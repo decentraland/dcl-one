@@ -3,8 +3,10 @@
 
 mod byte_budget;
 mod idle;
+mod ordinary;
 use byte_budget::ByteBudget;
 pub use idle::{IdleAction, IdleTimer};
+pub use ordinary::OrdinaryQueueConfig;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -81,7 +83,8 @@ pub fn close_message((code, reason): (u16, &'static str)) -> Message {
 /// when the RPC layer closed the transport itself).
 pub struct AxumWsTransport {
     inbound_rx: Mutex<UnboundedReceiver<TransportMessage>>,
-    outbound_tx: UnboundedSender<TransportMessage>,
+    outbound_tx: UnboundedSender<OrdinaryOutbound>,
+    ordinary: Option<Arc<ordinary::OrdinaryLane>>,
     guarded_tx: Sender<GuardedOutbound>,
     guarded_budget: Arc<ByteBudget>,
     closed: AtomicBool,
@@ -130,9 +133,52 @@ impl AxumWsTransport {
         idle: IdleTimer,
         max_backpressure: usize,
     ) -> (Self, JoinHandle<()>) {
+        Self::spawn_configured(socket, address, close, idle, max_backpressure, None)
+    }
+
+    /// Opt-in source ordinary queue, sharing the existing writer and byte budget.
+    pub fn spawn_with_ordinary_queue(
+        socket: WebSocket,
+        address: String,
+        close: Arc<SocketClose>,
+        idle: IdleTimer,
+        max_backpressure: usize,
+        ordinary: OrdinaryQueueConfig,
+    ) -> (Self, JoinHandle<()>) {
+        ordinary
+            .capacity(max_backpressure)
+            .expect("validated ordinary queue");
+        Self::spawn_configured(
+            socket,
+            address,
+            close,
+            idle,
+            max_backpressure,
+            Some(ordinary),
+        )
+    }
+
+    fn spawn_configured(
+        socket: WebSocket,
+        address: String,
+        close: Arc<SocketClose>,
+        idle: IdleTimer,
+        max_backpressure: usize,
+        ordinary_config: Option<OrdinaryQueueConfig>,
+    ) -> (Self, JoinHandle<()>) {
         let (mut sink, mut stream) = socket.split();
         let (inbound_tx, inbound_rx) = unbounded_channel::<TransportMessage>();
-        let (outbound_tx, outbound_rx) = unbounded_channel::<TransportMessage>();
+        let (outbound_tx, outbound_rx) = unbounded_channel::<OrdinaryOutbound>();
+        let budget = ByteBudget::new(max_backpressure);
+        let ordinary = ordinary_config.map(|config| {
+            ordinary::OrdinaryLane::new(
+                config,
+                outbound_tx.clone(),
+                budget.clone(),
+                close.clone(),
+                max_backpressure,
+            )
+        });
         let (guarded_tx, guarded_rx) = channel(GUARDED_CAPACITY);
 
         let reader_close = close.clone();
@@ -167,8 +213,9 @@ impl AxumWsTransport {
         let transport = Self {
             inbound_rx: Mutex::new(inbound_rx),
             outbound_tx,
+            ordinary,
             guarded_tx,
-            guarded_budget: ByteBudget::new(max_backpressure),
+            guarded_budget: budget,
             closed: AtomicBool::new(false),
             close,
             address,
@@ -201,8 +248,18 @@ impl Transport for AxumWsTransport {
         if self.closed.load(Ordering::Acquire) {
             return Err(TransportError::Closed);
         }
+        if let Some(ordinary) = &self.ordinary {
+            return ordinary
+                .send(message)
+                .await
+                .map_err(|_| TransportError::Closed)?
+                .map_err(|_| TransportError::Closed);
+        }
         self.outbound_tx
-            .send(message)
+            .send(OrdinaryOutbound {
+                bytes: message,
+                _permit: None,
+            })
             .map_err(|_| TransportError::Closed)
     }
 
@@ -246,6 +303,9 @@ impl Transport for AxumWsTransport {
     /// [`RPC_TRANSPORT_CLOSED`] unless another close was asked for first.
     async fn close(&self) {
         self.closed.store(true, Ordering::Release);
+        if let Some(ordinary) = &self.ordinary {
+            ordinary.close();
+        }
         let (code, reason) = RPC_TRANSPORT_CLOSED;
         self.close.end(code, reason);
     }
@@ -259,15 +319,19 @@ struct GuardedOutbound {
     delivery: GuardedDelivery,
     completion: tokio::sync::oneshot::Sender<Result<GuardedSend, TransportError>>,
 }
+struct OrdinaryOutbound {
+    bytes: Vec<u8>,
+    _permit: Option<byte_budget::Permit>,
+}
 enum Outbound {
     Idle(IdleAction),
-    Ordinary(Vec<u8>),
+    Ordinary(OrdinaryOutbound),
     Guarded(GuardedOutbound),
 }
 #[cfg(test)]
 async fn run_writer<S>(
     sink: &mut S,
-    ordinary: UnboundedReceiver<Vec<u8>>,
+    ordinary: UnboundedReceiver<OrdinaryOutbound>,
     guarded: Receiver<GuardedOutbound>,
     close: &SocketClose,
 ) where
@@ -277,7 +341,7 @@ async fn run_writer<S>(
 }
 async fn run_writer_with_idle<S>(
     sink: &mut S,
-    mut ordinary: UnboundedReceiver<Vec<u8>>,
+    mut ordinary: UnboundedReceiver<OrdinaryOutbound>,
     mut guarded: Receiver<GuardedOutbound>,
     close: &SocketClose,
     idle: IdleTimer,
@@ -319,12 +383,13 @@ async fn run_writer_with_idle<S>(
                 close.peer_gone();
                 return;
             }
-            Outbound::Ordinary(bytes) => {
+            Outbound::Ordinary(OrdinaryOutbound { bytes, _permit }) => {
                 let sent = tokio::select! { _ = close.ended() => false, result = sink.send(Message::Binary(bytes.into())) => result.is_ok() };
                 if !sent {
                     break;
                 }
                 idle.activity();
+                drop(_permit);
             }
             Outbound::Guarded(envelope) => {
                 if !write_guarded(sink, envelope, close).await {
@@ -476,6 +541,7 @@ mod guarded_tests {
         Arc::new(AxumWsTransport {
             inbound_rx: Mutex::new(inbound_rx),
             outbound_tx,
+            ordinary: None,
             guarded_tx,
             guarded_budget: ByteBudget::new(GUARDED_CAPACITY * MAX_GUARDED_MESSAGE_BYTES),
             closed: AtomicBool::new(false),

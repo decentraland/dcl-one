@@ -36,6 +36,31 @@ not a sustained throughput, multi-community fairness or maximum-payload benchmar
 SQL concurrency is capped by the configured pool size; ingress beyond the queue
 bound can still drop transient events and increments the delivery-drop counter.
 
+The targeted burst harness records readiness, submission, broker observer counts
+and both subscription queue lengths. In a 2026-11-03 full Social run it reached
+readiness in 5.007 seconds, finished submission at 5.021 seconds and observed
+all 1,000 frames at both broker links and both queues by 5.027 seconds. The same
+run delivered all community updates and its 100 controls in 28.482 milliseconds.
+A process snapshot near the run's start contained one Cargo process and no Rust
+compiler process; it is not a continuous system-load measurement. An earlier
+complete-suite targeted-burst timeout had no stage counts; its focused rerun
+passed. The cause of that timeout remains unestablished. The harness retains its
+10-second delivery deadline and exact count, ordering and duplicate assertions;
+that deadline is not a protocol latency guarantee.
+
+## Ordinary Social RPC writer
+
+The source transport fixture executes the pinned TypeScript transport with a
+controlled socket and virtual timers. Its 17 cases cover queue capacity,
+backoff, drain callbacks, accepted-once handling, closure and explicit unsupported
+configuration edges. A real socket test on 2026-11-03 preserved an 8 MiB profile
+URL in a unary response, then stopped reading and observed transport retirement
+after bounded retries of subsequent responses. That focused test completed in
+1.06 seconds. These checks do not measure native uWS buffer behavior, kernel
+capacity, sustained throughput or maximum-memory consumption. Accepted bytes are
+charged through the existing writer's physical flush; pending-message storage
+grows on demand up to the configured finite threshold.
+
 ## Private-call RPC UUID boundary
 
 The private identifier replay sampled 128 sequential SQLx executions of the bound

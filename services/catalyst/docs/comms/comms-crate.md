@@ -149,6 +149,31 @@ A stalled write keeps the existing five-second deadline and retires the socket.
 The producer waits for each acknowledgement and rechecks topology and privacy
 before writing. Other domains retain their default 16 KiB guarded-frame limit.
 
+Ordinary Social RPC frames use an opt-in pending-message queue in the same
+writer. Its source adaptive capacity is 128 messages with the defaults. The seven
+`WS_TRANSPORT_*` queue, size-estimate and retry settings use numeric-prefix
+parsing. Fractional queue thresholds and finite large capacities are preserved;
+the queue allocates as messages arrive. Overflow or retry exhaustion closes with
+1011 `RPC transport closed`. A pending head keeps its scheduled exponential
+backoff across new sends; a writer drain advances the retry. Accepted frames are
+removed once and retain their byte charge through physical flush. Admission
+checks bytes already pending with a strict `>` threshold, so one frame can cross
+the configured budget. Ordinary unary responses have no guarded-frame size cap.
+
+Tokio writer admission and flush supply these acceptance and drain signals;
+they do not measure uWS's kernel buffer. Source callback traces cover the queue
+policy, and socket tests cover large response preservation and stopped-reader
+closure. Native buffer timing and throughput equivalence remain unmeasured.
+Startup refuses zero `WS_MAX_BACKPRESSURE` and nonfinite computed ordinary queue
+capacities to retain bounded admission; the pinned
+[native send guard](https://github.com/uNetworking/uWebSockets/blob/7fd2be6fe2afe5af55e4c25b696801beeca1da52/src/WebSocket.h#L120)
+disables its limit with zero, and the source transport can compute an infinite
+queue capacity. `WS_MAX_BACKPRESSURE`
+still uses an unsigned integer parser, so the source's numeric-prefix,
+fractional, negative and wrapping native conversion forms remain configuration
+differences to check before cutover. Other users of the shared transport keep
+their existing ordinary writer unless they select this queue.
+
 Both Social socket protocols read `WS_AUTH_TIMEOUT_IN_MS` and
 `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS` separately using the source environment
 provider's numeric-prefix parser. The authentication timer follows Node's

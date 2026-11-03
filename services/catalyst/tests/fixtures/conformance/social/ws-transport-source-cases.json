@@ -1,0 +1,3423 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+  },
+  "runtime": {
+    "node": "v26.12.0"
+  },
+  "scope": "Executed UWebSocketTransport with controlled send outcomes, mitt callbacks and virtual timers. RPC error-close and ws-handler close listeners are represented by their synchronous teardown contract. Does not exercise kernel or native socket buffering.",
+  "cases": [
+    {
+      "id": "default-capacity-overflow",
+      "config": {},
+      "script": [
+        2
+      ],
+      "threshold": false,
+      "capacity": 128,
+      "configuration": {
+        "max_queue_size": 1000,
+        "min_queue_size": 100,
+        "max_queue_size_limit": 5000,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 1000,
+        "max_retry_attempts": 5,
+        "max_backoff_delay_ms": 30000,
+        "max_backpressure": 131072
+      },
+      "actions": [
+        {
+          "op": "send",
+          "label": 1
+        },
+        {
+          "op": "send",
+          "label": 2
+        },
+        {
+          "op": "send",
+          "label": 3
+        },
+        {
+          "op": "send",
+          "label": 4
+        },
+        {
+          "op": "send",
+          "label": 5
+        },
+        {
+          "op": "send",
+          "label": 6
+        },
+        {
+          "op": "send",
+          "label": 7
+        },
+        {
+          "op": "send",
+          "label": 8
+        },
+        {
+          "op": "send",
+          "label": 9
+        },
+        {
+          "op": "send",
+          "label": 10
+        },
+        {
+          "op": "send",
+          "label": 11
+        },
+        {
+          "op": "send",
+          "label": 12
+        },
+        {
+          "op": "send",
+          "label": 13
+        },
+        {
+          "op": "send",
+          "label": 14
+        },
+        {
+          "op": "send",
+          "label": 15
+        },
+        {
+          "op": "send",
+          "label": 16
+        },
+        {
+          "op": "send",
+          "label": 17
+        },
+        {
+          "op": "send",
+          "label": 18
+        },
+        {
+          "op": "send",
+          "label": 19
+        },
+        {
+          "op": "send",
+          "label": 20
+        },
+        {
+          "op": "send",
+          "label": 21
+        },
+        {
+          "op": "send",
+          "label": 22
+        },
+        {
+          "op": "send",
+          "label": 23
+        },
+        {
+          "op": "send",
+          "label": 24
+        },
+        {
+          "op": "send",
+          "label": 25
+        },
+        {
+          "op": "send",
+          "label": 26
+        },
+        {
+          "op": "send",
+          "label": 27
+        },
+        {
+          "op": "send",
+          "label": 28
+        },
+        {
+          "op": "send",
+          "label": 29
+        },
+        {
+          "op": "send",
+          "label": 30
+        },
+        {
+          "op": "send",
+          "label": 31
+        },
+        {
+          "op": "send",
+          "label": 32
+        },
+        {
+          "op": "send",
+          "label": 33
+        },
+        {
+          "op": "send",
+          "label": 34
+        },
+        {
+          "op": "send",
+          "label": 35
+        },
+        {
+          "op": "send",
+          "label": 36
+        },
+        {
+          "op": "send",
+          "label": 37
+        },
+        {
+          "op": "send",
+          "label": 38
+        },
+        {
+          "op": "send",
+          "label": 39
+        },
+        {
+          "op": "send",
+          "label": 40
+        },
+        {
+          "op": "send",
+          "label": 41
+        },
+        {
+          "op": "send",
+          "label": 42
+        },
+        {
+          "op": "send",
+          "label": 43
+        },
+        {
+          "op": "send",
+          "label": 44
+        },
+        {
+          "op": "send",
+          "label": 45
+        },
+        {
+          "op": "send",
+          "label": 46
+        },
+        {
+          "op": "send",
+          "label": 47
+        },
+        {
+          "op": "send",
+          "label": 48
+        },
+        {
+          "op": "send",
+          "label": 49
+        },
+        {
+          "op": "send",
+          "label": 50
+        },
+        {
+          "op": "send",
+          "label": 51
+        },
+        {
+          "op": "send",
+          "label": 52
+        },
+        {
+          "op": "send",
+          "label": 53
+        },
+        {
+          "op": "send",
+          "label": 54
+        },
+        {
+          "op": "send",
+          "label": 55
+        },
+        {
+          "op": "send",
+          "label": 56
+        },
+        {
+          "op": "send",
+          "label": 57
+        },
+        {
+          "op": "send",
+          "label": 58
+        },
+        {
+          "op": "send",
+          "label": 59
+        },
+        {
+          "op": "send",
+          "label": 60
+        },
+        {
+          "op": "send",
+          "label": 61
+        },
+        {
+          "op": "send",
+          "label": 62
+        },
+        {
+          "op": "send",
+          "label": 63
+        },
+        {
+          "op": "send",
+          "label": 64
+        },
+        {
+          "op": "send",
+          "label": 65
+        },
+        {
+          "op": "send",
+          "label": 66
+        },
+        {
+          "op": "send",
+          "label": 67
+        },
+        {
+          "op": "send",
+          "label": 68
+        },
+        {
+          "op": "send",
+          "label": 69
+        },
+        {
+          "op": "send",
+          "label": 70
+        },
+        {
+          "op": "send",
+          "label": 71
+        },
+        {
+          "op": "send",
+          "label": 72
+        },
+        {
+          "op": "send",
+          "label": 73
+        },
+        {
+          "op": "send",
+          "label": 74
+        },
+        {
+          "op": "send",
+          "label": 75
+        },
+        {
+          "op": "send",
+          "label": 76
+        },
+        {
+          "op": "send",
+          "label": 77
+        },
+        {
+          "op": "send",
+          "label": 78
+        },
+        {
+          "op": "send",
+          "label": 79
+        },
+        {
+          "op": "send",
+          "label": 80
+        },
+        {
+          "op": "send",
+          "label": 81
+        },
+        {
+          "op": "send",
+          "label": 82
+        },
+        {
+          "op": "send",
+          "label": 83
+        },
+        {
+          "op": "send",
+          "label": 84
+        },
+        {
+          "op": "send",
+          "label": 85
+        },
+        {
+          "op": "send",
+          "label": 86
+        },
+        {
+          "op": "send",
+          "label": 87
+        },
+        {
+          "op": "send",
+          "label": 88
+        },
+        {
+          "op": "send",
+          "label": 89
+        },
+        {
+          "op": "send",
+          "label": 90
+        },
+        {
+          "op": "send",
+          "label": 91
+        },
+        {
+          "op": "send",
+          "label": 92
+        },
+        {
+          "op": "send",
+          "label": 93
+        },
+        {
+          "op": "send",
+          "label": 94
+        },
+        {
+          "op": "send",
+          "label": 95
+        },
+        {
+          "op": "send",
+          "label": 96
+        },
+        {
+          "op": "send",
+          "label": 97
+        },
+        {
+          "op": "send",
+          "label": 98
+        },
+        {
+          "op": "send",
+          "label": 99
+        },
+        {
+          "op": "send",
+          "label": 100
+        },
+        {
+          "op": "send",
+          "label": 101
+        },
+        {
+          "op": "send",
+          "label": 102
+        },
+        {
+          "op": "send",
+          "label": 103
+        },
+        {
+          "op": "send",
+          "label": 104
+        },
+        {
+          "op": "send",
+          "label": 105
+        },
+        {
+          "op": "send",
+          "label": 106
+        },
+        {
+          "op": "send",
+          "label": 107
+        },
+        {
+          "op": "send",
+          "label": 108
+        },
+        {
+          "op": "send",
+          "label": 109
+        },
+        {
+          "op": "send",
+          "label": 110
+        },
+        {
+          "op": "send",
+          "label": 111
+        },
+        {
+          "op": "send",
+          "label": 112
+        },
+        {
+          "op": "send",
+          "label": 113
+        },
+        {
+          "op": "send",
+          "label": 114
+        },
+        {
+          "op": "send",
+          "label": 115
+        },
+        {
+          "op": "send",
+          "label": 116
+        },
+        {
+          "op": "send",
+          "label": 117
+        },
+        {
+          "op": "send",
+          "label": 118
+        },
+        {
+          "op": "send",
+          "label": 119
+        },
+        {
+          "op": "send",
+          "label": 120
+        },
+        {
+          "op": "send",
+          "label": 121
+        },
+        {
+          "op": "send",
+          "label": 122
+        },
+        {
+          "op": "send",
+          "label": 123
+        },
+        {
+          "op": "send",
+          "label": 124
+        },
+        {
+          "op": "send",
+          "label": 125
+        },
+        {
+          "op": "send",
+          "label": 126
+        },
+        {
+          "op": "send",
+          "label": 127
+        },
+        {
+          "op": "send",
+          "label": 128
+        },
+        {
+          "op": "send",
+          "label": 129
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 1,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 2,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 3,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 4,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 5,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 6,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 7,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 8,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 9,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 10,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 11,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 12,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 13,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 14,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 15,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 16,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 17,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 18,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 19,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 20,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 21,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 22,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 23,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 24,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 25,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 26,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 27,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 28,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 29,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 30,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 31,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 32,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 33,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 34,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 35,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 36,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 37,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 38,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 39,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 40,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 41,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 42,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 43,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 44,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 45,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 46,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 47,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 48,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 49,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 50,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 51,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 52,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 53,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 54,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 55,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 56,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 57,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 58,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 59,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 60,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 61,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 62,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 63,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 64,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 65,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 66,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 67,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 68,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 69,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 70,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 71,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 72,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 73,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 74,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 75,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 76,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 77,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 78,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 79,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 80,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 81,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 82,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 83,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 84,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 85,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 86,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 87,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 88,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 89,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 90,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 91,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 92,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 93,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 94,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 95,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 96,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 97,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 98,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 99,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 100,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 101,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 102,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 103,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 104,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 105,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 106,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 107,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 108,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 109,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 110,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 111,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 112,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 113,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 114,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 115,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 116,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 117,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 118,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 119,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 120,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 121,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 122,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 123,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 124,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 125,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 126,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 127,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 128,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 1,
+          "closed": 1,
+          "pending": 0,
+          "resolved": 1,
+          "rejected": 128
+        }
+      ],
+      "sends": [
+        {
+          "at": 0,
+          "label": 1,
+          "bytes": 1,
+          "result": 2
+        }
+      ],
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "closes": [
+        {
+          "code": 1011,
+          "reason": "RPC transport closed"
+        }
+      ],
+      "received": [],
+      "metrics": [
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "dropped"
+          }
+        }
+      ],
+      "futures": {
+        "1": "rejected:Connection closed",
+        "2": "rejected:Connection closed",
+        "3": "rejected:Connection closed",
+        "4": "rejected:Connection closed",
+        "5": "rejected:Connection closed",
+        "6": "rejected:Connection closed",
+        "7": "rejected:Connection closed",
+        "8": "rejected:Connection closed",
+        "9": "rejected:Connection closed",
+        "10": "rejected:Connection closed",
+        "11": "rejected:Connection closed",
+        "12": "rejected:Connection closed",
+        "13": "rejected:Connection closed",
+        "14": "rejected:Connection closed",
+        "15": "rejected:Connection closed",
+        "16": "rejected:Connection closed",
+        "17": "rejected:Connection closed",
+        "18": "rejected:Connection closed",
+        "19": "rejected:Connection closed",
+        "20": "rejected:Connection closed",
+        "21": "rejected:Connection closed",
+        "22": "rejected:Connection closed",
+        "23": "rejected:Connection closed",
+        "24": "rejected:Connection closed",
+        "25": "rejected:Connection closed",
+        "26": "rejected:Connection closed",
+        "27": "rejected:Connection closed",
+        "28": "rejected:Connection closed",
+        "29": "rejected:Connection closed",
+        "30": "rejected:Connection closed",
+        "31": "rejected:Connection closed",
+        "32": "rejected:Connection closed",
+        "33": "rejected:Connection closed",
+        "34": "rejected:Connection closed",
+        "35": "rejected:Connection closed",
+        "36": "rejected:Connection closed",
+        "37": "rejected:Connection closed",
+        "38": "rejected:Connection closed",
+        "39": "rejected:Connection closed",
+        "40": "rejected:Connection closed",
+        "41": "rejected:Connection closed",
+        "42": "rejected:Connection closed",
+        "43": "rejected:Connection closed",
+        "44": "rejected:Connection closed",
+        "45": "rejected:Connection closed",
+        "46": "rejected:Connection closed",
+        "47": "rejected:Connection closed",
+        "48": "rejected:Connection closed",
+        "49": "rejected:Connection closed",
+        "50": "rejected:Connection closed",
+        "51": "rejected:Connection closed",
+        "52": "rejected:Connection closed",
+        "53": "rejected:Connection closed",
+        "54": "rejected:Connection closed",
+        "55": "rejected:Connection closed",
+        "56": "rejected:Connection closed",
+        "57": "rejected:Connection closed",
+        "58": "rejected:Connection closed",
+        "59": "rejected:Connection closed",
+        "60": "rejected:Connection closed",
+        "61": "rejected:Connection closed",
+        "62": "rejected:Connection closed",
+        "63": "rejected:Connection closed",
+        "64": "rejected:Connection closed",
+        "65": "rejected:Connection closed",
+        "66": "rejected:Connection closed",
+        "67": "rejected:Connection closed",
+        "68": "rejected:Connection closed",
+        "69": "rejected:Connection closed",
+        "70": "rejected:Connection closed",
+        "71": "rejected:Connection closed",
+        "72": "rejected:Connection closed",
+        "73": "rejected:Connection closed",
+        "74": "rejected:Connection closed",
+        "75": "rejected:Connection closed",
+        "76": "rejected:Connection closed",
+        "77": "rejected:Connection closed",
+        "78": "rejected:Connection closed",
+        "79": "rejected:Connection closed",
+        "80": "rejected:Connection closed",
+        "81": "rejected:Connection closed",
+        "82": "rejected:Connection closed",
+        "83": "rejected:Connection closed",
+        "84": "rejected:Connection closed",
+        "85": "rejected:Connection closed",
+        "86": "rejected:Connection closed",
+        "87": "rejected:Connection closed",
+        "88": "rejected:Connection closed",
+        "89": "rejected:Connection closed",
+        "90": "rejected:Connection closed",
+        "91": "rejected:Connection closed",
+        "92": "rejected:Connection closed",
+        "93": "rejected:Connection closed",
+        "94": "rejected:Connection closed",
+        "95": "rejected:Connection closed",
+        "96": "rejected:Connection closed",
+        "97": "rejected:Connection closed",
+        "98": "rejected:Connection closed",
+        "99": "rejected:Connection closed",
+        "100": "rejected:Connection closed",
+        "101": "rejected:Connection closed",
+        "102": "rejected:Connection closed",
+        "103": "rejected:Connection closed",
+        "104": "rejected:Connection closed",
+        "105": "rejected:Connection closed",
+        "106": "rejected:Connection closed",
+        "107": "rejected:Connection closed",
+        "108": "rejected:Connection closed",
+        "109": "rejected:Connection closed",
+        "110": "rejected:Connection closed",
+        "111": "rejected:Connection closed",
+        "112": "rejected:Connection closed",
+        "113": "rejected:Connection closed",
+        "114": "rejected:Connection closed",
+        "115": "rejected:Connection closed",
+        "116": "rejected:Connection closed",
+        "117": "rejected:Connection closed",
+        "118": "rejected:Connection closed",
+        "119": "rejected:Connection closed",
+        "120": "rejected:Connection closed",
+        "121": "rejected:Connection closed",
+        "122": "rejected:Connection closed",
+        "123": "rejected:Connection closed",
+        "124": "rejected:Connection closed",
+        "125": "rejected:Connection closed",
+        "126": "rejected:Connection closed",
+        "127": "rejected:Connection closed",
+        "128": "rejected:Connection closed",
+        "129": "resolved"
+      }
+    },
+    {
+      "id": "burst-keeps-scheduled-backoff",
+      "config": {
+        "WS_TRANSPORT_MAX_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MIN_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT": "3",
+        "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE": "1024",
+        "WS_TRANSPORT_RETRY_DELAY_MS": "10",
+        "WS_TRANSPORT_MAX_RETRY_ATTEMPTS": "3",
+        "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS": "1000",
+        "WS_MAX_BACKPRESSURE": "1024"
+      },
+      "script": [
+        2,
+        1,
+        1,
+        1
+      ],
+      "threshold": false,
+      "capacity": 3,
+      "configuration": {
+        "max_queue_size": 3,
+        "min_queue_size": 3,
+        "max_queue_size_limit": 3,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 10,
+        "max_retry_attempts": 3,
+        "max_backoff_delay_ms": 1000,
+        "max_backpressure": 1024
+      },
+      "actions": [
+        {
+          "op": "send",
+          "label": 1
+        },
+        {
+          "op": "send",
+          "label": 2
+        },
+        {
+          "op": "send",
+          "label": 3
+        },
+        {
+          "op": "tick",
+          "ms": 19
+        },
+        {
+          "op": "tick",
+          "ms": 1
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 1,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 2,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 3,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 19,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 3,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 20,
+          "sends": 4,
+          "errors": 0,
+          "closed": 0,
+          "pending": 0,
+          "resolved": 3,
+          "rejected": 0
+        }
+      ],
+      "sends": [
+        {
+          "at": 0,
+          "label": 1,
+          "bytes": 1,
+          "result": 2
+        },
+        {
+          "at": 20,
+          "label": 1,
+          "bytes": 1,
+          "result": 1
+        },
+        {
+          "at": 20,
+          "label": 2,
+          "bytes": 1,
+          "result": 1
+        },
+        {
+          "at": 20,
+          "label": 3,
+          "bytes": 1,
+          "result": 1
+        }
+      ],
+      "errors": [],
+      "closes": [],
+      "received": [],
+      "metrics": [
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "dropped"
+          }
+        },
+        {
+          "name": "ws_messages_sent",
+          "labels": {}
+        },
+        {
+          "name": "ws_messages_sent",
+          "labels": {}
+        },
+        {
+          "name": "ws_messages_sent",
+          "labels": {}
+        }
+      ],
+      "futures": {
+        "1": "resolved",
+        "2": "resolved",
+        "3": "resolved"
+      }
+    },
+    {
+      "id": "drain-advances-retry",
+      "config": {
+        "WS_TRANSPORT_MAX_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MIN_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT": "3",
+        "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE": "1024",
+        "WS_TRANSPORT_RETRY_DELAY_MS": "10",
+        "WS_TRANSPORT_MAX_RETRY_ATTEMPTS": "3",
+        "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS": "1000",
+        "WS_MAX_BACKPRESSURE": "1024"
+      },
+      "script": [
+        2,
+        1
+      ],
+      "threshold": false,
+      "capacity": 3,
+      "configuration": {
+        "max_queue_size": 3,
+        "min_queue_size": 3,
+        "max_queue_size_limit": 3,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 10,
+        "max_retry_attempts": 3,
+        "max_backoff_delay_ms": 1000,
+        "max_backpressure": 1024
+      },
+      "actions": [
+        {
+          "op": "send",
+          "label": 1
+        },
+        {
+          "op": "tick",
+          "ms": 5
+        },
+        {
+          "op": "drain"
+        },
+        {
+          "op": "tick",
+          "ms": 100
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 1,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 5,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 1,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 5,
+          "sends": 2,
+          "errors": 0,
+          "closed": 0,
+          "pending": 0,
+          "resolved": 1,
+          "rejected": 0
+        },
+        {
+          "at": 105,
+          "sends": 2,
+          "errors": 0,
+          "closed": 0,
+          "pending": 0,
+          "resolved": 1,
+          "rejected": 0
+        }
+      ],
+      "sends": [
+        {
+          "at": 0,
+          "label": 1,
+          "bytes": 1,
+          "result": 2
+        },
+        {
+          "at": 5,
+          "label": 1,
+          "bytes": 1,
+          "result": 1
+        }
+      ],
+      "errors": [],
+      "closes": [],
+      "received": [],
+      "metrics": [
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "dropped"
+          }
+        },
+        {
+          "name": "ws_messages_sent",
+          "labels": {}
+        }
+      ],
+      "futures": {
+        "1": "resolved"
+      }
+    },
+    {
+      "id": "backpressure-accepts-once",
+      "config": {
+        "WS_TRANSPORT_MAX_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MIN_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT": "3",
+        "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE": "1024",
+        "WS_TRANSPORT_RETRY_DELAY_MS": "10",
+        "WS_TRANSPORT_MAX_RETRY_ATTEMPTS": "3",
+        "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS": "1000",
+        "WS_MAX_BACKPRESSURE": "1024"
+      },
+      "script": [
+        0,
+        1
+      ],
+      "threshold": false,
+      "capacity": 3,
+      "configuration": {
+        "max_queue_size": 3,
+        "min_queue_size": 3,
+        "max_queue_size_limit": 3,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 10,
+        "max_retry_attempts": 3,
+        "max_backoff_delay_ms": 1000,
+        "max_backpressure": 1024
+      },
+      "actions": [
+        {
+          "op": "send",
+          "label": 1
+        },
+        {
+          "op": "send",
+          "label": 2
+        },
+        {
+          "op": "tick",
+          "ms": 10
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 0,
+          "resolved": 1,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 1,
+          "resolved": 1,
+          "rejected": 0
+        },
+        {
+          "at": 10,
+          "sends": 2,
+          "errors": 0,
+          "closed": 0,
+          "pending": 0,
+          "resolved": 2,
+          "rejected": 0
+        }
+      ],
+      "sends": [
+        {
+          "at": 0,
+          "label": 1,
+          "bytes": 1,
+          "result": 0
+        },
+        {
+          "at": 10,
+          "label": 2,
+          "bytes": 1,
+          "result": 1
+        }
+      ],
+      "errors": [],
+      "closes": [],
+      "received": [],
+      "metrics": [
+        {
+          "name": "ws_messages_sent",
+          "labels": {}
+        },
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "backpressure"
+          }
+        },
+        {
+          "name": "ws_messages_sent",
+          "labels": {}
+        }
+      ],
+      "futures": {
+        "1": "resolved",
+        "2": "resolved"
+      }
+    },
+    {
+      "id": "max-attempts-close",
+      "config": {
+        "WS_TRANSPORT_MAX_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MIN_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT": "3",
+        "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE": "1024",
+        "WS_TRANSPORT_RETRY_DELAY_MS": "10",
+        "WS_TRANSPORT_MAX_RETRY_ATTEMPTS": "3",
+        "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS": "1000",
+        "WS_MAX_BACKPRESSURE": "1024"
+      },
+      "script": [
+        2
+      ],
+      "threshold": false,
+      "capacity": 3,
+      "configuration": {
+        "max_queue_size": 3,
+        "min_queue_size": 3,
+        "max_queue_size_limit": 3,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 10,
+        "max_retry_attempts": 3,
+        "max_backoff_delay_ms": 1000,
+        "max_backpressure": 1024
+      },
+      "actions": [
+        {
+          "op": "send",
+          "label": 1
+        },
+        {
+          "op": "tick",
+          "ms": 139
+        },
+        {
+          "op": "tick",
+          "ms": 1
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 1,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 139,
+          "sends": 3,
+          "errors": 0,
+          "closed": 0,
+          "pending": 1,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 140,
+          "sends": 3,
+          "errors": 1,
+          "closed": 1,
+          "pending": 0,
+          "resolved": 0,
+          "rejected": 1
+        }
+      ],
+      "sends": [
+        {
+          "at": 0,
+          "label": 1,
+          "bytes": 1,
+          "result": 2
+        },
+        {
+          "at": 20,
+          "label": 1,
+          "bytes": 1,
+          "result": 2
+        },
+        {
+          "at": 60,
+          "label": 1,
+          "bytes": 1,
+          "result": 2
+        }
+      ],
+      "errors": [
+        "Message not deliverable after max retries"
+      ],
+      "closes": [
+        {
+          "code": 1011,
+          "reason": "RPC transport closed"
+        }
+      ],
+      "received": [],
+      "metrics": [
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "dropped"
+          }
+        },
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "dropped"
+          }
+        },
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "dropped"
+          }
+        },
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "max_retries"
+          }
+        }
+      ],
+      "futures": {
+        "1": "rejected:Connection closed"
+      }
+    },
+    {
+      "id": "send-error-close",
+      "config": {
+        "WS_TRANSPORT_MAX_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MIN_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT": "3",
+        "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE": "1024",
+        "WS_TRANSPORT_RETRY_DELAY_MS": "10",
+        "WS_TRANSPORT_MAX_RETRY_ATTEMPTS": "3",
+        "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS": "1000",
+        "WS_MAX_BACKPRESSURE": "1024"
+      },
+      "script": [
+        "throw"
+      ],
+      "threshold": false,
+      "capacity": 3,
+      "configuration": {
+        "max_queue_size": 3,
+        "min_queue_size": 3,
+        "max_queue_size_limit": 3,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 10,
+        "max_retry_attempts": 3,
+        "max_backoff_delay_ms": 1000,
+        "max_backpressure": 1024
+      },
+      "actions": [
+        {
+          "op": "send",
+          "label": 1
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 1,
+          "closed": 1,
+          "pending": 0,
+          "resolved": 0,
+          "rejected": 1
+        }
+      ],
+      "sends": [
+        {
+          "at": 0,
+          "label": 1,
+          "bytes": 1,
+          "result": "throw"
+        }
+      ],
+      "errors": [
+        "Failed to send message: synthetic send failure"
+      ],
+      "closes": [
+        {
+          "code": 1011,
+          "reason": "RPC transport closed"
+        }
+      ],
+      "received": [],
+      "metrics": [],
+      "futures": {
+        "1": "rejected:Failed to send message: synthetic send failure"
+      }
+    },
+    {
+      "id": "unexpected-result-retains-head",
+      "config": {
+        "WS_TRANSPORT_MAX_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MIN_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT": "3",
+        "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE": "1024",
+        "WS_TRANSPORT_RETRY_DELAY_MS": "10",
+        "WS_TRANSPORT_MAX_RETRY_ATTEMPTS": "3",
+        "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS": "1000",
+        "WS_MAX_BACKPRESSURE": "1024"
+      },
+      "script": [
+        99,
+        1
+      ],
+      "threshold": false,
+      "capacity": 3,
+      "configuration": {
+        "max_queue_size": 3,
+        "min_queue_size": 3,
+        "max_queue_size_limit": 3,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 10,
+        "max_retry_attempts": 3,
+        "max_backoff_delay_ms": 1000,
+        "max_backpressure": 1024
+      },
+      "actions": [
+        {
+          "op": "send",
+          "label": 1
+        },
+        {
+          "op": "tick",
+          "ms": 10
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 1,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 10,
+          "sends": 2,
+          "errors": 0,
+          "closed": 0,
+          "pending": 0,
+          "resolved": 1,
+          "rejected": 0
+        }
+      ],
+      "sends": [
+        {
+          "at": 0,
+          "label": 1,
+          "bytes": 1,
+          "result": 99
+        },
+        {
+          "at": 10,
+          "label": 1,
+          "bytes": 1,
+          "result": 1
+        }
+      ],
+      "errors": [],
+      "closes": [],
+      "received": [],
+      "metrics": [
+        {
+          "name": "ws_unexpected_send_result_events",
+          "labels": {}
+        },
+        {
+          "name": "ws_messages_sent",
+          "labels": {}
+        }
+      ],
+      "futures": {
+        "1": "resolved"
+      }
+    },
+    {
+      "id": "closed-socket-skips-and-close-is-idempotent",
+      "config": {
+        "WS_TRANSPORT_MAX_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MIN_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT": "3",
+        "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE": "1024",
+        "WS_TRANSPORT_RETRY_DELAY_MS": "10",
+        "WS_TRANSPORT_MAX_RETRY_ATTEMPTS": "3",
+        "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS": "1000",
+        "WS_MAX_BACKPRESSURE": "1024"
+      },
+      "script": [
+        1
+      ],
+      "threshold": false,
+      "capacity": 3,
+      "configuration": {
+        "max_queue_size": 3,
+        "min_queue_size": 3,
+        "max_queue_size_limit": 3,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 10,
+        "max_retry_attempts": 3,
+        "max_backoff_delay_ms": 1000,
+        "max_backpressure": 1024
+      },
+      "actions": [
+        {
+          "op": "disconnect"
+        },
+        {
+          "op": "send",
+          "label": 1
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "receive",
+          "bytes": [
+            9
+          ]
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 0,
+          "sends": 0,
+          "errors": 0,
+          "closed": 0,
+          "pending": 0,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 0,
+          "errors": 0,
+          "closed": 0,
+          "pending": 0,
+          "resolved": 1,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 0,
+          "errors": 0,
+          "closed": 0,
+          "pending": 0,
+          "resolved": 1,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 0,
+          "errors": 0,
+          "closed": 0,
+          "pending": 0,
+          "resolved": 1,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 0,
+          "errors": 0,
+          "closed": 0,
+          "pending": 0,
+          "resolved": 1,
+          "rejected": 0
+        }
+      ],
+      "sends": [],
+      "errors": [],
+      "closes": [],
+      "received": [],
+      "metrics": [],
+      "futures": {
+        "1": "resolved"
+      }
+    },
+    {
+      "id": "message-callback-detaches-on-close",
+      "config": {
+        "WS_TRANSPORT_MAX_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MIN_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT": "3",
+        "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE": "1024",
+        "WS_TRANSPORT_RETRY_DELAY_MS": "10",
+        "WS_TRANSPORT_MAX_RETRY_ATTEMPTS": "3",
+        "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS": "1000",
+        "WS_MAX_BACKPRESSURE": "1024"
+      },
+      "script": [
+        1
+      ],
+      "threshold": false,
+      "capacity": 3,
+      "configuration": {
+        "max_queue_size": 3,
+        "min_queue_size": 3,
+        "max_queue_size_limit": 3,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 10,
+        "max_retry_attempts": 3,
+        "max_backoff_delay_ms": 1000,
+        "max_backpressure": 1024
+      },
+      "actions": [
+        {
+          "op": "receive",
+          "bytes": [
+            1,
+            2
+          ]
+        },
+        {
+          "op": "close"
+        },
+        {
+          "op": "receive",
+          "bytes": [
+            3
+          ]
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 0,
+          "sends": 0,
+          "errors": 0,
+          "closed": 0,
+          "pending": 0,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 0,
+          "errors": 0,
+          "closed": 1,
+          "pending": 0,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 0,
+          "errors": 0,
+          "closed": 1,
+          "pending": 0,
+          "resolved": 0,
+          "rejected": 0
+        }
+      ],
+      "sends": [],
+      "errors": [],
+      "closes": [
+        {
+          "code": 1011,
+          "reason": "RPC transport closed"
+        }
+      ],
+      "received": [
+        [
+          1,
+          2
+        ]
+      ],
+      "metrics": [],
+      "futures": {}
+    },
+    {
+      "id": "existing-buffer-threshold-allows-crossing-frame",
+      "config": {
+        "WS_TRANSPORT_MAX_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MIN_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT": "3",
+        "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE": "1024",
+        "WS_TRANSPORT_RETRY_DELAY_MS": "10",
+        "WS_TRANSPORT_MAX_RETRY_ATTEMPTS": "3",
+        "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS": "1000",
+        "WS_MAX_BACKPRESSURE": "1024"
+      },
+      "script": [],
+      "threshold": true,
+      "capacity": 3,
+      "configuration": {
+        "max_queue_size": 3,
+        "min_queue_size": 3,
+        "max_queue_size_limit": 3,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 10,
+        "max_retry_attempts": 3,
+        "max_backoff_delay_ms": 1000,
+        "max_backpressure": 1024
+      },
+      "actions": [
+        {
+          "op": "buffer",
+          "bytes": 1024
+        },
+        {
+          "op": "send",
+          "label": 1,
+          "bytes": 2048
+        },
+        {
+          "op": "send",
+          "label": 2
+        },
+        {
+          "op": "tick",
+          "ms": 10
+        },
+        {
+          "op": "tick",
+          "ms": 5
+        },
+        {
+          "op": "drain"
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 0,
+          "sends": 0,
+          "errors": 0,
+          "closed": 0,
+          "pending": 0,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 0,
+          "resolved": 1,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 1,
+          "resolved": 1,
+          "rejected": 0
+        },
+        {
+          "at": 10,
+          "sends": 2,
+          "errors": 0,
+          "closed": 0,
+          "pending": 1,
+          "resolved": 1,
+          "rejected": 0
+        },
+        {
+          "at": 15,
+          "sends": 2,
+          "errors": 0,
+          "closed": 0,
+          "pending": 1,
+          "resolved": 1,
+          "rejected": 0
+        },
+        {
+          "at": 15,
+          "sends": 3,
+          "errors": 0,
+          "closed": 0,
+          "pending": 0,
+          "resolved": 2,
+          "rejected": 0
+        }
+      ],
+      "sends": [
+        {
+          "at": 0,
+          "label": 1,
+          "bytes": 2048,
+          "result": 0
+        },
+        {
+          "at": 10,
+          "label": 2,
+          "bytes": 1,
+          "result": 2
+        },
+        {
+          "at": 15,
+          "label": 2,
+          "bytes": 1,
+          "result": 0
+        }
+      ],
+      "errors": [],
+      "closes": [],
+      "received": [],
+      "metrics": [
+        {
+          "name": "ws_messages_sent",
+          "labels": {}
+        },
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "backpressure"
+          }
+        },
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "dropped"
+          }
+        },
+        {
+          "name": "ws_messages_sent",
+          "labels": {}
+        },
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "backpressure"
+          }
+        }
+      ],
+      "futures": {
+        "1": "resolved",
+        "2": "resolved"
+      }
+    },
+    {
+      "id": "backoff-ceiling",
+      "config": {
+        "WS_TRANSPORT_MAX_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MIN_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT": "3",
+        "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE": "1024",
+        "WS_TRANSPORT_RETRY_DELAY_MS": "10",
+        "WS_TRANSPORT_MAX_RETRY_ATTEMPTS": "3",
+        "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS": "25",
+        "WS_MAX_BACKPRESSURE": "1024"
+      },
+      "script": [
+        2
+      ],
+      "threshold": false,
+      "capacity": 3,
+      "configuration": {
+        "max_queue_size": 3,
+        "min_queue_size": 3,
+        "max_queue_size_limit": 3,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 10,
+        "max_retry_attempts": 3,
+        "max_backoff_delay_ms": 25,
+        "max_backpressure": 1024
+      },
+      "actions": [
+        {
+          "op": "send",
+          "label": 1
+        },
+        {
+          "op": "tick",
+          "ms": 69
+        },
+        {
+          "op": "tick",
+          "ms": 1
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 1,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 69,
+          "sends": 3,
+          "errors": 0,
+          "closed": 0,
+          "pending": 1,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 70,
+          "sends": 3,
+          "errors": 1,
+          "closed": 1,
+          "pending": 0,
+          "resolved": 0,
+          "rejected": 1
+        }
+      ],
+      "sends": [
+        {
+          "at": 0,
+          "label": 1,
+          "bytes": 1,
+          "result": 2
+        },
+        {
+          "at": 20,
+          "label": 1,
+          "bytes": 1,
+          "result": 2
+        },
+        {
+          "at": 45,
+          "label": 1,
+          "bytes": 1,
+          "result": 2
+        }
+      ],
+      "errors": [
+        "Message not deliverable after max retries"
+      ],
+      "closes": [
+        {
+          "code": 1011,
+          "reason": "RPC transport closed"
+        }
+      ],
+      "received": [],
+      "metrics": [
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "dropped"
+          }
+        },
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "dropped"
+          }
+        },
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "dropped"
+          }
+        },
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "max_retries"
+          }
+        }
+      ],
+      "futures": {
+        "1": "rejected:Connection closed"
+      }
+    },
+    {
+      "id": "fractional-queue-threshold",
+      "config": {
+        "WS_TRANSPORT_MAX_QUEUE_SIZE": "1.5",
+        "WS_TRANSPORT_MIN_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT": "3",
+        "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE": "1024",
+        "WS_TRANSPORT_RETRY_DELAY_MS": "10",
+        "WS_TRANSPORT_MAX_RETRY_ATTEMPTS": "3",
+        "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS": "1000",
+        "WS_MAX_BACKPRESSURE": "1024"
+      },
+      "script": [
+        2
+      ],
+      "threshold": false,
+      "capacity": 1.5,
+      "configuration": {
+        "max_queue_size": 1.5,
+        "min_queue_size": 3,
+        "max_queue_size_limit": 3,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 10,
+        "max_retry_attempts": 3,
+        "max_backoff_delay_ms": 1000,
+        "max_backpressure": 1024
+      },
+      "actions": [
+        {
+          "op": "send",
+          "label": 1
+        },
+        {
+          "op": "send",
+          "label": 2
+        },
+        {
+          "op": "send",
+          "label": 3
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 1,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 2,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 1,
+          "closed": 1,
+          "pending": 0,
+          "resolved": 1,
+          "rejected": 2
+        }
+      ],
+      "sends": [
+        {
+          "at": 0,
+          "label": 1,
+          "bytes": 1,
+          "result": 2
+        }
+      ],
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "closes": [
+        {
+          "code": 1011,
+          "reason": "RPC transport closed"
+        }
+      ],
+      "received": [],
+      "metrics": [
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "dropped"
+          }
+        }
+      ],
+      "futures": {
+        "1": "rejected:Connection closed",
+        "2": "rejected:Connection closed",
+        "3": "resolved"
+      }
+    },
+    {
+      "id": "zero-queue-rejects-before-first-send",
+      "config": {
+        "WS_TRANSPORT_MAX_QUEUE_SIZE": "0",
+        "WS_TRANSPORT_MIN_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT": "3",
+        "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE": "1024",
+        "WS_TRANSPORT_RETRY_DELAY_MS": "10",
+        "WS_TRANSPORT_MAX_RETRY_ATTEMPTS": "3",
+        "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS": "1000",
+        "WS_MAX_BACKPRESSURE": "1024"
+      },
+      "script": [
+        1
+      ],
+      "threshold": false,
+      "capacity": 0,
+      "configuration": {
+        "max_queue_size": 0,
+        "min_queue_size": 3,
+        "max_queue_size_limit": 3,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 10,
+        "max_retry_attempts": 3,
+        "max_backoff_delay_ms": 1000,
+        "max_backpressure": 1024
+      },
+      "actions": [
+        {
+          "op": "send",
+          "label": 1
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 0,
+          "sends": 0,
+          "errors": 1,
+          "closed": 1,
+          "pending": 0,
+          "resolved": 1,
+          "rejected": 0
+        }
+      ],
+      "sends": [],
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "closes": [
+        {
+          "code": 1011,
+          "reason": "RPC transport closed"
+        }
+      ],
+      "received": [],
+      "metrics": [],
+      "futures": {
+        "1": "resolved"
+      }
+    },
+    {
+      "id": "huge-finite-capacity-without-proportional-allocation",
+      "config": {
+        "WS_TRANSPORT_MAX_QUEUE_SIZE": "1e300",
+        "WS_TRANSPORT_MIN_QUEUE_SIZE": "1e300",
+        "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT": "1e300",
+        "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE": "1024",
+        "WS_TRANSPORT_RETRY_DELAY_MS": "10",
+        "WS_TRANSPORT_MAX_RETRY_ATTEMPTS": "3",
+        "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS": "1000",
+        "WS_MAX_BACKPRESSURE": "1024"
+      },
+      "script": [
+        1
+      ],
+      "threshold": false,
+      "capacity": 1e+300,
+      "configuration": {
+        "max_queue_size": 1e+300,
+        "min_queue_size": 1e+300,
+        "max_queue_size_limit": 1e+300,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 10,
+        "max_retry_attempts": 3,
+        "max_backoff_delay_ms": 1000,
+        "max_backpressure": 1024
+      },
+      "actions": [
+        {
+          "op": "send",
+          "label": 1
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 0,
+          "resolved": 1,
+          "rejected": 0
+        }
+      ],
+      "sends": [
+        {
+          "at": 0,
+          "label": 1,
+          "bytes": 1,
+          "result": 1
+        }
+      ],
+      "errors": [],
+      "closes": [],
+      "received": [],
+      "metrics": [
+        {
+          "name": "ws_messages_sent",
+          "labels": {}
+        }
+      ],
+      "futures": {
+        "1": "resolved"
+      }
+    },
+    {
+      "id": "numeric-prefix-config",
+      "config": {
+        "WS_TRANSPORT_MAX_QUEUE_SIZE": "1.5messages",
+        "WS_TRANSPORT_MIN_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT": "3",
+        "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE": "1024",
+        "WS_TRANSPORT_RETRY_DELAY_MS": "10ms",
+        "WS_TRANSPORT_MAX_RETRY_ATTEMPTS": "3",
+        "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS": "1000",
+        "WS_MAX_BACKPRESSURE": "1024"
+      },
+      "script": [
+        2
+      ],
+      "threshold": false,
+      "capacity": 1.5,
+      "configuration": {
+        "max_queue_size": 1.5,
+        "min_queue_size": 3,
+        "max_queue_size_limit": 3,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 10,
+        "max_retry_attempts": 3,
+        "max_backoff_delay_ms": 1000,
+        "max_backpressure": 1024
+      },
+      "actions": [
+        {
+          "op": "send",
+          "label": 1
+        },
+        {
+          "op": "send",
+          "label": 2
+        },
+        {
+          "op": "send",
+          "label": 3
+        }
+      ],
+      "checkpoints": [
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 1,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 0,
+          "closed": 0,
+          "pending": 2,
+          "resolved": 0,
+          "rejected": 0
+        },
+        {
+          "at": 0,
+          "sends": 1,
+          "errors": 1,
+          "closed": 1,
+          "pending": 0,
+          "resolved": 1,
+          "rejected": 2
+        }
+      ],
+      "sends": [
+        {
+          "at": 0,
+          "label": 1,
+          "bytes": 1,
+          "result": 2
+        }
+      ],
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "closes": [
+        {
+          "code": 1011,
+          "reason": "RPC transport closed"
+        }
+      ],
+      "received": [],
+      "metrics": [
+        {
+          "name": "ws_backpressure_events",
+          "labels": {
+            "result": "dropped"
+          }
+        }
+      ],
+      "futures": {
+        "1": "rejected:Connection closed",
+        "2": "rejected:Connection closed",
+        "3": "resolved"
+      }
+    },
+    {
+      "id": "zero-backpressure-target-rejects",
+      "config": {
+        "WS_TRANSPORT_MAX_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MIN_QUEUE_SIZE": "3",
+        "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT": "3",
+        "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE": "1024",
+        "WS_TRANSPORT_RETRY_DELAY_MS": "10",
+        "WS_TRANSPORT_MAX_RETRY_ATTEMPTS": "3",
+        "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS": "1000",
+        "WS_MAX_BACKPRESSURE": "0"
+      },
+      "script": [
+        1
+      ],
+      "threshold": false,
+      "capacity": 3,
+      "configuration": {
+        "max_queue_size": 3,
+        "min_queue_size": 3,
+        "max_queue_size_limit": 3,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 10,
+        "max_retry_attempts": 3,
+        "max_backoff_delay_ms": 1000,
+        "max_backpressure": 0
+      },
+      "actions": [],
+      "checkpoints": [],
+      "sends": [],
+      "errors": [],
+      "closes": [],
+      "received": [],
+      "metrics": [],
+      "futures": {}
+    },
+    {
+      "id": "nonfinite-capacity-target-rejects",
+      "config": {
+        "WS_TRANSPORT_MAX_QUEUE_SIZE": "Infinity",
+        "WS_TRANSPORT_MIN_QUEUE_SIZE": "Infinity",
+        "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT": "3",
+        "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE": "1024",
+        "WS_TRANSPORT_RETRY_DELAY_MS": "10",
+        "WS_TRANSPORT_MAX_RETRY_ATTEMPTS": "3",
+        "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS": "1000",
+        "WS_MAX_BACKPRESSURE": "1024"
+      },
+      "script": [
+        1
+      ],
+      "threshold": false,
+      "capacity": "Infinity",
+      "configuration": {
+        "max_queue_size": "Infinity",
+        "min_queue_size": "Infinity",
+        "max_queue_size_limit": 3,
+        "estimated_message_size": 1024,
+        "retry_delay_ms": 10,
+        "max_retry_attempts": 3,
+        "max_backoff_delay_ms": 1000,
+        "max_backpressure": 1024
+      },
+      "actions": [],
+      "checkpoints": [],
+      "sends": [],
+      "errors": [],
+      "closes": [],
+      "received": [],
+      "metrics": [],
+      "futures": {}
+    }
+  ]
+}

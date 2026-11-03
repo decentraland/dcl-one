@@ -38,7 +38,23 @@ impl ByteBudget {
             changed.await;
         }
     }
-    #[cfg(test)]
+    pub(super) fn try_reserve_buffered(self: &Arc<Self>, bytes: usize) -> Option<(Permit, bool)> {
+        let mut used = self.used.lock().unwrap();
+        if *used > self.limit {
+            return None;
+        }
+        *used = used.checked_add(bytes)?;
+        Some((
+            Permit {
+                budget: self.clone(),
+                bytes,
+            },
+            *used > self.limit,
+        ))
+    }
+    pub(super) fn changed(&self) -> tokio::sync::futures::Notified<'_> {
+        self.changed.notified()
+    }
     pub(super) fn used(&self) -> usize {
         *self.used.lock().unwrap()
     }

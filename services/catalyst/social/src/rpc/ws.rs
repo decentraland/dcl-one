@@ -85,12 +85,13 @@ async fn handle_connection(
             "rpc server not running; State::spawn_jobs was not called"
         ));
     };
-    let (transport, writer) = AxumWsTransport::spawn_with_idle_and_backpressure(
+    let (transport, writer) = AxumWsTransport::spawn_with_ordinary_queue(
         socket,
         address.into_string(),
         slot.close.clone(),
         idle,
         state.settings.ws_max_backpressure_bytes,
+        state.settings.ordinary_transport,
     );
     if let Err(e) = events.send_attach_transport(Arc::new(transport)) {
         let (code, reason) = RPC_TRANSPORT_CLOSED;

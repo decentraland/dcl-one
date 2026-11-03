@@ -624,3 +624,117 @@ fn source_numeric_auth_timer_buckets_remain_independent_from_signature_windows()
         );
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ordinary_large_unary_response_is_preserved_and_a_stopped_reader_closes() {
+    use std::sync::atomic::Ordering;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let settings = Settings {
+        ws_max_backpressure_bytes: 1024,
+        ordinary_transport: crate::shared::rpc::ws::OrdinaryQueueConfig {
+            retry_delay_ms: 10.0,
+            max_retry_attempts: 3.0,
+            max_backoff_delay_ms: 1000.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let server = spawn_server_with(Some(pool.clone()), settings, None).await;
+    let key = PrivateKeySigner::random();
+    let me = format!("{:#x}", key.address());
+    let tcp = tokio::net::TcpSocket::new_v4().unwrap();
+    tcp.set_recv_buffer_size(1024).unwrap();
+    let tcp = tcp.connect(server.addr).await.unwrap();
+    let (mut socket, _) = tokio_tungstenite::client_async(
+        format!("ws://{}/social-rpc", server.addr),
+        tokio_tungstenite::MaybeTlsStream::Plain(tcp),
+    )
+    .await
+    .unwrap();
+    let (_, frame) = crate::rpc::handshake::test_support::frame_for(
+        &key,
+        "/",
+        chrono::Utc::now().timestamp_millis(),
+    )
+    .await;
+    socket.send(WsMessage::Text(frame.into())).await.unwrap();
+    let gate = Arc::new(SocketReadGate::default());
+    let mut transport = TungsteniteTransport::new(socket);
+    transport.gate = Some(gate.clone());
+    let mut client = RpcClient::new(transport).await.unwrap();
+    let social: SocialClient = client
+        .create_port("ordinary-large")
+        .await
+        .unwrap()
+        .load_module(MODULE_NAME)
+        .await
+        .unwrap();
+    let friend = addr("ordinary-large");
+    let entity = seed_profile(&pool, &friend, "Large ordinary response").await;
+    let picture = "https://profiles.example/".to_owned() + &"u".repeat(8 * 1024 * 1024);
+    let metadata = serde_json::json!({"v":{"avatars":[{"userId":friend,"name":"Large ordinary response","hasClaimedName":true,"avatar":{"snapshots":{"face256":picture}}}]}});
+    sqlx::query("UPDATE content.deployments SET entity_metadata=$2 WHERE entity_id=$1")
+        .bind(&entity)
+        .bind(metadata)
+        .execute(&pool)
+        .await
+        .unwrap();
+    server
+        .state
+        .ctx
+        .db()
+        .apply_friendship_action(&me, &friend, "accept", true, None, None)
+        .await
+        .unwrap();
+    let got = tokio::time::timeout(Duration::from_secs(10), social.get_friends())
+        .await
+        .expect("healthy large response");
+    assert_eq!(
+        got.friends[0].profile_picture_url, picture,
+        "ordinary unary frames have no guarded 16KiB frame cap"
+    );
+    gate.pause_after_response.store(true, Ordering::SeqCst);
+    let _ = social.get_friendship_status(&friend).await;
+    assert!(gate.paused.load(Ordering::SeqCst));
+    let requests = async {
+        tokio::join!(
+            social
+                .module
+                .call_unary_procedure::<PaginatedFriendsProfilesResponse, _>(
+                    "GetFriends",
+                    GetFriendsPayload { pagination: None }
+                ),
+            social
+                .module
+                .call_unary_procedure::<PaginatedFriendsProfilesResponse, _>(
+                    "GetFriends",
+                    GetFriendsPayload { pagination: None }
+                )
+        )
+    };
+    tokio::pin!(requests);
+    let retired = tokio::time::timeout(Duration::from_secs(10), async {
+        while server.state.ctx.live_connections() != 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    });
+    tokio::select! {
+        result = retired => result.expect("ordinary retry exhaustion must retire a stopped socket"),
+        _ = &mut requests => panic!("paused reader cannot complete pending calls"),
+    }
+    gate.paused.store(false, Ordering::SeqCst);
+    gate.resume.notify_one();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !gate.closed.load(Ordering::SeqCst) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("peer must observe retired transport");
+    drop_profile(&pool, &friend, &entity).await;
+    cleanup_pair(server.state.ctx.db(), &me, &friend).await;
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}

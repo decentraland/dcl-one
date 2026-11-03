@@ -75,7 +75,7 @@ use crate::rpc::context::{Context, VoiceSettings};
 use crate::rpc::db::Db;
 use crate::rpc::drpc::server::{RpcServer, ServerEventsSender};
 use crate::rpc::profiles::Profiles;
-use crate::shared::rpc::ws::AxumWsTransport;
+use crate::shared::rpc::ws::{AxumWsTransport, OrdinaryQueueConfig};
 
 /// The socket's settings (the old `catalyrst-social-rpc` env, minus its
 /// database and gatekeeper URLs, which the ONE pool and the voice seam
@@ -107,6 +107,7 @@ pub struct Settings {
     /// be written when another is sent; past it the send closes the socket
     /// 1008 `Slow consumer`.
     pub ws_max_backpressure_bytes: usize,
+    pub ordinary_transport: OrdinaryQueueConfig,
     /// The per-address limits both sockets share (`WS_MAX_CONNECTIONS_PER_ADDRESS`,
     /// `WS_SUBSCRIPTIONS_PER_SECOND`, `WS_SUBSCRIPTION_BURST`, `WS_ADDRESS_BUDGET_CAPACITY`).
     pub admission: limits::AdmissionLimits,
@@ -143,6 +144,7 @@ impl Default for Settings {
             ws_max_concurrent_connections: None,
             ws_max_payload_bytes: 1024 * 1024,
             ws_max_backpressure_bytes: 128 * 1024,
+            ordinary_transport: OrdinaryQueueConfig::default(),
             admission: Default::default(),
             friendship_limits: Default::default(),
             stream: Default::default(),

@@ -319,6 +319,22 @@ pub struct SocialConfig {
     #[arg(long, env = "WS_MAX_BACKPRESSURE", default_value_t = 131_072)]
     pub ws_max_backpressure: usize,
 
+    /// Source ordinary RPC queue and retry settings.
+    #[arg(long, env = "WS_TRANSPORT_MAX_QUEUE_SIZE", default_value_t = 1000.0, value_parser = source_number, allow_hyphen_values = true)]
+    pub ws_transport_max_queue_size: f64,
+    #[arg(long, env = "WS_TRANSPORT_MIN_QUEUE_SIZE", default_value_t = 100.0, value_parser = source_number, allow_hyphen_values = true)]
+    pub ws_transport_min_queue_size: f64,
+    #[arg(long, env = "WS_TRANSPORT_MAX_QUEUE_SIZE_LIMIT", default_value_t = 5000.0, value_parser = source_number, allow_hyphen_values = true)]
+    pub ws_transport_max_queue_size_limit: f64,
+    #[arg(long, env = "WS_TRANSPORT_ESTIMATED_MESSAGE_SIZE", default_value_t = 1024.0, value_parser = source_number, allow_hyphen_values = true)]
+    pub ws_transport_estimated_message_size: f64,
+    #[arg(long, env = "WS_TRANSPORT_RETRY_DELAY_MS", default_value_t = 1000.0, value_parser = source_number, allow_hyphen_values = true)]
+    pub ws_transport_retry_delay_ms: f64,
+    #[arg(long, env = "WS_TRANSPORT_MAX_RETRY_ATTEMPTS", default_value_t = 5.0, value_parser = source_number, allow_hyphen_values = true)]
+    pub ws_transport_max_retry_attempts: f64,
+    #[arg(long, env = "WS_TRANSPORT_MAX_BACKOFF_DELAY_MS", default_value_t = 30000.0, value_parser = source_number, allow_hyphen_values = true)]
+    pub ws_transport_max_backoff_delay_ms: f64,
+
     /// Authenticated social sockets per address across both protocols; past
     /// it the address's oldest closes 3005.
     #[arg(long, env = "WS_MAX_CONNECTIONS_PER_ADDRESS", default_value_t = 8, value_parser = clap::value_parser!(u32).range(1..))]
@@ -777,6 +793,76 @@ mod tests {
                 "{raw}"
             );
         }
+    }
+
+    #[test]
+    fn ordinary_transport_settings_match_source_prefix_numbers_and_defaults() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tests/fixtures/conformance/social/ws-transport-source-cases.json"
+        )))
+        .unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let values: Vec<_> = case["config"]
+                .as_object()
+                .unwrap()
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str().unwrap()))
+                .collect();
+            let configured = social(&values).unwrap();
+            let number = |name: &str| {
+                case["configuration"][name].as_f64().unwrap_or_else(|| {
+                    case["configuration"][name]
+                        .as_str()
+                        .unwrap()
+                        .parse()
+                        .unwrap()
+                })
+            };
+            assert_eq!(
+                configured.ws_transport_max_queue_size,
+                number("max_queue_size"),
+                "{}",
+                case["id"]
+            );
+            assert_eq!(
+                configured.ws_transport_min_queue_size,
+                number("min_queue_size"),
+                "{}",
+                case["id"]
+            );
+            assert_eq!(
+                configured.ws_transport_max_queue_size_limit,
+                number("max_queue_size_limit"),
+                "{}",
+                case["id"]
+            );
+            assert_eq!(
+                configured.ws_transport_estimated_message_size,
+                number("estimated_message_size"),
+                "{}",
+                case["id"]
+            );
+            assert_eq!(
+                configured.ws_transport_retry_delay_ms,
+                number("retry_delay_ms"),
+                "{}",
+                case["id"]
+            );
+            assert_eq!(
+                configured.ws_transport_max_retry_attempts,
+                number("max_retry_attempts"),
+                "{}",
+                case["id"]
+            );
+            assert_eq!(
+                configured.ws_transport_max_backoff_delay_ms,
+                number("max_backoff_delay_ms"),
+                "{}",
+                case["id"]
+            );
+        }
+        assert!(social(&[("WS_TRANSPORT_MAX_QUEUE_SIZE", "NaN")]).is_err());
     }
 
     #[test]

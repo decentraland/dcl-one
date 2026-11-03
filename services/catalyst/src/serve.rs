@@ -2100,6 +2100,18 @@ fn social_states(
         },
     ));
 
+    let ordinary_transport = shared::rpc::ws::OrdinaryQueueConfig {
+        max_queue_size: config.social.ws_transport_max_queue_size,
+        min_queue_size: config.social.ws_transport_min_queue_size,
+        max_queue_size_limit: config.social.ws_transport_max_queue_size_limit,
+        estimated_message_size: config.social.ws_transport_estimated_message_size,
+        retry_delay_ms: config.social.ws_transport_retry_delay_ms,
+        max_retry_attempts: config.social.ws_transport_max_retry_attempts,
+        max_backoff_delay_ms: config.social.ws_transport_max_backoff_delay_ms,
+    };
+    ordinary_transport
+        .capacity(config.social.ws_max_backpressure)
+        .map_err(|error| anyhow::anyhow!(error))?;
     let rpc = Arc::new(social_rpc::State::new(
         pool.clone(),
         social_rpc::Settings {
@@ -2118,6 +2130,7 @@ fn social_states(
             ws_max_concurrent_connections: config.social.ws_max_concurrent_connections,
             ws_max_payload_bytes: config.social.ws_max_payload_length,
             ws_max_backpressure_bytes: config.social.ws_max_backpressure,
+            ordinary_transport,
             friendship_limits: social_rpc::limits::FriendshipLimits {
                 window_seconds: config.social.friendship_rate_limit_window_seconds,
                 per_actor: config.social.friendship_rate_limit_per_actor,
