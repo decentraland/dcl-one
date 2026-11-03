@@ -63,6 +63,15 @@ required-features = ["react-hud-cef"]
 [profile.release]
 codegen-units = 1
 
+# Test Suite builds: release settings (no debug assertions or overflow checks), workspace crates at opt-level 1.
+[profile.ci-test]
+inherits = "release"
+codegen-units = 16
+opt-level = 1
+
+[profile.ci-test.package."*"]
+opt-level = 3
+
 [profile.dev]
 # opt-level = 3
 # codegen-units = 1

@@ -9,7 +9,7 @@
 //! behind `DATA_WRITES_ENABLED`. An owner's edit of an approved event's
 //! content (or its featured item) sends it back to approval. Every write
 //! lands in `explore.event` with its `explore.events_local` audit in one
-//! transaction (`events::moderation::store`). Only events created here
+//! transaction (`events::moderation::store_locked`). Only events created here
 //! (`origin = 'local'`) take their owner's edit and delete: on a mirrored
 //! event those answer 409 naming the upstream (the mirror writes its
 //! fields). The admin's moderation and delete of a mirrored event are local
@@ -68,8 +68,8 @@ pub struct UpdateEventBody {
     pub name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
-    #[serde(default)]
-    pub image: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub image: Option<Option<String>>,
     #[serde(default)]
     pub image_vertical: Option<String>,
     #[serde(default)]
@@ -274,14 +274,18 @@ pub fn apply_owner_edit(
             "event text exceeds the maximum length",
         ));
     }
-    for (key, img) in [
-        ("image", &body.image),
-        ("image_vertical", &body.image_vertical),
-    ] {
-        if let Some(img) = img {
-            let img = crate::sanitize::sanitize_asset_url(img).map_err(ApiError::bad_request)?;
-            raw.insert(key.into(), json!(img));
-        }
+    if let Some(image) = &body.image {
+        let image = image
+            .as_deref()
+            .map(crate::sanitize::sanitize_asset_url)
+            .transpose()
+            .map_err(ApiError::bad_request)?;
+        raw.insert("image".into(), json!(image));
+        raw.insert("_image_source".into(), json!("explicit"));
+    }
+    if let Some(img) = &body.image_vertical {
+        let img = crate::sanitize::sanitize_asset_url(img).map_err(ApiError::bad_request)?;
+        raw.insert("image_vertical".into(), json!(img));
     }
     if let Some(server) = &body.server {
         raw.insert("server".into(), json!(server));
@@ -381,10 +385,9 @@ fn reject_past_dates(raw: &Map<String, Value>) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// The stored document, its owner (the document's `user`, else the column)
-/// and whether it is mirrored. The owner never writes a mirrored event: that
-/// answers 409 naming the upstream (`owner_write`); the operator's delete of
-/// one is local moderation ([`moderation::hide_mirrored`]).
+/// Lock and load the document before applying any mutation. Its owner comes
+/// from the document or projected creator; mirrored authority is returned so
+/// the caller can reject an owner write or apply operator policy explicitly.
 async fn load_raw(
     tx: &mut Transaction<'_, Postgres>,
     id: &str,
@@ -414,10 +417,14 @@ async fn load_raw(
     }))
 }
 
-async fn answer(state: &SharedState, id: &str) -> Result<Json<ApiData<EventRecord>>, ApiError> {
+async fn answer(
+    state: &SharedState,
+    id: &str,
+    viewer: Option<&str>,
+) -> Result<Json<ApiData<EventRecord>>, ApiError> {
     let record = state
         .events
-        .get(id)
+        .get_for_viewer(id, viewer)
         .await?
         .ok_or_else(|| ApiError::not_found(format!("Not found event \"{id}\"")))?;
     Ok(Json(ApiData::ok(record)))
@@ -446,7 +453,7 @@ pub async fn create_event(
     let body: CreateEvent = serde_json::from_slice(&body)
         .map_err(|e| ApiError::bad_request(format!("invalid event body: {e}")))?;
     let id = moderation::create_as(&state.pool, &body, &signer, &signer).await?;
-    answer(&state, &id).await
+    answer(&state, &id, Some(&signer)).await
 }
 
 /// Privileged event mutations bind exact request bytes and consume the signed nonce
@@ -526,7 +533,7 @@ pub async fn patch_event(
         if !moderation::moderate(&state.pool, &event_id, &patch, &actor).await? {
             return Err(not_found(&event_id));
         }
-        return answer(&state, &event_id).await;
+        return answer(&state, &event_id, None).await;
     }
     state.user_writes()?;
     let signer = state.signer(&headers, method.as_str(), uri.path()).await?;
@@ -629,6 +636,7 @@ pub async fn patch_event(
         );
         raw.insert("world".into(), json!(world));
     }
+    super::metadata::enrich(&mut tx, &mut raw, Some(&before), edit.url.is_none()).await?;
     // Another reviewer's rejection is a moderation hold: self-approval cannot remove it.
     let held = moderation::flag(&before, "rejected")
         && !before
@@ -694,7 +702,7 @@ pub async fn patch_event(
     )
     .await?;
     tx.commit().await?;
-    answer(&state, &event_id).await
+    answer(&state, &event_id, Some(&signer)).await
 }
 
 /// `DELETE /api/events/{id}`: a soft delete, by the admin or the owner.
@@ -714,21 +722,23 @@ pub async fn delete_event(
         state.user_writes()?;
         Some(state.signer(&headers, method.as_str(), uri.path()).await?)
     };
-    let permissions = if let Some(signer) = signer.as_ref() {
-        super::profiles::event_permissions(&state.pool, signer).await?
-    } else {
-        Default::default()
+    let permissions = match signer.as_deref() {
+        Some(signer) => super::profiles::event_permissions(&state.pool, signer).await?,
+        None => super::profiles::EventPermissions::default(),
     };
     super::mirror::reclaim_local(&state.pool).await?;
     let mut tx = state.pool.begin().await?;
     let Some((mut raw, owner, mirrored)) = load_raw(&mut tx, &event_id).await? else {
         return Err(not_found(&event_id));
     };
-    if mirrored && signer.is_some() {
+    if mirrored && signer.is_some() && !permissions.edit_any {
         tx.rollback().await?;
         return Err(moderation::mirrored_event(&state.pool, &event_id).await);
     }
-    if let Some(signer) = signer.as_ref().filter(|signer| signer.as_str() != owner) {
+    if let Some(signer) = signer
+        .as_ref()
+        .filter(|signer| mirrored || signer.as_str() != owner)
+    {
         if !permissions.edit_any {
             return Err(ApiError::forbidden(
                 "You don't have permission to delete this event",
@@ -748,9 +758,10 @@ pub async fn delete_event(
     }
     if is_soft_deleted(&raw) {
         tx.rollback().await?;
-        return answer(&state, &event_id).await;
+        return answer(&state, &event_id, signer.as_deref()).await;
     }
     let before = raw.clone();
+    let viewer = signer.clone();
     let now = Utc::now().to_rfc3339();
     let (provenance, payload) = match signer {
         None => {
@@ -769,16 +780,8 @@ pub async fn delete_event(
             )
         }
         Some(signer) => {
-            if owner != signer && !permissions.edit_any {
-                return Err(ApiError::forbidden(
-                    "You don't have permission to delete this event",
-                ));
-            }
-            if owner != signer {
-                state.operator_writes()?;
-            }
             raw.insert(
-                if owner == signer {
+                if owner == signer && !mirrored {
                     "deleted_by_user"
                 } else {
                     "deleted_by_admin"
@@ -798,7 +801,7 @@ pub async fn delete_event(
         moderation::store_locked(&mut tx, &event_id, &before, raw, &provenance, payload).await?;
     }
     tx.commit().await?;
-    answer(&state, &event_id).await
+    answer(&state, &event_id, viewer.as_deref()).await
 }
 
 /// Visible to `signer`: approved and not rejected, or theirs; never a deleted one.
@@ -1022,6 +1025,370 @@ mod tests {
 
     fn new_event() -> Value {
         json!({ "name": "Launch party", "start_at": "2099-06-01T18:00:00Z", "duration": 3_600_000, "x": 10, "y": -20, "description": "<b>come</b>" })
+    }
+
+    async fn wait_for_event_lock(pool: &sqlx::PgPool, blocker_pid: i32, count: i64) {
+        tokio::time::timeout(std::time::Duration::from_secs(5),async {
+            loop {
+                let blocked: i64 = sqlx::query_scalar("WITH RECURSIVE blocked(pid) AS (
+                    SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))
+                    UNION SELECT a.pid FROM pg_stat_activity a JOIN blocked b ON b.pid=ANY(pg_blocking_pids(a.pid))
+                ) SELECT count(*) FROM pg_stat_activity a JOIN blocked b USING(pid)
+                WHERE a.datname=current_database() AND a.wait_event_type='Lock' AND a.query LIKE '%explore.event%FOR UPDATE%' ")
+                    .bind(blocker_pid).fetch_one(pool).await.unwrap();
+                if blocked >= count { break; }
+                tokio::task::yield_now().await;
+            }
+        }).await.expect("event mutations reach the held row lock");
+    }
+
+    #[tokio::test]
+    async fn authoring_enriches_known_metadata_and_updates_generated_targets_while_preserving_posters()
+     {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let profile_id = format!("event-profile-{}", uuid::Uuid::new_v4());
+        sqlx::query("INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,entity_metadata,entity_timestamp,entity_pointers,local_timestamp,auth_chain) VALUES ($1,'v3','profile',$2,'{\"avatars\":[{\"name\":\"Known Creator\"}]}',timezone('UTC',now()),ARRAY[$1],timezone('UTC',now()),'[]')")
+            .bind(address()).bind(&profile_id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO content.active_pointers (pointer,entity_id,entity_type) VALUES ($1,$2,'profile') ON CONFLICT (pointer) DO UPDATE SET entity_id=EXCLUDED.entity_id")
+            .bind(address()).bind(&profile_id).execute(&pool).await.unwrap();
+        let first_place = format!("event-place-{}", uuid::Uuid::new_v4());
+        let second_place = format!("event-place-{}", uuid::Uuid::new_v4());
+        sqlx::query("INSERT INTO explore.place (id,base_position,title,raw) VALUES ($1,'41,42','Known scene','{\"positions\":[\"41,42\"],\"title\":\"Known scene\",\"estate_id\":\"known-estate\",\"estate_name\":\"Known estate\",\"image\":\"https://cdn.example.org/scene.png\"}'),($2,'43,44','Other scene','{\"positions\":[\"43,44\"],\"title\":\"Other scene\"}')")
+            .bind(&first_place).bind(&second_place).execute(&pool).await.unwrap();
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                user_writes_enabled: true,
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let mut event = new_event();
+        event["x"] = json!(41);
+        event["y"] = json!(42);
+        let (status, created) =
+            call(&app, "POST", "/api/events", Some("signed"), Some(event)).await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        assert_eq!(created["data"]["user_name"], "Known Creator");
+        assert_eq!(created["data"]["scene_name"], "Known scene");
+        assert_eq!(created["data"]["estate_id"], "known-estate");
+        assert_eq!(
+            created["data"]["image"],
+            "https://cdn.example.org/scene.png"
+        );
+        let path = format!("/api/events/{}", created["data"]["id"].as_str().unwrap());
+        let (status, generated) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"x":43,"y":44})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{generated}");
+        assert_eq!(
+            generated["data"]["image"],
+            "https://api.decentraland.org/v1/parcels/43/44/map.png"
+        );
+        let (status, moved) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"x":43,"y":44,"image":"/poster/approved-upload.webp"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{moved}");
+        assert_eq!(moved["data"]["place_id"], second_place);
+        assert_eq!(moved["data"]["scene_name"], "Other scene");
+        assert_eq!(
+            moved["data"]["estate_id"],
+            Value::Null,
+            "unknown estate facts are never inferred from the scene name"
+        );
+        assert_eq!(moved["data"]["image"], "/poster/approved-upload.webp");
+        assert_eq!(
+            moved["data"]["url"],
+            "https://decentraland.org/play/?position=43%2C44"
+        );
+    }
+
+    #[tokio::test]
+    async fn generated_posters_follow_moves_and_explicit_null_clears_survive_edits() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let app = router(Arc::new(ExploreState::new(
+            pool,
+            Settings {
+                user_writes_enabled: true,
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let (status, created) = call(
+            &app,
+            "POST",
+            "/api/events",
+            Some("signed"),
+            Some(new_event()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        let path = format!("/api/events/{}", created["data"]["id"].as_str().unwrap());
+        assert_eq!(
+            created["data"]["image"],
+            "https://api.decentraland.org/v1/parcels/10/-20/map.png"
+        );
+        let (status, moved) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"x":123,"y":124})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{moved}");
+        assert_eq!(
+            moved["data"]["image"],
+            "https://api.decentraland.org/v1/parcels/123/124/map.png"
+        );
+        let (status, cleared) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"image":null})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{cleared}");
+        assert!(cleared["data"]["image"].is_null());
+        let (status, moved) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"x":125,"name":"Still cleared"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{moved}");
+        assert!(moved["data"]["image"].is_null());
+        let (_, poster) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"image":"/poster/custom.webp"})),
+        )
+        .await;
+        assert_eq!(poster["data"]["image"], "/poster/custom.webp");
+        let (_, moved) = call(&app, "PATCH", &path, Some("signed"), Some(json!({"y":126}))).await;
+        assert_eq!(moved["data"]["image"], "/poster/custom.webp");
+    }
+
+    #[tokio::test]
+    async fn mirrored_deletion_by_its_owner_with_edit_any_requires_operator_writes_and_a_single_use_nonce()
+     {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let wallet = alloy::signers::local::PrivateKeySigner::random();
+        let signer = format!("{:#x}", wallet.address());
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions_granted,permissions) VALUES ($1,true,'[\"edit_any_event\"]') ON CONFLICT (\"user\") DO UPDATE SET permissions_granted=true,permissions=EXCLUDED.permissions")
+            .bind(&signer).execute(&pool).await.unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        super::super::mirror::upsert_event(&pool,&json!({"id":id,"name":"Mirrored owner","user":signer,"approved":true,"start_at":"2099-06-01T18:00:00Z","duration":3600000})).await.unwrap();
+        let path = format!("/api/events/{id}");
+        let make_app = |operator_writes_enabled| {
+            router(Arc::new(ExploreState::new(
+                pool.clone(),
+                Settings {
+                    user_writes_enabled: true,
+                    operator_writes_enabled,
+                    ..Settings::for_tests()
+                },
+                None,
+            )))
+        };
+        let (status, _) = call_as(&make_app(false), "DELETE", &path, &wallet, json!({})).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        let app = make_app(true);
+        let nonce = uuid::Uuid::new_v4().to_string();
+        for (metadata, expected) in [
+            (
+                json!({"body_sha256":hex::encode(Sha256::digest(b""))}),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                json!({"body_sha256":hex::encode(Sha256::digest(b"")),"nonce":nonce}),
+                StatusCode::OK,
+            ),
+            (
+                json!({"body_sha256":hex::encode(Sha256::digest(b"")),"nonce":nonce}),
+                StatusCode::CONFLICT,
+            ),
+        ] {
+            let mut req = Request::builder().method("DELETE").uri(&path);
+            for (key, value) in crate::shared::signed_fetch::test_support::signed_headers_by(
+                &wallet,
+                "delete",
+                &path,
+                &metadata.to_string(),
+                true,
+                &Utc::now().timestamp_millis().to_string(),
+            )
+            .await
+            .iter()
+            {
+                req = req.header(key, value);
+            }
+            let response = app
+                .clone()
+                .oneshot(req.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+        }
+        let raw: Value = sqlx::query_scalar("SELECT raw FROM explore.event WHERE id=$1")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(raw["deleted_by_admin"], true);
+        assert_ne!(raw["deleted_by_user"], true);
+        let actions:i64=sqlx::query_scalar("SELECT count(*) FROM explore.signed_actions WHERE signer=$1 AND action_type='EventPrivilegedWrite' AND subject_id=$2").bind(&signer).bind(&id).fetch_one(&pool).await.unwrap();
+        assert_eq!(actions, 1);
+    }
+
+    #[tokio::test]
+    async fn owner_edits_preserve_committed_moderation_and_concurrent_fields_without_exposing_private_details()
+     {
+        let Some(pool) = crate::db::scratch::pool(8).await else {
+            return;
+        };
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                user_writes_enabled: true,
+                operator_writes_enabled: true,
+                events_admin_token: Some("concurrent-admin".into()),
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let mut event = new_event();
+        event["contact"] = json!("private@example.org");
+        event["details"] = json!("Organizer instructions");
+        let (status, created) =
+            call(&app, "POST", "/api/events", Some("signed"), Some(event)).await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        assert_eq!(created["data"]["contact"], "private@example.org");
+        let id = created["data"]["id"].as_str().unwrap().to_owned();
+        let path = format!("/api/events/{id}");
+        call(
+            &app,
+            "PATCH",
+            &path,
+            Some("concurrent-admin"),
+            Some(json!({"approved":true})),
+        )
+        .await;
+        let (_, public) = call(&app, "GET", &path, None, None).await;
+        assert!(public["data"].get("contact").is_none());
+        assert!(public["data"].get("details").is_none());
+        let (_, owner) = call(&app, "GET", &path, Some("signed"), None).await;
+        assert_eq!(owner["data"]["details"], "Organizer instructions");
+        let (_, admin) = call(&app, "GET", &path, Some("concurrent-admin"), None).await;
+        assert!(
+            admin["data"].get("contact").is_none(),
+            "moderation privilege does not imply organizer-private access"
+        );
+
+        let mut moderator = pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM explore.event WHERE id=$1 FOR UPDATE")
+            .bind(&id)
+            .execute(&mut *moderator)
+            .await
+            .unwrap();
+        let edit = {
+            let (app, path) = (app.clone(), path.clone());
+            tokio::spawn(async move {
+                call(
+                    &app,
+                    "PATCH",
+                    &path,
+                    Some("signed"),
+                    Some(json!({"contact":"updated@example.org"})),
+                )
+                .await
+            })
+        };
+        let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *moderator)
+            .await
+            .unwrap();
+        wait_for_event_lock(&pool, blocker_pid, 1).await;
+        sqlx::query("UPDATE explore.event SET approved=false,raw=raw || '{\"approved\":false,\"rejected\":true,\"rejection_reason\":\"Moderator reason\"}'::jsonb WHERE id=$1")
+            .bind(&id).execute(&mut *moderator).await.unwrap();
+        moderator.commit().await.unwrap();
+        let (status, edited) = edit.await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{edited}");
+        assert_eq!(edited["data"]["rejected"], true);
+        assert_eq!(edited["data"]["rejection_reason"], "Moderator reason");
+        assert_eq!(edited["data"]["contact"], "updated@example.org");
+        assert_eq!(edited["data"]["approved"], false);
+
+        let mut blocker = pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM explore.event WHERE id=$1 FOR UPDATE")
+            .bind(&id)
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+        let first = {
+            let (app, path) = (app.clone(), path.clone());
+            tokio::spawn(async move {
+                call(
+                    &app,
+                    "PATCH",
+                    &path,
+                    Some("signed"),
+                    Some(json!({"name":"Concurrent name"})),
+                )
+                .await
+            })
+        };
+        let second = {
+            let (app, path) = (app.clone(), path.clone());
+            tokio::spawn(async move {
+                call(
+                    &app,
+                    "PATCH",
+                    &path,
+                    Some("signed"),
+                    Some(json!({"description":"Concurrent description"})),
+                )
+                .await
+            })
+        };
+        let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *blocker)
+            .await
+            .unwrap();
+        wait_for_event_lock(&pool, blocker_pid, 2).await;
+        blocker.rollback().await.unwrap();
+        assert_eq!(first.await.unwrap().0, StatusCode::OK);
+        assert_eq!(second.await.unwrap().0, StatusCode::OK);
+        let (_, result) = call(&app, "GET", &path, Some("signed"), None).await;
+        assert_eq!(result["data"]["name"], "Concurrent name");
+        assert_eq!(result["data"]["description"], "Concurrent description");
+        let leaked: i64=sqlx::query_scalar("SELECT count(*) FROM social.event_notification_intents WHERE event_id=$1 AND event ?| ARRAY['contact','details','recurrent_dates']")
+            .bind(&id).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            leaked, 0,
+            "notification snapshots contain no private data or recurrence arrays"
+        );
     }
 
     async fn call_as(
