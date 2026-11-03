@@ -66,8 +66,8 @@ const WALL_THICKNESS: f32 = 10.0;
 const OCEAN_SIZE: f32 = 32768.0;
 /// The flat ocean follows the camera on this grid, so its ripples don't slide.
 const OCEAN_SNAP: f32 = 64.0;
-/// The flat ocean lies below the wave grid, so the two never z-fight.
-const OCEAN_DROP: f32 = 0.5;
+/// The flat ocean lies below the wave grid's deepest trough (0.69 m), so the two never z-fight.
+const OCEAN_DROP: f32 = 1.0;
 
 pub(crate) struct CoastPlugin;
 

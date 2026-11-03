@@ -36,6 +36,11 @@ pub const WAVE_DIR2: Vec4 = Vec4::new(0.1, 0.9, -0.5, -0.5);
 /// `_RefractionStrength` and `_RefractionChromaticAberration`.
 pub const REFRACTION_STRENGTH: f32 = 0.06;
 pub const REFRACTION_CHROMATIC: f32 = 0.1;
+/// `_DepthHorizontal`, `_DepthVertical` and `_DepthExp`, the water density's height and view
+/// depth scales and its exponential blend (`GetWaterDensity` in ForwardPass.hlsl).
+pub const WATER_DEPTH_HORIZONTAL: f32 = 1.5;
+pub const WATER_DEPTH_VERTICAL: f32 = 0.01;
+pub const WATER_DEPTH_EXP: f32 = 1.0;
 /// The displaced grid around the camera; the flat ocean plane covers the rest.
 pub const WAVE_GRID_SIZE_M: f32 = 1024.0;
 pub const WAVE_GRID_SPACING_M: f32 = 2.0;
@@ -121,6 +126,9 @@ pub(super) fn shader_defs() -> Vec<ShaderDefVal> {
         float("WAVE_STEEPNESS".into(), WAVE_STEEPNESS),
         float("REFRACTION_STRENGTH".into(), REFRACTION_STRENGTH),
         float("REFRACTION_CHROMATIC".into(), REFRACTION_CHROMATIC),
+        float("WATER_DEPTH_HORIZONTAL".into(), WATER_DEPTH_HORIZONTAL),
+        float("WATER_DEPTH_VERTICAL".into(), WATER_DEPTH_VERTICAL),
+        float("WATER_DEPTH_EXP".into(), WATER_DEPTH_EXP),
     ];
     let vectors: [(&str, &[f32]); 5] = [
         ("WAVE_DIRECTION", &WAVE_DIRECTION.to_array()),
@@ -138,20 +146,18 @@ pub(super) fn shader_defs() -> Vec<ShaderDefVal> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
+
+    /// The bound Waves.hlsl implies on the height: each of the `WAVE_COUNT + 1` iterations adds
+    /// at most sum(amp) before the sum is averaged over `WAVE_COUNT` and scaled by the height.
+    pub(in crate::coast) fn wave_bound() -> f32 {
+        WAVE_HEIGHT * (WAVE_COUNT + 1) as f32 * WAVE_AMP.element_sum() / WAVE_COUNT as f32
+    }
 
     #[test]
     fn wave_sum_is_bounded_and_periodic_in_time() {
-        // the bound Waves.hlsl implies: every iteration adds at most sum(amp) * fade^i before the
-        // sum is averaged over WAVE_COUNT and scaled by the height; this twin is before the
-        // distance fade, so fade is one
-        let fade: f32 = 1.0;
-        let bound = WAVE_HEIGHT
-            * (0..=WAVE_COUNT)
-                .map(|i| WAVE_AMP.element_sum() * fade.powi(i as i32))
-                .sum::<f32>()
-            / WAVE_COUNT as f32;
+        let bound = wave_bound();
         let h = |t| wave_displacement(Vec2::new(10.0, 5.0), t).y;
         assert!((0..200).all(|i| h(i as f32 * 0.1).abs() <= bound * 1.001));
         assert!(h(0.0) != h(1.0));

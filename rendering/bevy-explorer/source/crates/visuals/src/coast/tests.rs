@@ -204,6 +204,11 @@ fn ripples_tile_and_are_deterministic() {
 }
 
 #[test]
+fn the_flat_ocean_stays_below_the_deepest_trough() {
+    assert!(OCEAN_DROP > waves::tests::wave_bound() + 0.2);
+}
+
+#[test]
 fn shader_wave_constants_match_the_cpu_constants() {
     use std::collections::BTreeSet;
 
@@ -222,6 +227,15 @@ fn shader_wave_constants_match_the_cpu_constants() {
             "REFRACTION_CHROMATIC".to_string(),
             bits(REFRACTION_CHROMATIC),
         ),
+        (
+            "WATER_DEPTH_HORIZONTAL".to_string(),
+            bits(WATER_DEPTH_HORIZONTAL),
+        ),
+        (
+            "WATER_DEPTH_VERTICAL".to_string(),
+            bits(WATER_DEPTH_VERTICAL),
+        ),
+        ("WATER_DEPTH_EXP".to_string(), bits(WATER_DEPTH_EXP)),
         ("WAVE_DIRECTION_X".to_string(), bits(WAVE_DIRECTION.x)),
         ("WAVE_DIRECTION_Y".to_string(), bits(WAVE_DIRECTION.y)),
     ];
