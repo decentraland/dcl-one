@@ -130,3 +130,15 @@ by creation time and returns at most two rows. Single local
 a build. They do not include HTTP/Slack time, prove sustained throughput or bound
 scan work as one referrer's history grows. No additional index is inferred from
 these samples.
+
+The community SNS replay on the same date executed 18 source broadcaster cases,
+two SNS adapter result cases and twelve source event creators. The local target
+used its real membership SQL and the official AWS SDK with a local HTTP stub.
+For a rename of 1,101 members, both sides fetched twelve membership pages,
+created twelve recipient messages and made two PublishBatch requests (ten and
+two entries). A 205-member deletion excluded its owner and emitted three
+recipient messages. Partial result IDs and full failed chunks were compared;
+failed broadcasts did not undo HTTP ban or voice START. This establishes the
+sampled audience, batching and request shapes. SNS service latency, retry timing,
+concurrent membership mutation across pages and sustained throughput were not
+measured.

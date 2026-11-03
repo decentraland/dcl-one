@@ -19,6 +19,14 @@ pub struct LegacyEvents {
     publisher: Option<(aws_sdk_sns::Client, String)>,
 }
 
+/// The source SNS component reports per-event failures rather than rejecting
+/// the entire batch. Community broadcasters deliberately do not retry them.
+#[derive(Debug, Default)]
+pub struct PublishBatchResult {
+    pub successful_message_ids: Vec<String>,
+    pub failed_events: Vec<Value>,
+}
+
 impl LegacyEvents {
     /// With neither source transport configured this returns before resolving
     /// the AWS credential chain, regions or IMDS endpoints.
@@ -121,6 +129,86 @@ impl LegacyEvents {
         }
         tokio::time::timeout(Duration::from_secs(30), publish.send()).await??;
         Ok(())
+    }
+
+    /// `@dcl/sns-component` publishMessages: chunks of ten, concurrent sends,
+    /// ids local to each request, and allSettled results in input-chunk order.
+    pub async fn publish_batch(&self, events: &[Value]) -> anyhow::Result<PublishBatchResult> {
+        let Some((client, arn)) = &self.publisher else {
+            anyhow::bail!("AWS_SNS_ARN is not configured");
+        };
+        let chunks = events.chunks(10).map(|chunk| async move {
+            let send = async {
+                let mut request = client.publish_batch().topic_arn(arn);
+                for (index, event) in chunk.iter().enumerate() {
+                    let attribute = |value: &str| {
+                        aws_sdk_sns::types::MessageAttributeValue::builder()
+                            .data_type("String")
+                            .string_value(value)
+                            .build()
+                    };
+                    let mut entry = aws_sdk_sns::types::PublishBatchRequestEntry::builder()
+                        .id(format!("msg_{index}"))
+                        .message(serde_json::to_string(event)?)
+                        .message_attributes(
+                            "type",
+                            attribute(
+                                event["type"]
+                                    .as_str()
+                                    .filter(|value| !value.is_empty())
+                                    .unwrap_or("unknown"),
+                            )?,
+                        );
+                    if let Some(subtype) = event["subType"].as_str() {
+                        entry = entry.message_attributes("subType", attribute(subtype)?);
+                    }
+                    request = request.publish_batch_request_entries(entry.build()?);
+                }
+                Ok::<_, anyhow::Error>(
+                    tokio::time::timeout(Duration::from_secs(30), request.send()).await??,
+                )
+            }
+            .await;
+            match send {
+                Ok(output) => PublishBatchResult {
+                    successful_message_ids: output
+                        .successful()
+                        .iter()
+                        .filter_map(|entry| {
+                            entry
+                                .message_id()
+                                .filter(|id| !id.is_empty())
+                                .map(str::to_owned)
+                        })
+                        .collect(),
+                    failed_events: output
+                        .failed()
+                        .iter()
+                        .filter_map(|failure| {
+                            let digits = failure.id().strip_prefix("msg_")?;
+                            if digits.is_empty()
+                                || !digits.bytes().all(|digit| digit.is_ascii_digit())
+                            {
+                                return None;
+                            }
+                            chunk.get(digits.parse::<usize>().ok()?).cloned()
+                        })
+                        .collect(),
+                },
+                Err(_) => PublishBatchResult {
+                    successful_message_ids: Vec::new(),
+                    failed_events: chunk.to_vec(),
+                },
+            }
+        });
+        let mut result = PublishBatchResult::default();
+        for chunk in futures::future::join_all(chunks).await {
+            result
+                .successful_message_ids
+                .extend(chunk.successful_message_ids);
+            result.failed_events.extend(chunk.failed_events);
+        }
+        Ok(result)
     }
     pub fn spawn(
         self: &Arc<Self>,

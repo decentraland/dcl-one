@@ -254,6 +254,18 @@ these are estimates, not measured throughput.
 
 ## Queries, ingest and derived state
 
+Community SNS egress reuses the legacy publisher already held by the referral
+component and the existing SQL pool. The raw event precedes the inbox consumer's
+opt-out filter. Its audience lookup reads membership in pages of 100 ordered by
+role and join time; recipient messages contain at most 100 wallets, and the SNS
+adapter sends at most ten messages per request. These are paginated live reads,
+without a transaction snapshot across pages. HTTP producers start the broadcast
+in the background; voice START awaits it. Publisher and audience failures are
+logged and do not undo the mutation. There is no durable egress queue or replay
+guarantee. A community deletion sends the content-violation event when applicable,
+then the member deletion batches, then its realtime deletion update. The inbox
+writer remains a separate consumer and applies subscription preferences.
+
 Event notification delivery is owned by Social in
 `social.event_notification_intents`. Explore inserts an event transition snapshot
 through qualified SQL in the same transaction as the event change; Social owns

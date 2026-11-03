@@ -54,6 +54,151 @@ pub struct CommunityEvent {
     pub metadata: Value,
 }
 
+/// Raw SNS metadata precedes the notifications worker's projection and opt-out
+/// filter. Its field names are intentionally different from inbox metadata.
+pub(crate) fn legacy_event(
+    event: &CommunityEvent,
+    audience: &Audience<'_>,
+    timestamp: i64,
+) -> Value {
+    let id = event.community_id.as_uuid();
+    let metadata = &event.metadata;
+    let one = match audience {
+        Audience::One(address) => address.as_str(),
+        _ => "",
+    };
+    let community = || serde_json::json!({"communityId":id,"communityName":metadata["communityName"],"thumbnailUrl":metadata["thumbnailUrl"]});
+    let mut raw = match event.kind {
+        "community_deleted" => {
+            serde_json::json!({"id":id,"name":metadata["communityName"],"thumbnailUrl":metadata["thumbnailUrl"]})
+        }
+        "community_deleted_content_violation" => {
+            serde_json::json!({"id":id,"name":metadata["communityName"],"ownerAddress":one,"thumbnailUrl":metadata["thumbnailUrl"]})
+        }
+        "community_renamed" => {
+            serde_json::json!({"id":id,"oldName":metadata["oldName"],"newName":metadata["newName"],"thumbnailUrl":metadata["thumbnailUrl"]})
+        }
+        "community_member_removed" | "community_member_banned" => {
+            serde_json::json!({"id":id,"name":metadata["communityName"],"memberAddress":one,"thumbnailUrl":metadata["thumbnailUrl"]})
+        }
+        "community_member_left" => serde_json::json!({"id":id,"memberAddress":one}),
+        "community_ownership_transferred" => {
+            let mut raw = community();
+            raw["oldOwnerAddress"] = metadata["oldOwnerAddress"].clone();
+            raw["newOwnerAddress"] = Value::String(one.to_owned());
+            raw
+        }
+        "community_invite_received"
+        | "community_request_to_join_accepted"
+        | "community_request_to_join_received" => {
+            let mut raw = community();
+            raw["memberAddress"] = if metadata["memberAddress"].is_string() {
+                metadata["memberAddress"].clone()
+            } else {
+                Value::String(one.to_owned())
+            };
+            if event.kind == "community_request_to_join_received" {
+                raw["memberName"] = metadata["memberName"].clone();
+            }
+            raw
+        }
+        "community_post_added" => {
+            let mut raw = community();
+            raw["postId"] = metadata["postId"].clone();
+            raw["authorAddress"] = metadata["authorAddress"].clone();
+            raw["addressesToNotify"] = serde_json::json!([]);
+            raw
+        }
+        "community_voice_chat_started" => community(),
+        _ => metadata.clone(),
+    };
+    // A source event may omit an undefined optional field; it never serializes
+    // an invented null introduced by this local projection.
+    if let Some(object) = raw.as_object_mut() {
+        object.retain(|_, value| !value.is_null());
+    }
+    serde_json::json!({"type":"community","subType":event.kind.replace('_',"-"),"key":event.key,"timestamp":timestamp,"metadata":raw})
+}
+
+/// The source broadcaster reads unfiltered membership, then the remote worker
+/// applies opt-out. The existing inbox writer remains a separate consumer.
+pub(crate) async fn broadcast_legacy(
+    pool: &PgPool,
+    publisher: &crate::legacy_events::LegacyEvents,
+    event: Value,
+    online: Option<Vec<String>>,
+    excluded: Vec<String>,
+) {
+    let result = broadcast_legacy_inner(pool, publisher, event, online, excluded).await;
+    if let Err(error) = result {
+        tracing::warn!(%error,"community SNS broadcast failed");
+    }
+}
+
+async fn broadcast_legacy_inner(
+    pool: &PgPool,
+    publisher: &crate::legacy_events::LegacyEvents,
+    mut event: Value,
+    online: Option<Vec<String>>,
+    mut excluded: Vec<String>,
+) -> anyhow::Result<()> {
+    let subtype = event["subType"].as_str().unwrap_or_default();
+    let (roles, field, single): (Option<Vec<&str>>, &str, bool) = match subtype {
+        "community-deleted" => (Some(vec!["moderator", "member"]), "memberAddresses", false),
+        "community-renamed" => (None, "memberAddresses", false),
+        "community-request-to-join-received" => {
+            (Some(vec!["moderator", "owner"]), "addressesToNotify", true)
+        }
+        "community-post-added" => {
+            excluded.push(
+                event["metadata"]["authorAddress"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_lowercase(),
+            );
+            (None, "addressesToNotify", false)
+        }
+        "community-voice-chat-started" => (None, "addressesToNotify", false),
+        _ => return publisher.publish(&event).await,
+    };
+    let community = event["metadata"]["communityId"]
+        .as_str()
+        .or_else(|| event["metadata"]["id"].as_str())
+        .ok_or_else(|| anyhow::anyhow!("Community event lacks community id"))?;
+    let community = Uuid::parse_str(community)?;
+    let mut recipients = Vec::<String>::new();
+    let mut offset = 0_i64;
+    loop {
+        let page:Vec<String>=sqlx::query_scalar("SELECT member_address FROM social.community_members WHERE community_id=$1 AND ($2::text[] IS NULL OR role=ANY($2)) AND ($3::text[] IS NULL OR member_address=ANY($3)) AND (cardinality($4::text[])=0 OR member_address<>ANY($4)) ORDER BY CASE role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END,joined_at LIMIT 100 OFFSET $5")
+            .bind(community).bind(&roles).bind(&online).bind(&excluded).bind(offset).fetch_all(pool).await?;
+        let done = page.len() < 100;
+        recipients.extend(page);
+        if done {
+            break;
+        }
+        offset += 100;
+    }
+    if single {
+        event["metadata"][field] = serde_json::json!(recipients);
+        return publisher.publish(&event).await;
+    }
+    let original_key = event["key"].as_str().unwrap_or_default().to_owned();
+    let messages: Vec<Value> = recipients
+        .chunks(100)
+        .enumerate()
+        .map(|(index, recipients)| {
+            let mut event = event.clone();
+            event["key"] = Value::String(format!("{original_key}-batch-{}", index + 1));
+            event["metadata"][field] = serde_json::json!(recipients);
+            event
+        })
+        .collect();
+    // Source publishMessages returns failed events; this broadcaster does not
+    // retry or promote those failures to the HTTP operation.
+    let _ = publisher.publish_batch(&messages).await?;
+    Ok(())
+}
+
 async fn recipients(
     pool: &PgPool,
     community: CommunityId,

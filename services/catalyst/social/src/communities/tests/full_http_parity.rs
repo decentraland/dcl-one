@@ -474,8 +474,14 @@ async fn http_membership_and_deletion_writes_publish_connectivity_after_commit()
             .0,
         StatusCode::NO_CONTENT
     );
+    // Source deletion publishes from its background SNS helper, after the
+    // HTTP mutation has returned. Wait for delivery rather than a scheduler turn.
+    let deleted = tokio::time::timeout(std::time::Duration::from_secs(5), self_events.recv())
+        .await
+        .unwrap()
+        .unwrap();
     assert!(
-        matches!(self_events.try_recv().unwrap().as_ref(),SocialEvent::CommunityMemberStatus(update) if update.status == ConnectivityStatus::Offline as i32 && update.member.as_ref().unwrap().address == member.address.as_str())
+        matches!(deleted.as_ref(),SocialEvent::CommunityMemberStatus(update) if update.status == ConnectivityStatus::Offline as i32 && update.member.as_ref().unwrap().address == member.address.as_str())
     );
     rig.finish();
 }

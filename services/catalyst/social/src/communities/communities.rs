@@ -993,22 +993,19 @@ pub async fn update_community(
         && new_name.trim() != old_name.trim()
     {
         let slug = |n: &str| n.trim().to_lowercase().replace(' ', "-");
-        notify(
-            &state.pool,
-            CommunityEvent {
-                kind: "community_renamed",
-                key: format!("{uuid}-{}-{}", slug(new_name), slug(old_name)),
-                community_id: uuid,
-                metadata: json!({
-                    "communityId": uuid.as_uuid(),
-                    "oldName": old_name,
-                    "newName": new_name,
-                    "thumbnailUrl": stored_thumbnail_or_na(&state, detail.has_thumbnail, uuid),
-                }),
-            },
-            Audience::Members,
-        )
-        .await;
+        let event = CommunityEvent {
+            kind: "community_renamed",
+            key: format!("{uuid}-{}-{}", slug(new_name), slug(old_name)),
+            community_id: uuid,
+            metadata: json!({
+                "communityId": uuid.as_uuid(),
+                "oldName": old_name,
+                "newName": new_name,
+                "thumbnailUrl": stored_thumbnail_or_na(&state, detail.has_thumbnail, uuid),
+            }),
+        };
+        tokio::spawn(state.publish_community_event(&event, &Audience::Members));
+        notify(&state.pool, event, Audience::Members).await;
     }
     let mut data = json!({
         "id": detail.id, "name": detail.name, "description": detail.description,
@@ -1148,8 +1145,6 @@ pub async fn delete_community(
         .await
     ));
     state.community_closed_to_worlds(uuid);
-    // upstream `deleteCommunity`'s `COMMUNITY_DELETED_UPDATES_CHANNEL`
-    state.community_deleted_update(uuid).await;
     // upstream `broadcastCommunityDeleted`: the owner hears of a moderator's
     // removal, every other member of the deletion
     let metadata = json!({
@@ -1157,30 +1152,36 @@ pub async fn delete_community(
         "communityName": name,
         "thumbnailUrl": stored_thumbnail_or_na(&state, has_thumbnail, uuid),
     });
-    if !owner_deleting {
-        notify(
-            &state.pool,
-            CommunityEvent {
-                kind: "community_deleted_content_violation",
-                key: uuid.to_string(),
-                community_id: uuid,
-                metadata: metadata.clone(),
-            },
-            Audience::One(&owner),
-        )
-        .await;
+    let violation = (!owner_deleting).then(|| CommunityEvent {
+        kind: "community_deleted_content_violation",
+        key: uuid.to_string(),
+        community_id: uuid,
+        metadata: metadata.clone(),
+    });
+    let deleted = CommunityEvent {
+        kind: "community_deleted",
+        key: uuid.to_string(),
+        community_id: uuid,
+        metadata,
+    };
+    let violation_publish = violation
+        .as_ref()
+        .map(|event| state.publish_community_event(event, &Audience::One(&owner)));
+    let deleted_publish = state.publish_community_event(&deleted, &Audience::MembersButOwner);
+    let updates = state.clone();
+    tokio::spawn(async move {
+        if let Some(publish) = violation_publish {
+            publish.await;
+        }
+        deleted_publish.await;
+        // Source publishes connectivity deletion after both best-effort SNS
+        // broadcasts inside the same background helper.
+        updates.community_deleted_update(uuid).await;
+    });
+    if let Some(event) = violation {
+        notify(&state.pool, event, Audience::One(&owner)).await;
     }
-    notify(
-        &state.pool,
-        CommunityEvent {
-            kind: "community_deleted",
-            key: uuid.to_string(),
-            community_id: uuid,
-            metadata,
-        },
-        Audience::MembersButOwner,
-    )
-    .await;
+    notify(&state.pool, deleted, Audience::MembersButOwner).await;
     StatusCode::NO_CONTENT.into_response()
 }
 

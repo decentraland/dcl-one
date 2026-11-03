@@ -895,8 +895,22 @@ async fn membership_changes_and_deletion_reach_the_open_member_streams() {
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    assert_eq!(heard(owner_rx), about(&owner, offline));
-    assert_eq!(heard(asker_rx), about(&asker, offline));
+    // Deletion's source helper broadcasts SNS and then realtime in the
+    // background. The committed HTTP response does not wait for delivery.
+    for (index, wallet) in [(owner_rx, &owner), (asker_rx, &asker)] {
+        let events = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let events = heard(index);
+                if !events.is_empty() {
+                    break events;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(events, about(wallet, offline));
+    }
     for i in [joiner_rx, kicked_rx, banned_rx, stranger_rx] {
         assert!(heard(i).is_empty(), "{i}");
     }

@@ -271,6 +271,22 @@ pub async fn create_post(
             }
         },
     };
+    // Source createPost inserts first, resolves the author with the strict
+    // single registry reader, then starts its broadcaster. A missing profile
+    // leaves the inserted post but emits no event and returns its own 500.
+    let author = match state.profiles.registry().single(signer.as_str()).await {
+        Ok(profile) => profile,
+        Err(error) => {
+            let message = match &error {
+                super::profiles::RegistryError::Database(error) => {
+                    super::http::database_message(error)
+                }
+                _ => error.to_string(),
+            };
+            return CommError::MessageOnly(StatusCode::INTERNAL_SERVER_ERROR, message)
+                .into_response();
+        }
+    };
     // upstream `createPost`: POST_ADDED to every member but the author (a
     // replayed key is the same post, so the same notification rows)
     state
@@ -288,10 +304,10 @@ pub async fn create_post(
         "authorAddress": signer.as_str(),
         "content": content,
         "createdAt": crate::shared::as_of::wire(created_at.and_utc()),
+        "authorName": author.name,
+        "authorProfilePictureUrl": author.profile_picture_url,
+        "authorHasClaimedName": author.has_claimed_name,
     });
-    let mut rows = vec![data];
-    enrich_posts_with_authors(&state.profiles, &mut rows, "authorAddress").await;
-    let data = rows.remove(0);
     (StatusCode::CREATED, Json(json!({ "data": data }))).into_response()
 }
 

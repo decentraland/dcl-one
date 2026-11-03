@@ -182,6 +182,7 @@ async fn announce_started(
         return Ok(());
     };
     let everyone = !community.private && !community.unlisted;
+    let created_at = now_ms();
     // Persist the routing fact before optional enrichment, as upstream does before its
     // thumbnail/place reads. The generation guards notification metadata, not media I/O.
     let generation = ctx
@@ -203,7 +204,7 @@ async fn announce_started(
     let update = CommunityVoiceChatUpdate {
         stream_closed: None,
         community_id: cid.to_string(),
-        created_at: chrono::Utc::now().timestamp_millis(),
+        created_at,
         status: CommunityVoiceChatStatus::CommunityVoiceChatStarted as i32,
         ended_at: None,
         positions,
@@ -220,24 +221,24 @@ async fn announce_started(
     // upstream `broadcastVoiceChatStarted` (`logic/community/broadcaster.ts`):
     // the online members but the opener
     let online = ctx.topology().snapshot().wallets;
-    notify(
-        ctx.db().pool(),
-        CommunityEvent {
-            kind: "community_voice_chat_started",
-            key: format!("{cid}-{}", now_ms()),
-            community_id: id,
-            metadata: serde_json::json!({
-                "communityId": cid,
-                "communityName": community.name,
-                "thumbnailUrl": image.unwrap_or_default(),
-            }),
-        },
-        Audience::OnlineMembersExcept {
-            online: &online,
-            except: me,
-        },
-    )
-    .await;
+    let event = CommunityEvent {
+        kind: "community_voice_chat_started",
+        key: format!("{cid}-{created_at}"),
+        community_id: id,
+        metadata: serde_json::json!({
+            "communityId": cid,
+            "communityName": community.name,
+            "thumbnailUrl": image.unwrap_or_default(),
+        }),
+    };
+    let audience = Audience::OnlineMembersExcept {
+        online: &online,
+        except: me,
+    };
+    if let Some(state) = ctx.communities() {
+        state.publish_community_event(&event, &audience).await;
+    }
+    notify(ctx.db().pool(), event, audience).await;
     Ok(())
 }
 
