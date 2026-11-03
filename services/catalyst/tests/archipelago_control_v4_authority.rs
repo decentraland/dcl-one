@@ -1,6 +1,6 @@
 // from: catalyrst/crates/catalyrst-archipelago/tests/control_v4_authority.rs
 use catalyst::comms::archipelago::control_v4::{
-    AssignmentAuthority, AssignmentPayload, LaneKey, V4Owner,
+    AssignmentAuthority, AssignmentPayload, LaneKey, V4Error, V4Owner,
 };
 #[path = "support/db.rs"]
 mod db;
@@ -454,9 +454,9 @@ async fn renewal_and_release_reach_only_the_rows_a_socket_still_owns() {
 
 #[tokio::test]
 async fn expired_or_released_owners_cannot_read_renew_publish_ack_or_reclaim() {
-    let Some(fixture) = Fixture::new().await else {
-        return;
-    };
+    let fixture = Fixture::new()
+        .await
+        .expect("authority expiry regression requires CATALYST_TEST_DATABASE_URL");
     let authority = AssignmentAuthority::pg(fixture.pool.clone()).await.unwrap();
     let realm = LaneKey::parse("realm").unwrap();
     for released in [false, true] {
@@ -482,8 +482,14 @@ async fn expired_or_released_owners_cannot_read_renew_publish_ack_or_reclaim() {
         .fetch_one(&fixture.pool)
         .await
         .unwrap();
-        assert!(authority.snapshot(&old, &realm).await.is_err());
-        assert!(authority.renew(&old).await.is_err());
+        assert!(matches!(
+            authority.snapshot(&old, &realm).await,
+            Err(V4Error::AuthorityUnavailable)
+        ));
+        assert!(matches!(
+            authority.renew(&old).await,
+            Err(V4Error::AuthorityUnavailable)
+        ));
         assert!(
             authority
                 .publish_assignment(&old, &realm, assignment.assignment.unwrap())
@@ -518,6 +524,10 @@ async fn expired_or_released_owners_cannot_read_renew_publish_ack_or_reclaim() {
             .remove(0);
         assert!(claimed.assignment.is_none());
         assert!(claimed.fencing_token > assignment.fencing_token);
+        assert!(matches!(
+            authority.renew(&old).await,
+            Err(V4Error::AuthorityConflict)
+        ));
     }
     fixture.finish().await;
 }

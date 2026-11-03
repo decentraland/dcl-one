@@ -50,9 +50,9 @@ def clean_env():
     return {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
 
 
-def workflow_paths(name, event='pull_request'):
+def workflow_paths(name, event='pull_request', source=None):
     """The `paths:` list of a workflow's event (as checked out for the run), or None when it runs on every change."""
-    source = TREE if (TREE / '.github/workflows' / name).exists() else ROOT
+    source = source or (TREE if (TREE / '.github/workflows' / name).exists() else ROOT)
     if name in ('apis-sites-images.yml', 'bevy-explorer-headless.yml'):
         spec = importlib.util.spec_from_file_location('bevy_selection', source / 'tooling/bevy-ci.py')
         selection = importlib.util.module_from_spec(spec)

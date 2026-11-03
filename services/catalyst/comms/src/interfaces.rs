@@ -187,6 +187,10 @@ pub trait SocialDirectory: Send + Sync {
         &self,
         notification: &StreamingNotification,
     ) -> Result<(), sqlx::Error>;
+    /// A community voice room closed (ended, expired or finished): social
+    /// tells the open voice-chat streams it ENDED, as upstream's
+    /// community-voice polling does. Nothing by default.
+    async fn community_voice_room_closed(&self, _community: crate::CommunityId) {}
     /// Insert only the in-app notice in the moderation owner's transaction.
     /// Implementations must perform no network work or implicit email delivery.
     async fn notify_moderation_notification(

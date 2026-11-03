@@ -3959,6 +3959,2083 @@
           }
         }
       }
+    },
+    "/v2/friends": {
+      "get": {
+        "operationId": "getFriendsV2",
+        "summary": "Get friends (addresses only)",
+        "description": "Returns a paginated list of the addresses of the authenticated user's friends. The response has no\nprofile information: clients resolve the profiles themselves.\n",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 100
+            },
+            "description": "Number of results per page. Values above the maximum are reduced to it."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Number of results to skip. Values above 100000 are clamped to 100000."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Friends of the authenticated user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetFriends200OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Friends"
+        ]
+      }
+    },
+    "/v1/friends/{address}": {
+      "delete": {
+        "operationId": "removeFriend",
+        "summary": "Remove a friend",
+        "description": "Ends the friendship between the authenticated user and `address`.",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ethereum address of the other user"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Friendship ended"
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "One of the users blocked the other",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The action is not valid for the current friendship status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many friendship or block actions, try again later",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Friends"
+        ]
+      }
+    },
+    "/v2/users/{address}/mutual-friends": {
+      "get": {
+        "operationId": "getMutualFriendsV2",
+        "summary": "Get mutual friends (addresses only)",
+        "description": "Returns a paginated list of the addresses of the friends the authenticated user and `address` have in\ncommon, without profile information.\n",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ethereum address of the other user"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 100
+            },
+            "description": "Number of results per page. Values above the maximum are reduced to it."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Number of results to skip. Values above 100000 are clamped to 100000."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mutual friends",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetFriends200OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Friends"
+        ]
+      }
+    },
+    "/v1/users/{address}/friendship-status": {
+      "get": {
+        "operationId": "getFriendshipStatus",
+        "summary": "Get the friendship status with a user",
+        "description": "Returns the status of the friendship between the authenticated user and `address`.",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ethereum address of the other user"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Friendship status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetFriendshipStatus200OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Friends"
+        ]
+      }
+    },
+    "/v2/friendship-requests": {
+      "get": {
+        "operationId": "getFriendshipRequestsV2",
+        "summary": "Get pending friendship requests (addresses only)",
+        "description": "Returns a paginated list of the pending friendship requests the authenticated user received or sent.\nEach request carries the other user's address instead of their profile.\n",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "direction",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "received",
+                "sent"
+              ]
+            },
+            "description": "Whether to list the requests the user received or the ones they sent"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 100
+            },
+            "description": "Number of results per page. Values above the maximum are reduced to it."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Number of results to skip. Values above 100000 are clamped to 100000."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pending friendship requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetFriendshipRequests200OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Friends"
+        ]
+      }
+    },
+    "/v1/friendship-requests": {
+      "post": {
+        "operationId": "createFriendshipRequest",
+        "summary": "Send a friendship request",
+        "description": "Sends a friendship request from the authenticated user to `address`.",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "address"
+                ],
+                "properties": {
+                  "address": {
+                    "type": "string",
+                    "description": "Ethereum address of the user to send the request to",
+                    "example": "0x0000000000000000000000000000000000000001"
+                  },
+                  "message": {
+                    "type": "string",
+                    "maxLength": 256,
+                    "description": "Optional message sent along with the request, limited to 256 Unicode code points"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Friendship request sent, with the receiver's address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FriendshipRequest200OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or missing authentication: invalid address, a request to yourself or a message longer than 256 characters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "One of the users blocked the other",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The action is not valid for the current friendship status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many friendship or block actions, try again later",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Friends"
+        ]
+      }
+    },
+    "/v1/friendship-requests/{address}": {
+      "patch": {
+        "operationId": "updateFriendshipRequest",
+        "summary": "Accept, reject or cancel a friendship request",
+        "description": "Resolves the pending friendship request between the authenticated user and `address`. There is at\nmost one pending request per pair of users, so the other user's address identifies it. The receiver\ncan accept or reject it, and the sender can cancel it.\n",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ethereum address of the other user"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "intention"
+                ],
+                "properties": {
+                  "intention": {
+                    "type": "string",
+                    "enum": [
+                      "accepted",
+                      "rejected",
+                      "cancelled"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Friendship request updated, with the other user's address",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FriendshipRequest200OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "One of the users blocked the other",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The action is not valid for the current friendship status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many friendship or block actions, try again later",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Friends"
+        ]
+      }
+    },
+    "/v2/blocks": {
+      "get": {
+        "operationId": "getBlockedUsersV2",
+        "summary": "Get blocked users (addresses only)",
+        "description": "Returns a paginated list of the addresses the authenticated user blocked, with when each one was\nblocked. The response has no profile information: clients resolve the profiles themselves.\n",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 100
+            },
+            "description": "Number of results per page. Values above the maximum are reduced to it."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            },
+            "description": "Number of results to skip. Values above 100000 are clamped to 100000."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Users blocked by the authenticated user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetBlockedUsers200OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Blocks"
+        ]
+      }
+    },
+    "/v1/blocks": {
+      "post": {
+        "operationId": "blockUser",
+        "summary": "Block a user",
+        "description": "Blocks `address` for the authenticated user. Blocking a friend also ends the friendship. Blocking\nan address that is already blocked keeps the original `blockedAt`.\n",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "address"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "address": {
+                    "type": "string",
+                    "pattern": "^0x[a-fA-F0-9]{40}$",
+                    "description": "Ethereum address of the user to block",
+                    "example": "0x0000000000000000000000000000000000000001"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "User blocked, with the blocked address and when it was blocked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlockUser201OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or missing authentication, including an attempt to block yourself",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many friendship or block actions, try again later",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Blocks"
+        ]
+      }
+    },
+    "/v1/blocks/{address}": {
+      "delete": {
+        "operationId": "unblockUser",
+        "summary": "Unblock a user",
+        "description": "Removes the block the authenticated user placed on `address`. Does nothing if that block does not exist.",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^0x[a-fA-F0-9]{40}$"
+            },
+            "description": "Ethereum address of the other user"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "User unblocked"
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many friendship or block actions, try again later",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Blocks"
+        ]
+      }
+    },
+    "/v1/blocking-status": {
+      "get": {
+        "operationId": "getBlockingStatus",
+        "summary": "Get the blocking status",
+        "description": "Returns every address the authenticated user blocked and every address that blocked them.",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Blocking status of the authenticated user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetBlockingStatus200OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Blocks"
+        ]
+      }
+    },
+    "/v1/social-settings": {
+      "get": {
+        "operationId": "getSocialSettings",
+        "summary": "Get the social settings",
+        "description": "Returns the social settings of the authenticated user, or the defaults when they never changed them.",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Social settings of the authenticated user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SocialSettings200OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Social Settings"
+        ]
+      },
+      "patch": {
+        "operationId": "updateSocialSettings",
+        "summary": "Update the social settings",
+        "description": "Updates the submitted social settings of the authenticated user and returns all of them. At least one\nsetting must be submitted. The private messages privacy is also synced to Comms Gatekeeper; if that\nfails the request answers 500, and a restriction to `only_friends` is not stored.\n",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": false,
+                "properties": {
+                  "privateMessagesPrivacy": {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "only_friends"
+                    ]
+                  },
+                  "blockedUsersMessagesVisibility": {
+                    "type": "string",
+                    "enum": [
+                      "show_messages",
+                      "do_not_show_messages"
+                    ]
+                  },
+                  "showSituationReactions": {
+                    "type": "string",
+                    "enum": [
+                      "show",
+                      "hide"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated social settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SocialSettings200OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Social Settings"
+        ]
+      }
+    },
+    "/v1/private-messages-settings": {
+      "get": {
+        "operationId": "getPrivateMessagesSettings",
+        "summary": "Get the private messages settings of other users",
+        "description": "Returns who can send private messages to each requested user, and whether each one is a friend of the authenticated user.",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "addresses",
+            "in": "query",
+            "schema": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "type": "string",
+                "pattern": "^0x[a-fA-F0-9]{40}$"
+              }
+            },
+            "style": "form",
+            "explode": true,
+            "description": "Addresses to look up, at most 50 (e.g. `?addresses=0x0000000000000000000000000000000000000001&addresses=0x0000000000000000000000000000000000000002`)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Private messages settings of the requested users",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetPrivateMessagesSettings200OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Social Settings"
+        ]
+      }
+    },
+    "/v1/private-voice-chats": {
+      "post": {
+        "operationId": "startPrivateVoiceChat",
+        "summary": "Start a private voice chat",
+        "description": "Calls `calleeAddress`. Fails with 403 when either user only accepts calls from friends and they are not\nfriends, or one blocked the other, and with 409 when either user is already in, or being invited to,\nanother private or community voice chat.\n",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "calleeAddress"
+                ],
+                "properties": {
+                  "calleeAddress": {
+                    "type": "string",
+                    "example": "0x0000000000000000000000000000000000000001"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Call started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartPrivateVoiceChat201OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated user is not allowed to perform this action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The action conflicts with the current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Private Voice Chats"
+        ]
+      }
+    },
+    "/v1/private-voice-chats/incoming": {
+      "get": {
+        "operationId": "getIncomingPrivateVoiceChat",
+        "summary": "Get the incoming private voice chat",
+        "description": "Returns the call the authenticated user is being invited to, or 404 when there is none.",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Incoming call",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GetIncomingPrivateVoiceChat200OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Private Voice Chats"
+        ]
+      }
+    },
+    "/v1/private-voice-chats/{callId}": {
+      "patch": {
+        "operationId": "updatePrivateVoiceChat",
+        "summary": "Accept or reject a private voice chat",
+        "description": "The callee accepts the call, getting the credentials to join it (200), or rejects it (204). Only the\ncallee can do either.\n",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "callId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ID of the private voice chat"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "intention"
+                ],
+                "properties": {
+                  "intention": {
+                    "type": "string",
+                    "enum": [
+                      "accepted",
+                      "rejected"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Call accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AcceptPrivateVoiceChat200OkResponse"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "Call rejected"
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated user is not allowed to perform this action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Private Voice Chats"
+        ]
+      },
+      "delete": {
+        "operationId": "endPrivateVoiceChat",
+        "summary": "End a private voice chat",
+        "description": "Ends the call, or cancels it before it is accepted. Either participant can do it.",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "callId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ID of the private voice chat"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Call ended"
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Private Voice Chats"
+        ]
+      }
+    },
+    "/v1/community-voice-chats": {
+      "post": {
+        "operationId": "startCommunityVoiceChat",
+        "summary": "Start a community voice chat",
+        "description": "Starts the voice chat of a community. Only its owner and moderators can do it.",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "communityId"
+                ],
+                "properties": {
+                  "communityId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Voice chat started; the credentials let the host join it",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceChatCredentials201OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated user is not allowed to perform this action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The community voice chat resource was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The action conflicts with the current state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Community Voice Chats"
+        ]
+      }
+    },
+    "/v1/community-voice-chats/{communityId}": {
+      "delete": {
+        "operationId": "endCommunityVoiceChat",
+        "summary": "End a community voice chat",
+        "description": "Ends the voice chat of a community for everyone. Only its owner and moderators can do it.",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "communityId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ID of the community"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Voice chat ended"
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated user is not allowed to perform this action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Community Voice Chats"
+        ]
+      }
+    },
+    "/v1/community-voice-chats/{communityId}/participants": {
+      "post": {
+        "operationId": "joinCommunityVoiceChat",
+        "summary": "Join a community voice chat",
+        "description": "Joins the active voice chat of a community as the authenticated user.",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "communityId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ID of the community"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Joined; the credentials let the user connect",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VoiceChatCredentials201OkResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated user is not allowed to perform this action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Community Voice Chats"
+        ]
+      }
+    },
+    "/v1/community-voice-chats/{communityId}/participants/{address}": {
+      "delete": {
+        "operationId": "kickCommunityVoiceChatParticipant",
+        "summary": "Kick a participant",
+        "description": "Removes `address` from the voice chat. Only owners and moderators can do it, and nobody can kick the owner.",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "communityId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ID of the community"
+          },
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ethereum address of the other user"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Participant kicked"
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated user is not allowed to perform this action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Community Voice Chats"
+        ]
+      }
+    },
+    "/v1/community-voice-chats/{communityId}/speakers/{address}": {
+      "put": {
+        "operationId": "promoteCommunityVoiceChatSpeaker",
+        "summary": "Promote a participant to speaker",
+        "description": "Only owners and moderators can do it.",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "communityId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ID of the community"
+          },
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ethereum address of the other user"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Participant promoted"
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated user is not allowed to perform this action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Community Voice Chats"
+        ]
+      },
+      "patch": {
+        "operationId": "muteCommunityVoiceChatSpeaker",
+        "summary": "Mute or unmute a speaker",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "communityId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ID of the community"
+          },
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ethereum address of the other user"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "muted"
+                ],
+                "properties": {
+                  "muted": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Speaker muted or unmuted"
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated user is not allowed to perform this action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Community Voice Chats"
+        ]
+      },
+      "delete": {
+        "operationId": "demoteCommunityVoiceChatSpeaker",
+        "summary": "Demote a speaker to listener",
+        "description": "Any speaker can demote themselves; demoting someone else takes an owner or moderator.",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "communityId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ID of the community"
+          },
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ethereum address of the other user"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Speaker demoted"
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated user is not allowed to perform this action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Community Voice Chats"
+        ]
+      }
+    },
+    "/v1/community-voice-chats/{communityId}/speak-requests": {
+      "post": {
+        "operationId": "createCommunityVoiceChatSpeakRequest",
+        "summary": "Raise the hand",
+        "description": "Asks to speak in the voice chat as the authenticated user.",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "communityId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ID of the community"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Hand raised"
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated user is not allowed to perform this action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Community Voice Chats"
+        ]
+      }
+    },
+    "/v1/community-voice-chats/{communityId}/speak-requests/{address}": {
+      "delete": {
+        "operationId": "removeCommunityVoiceChatSpeakRequest",
+        "summary": "Lower the hand or reject a speak request",
+        "description": "On the authenticated user's own address it lowers their hand. On someone else's it rejects their\nrequest, which only owners and moderators can do. Lowering one's own hand is idempotent and\nreturns 204 even if the room or participant is already gone.\n",
+        "security": [
+          {
+            "SignedFetch": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "communityId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "ID of the community"
+          },
+          {
+            "name": "address",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Ethereum address of the other user"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Speak request removed"
+          },
+          "400": {
+            "description": "Invalid request or missing authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The authenticated user is not allowed to perform this action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Community Voice Chats"
+        ]
+      }
     }
   },
   "components": {
@@ -4726,6 +6803,449 @@
             "format": "int64"
           }
         }
+      },
+      "GetBlockedUsers200OkResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaginatedResponse"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "results": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/BlockedUser"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "GetFriendshipStatus200OkResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "type": "integer",
+                "description": "Friendship status between the authenticated user and the other user, the same code the community endpoints return in `friendshipStatus`: 0 request sent, 1 request received, 2 canceled, 3 accepted, 4 rejected, 5 deleted, 6 blocked, 7 none, 8 blocked by."
+              }
+            }
+          }
+        }
+      },
+      "BlockedUser": {
+        "type": "object",
+        "required": [
+          "address",
+          "blockedAt"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "Ethereum address of the blocked user. Clients resolve the profile themselves."
+          },
+          "blockedAt": {
+            "type": "integer",
+            "description": "When the user was blocked, in milliseconds since the epoch"
+          }
+        }
+      },
+      "GetFriendshipRequests200OkResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaginatedResponse"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "results": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/FriendshipRequest"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "SocialSettings200OkResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/SocialSettings"
+          }
+        }
+      },
+      "SocialSettings": {
+        "type": "object",
+        "required": [
+          "privateMessagesPrivacy",
+          "blockedUsersMessagesVisibility",
+          "showSituationReactions"
+        ],
+        "properties": {
+          "privateMessagesPrivacy": {
+            "type": "string",
+            "enum": [
+              "all",
+              "only_friends"
+            ],
+            "description": "Who can send private messages to the user"
+          },
+          "blockedUsersMessagesVisibility": {
+            "type": "string",
+            "enum": [
+              "show_messages",
+              "do_not_show_messages"
+            ],
+            "description": "Whether messages from blocked users are shown"
+          },
+          "showSituationReactions": {
+            "type": "string",
+            "enum": [
+              "show",
+              "hide"
+            ],
+            "description": "Whether situation reactions are shown"
+          }
+        }
+      },
+      "StartPrivateVoiceChat201OkResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "callId"
+            ],
+            "properties": {
+              "callId": {
+                "type": "string",
+                "format": "uuid",
+                "description": "ID of the new private voice chat"
+              }
+            }
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "message",
+          "error"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "A message describing the error"
+          },
+          "error": {
+            "type": "string",
+            "description": "Error code (e.g. Not Found, Invalid Request, Unauthorized, etc.)"
+          }
+        }
+      },
+      "PaginatedResponse": {
+        "type": "object",
+        "required": [
+          "results",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "total": {
+            "type": "integer",
+            "description": "Total number of items"
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Number of items per page actually applied, which may be lower than requested"
+          },
+          "offset": {
+            "type": "integer",
+            "description": "Number of items actually skipped, which may be lower than requested"
+          },
+          "page": {
+            "type": "integer",
+            "description": "Current page number (1-indexed)"
+          },
+          "pages": {
+            "type": "integer",
+            "description": "Total number of pages"
+          }
+        }
+      },
+      "BlockUser201OkResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/BlockedUser"
+          }
+        }
+      },
+      "GetIncomingPrivateVoiceChat200OkResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "callId",
+              "callerAddress"
+            ],
+            "properties": {
+              "callId": {
+                "type": "string",
+                "format": "uuid",
+                "description": "ID of the incoming private voice chat"
+              },
+              "callerAddress": {
+                "type": "string",
+                "description": "Ethereum address of the caller"
+              }
+            }
+          }
+        }
+      },
+      "GetBlockingStatus200OkResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "blockedUsers",
+              "blockedByUsers"
+            ],
+            "properties": {
+              "blockedUsers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Addresses the authenticated user blocked"
+              },
+              "blockedByUsers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Addresses that blocked the authenticated user"
+              }
+            }
+          }
+        }
+      },
+      "AcceptPrivateVoiceChat200OkResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "callId",
+              "connectionUrl"
+            ],
+            "properties": {
+              "callId": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "connectionUrl": {
+                "type": "string",
+                "description": "Credentials of the authenticated user to connect to the call"
+              }
+            }
+          }
+        }
+      },
+      "GetPrivateMessagesSettings200OkResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "address",
+                "privateMessagesPrivacy",
+                "isFriend"
+              ],
+              "properties": {
+                "address": {
+                  "type": "string",
+                  "description": "Ethereum address of the user"
+                },
+                "privateMessagesPrivacy": {
+                  "type": "string",
+                  "enum": [
+                    "all",
+                    "only_friends"
+                  ],
+                  "description": "Who can send private messages to the user"
+                },
+                "isFriend": {
+                  "type": "boolean",
+                  "description": "Whether the user is a friend of the authenticated user"
+                }
+              }
+            }
+          }
+        }
+      },
+      "FriendshipRequest200OkResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/FriendshipRequest"
+          }
+        }
+      },
+      "GetFriends200OkResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PaginatedResponse"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "results": {
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/components/schemas/Friend"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "FriendshipRequest": {
+        "type": "object",
+        "required": [
+          "id",
+          "address",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Identifier of the friendship request"
+          },
+          "address": {
+            "type": "string",
+            "description": "Ethereum address of the other user: the sender of a received request, the receiver of a sent one"
+          },
+          "createdAt": {
+            "type": "integer",
+            "description": "When the request was created, in milliseconds since the epoch"
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Message sent along with the request, limited to 256 Unicode code points. Absent when the request has none."
+          }
+        }
+      },
+      "Friend": {
+        "type": "object",
+        "required": [
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "description": "Ethereum address of the friend. Clients resolve the profile themselves."
+          }
+        }
+      },
+      "VoiceChatCredentials201OkResponse": {
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "object",
+            "required": [
+              "connectionUrl"
+            ],
+            "properties": {
+              "connectionUrl": {
+                "type": "string",
+                "description": "Credentials of the authenticated user to connect to the voice chat"
+              }
+            }
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "SignedFetch": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Authorization",
+        "description": "Signed Fetch authentication.\nSee ADR-44 for more details about the authentication mechanism.\n"
       }
     }
   }

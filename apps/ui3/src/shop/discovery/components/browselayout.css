@@ -1,5 +1,6 @@
 /* from: shop@94584a5c:app/src/pages/Assets.styles.ts, app/src/styles/browseLayout.styles.ts; shop@2d3bf62:app/src/styles/grid.styles.ts,
-         app/src/styles/browseLayout.styles.ts (Root, Main, Sidebar: 265px), app/src/styles/index.css (.page) */
+         app/src/styles/browseLayout.styles.ts (Root, Main, Sidebar: 265px), app/src/styles/index.css (.page);
+         shop@3a322cf9:app/src/styles/browseLayout.styles.ts (Sidebar: pinned under the bars, scrolling inside) */
 .shop-browse {
   display: grid;
   grid-template-columns: 265px minmax(0, 1fr);
@@ -12,6 +13,21 @@
   gap: 16px;
   position: sticky;
   top: 16px;
+}
+/* Pinned under the site nav and the subnav (upstream's 92 + 66 = 158px at full width; the site nav is
+   shorter at ≤991px), scrolling inside when every section is expanded, 24px clear of the screen edge. */
+@media (min-width: 901px) {
+  .shop-browse__col {
+    top: calc(var(--site-header-h, 92px) + 66px);
+    max-height: calc(100vh - var(--site-header-h, 92px) - 66px - 24px);
+  }
+  .shop-browse__sidebar {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+  .shop-browse__sidebar::-webkit-scrollbar { width: 0; display: none; }
 }
 .shop-browse__drawerhead,
 .shop-browse__drawerfoot {

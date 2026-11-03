@@ -314,8 +314,13 @@ async fn receipt_prerequisites_and_step_records_roll_back_on_drift_or_later_fail
         let steps = if drift {
             MIGRATIONS_SQL.into()
         } else {
+            // Keep the injected SQL failure after every real migration as new
+            // steps are added, so validation does not short-circuit the test.
+            let last = schema_migrate::parse_steps(MIGRATIONS_SQL).pop().unwrap();
+            let next = last.name.split_once('_').unwrap().0.parse::<u16>().unwrap() + 1;
+            assert!(next <= 9999, "migration step numbers must fit four digits");
             format!(
-                "{MIGRATIONS_SQL}\n-- ════ step 0014_receipt_test_failure ════\nUPDATE meta.receipt_upgrade_probe SET id=2;\nUPDATE meta.receipt_upgrade_probe SET missing=3;\n"
+                "{MIGRATIONS_SQL}\n-- ════ step {next:04}_receipt_test_failure ════\nUPDATE meta.receipt_upgrade_probe SET id=2;\nUPDATE meta.receipt_upgrade_probe SET missing=3;\n"
             )
         };
         let error = schema_migrate::migrate(pool, &schema, &steps)

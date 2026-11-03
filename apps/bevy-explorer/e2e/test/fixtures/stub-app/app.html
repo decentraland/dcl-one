@@ -1,0 +1,49 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>stub app</title>
+  </head>
+  <body>
+    <button id="jump">Jump In</button>
+    <script>
+      // A stand-in for the app frame: `engine_console_command` answers a few commands the way the
+      // engine does (a string, or a rejection with the error text), and `/hud_click` reports a
+      // real click on the button through the DOM's `isTrusted`.
+      let clicks = 0
+      let trusted = false
+      document.getElementById('jump').addEventListener('click', (event) => {
+        clicks++
+        trusted = event.isTrusted
+      })
+      const replies = {
+        '/world_state': () => JSON.stringify({ inWorld: clicks > 0, arrivals: clicks, signedIn: true, address: null, guest: false, realm: '', realmConnected: true, worldHeld: clicks === 0, outOfWorld: false, position: [0, 0, 0] }),
+        '/player_position': () => '(1, 2, 3)',
+        '/hud_click': () => {
+          const rect = document.getElementById('jump').getBoundingClientRect()
+          const control = { found: true, role: 'button', name: 'Jump In', text: 'Jump In', disabled: false, visible: true, actionable: true, x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+          if (typeof window.__dclTrustedInput !== 'function') {
+            document.getElementById('jump').click()
+            return JSON.stringify({ ...control, input: 'synthetic' })
+          }
+          return new Promise((resolve, reject) => {
+            const id = clicks + 1
+            window.__dclTrustedInputDone = (doneId, error) => {
+              if (doneId !== id) return
+              if (error) reject(new Error(error))
+              else resolve(JSON.stringify({ ...control, input: trusted ? 'trusted' : 'synthetic' }))
+            }
+            window.__dclTrustedInput(JSON.stringify({ id, op: 'click', x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, button: 'left' }))
+          })
+        },
+        '/fail': () => Promise.reject('failed to set location')
+      }
+      window.engine_console_command = (line) => {
+        const command = line.trim().split(/\s+/)[0]
+        const reply = replies[command]
+        if (!reply) return Promise.reject('Command not recognized: `' + command + '`. Recognized commands: ' + JSON.stringify(Object.keys(replies)))
+        return Promise.resolve().then(reply)
+      }
+    </script>
+  </body>
+</html>

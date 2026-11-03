@@ -102,14 +102,24 @@ class SelectionTest(unittest.TestCase):
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, {'web'})
 
-    def test_web_files_the_browser_leg_tests_read_also_select_the_test_suite(self):
-        for name in ('deploy/web/engine/perf_stream.js', 'react-web/src/features/auth/sso.ts'):
+    def test_web_files_the_harness_tests_read_also_select_the_test_suite(self):
+        for name in ('deploy/web/engine/perf_stream.js', 'react-web/src/features/auth/sso.ts',
+                     'react-web/src/lib/hudAutomation.ts'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write('rendering/bevy-explorer/source/' + name, 'changed')
                 selected = ci.select(before, self.commit())
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, {'web', 'test'})
+
+    def test_the_end_to_end_suite_selects_no_engine_lane(self):
+        for name in ('driver/explorer.ts', 'specs/chat.test.ts', 'scenes/core/scene.json', 'README.md'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write('apps/bevy-explorer/e2e/' + name, 'changed')
+                selected = ci.select(before, self.commit())
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
+                                  if selected[lane]}, set())
 
     def test_web_change_cannot_hide_a_native_or_shared_input_change(self):
         self.write('rendering/bevy-explorer/source/react-web/src/App.tsx', 'web edit')
@@ -186,6 +196,20 @@ class SelectionTest(unittest.TestCase):
         self.write('docs/example.md', 'changed')
         self.assertFalse(ci.consumer_plan('pull_request', self.base, self.commit(), '')['images'])
 
+    def test_wildcard_inputs_stay_in_their_directory(self):
+        self.write('tooling/dev-regressions-x/y.json', '{}')
+        result = ci.select(self.base, self.commit())
+        self.assertFalse(any(result[lane] for lane in ci.LANES) or result['scenes'])
+
+    def test_schema_files_rebuild_images_and_independent_crates_or_docs_do_not(self):
+        base = self.base
+        for name, expected in (('schemas/10_explore.sql', True), ('apps/dcl-scene-cli/src/main.rs', False),
+                               ('rendering/bevy-explorer/README.md', False)):
+            self.write(name, 'changed')
+            head = self.commit()
+            self.assertEqual(ci.consumer_changed(base, head, 'images'), expected, name)
+            base = head
+
     def test_consumer_failure_to_find_a_successful_baseline_builds_images(self):
         with patch.object(ci, 'api', return_value={'workflow_runs': []}):
             self.assertTrue(ci.consumer_plan('push', self.base, self.base, 'example/project')['images'])
@@ -221,6 +245,7 @@ class SelectionTest(unittest.TestCase):
             ci.WORKFLOW: {*ci.LANES, 'native-matrix'},
             'apps/bevy-explorer/README.md': set(),
             'tooling/tests/test_bevy_linux_deps.py': set(),
+            'tooling/bevy-http2-test.mjs': {'test'},
         }
         for path, expected in cases.items():
             with self.subTest(path=path):

@@ -1,15 +1,19 @@
-// from: shop@2d3bf62:app/src/pages/Cart.tsx (the cart line card: thumbnail with the ready check, name,
-//       "By {creator}", the Creator tag, quantity stepper, live price with the old one struck through,
+// from: shop@3a322cf9:app/src/pages/Cart.tsx (the cart line card: the rarity tile with its category flap, name,
+//       the creator, the Creator tag, quantity stepper, live price with the old one struck through,
 //       availability, favourite + remove) and Cart.styles.ts (Card, Thumb, Info, Desc, Foot, Stepper, Price)
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 
 import { Trash } from "../../../atoms/icons";
 import Icon from "../../discovery/components/Icon";
-import { CreatorBadge } from "../../discovery/components/Hero";
+import CategoryFlap from "../../discovery/components/CategoryFlap";
+import { CreditsAmount } from "../../discovery/components/PriceTag";
+import { categoryIcon } from "../../discovery/lib/itemIcons";
+import { rarityCardPalette } from "../../discovery/lib/rarity";
+import { DetailCreator } from "../../detail/components/DetailBadges";
 import { fetchCatalogByIds } from "../../market/lib/catalog";
 import { shopFavorites, useFavorites } from "../../market/store/favorites";
 import { useShopWallet } from "../../wallet/context";
-import { CreditsAmount, ManaAmount } from "../../credits/components/Amount";
+import { ManaAmount } from "../../credits/components/Amount";
 import type { LineChange } from "../../cart/revalidate";
 import type { LineRefusal } from "../../cart/partition";
 import { lineUnits } from "../../cart/partition";
@@ -72,12 +76,6 @@ export type CartLineRowProps = {
   onRetry(): void;
   guidance?: Omit<ManaGuidanceProps, "guidance" | "required" | "reasons" | "item">;
 };
-
-const ReadyCheck = () => (
-  <svg viewBox="0 0 20 20" width="12" height="12" aria-hidden="true">
-    <path d="M5 10.5l3 3 7-7.5" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
 
 const Minus = () => (
   <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
@@ -158,19 +156,32 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
   let price: ReactNode = null;
   if (option?.method === "credits" && option.charge !== null) {
     const total = mulCents(option.charge, quantity);
-    if (total !== null) price = <CreditsAmount credits={creditsFloor(total)} size={24} />;
+    if (total !== null) {
+      const credits = creditsFloor(total);
+      price = <CreditsAmount credits={credits} className="shop-cartline__amount" coinClassName="shop-cartline__coin" />;
+    }
   } else if (option?.method === "mana" && option.quote?.method === "mana") {
     const total = mulMana(option.quote.amount, quantity);
     if (total !== null) price = <ManaAmount wei={total} chainId={manaChain} size={24} />;
   }
-  const showChoice = !!view;
+  // One ready way to pay needs no chooser (upstream shows none). It stays for MANA-only lines (their reasons and
+  // guidance), for a real choice, for any option with something to say, and when the line's saved method is no
+  // longer offered (a MANA choice kept from a web3 session), so the buyer can pick again, or has no price to show.
+  const showChoice =
+    !!view &&
+    (view.manaOnly || view.options.length > 1 || !option || !price || view.options.some((o) => o.state.kind !== "ready" && o.state.kind !== "signInRequired"));
   const choicePriced = !!view && view.options.length > 1;
   const favKey = favoriteKeyOf(line);
+  // As upstream's rarityTileStyle: a line without a rarity gets the neutral tile and its grey outline.
+  const palette = rarityCardPalette(line.display.rarity);
+  // The flap names a wearable's or an emote's category; LAND, names and older saved lines have none to show.
+  const flapItem = line.display.category ? { category: line.display.category, wearableCategory: line.display.wearableCategory, rarity: line.display.rarity ?? "" } : null;
   const href = line.display.href;
 
   return (
     <article className="shop-cartline" data-unavailable={unavailable || undefined} aria-label={line.display.name}>
-      <div className="shop-cartline__thumb" data-thumb>
+      <div className="shop-cartline__thumb" data-thumb style={{ "--tile-bg": palette.background, "--tile-stroke": palette.stroke } as CSSProperties}>
+        {flapItem && categoryIcon(flapItem) ? <CategoryFlap item={flapItem} size="sm" testId="cart-line-flap" /> : null}
         {href ? (
           <a className="shop-cartline__thumb-link" href={href} aria-label={line.display.name}>
             {line.display.thumbnail ? <img src={line.display.thumbnail} alt={line.display.name} loading="lazy" /> : null}
@@ -178,9 +189,6 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
         ) : line.display.thumbnail ? (
           <img src={line.display.thumbnail} alt={line.display.name} loading="lazy" />
         ) : null}
-        <span className="shop-cartline__check" data-check aria-hidden="true">
-          <ReadyCheck />
-        </span>
       </div>
       <div className="shop-cartline__main">
         <div className="shop-cartline__desc" data-desc>
@@ -193,11 +201,7 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
               {line.display.name}
             </span>
           )}
-          {line.display.creator ? (
-            <span className="shop-cartline__creator">
-              <CreatorBadge address={line.display.creator} prefix />
-            </span>
-          ) : null}
+          {line.display.creator ? <DetailCreator address={line.display.creator} size="sm" className="shop-cartline__creator" /> : null}
           {isMint && offer?.sale === "primaryMint" ? (
             <span className="shop-cartline__tag" data-testid="cart-creator-tag">
               <CreatorLeaf />
@@ -225,7 +229,7 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
                 </div>
               ) : null}
               {price ? (
-                <div className="shop-cartline__price" data-testid="cart-line-price">
+                <div className="shop-cartline__price">
                   {price}
                   {was ? <s className="shop-cartline__was">{quoteText(was.before)}</s> : null}
                 </div>

@@ -76,7 +76,7 @@ class EngineCacheTests(unittest.TestCase):
         with patch.dict(os.environ, {name: '' for name in artifact.BUILD_ENV}):
             cache_key = artifact.engine_cache_key(self.root)
             keys = artifact.engine_inputs(self.root), artifact.inputs(self.root)
-            with patch.dict(os.environ, {'BEVY_SEGMENT_WRITE_KEY_PROD': 'key-prod'}):
+            with patch.dict(os.environ, {'BEVY_SEGMENT_WRITE_KEY': 'key'}):
                 self.assertNotEqual(cache_key, artifact.engine_cache_key(self.root))
                 self.assertEqual(keys, (artifact.engine_inputs(self.root), artifact.inputs(self.root)))
                 engine = self.pack()

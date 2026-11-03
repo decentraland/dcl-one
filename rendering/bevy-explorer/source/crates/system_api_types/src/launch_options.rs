@@ -30,6 +30,9 @@ pub mod help_heading {
     pub const HOST: &str = "Set by the embedding host";
     pub const SERVICES: &str = "Service endpoints";
     pub const HEADLESS: &str = "Headless runner";
+    /// A loopback JSON-RPC server that runs console commands, for agents and tests: off unless a
+    /// token is given. Native only, so no web param.
+    pub const AUTOMATION: &str = "Automation";
 }
 use help_heading::*;
 

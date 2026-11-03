@@ -197,7 +197,7 @@ export default function PaymentPanel(props: PaymentPanelProps) {
             {t("itemDetail.retryPrice")}
           </Button>
         </div>
-      ) : current.state.kind !== "ready" && current.state.kind !== "walletRequired" && !deferToSignIn ? (
+      ) : current.state.kind !== "ready" && current.state.kind !== "walletRequired" && !(current.state.kind === "signInRequired" && wallet.onSignIn) && !deferToSignIn ? (
         <p className="shop-pay__state" role="status" data-testid={`state-${current.state.kind}`}>
           {optionStateText(current.method, current.state)}
           {current.state.kind === "topUpRequired" ? ` ${t("itemDetail.topUpShort", { credits: t("assetCard.credits", { count: creditsCeil(current.state.short) }) })}` : ""}

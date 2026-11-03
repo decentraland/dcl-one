@@ -4,13 +4,14 @@ import type { AuthIdentity } from "../../auth/types";
 import { getJSON, signedGetJSON, type GetOptions } from "../client";
 import { ApiDataTotalSchema, DestinationSchema } from "../generated-schemas/places";
 import type { Place } from "../schema";
+import { reportSchemaDrift } from "../schema-drift";
 
 export type DestinationParams = {
   limit?: number; offset?: number; categories?: string; search?: string; owner?: string;
   only_favorites?: boolean; only_highlighted?: boolean; world_names?: string;
   order_by?: "most_active";
 };
-export type DestinationPage = { data: Place[]; total: number; copy: CopyStamp | null };
+export type DestinationPage = { data: Place[]; total: number; copy: CopyStamp | null; received?: number };
 
 function toPlace(row: z.infer<typeof DestinationSchema>): Place {
   return {
@@ -29,8 +30,14 @@ export async function fetchDestinations(params: DestinationParams = {}, options:
   const raw = options.identity
     ? await signedGetJSON(path, { identity: options.identity, base: options.base, signal: options.signal, query })
     : await getJSON(path, { ...options, query });
-  const envelope = ApiDataTotalSchema(DestinationSchema).parse(raw);
-  return { data: envelope.data.map(toPlace), total: envelope.total, copy: readCopy(raw) };
+  const envelope = ApiDataTotalSchema(z.unknown()).parse(raw);
+  const data: Place[] = [];
+  for (const row of envelope.data) {
+    const parsed = DestinationSchema.safeParse(row);
+    if (parsed.success) data.push(toPlace(parsed.data));
+    else reportSchemaDrift("Destination", parsed.error.issues);
+  }
+  return { data, total: envelope.total, copy: readCopy(raw), received: envelope.data.length };
 }
 
 /** Hide unfinished catalogue entries on the default public view; explicit searches and personal views keep their matches. */
@@ -49,7 +56,7 @@ export function hiddenFromBrowse(place: Place): boolean {
 export async function resolveLegacyPlace(kind: "place" | "world", value: string, options: GetOptions = {}): Promise<string | null> {
   if (kind === "world") {
     const name = value.trim().toLowerCase();
-    if (!name || name.length > 255) return null;
+    if (!name || name.length > 255 || name.includes(",")) return null;
     const result = await fetchDestinations({ world_names: name, limit: 1 }, options);
     return result.data[0]?.id ?? null;
   }

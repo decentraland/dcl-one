@@ -1,6 +1,7 @@
 // from: shop@94584a5c:app/src/components/SuggestedForYouRow/SuggestedForYouRow.tsx, app/src/hooks/useSuggestedForYou.ts
 // "Suggested for you": ranked and explained by the server for this visitor (the signed-in account, or
-// seeds from the cart and recently viewed). It renders only when the server personalised the answer
+// seeds from the cart and recently viewed). It is asked for only while upstream's rollout flag is on
+// (lib/remoteFlags.ts), and it renders only when the server personalised the answer
 // and returned enough of it (suggestedHiddenReason); every card carries its reason line, linked to
 // the item that triggered it when there is one.
 
@@ -12,6 +13,7 @@ import { useShopWallet } from "../../wallet/context";
 import { fetchCatalogByIds, fetchSuggestedItems, type SuggestedItem } from "../api";
 import { t } from "../intl";
 import { useRecentlyViewed } from "../lib/recently-viewed";
+import { REMOTE_FLAG, useRemoteFlag } from "../lib/remoteFlags";
 import { suggestedHiddenReason } from "../lib/suggestionEvents";
 import { reasonInterpolatesItemName, reasonKey, reasonLinksToItem, triggerItemPath } from "../lib/suggestionReasons";
 import { buildSuggestionSeeds, seedsKey } from "../lib/suggestionSeeds";
@@ -21,7 +23,8 @@ import Rail from "./Rail";
 
 const RAIL_SIZE = 12;
 
-export function useSuggestedForYou(first: number, { exclude, enabled = true }: { exclude?: string[]; enabled?: boolean } = {}) {
+export function useSuggestedForYou(first: number, { exclude }: { exclude?: string[] } = {}) {
+  const enabled = useRemoteFlag(REMOTE_FLAG.suggestedForYou);
   const { account } = useShopWallet();
   const cartLines = useCart((s) => s.lines);
   const recentlyViewed = useRecentlyViewed();

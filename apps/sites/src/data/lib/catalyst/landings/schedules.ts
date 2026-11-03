@@ -110,38 +110,10 @@ export function scheduleToDraft(s: Schedule): ScheduleDraft {
   };
 }
 
-type ScheduleUpsertBody = {
-  schedule_id?: string;
-  name: string;
-  description: string | null;
-  image: string | null;
-  theme: string | null;
-  background: string[];
-  active_since: number;
-  active_until: number;
-  active: boolean;
-  signed_at: number;
-};
-
 function dateToEpochMs(date: string): number {
   if (!date) return 0;
   const d = new Date(`${date}T00:00:00.000Z`);
   return Number.isNaN(d.getTime()) ? 0 : d.getTime();
-}
-
-export function toUpsertBody(draft: ScheduleDraft, scheduleId?: string): ScheduleUpsertBody {
-  return {
-    ...(scheduleId ? { schedule_id: scheduleId } : {}),
-    name: draft.name.trim(),
-    description: draft.description.trim() || null,
-    image: draft.imageUrl.trim() || null,
-    theme: draft.theme || null,
-    background: draft.background.filter((c) => c.trim().length > 0),
-    active_since: dateToEpochMs(draft.activeSinceDate),
-    active_until: dateToEpochMs(draft.activeUntilDate),
-    active: draft.active,
-    signed_at: Date.now(),
-  };
 }
 
 type DraftIssues = Partial<Record<keyof ScheduleDraft, string>>;
@@ -182,7 +154,7 @@ const SubmitResultSchema = z.object({
 });
 export type SubmitResult = z.infer<typeof SubmitResultSchema>;
 
-export function buildScheduleSubmit(identitySource: () => AuthIdentity | null): SubmitFn {
+export function buildScheduleSubmit(identitySource: () => AuthIdentity | null, original?: Schedule): SubmitFn {
   return async ({ draft, scheduleId, signal }) => {
     const identity = identitySource();
     if (!identity) throw new Error("Sign in to manage schedules.");
@@ -190,39 +162,15 @@ export function buildScheduleSubmit(identitySource: () => AuthIdentity | null): 
     const body = {
       name: draft.name.trim(), description: draft.description.trim() || null, image: draft.imageUrl.trim() || null,
       theme: draft.theme || null, background: draft.background.filter((color) => color.trim()), active: draft.active,
-      active_since: `${draft.activeSinceDate}T00:00:00.000Z`, active_until: `${draft.activeUntilDate}T23:59:59.000Z`,
+      active_since: original?.active_since && isoToDateInput(original.active_since) === draft.activeSinceDate
+        ? original.active_since : `${draft.activeSinceDate}T00:00:00.000Z`,
+      active_until: original?.active_until && isoToDateInput(original.active_until) === draft.activeUntilDate
+        ? original.active_until : `${draft.activeUntilDate}T23:59:59.000Z`,
     };
     const path = scheduleId ? `/events/api/schedules/${encodeURIComponent(scheduleId)}` : "/events/api/schedules";
     const raw = await postJSON(path, body, { identity, method: scheduleId ? "PATCH" : "POST", signal });
     return apiOkOf(SubmitResultSchema).parse(raw).data;
   };
-}
-
-export async function simulateSubmitSchedule(
-  draft: ScheduleDraft,
-  opts: { scheduleId?: string; signal?: AbortSignal; delayMs?: number } = {},
-): Promise<SubmitResult> {
-  const body = toUpsertBody(draft, opts.scheduleId);
-  if (!body.name) throw new Error("name is required");
-
-  await new Promise<void>((resolve, reject) => {
-    const t = setTimeout(resolve, opts.delayMs ?? 500);
-    opts.signal?.addEventListener("abort", () => {
-      clearTimeout(t);
-      reject(new Error("aborted"));
-    });
-  });
-
-  const id =
-    opts.scheduleId ??
-    `local-sim-${Math.abs(hashString(body.name + body.active_since)).toString(16).padStart(12, "0").slice(0, 12)}`;
-  return { id, active: body.active };
-}
-
-function hashString(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
-  return h;
 }
 
 type AssignableTo<Sub, Sup> = Sub extends Sup ? true : false;
