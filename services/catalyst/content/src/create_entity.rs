@@ -15,9 +15,12 @@
 //! `Retry-After` when this node could not decide (a source unset or down,
 //! the store unreadable); the gates of [`super::writes`] before any of it
 //! (503 disabled, 403 read-only) and the old 503 while the node is
-//! bootstrapping. The per-client request budget is the proxy's
-//! (`limit_req zone=catdeploy` on `= /content/entities`,
-//! `deploy/nix/nginx.nix`); the per-pointer TTLs are the deployer's.
+//! bootstrapping. Before the body is read, a client address past its daily
+//! quota answers 429 and a body that does not fit the in-memory upload
+//! budget 503, both with `Retry-After` ([`super::upload_admission`]); a form
+//! over its field limits answers 400. The per-second request rate is the
+//! gateway's (`limit_req zone=deploy`, `infra/gateway/gateway.py`); the
+//! per-pointer TTLs are the deployer's.
 
 use std::collections::BTreeMap;
 
@@ -146,9 +149,14 @@ fn is_file_part(file_name: Option<&str>, content_type: Option<&str>) -> bool {
         || content_type.is_some_and(|t| !t.trim_start().to_ascii_lowercase().starts_with("text/"))
 }
 
-/// Reads the whole form: text fields by name, file parts in order, each
-/// under [`MAX_DEPLOY_FILE_BYTES`], at most [`MAX_DEPLOY_FILES`] of them.
-async fn read_form(multipart: &mut Multipart) -> AppResult<(BTreeMap<String, String>, Vec<Bytes>)> {
+/// Reads the whole form: text fields by name, at most `max_fields` of up to
+/// `max_field_bytes` each, and file parts in order, each under
+/// [`MAX_DEPLOY_FILE_BYTES`], at most [`MAX_DEPLOY_FILES`] of them.
+async fn read_form(
+    multipart: &mut Multipart,
+    max_fields: usize,
+    max_field_bytes: usize,
+) -> AppResult<(BTreeMap<String, String>, Vec<Bytes>)> {
     let mut fields: BTreeMap<String, String> = BTreeMap::new();
     let mut files: Vec<Bytes> = Vec::new();
 
@@ -180,9 +188,25 @@ async fn read_form(multipart: &mut Multipart) -> AppResult<(BTreeMap<String, Str
             }
             files.push(buf.freeze());
         } else {
-            let value = field
-                .text()
+            if fields.len() >= max_fields {
+                return Err(invalid(format!(
+                    "Too many form fields in the request. The maximum allowed is {max_fields}."
+                )));
+            }
+            let mut buf = Vec::new();
+            while let Some(chunk) = field
+                .chunk()
                 .await
+                .map_err(|e| invalid(format!("Failed to read field value: {e}")))?
+            {
+                if buf.len().saturating_add(chunk.len()) > max_field_bytes {
+                    return Err(invalid(format!(
+                        "Field '{name}' is too large. The maximum allowed size per field is {max_field_bytes} bytes."
+                    )));
+                }
+                buf.extend_from_slice(&chunk);
+            }
+            let value = String::from_utf8(buf)
                 .map_err(|e| invalid(format!("Failed to read field value: {e}")))?;
             fields.insert(name, value);
         }
@@ -218,6 +242,30 @@ pub fn deployment_failure_response(failure: DeployFailure) -> Response {
     response
 }
 
+/// 429 with `Retry-After` for a client past its daily quota.
+fn quota_exceeded_response(retry_after_secs: u64) -> Response {
+    let mut response = (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(json!({ "error": "Too many requests" })),
+    )
+        .into_response();
+    response.headers_mut().insert(
+        header::RETRY_AFTER,
+        header::HeaderValue::from(retry_after_secs),
+    );
+    response
+}
+
+/// The bytes a body can occupy: its declared length, else the body cap.
+fn declared_body_bytes(headers: &HeaderMap) -> u64 {
+    headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(u64::MAX)
+        .min(MAX_DEPLOYMENT_BYTES as u64)
+}
+
 pub async fn create_entity(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -239,7 +287,35 @@ pub async fn create_entity(
         return bootstrapping();
     }
 
-    let (fields, files) = read_form(&mut multipart).await?;
+    let source = crate::shared::client_ip::client_ip(&headers);
+    if let Some(retry_after) = state.deploy_quota.exhausted(&source) {
+        return Ok(quota_exceeded_response(retry_after));
+    }
+    let Some(_reservation) = state
+        .upload_budget
+        .try_reserve(declared_body_bytes(&headers))
+    else {
+        let mut response = super::errors::json_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            super::upload_admission::BUDGET_EXHAUSTED_MESSAGE,
+        );
+        response.headers_mut().insert(
+            header::RETRY_AFTER,
+            header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
+        );
+        return Ok(response);
+    };
+
+    let settings = &state.settings;
+    let (fields, files) = read_form(
+        &mut multipart,
+        settings.max_upload_field_count,
+        settings.max_upload_field_bytes,
+    )
+    .await?;
+    if let Err(retry_after) = state.deploy_quota.consume(&source) {
+        return Ok(quota_exceeded_response(retry_after));
+    }
     let entity_id = fields
         .get("entityId")
         .ok_or_else(|| invalid("Missing entityId field"))?

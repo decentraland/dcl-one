@@ -153,7 +153,7 @@ async fn signed(
     uploads: &[Vec<u8>],
 ) -> (
     Entity,
-    HashMap<String, Vec<u8>>,
+    HashMap<String, bytes::Bytes>,
     crate::auth::AuthChain,
     String,
 ) {
@@ -171,9 +171,9 @@ async fn signed(
     ]))
     .unwrap();
     let parsed = entity_parser::parse_entity_from_bytes(&bytes, &id).unwrap();
-    let mut files = HashMap::from([(id.clone(), bytes)]);
+    let mut files = HashMap::from([(id.clone(), bytes.into())]);
     for upload in uploads {
-        files.insert(hash_bytes_v1(upload), upload.clone());
+        files.insert(hash_bytes_v1(upload), upload.clone().into());
     }
     (parsed, files, chain, signer)
 }
@@ -973,7 +973,8 @@ async fn third_party_items_are_proven_against_the_registry_root_at_the_deploy_bl
         ))
     );
     let mut d = OwnedDeployment::new(entity);
-    d.files.insert(d.entity.id.clone(), WOODIE_0.to_vec());
+    d.files
+        .insert(d.entity.id.clone(), WOODIE_0.to_vec().into());
     let pointer = d.entity.pointers[0].clone();
 
     let blocks = serve_graph(|query, vars| {

@@ -428,7 +428,7 @@ impl WriteDeployer {
     async fn validate(
         &self,
         entity: &Entity,
-        files: &HashMap<String, Vec<u8>>,
+        files: &HashMap<String, Bytes>,
         auth_chain: &AuthChain,
         context: &str,
     ) -> Result<(), DeployFailure> {
@@ -599,7 +599,7 @@ impl WriteDeployer {
             .map(|c| c.hash.as_str())
             .chain(std::iter::once(entity.id.as_str()))
             .collect();
-        let mut vfiles: HashMap<String, Vec<u8>> = HashMap::new();
+        let mut vfiles: HashMap<String, Bytes> = HashMap::new();
         for upload in &uploads {
             let key = if declared.contains(upload.v1.as_str()) {
                 &upload.v1
@@ -609,7 +609,7 @@ impl WriteDeployer {
                 &upload.v1
             };
 
-            if let Some(prev) = vfiles.insert(key.clone(), upload.bytes.to_vec())
+            if let Some(prev) = vfiles.insert(key.clone(), upload.bytes.clone())
                 && prev != upload.bytes
             {
                 return Err(vec![format!(

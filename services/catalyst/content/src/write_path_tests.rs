@@ -1070,3 +1070,151 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
     let _ = std::fs::remove_dir_all(&tmp);
     pool.close().await;
 }
+
+/// A deploy form of the given text fields from `ip`, as the gateway stamps it.
+fn form_request(ip: &str, fields: &[(String, String)]) -> Request<Body> {
+    let boundary = "catalyst-admission-boundary";
+    let mut body = String::new();
+    for (name, value) in fields {
+        body.push_str(&format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+        ));
+    }
+    body.push_str(&format!("--{boundary}--\r\n"));
+    Request::post("/content/entities")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .header(header::CONTENT_LENGTH, body.len())
+        .header("x-real-ip", ip)
+        .body(Body::from(body))
+        .unwrap()
+}
+
+/// A form that passes admission and is then refused by the deployer (400).
+fn entity_form() -> Vec<(String, String)> {
+    vec![
+        ("entityId".to_string(), "bafy".to_string()),
+        ("ethAddress".to_string(), "0xabc".to_string()),
+        ("signature".to_string(), "0xsig".to_string()),
+    ]
+}
+
+async fn deploying_node(tag: &str, settings: Settings) -> TestNode {
+    let node = TestNode::without_db_settings(tag, settings).await;
+    attach(&node.state, true, None, None);
+    node.state.sync.set_state(SyncState::Syncing);
+    node
+}
+
+#[tokio::test]
+async fn a_form_over_its_field_limits_is_refused() {
+    let node = deploying_node("field-limits", Settings::for_tests()).await;
+    let router = node.router();
+
+    let mut many = entity_form();
+    many.extend((0..30).map(|i| (format!("extra{i}"), "x".to_string())));
+    let (status, _, body) = call(&router, form_request("203.0.113.1", &many)).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"error": "Too many form fields in the request. The maximum allowed is 32."})
+        )
+    );
+
+    let mut large = entity_form();
+    large.push(("big".to_string(), "x".repeat(32 * 1024 + 1)));
+    let (status, _, body) = call(&router, form_request("203.0.113.1", &large)).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"error": "Field 'big' is too large. The maximum allowed size per field is 32768 bytes."})
+        )
+    );
+
+    let mut fits = entity_form();
+    fits.push(("big".to_string(), "x".repeat(32 * 1024)));
+    let (status, _, body) = call(&router, form_request("203.0.113.1", &fits)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_of(&body),
+        json!({"errors": ["The entity file was not part of the uploaded files."]}),
+        "a form at the limits reaches the deployer"
+    );
+}
+
+#[tokio::test]
+async fn a_client_past_its_daily_quota_is_turned_away() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 2,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("daily-quota", settings).await;
+    let router = node.router();
+    for _ in 0..2 {
+        let (status, _, _) = call(&router, form_request("203.0.113.7", &entity_form())).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "refused deploys still count"
+        );
+    }
+    let (status, headers, body) = call(&router, form_request("203.0.113.7", &entity_form())).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({"error": "Too many requests"})
+        )
+    );
+    let retry: u64 = headers[header::RETRY_AFTER]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(retry > 0 && retry <= 24 * 60 * 60, "{retry}");
+
+    let (status, _, _) = call(&router, form_request("203.0.113.8", &entity_form())).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "another address has its own quota"
+    );
+}
+
+#[tokio::test]
+async fn a_body_past_the_upload_budget_is_shed_with_retry_after() {
+    let capacity = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let settings = Settings {
+        max_in_memory_deployment_bytes: capacity,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("upload-budget", settings).await;
+    let router = node.router();
+
+    let held = node.state.upload_budget.try_reserve(capacity).unwrap();
+    let (status, headers, body) = call(&router, form_request("203.0.113.9", &entity_form())).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"error": super::upload_admission::BUDGET_EXHAUSTED_MESSAGE})
+        )
+    );
+    assert_eq!(headers[header::RETRY_AFTER], "30");
+
+    drop(held);
+    let (status, _, _) = call(&router, form_request("203.0.113.9", &entity_form())).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "admitted once the budget frees"
+    );
+    assert!(
+        node.state.upload_budget.try_reserve(capacity).is_some(),
+        "a finished request returns its reservation"
+    );
+}

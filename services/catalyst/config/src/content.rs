@@ -135,6 +135,30 @@ pub struct ContentConfig {
     /// (`content::read_through`). Off: a miss answers what it always did.
     #[arg(long, env = "READ_THROUGH_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub read_through_enabled: bool,
+
+    /// Non-file fields a `POST /entities` form may carry: `entityId` and the
+    /// `type`/`payload`/`signature` of up to ten auth-chain links, and one spare.
+    #[arg(long, env = "MAX_UPLOAD_FIELD_COUNT", default_value_t = 2 + 3 * 10)]
+    pub max_upload_field_count: usize,
+
+    /// Bytes one non-file `POST /entities` field may hold.
+    #[arg(long, env = "MAX_UPLOAD_FIELD_SIZE", default_value_t = 32 * 1024)]
+    pub max_upload_field_size: usize,
+
+    /// Bytes of `POST /entities` bodies held in memory at once across every
+    /// request, each holding at least 16 MiB; never below one maximum-size
+    /// deployment. A request that does not fit answers 503 unread.
+    #[arg(
+        long,
+        env = "MAX_IN_MEMORY_DEPLOYMENT_BYTES",
+        default_value_t = 2 * 1024 * 1024 * 1024
+    )]
+    pub max_in_memory_deployment_bytes: u64,
+
+    /// `POST /entities` requests one client address may make per 24 hours
+    /// (counted once the form is read); 0 turns the quota off.
+    #[arg(long, env = "POST_ENTITIES_DAILY_QUOTA_MAX", default_value_t = 300)]
+    pub post_entities_daily_quota_max: u32,
 }
 
 impl ContentConfig {

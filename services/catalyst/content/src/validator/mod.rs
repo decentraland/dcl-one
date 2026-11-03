@@ -257,7 +257,7 @@ pub struct Context<'a> {
 /// kind.
 pub async fn validate(
     entity: &Entity,
-    files: &HashMap<String, Vec<u8>>,
+    files: &HashMap<String, bytes::Bytes>,
     ctx: &Context<'_>,
 ) -> Result<(), Vec<ValidationError>> {
     let deployment = Deployment {
