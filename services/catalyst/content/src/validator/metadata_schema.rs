@@ -6,6 +6,8 @@
 //! The first failure answers, as a path and an ajv-style reason after the
 //! reference's sentence.
 
+use std::collections::HashMap;
+
 use serde_json::{Map, Value};
 
 use super::error::ValidationResponse;
@@ -117,10 +119,15 @@ fn max_items(a: &[Value], n: usize, p: &str) -> Check {
     Ok(())
 }
 
+/// `uniqueItems` over string items, scanned from the end as ajv does.
 fn unique(a: &[Value], p: &str) -> Check {
-    for (i, x) in a.iter().enumerate() {
-        if a[..i].contains(x) {
-            return Err(format!("{p} must NOT have duplicate items"));
+    let mut seen: HashMap<&str, usize> = HashMap::with_capacity(a.len());
+    for (i, x) in a.iter().enumerate().rev() {
+        let Some(s) = x.as_str() else { continue };
+        if let Some(j) = seen.insert(s, i) {
+            return Err(format!(
+                "{p} must NOT have duplicate items (items ## {j} and {i} are identical)"
+            ));
         }
     }
     Ok(())
@@ -1240,6 +1247,26 @@ mod tests {
             EntityType::Outfits,
             json!({"outfits": []}),
             "metadata must have required property 'namesForExtraSlots'",
+        );
+    }
+
+    #[test]
+    fn duplicate_items_are_found_in_linear_time() {
+        let names: Vec<String> = (0..80_000).map(|i| format!("n{i}")).collect();
+        let outfits = |names: &[String]| json!({"outfits": [], "namesForExtraSlots": names});
+        let started = std::time::Instant::now();
+        assert_valid(EntityType::Outfits, outfits(&names));
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "took {:?}",
+            started.elapsed()
+        );
+        let mut repeated = names[..3].to_vec();
+        repeated.push("n0".into());
+        assert_invalid(
+            EntityType::Outfits,
+            outfits(&repeated),
+            "metadata.namesForExtraSlots must NOT have duplicate items (items ## 3 and 0 are identical)",
         );
     }
 
