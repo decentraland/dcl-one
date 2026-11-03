@@ -7,10 +7,7 @@ use crate::{unity_bloom, unity_color_grading};
 use anyhow::anyhow;
 use bevy::log::warn;
 use bevy::{
-    core_pipeline::{
-        prepass::{DepthPrepass, NormalPrepass},
-        tonemapping::{DebandDither, Tonemapping},
-    },
+    core_pipeline::tonemapping::{DebandDither, Tonemapping},
     ecs::bundle::Bundle,
     pbr::ShadowFilteringMethod,
 };
@@ -242,8 +239,6 @@ pub fn default_camera_components() -> impl Bundle {
         unity_color_grading(),
         unity_bloom(),
         ShadowFilteringMethod::Gaussian,
-        DepthPrepass,
-        NormalPrepass,
     )
 }
 
