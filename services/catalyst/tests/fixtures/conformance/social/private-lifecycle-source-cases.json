@@ -43,7 +43,7 @@
       "sha256": "7b79ebc3cdde634871f1b8f9dad00decc518b79f34f63cfc3f085ae340174e65"
     }
   ],
-  "scope": "Original Social voice and pending DB + original companion presence DB on PostgreSQL. Actual initial/interrupted TTL300000; media table retains rows until its minute sweep. No LiveKit transport instantiated; one source constant dependency extracted verbatim.",
+  "scope": "Original Social voice and pending DB + original companion presence and media-write DB on PostgreSQL. Actual initial/interrupted TTL300000; media table retains rows until its minute sweep. No LiveKit transport instantiated; one source constant dependency extracted verbatim.",
   "entries": [
     {
       "status": "connected",
@@ -98,6 +98,22 @@
       "error": null,
       "media_rows": 2,
       "pending_rows": 1
+    }
+  ],
+  "writerSequences": [
+    {
+      "scenario": "pending-then-media-other-role",
+      "pending_retained": true,
+      "media_rows": 2
+    },
+    {
+      "scenario": "two-media-writers-retain-both-rooms",
+      "pending_retained": true,
+      "media_rows": 4,
+      "rooms": [
+        "voice-chat-private-media-one",
+        "voice-chat-private-media-two"
+      ]
     }
   ]
 }

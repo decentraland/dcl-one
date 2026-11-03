@@ -399,18 +399,32 @@ database holding local authority changes only through a data-safe release
 `schemas/migrations/` applied once by `catalyst schema migrate`; anything that
 drops, renames or retypes is its own reviewed release under `schemas/releases/`.
 
-The Shop schema requires schema version 2. For a database stamped version 1,
-stop the node and verify a backup restore, then apply the reviewed release
-(it keeps column, index and row shapes and moves Shop relations to `shop`):
+The binary requires schema version 3. A database stamped version 1 first takes
+`schemas/releases/v2-shop-schema.sql` with all writers stopped and a backup
+restore verified. A version-2 database then takes the private-voice release:
 
 ```sh
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f schemas/releases/v2-shop-schema.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f schemas/releases/v3-private-voice-pending.sql
 catalyst schema migrate
+catalyst schema status
 ```
 
-`db::bootstrap` refuses version 1, and `migrate` alone would create an empty
-`shop` beside `marketplace`. A version change is never rollback-compatible
-(`services/catalyst/tests/schema_upgrade_from_closure_base.rs` exercises the upgrade; deployment restore and rollback evidence remains a separate acceptance gate).
+Keep every writer stopped through that sequence. The release audits pending
+wallets across caller and callee roles after normalization and refuses overlapping
+or non-normalized pending state without changing data. It drops only the two
+caller/callee uniqueness constraints and stamps version 3 in one transaction.
+The canonical object pass of `schema migrate` creates the nonunique
+`private_voice_chats_caller_idx` and `private_voice_chats_callee_idx`; verify
+both valid indexes before traffic resumes. The release does not delete, merge
+or rewrite calls or participants. A failed transaction preserves the version-2
+stamp and constraints. Both older and newer binaries refuse a mismatched stamp.
+
+Retained media can coexist with new pending calls in version 3. Once such data
+exists, reinstating the former uniqueness constraints is not a general rollback.
+Quiesce and use a reviewed forward fix or restore; never delete or deduplicate
+media calls to force those constraints back. The owned populated upgrade tests
+exercise release, migration, ledger and replay. Deployment backup, restore and
+rollback evidence remains a separate gate.
 
 Peer sync is not a backup of local state. Keep local write paths disabled until a backup restore of the node's database, blobs and credentials has been demonstrated. Record the restore and rollback evidence in the task report before enabling writes. Development and commit builds sharing a database must agree on its schema; do not reset or silently migrate shared state to fit a working tree.
 
@@ -569,3 +583,24 @@ The atomic join-and-remove-requests operation remains separate from these
 workflows. Trigger-injected regressions cover one affected member, like and
 request, plus place replacement; they do not measure concurrent cutover or
 large-community workloads.
+
+## Private voice pending and media workload
+
+`social.private_voice_chats` records call identity and both parties. Absence of
+participant rows means a pending intent; accepting inserts both participants
+atomically. Only pending creation commits a call without participants. It
+normalizes and sorts both wallets, acquires their transaction advisory locks,
+and probes pending rows in a fresh statement under explicit `READ COMMITTED`,
+including when the role default is stronger. Those locks enforce one pending
+per wallet across both roles. Pending expiry, rejection and disconnect delete
+whole pending calls; media cleanup deletes whole media calls and cascades their
+participants. No path removes the last participant while retaining its call.
+
+Live media presence still refuses a new Social call. Historical or expired media
+can coexist with a new pending intent until its own lifecycle removes it. The two
+nonunique address indexes support the caller/callee membership probes without
+constraining that history. Pending creation does not delete media. Expected
+traffic is low-rate two-wallet writes and indexed existence probes, with at most
+one pending per normalized wallet; retained media depends on its connection and
+cleanup lifecycle. Capacity and production latency are not established by the
+functional tests.

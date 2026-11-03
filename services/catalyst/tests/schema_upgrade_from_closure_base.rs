@@ -6,8 +6,8 @@
 //! `catalyst-schema.service` runs) with the row intact, every step of
 //! `schemas/migrations/` recorded, `db::bootstrap` accepting it and a second
 //! run applying nothing. The base is stamped version 1, so the reviewed
-//! release script of version 2 (`schemas/releases/v2-shop-schema.sql`, the
-//! Shop schema) runs first, by hand on a host; `migrate` refuses the base
+//! release scripts for Shop (version 2) and private-voice pending/media
+//! coexistence (version 3) run first, by hand on a host; `migrate` refuses the base
 //! before it. Before the steps existed the same call refused the upgrade at
 //! `credits.purchases.quantity, credits.purchases.source`.
 //! Needs CATALYST_TEST_DATABASE_URL (a database of its own, dropped after).
@@ -17,6 +17,10 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 const CLOSURE_BASE: &str = include_str!("fixtures/schema/closure-base-c96370f21.sql");
+const RELEASE_V3: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/releases/v3-private-voice-pending.sql"
+));
 const RELEASE_V2: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),
     "/schemas/releases/v2-shop-schema.sql"
@@ -162,6 +166,10 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         .await
         .unwrap();
     drop(again);
+    sqlx::raw_sql(RELEASE_V3)
+        .execute(pool)
+        .await
+        .expect("the v3 private-voice release applies after v2");
     let (version,): (i32,) = sqlx::query_as("SELECT version FROM meta.schema WHERE id = 1")
         .fetch_one(pool)
         .await
@@ -449,6 +457,7 @@ async fn the_origin_backfill_keeps_local_rows_and_releases_edited_mirrored_event
     .unwrap();
 
     sqlx::raw_sql(RELEASE_V2).execute(pool).await.unwrap();
+    sqlx::raw_sql(RELEASE_V3).execute(pool).await.unwrap();
     schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
         .await
         .unwrap_or_else(|e| panic!("{e}"));
@@ -634,6 +643,7 @@ async fn stamped_database_additive_pass_installs_livekit_intents_and_preserves_b
     };
     let pool = &old.pool;
     sqlx::raw_sql(RELEASE_V2).execute(pool).await.unwrap();
+    sqlx::raw_sql(RELEASE_V3).execute(pool).await.unwrap();
     schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
         .await
         .unwrap();
@@ -668,4 +678,110 @@ async fn stamped_database_additive_pass_installs_livekit_intents_and_preserves_b
     let claimed:i64=sqlx::query_scalar("WITH due AS (SELECT root_key,target_key FROM social.livekit_removal_intents WHERE next_attempt_at<=timezone('UTC',now()) AND claim_until IS NULL ORDER BY next_attempt_at,created_at,root_key,target_key FOR UPDATE SKIP LOCKED LIMIT 16), claimed AS (UPDATE social.livekit_removal_intents t SET claim_id=gen_random_uuid(),claim_until=timezone('UTC',now())+interval '60 seconds' FROM due WHERE t.root_key=due.root_key AND t.target_key=due.target_key RETURNING t.root_key) SELECT count(*) FROM claimed").fetch_one(pool).await.unwrap();
     assert_eq!(claimed, 1);
     old.drop().await;
+}
+
+async fn release_result(pool: &PgPool, sql: &str) -> Result<(), sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    let result = sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_owned()))
+        .execute(&mut *connection)
+        .await
+        .map(|_| ());
+    if result.is_err() {
+        sqlx::query("ROLLBACK").execute(&mut *connection).await?;
+    }
+    result
+}
+
+#[tokio::test]
+async fn private_voice_release_retains_rows_then_real_migrate_adds_indexes_and_replays_nothing() {
+    let Some(old) = stamped_with_the_closure_base().await else {
+        return;
+    };
+    let pool = &old.pool;
+    release_result(pool, RELEASE_V2).await.unwrap();
+    let pending = uuid::Uuid::new_v4();
+    let media = uuid::Uuid::new_v4();
+    sqlx::query("INSERT INTO social.private_voice_chats(id,caller_address,callee_address) VALUES($1,'pending-caller','pending-callee'),($2,'media-caller','media-callee')").bind(pending).bind(media).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO social.private_voice_chat_participants(call_id,address,status) VALUES($1,'media-caller','connection_interrupted'),($1,'media-callee','not_connected')").bind(media).execute(pool).await.unwrap();
+    let snapshot = "SELECT jsonb_build_object('calls',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM social.private_voice_chats c),'participants',(SELECT jsonb_agg(to_jsonb(p) ORDER BY call_id,address) FROM social.private_voice_chat_participants p))";
+    let before: serde_json::Value = sqlx::query_scalar(snapshot).fetch_one(pool).await.unwrap();
+    assert!(matches!(
+        catalyst::db::bootstrap(pool).await,
+        Err(catalyst::db::BootstrapError::Mismatch { version: 2, .. })
+    ));
+    assert!(matches!(
+        schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL).await,
+        Err(MigrateError::Incompatible { version: 2, .. })
+    ));
+    release_result(pool, RELEASE_V3).await.unwrap();
+    let after: serde_json::Value = sqlx::query_scalar(snapshot).fetch_one(pool).await.unwrap();
+    assert_eq!(
+        before, after,
+        "the release changes no call or participant value"
+    );
+    assert!(
+        release_result(pool, RELEASE_V3).await.is_err(),
+        "version guard refuses replay"
+    );
+    let constraints: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_constraint WHERE conrelid='social.private_voice_chats'::regclass AND conname IN ('private_voice_chats_caller_key','private_voice_chats_callee_key')").fetch_one(pool).await.unwrap();
+    assert_eq!(constraints, 0);
+    let applied =
+        schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+            .await
+            .unwrap();
+    assert!(!applied.is_empty());
+    let indexes: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid WHERE i.indrelid='social.private_voice_chats'::regclass AND c.relname IN ('private_voice_chats_caller_idx','private_voice_chats_callee_idx') AND NOT i.indisunique AND i.indisvalid").fetch_one(pool).await.unwrap();
+    assert_eq!(
+        indexes, 2,
+        "canonical object pass creates both address access paths"
+    );
+    catalyst::db::bootstrap(pool).await.unwrap();
+    assert!(
+        schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    let after: serde_json::Value = sqlx::query_scalar(snapshot).fetch_one(pool).await.unwrap();
+    assert_eq!(
+        before, after,
+        "migrate and replay retain every stored value"
+    );
+    let ledger: i64 = sqlx::query_scalar("SELECT count(*) FROM meta.schema_steps")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        ledger as usize,
+        schema_migrate::parse_steps(catalyst::db::MIGRATIONS_SQL).len()
+    );
+    old.drop().await;
+}
+
+#[tokio::test]
+async fn private_voice_release_refuses_overlapping_or_non_normalized_pending_without_changes() {
+    for unnormalized in [false, true] {
+        let Some(old) = stamped_with_the_closure_base().await else {
+            return;
+        };
+        let pool = &old.pool;
+        release_result(pool, RELEASE_V2).await.unwrap();
+        sqlx::query("INSERT INTO social.private_voice_chats(id,caller_address,callee_address) VALUES($1,$2,'callee'),($3,'other-caller',$4)").bind(uuid::Uuid::new_v4()).bind(if unnormalized {"MixedCaller"} else {"caller"}).bind(uuid::Uuid::new_v4()).bind(if unnormalized {"other-callee"} else {"caller"}).execute(pool).await.unwrap();
+        let result = release_result(pool, RELEASE_V3).await.unwrap_err();
+        assert!(
+            result.to_string().contains(if unnormalized {
+                "non-normalized pending"
+            } else {
+                "overlapping pending"
+            }),
+            "{result}"
+        );
+        let (version,rows,constraints):(i32,i64,i64)=sqlx::query_as("SELECT (SELECT version FROM meta.schema WHERE id=1),(SELECT count(*) FROM social.private_voice_chats),(SELECT count(*) FROM pg_constraint WHERE conrelid='social.private_voice_chats'::regclass AND conname IN ('private_voice_chats_caller_key','private_voice_chats_callee_key'))").fetch_one(pool).await.unwrap();
+        assert_eq!(
+            (version, rows, constraints),
+            (2, 2, 2),
+            "a refused release leaves the stamp, rows and constraints intact"
+        );
+        old.drop().await;
+    }
 }

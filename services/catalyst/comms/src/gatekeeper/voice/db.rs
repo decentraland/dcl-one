@@ -264,6 +264,11 @@ impl VoiceDb {
         participants.sort();
 
         let mut tx = self.pool.begin().await?;
+        // The fresh probe after waiting for a participant lock must see the
+        // previous winner even when the role default is REPEATABLE READ.
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext('private-voice:' || p)) FROM unnest($1::text[]) AS t(p)")
             .bind(&participants)
             .execute(&mut *tx)
@@ -273,7 +278,8 @@ impl VoiceDb {
              SELECT $1::uuid, $2::text, $3::text \
              WHERE NOT EXISTS ( \
                SELECT 1 FROM social.private_voice_chats \
-               WHERE caller_address = ANY($4) OR callee_address = ANY($4) \
+               WHERE (caller_address = ANY($4) OR callee_address = ANY($4)) \
+                 AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id = private_voice_chats.id) \
              ) \
              RETURNING id",
         )
@@ -404,10 +410,10 @@ impl VoiceDb {
         Ok(true)
     }
 
-    /// Opens (or re-opens) the call `call_id` between the two wallets with
-    /// both participants `not_connected`. A wallet is in at most one call
-    /// (the two UNIQUEs): any other call either wallet was in is deleted in
-    /// the same transaction and its id returned so the room is torn down.
+    /// Opens (or re-opens) this media call with both participants atomically.
+    /// Issuing credentials does not displace other pending intents or media;
+    /// the actual participant join/webhook and expiry paths own that lifecycle.
+    /// The existing return type is retained; no room is displaced here.
     pub async fn create_private_call(
         &self,
         call_id: Uuid,
@@ -416,15 +422,6 @@ impl VoiceDb {
     ) -> Result<Vec<Uuid>, sqlx::Error> {
         let now = now_utc();
         let mut txn = self.pool.begin().await?;
-        let displaced: Vec<(Uuid,)> = sqlx::query_as(
-            "DELETE FROM social.private_voice_chats \
-             WHERE id <> $1 AND (caller_address IN ($2, $3) OR callee_address IN ($2, $3)) RETURNING id",
-        )
-        .bind(call_id)
-        .bind(caller)
-        .bind(callee)
-        .fetch_all(&mut *txn)
-        .await?;
         sqlx::query(
             "INSERT INTO social.private_voice_chats (id, caller_address, callee_address, created_at) VALUES ($1, $2, $3, $4) \
              ON CONFLICT (id) DO UPDATE SET caller_address = EXCLUDED.caller_address, callee_address = EXCLUDED.callee_address, created_at = EXCLUDED.created_at",
@@ -447,7 +444,7 @@ impl VoiceDb {
         .execute(&mut *txn)
         .await?;
         txn.commit().await?;
-        Ok(displaced.into_iter().map(|(id,)| id).collect())
+        Ok(Vec::new())
     }
 
     pub async fn participants_in(
@@ -1045,6 +1042,90 @@ mod tests {
             .expect("busy start must preserve the stale pending call");
         assert_eq!(restored.caller_address, caller);
         assert_eq!(restored.callee_address, callee);
+    }
+
+    #[tokio::test]
+    async fn pending_starts_use_fresh_snapshots_with_repeatable_read_role_defaults() {
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let name = format!("voice-isolation-{}", Uuid::new_v4().simple());
+        let options = (*pool.connect_options()).clone().application_name(&name);
+        let writers = sqlx::postgres::PgPoolOptions::new().max_connections(2)
+            .after_connect(|connection, _| Box::pin(async move {
+                sqlx::query("SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+                    .execute(connection).await?;
+                Ok(())
+            })).connect_with(options).await.unwrap();
+        let isolation: String = sqlx::query_scalar("SHOW default_transaction_isolation")
+            .fetch_one(&writers)
+            .await
+            .unwrap();
+        assert_eq!(isolation, "repeatable read");
+        let wallet = |prefix: &str| format!("0x{prefix}{}000000", Uuid::new_v4().simple());
+        let (a, b, c, d) = (wallet("01"), wallet("02"), wallet("03"), wallet("04"));
+        let db = VoiceDb::new(pool.clone(), VoiceDbConfig::default());
+        let old = Uuid::new_v4();
+        db.create_private_call(
+            old,
+            &Address::parse(&a).unwrap(),
+            &Address::parse(&d).unwrap(),
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE social.private_voice_chat_participants SET joined_at=joined_at-interval '1 day' WHERE call_id=$1").bind(old).execute(&pool).await.unwrap();
+        let mut blocker = pool.begin().await.unwrap();
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('private-voice:' || $1))")
+            .bind(&a)
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+        let first = VoiceDb::new(writers.clone(), VoiceDbConfig::default());
+        let second = first.clone();
+        let (upper_a, lower_a, first_b, second_c) =
+            (a.to_uppercase(), a.clone(), b.clone(), c.clone());
+        let first = tokio::spawn(async move {
+            first
+                .create_pending_private_call(&upper_a, &first_b, 60_000)
+                .await
+        });
+        let second = tokio::spawn(async move {
+            second
+                .create_pending_private_call(&second_c, &lower_a, 60_000)
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let waiting:i64 = sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE application_name=$1 AND wait_event='advisory'").bind(&name).fetch_one(&pool).await.unwrap();
+                if waiting == 2 { break; }
+                tokio::task::yield_now().await;
+            }
+        }).await.expect("both role-default REPEATABLE READ writers must wait behind the same participant lock");
+        blocker.commit().await.unwrap();
+        let (first, second) = (
+            first.await.unwrap().unwrap(),
+            second.await.unwrap().unwrap(),
+        );
+        assert_ne!(
+            first.started.is_some(),
+            second.started.is_some(),
+            "one pending wins across caller/callee roles and case"
+        );
+        let count:i64=sqlx::query_scalar("SELECT count(*) FROM social.private_voice_chats c WHERE (caller_address=$1 OR callee_address=$1) AND NOT EXISTS(SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=c.id)").bind(&a).fetch_one(&pool).await.unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(
+            db.participants_in(old).await.unwrap().len(),
+            2,
+            "the pending winner preserves historical media"
+        );
+        sqlx::query(
+            "DELETE FROM social.private_voice_chats WHERE caller_address=$1 OR callee_address=$1",
+        )
+        .bind(&a)
+        .execute(&pool)
+        .await
+        .unwrap();
+        writers.close().await;
     }
 
     #[test]

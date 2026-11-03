@@ -239,7 +239,7 @@ async fn private_voice_chat_room_credentials(
             serde_json::json!({ "connection_url": connection_url }),
         );
     }
-    let displaced = if pending_only {
+    if pending_only {
         if !state
             .voice_db
             .accept_pending_private_call(call_id, caller, callee)
@@ -247,16 +247,11 @@ async fn private_voice_chat_room_credentials(
         {
             return Err(ApiError::not_found("Private voice chat intent not found"));
         }
-        Vec::new()
     } else {
         state
             .voice_db
             .create_private_call(call_id, caller, callee)
-            .await?
-    };
-    if !displaced.is_empty() {
-        let rooms: Vec<String> = displaced.iter().map(private_voice_chat_room_name).collect();
-        delete_livekit_rooms(state, &rooms, "displaced private voice room").await;
+            .await?;
     }
     Ok(out)
 }

@@ -7,9 +7,9 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use thiserror::Error;
 
 pub const SCHEMA_IDENTITY: &str = "catalyst";
-/// 2 (2026-09-26): schema `marketplace` is `shop` and the four checkout ledgers
-/// left `economy` (DATABASE.md, "Bootstrap, schema versions and local writes"); 1: the closure layout.
-pub const SCHEMA_VERSION: i32 = 2;
+/// Version 3 separates pending-call uniqueness from retained media-room history.
+/// Databases stamped version 2 need the reviewed private-voice release before startup.
+pub const SCHEMA_VERSION: i32 = 3;
 /// `schema/*.sql` rendered in name order by build.rs; `catalyst schema print`
 /// writes the same text.
 pub const SCHEMA_SQL: &str = include_str!(concat!(env!("OUT_DIR"), "/schema.sql"));

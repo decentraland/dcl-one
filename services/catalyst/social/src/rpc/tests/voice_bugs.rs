@@ -18,6 +18,7 @@ use crate::http::Outbound;
 struct Rig {
     db: Db,
     ctx: Context,
+    runtime: Arc<CommsState>,
     deleted_rooms: Arc<StdMutex<Vec<String>>>,
     /// Set, the stub answers every `DeleteRoom` with a 500 (still recorded).
     refuse_deletes: Arc<AtomicBool>,
@@ -67,6 +68,7 @@ impl Rig {
         Some(Self {
             db,
             ctx,
+            runtime,
             deleted_rooms,
             refuse_deletes,
             livekit,
@@ -233,11 +235,10 @@ async fn an_accepted_call_is_never_swept_as_expired() {
     assert!(!callee_heard.contains(&expired), "{callee_heard:?}");
 }
 
-/// An accepted call older than the pending TTL keeps both parties busy: a new
-/// call to one of them neither reclaims it as expired nor starts, as
-/// upstream's busy check intends for a party in a live call.
+/// An accepted call older than the pending TTL remains unavailable while its
+/// media presence is live. It is no longer part of the pending busy relation.
 #[tokio::test]
-async fn an_old_accepted_call_keeps_its_parties_busy() {
+async fn an_old_accepted_call_with_live_presence_refuses_new_calls() {
     let Some(rig) = Rig::new().await else {
         return;
     };
@@ -245,16 +246,15 @@ async fn an_old_accepted_call_keeps_its_parties_busy() {
     let (caller, callee, other) = (addr("vb3a"), addr("vb3b"), addr("vb3c"));
     let call = rig.accepted_call(&caller, &callee).await;
     backdate(&rig.db, call, EXPIRATION_MS + 1_000).await;
-    let outcome = rig
-        .ctx
-        .voice()
-        .create_pending_private_call(&other, &callee, EXPIRATION_MS)
-        .await;
+    let outcome =
+        crate::rpc::service::ops::start_private_voice_chat(&rig.ctx, &other, &callee).await;
     let kept = call_exists(&rig.db, call).await;
     rig.finish(&[&caller, &callee, &other]).await;
-    let outcome = outcome.unwrap();
-    assert!(outcome.started.is_none(), "{outcome:?}");
-    assert!(kept, "the accepted call was reclaimed");
+    assert_eq!(
+        outcome.unwrap_err().message(),
+        format!("One of the users is already in a voice chat: {callee}")
+    );
+    assert!(kept, "a refused start preserves live media");
 }
 
 /// An accepted call older than the pending TTL does not arm the sweep: the
@@ -396,4 +396,342 @@ async fn accept_and_reject_race_has_one_winner_without_resurrection() {
             .unwrap();
     }
     rig.finish(&[&caller, &callee]).await;
+}
+
+/// Execute the source's pending and media-presence distinction through the
+/// real target comms runtime and SQL, before its periodic media cleanup.
+#[tokio::test]
+async fn new_pending_calls_match_source_while_historical_media_is_retained() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/private-lifecycle-source-cases.json"
+    )))
+    .unwrap();
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let caller = addr("lifecycle-caller");
+    let callee = addr("lifecycle-callee");
+    let cases = fixture["entries"].as_array().unwrap();
+    assert_eq!(cases.len(), 6);
+    for case in cases {
+        let old = rig.accepted_call(&caller, &callee).await;
+        let status = case["status"].as_str().unwrap();
+        let stale = case["stale"].as_bool().unwrap();
+        sqlx::query("UPDATE social.private_voice_chat_participants SET status=$2,joined_at=CURRENT_TIMESTAMP-($3::bigint*interval '1 second'),status_updated_at=CURRENT_TIMESTAMP-($3::bigint*interval '1 second') WHERE call_id=$1")
+            .bind(old).bind(status).bind(if stale { 3600_i64 } else { 0 }).execute(rig.db.pool()).await.unwrap();
+        let pre = rig
+            .ctx
+            .db()
+            .private_voice_preflight(
+                &caller,
+                &callee,
+                EXPIRATION_MS,
+                rig.ctx.voice().presence_config(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(pre.caller_in_voice, case["source_presence"], "{case}");
+        assert!(
+            !pre.busy,
+            "accepted media is absent from the source pending relation"
+        );
+        let result =
+            crate::rpc::service::ops::start_private_voice_chat(&rig.ctx, &caller, &callee).await;
+        assert_eq!(result.is_ok(), case["started"], "{case}: {result:?}");
+        if let Err(error) = result {
+            let message = error
+                .message()
+                .replace(&callee, "0x2222222222222222222222222222222222222222");
+            assert_eq!(message, case["error"], "{case}");
+        }
+        let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM social.private_voice_chats c WHERE caller_address=$1 AND NOT EXISTS(SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=c.id)").bind(&caller).fetch_one(rig.db.pool()).await.unwrap();
+        let media: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.private_voice_chat_participants WHERE call_id=$1",
+        )
+        .bind(old)
+        .fetch_one(rig.db.pool())
+        .await
+        .unwrap();
+        assert_eq!(pending, case["pending_rows"], "{case}");
+        assert_eq!(media, case["media_rows"], "{case}");
+        assert!(
+            call_exists(&rig.db, old).await,
+            "start must preserve historical media: {case}"
+        );
+        assert!(
+            !rig.room_deleted(old),
+            "start must not delete media: {case}"
+        );
+        sqlx::query(
+            "DELETE FROM social.private_voice_chats WHERE caller_address=$1 OR callee_address=$1",
+        )
+        .bind(&caller)
+        .execute(rig.db.pool())
+        .await
+        .unwrap();
+    }
+    rig.finish(&[&caller, &callee]).await;
+}
+
+#[tokio::test]
+async fn issuing_media_credentials_preserves_pending_and_prior_media_until_join() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/private-lifecycle-source-cases.json"
+    )))
+    .unwrap();
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let (a, b, c) = (addr("writer-a"), addr("writer-b"), addr("writer-c"));
+    let pending = crate::rpc::service::ops::start_private_voice_chat(&rig.ctx, &a, &b)
+        .await
+        .unwrap();
+    let first = Uuid::new_v4();
+    let second = Uuid::new_v4();
+    for (position, id, parties) in [
+        (0, first, [c.clone(), a.clone()]),
+        (1, second, [a.clone(), b.clone()]),
+    ] {
+        let addresses =
+            parties.map(|address| crate::shared::identity::Address::parse(&address).unwrap());
+        let credentials = gatekeeper::voice::get_private_voice_chat_room_credentials(
+            &rig.runtime,
+            &id.to_string(),
+            &addresses,
+        )
+        .await
+        .unwrap();
+        assert_eq!(credentials.len(), 2);
+        let pending_retained = rig
+            .ctx
+            .db()
+            .get_private_voice_chat(pending)
+            .await
+            .unwrap()
+            .is_some();
+        let expected = &fixture["writerSequences"][position];
+        assert_eq!(pending_retained, expected["pending_retained"], "{expected}");
+        let media_rows: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.private_voice_chat_participants WHERE call_id=ANY($1)",
+        )
+        .bind(vec![first, second])
+        .fetch_one(rig.db.pool())
+        .await
+        .unwrap();
+        assert_eq!(media_rows, expected["media_rows"], "{expected}");
+        assert!(
+            rig.deleted_rooms.lock().unwrap().is_empty(),
+            "issuing credentials deletes no media room"
+        );
+        if position == 0 {
+            gatekeeper::voice::handle_private_participant_joined(&rig.runtime, &a, first)
+                .await
+                .unwrap();
+        }
+    }
+    // The actual join, not the earlier credential issuance, displaces the
+    // user's previously connected media room through the existing lifecycle.
+    gatekeeper::voice::handle_private_participant_joined(&rig.runtime, &a, second)
+        .await
+        .unwrap();
+    assert!(rig.room_deleted(first));
+    assert!(!rig.room_deleted(second));
+    assert!(
+        call_exists(&rig.db, pending).await,
+        "media join preserves the independently pending intent"
+    );
+    let response = rig.end(&a, pending).await;
+    assert!(matches!(
+        response,
+        Some(end_private_voice_chat_response::Response::Ok(_))
+    ));
+    assert!(
+        call_exists(&rig.db, first).await && call_exists(&rig.db, second).await,
+        "ending a pending call does not select either media call"
+    );
+    let response = rig.end(&a, second).await;
+    assert!(matches!(
+        response,
+        Some(end_private_voice_chat_response::Response::Ok(_))
+    ));
+    assert!(!call_exists(&rig.db, second).await);
+    assert!(
+        call_exists(&rig.db, first).await,
+        "explicit media end selects its exact call ID"
+    );
+    rig.finish(&[&a, &b, &c]).await;
+}
+
+#[tokio::test]
+async fn concurrent_media_writers_preserve_both_rooms_and_the_pending_call() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let (a, b, c) = (
+        addr("media-race-a"),
+        addr("media-race-b"),
+        addr("media-race-c"),
+    );
+    let pending = crate::rpc::service::ops::start_private_voice_chat(&rig.ctx, &a, &b)
+        .await
+        .unwrap();
+    let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+    let addresses = |parties: [String; 2]| {
+        parties.map(|party| crate::shared::identity::Address::parse(&party).unwrap())
+    };
+    let one = addresses([c.clone(), a.to_uppercase()]);
+    let two = addresses([a.clone(), b.to_uppercase()]);
+    let first_id = first.to_string();
+    let second_id = second.to_string();
+    let (one, two) = tokio::join!(
+        gatekeeper::voice::get_private_voice_chat_room_credentials(&rig.runtime, &first_id, &one),
+        gatekeeper::voice::get_private_voice_chat_room_credentials(&rig.runtime, &second_id, &two)
+    );
+    assert_eq!(one.unwrap().len(), 2);
+    assert_eq!(two.unwrap().len(), 2);
+    assert!(
+        rig.ctx
+            .db()
+            .get_private_voice_chat(pending)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.private_voice_chat_participants WHERE call_id=ANY($1)",
+    )
+    .bind(vec![first, second])
+    .fetch_one(rig.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        rows, 4,
+        "source independent media writers retain both rooms"
+    );
+    assert!(rig.deleted_rooms.lock().unwrap().is_empty());
+    rig.finish(&[&a, &b, &c]).await;
+}
+
+#[tokio::test]
+async fn starts_acceptance_media_expiry_and_explicit_ends_keep_their_call_identity() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let db = VoiceDb::new(rig.db.pool().clone(), Default::default());
+    for reversed in [false, true] {
+        for _ in 0..8 {
+            let (a, b, c, d) = (
+                addr("transition-a"),
+                addr("transition-b"),
+                addr("transition-c"),
+                addr("transition-d"),
+            );
+            let (caller, callee) = if reversed { (&b, &a) } else { (&a, &b) };
+            let original = db
+                .create_pending_private_call(caller, callee, EXPIRATION_MS)
+                .await
+                .unwrap()
+                .started
+                .unwrap();
+            backdate(&rig.db, original, EXPIRATION_MS + 1_000).await;
+            let caller_address = crate::shared::identity::Address::parse(caller).unwrap();
+            let callee_address = crate::shared::identity::Address::parse(callee).unwrap();
+            let media = Uuid::new_v4();
+            let media_caller = crate::shared::identity::Address::parse(&d).unwrap();
+            let media_callee = crate::shared::identity::Address::parse(&a.to_uppercase()).unwrap();
+            let next_caller = if reversed {
+                a.to_uppercase()
+            } else {
+                c.to_uppercase()
+            };
+            let next_callee = if reversed { c.clone() } else { a.clone() };
+            let barrier = tokio::sync::Barrier::new(4);
+            let (accepted, expired, next, created) = tokio::join!(
+                async {
+                    barrier.wait().await;
+                    db.accept_pending_private_call(original, &caller_address, &callee_address)
+                        .await
+                },
+                async {
+                    barrier.wait().await;
+                    db.expire_pending_private_calls(EXPIRATION_MS, 64).await
+                },
+                async {
+                    barrier.wait().await;
+                    db.create_pending_private_call(&next_caller, &next_callee, EXPIRATION_MS)
+                        .await
+                },
+                async {
+                    barrier.wait().await;
+                    db.create_private_call(media, &media_caller, &media_callee)
+                        .await
+                }
+            );
+            let (accepted, expired, next) = (accepted.unwrap(), expired.unwrap(), next.unwrap());
+            assert!(
+                created.unwrap().is_empty(),
+                "issuing credentials displaces no call"
+            );
+            assert_eq!(db.participants_in(media).await.unwrap().len(), 2);
+            if accepted {
+                assert!(!expired.iter().any(|call| call.id == original));
+                assert_eq!(db.participants_in(original).await.unwrap().len(), 2);
+            } else {
+                assert!(expired.iter().any(|call| call.id == original));
+                assert!(
+                    !call_exists(&rig.db, original).await,
+                    "late acceptance must not resurrect an expired intent"
+                );
+            }
+            let pending:i64=sqlx::query_scalar("SELECT count(*) FROM social.private_voice_chats c WHERE (caller_address=$1 OR callee_address=$1) AND NOT EXISTS(SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=c.id)").bind(&a).fetch_one(rig.db.pool()).await.unwrap();
+            assert_eq!(
+                pending,
+                i64::from(next.started.is_some()),
+                "at most one pending survives across both roles"
+            );
+            if let Some(next) = next.started {
+                let ended = db
+                    .finish_pending_private_call(PendingPrivateCall::Ended {
+                        id: next,
+                        party: a.to_uppercase(),
+                    })
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(ended.id, next);
+                assert_eq!(
+                    db.participants_in(media).await.unwrap().len(),
+                    2,
+                    "ending the pending selects no media room"
+                );
+            }
+            if accepted {
+                let ended = db
+                    .delete_private_call_if_member(Some(original), &caller_address)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    ended.call.id, original,
+                    "explicit media end selects its exact call ID"
+                );
+                assert_eq!(db.participants_in(media).await.unwrap().len(), 2);
+            }
+            sqlx::query("DELETE FROM social.private_voice_chats WHERE id=$1")
+                .bind(media)
+                .execute(rig.db.pool())
+                .await
+                .unwrap();
+        }
+    }
+    assert!(
+        rig.deleted_rooms.lock().unwrap().is_empty(),
+        "SQL transitions do not invent media teardown"
+    );
+    rig.finish(&[]).await;
 }

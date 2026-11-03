@@ -162,3 +162,27 @@ and header-only variants all reached the independent multipart 400. Thumbnail
 limits were checked separately while the total stayed below 1 MiB. This replay
 does not measure RSS, concurrent upload capacity, throughput, or unread chunked
 connection-close timing. The latter remains a separate source/target audit.
+
+## Private voice pending and retained media
+
+A 2026-11-03 owned PostgreSQL fixture contained 10,512 media calls and 21,024
+participants, including 512 historical calls for one wallet. Each media
+participant was past its initial-connection TTL; no pending calls remained.
+The target INSERT statement was extracted from the Rust write path. Fifty
+local starts per wallet measured BEGIN, explicit READ COMMITTED, sorted
+participant advisory locks, INSERT and COMMIT; cleanup was excluded.
+
+| Wallet history | Median start | Local p95 | Final INSERT plan execution |
+| --- | ---: | ---: | ---: |
+| One retained call | 0.419 ms | 0.663 ms | 0.026 ms |
+| 512 retained calls | 1.798 ms | 2.367 ms | 1.755 ms |
+
+Both plans used the nonunique caller/callee indexes. The small history used the
+participant primary key; the skewed case used a hash anti-join against the
+participant set. Repeated insert/delete cleanup left dead index entries during
+the sample. Rust compilation ran concurrently and cache state was uncontrolled.
+These samples establish the access paths and local command cost; they do not
+compare source performance or establish production capacity, contention latency,
+cold-cache behavior or a service-level bound. Explicit isolation adds one SQL
+command to pending creation so waiting writers observe the prior winner even
+under a role whose default isolation is REPEATABLE READ.
