@@ -1220,6 +1220,21 @@ async fn a_body_past_the_upload_budget_is_shed_with_retry_after() {
 }
 
 #[tokio::test]
+async fn repeated_field_names_count_toward_the_field_limit() {
+    let node = deploying_node("field-repeats", Settings::for_tests()).await;
+    let mut repeated = entity_form();
+    repeated.extend((0..30).map(|_| ("extra".to_string(), "x".to_string())));
+    let (status, _, body) = call(&node.router(), form_request("203.0.113.1", &repeated)).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"error": "Too many form fields in the request. The maximum allowed is 32."})
+        )
+    );
+}
+
+#[tokio::test]
 async fn forms_refused_for_their_field_limits_count_toward_the_quota() {
     let settings = Settings {
         post_entities_daily_quota_max: 2,

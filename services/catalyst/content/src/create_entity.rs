@@ -160,6 +160,7 @@ async fn read_form(
 ) -> AppResult<(BTreeMap<String, String>, Vec<Bytes>)> {
     let mut fields: BTreeMap<String, String> = BTreeMap::new();
     let mut files: Vec<Bytes> = Vec::new();
+    let mut field_count = 0usize;
 
     while let Some(mut field) = multipart
         .next_field()
@@ -189,11 +190,13 @@ async fn read_form(
             }
             files.push(buf.freeze());
         } else {
-            if fields.len() >= max_fields {
+            // Repeated names count too.
+            if field_count >= max_fields {
                 return Err(invalid(format!(
                     "Too many form fields in the request. The maximum allowed is {max_fields}."
                 )));
             }
+            field_count += 1;
             let mut buf = Vec::new();
             while let Some(chunk) = field
                 .chunk()
