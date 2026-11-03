@@ -271,7 +271,7 @@ async fn drive(
         // ENet would give up on its own only after up to 30 s. The loop wakes at least every
         // `MAINTENANCE_INTERVAL`, so this is checked about as often.
         if !connected && connecting_since.elapsed() >= CONNECT_TIMEOUT {
-            return fail(channels, "connect timed out".to_owned());
+            return abandon(&mut host, peer, channels, "connect timed out".to_owned());
         }
 
         // Block until there's work: an outbound frame to send, an inbound datagram to read, or the
@@ -323,7 +323,9 @@ async fn drive(
                     let bytes = packet.data().to_vec();
                     let reliable = channel_id == CHANNEL_RELIABLE;
                     if backlog.deliver(&channels.inbound, bytes, reliable).is_err() {
-                        return fail(
+                        return abandon(
+                            &mut host,
+                            peer,
                             channels,
                             format!("inbound backlog over {MAX_HELD_RELIABLE} messages"),
                         );
@@ -332,7 +334,14 @@ async fn drive(
                 // This host keeps receive_policy=None; preserve exhaustive handling of vendor events.
                 Ok(Some(enet::Event::ReceiveLimitExceeded { .. })) => {}
                 Ok(None) => break,
-                Err(err) => return fail(channels, format!("enet service error: {err}")),
+                Err(err) => {
+                    return abandon(
+                        &mut host,
+                        peer,
+                        channels,
+                        format!("enet service error: {err}"),
+                    )
+                }
             }
         }
     }
@@ -379,6 +388,20 @@ fn queue_frame(host: &mut enet::Host<PulseSocket>, peer: enet::PeerID, frame: &P
 fn fail(channels: &mut PulseDriverChannels, message: String) {
     bevy::log::warn!("pulse: {message}");
     let _ = channels.status.try_send(PulseStatus::Failed(message));
+}
+
+/// [`fail`], for a connection `host.connect` has started: the server is told at once, with
+/// `NONE` (0), as unity-explorer tells it when its connect times out (`ForceDisconnectAsync` in
+/// `ENetTransport.cs`). Otherwise it would hold the peer until its own timeout noticed.
+fn abandon<S: enet::Socket>(
+    host: &mut enet::Host<S>,
+    peer: enet::PeerID,
+    channels: &mut PulseDriverChannels,
+    message: String,
+) {
+    // Flushes the notice out before it resets the peer, so the host can go right after.
+    host.peer_mut(peer).disconnect_now(0);
+    fail(channels, message);
 }
 
 #[cfg(test)]

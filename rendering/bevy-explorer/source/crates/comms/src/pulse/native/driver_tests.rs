@@ -1,6 +1,7 @@
 use tokio::sync::mpsc::error::TryRecvError;
 
 use super::*;
+use crate::pulse::transport::pulse_channels;
 
 fn address(text: &str) -> SocketAddr {
     text.parse().unwrap()
@@ -70,4 +71,53 @@ fn holding_past_the_cap_is_an_error() {
     backlog.deliver(&tx, vec![2], true).unwrap();
 
     assert_eq!(backlog.deliver(&tx, vec![3], true), Err(BacklogFull));
+}
+
+/// A host on a loopback socket of its own, with the driver's settings.
+fn loopback_host() -> enet::Host<std::net::UdpSocket> {
+    enet::Host::new(
+        std::net::UdpSocket::bind("127.0.0.1:0").unwrap(),
+        enet::HostSettings {
+            peer_limit: 1,
+            channel_limit: CHANNEL_COUNT,
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+
+/// A driver that gives up on a connection tells the server at once, as unity-explorer does on a
+/// connect timeout. Otherwise the server holds the peer until its own timeout notices, which takes
+/// ENet at least 5 s.
+#[test]
+fn abandoning_a_connection_tells_the_server_at_once() {
+    let mut server = loopback_host();
+    let mut client = loopback_host();
+    let address = server.socket().local_addr().unwrap();
+    let peer = client.connect(address, CHANNEL_COUNT, 0).unwrap().id();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let (mut client_up, mut server_up) = (false, false);
+    while !(client_up && server_up) {
+        assert!(Instant::now() < deadline, "the connection never came up");
+        client_up |= matches!(client.service(), Ok(Some(enet::Event::Connect { .. })));
+        server_up |= matches!(server.service(), Ok(Some(enet::Event::Connect { .. })));
+        thread::sleep(Duration::from_millis(1));
+    }
+
+    let (mut link, mut channels) = pulse_channels(1);
+    abandon(&mut client, peer, &mut channels, "gave up".to_owned());
+
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let reason = loop {
+        assert!(Instant::now() < deadline, "the server was not told");
+        if let Ok(Some(enet::Event::Disconnect { data, .. })) = server.service() {
+            break data;
+        }
+        thread::sleep(Duration::from_millis(1));
+    };
+    assert_eq!(PulseDisconnect::from_code(reason), PulseDisconnect::None);
+    assert!(matches!(
+        link.status.try_recv(),
+        Ok(PulseStatus::Failed(message)) if message == "gave up"
+    ));
 }
