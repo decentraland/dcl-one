@@ -17,6 +17,8 @@
 //!   answer for that block: undecidable).
 //! - items, as the reference validator: no thumbnail check, and pointers
 //!   naming one collections-v1 asset by address and by name count as one.
+//! - a timestamp more than `REQUEST_TTL_FORWARDS_MS` ahead of this node's
+//!   clock is undecided until the clock catches up.
 //! - access: every check asks the chain at the entity timestamp's block, then
 //!   five minutes before it ([`super::onchain`]), as for a local deploy; item
 //!   ownership leaves out the escrow lease overlay, which knows only the
@@ -262,6 +264,15 @@ pub async fn validate_synced(
 ) -> Result<ChainVerdict, Vec<ValidationError>> {
     let entity = entity_parser::parse_entity_from_bytes(entity_bytes, entity_id)
         .map_err(|e| vec![ValidationError::Rejected(e.to_string())])?;
+    // Judged at the chain head until the clock catches up: retried, not decided now.
+    let latest = chrono::Utc::now().timestamp_millis()
+        + crate::write_deployer::REQUEST_TTL_FORWARDS_MS;
+    if entity.timestamp > latest {
+        return Err(vec![ValidationError::Unavailable(format!(
+            "The entity timestamp {} is too far in the future",
+            entity.timestamp
+        ))]);
+    }
     let files = HashMap::from([(entity_id.to_string(), entity_bytes.to_vec())]);
     let synced = Synced {
         sources,
@@ -462,6 +473,39 @@ mod tests {
             "no block yet: a refusal"
         );
         assert_eq!(asks.0.lock().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    #[tokio::test]
+    async fn an_entity_from_the_future_is_undecided_until_the_clock_catches_up() {
+        let (_, _, _, sources, tmp) = wearable(&[HAT_BY_NAME]).await;
+        let at = |timestamp: i64| {
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "version": "v3", "type": "wearable", "pointers": [HAT_BY_NAME],
+                "timestamp": timestamp, "content": [],
+                "metadata": { "data": { "representations": [] } }
+            }))
+            .unwrap();
+            let id = crate::auth::hash_bytes_v1(&bytes);
+            (bytes, id)
+        };
+        let now = chrono::Utc::now().timestamp_millis();
+
+        let (bytes, id) = at(now + 2 * crate::write_deployer::REQUEST_TTL_FORWARDS_MS);
+        let chain = crate::sync_test_support::signed_chain(&id).await;
+        let errors = validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&errors[..], [ValidationError::Unavailable(m)] if m.contains("too far in the future")),
+            "{errors:?}"
+        );
+
+        let (bytes, id) = at(now + 60_000);
+        let chain = crate::sync_test_support::signed_chain(&id).await;
+        validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched)
+            .await
+            .expect("inside the clock skew");
         let _ = std::fs::remove_dir_all(tmp);
     }
 
