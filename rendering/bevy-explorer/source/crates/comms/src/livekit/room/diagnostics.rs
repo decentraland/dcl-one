@@ -51,7 +51,7 @@ pub(super) fn register(app: &mut App) {
         if scope == "scene" {
             fields.extend([
                 ("Scene ID", "room.scene"),
-                ("Associated base parcel", "room.baseParcel"),
+                ("Associated base parcel (X / Y)", "room.baseParcelPosition"),
             ]);
         }
         let pause = format!("/room_connection {scope} disconnect");
@@ -284,17 +284,21 @@ fn room_diagnostics(
                     .pointer("/scene/base")?
                     .as_str()
             });
+            let base_position = base.and_then(|base| {
+                let (x, y) = base.split_once(',')?;
+                Some([x.trim().parse::<i32>().ok()?, y.trim().parse::<i32>().ok()?])
+            });
             result["room"] = json!({"state": if paused { "paused" } else { RoomState::from_markers(connected, reconnecting, disconnected, failed).name() },
                 "name": room.map(|r| r.name().to_string()), "sid": sid, "scene": scene.map(|s| s.0.as_str()),
-                "baseParcel": base, "attempts": livekit.retries,
+                "baseParcel": base, "baseParcelPosition": base_position, "attempts": livekit.retries,
                 "remoteCount": remote_count, "selfSid": local_sid, "quality": local_quality});
             result["unavailable"] = if connected {
                 json!({"room.quality": "Waiting for LiveKit to report connection quality",
-                    "room.baseParcel": "Scene metadata has no loaded base parcel",
+                    "room.baseParcelPosition": "Scene metadata has no valid base parcel coordinates",
                     "room.sid": "LiveKit has not reported a room SID",
                     "room.selfSid": "Waiting for the local participant"})
             } else {
-                json!({"room": "Room is not connected", "room.baseParcel": "Scene metadata has no loaded base parcel"})
+                json!({"room": "Room is not connected", "room.baseParcelPosition": "Scene metadata has no valid base parcel coordinates"})
             };
             break;
         }
