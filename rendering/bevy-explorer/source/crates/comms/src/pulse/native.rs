@@ -7,7 +7,8 @@
 //! ENet's own timers (pings, reliable retransmits) keep ticking when otherwise idle. After any
 //! wake it drains outbound onto the peer and services the host. The host's socket is a Tokio
 //! [`UdpSocket`] driven non-blocking via `try_recv_from` / `try_send_to`. The thread never waits
-//! on the protocol layer: what a full inbound queue cannot take is held in a [`Backlog`].
+//! on the protocol layer: a reliable message a full inbound queue cannot take is held in a
+//! [`Backlog`], and an unreliable one is dropped.
 //!
 //! The host is a (locally patched) [`rusty_enet`] — a pure-Rust port of ENet retargeted to the
 //! nxrighthere/SoftwareGuy ENet-CSharp "modified protocol" fork the server runs (the patch is the
@@ -372,8 +373,9 @@ fn queue_frame(host: &mut enet::Host<PulseSocket>, peer: enet::PeerID, frame: &P
     }
 }
 
-/// Report a never-established failure (DNS/socket/connect). Always transient — the protocol layer
-/// retries.
+/// Report a failure the driver detects itself, before or after the connection comes up: setup,
+/// DNS, connect, the inbound backlog over its cap, or servicing ENet. Always retryable — the
+/// protocol layer reconnects.
 fn fail(channels: &mut PulseDriverChannels, message: String) {
     bevy::log::warn!("pulse: {message}");
     let _ = channels.status.try_send(PulseStatus::Failed(message));

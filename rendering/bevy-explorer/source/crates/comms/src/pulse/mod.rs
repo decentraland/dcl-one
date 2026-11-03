@@ -402,7 +402,7 @@ pub struct PulseDecoder {
     joins: u64,
     /// Subjects with a `Resync` sent that nothing has answered yet. A gap in a subject's deltas
     /// shows in every one after it, so without this each would ask again. A full state, a delta
-    /// that applies, a join, a leave and `reset` each end the wait.
+    /// that applies, a join, a leave and `reset` each end the wait, as does `resync_not_sent`.
     pending_resync: HashSet<u32>,
     /// Server ticks are `u32` milliseconds since the Pulse server started, so they roll over after
     /// ~49.7 days of server uptime. The newest raw tick seen, and the number of milliseconds to
@@ -834,6 +834,12 @@ impl PulseDecoder {
             teleport: false,
             timestamp: self.tick_secs(delta.server_tick),
         }]
+    }
+
+    /// The `Resync` for `subject_id` never left (no link, or a full queue), so nothing will answer
+    /// it: the next gap may ask again.
+    pub fn resync_not_sent(&mut self, subject_id: u32) {
+        self.pending_resync.remove(&subject_id);
     }
 
     /// A `Resync` for `subject_id`, unless one is already waiting on its answer.

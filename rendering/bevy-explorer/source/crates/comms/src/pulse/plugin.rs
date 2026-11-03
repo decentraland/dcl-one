@@ -13,10 +13,11 @@
 //! same-realm peers.
 //!
 //! Reconnection model: a driver runs exactly one connection attempt and, when that attempt ends,
-//! drops its channel ends. The protocol layer treats that *pipe close* — not the advisory
-//! `Disconnected(reason)` message — as the authoritative "transport is gone" signal, and rebuilds
-//! the whole driver/link from `Down` (unless the last reason was terminal, in which case it parks in
-//! `Dead`). Initial connect is just the first such build.
+//! drops its channel ends. Its last status (the server's `Disconnected(reason)`, or a failure of its
+//! own), or failing that the pipe close, says the transport is gone; the protocol layer also closes
+//! a connection itself when its one handshake fails. Either way it rebuilds the whole driver/link
+//! from `Down` when the [`ReconnectPolicy`] says, or parks in `Dead` for a terminal reason. Initial
+//! connect is just the first such build.
 
 use std::sync::{Arc, OnceLock};
 
@@ -37,6 +38,7 @@ use prost::Message as _;
 use tokio::sync::mpsc;
 use wallet::Wallet;
 
+use super::reconnect::{Failure, Next, ReconnectPolicy};
 use super::transport::{
     self, FrameKind, PulseDriverHandle, PulseFrame, PulseLink, PulseReliability, PulseStatus,
     PulseTransportConfig,
@@ -68,17 +70,17 @@ pub struct PulseConfig {
 
 /// The Pulse connection's lifecycle — a single linear progression with two off-ramps (`Down` to
 /// rebuild, `Dead` to give up). The driver/link are live from `Connecting` through `Established`;
-/// `Down` and `Dead` have no driver. There are no side-flags: the transport-up signal *is* the
-/// `Connecting → Idle` transition, and a disconnect's reason is consumed the moment it arrives.
+/// `Down` and `Dead` have no driver. There are no side-flags beyond `PulseSession::accepted`, kept
+/// for the reconnect policy: the transport-up signal *is* the `Connecting → Idle` transition, and a
+/// disconnect's reason is consumed the moment it arrives.
 enum Connection {
     /// No live driver. The next tick after `respawn_at` (re)builds one. This is both the initial
-    /// state and where a retryable transport drop lands.
+    /// state and where every retryable failure lands, at the time the [`ReconnectPolicy`] gives.
     Down { respawn_at: f64 },
     /// Driver up, waiting for it to report `Connected` (the ENet/WebTransport connect completing).
     Connecting,
-    /// Transport connected, ready to sign once an identity is present and the cooldown elapses.
-    /// `retry_after` throttles re-signs after a sign error / rejection / response timeout.
-    Idle { retry_after: f64 },
+    /// Transport connected, ready to sign once an identity is present.
+    Idle,
     /// Signing the auth chain off-thread; resolves to the encoded `ClientMessage(handshake)` bytes.
     /// Re-signed on each attempt so the connect-signature timestamp is fresh when sent.
     Signing(Task<Result<Vec<u8>, String>>),
@@ -86,16 +88,18 @@ enum Connection {
     AwaitingResponse { timeout_at: f64 },
     /// Handshake accepted and the realm teleport sent; steady state.
     Established,
-    /// Terminally disconnected (auth rejected, banned, evicted, flagged) — no reconnect attempted.
-    /// Only a fresh session (realm change / re-login recreating `PulseConfig`) clears this.
+    /// Terminally disconnected (banned, evicted by a newer session, flagged for misbehaviour, or a
+    /// code this build doesn't know) — no reconnect attempted. A realm change while here sets
+    /// `Down { respawn_at: 0.0 }` and resets the [`ReconnectPolicy`].
     Dead,
 }
 
-/// Cooldown before re-attempting after any retryable failure (no identity yet, sign error, response
-/// timeout, server rejection, or a retryable disconnect), so we don't hammer the wallet or server.
+/// Cooldown before looking the local scene development realm up again after a failed lookup.
 const RETRY_COOLDOWN_SECS: f64 = 2.0;
-/// How long to wait for the server's `HandshakeResponse` before assuming it was lost and retrying.
-const HANDSHAKE_RESPONSE_TIMEOUT_SECS: f64 = 5.0;
+/// How long the server has to answer the handshake, from the moment it is sent, before the
+/// connection is closed as failed. unity-explorer waits without limit; the servers' own pre-auth
+/// deadline is 30 s.
+const HANDSHAKE_RESPONSE_TIMEOUT_SECS: f64 = 10.0;
 /// Minimum spacing between a listener's `SceneListenerUpdate`s. An update rides the server's
 /// discrete-event bucket (20/s sustained, 16 burst) and overrunning it is a terminal disconnect,
 /// while a busy server's scene set changes many frames in a row — an orchestrator re-adding every
@@ -134,6 +138,10 @@ pub(crate) struct PulseSession {
     /// connection, one outbound stream, so it lives with the session rather than with any one of
     /// the transports feeding it.
     last_state: Option<pulse::PlayerState>,
+    /// When to connect again after a failure, and when to stop.
+    policy: ReconnectPolicy,
+    /// Whether the current connection's handshake was accepted.
+    accepted: bool,
     state: Connection,
 }
 
@@ -599,6 +607,8 @@ fn connect_pulse(
         transport_config: config.transport.clone(),
         server_id: config.server_id.clone(),
         last_state: None,
+        policy: ReconnectPolicy::default(),
+        accepted: false,
         state: Connection::Down { respawn_at: 0.0 },
     });
 
@@ -609,9 +619,10 @@ fn connect_pulse(
 }
 
 /// Keep the routing `Transport` entity in step with the current realm: (re)spawn it on a realm
-/// change and — if already connected — announce the new realm with a teleport. Pulse is the
-/// realm's avatar-state transport whatever its byte protocol is, so this follows the realm itself
-/// rather than any island or room the realm's comms bring up.
+/// change and — if already connected — announce the new realm with a teleport, or, after a terminal
+/// disconnect, connect again. Pulse is the realm's avatar-state transport whatever its byte
+/// protocol is, so this follows the realm itself rather than any island or room the realm's comms
+/// bring up.
 ///
 /// `process_realm_change` sweeps every `Transport` on a realm change, ours included, and with it
 /// every peer the old entity carried, while the server keeps its view of them for us across our own
@@ -687,6 +698,13 @@ fn follow_realm(
     if matches!(session.state, Connection::Established) && in_world(&player) {
         send_teleport(&session, &realm, &player);
     }
+    // A terminal stop lasts until the user moves to another realm: a recovery they start, so it
+    // never loops. Rebuilding a lost routing entity in the same realm is not one.
+    if realm_changed && matches!(session.state, Connection::Dead) {
+        info!("pulse: realm changed after a terminal disconnect — reconnecting");
+        session.state = Connection::Down { respawn_at: 0.0 };
+        session.policy.reset();
+    }
 }
 
 /// Drain the Pulse routing entity's channel each frame and convert each queued message to a Pulse
@@ -750,8 +768,15 @@ fn pump_pulse(
         .and_then(|p| p.profile.as_ref().map(|p| p.version as i32))
         .unwrap_or(0);
 
-    drain_status(session, now);
-    drive_connection(session, &wallet, world_hold.is_some(), profile_version, now);
+    drain_status(session, &sinks, now);
+    drive_connection(
+        session,
+        &sinks,
+        &wallet,
+        world_hold.is_some(),
+        profile_version,
+        now,
+    );
     flush_replay(session, &sinks, &realm);
     drain_inbound(session, &sinks, &realm, &player, in_world, now);
     flush_listener_aoi(session, now);
@@ -856,28 +881,35 @@ fn forward_movement(
 /// driver signing off, handled as the teardown; a bare channel close means it vanished with no word
 /// (e.g. panicked) — the fallback teardown. Either way `lost_connection` nulls the link, ending the
 /// loop and making a status-then-close sequence idempotent.
-fn drain_status(session: &mut PulseSession, now: f64) {
+fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64) {
     while let Some(status) = session.link.as_mut().map(|link| link.status.try_recv()) {
         match status {
             Ok(PulseStatus::Connecting) => debug!("pulse: connecting"),
             Ok(PulseStatus::Connected) => {
                 info!("pulse: connected");
                 if matches!(session.state, Connection::Connecting) {
-                    session.state = Connection::Idle { retry_after: 0.0 };
+                    session.state = Connection::Idle;
                 }
             }
             Ok(PulseStatus::Disconnected(reason)) => {
                 warn!("pulse: disconnected ({reason:?})");
-                lost_connection(session, reason.should_retry(), now);
+                let accepted = session.accepted;
+                lost_connection(
+                    session,
+                    sinks,
+                    Failure::Disconnected { reason, accepted },
+                    now,
+                );
             }
-            // Never established (DNS/socket/connect timeout) — always transient.
+            // A failure the driver reports itself, before or after the connection came up — always
+            // retryable.
             Ok(PulseStatus::Failed(error)) => {
                 warn!("pulse: failed ({error})");
-                lost_connection(session, true, now);
+                lost_connection(session, sinks, Failure::Unreached, now);
             }
             Err(mpsc::error::TryRecvError::Empty) => break,
             Err(mpsc::error::TryRecvError::Disconnected) => {
-                lost_connection(session, true, now);
+                lost_connection(session, sinks, Failure::Unreached, now);
                 break;
             }
         }
@@ -886,10 +918,11 @@ fn drain_status(session: &mut PulseSession, now: f64) {
 
 /// Advance the connection one step. `Down` (re)builds the driver; `Connecting` waits passively for
 /// the transport-up status; signing waits additionally for an identity (`PulseConfig` may be present
-/// before login). Each retryable handshake failure folds back to `Idle` (driver still up) with a
-/// cooldown.
+/// before login). A connection carries one handshake: a sign error or a response timeout closes it,
+/// as a rejection does, and the next attempt is a new connection.
 fn drive_connection(
     session: &mut PulseSession,
+    sinks: &Query<&PulseSink>,
     wallet: &Wallet,
     world_held: bool,
     profile_version: i32,
@@ -915,11 +948,12 @@ fn drive_connection(
             let (link, driver) = spawn_driver(&session.transport_config);
             session.link = Some(link);
             session._driver = Some(driver);
+            session.accepted = false;
             session.state = Connection::Connecting;
         }
-        Connection::Idle { retry_after } => {
-            // Hold off until the cooldown elapses and we have an identity to sign with.
-            if now < *retry_after || wallet.address().is_none() {
+        Connection::Idle => {
+            // Hold off until we have an identity to sign with.
+            if wallet.address().is_none() {
                 return;
             }
             // Nothing to announce means nothing to connect for — a listener with no scenes yet
@@ -957,20 +991,16 @@ fn drive_connection(
                         };
                     }
                     Err(err) => {
-                        warn!("pulse: failed to build handshake, retrying: {err}");
-                        session.state = Connection::Idle {
-                            retry_after: now + RETRY_COOLDOWN_SECS,
-                        };
+                        warn!("pulse: failed to build handshake: {err}");
+                        lost_connection(session, sinks, Failure::HandshakeFailed, now);
                     }
                 }
             }
         }
         Connection::AwaitingResponse { timeout_at } => {
             if now > *timeout_at {
-                warn!("pulse: handshake response timed out, retrying");
-                session.state = Connection::Idle {
-                    retry_after: now + RETRY_COOLDOWN_SECS,
-                };
+                warn!("pulse: handshake response timed out");
+                lost_connection(session, sinks, Failure::HandshakeFailed, now);
             }
         }
     }
@@ -1008,9 +1038,9 @@ fn drain_inbound(
         for event in events {
             match event {
                 // The handshake ack drives the connect sequence.
-                PulseEvent::Connected { success, error } => {
-                    on_handshake_response(session, realm, player, in_world, now, success, error)
-                }
+                PulseEvent::Connected { success, error } => on_handshake_response(
+                    session, sinks, realm, player, in_world, now, success, error,
+                ),
                 PulseEvent::Movement {
                     address,
                     movement,
@@ -1027,15 +1057,22 @@ fn drain_inbound(
                 }
                 // A sequence gap was detected — ask the server to replay full state, reliably.
                 PulseEvent::Resync(request) => {
+                    let subject_id = request.subject_id;
                     let message = pulse::ClientMessage {
                         message: Some(pulse::client_message::Message::Resync(request)),
                     };
-                    if let Some(link) = session.link.as_ref() {
-                        let _ = link.outbound.try_send(PulseFrame {
-                            bytes: message.encode_to_vec(),
-                            reliability: PulseReliability::Reliable,
-                            kind: FrameKind::Control,
-                        });
+                    let sent = session.link.as_ref().is_some_and(|link| {
+                        link.outbound
+                            .try_send(PulseFrame {
+                                bytes: message.encode_to_vec(),
+                                reliability: PulseReliability::Reliable,
+                                kind: FrameKind::Control,
+                            })
+                            .is_ok()
+                    });
+                    // Unsent, it would hold back every later request for the subject.
+                    if !sent {
+                        session.decoder.resync_not_sent(subject_id);
                     }
                 }
                 // Emote start/stop are delivered natively (`PlayerMessage::EmoteStart` / `EmoteStop`)
@@ -1131,26 +1168,41 @@ fn bridge_profile_version(
     );
 }
 
-/// The transport is gone — tear the driver/link down and decide what's next: schedule a rebuild from
-/// `Down` after a cooldown, or, for a terminal reason, park in `Dead`. Idempotent: with no live link
-/// it's a no-op, so a `Disconnected` status followed by the pipe close only acts once.
-fn lost_connection(session: &mut PulseSession, retry: bool, now: f64) {
+/// Drop the link (the driver closes with GRACEFUL), report every held peer as left, reset the
+/// decoder, and go where the policy says. Idempotent: with no live link it's a no-op, so a
+/// `Disconnected` status followed by the pipe close only acts once.
+fn lost_connection(
+    session: &mut PulseSession,
+    sinks: &Query<&PulseSink>,
+    failure: Failure,
+    now: f64,
+) {
     if session.link.is_none() {
         return;
     }
+    // The link goes first: its drop is what ends the driver, even mid DNS lookup, so the handle's
+    // drop that follows joins the thread promptly.
     session.link = None;
-    session._driver = None; // dropping joins the already-exited driver thread
+    session._driver = None;
 
-    // Whatever the next connection announces is the whole truth; nothing held from this one is.
-    let _ = session.decoder.reset();
-    session.state = if retry {
-        info!("pulse: transport dropped — reinitialising after cooldown");
-        Connection::Down {
-            respawn_at: now + RETRY_COOLDOWN_SECS,
+    // Whatever the next connection announces is the whole truth; nothing held from this one is. The
+    // peers go now rather than freeze until it does, and anyone who left meanwhile stays gone.
+    for wallet in session.decoder.reset() {
+        session.forget(sinks, wallet);
+    }
+    session.accepted = false;
+    session.state = match session.policy.next(failure, now) {
+        Next::RetryAt(respawn_at) => {
+            info!(
+                "pulse: connection lost — reconnecting in {:.0} s",
+                respawn_at - now
+            );
+            Connection::Down { respawn_at }
         }
-    } else {
-        warn!("pulse: terminal disconnect — not reconnecting");
-        Connection::Dead
+        Next::Dead => {
+            warn!("pulse: terminal disconnect — not reconnecting until the realm changes");
+            Connection::Dead
+        }
     };
 }
 
@@ -1160,6 +1212,7 @@ fn lost_connection(session: &mut PulseSession, retry: bool, now: f64) {
 #[allow(clippy::too_many_arguments)]
 fn on_handshake_response(
     session: &mut PulseSession,
+    sinks: &Query<&PulseSink>,
     realm: &CurrentRealm,
     player: &Query<(&GlobalTransform, Has<OutOfWorld>), With<PrimaryUser>>,
     in_world: bool,
@@ -1172,16 +1225,13 @@ fn on_handshake_response(
         return;
     }
     if !success {
-        warn!(
-            "pulse: handshake rejected, retrying: {}",
-            error.unwrap_or_default()
-        );
-        session.state = Connection::Idle {
-            retry_after: now + RETRY_COOLDOWN_SECS,
-        };
+        warn!("pulse: handshake rejected: {}", error.unwrap_or_default());
+        lost_connection(session, sinks, Failure::HandshakeFailed, now);
         return;
     }
     info!("pulse: handshake accepted");
+    session.policy.on_accepted();
+    session.accepted = true;
     session.state = Connection::Established;
     // A listener has no position to announce and is refused every message but `Resync`; its AoI went
     // out with the handshake.
@@ -1865,3 +1915,6 @@ mod tests {
         assert!(lsd_realm_key(&over).starts_with("lsd:sha256:"));
     }
 }
+
+#[cfg(test)]
+mod connection_tests;

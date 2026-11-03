@@ -3,7 +3,9 @@
 //! A pure policy: told what failed and when, it answers with the time to retry at, or that no
 //! retry can help. It knows nothing of Bevy, the driver or the handshake, and its times are `f64`
 //! seconds on the caller's clock, so a test drives it without an app. There is no jitter, as in the
-//! reference client.
+//! reference client, and that is deliberate: the repository owner kept unity-explorer's exact
+//! waits, although the server's contract (decentraland/Pulse `docs/hardening.md`, "Client
+//! recovery") asks for jitter on codes 7, 8, 17 and 18.
 //!
 //! The numbers are unity-explorer's (paths under `Explorer/Assets/DCL/`), which recovers two ways.
 //! A connection that was up and dropped waits a fixed time chosen by the server's reason:
@@ -11,8 +13,9 @@
 //! values set in `PluginSystem/Global/Plugin Settings.asset`. An attempt that never got its
 //! handshake accepted backs off, doubling: `CONNECTION_RETRY_POLICY` in
 //! `Multiplayer/Connections/Pulse/PulseMultiplayerService.cs`, capped by
-//! `WebRequests/RetryPolicy.cs`. Two things are not Unity's, and each says so where it applies:
-//! the refusal floors also hold before acceptance, and codes 17 and 18.
+//! `WebRequests/RetryPolicy.cs`. Three things are not Unity's, and each says so where it applies:
+//! the refusal floors also hold before acceptance, codes 17 and 18, and a rejected handshake is
+//! retried.
 
 use super::transport::PulseDisconnect;
 
@@ -21,8 +24,9 @@ use super::transport::PulseDisconnect;
 /// failure.
 pub const DEFAULT_RETRY_DELAY: f64 = 3.0;
 /// unity-explorer `ReconnectionSettings.AuthExhaustionRetryDelayMs` (10000): the least wait after
-/// the per-IP or pre-auth cap refuses a connection (codes 7 and 8). Code 17 shares it, being in
-/// their family on the server; unity-explorer does not know that code.
+/// the per-IP or pre-auth cap refuses a connection (codes 7 and 8). Unity applies it only to a
+/// connection that was up; here it floors the backoff before acceptance too. Code 17 shares it,
+/// being in their family on the server; unity-explorer does not know that code.
 pub const AUTH_EXHAUSTION_RETRY_DELAY: f64 = 10.0;
 /// unity-explorer `ReconnectionSettings.ServerFullRetryDelayMs` (60000): the least wait after the
 /// server is full (code 6). Unity applies it only to a connection that was up; here it floors the
@@ -45,14 +49,17 @@ pub const LISTENER_LIMIT_CAP: f64 = 300.0;
 /// What went wrong with the connection.
 #[derive(Debug)]
 pub enum Failure {
-    /// Never established: DNS, socket, connect timeout, or the driver gone without a status.
+    /// A failure the driver reported itself (DNS, a connect timeout, an inbound backlog over its
+    /// cap, …), before or after the connection came up, or the driver gone without a status.
     Unreached,
     /// The server's reason; `accepted` is whether this connection's handshake had been accepted.
     Disconnected {
         reason: PulseDisconnect,
         accepted: bool,
     },
-    /// Rejected (`success = false`), unanswered within the response timeout, or not signable.
+    /// Rejected (`success = false`), unanswered within the response timeout, or not signable. A
+    /// rejection takes the backoff like the others; unity-explorer treats it as terminal until the
+    /// next sign-in (`Multiplayer/Connections/Pulse/PulseHandshakeDisconnectedException.cs`).
     HandshakeFailed,
 }
 

@@ -42,8 +42,8 @@ use super::transport::{
 /// teardown that only flips the flag (rather than closing the outbound channel) is still noticed.
 const STOP_POLL_MS: u32 = 200;
 
-/// How long the session may take to come up: the 10 s native allows the ENet connect, from
-/// unity-explorer `ENetTransportOptions.ConnectTimeoutMs`
+/// How long the session may take to come up: the same 10 s the native driver allows the ENet
+/// connect, from unity-explorer `ENetTransportOptions.ConnectTimeoutMs`
 /// (`Explorer/Assets/DCL/Multiplayer/Connections/Pulse/ENet/ENetTransportOptions.cs`).
 const CONNECT_TIMEOUT_MS: u32 = 10_000;
 

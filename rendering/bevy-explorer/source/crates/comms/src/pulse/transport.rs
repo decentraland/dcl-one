@@ -74,15 +74,16 @@ pub enum PulseStatus {
     Connected,
     /// Connected-then-dropped, carrying the server's reason (see [`PulseDisconnect`]).
     Disconnected(PulseDisconnect),
-    /// Never established (DNS/socket/connect timeout) — always transient, safe to retry.
+    /// A failure the driver reports itself, before or after the connection came up: DNS, a connect
+    /// timeout, an inbound backlog over its cap, and the like. Always retryable.
     Failed(String),
 }
 
 /// Server disconnect reason. This is an out-of-band ABI shared with the server
 /// (`Pulse.Transport.DisconnectReason`), *not* a wire message: it arrives as the ENet disconnect
 /// event's `data` code. The driver maps that `u32` here so the protocol layer can decide whether a
-/// reconnect could plausibly help — several reasons are terminal by the server's design (bad auth,
-/// ban, eviction, flagged misbehaviour) and must not trigger a reconnect loop.
+/// reconnect could plausibly help — several reasons are terminal by the server's design (ban,
+/// eviction, flagged misbehaviour) and must not trigger a reconnect loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PulseDisconnect {
     /// No reason supplied (e.g. a plain network timeout where the remote set no code).
@@ -163,21 +164,6 @@ impl PulseDisconnect {
             19 => Self::InvalidSceneListenerField,
             other => Self::Unknown(other),
         }
-    }
-
-    /// Whether reconnecting could plausibly succeed. Only transient, server-side, or
-    /// too-slow-this-time reasons are retryable; auth/ban/eviction/misbehaviour reasons (and any
-    /// unrecognised code) are terminal — reconnecting against them just loops.
-    pub fn should_retry(self) -> bool {
-        matches!(
-            self,
-            Self::None
-                | Self::Graceful
-                | Self::AuthTimeout
-                | Self::ServerFull
-                | Self::PreAuthIpLimit
-                | Self::PreAuthBudget
-        )
     }
 }
 

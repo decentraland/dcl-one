@@ -841,6 +841,22 @@ fn reset_clears_the_pending_resyncs() {
     assert!(is_one_resync(&events, SUBJECT, 0), "{events:?}");
 }
 
+/// The plugin could not send the request (its queue was full, or the link gone), so nothing waits
+/// on an answer, and the next gap asks again.
+#[test]
+fn a_resync_that_was_not_sent_is_asked_for_again() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+
+    let events = decoder.handle(delta(SUBJECT, 7, 8, 1500, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+
+    decoder.resync_not_sent(SUBJECT);
+
+    let events = decoder.handle(delta(SUBJECT, 8, 9, 1600, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+}
+
 #[test]
 fn an_emote_event_older_than_the_last_is_ignored() {
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
