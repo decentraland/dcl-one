@@ -95,6 +95,66 @@ fn test_ctx(db: Db, voice: Arc<dyn crate::comms::gatekeeper::voice::rooms::Voice
     )
 }
 
+/// [`test_ctx`] with a profile source: the active profile entities of
+/// `content.deployments`, as in production, so a wallet without one is left
+/// out where upstream's registry drops it.
+fn profiled_ctx(
+    db: Db,
+    voice: Arc<dyn crate::comms::gatekeeper::voice::rooms::VoiceRooms>,
+) -> Context {
+    Context::new(
+        VoiceSettings::default(),
+        db.clone(),
+        Profiles::new(
+            Some(db.pool().clone()),
+            crate::communities::profiles::FaceUrls::new(
+                None,
+                "https://peer.test/profile-images/",
+                false,
+            ),
+        ),
+        voice,
+    )
+}
+
+/// Deploys `address`'s profile named `name` with a face; returns its entity id.
+async fn deploy_profile(pool: &PgPool, address: &str, name: &str) -> String {
+    let entity_id = format!("bafkreiprofile{}", Uuid::new_v4().simple());
+    let metadata = serde_json::json!({"v": {"avatars": [{"name": name, "hasClaimedName": true,
+        "avatar": {"snapshots": {"face256": "bafkreiface"}}}]}});
+    sqlx::query(
+        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, \
+         entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+         VALUES ($1, 'v3', 'profile', $2, $3, now(), ARRAY[$1], now(), '[]'::json)",
+    )
+    .bind(address)
+    .bind(&entity_id)
+    .bind(&metadata)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ($1, $2, 'profile')",
+    )
+    .bind(address)
+    .bind(&entity_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    entity_id
+}
+
+async fn drop_profile(pool: &PgPool, address: &str, entity_id: &str) {
+    let _ = sqlx::query("DELETE FROM content.active_pointers WHERE pointer = $1")
+        .bind(address)
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("DELETE FROM content.deployments WHERE entity_id = $1")
+        .bind(entity_id)
+        .execute(pool)
+        .await;
+}
+
 fn procedure_ctx(ctx: &Context, me: &str, transport_id: u32) -> ProcedureContext<Context> {
     ctx.register_identity(transport_id, me.to_string());
     ProcedureContext {
@@ -1025,11 +1085,16 @@ async fn reject_and_disconnect_delete_through_voice_owner_before_signalling() {
     ctx.end_private_voice_chat_on_disconnect(&callee.to_uppercase())
         .await;
     assert!(!call_exists(&db, dropped).await);
-    for event in [caller_rx.try_recv().unwrap(), callee_rx.try_recv().unwrap()] {
-        assert!(
-            matches!(&*event, SocialEvent::PrivateVoice(u) if u.call_id == dropped.to_string() && u.status == PrivateVoiceChatStatus::VoiceChatEnded as i32)
-        );
-    }
+    // upstream `endIncomingOrOutgoingPrivateVoiceChatForUser`: only the party
+    // that stayed hears ENDED
+    let event = caller_rx.try_recv().unwrap();
+    assert!(
+        matches!(&*event, SocialEvent::PrivateVoice(u) if u.call_id == dropped.to_string() && u.status == PrivateVoiceChatStatus::VoiceChatEnded as i32)
+    );
+    assert!(
+        callee_rx.try_recv().is_err(),
+        "the dropped party is not told"
+    );
     // The runtime is asked about the address's accepted call first; a pending
     // call has none, so it is deleted as pending.
     assert!(
@@ -1334,17 +1399,21 @@ async fn community_voice_start_join_and_ban_semantics() {
         join(&ctx, &member).await.response,
         Some(join_community_voice_chat_response::Response::Ok(_))
     ));
-    // A public guest joins with no membership role (upstream
-    // social-service-ea@b6b2cef validation.ts:49-55).
+    // Upstream `validateCommunityVoiceChatParticipation`: a public community
+    // admits a guest, with no role (`src/logic/community-voice/validation.ts:49-53`).
     assert!(matches!(
         join(&ctx, &stranger).await.response,
         Some(join_community_voice_chat_response::Response::Ok(_))
     ));
-    // A ban wins whether the member row was deleted or survived a race.
-    // Neither case mints a grant.
+    assert!(voice.calls.lock().contains(&format!(
+        "community-credentials {community} {stranger} none join"
+    )));
+    // The ban is read whether or not the member row survived it (a ban
+    // deletes the row; a race may leave it). Either way no grant is minted.
+    let banned_message = format!("The user {banned} is banned from community {cid}");
     let refused = join(&ctx, &banned).await;
     assert!(
-        matches!(&refused.response, Some(join_community_voice_chat_response::Response::ForbiddenError(f)) if f.message.as_deref() == Some("banned from this community")),
+        matches!(&refused.response, Some(join_community_voice_chat_response::Response::ForbiddenError(f)) if f.message.as_deref() == Some(banned_message.as_str())),
         "{refused:?}"
     );
     sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'member')")
@@ -1355,7 +1424,7 @@ async fn community_voice_start_join_and_ban_semantics() {
         .unwrap();
     let refused = join(&ctx, &banned).await;
     assert!(
-        matches!(&refused.response, Some(join_community_voice_chat_response::Response::ForbiddenError(f)) if f.message.as_deref() == Some("banned from this community")),
+        matches!(&refused.response, Some(join_community_voice_chat_response::Response::ForbiddenError(f)) if f.message.as_deref() == Some(banned_message.as_str())),
         "{refused:?}"
     );
     assert!(

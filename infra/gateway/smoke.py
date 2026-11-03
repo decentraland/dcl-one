@@ -145,6 +145,7 @@ def client(args):
                  "/places/api/status", "/places/api/status.data", "/places/place?position=1,2",
                  "/places/place/?position=1,2", "/places/world/?name=sample.dcl.eth",
                  "/places/world?name=sample.dcl.eth", "/events/api/status",
+                 "/events/assets/event-default.webp",
                  "/profile-images/alice", "/worlds-content-server/status", "/shop-api/v1/catalog"]:
         hit(path, "apis")
     for alias in table["aliases"]:

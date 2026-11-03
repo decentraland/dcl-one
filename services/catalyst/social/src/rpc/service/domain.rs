@@ -6,14 +6,13 @@
 //! the REST module).
 
 use super::SocialServiceImpl;
-use super::helpers::{SocialError, page_friendship_requests, page_of};
+use super::helpers::{Refusal, SocialError, page_friendship_requests, page_of};
 use crate::rpc::context::Context;
-use crate::rpc::db::{Db, LastAction, SocialSettingsRow};
+use crate::rpc::db::{LastAction, SocialSettingsRow, VoiceGate, VoiceParty};
 use crate::rpc::drpc::service_module_definition::ProcedureContext;
 use crate::rpc::profiles;
 use crate::rpc::proto::errors::*;
 use crate::rpc::proto::v2::*;
-use crate::rpc::pubsub::SocialEvent;
 use crate::{CommunityPermission, CommunityStanding};
 use uuid::Uuid;
 
@@ -250,18 +249,22 @@ pub(super) async fn friendship_requests(
             });
         }
     };
+    // Upstream `parseFriendshipRequestsToFriendshipRequestResponses`: a
+    // request whose counterparty has no profile is left out (the total
+    // stays the row count), and an absent message reads `''`.
     let addrs: Vec<String> = rows.iter().map(|r| r.address.clone()).collect();
-    let map = context.server_context.profiles().get_profiles(&addrs).await;
+    let profiles = context.server_context.profiles();
+    let (map, strict) = profiles.known_profiles(&addrs).await;
     let requests = rows
         .into_iter()
-        .map(|r| FriendshipRequestResponse {
-            friend: Some(profiles::friend_profile(
-                &r.address,
-                map.get(&r.address.to_lowercase()),
-            )),
-            created_at: r.timestamp.timestamp_millis(),
-            message: r.message,
-            id: r.id.to_string(),
+        .filter_map(|r| {
+            let info = map.get(&r.address.to_lowercase());
+            (info.is_some() || !strict).then(|| FriendshipRequestResponse {
+                friend: Some(profiles::friend_profile(&r.address, info)),
+                created_at: r.timestamp.timestamp_millis(),
+                message: Some(r.message.unwrap_or_default()),
+                id: r.id.to_string(),
+            })
         })
         .collect();
     Ok(PaginatedFriendshipRequestsResponse {
@@ -275,209 +278,98 @@ pub(super) async fn friendship_requests(
     })
 }
 
-pub(super) async fn fan_community_voice(
-    ctx: &Context,
-    community_id: &str,
-    status: CommunityVoiceChatStatus,
-    exclude: Option<&str>,
-) {
-    let (community_name, members) = ctx
-        .db()
-        .community_voice_fanout(community_id)
-        .await
-        .ok()
-        .flatten()
-        .unwrap_or_default();
-    fan_community_voice_to(
-        ctx,
-        community_id,
-        status,
-        exclude,
-        &community_name,
-        &members,
-    );
+fn standing(party: &VoiceParty) -> CommunityStanding {
+    CommunityStanding::from_rows(false, party.role.as_deref())
 }
 
-/// [`fan_community_voice`] with the name and member list already read.
-pub(super) fn fan_community_voice_to(
-    ctx: &Context,
-    community_id: &str,
-    status: CommunityVoiceChatStatus,
-    exclude: Option<&str>,
-    community_name: &str,
-    members: &[String],
-) {
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    let ended_at =
-        matches!(status, CommunityVoiceChatStatus::CommunityVoiceChatEnded).then_some(now_ms);
-    for member in members {
-        if exclude.is_some_and(|e| e.eq_ignore_ascii_case(member)) {
-            continue;
-        }
-        ctx.pubsub().publish(
-            member,
-            SocialEvent::CommunityVoice(CommunityVoiceChatUpdate {
-                stream_closed: None,
-                community_id: community_id.to_string(),
-                created_at: now_ms,
-                status: status as i32,
-                ended_at,
-                positions: Vec::new(),
-                is_member: true,
-                community_name: community_name.to_string(),
-                community_image: None,
-                worlds: Vec::new(),
-            }),
-        );
-    }
-}
-
-/// Decided from the same `community_members` row the REST paths read, through
-/// the shared tier parse (a federated moderator stored as `mod` moderates a
-/// voice room like one stored as `moderator`).
-pub(super) async fn require_moderator(
-    db: &Db,
-    community_id: &str,
-    address: &str,
-) -> Result<Result<(), ForbiddenError>, SocialError> {
-    let standing = load_voice_standing(db, community_id, address, address).await?;
-    Ok(moderator_gate(standing.actor))
-}
-
-fn moderator_gate(standing: CommunityStanding) -> Result<(), ForbiddenError> {
-    if standing.has(CommunityPermission::BanPlayers) {
-        Ok(())
-    } else {
-        Err(ForbiddenError {
-            message: Some("requires moderator or owner role".into()),
-        })
-    }
-}
-
-/// The community's privacy, roles and bans, which every voice-room gate below
-/// decides from in one database read.
-struct VoiceStanding {
-    private: bool,
-    actor: CommunityStanding,
-    target: CommunityStanding,
-    target_banned: bool,
-}
-
-/// An absent or unrecognised value is `NotAMember`; a missing community too.
-async fn load_voice_standing(
-    db: &Db,
-    community_id: &str,
+/// Upstream `validateCommunityVoiceChatHost` (start, end): a role in the
+/// community, an owner's or a moderator's, and no ban, in that order.
+pub(super) fn host_gate(
+    gate: &VoiceGate,
     actor: &str,
-    target: &str,
-) -> Result<VoiceStanding, SocialError> {
-    let (private, actor_role, target_role, actor_banned, target_banned) = db
-        .community_voice_roles(community_id, actor, target)
-        .await?
-        .unwrap_or((false, None, None, false, false));
-    Ok(VoiceStanding {
-        private,
-        actor: CommunityStanding::from_rows(actor_banned, actor_role.as_deref()),
-        target: CommunityStanding::from_rows(false, target_role.as_deref()),
-        target_banned,
-    })
-}
-
-/// Gate for the self-service community-voice actions (raising a hand, self-
-/// unmute), the reachable half of upstream
-/// `validateCommunityVoiceChatParticipation` (#447): the actor must not be
-/// banned, a private community requires membership, a public one admits a
-/// guest holding no role. The room-live check is owed: presence is the voice
-/// runtime's, and a missing room is not rejected here.
-pub(super) async fn validate_community_voice_participation(
-    db: &Db,
     community_id: &str,
-    address: &str,
-) -> Result<Result<(), ForbiddenError>, SocialError> {
-    let standing = load_voice_standing(db, community_id, address, address).await?;
-    if standing.actor == CommunityStanding::Banned {
-        return Ok(Err(ForbiddenError {
-            message: Some("banned from this community".into()),
-        }));
+    action: &str,
+) -> Result<(), Refusal> {
+    let actor_standing = standing(&gate.a);
+    if actor_standing == CommunityStanding::NotAMember {
+        return Err(not_a_member(actor, community_id));
     }
-    Ok(target_membership_gate(standing.private, standing.actor))
-}
-
-/// Upstream `validateCommunityVoiceChatTargetMembership` (#447): a public
-/// community admits any target the live room already holds, a private one
-/// requires the target to be a member. Applied after the actor cleared the
-/// moderator gate.
-fn target_membership_gate(
-    private: bool,
-    standing: CommunityStanding,
-) -> Result<(), ForbiddenError> {
-    if private && standing == CommunityStanding::NotAMember {
-        return Err(ForbiddenError {
-            message: Some("not a community member".into()),
-        });
+    if !actor_standing.has(CommunityPermission::BanPlayers) {
+        return Err(Refusal::Forbidden(format!(
+            "Only community owners and moderators can {action}"
+        )));
+    }
+    if gate.a.banned {
+        return Err(Refusal::Forbidden(format!("Banned users cannot {action}")));
     }
     Ok(())
 }
 
-/// [`require_moderator_protecting_owner`] followed by the target-membership
-/// gate, decided from the same read. Promotion and demotion also reject a
-/// banned target; rejecting a hand request remains possible after a ban.
-pub(super) async fn require_moderator_over_member(
-    db: &Db,
-    community_id: &str,
+/// Upstream `validateCommunityVoiceChatModerator` (promote, demote another,
+/// reject, kick, mute another): an owner or moderator, not banned, never a
+/// non-owner acting on the owner. Peer moderators may act on each other:
+/// these actions are confined to the live room and are reversible.
+pub(super) fn moderator_gate(
+    gate: &VoiceGate,
     actor: &str,
     target: &str,
     action: &str,
-    reject_banned_target: bool,
-) -> Result<Result<(), ForbiddenError>, SocialError> {
-    let standing = load_voice_standing(db, community_id, actor, target).await?;
-    Ok(
-        owner_protecting_gate(&standing, actor, target, action).and_then(|()| {
-            if reject_banned_target && standing.target_banned {
-                return Err(ForbiddenError {
-                    message: Some("not a community member".into()),
-                });
-            }
-            target_membership_gate(standing.private, standing.target)
-        }),
-    )
-}
-
-/// Like [`require_moderator`], but protects the owner: a voice-room moderation
-/// aimed at the owner is refused unless the actor IS the owner (upstream
-/// `validateCommunityVoiceChatModerator`, #447). A self-action bypasses only
-/// the owner-protection clause; the capability gate always applies.
-pub(super) async fn require_moderator_protecting_owner(
-    db: &Db,
-    community_id: &str,
-    actor: &str,
-    target: &str,
-    action: &str,
-) -> Result<Result<(), ForbiddenError>, SocialError> {
-    let standing = load_voice_standing(db, community_id, actor, target).await?;
-    Ok(owner_protecting_gate(&standing, actor, target, action))
-}
-
-fn owner_protecting_gate(
-    standing: &VoiceStanding,
-    actor: &str,
-    target: &str,
-    action: &str,
-) -> Result<(), ForbiddenError> {
-    moderator_gate(standing.actor)?;
-    if actor.trim().eq_ignore_ascii_case(target.trim()) {
-        return Ok(());
+) -> Result<(), Refusal> {
+    let (actor_standing, target_standing) = (standing(&gate.a), standing(&gate.b));
+    if !actor_standing.has(CommunityPermission::BanPlayers) {
+        return Err(Refusal::Forbidden(format!(
+            "Only community owners and moderators can {action}"
+        )));
     }
-    if targeting_the_owner_as_a_non_owner(standing.actor, standing.target) {
-        return Err(ForbiddenError {
-            message: Some(format!("Not enough permissions to {action} this user")),
-        });
+    if gate.a.banned {
+        return Err(Refusal::Forbidden(format!("Banned users cannot {action}")));
+    }
+    if actor != target && targeting_the_owner_as_a_non_owner(actor_standing, target_standing) {
+        return Err(Refusal::Forbidden(format!(
+            "Not enough permissions to {action} this user"
+        )));
     }
     Ok(())
 }
 
-/// Only the owner may be acted on, and only by the owner. Peer moderators may
-/// still moderate each other: these actions are confined to the live room and
-/// are reversible.
+/// Upstream `validateCommunityVoiceChatTargetMembership` (reject): a public
+/// community takes anyone the room already holds, a private one requires
+/// the target to be a member.
+pub(super) fn target_membership_gate(
+    private: bool,
+    target: &VoiceParty,
+    target_address: &str,
+    community_id: &str,
+) -> Result<(), Refusal> {
+    if private && standing(target) == CommunityStanding::NotAMember {
+        return Err(not_a_member(target_address, community_id));
+    }
+    Ok(())
+}
+
+/// Upstream `validateCommunityVoiceChatTargetUser` (promote, demote
+/// another): a banned target is refused whatever the privacy, then the
+/// membership rule above.
+pub(super) fn target_user_gate(
+    private: bool,
+    target: &VoiceParty,
+    target_address: &str,
+    community_id: &str,
+) -> Result<(), Refusal> {
+    if target.banned {
+        return Err(not_a_member(target_address, community_id));
+    }
+    target_membership_gate(private, target, target_address, community_id)
+}
+
+/// Upstream `UserNotCommunityMemberError`.
+pub(super) fn not_a_member(address: &str, community_id: &str) -> Refusal {
+    Refusal::Forbidden(format!(
+        "User {address} is not a member of community {community_id}"
+    ))
+}
+
+/// Only the owner may be acted on, and only by the owner.
 fn targeting_the_owner_as_a_non_owner(actor: CommunityStanding, target: CommunityStanding) -> bool {
     target == CommunityStanding::Owner && actor != CommunityStanding::Owner
 }
@@ -695,16 +587,125 @@ mod tests {
         assert!(!targeting_the_owner_as_a_non_owner(T::Moderator, T::Member));
     }
 
+    fn gate(
+        role_a: Option<&str>,
+        banned_a: bool,
+        role_b: Option<&str>,
+        banned_b: bool,
+    ) -> VoiceGate {
+        VoiceGate {
+            community: None,
+            a: VoiceParty {
+                role: role_a.map(str::to_string),
+                banned: banned_a,
+            },
+            b: VoiceParty {
+                role: role_b.map(str::to_string),
+                banned: banned_b,
+            },
+        }
+    }
+
+    fn message(r: Result<(), Refusal>) -> String {
+        r.unwrap_err().message().to_string()
+    }
+
     #[test]
     fn the_moderator_gate_reads_both_role_spellings_and_refuses_members() {
-        assert!(moderator_gate(CommunityStanding::from_rows(false, Some("owner"))).is_ok());
-        assert!(moderator_gate(CommunityStanding::from_rows(false, Some("moderator"))).is_ok());
-        assert!(moderator_gate(CommunityStanding::from_rows(false, Some("mod"))).is_ok());
-        assert!(moderator_gate(CommunityStanding::from_rows(false, Some("member"))).is_err());
-        assert!(moderator_gate(CommunityStanding::from_rows(false, Some("admin"))).is_err());
-        assert!(moderator_gate(CommunityStanding::from_rows(false, None)).is_err());
-        assert!(target_membership_gate(true, CommunityStanding::NotAMember).is_err());
-        assert!(target_membership_gate(false, CommunityStanding::NotAMember).is_ok());
-        assert!(target_membership_gate(true, CommunityStanding::Member).is_ok());
+        let act = "kick players";
+        for role in ["owner", "moderator", "mod"] {
+            assert!(moderator_gate(&gate(Some(role), false, None, false), ME, OTHER, act).is_ok());
+        }
+        for role in [Some("member"), Some("admin"), None] {
+            assert_eq!(
+                message(moderator_gate(
+                    &gate(role, false, None, false),
+                    ME,
+                    OTHER,
+                    act
+                )),
+                "Only community owners and moderators can kick players"
+            );
+        }
+        assert!(target_membership_gate(true, &VoiceParty::default(), OTHER, "c").is_err());
+        assert!(target_membership_gate(false, &VoiceParty::default(), OTHER, "c").is_ok());
+        let member = VoiceParty {
+            role: Some("member".into()),
+            banned: false,
+        };
+        assert!(target_membership_gate(true, &member, OTHER, "c").is_ok());
+    }
+
+    /// Upstream `validation.ts`: a ban is read on every gate, since it is
+    /// not guaranteed to clear the role row; the host gate names a wallet
+    /// with no role; a banned target is never promoted or demoted.
+    #[test]
+    fn every_gate_reads_the_ban_and_names_the_refusal_as_upstream() {
+        assert_eq!(
+            message(host_gate(
+                &gate(None, false, None, false),
+                ME,
+                "c",
+                "start voice chats"
+            )),
+            "User 0xme is not a member of community c"
+        );
+        assert_eq!(
+            message(host_gate(
+                &gate(Some("member"), false, None, false),
+                ME,
+                "c",
+                "start voice chats"
+            )),
+            "Only community owners and moderators can start voice chats"
+        );
+        assert_eq!(
+            message(host_gate(
+                &gate(Some("owner"), true, None, false),
+                ME,
+                "c",
+                "end voice chats"
+            )),
+            "Banned users cannot end voice chats"
+        );
+        assert_eq!(
+            message(moderator_gate(
+                &gate(Some("moderator"), true, None, false),
+                ME,
+                OTHER,
+                "promote speakers"
+            )),
+            "Banned users cannot promote speakers"
+        );
+        assert_eq!(
+            message(moderator_gate(
+                &gate(Some("moderator"), false, Some("owner"), false),
+                ME,
+                OTHER,
+                "kick players"
+            )),
+            "Not enough permissions to kick players this user"
+        );
+        assert!(
+            moderator_gate(
+                &gate(Some("owner"), false, Some("owner"), false),
+                ME,
+                ME,
+                "mute/unmute speakers"
+            )
+            .is_ok()
+        );
+        let banned = VoiceParty {
+            role: None,
+            banned: true,
+        };
+        assert_eq!(
+            message(target_user_gate(false, &banned, OTHER, "c")),
+            "User 0xother is not a member of community c"
+        );
+        assert!(
+            target_membership_gate(false, &banned, OTHER, "c").is_ok(),
+            "reject reads no ban"
+        );
     }
 }

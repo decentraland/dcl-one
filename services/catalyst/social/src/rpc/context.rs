@@ -54,6 +54,9 @@ pub struct ContextInner {
     subscriptions: DashMap<(u32, &'static str), Arc<CancellationToken>>,
     presence: DashMap<String, u32>,
     topology: std::sync::OnceLock<Arc<crate::comms::topology::Topology>>,
+    /// The communities state, attached in `serve`: a community voice start
+    /// reads its places and thumbnail through it.
+    communities: std::sync::OnceLock<crate::communities::SharedState>,
     connectivity_operations: tokio::sync::Semaphore,
     kill_handles: DashMap<u32, Arc<SocketClose>>,
     /// Every open socket of both protocols, from the moment it opens
@@ -139,6 +142,7 @@ impl Context {
             subscriptions: DashMap::new(),
             presence: DashMap::new(),
             topology: std::sync::OnceLock::new(),
+            communities: std::sync::OnceLock::new(),
             connectivity_operations: tokio::sync::Semaphore::new(4),
             kill_handles: DashMap::new(),
             sockets: parking_lot::Mutex::new(HashMap::new()),
@@ -169,6 +173,28 @@ impl Context {
     }
     pub fn profiles(&self) -> &Profiles {
         &self.0.profiles
+    }
+
+    /// Publishes `from`'s friendship update to `to`, built from `from`'s
+    /// profile. Upstream's live loop skips an update whose sender's profile
+    /// the registry does not hold (`src/logic/updates.ts`
+    /// `handleSubscriptionUpdates`, `shouldRetrieveProfile`), so with a
+    /// profile source such an update reaches no one.
+    pub(crate) async fn publish_friendship(
+        &self,
+        from: &str,
+        to: &str,
+        update: impl FnOnce(
+            crate::rpc::proto::v2::FriendProfile,
+        ) -> crate::rpc::proto::v2::FriendshipUpdate,
+    ) {
+        match self.0.profiles.existing_friend_profile(from).await {
+            Some(profile) => self
+                .0
+                .pubsub
+                .publish(to, SocialEvent::Friendship(update(profile))),
+            None => tracing::debug!(%from, "friendship update skipped: the sender has no profile"),
+        }
     }
     pub fn friendship_limiter(&self) -> &FriendshipMutationLimiter {
         &self.0.friendship_limiter
@@ -327,6 +353,15 @@ impl Context {
         self.0
             .topology
             .get_or_init(|| Arc::new(crate::comms::topology::Topology::default()))
+    }
+
+    /// Attaches the communities state (once).
+    pub fn set_communities(&self, communities: crate::communities::SharedState) {
+        let _ = self.0.communities.set(communities);
+    }
+
+    pub(crate) fn communities(&self) -> Option<&crate::communities::SharedState> {
+        self.0.communities.get()
     }
 
     pub(crate) fn set_topology(&self, topology: Arc<crate::comms::topology::Topology>) {
@@ -494,9 +529,13 @@ impl Context {
                 .connectivity_friends_page(&address, &cursor.friend_after, true)
                 .await?;
             if !friends.is_empty() {
-                let profile = crate::rpc::profiles::connectivity_profile(
-                    self.0.profiles.friend_profile(&address).await,
-                );
+                // Upstream's live loop skips a connectivity update whose
+                // wallet the registry holds no profile for.
+                let Some(profile) = self.0.profiles.existing_friend_profile(&address).await else {
+                    cursor.friends_done = true;
+                    return Ok((cursor, false));
+                };
+                let profile = crate::rpc::profiles::connectivity_profile(profile);
                 for friend in &friends {
                     if !self
                         .topology()
@@ -585,7 +624,37 @@ impl Context {
                 return;
             }
         };
-        self.publish_private_voice(&chat, PrivateVoiceChatStatus::VoiceChatEnded);
+        self.publish_private_voice_ended_by(&chat, address);
+    }
+
+    /// ENDED to the party that did not end the call (upstream
+    /// `endPrivateVoiceChat`, `src/logic/voice/voice.ts:203-208`, `:230-237`:
+    /// the acting side is left out of the update), whether it ended or
+    /// dropped.
+    pub fn publish_private_voice_ended_by(
+        &self,
+        chat: &crate::comms::gatekeeper::voice::db::PrivateVoiceChatRow,
+        ender: &str,
+    ) {
+        let update = PrivateVoiceChatUpdate {
+            stream_closed: None,
+            call_id: chat.id.to_string(),
+            status: PrivateVoiceChatStatus::VoiceChatEnded as i32,
+            caller: Some(User {
+                address: chat.caller_address.clone(),
+            }),
+            callee: Some(User {
+                address: chat.callee_address.clone(),
+            }),
+            credentials: None,
+        };
+        for party in [&chat.caller_address, &chat.callee_address] {
+            if !party.eq_ignore_ascii_case(ender) {
+                self.0
+                    .pubsub
+                    .publish(party, SocialEvent::PrivateVoice(update.clone()));
+            }
+        }
     }
 
     /// The same update to both parties of `chat`.
