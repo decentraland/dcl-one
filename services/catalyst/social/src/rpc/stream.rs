@@ -517,6 +517,20 @@ impl Session {
             self.code = code;
         }
         self.outbox.close(frame).await;
+        if frame.is_some() {
+            // Preserve the close frame while the peer still has application data
+            // in flight. Dropping a TCP socket with unread data can reset it and
+            // discard the close we just flushed. Only drain the closing handshake;
+            // no further client command is processed.
+            let _ = tokio::time::timeout(CLOSE_BUDGET, async {
+                while let Some(Ok(message)) = self.incoming.next().await {
+                    if matches!(message, Message::Close(_)) {
+                        break;
+                    }
+                }
+            })
+            .await;
+        }
         self.code
     }
 
