@@ -29,8 +29,8 @@ async fn uws_auxiliary_routes_match_executed_source_configuration_and_authentica
     let privacy_address = "0x9711111111111111111111111111111111111111";
     for case in fixture["cases"].as_array().unwrap() {
         let operation = case["operation"].as_str().unwrap();
-        // Source catches preserve dependency error text, while the local SQL
-        // surface sanitizes it; an actual socket abort uses different transports.
+        // The real SQL error boundary has its own source-executed replay in
+        // communities::tests::referral_errors. A socket abort uses different transports.
         if matches!(
             case["id"].as_str(),
             Some("error" | "unknown-error" | "aborted")

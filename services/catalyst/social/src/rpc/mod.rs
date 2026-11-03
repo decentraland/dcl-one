@@ -432,13 +432,11 @@ async fn privacy_settings(
             "private_messages_privacy": row.unwrap_or_default().private_messages_privacy,
         }))
         .into_response(),
-        // upstream echoes the error's message; the shape is kept, the
-        // database detail stays in the log
-        Err(e) => {
+        Err(db::DbError::Sqlx(e)) => {
             tracing::warn!(error = %e, "privacy-settings read failed");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "Internal Server Error" })),
+                Json(json!({ "error": crate::communities::http::database_message(&e) })),
             )
                 .into_response()
         }

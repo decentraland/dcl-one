@@ -1012,6 +1012,11 @@
           "path": "services/catalyst/social/src/legacy_events.rs",
           "test": "official_sdk_keeps_source_queue_parameters_and_sns_attributes",
           "scope": "Official SDKs send SigV4 requests only to a local stub; validates batch10,visibility60,longpoll20 and SNS JSON+type/subType attributes. No live AWS delivery claimed."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
+          "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
+          "scope": "Five actual pinned source handlers raise a real PostgreSQL server exception through node-pg. The local SQLx routes raise the same server message in an owned database and compare status plus the exact handler-specific error/message JSON envelope. Other driver/OS error text is outside this scope."
         }
       ],
       "gaps": [
@@ -1585,6 +1590,11 @@
           "path": "services/catalyst/social/src/legacy_events.rs",
           "test": "official_sdk_keeps_source_queue_parameters_and_sns_attributes",
           "scope": "Official SDKs send SigV4 requests only to a local stub; validates batch10,visibility60,longpoll20 and SNS JSON+type/subType attributes. No live AWS delivery claimed."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
+          "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
+          "scope": "Five actual pinned source handlers raise a real PostgreSQL server exception through node-pg. The local SQLx routes raise the same server message in an owned database and compare status plus the exact handler-specific error/message JSON envelope. Other driver/OS error text is outside this scope."
         }
       ],
       "gaps": [
@@ -2099,6 +2109,11 @@
           "path": "services/catalyst/social/src/legacy_events.rs",
           "test": "official_sdk_keeps_source_queue_parameters_and_sns_attributes",
           "scope": "Official SDKs send SigV4 requests only to a local stub; validates batch10,visibility60,longpoll20 and SNS JSON+type/subType attributes. No live AWS delivery claimed."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
+          "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
+          "scope": "Five actual pinned source handlers raise a real PostgreSQL server exception through node-pg. The local SQLx routes raise the same server message in an owned database and compare status plus the exact handler-specific error/message JSON envelope. Other driver/OS error text is outside this scope."
         }
       ],
       "gaps": [
@@ -2131,6 +2146,11 @@
           "path": "services/catalyst/social/src/legacy_events.rs",
           "test": "official_sdk_keeps_source_queue_parameters_and_sns_attributes",
           "scope": "Official SDKs send SigV4 requests only to a local stub; validates batch10,visibility60,longpoll20 and SNS JSON+type/subType attributes. No live AWS delivery claimed."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
+          "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
+          "scope": "Five actual pinned source handlers raise a real PostgreSQL server exception through node-pg. The local SQLx routes raise the same server message in an owned database and compare status plus the exact handler-specific error/message JSON envelope. Other driver/OS error text is outside this scope."
         }
       ],
       "gaps": [
@@ -3437,8 +3457,8 @@
     {
       "id": "uws_http:GET:/v1/users/:address/privacy-settings",
       "owner": "inventory-auxiliary",
-      "status": "known_gap",
-      "result": "Lowercases without trimming, validates the address and returns stored private_messages_privacy or absent-row all. Invalid,absent,uppercase and configured-friends cases match executed source. Failure status/JSON envelope match but the error text differs.",
+      "status": "reviewed",
+      "result": "Lowercases without trimming, validates the address and returns stored private_messages_privacy or absent-row all. Invalid, absent, uppercase and configured-friends cases match executed source. SQL server failures return the server message under error, matching the source catch boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/mod.rs",
@@ -3451,14 +3471,17 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/http.rs",
-          "test": "a_failed_privacy_read_names_no_database_detail",
-          "scope": "Local regression explicitly preserves the sanitized SQL failure text; it documents the known source detail difference."
+          "test": "a_failed_privacy_read_preserves_the_dependency_message",
+          "scope": "A failed SQLx pool acquisition keeps its dependency message. This is a local failure regression, not an assertion that all Node and SQLx transport failures have identical text."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
+          "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
+          "scope": "Five actual pinned source handlers raise a real PostgreSQL server exception through node-pg. The local SQLx routes raise the same server message in an owned database and compare status plus the exact handler-specific error/message JSON envelope. Other driver/OS error text is outside this scope."
         }
       ],
-      "gaps": [
-        "Upstream echoes dependency error.message (or Unknown error); the local failed SQL read returns the fixed Internal Server Error message. Source Node and SQLx dependency details have not been equated."
-      ],
-      "remaining_verification": "Dependency-error message contract is a known difference; actual deployed backend failures and proxy path handling remain unverified."
+      "gaps": [],
+      "remaining_verification": "Actual deployed backend/proxy failures and unrelated driver or operating-system error texts remain unverified; the real PostgreSQL server-exception case is replayed."
     },
     {
       "id": "websocket:UPGRADE:/",

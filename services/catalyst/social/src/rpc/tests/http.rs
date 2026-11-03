@@ -229,9 +229,9 @@ async fn with_writes_off_the_guard_answers_non_gets_first() {
     );
 }
 
-/// A failed read answers upstream's `{error}` 500 without the database's detail.
+/// Non-server SQLx failures retain the dependency's own message at this boundary.
 #[tokio::test]
-async fn a_failed_privacy_read_names_no_database_detail() {
+async fn a_failed_privacy_read_preserves_the_dependency_message() {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(std::time::Duration::from_millis(200))
         .connect_lazy("postgres://nobody@127.0.0.1:1/nowhere")
@@ -244,7 +244,7 @@ async fn a_failed_privacy_read_names_no_database_detail() {
     );
     assert_eq!(
         serde_json::from_str::<Value>(&body).unwrap(),
-        json!({ "error": "Internal Server Error" })
+        json!({ "error": "pool timed out while waiting for an open connection" })
     );
 }
 

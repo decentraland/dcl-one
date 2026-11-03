@@ -35,6 +35,7 @@ mod owner_parity;
 mod post_create;
 mod post_edit;
 mod ranking_parity;
+mod referral_errors;
 mod referral_lifecycle;
 mod request_lifecycle;
 mod selected_community;
