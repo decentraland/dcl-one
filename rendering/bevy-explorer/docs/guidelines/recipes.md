@@ -166,6 +166,9 @@ messages and signed URLs out of the panel. Compute expensive readings on demand.
 
 Use `DebugInput` for a toggle, choice, number or text argument. A field path binds the
 control to live state. A command template substitutes `{value}` into its arguments.
+For opposite actions such as Connect and Disconnect, register one `ActionButton`.
+Bind it to the boolean the command changes and give each direction its caption and
+argument. When neither action is available, return null and the reason.
 Validate user input in the owning handler. For HUD-owned features, use the existing
 session handler and apply the same lifecycle rules. Verify a real value change or
 side effect through an open panel in a built client. See `WorldStatePlugin` for a

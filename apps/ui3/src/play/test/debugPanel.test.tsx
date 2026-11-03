@@ -102,6 +102,53 @@ it('opens a named section from chat and applies plugin-declared values', async (
   fireEvent.click(screen.getByRole('button', { name: 'Close' }))
 })
 
+it('shows only the next connection action and follows changes from the engine', async () => {
+  vi.useFakeTimers()
+  const session = fakeSession()
+  let enabled: boolean | null = true
+  let refuseDisconnect = true
+  const input = { label: 'Connection', field: 'enabled', command: '/connection {value}', kind: {
+    type: 'actionButton', options: { enable: ['Connect', 'connect'], disable: ['Disconnect', 'disconnect'] }
+  } }
+  session.runDebugCommand = vi.fn(async (line: string) => {
+    if (line === '/debug_panel --dev-build') return 'true'
+    if (line === '/debug_panel') return JSON.stringify([{ title: 'Pulse', query: '/state', fields: [], actions: [], inputs: [input] }])
+    if (line === '/state') return JSON.stringify({ enabled, unavailable: { enabled: 'No session' } })
+    if (line === '/connection disconnect') {
+      if (refuseDisconnect) throw new Error('Connection policy changed')
+      enabled = false
+    }
+    if (line === '/connection connect') enabled = true
+    return 'Applied'
+  })
+  try {
+    render(<><Sidebar session={session} /><PopupHost /></>)
+    await act(async () => requestDebugPanel('Pulse', vi.fn()))
+    const action = (name: string) => screen.queryByRole('button', { name })
+    expect(action('Connect')).toBeNull()
+    const click = (name: string) => act(async () => { fireEvent.click(screen.getByRole('button', { name })) })
+    await click('Disconnect')
+    expect(screen.getByText(/Connection policy changed/)).toBeInTheDocument()
+    expect(action('Disconnect')).toBeEnabled()
+    expect(action('Connect')).toBeNull()
+    refuseDisconnect = false
+    await click('Disconnect')
+    expect(enabled).toBe(false)
+    expect(action('Disconnect')).toBeNull()
+    await click('Connect')
+    expect(enabled).toBe(true)
+    expect(action('Disconnect')).toBeEnabled()
+    enabled = null
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    expect(action('Connect')).toBeDisabled()
+    expect(screen.getByText(/No session/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+  } finally {
+    resetPopups()
+    vi.useRealTimers()
+  }
+})
+
 it('keeps the caption with each number and separates unlabelled tuples too', async () => {
   const session = fakeSession()
   const fields = [['Scene definitions per batch (min / mean / max)', 'batch'], ['Samples', 'pair']]

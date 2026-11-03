@@ -737,7 +737,15 @@ impl DecentralandApp {
         )
         .add_debug_section(DebugSection {
             title: "Performance",
-            inputs: &[],
+            inputs: &[DebugInput {
+                label: "30 FPS limit",
+                field: "limit30",
+                command: "/session_graphics fps {value}",
+                kind: DebugInputKind::ActionButton {
+                    enable: ("Limit to 30 FPS", "30"),
+                    disable: ("Use configured FPS", ""),
+                },
+            }],
             query: "/performance_state",
             fields: &[
                 ("Client version", "version"),
@@ -750,10 +758,7 @@ impl DecentralandApp {
                 ("GPU frame time (ms)", "gpuFrameMs"),
                 ("Engine memory (MiB)", "engineMemoryMiB"),
             ],
-            actions: &[
-                ("Limit to 30 FPS", "/session_graphics fps 30"),
-                ("Use configured FPS", "/session_graphics fps"),
-            ],
+            actions: &[],
         });
 
         app

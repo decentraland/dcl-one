@@ -54,18 +54,22 @@ pub(super) fn register(app: &mut App) {
                 ("Associated base parcel (X / Y)", "room.baseParcelPosition"),
             ]);
         }
-        let pause = format!("/room_connection {scope} disconnect");
-        let resume = format!("/room_connection {scope} connect");
-        let actions = [
-            ("Disconnect current room", pause.as_str()),
-            ("Reconnect current room", resume.as_str()),
-        ];
+        let command = format!("/room_connection {scope} {{value}}");
+        let inputs = [DebugInput {
+            label: "Connection",
+            field: "room.connectionEnabled",
+            command: &command,
+            kind: DebugInputKind::ActionButton {
+                enable: ("Connect", "connect"),
+                disable: ("Disconnect", "disconnect"),
+            },
+        }];
         app.add_debug_section(DebugSection {
             title,
             query: &format!("/room_diagnostics {scope}"),
             fields: &fields,
-            actions: if client { &actions } else { &[] },
-            inputs: &[],
+            actions: &[],
+            inputs: if client { &inputs } else { &[] },
         });
     }
     let indicators = app.is_plugin_added::<bevy::gizmos::GizmoPlugin>()
@@ -127,6 +131,30 @@ enum Scope {
     Throughput,
 }
 
+impl Scope {
+    fn for_room(scene: bool, private: bool, transport: bool) -> Option<Self> {
+        if private {
+            Some(Self::Chat)
+        } else if !transport {
+            None
+        } else if scene {
+            Some(Self::Scene)
+        } else {
+            Some(Self::Island)
+        }
+    }
+}
+
+fn room_control_block(policy: ConnectionAvailability, no_render: bool) -> Option<&'static str> {
+    if common::structs::server_mode() || no_render {
+        Some("Only a graphical player client can control room connections")
+    } else if policy == ConnectionAvailability::Unavailable {
+        Some("Room connections are controlled by session policy")
+    } else {
+        None
+    }
+}
+
 /// Inspect LiveKit room lifecycle, participant membership and data-channel throughput.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/room_diagnostics")]
@@ -138,6 +166,7 @@ struct RoomDiagnostics {
 fn room_diagnostics(
     mut input: ConsoleCommand<RoomDiagnostics>,
     policy: Res<State<ConnectionAvailability>>,
+    no_render: Option<Res<common::structs::NoRenderApp>>,
     rooms: Query<
         (
             Entity,
@@ -214,17 +243,16 @@ fn room_diagnostics(
         livekit,
     ) in &rooms
     {
-        let scope = if private {
-            Scope::Chat
-        } else if !transport {
+        let Some(scope) = Scope::for_room(scene.is_some(), private, transport) else {
             continue;
-        } else if scene.is_some() {
-            Scope::Scene
-        } else {
-            Scope::Island
         };
         if scope != command.scope && (command.scope != Scope::Throughput || private) {
             continue;
+        }
+        if command.scope != Scope::Throughput && !result["room"].is_null() {
+            result["room"]["connectionEnabled"] = serde_json::Value::Null;
+            result["unavailable"]["room.connectionEnabled"] = json!("More than one room matches");
+            break;
         }
         let mut remote_count = 0;
         let mut peer_quality = BTreeSet::new();
@@ -300,7 +328,11 @@ fn room_diagnostics(
             } else {
                 json!({"room": "Room is not connected", "room.baseParcelPosition": "Scene metadata has no valid base parcel coordinates"})
             };
-            break;
+            if let Some(reason) = room_control_block(*policy.get(), no_render.is_some()) {
+                result["unavailable"]["room.connectionEnabled"] = json!(reason);
+            } else {
+                result["room"]["connectionEnabled"] = json!(!paused && !failed);
+            }
         }
     }
     input.reply_ok(result.to_string());
@@ -329,6 +361,7 @@ fn room_connection(
     mut input: ConsoleCommand<RoomConnectionCommand>,
     mut commands: Commands,
     policy: Res<State<ConnectionAvailability>>,
+    no_render: Option<Res<common::structs::NoRenderApp>>,
     rooms: Query<
         (
             Entity,
@@ -345,19 +378,13 @@ fn room_connection(
     let Some(Ok(command)) = input.take() else {
         return;
     };
-    if common::structs::server_mode() || *policy.get() == ConnectionAvailability::Unavailable {
-        input.reply_failed("Room connections are controlled by session policy");
+    if let Some(reason) = room_control_block(*policy.get(), no_render.is_some()) {
+        input.reply_failed(reason);
         return;
     }
-    let mut matching =
-        rooms
-            .iter()
-            .filter(|(_, scene, private, transport, ..)| match command.scope {
-                Scope::Chat => *private,
-                Scope::Scene => *scene && *transport,
-                Scope::Island => !*scene && !*private && *transport,
-                _ => false,
-            });
+    let mut matching = rooms.iter().filter(|(_, scene, private, transport, ..)| {
+        Scope::for_room(*scene, *private, *transport) == Some(command.scope)
+    });
     let Some((entity, _, _, _, paused, failed, room)) = matching.next() else {
         input.reply_failed("No current room");
         return;
@@ -492,6 +519,89 @@ fn draw_room_indicators(
 mod tests {
     use super::*;
     use bevy_console::ConsoleCommandEntered;
+    use std::sync::{Arc, Mutex};
+
+    fn spawn_island(app: &mut App) -> Entity {
+        let (components, sender, _) = crate::livekit::standalone_room_components(String::new());
+        app.world_mut()
+            .spawn((
+                components,
+                Transport {
+                    transport_type: TransportType::Livekit,
+                    context: Entity::PLACEHOLDER,
+                    sender,
+                    control: None,
+                },
+            ))
+            .id()
+    }
+
+    fn island_diagnostics(app: &mut App) -> serde_json::Value {
+        let reply = Arc::new(Mutex::new(None));
+        let writer = reply.clone();
+        app.world_mut().send_event(ConsoleCommandEntered {
+            command_name: "/room_diagnostics".into(),
+            args: vec!["island".into()],
+            responder: Some(Arc::new(move |result| {
+                *writer.lock().unwrap() = Some(result)
+            })),
+        });
+        app.update();
+        let text = reply.lock().unwrap().take().unwrap().unwrap();
+        serde_json::from_str(&text).unwrap()
+    }
+
+    #[test]
+    fn room_button_follows_pause_refusal_policy_and_unique_assignment() {
+        let mut app = App::new();
+        app.add_plugins(console::ConsolePlugin {
+            add_bevy_console: false,
+        })
+        .insert_resource(State::new(ConnectionAvailability::Available))
+        .init_resource::<ProfileMetaCache>()
+        .add_console_command::<RoomDiagnostics, _>(room_diagnostics);
+        app.update();
+        let empty = island_diagnostics(&mut app);
+        assert!(empty["room"].is_null());
+        assert_eq!(
+            empty["unavailable"]["room"],
+            "No LiveKit island room assigned"
+        );
+        let room = spawn_island(&mut app);
+        assert_eq!(
+            island_diagnostics(&mut app)["room"]["connectionEnabled"],
+            true
+        );
+        app.world_mut().entity_mut(room).insert(RoomPaused);
+        assert_eq!(
+            island_diagnostics(&mut app)["room"]["connectionEnabled"],
+            false
+        );
+        app.world_mut()
+            .entity_mut(room)
+            .remove::<RoomPaused>()
+            .insert(ConnectFailed);
+        assert_eq!(
+            island_diagnostics(&mut app)["room"]["connectionEnabled"],
+            false
+        );
+        app.insert_resource(State::new(ConnectionAvailability::Unavailable));
+        let blocked = island_diagnostics(&mut app);
+        assert!(blocked["room"]["connectionEnabled"].is_null());
+        assert_eq!(
+            blocked["unavailable"]["room.connectionEnabled"],
+            "Room connections are controlled by session policy"
+        );
+        app.insert_resource(State::new(ConnectionAvailability::Available));
+        spawn_island(&mut app);
+        let ambiguous = island_diagnostics(&mut app);
+        assert!(ambiguous["room"]["state"].is_string());
+        assert!(ambiguous["room"]["connectionEnabled"].is_null());
+        assert_eq!(
+            ambiguous["unavailable"]["room.connectionEnabled"],
+            "More than one room matches"
+        );
+    }
 
     #[test]
     fn reconnect_restarts_a_refused_dial_once() {
@@ -506,20 +616,8 @@ mod tests {
                 rooms.get_mut(trigger.target()).unwrap().retries += 1;
             },
         );
-        let (components, sender, _) = crate::livekit::standalone_room_components(String::new());
-        let room = app
-            .world_mut()
-            .spawn((
-                components,
-                Transport {
-                    transport_type: TransportType::Livekit,
-                    context: Entity::PLACEHOLDER,
-                    sender,
-                    control: None,
-                },
-                Connecting,
-            ))
-            .id();
+        let room = spawn_island(&mut app);
+        app.world_mut().entity_mut(room).insert(Connecting);
         app.update();
         app.world_mut().entity_mut(room).insert(ConnectFailed);
         app.world_mut().send_event(ConsoleCommandEntered {

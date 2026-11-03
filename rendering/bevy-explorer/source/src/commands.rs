@@ -187,6 +187,7 @@ pub fn performance_state(
                 "fps": fps.map(f64::round),
                 "targetFps": session.fps_target(&config),
                 "overrideFps": session.fps_target,
+                "limit30": session.fps_target == Some(30),
                 "gpuFrameMs": gpu_ms.map(|ms| (ms * 10.0).round() / 10.0),
                 "engineMemoryMiB": memory.reading().map(|reading| reading.used_bytes >> 20),
                 "unavailable": {

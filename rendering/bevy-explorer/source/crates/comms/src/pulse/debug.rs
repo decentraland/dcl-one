@@ -9,9 +9,25 @@ pub(super) fn register(app: &mut App) {
         .world()
         .contains_resource::<common::structs::NoRenderApp>()
         && !common::structs::server_mode();
+    let mut inputs = Vec::new();
     if client {
         app.add_console_command::<PulseConnection, _>(pulse_connection);
+        inputs.push(DebugInput {
+            label: "Connection",
+            field: "connectionEnabled",
+            command: "/pulse_connection {value}",
+            kind: DebugInputKind::ActionButton {
+                enable: ("Connect", "connect"),
+                disable: ("Disconnect", "disconnect"),
+            },
+        });
     }
+    inputs.push(DebugInput {
+        label: "Look up peer by wallet",
+        field: "wallet",
+        command: "/pulse_lookup {value}",
+        kind: DebugInputKind::Text,
+    });
     app.init_resource::<PeerLookup>()
         .add_console_command::<PulseState, _>(pulse_state)
         .add_console_command::<PulseLookup, _>(pulse_lookup)
@@ -28,20 +44,8 @@ pub(super) fn register(app: &mut App) {
                 ("Resync requests (last 60s)", "resyncs"),
                 ("Emote for selected peer", "emote"),
             ],
-            actions: if client {
-                &[
-                    ("Connect", "/pulse_connection connect"),
-                    ("Disconnect", "/pulse_connection disconnect"),
-                ]
-            } else {
-                &[]
-            },
-            inputs: &[DebugInput {
-                label: "Look up peer by wallet",
-                field: "wallet",
-                command: "/pulse_lookup {value}",
-                kind: DebugInputKind::Text,
-            }],
+            actions: &[],
+            inputs: &inputs,
         });
 }
 
@@ -74,6 +78,7 @@ struct PulseState;
 fn pulse_state(
     mut input: ConsoleCommand<PulseState>,
     session: Option<Res<PulseSession>>,
+    no_render: Option<Res<common::structs::NoRenderApp>>,
     lookup: Res<PeerLookup>,
     time: Res<Time>,
 ) {
@@ -118,12 +123,21 @@ fn pulse_state(
                 .map(|peer| peer.active_emote.as_deref().unwrap_or("not emoting"))
                 .unwrap_or("peer not present")
         });
+        let connection = session
+            .as_deref()
+            .ok_or("Pulse is not configured")
+            .and_then(|s| connection_enabled(s, no_render.is_some()));
+        let mut unavailable = json!({"emote": "Select a peer wallet to inspect its emote"});
+        if let Err(reason) = connection {
+            unavailable["connectionEnabled"] = json!(reason);
+        }
         input.reply_ok(json!({
+            "connectionEnabled": connection.ok(),
             "state": state, "authenticated": matches!(session.as_deref().map(|s| &s.state), Some(Connection::Established)),
             "sentBytes": sent.bytes, "sentPackets": sent.packets, "receivedBytes": received.bytes,
             "receivedPackets": received.packets, "resyncs": resyncs,
             "wallet": lookup.0.map(|wallet| format!("{wallet:#x}")), "emote": emote,
-            "unavailable": {"emote": "Select a peer wallet to inspect its emote"},
+            "unavailable": unavailable,
         }).to_string());
     }
 }
@@ -141,9 +155,24 @@ struct PulseConnection {
     operation: Operation,
 }
 
+fn connection_enabled(session: &PulseSession, no_render: bool) -> Result<bool, &'static str> {
+    if no_render || common::structs::server_mode() {
+        return Err("Only a graphical player client can control the Pulse connection");
+    }
+    if !matches!(session.role, PulseRole::Player(_)) {
+        return Err("Only a player session can control its Pulse connection");
+    }
+    match session.state {
+        Connection::Dead => Err("A terminal disconnect requires a fresh Pulse session"),
+        Connection::Paused => Ok(false),
+        _ => Ok(true),
+    }
+}
+
 fn pulse_connection(
     mut input: ConsoleCommand<PulseConnection>,
     session: Option<ResMut<PulseSession>>,
+    no_render: Option<Res<common::structs::NoRenderApp>>,
     mut commands: Commands,
 ) {
     let Some(Ok(command)) = input.take() else {
@@ -153,8 +182,8 @@ fn pulse_connection(
         input.reply_failed("Pulse is not configured");
         return;
     };
-    if !matches!(session.role, PulseRole::Player(_)) || matches!(session.state, Connection::Dead) {
-        input.reply_failed("This session cannot be controlled");
+    if let Err(reason) = connection_enabled(&session, no_render.is_some()) {
+        input.reply_failed(reason);
         return;
     }
     match command.operation {

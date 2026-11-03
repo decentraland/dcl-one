@@ -54,6 +54,10 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await waitTarget(47)
     await explorer.hud.click(button('Limit to 30 FPS'))
     await waitTarget(30)
+    assert.equal(await explorer.hud.isVisible(button('Limit to 30 FPS')), false)
+    await explorer.hud.click(button('Use configured FPS'))
+    await explorer.hud.wait(button('Limit to 30 FPS'))
+    assert.equal((await explorer.json<{ overrideFps: number | null }>('/performance_state')).overrideFps, null)
     await expand('Avatar')
     await explorer.hud.click(button('Play wave'))
     await until(async () => (await explorer.myAvatar()).emote, (emote) =>

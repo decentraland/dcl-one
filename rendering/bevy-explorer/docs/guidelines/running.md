@@ -81,6 +81,8 @@ In any build, open **Sidebar settings (•••) → Debug panel** or enter `/d
 Use `/debug help` to list the sections available in this client and `/debug <section>`
 to open one directly. Search matches both section titles and controls. Expand the
 sections you want to watch. Collapsing a section stops its queries.
+Pulse and LiveKit rooms show one connection button. It changes from **Disconnect**
+to **Connect** when paused, and is disabled when there is no controllable connection.
 
 World and Scene Loading show where the player is and which load stage is active.
 Performance and Memory and limits expose the engine's measurements and budgets.

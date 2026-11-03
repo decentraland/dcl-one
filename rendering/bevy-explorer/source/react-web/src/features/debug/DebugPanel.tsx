@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button, ModalShell, Select, TextInput, Toggle, openPopup } from '../../design'
 import styles from './DebugPanel.module.css'
 
@@ -19,31 +19,38 @@ interface WidgetInput {
   command: string
   kind: { type: 'text' | 'toggle' } | { type: 'number'; options: { min: number; max: number; step: number } }
     | { type: 'select'; options: [label: string, argument: string][] }
+    | { type: 'actionButton'; options: { enable: [label: string, argument: string]; disable: [label: string, argument: string] } }
 }
 
 export function useCommandResult<T>(run: RunCommand, line: string, repeat: boolean) {
   const [value, setValue] = useState<T>()
   const [error, setError] = useState('')
+  const refresh = useRef<() => Promise<void>>(undefined)
   useEffect(() => {
     let active = true
+    let latest = 0
     let timer: ReturnType<typeof setTimeout>
     async function read() {
+      // A command readback supersedes any poll that was already in flight.
+      const request = ++latest
+      clearTimeout(timer)
       try {
         const next: T = JSON.parse(await run(line))
-        if (active) {
+        if (active && request === latest) {
           setValue(next)
           setError('')
         }
       } catch (e) {
-        if (active) setError(String(e))
+        if (active && request === latest) setError(String(e))
       } finally {
-        if (active && repeat) timer = setTimeout(read, 1000)
+        if (active && repeat && request === latest) timer = setTimeout(read, 1000)
       }
     }
+    refresh.current = read
     void read()
-    return () => { active = false; clearTimeout(timer) }
+    return () => { active = false; clearTimeout(timer); refresh.current = undefined }
   }, [line, repeat, run])
-  return { value, error }
+  return { value, error, refresh: () => refresh.current?.() }
 }
 
 function fieldValue(data: unknown, path: string): unknown {
@@ -164,9 +171,17 @@ function InputWidget({ input, live, reason, busy, submit }: {
   input: WidgetInput; live: unknown; reason?: string; busy: boolean; submit: (line: string) => Promise<boolean>
 }) {
   const [draft, setDraft] = useState<string | null>(null)
-  const apply = (v: string) => submit(input.command.replace('{value}', () => v))
+  const apply = (v: string) => submit(input.command.replace('{value}', () => v).trimEnd())
   const kind = input.kind
   const unavailable = input.field !== '' && live == null
+  if (kind.type === 'actionButton') {
+    const [caption, argument] = live === true ? kind.options.disable : kind.options.enable
+    return <div className={styles.inputRow}>
+      <span>{input.label}{unavailable && reason && <> — {reason}</>}</span>
+      <Button size="sm" variant="secondary" disabled={busy || typeof live !== 'boolean'}
+        onClick={() => void apply(argument)}>{caption}</Button>
+    </div>
+  }
   if (kind.type === 'toggle') return (
     <div className={styles.inputRow}><span>{input.label}{unavailable && reason && <> — {reason}</>}</span>
       <Toggle aria-label={input.label} checked={live === true} disabled={busy || unavailable}
@@ -204,7 +219,7 @@ function InputWidget({ input, live, reason, busy, submit }: {
 }
 
 function Widgets({ section, run }: { section: DebugSection; run: RunCommand }) {
-  const { value, error } = useCommandResult<unknown>(run, section.query, true)
+  const { value, error, refresh } = useCommandResult<unknown>(run, section.query, true)
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState('')
   async function invoke(line: string) {
@@ -217,6 +232,7 @@ function Widgets({ section, run }: { section: DebugSection; run: RunCommand }) {
       setResult(String(e))
       return false
     } finally {
+      await refresh()
       setBusy(false)
     }
   }
@@ -236,7 +252,7 @@ function Widgets({ section, run }: { section: DebugSection; run: RunCommand }) {
         </div>
       )}
       {section.inputs?.map((input) => (
-        <InputWidget key={input.label} input={input} live={fieldValue(value, input.field)}
+        <InputWidget key={input.label} input={input} live={error ? undefined : fieldValue(value, input.field)}
           reason={unavailableReason(fieldValue(value, 'unavailable'), input.field)} busy={busy} submit={invoke} />
       ))}
       {result && <pre className={styles.reply} role="status">{result}</pre>}
@@ -268,7 +284,8 @@ function DebugPanel({ run, close, initial }: { run: RunCommand; close: () => voi
   }
   const term = filter.trim().toLowerCase()
   const matches = sections?.filter((s) => [s.title, ...s.fields.map(([label]) => label),
-    ...s.actions.map(([label]) => label), ...(s.inputs ?? []).map((i) => i.label)].some((label) => label.toLowerCase().includes(term)))
+    ...s.actions.map(([label]) => label), ...(s.inputs ?? []).flatMap(i => i.kind.type === 'actionButton'
+      ? [i.label, i.kind.options.enable[0], i.kind.options.disable[0]] : [i.label])].some((label) => label.toLowerCase().includes(term)))
   return (
     <ModalShell title="Debug panel" ariaLabel="Debug panel" onClose={close} className={styles.panel}>
       <TextInput type="search" aria-label="Find debug controls" placeholder="Find a section or control"

@@ -32,7 +32,17 @@ pub struct DebugInput<'a> {
 pub enum DebugInputKind<'a> {
     Text,
     Toggle,
-    Number { min: f64, max: f64, step: f64 },
+    /// One button bound to a boolean. Each direction supplies its caption and command argument.
+    #[serde(rename = "actionButton")]
+    ActionButton {
+        enable: (&'a str, &'a str),
+        disable: (&'a str, &'a str),
+    },
+    Number {
+        min: f64,
+        max: f64,
+        step: f64,
+    },
     Select(&'a [(&'a str, &'a str)]),
 }
 
