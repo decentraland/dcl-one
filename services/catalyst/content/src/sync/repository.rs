@@ -141,12 +141,13 @@ impl LiveDeploymentRepository {
     /// Repairs `deleter_deployment` for every row an intra-batch overwrite could not see:
     /// each pointer's successor chain, ordered by (entity_timestamp, lower(entity_id)), per type.
     /// An unpublished local scene is a link of the chain like any other (its parcels stay
-    /// empty); a row the repair gives a deleter gives up its pointers, in the same transaction.
+    /// empty); a row the repair gives a deleter gives up its pointers, and the snapshot windows
+    /// that may still list it are marked for regeneration, in the same transaction.
     pub async fn resolve_deleter_deployments(&self) -> Result<(), SyncError> {
         let start = std::time::Instant::now();
         let storage = |e: sqlx::Error| SyncError::Storage(e.to_string());
         let mut tx = self.pool.begin().await.map_err(storage)?;
-        let (superseded, cleared): (i64, i64) = sqlx::query_as(
+        let (superseded, cleared, outdated): (i64, i64, i64) = sqlx::query_as(
             r#"
             WITH pointer_successors AS (
                 SELECT id AS older_id,
@@ -172,14 +173,23 @@ impl LiveDeploymentRepository {
                 FROM successors
                 WHERE older.id = successors.older_id
                   AND older.deleter_deployment IS NULL
-                RETURNING older.entity_id
+                RETURNING older.entity_id, older.entity_timestamp
             ), cleared AS (
                 DELETE FROM content.active_pointers ap
                 USING superseded s
                 WHERE ap.entity_id = s.entity_id
                 RETURNING ap.pointer
+            ), outdated AS (
+                -- a generation stamped before its window began is regenerated on the next pass
+                UPDATE content.snapshots sn
+                SET generation_time = 'epoch'::timestamp
+                WHERE EXISTS (
+                    SELECT 1 FROM superseded s
+                    WHERE s.entity_timestamp BETWEEN sn.init_timestamp AND sn.end_timestamp)
+                RETURNING 1
             )
-            SELECT (SELECT count(*) FROM superseded), (SELECT count(*) FROM cleared)
+            SELECT (SELECT count(*) FROM superseded), (SELECT count(*) FROM cleared),
+                   (SELECT count(*) FROM outdated)
             "#,
         )
         .fetch_one(&mut *tx)
@@ -190,6 +200,7 @@ impl LiveDeploymentRepository {
         tracing::info!(
             rows_affected = superseded,
             pointers_cleared = cleared,
+            snapshots_outdated = outdated,
             elapsed_ms = start.elapsed().as_millis() as u64,
             "Resolved deleter_deployment"
         );

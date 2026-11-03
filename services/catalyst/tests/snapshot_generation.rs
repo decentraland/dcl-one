@@ -1243,6 +1243,114 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
     let _ = std::fs::remove_dir_all(root_b);
 }
 
+/// A database an earlier unpublish left behind: the unpublish restored the
+/// older scene it had superseded (its deleter cleared, the parcel re-pointed)
+/// and the next pass wrote that scene into its window. The deleter repair
+/// supersedes it again, empties the parcel and marks the window, so the next
+/// pass regenerates it without the scene and `/pointer-changes` agrees.
+#[tokio::test]
+async fn the_deleter_repair_regenerates_a_window_an_earlier_unpublish_restored() {
+    let Some(db_a) = db::scratch_database().await else {
+        return;
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    let root = temp_dir("repair-window");
+    let node = content_state(&db_a.pool, &root).await;
+    node.sync.set_state(SyncState::Syncing);
+
+    let old_local = seed_old_local_scene(&node, now).await;
+    let deployer = WriteDeployer::new(
+        db_a.pool.clone(),
+        node.storage.clone(),
+        Arc::new(catalyst::auth::PeerValidated),
+    );
+    let asset = b"a newer scene".to_vec();
+    let asset_hash = catalyst::auth::hash_bytes_v1(&asset);
+    let (new_local, new_local_bytes) = entity_file(
+        "scene",
+        &["7,7"],
+        now - 60_000,
+        &[("bin/game.js", &asset_hash)],
+    );
+    let chain = serde_json::to_value(auth::signed_chain(&new_local).await).unwrap();
+    deployer
+        .deploy_entity(
+            vec![Bytes::from(new_local_bytes), Bytes::from(asset)],
+            &new_local,
+            chain,
+            "LOCAL",
+        )
+        .await
+        .unwrap_or_else(|e| panic!("local deploy: {:?}", e.errors()));
+
+    // The earlier unpublish: the newer scene tombstoned, the old one restored.
+    for sql in [
+        "UPDATE content.local_entities SET tombstoned_at = timezone('UTC', now()) WHERE entity_id = $1",
+        "UPDATE content.deployments SET deleter_deployment = NULL WHERE entity_id = $2",
+        "UPDATE content.active_pointers SET entity_id = $2 WHERE pointer = '7,7'",
+    ] {
+        sqlx::query(sql)
+            .bind(&new_local)
+            .bind(&old_local)
+            .execute(&db_a.pool)
+            .await
+            .unwrap();
+    }
+    let generator = SnapshotGenerator::new(node.clone(), false, settings(100));
+    let (before, _) = generator
+        .generate(chrono::Utc::now().timestamp_millis())
+        .await
+        .unwrap();
+    let in_files: u64 = before.iter().map(|r| r.number_of_entities).sum();
+    assert_eq!(in_files, 1, "the restored scene is in its window");
+
+    catalyst::content::sync::LiveDeploymentRepository::new(
+        db_a.pool.clone(),
+        Arc::new(SyncStatus::default()),
+    )
+    .resolve_deleter_deployments()
+    .await
+    .unwrap();
+    let a_pointer: Option<String> =
+        sqlx::query_scalar("SELECT entity_id FROM content.active_pointers WHERE pointer = '7,7'")
+            .fetch_optional(&db_a.pool)
+            .await
+            .unwrap();
+    assert_eq!(a_pointer, None, "the repair empties the parcel");
+
+    let (after, summary) = generator
+        .generate(chrono::Utc::now().timestamp_millis())
+        .await
+        .unwrap();
+    assert!(summary.generated >= 1, "{summary:?}");
+    let in_files: u64 = after.iter().map(|r| r.number_of_entities).sum();
+    assert_eq!(in_files, 0, "the regenerated window leaves the scene out");
+
+    let (url, _, serve) = serve_node(node.clone()).await;
+    let changes: Value = reqwest::Client::new()
+        .get(format!("{url}/content/pointer-changes"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let listed: Vec<&str> = changes["deltas"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["entityId"].as_str().unwrap())
+        .collect();
+    assert!(
+        !listed.contains(&old_local.as_str()) && !listed.contains(&new_local.as_str()),
+        "{listed:?}"
+    );
+
+    serve.abort();
+    db_a.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// A pass over a populated database. Not a contract: run by hand with
 /// CATALYST_SNAPSHOT_BENCH_DATABASE_URL naming a disposable database (it
 /// writes content.snapshots and a temporary store). Prints each pass's wall

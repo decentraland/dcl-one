@@ -540,7 +540,8 @@ const WINDOW_SQL: &str = r#"
 /// (the old `snapshot_is_outdated`, inclusive window, strict `>`), or a
 /// local unpublish since then touched it: a scene tombstoned after the
 /// generation shares a pointer with a deployment of the window (the scene
-/// itself, which the windows leave out once tombstoned). The
+/// itself, which the windows leave out once tombstoned), or the row is
+/// stamped before its window began (the deleter repair's mark). The
 /// second leg reads the tombstones since the generation
 /// (`local_entities_tombstoned_idx`, a handful) and the GIN pointer index. Planned
 /// per call (`persistent(false)`): with the values, the planner walks
@@ -554,6 +555,10 @@ pub async fn snapshot_is_outdated(
     window: &TimeRange,
     generation_ms: Timestamp,
 ) -> Result<bool, GenerationError> {
+    // The deleter repair marks a window whose rows it superseded this way.
+    if generation_ms < window.init_timestamp {
+        return Ok(true);
+    }
     Ok(sqlx::query_scalar(
         "SELECT EXISTS (
              SELECT 1 FROM content.deployments
