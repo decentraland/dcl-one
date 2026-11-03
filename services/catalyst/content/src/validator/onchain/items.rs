@@ -42,7 +42,7 @@ pub fn v1_collection_contract(name: &str) -> Option<Address> {
 }
 
 /// What an ownership check asks about one URN.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ItemRef {
     /// Not an item with a token: counts as owned.
     NotAsked,
@@ -92,23 +92,17 @@ fn is_digits(s: &str) -> bool {
     !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// A lowercase URN network the resolver knows (`mainnet` is spelled
-/// `ethereum`): `Some(true)` on L1, `Some(false)` on L2.
-fn layer(network: &str) -> Option<bool> {
-    if network == "ethereum" || (network != "mainnet" && L1_NETWORKS.contains(&network)) {
-        Some(true)
-    } else if L2_NETWORKS.contains(&network) {
-        Some(false)
-    } else {
-        None
-    }
+/// Whether a lowercase network is Ethereum mainnet (`ethereum`, or the
+/// `mainnet` alias the stored URNs normalize).
+fn is_ethereum(network: &str) -> bool {
+    network == "ethereum" || network == "mainnet"
 }
 
-/// The chain a third-party item's NFT lives on.
-fn nft_layer(chain: &str) -> Option<bool> {
-    if chain == "ethereum" || L1_NETWORKS.contains(&chain) {
+/// The chain a lowercase URN network names: `Some(true)` on L1, `Some(false)` on L2.
+fn layer(network: &str) -> Option<bool> {
+    if is_ethereum(network) || L1_NETWORKS.contains(&network) {
         Some(true)
-    } else if L2_NETWORKS.contains(&chain) {
+    } else if L2_NETWORKS.contains(&network) {
         Some(false)
     } else {
         None
@@ -149,7 +143,7 @@ pub fn item_ref(urn: &str) -> ItemRef {
         ("collections-v1", [collection, _name, id]) if is_digits(id) => {
             if is_hex_address(collection) {
                 token_ref(l1, collection.parse().ok(), id)
-            } else if network == "ethereum" {
+            } else if is_ethereum(network) {
                 token_ref(l1, v1_collection_contract(collection), id)
             } else {
                 ItemRef::Malformed
@@ -173,7 +167,7 @@ pub fn item_ref(urn: &str) -> ItemRef {
             if !l1 && is_hex_address(nft_contract) && is_digits(id) =>
         {
             match (
-                nft_layer(nft_chain),
+                layer(nft_chain),
                 nft_contract.parse::<Address>().ok(),
                 U256::from_str_radix(id, 10).ok(),
             ) {
@@ -289,6 +283,15 @@ mod tests {
             );
         }
         assert_eq!(
+            item_ref("urn:decentraland:mainnet:collections-v1:halloween_2019:hat:12"),
+            item_ref("urn:decentraland:ethereum:collections-v1:halloween_2019:hat:12"),
+            "mainnet is the ethereum alias"
+        );
+        assert_eq!(
+            item_ref("urn:decentraland:mainnet:collections-v1:halloween_2019:hat"),
+            ItemRef::NotAsked
+        );
+        assert_eq!(
             item_ref("urn:decentraland:ethereum:Collections-V1:Halloween_2019:hat:12"),
             item_ref("urn:decentraland:ethereum:collections-v1:halloween_2019:hat:12")
         );
@@ -303,8 +306,6 @@ mod tests {
             format!("urn:decentraland:matic:collections-v2:{A}:0:5abc"),
             "urn:decentraland:matic:collections-v2:not-an-address:0:5".to_string(),
             format!("urn:decentraland:foo:collections-v2:{A}:0:42"),
-            format!("urn:decentraland:mainnet:collections-v2:{A}:1:3"),
-            format!("urn:decentraland:mainnet:collections-v1:{A}:hat:3"),
             "urn:decentraland:sepolia:collections-v1:halloween_2019:hat:12".to_string(),
             "urn:decentraland:ethereum:collections-v1:halloween_2019:hat:12:x".to_string(),
             "urn:decentraland:ethereum:collections-v1:halloween_2019:hat:0x1f".to_string(),
