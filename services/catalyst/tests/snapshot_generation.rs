@@ -1142,6 +1142,13 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
             .unwrap();
     assert_eq!(a_pointer, None);
 
+    // The unpublish outdates the windows it touched: the old scene's is regenerated.
+    let (_, summary) = generator
+        .generate(chrono::Utc::now().timestamp_millis())
+        .await
+        .unwrap();
+    assert!(summary.generated >= 1, "{summary:?}");
+
     // A scene on 8,8 B waits for: once it lands, B has replayed A.
     let marker_asset = b"a neighbouring scene".to_vec();
     let marker_hash = catalyst::auth::hash_bytes_v1(&marker_asset);
