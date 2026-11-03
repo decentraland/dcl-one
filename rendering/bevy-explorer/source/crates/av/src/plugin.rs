@@ -285,7 +285,7 @@ fn should_be_playing_on_remove<T: AVPlayer>(
     commands.entity(entity).try_remove::<ActiveReceiver>();
 
     let Ok((container_entity, has_stream)) = av_players.get(entity) else {
-        error!(
+        debug!(
             "Entity which had {} removed did not have ContainerEntity.",
             disqualified::ShortName::of::<T>()
         );
