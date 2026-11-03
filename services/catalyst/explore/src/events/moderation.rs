@@ -195,6 +195,12 @@ pub fn apply_admin_state(
         raw.insert("description".into(), json!(description));
         handled = true;
     }
+    // Editing an existing rejection's explanation is independent of deciding
+    // the verdict again, so retain its original actor and feature decisions.
+    if body.reason.is_some() && flag(raw, "rejected") {
+        raw.insert("rejection_reason".into(), json!(body.reason));
+        handled = true;
+    }
     if !handled {
         return Err(ApiError::bad_request("no moderation fields provided"));
     }
@@ -353,8 +359,15 @@ impl Decision {
             || body.approved == Some(true)
             || body.rejected == Some(true);
         let pick = |touched: bool, key: &str| touched.then(|| flag(raw, key));
-        let approved = pick(verdict || body.approved.is_some(), "approved");
-        let rejected = pick(verdict || body.rejected.is_some(), "rejected");
+        let reason_edit = body.reason.is_some() && flag(raw, "rejected");
+        let approved = pick(
+            verdict || body.approved.is_some() || reason_edit,
+            "approved",
+        );
+        let rejected = pick(
+            verdict || body.rejected.is_some() || reason_edit,
+            "rejected",
+        );
         let with = |decided: Option<bool>, key: &str| {
             decided.unwrap_or(false).then(|| text(raw, key)).flatten()
         };
@@ -922,7 +935,7 @@ pub async fn create_as(
     doc["id"] = json!(id);
     if let Some(raw) = doc.as_object_mut() {
         let mut conn = pool.acquire().await?;
-        super::metadata::enrich(&mut conn, raw, None, true, settings).await?;
+        super::metadata::enrich(&mut conn, raw, None, true).await?;
     }
     if creator != ADMIN_CREATOR {
         if let Some(community) = body.community_id.as_deref() {

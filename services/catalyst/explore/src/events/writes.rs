@@ -740,7 +740,6 @@ pub async fn patch_event(
         &mut raw,
         Some(&before),
         edit.url.as_ref().is_none_or(Option::is_none),
-        &state.settings,
     )
     .await?;
     // Another reviewer's rejection is a moderation hold: self-approval cannot remove it.
@@ -1412,6 +1411,119 @@ mod tests {
                 assert_eq!(response["data"]["highlighted"], true);
             }
         }
+    }
+
+    #[tokio::test]
+    async fn reason_only_admin_edits_preserve_verdict_actor_and_mirrored_overrides() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                user_writes_enabled: true,
+                operator_writes_enabled: true,
+                events_admin_token: Some("admin-test".into()),
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let (status, created) = call(
+            &app,
+            "POST",
+            "/api/events",
+            Some("signed"),
+            Some(new_event()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        let local = created["data"]["id"].as_str().unwrap().to_owned();
+        let path = format!("/api/events/{local}");
+        let (status, _) = call(&app,"PATCH",&path,Some("admin-test"),Some(json!({"action":"reject","reason":"A","actor":"original-moderator","highlighted":true,"trending":true}))).await;
+        assert_eq!(status, StatusCode::OK);
+        let mirrored = format!("reason-only-{}", uuid::Uuid::new_v4());
+        let upstream = json!({"id":mirrored,"name":"Mirrored rejection","approved":false,"rejected":true,"rejected_by":"original-moderator","rejection_reason":"A","highlighted":true,"trending":true,"start_at":"2099-06-01T18:00:00Z","duration":3600000});
+        assert!(
+            super::super::mirror::upsert_event(&pool, &upstream)
+                .await
+                .unwrap()
+        );
+        for id in [&local, &mirrored] {
+            let notices: i64 = sqlx::query_scalar("SELECT count(*) FROM social.event_notification_intents WHERE event_id=$1 AND kind='event_rejected'").bind(id).fetch_one(&pool).await.unwrap();
+            let path = format!("/api/events/{id}");
+            for body in [
+                json!({"reason":"B"}),
+                json!({"reason":"C","rejection_reason":"ignored","actor":"reason-editor"}),
+            ] {
+                let (status, edited) =
+                    call(&app, "PATCH", &path, Some("admin-test"), Some(body.clone())).await;
+                assert_eq!(status, StatusCode::OK, "{edited}");
+                assert_eq!(edited["data"]["rejection_reason"], body["reason"]);
+                assert_eq!(edited["data"]["rejected_by"], "original-moderator");
+                assert_eq!(edited["data"]["approved"], false);
+                assert_eq!(edited["data"]["rejected"], true);
+                assert_eq!(edited["data"]["highlighted"], true);
+                assert_eq!(edited["data"]["trending"], true);
+            }
+            let after: i64 = sqlx::query_scalar("SELECT count(*) FROM social.event_notification_intents WHERE event_id=$1 AND kind='event_rejected'").bind(id).fetch_one(&pool).await.unwrap();
+            assert_eq!(
+                after, notices,
+                "editing a reason does not decide rejection again"
+            );
+        }
+        let mut refreshed = upstream;
+        refreshed["approved"] = json!(true);
+        refreshed["rejected"] = json!(false);
+        refreshed["rejected_by"] = Value::Null;
+        refreshed["rejection_reason"] = Value::Null;
+        assert!(
+            super::super::mirror::upsert_event(&pool, &refreshed)
+                .await
+                .unwrap()
+        );
+        let raw: Value = sqlx::query_scalar("SELECT raw FROM explore.event WHERE id=$1")
+            .bind(&mirrored)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(raw["rejection_reason"], "C");
+        assert_eq!(raw["rejected_by"], "original-moderator");
+        assert_eq!(raw["approved"], false);
+        assert_eq!(raw["rejected"], true);
+        assert_eq!(raw["highlighted"], true);
+        assert_eq!(raw["trending"], true);
+        let (status, approved) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("admin-test"),
+            Some(json!({"approved":true})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{approved}");
+        let before: Value = sqlx::query_scalar("SELECT raw FROM explore.event WHERE id=$1")
+            .bind(&local)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let (status, _) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("admin-test"),
+            Some(json!({"reason":"not a rejection"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let after: Value = sqlx::query_scalar("SELECT raw FROM explore.event WHERE id=$1")
+            .bind(&local)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            after, before,
+            "an invalid reason-only request cannot create an orphan reason"
+        );
     }
 
     #[tokio::test]

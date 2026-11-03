@@ -74,7 +74,6 @@ pub(super) async fn enrich(
     raw: &mut Map<String, Value>,
     previous: Option<&Map<String, Value>>,
     refresh_url: bool,
-    _settings: &crate::Settings,
 ) -> Result<(), ApiError> {
     if refresh_url && let Some(previous) = previous {
         refresh_target(raw, previous);
@@ -139,15 +138,9 @@ mod tests {
         let mut conn = pool.acquire().await.unwrap();
         let mut raw=json!({"user":"missing-profile","place_id":"missing-place","user_name":"Stored creator","scene_name":"Stored scene","estate_id":"stored-estate","estate_name":"Stored estate","x":1,"y":2,"image":"/poster/kept.webp"}).as_object().unwrap().clone();
         let previous = raw.clone();
-        enrich(
-            &mut conn,
-            &mut raw,
-            Some(&previous),
-            true,
-            &crate::Settings::for_tests(),
-        )
-        .await
-        .unwrap();
+        enrich(&mut conn, &mut raw, Some(&previous), true)
+            .await
+            .unwrap();
         for key in [
             "user_name",
             "scene_name",
@@ -160,15 +153,9 @@ mod tests {
         let previous = raw.clone();
         raw.insert("x".into(), json!(5));
         raw.insert("place_id".into(), Value::Null);
-        enrich(
-            &mut conn,
-            &mut raw,
-            Some(&previous),
-            true,
-            &crate::Settings::for_tests(),
-        )
-        .await
-        .unwrap();
+        enrich(&mut conn, &mut raw, Some(&previous), true)
+            .await
+            .unwrap();
         assert_eq!(raw["user_name"], "Stored creator");
         for key in ["scene_name", "estate_id", "estate_name"] {
             assert!(raw[key].is_null(), "{key} belongs to the old location");
@@ -177,15 +164,9 @@ mod tests {
         // Empty keys have no source; they must not replace stored facts.
         raw.insert("user".into(), json!(""));
         let previous = raw.clone();
-        enrich(
-            &mut conn,
-            &mut raw,
-            Some(&previous),
-            true,
-            &crate::Settings::for_tests(),
-        )
-        .await
-        .unwrap();
+        enrich(&mut conn, &mut raw, Some(&previous), true)
+            .await
+            .unwrap();
         assert_eq!(raw["user_name"], "Stored creator");
         raw.insert(
             "image".into(),
@@ -193,30 +174,18 @@ mod tests {
         );
         raw.insert("_image_source".into(), json!("generated"));
         let previous = raw.clone();
-        enrich(
-            &mut conn,
-            &mut raw,
-            Some(&previous),
-            true,
-            &crate::Settings::for_tests(),
-        )
-        .await
-        .unwrap();
+        enrich(&mut conn, &mut raw, Some(&previous), true)
+            .await
+            .unwrap();
         assert_eq!(
             raw["image"], "https://cdn.example.org/last-known-scene.png",
             "same-location source miss retains a generated scene poster"
         );
         let previous = raw.clone();
         raw.insert("x".into(), json!(8));
-        enrich(
-            &mut conn,
-            &mut raw,
-            Some(&previous),
-            true,
-            &crate::Settings::for_tests(),
-        )
-        .await
-        .unwrap();
+        enrich(&mut conn, &mut raw, Some(&previous), true)
+            .await
+            .unwrap();
         assert_eq!(
             raw["image"],
             super::super::posters::DEFAULT_EVENT_IMAGE,
@@ -294,16 +263,11 @@ mod tests {
         };
         let mut raw = json!({"image":super::super::posters::DEFAULT_EVENT_IMAGE,"_image_source":"generated","x":1,"y":2}).as_object().unwrap().clone();
         let previous = raw.clone();
-        let settings = crate::Settings {
-            events_asset_base_url: "https://native.example.org/events".into(),
-            ..crate::Settings::for_tests()
-        };
         enrich(
             &mut pool.acquire().await.unwrap(),
             &mut raw,
             Some(&previous),
             true,
-            &settings,
         )
         .await
         .unwrap();
