@@ -1292,10 +1292,15 @@ mod tests {
     }
 
     #[test]
-    fn metadata_before_adr_45_is_not_checked() {
+    fn metadata_is_checked_from_adr_45_on() {
         let mut e = entity(EntityType::Scene, json!({}));
         e.timestamp = adr_timestamps::ADR_45 - 1;
         assert!(validate_metadata(&e).is_ok());
+        e.timestamp = adr_timestamps::ADR_45;
+        assert_eq!(
+            validate_metadata(&e).errors().unwrap()[1],
+            "metadata must have required property 'main'"
+        );
     }
 
     #[test]

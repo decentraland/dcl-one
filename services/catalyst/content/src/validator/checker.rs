@@ -875,10 +875,16 @@ mod tests {
         }
     }
 
-    struct NoChain;
+    /// Item access without a chain: refuses nothing it is asked when it
+    /// `grants`, and records what it was asked.
+    #[derive(Default)]
+    struct ItemChain {
+        grants: bool,
+        asked: std::sync::Mutex<Vec<String>>,
+    }
 
     #[async_trait]
-    impl BlockchainChecker for NoChain {
+    impl BlockchainChecker for ItemChain {
         async fn check_land_access(
             &self,
             _: &str,
@@ -906,34 +912,91 @@ mod tests {
         async fn check_collection_access(
             &self,
             _: &str,
-            _: &str,
-            _: &str,
+            contract: &str,
+            item: &str,
             _: &Entity,
             _: Timestamp,
-            _: BlockchainLayer,
+            layer: BlockchainLayer,
         ) -> Result<bool, ValidatorError> {
-            unreachable!()
+            assert!(self.grants);
+            let asked = format!("collection {contract} {item} {layer:?}");
+            self.asked.lock().unwrap().push(asked);
+            Ok(true)
         }
         async fn check_third_party_access(
             &self,
-            _: &str,
+            pointer: &str,
             _: &Entity,
             _: &Deployment<'_>,
             _: Timestamp,
         ) -> Result<bool, ValidatorError> {
-            unreachable!()
+            assert!(self.grants);
+            let asked = format!("third-party {pointer}");
+            self.asked.lock().unwrap().push(asked);
+            Ok(true)
         }
         fn is_address_owned_by_decentraland(&self, _: &str) -> bool {
-            false
+            self.grants
         }
     }
 
     async fn item_access_errors(etype: EntityType, pointers: &[&str]) -> Vec<String> {
         let mut deployment = ownership_deployment(etype, pointers[0]);
         deployment.entity.pointers = pointers.iter().map(|p| p.to_string()).collect();
-        match validate_item_access(&deployment.view(), &NoChain, "0xabc").await {
+        match validate_item_access(&deployment.view(), &ItemChain::default(), "0xabc").await {
             ValidationResponse::Failed { errors } => errors,
             other => panic!("expected a rejection, got {other}"),
+        }
+    }
+
+    /// A pointer of an accepted asset type reaches the access check of its type.
+    #[tokio::test]
+    async fn accepted_item_pointers_reach_their_access_check() {
+        let cases = [
+            (
+                EntityType::Wearable,
+                "urn:decentraland:matic:collections-v2:0xAbC123:0",
+                Some("collection 0xabc123 0 L2"),
+            ),
+            (
+                EntityType::Emote,
+                "urn:decentraland:matic:collections-v2:0xabc123:7",
+                Some("collection 0xabc123 7 L2"),
+            ),
+            (
+                EntityType::Wearable,
+                "urn:decentraland:ethereum:collections-v1:community_contest:hat",
+                Some("collection community_contest hat L1"),
+            ),
+            (
+                EntityType::Emote,
+                "urn:decentraland:amoy:collections-thirdparty:tp:col:item",
+                Some("third-party urn:decentraland:amoy:collections-thirdparty:tp:col:item"),
+            ),
+            (
+                EntityType::Wearable,
+                "urn:decentraland:amoy:collections-thirdparty:tp:col:item",
+                Some("third-party urn:decentraland:amoy:collections-thirdparty:tp:col:item"),
+            ),
+            (
+                EntityType::Emote,
+                "urn:decentraland:off-chain:base-emotes:wave",
+                None,
+            ),
+        ];
+        for (etype, pointer, asked) in cases {
+            let chain = ItemChain {
+                grants: true,
+                ..ItemChain::default()
+            };
+            let deployment = ownership_deployment(etype, pointer);
+            let result = validate_item_access(&deployment.view(), &chain, "0xabc").await;
+            assert!(result.is_ok(), "{etype} {pointer}: {result}");
+            assert_eq!(
+                *chain.asked.lock().unwrap(),
+                asked.into_iter().map(String::from).collect::<Vec<_>>(),
+                "{pointer}"
+            );
         }
     }
 
