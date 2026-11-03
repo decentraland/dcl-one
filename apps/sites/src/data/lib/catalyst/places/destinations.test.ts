@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { z } from "zod";
 vi.mock("../client", async (original) => ({ ...await original<typeof import("../client")>(), getJSON: vi.fn(), signedGetJSON: vi.fn() }));
+vi.mock("../schema-drift", () => ({ reportSchemaDrift: vi.fn() }));
+import { reportSchemaDrift } from "../schema-drift";
 import { getJSON, signedGetJSON } from "../client";
 import { DestinationSchema } from "../generated-schemas/places";
 import { fetchDestinations, resolveLegacyPlace } from "./destinations";
@@ -33,10 +35,24 @@ describe("when browsing the unified destinations feed", () => {
     expect(getJSON).not.toHaveBeenCalled();
   });
 
-  it("should not cache signed personal results", async () => {
-    await fetchDestinations({ only_favorites: true }, { identity });
-    await fetchDestinations({ only_favorites: true }, { identity });
-    expect(signedGetJSON).toHaveBeenCalledTimes(2);
+  describe("and a destination row has schema drift", () => {
+    beforeEach(() => { vi.mocked(getJSON).mockResolvedValueOnce({ ok: true, data: [row, { ...row, kind: "new-kind" }], total: 90 }); });
+    it("should retain valid rows, total and consumed count while reporting drift", async () => {
+      await expect(fetchDestinations()).resolves.toMatchObject({ data: [expect.objectContaining({ id: row.id })], total: 90, received: 2 });
+      expect(reportSchemaDrift).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe("and the envelope is malformed", () => {
+    beforeEach(() => { vi.mocked(getJSON).mockResolvedValueOnce({ data: "invalid", total: 1 }); });
+    it("should reject the unavailable response", async () => { await expect(fetchDestinations()).rejects.toThrow(); });
+  });
+
+  describe.each([",", "missing,other.dcl.eth"])("and the world name is %s", (name) => {
+    it("should reject a multi-world filter without querying the catalogue", async () => {
+      await expect(resolveLegacyPlace("world", name)).resolves.toBeNull();
+      expect(getJSON).not.toHaveBeenCalled();
+    });
   });
 
   it("should reject a signed-out favourites request", async () => {

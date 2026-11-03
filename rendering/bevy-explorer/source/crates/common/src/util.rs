@@ -52,7 +52,7 @@ impl<T> TaskExt for Task<T> {
     fn complete(&mut self) -> Option<Self::Output> {
         use futures_lite::FutureExt;
 
-        // wasm doesn't have `is_finished``, but polling is cheap as it is just a oneshot receiver
+        // polling is cheap as it is just a oneshot receiver
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
         if let std::task::Poll::Ready(res) = self.poll(&mut context) {
             Some(res)
@@ -482,7 +482,7 @@ pub fn camera_to_render_layers<'a>(
 // convenient non-pooled client use for infrequent requests
 #[cfg(not(target_arch = "wasm32"))]
 pub fn reqwest_client() -> reqwest::Client {
-    reqwest::Client::builder()
+    platform::http_client_builder()
         .timeout(std::time::Duration::from_secs(5))
         .use_native_tls()
         .user_agent("DCLExplorer/0.1")
@@ -492,7 +492,7 @@ pub fn reqwest_client() -> reqwest::Client {
 
 #[cfg(target_arch = "wasm32")]
 pub fn reqwest_client() -> reqwest::Client {
-    reqwest::Client::builder()
+    platform::http_client_builder()
         .user_agent("DCLExplorer/0.1")
         .build()
         .unwrap()

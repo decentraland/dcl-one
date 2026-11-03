@@ -193,6 +193,10 @@ export type PageToScene =
   | SaveOutfitRequest
   | DeleteOutfitRequest
   | EquipOutfitRequest
+  | RandomizeOutfitRequest
+  | UndoOutfitRequest
+  | RedoOutfitRequest
+  | ResetOutfitHistoryRequest
   | SetAvatarColorRequest
   | SetForceRenderRequest
   | GetCommunitiesRequest
@@ -1432,6 +1436,35 @@ export interface EquipOutfitRequest {
   slot: number
 }
 
+/** Put a random look from the owned and base wearables on the Backpack's look, keeping the body
+ *  shape and colors (re-emits wearables and outfitHistory). */
+export interface RandomizeOutfitRequest {
+  kind: 'randomizeOutfit'
+}
+
+/** Go back to the look before the last randomize, undo or redo of the Backpack session. */
+export interface UndoOutfitRequest {
+  kind: 'undoOutfit'
+}
+
+/** Go forward to the look the last undo left. */
+export interface RedoOutfitRequest {
+  kind: 'redoOutfit'
+}
+
+/** Forget the randomize history and the cached catalog: the Backpack closed. */
+export interface ResetOutfitHistoryRequest {
+  kind: 'resetOutfitHistory'
+}
+
+/** Whether the randomize bar's undo and redo have a step, and whether a roll is loading. */
+export interface OutfitHistoryMessage {
+  kind: 'outfitHistory'
+  canUndo: boolean
+  canRedo: boolean
+  rolling: boolean
+}
+
 export interface GetEmotesRequest {
   kind: 'getEmotes'
 }
@@ -1622,6 +1655,7 @@ export type SceneToPage =
   | WearablesMessage
   | CatalogPageMessage
   | OutfitsMessage
+  | OutfitHistoryMessage
   | CommunitiesMessage
   | VoiceActivityMessage
   | CommunityActionFailedMessage

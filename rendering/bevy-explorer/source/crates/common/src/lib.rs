@@ -5,6 +5,10 @@ pub mod bounds_calc;
 pub mod dynamics;
 pub mod gpu_time;
 pub mod inputs;
+pub mod memory;
+#[cfg(test)]
+mod memory_tests;
+pub mod partition;
 pub mod profile;
 pub mod rpc;
 pub mod sets;

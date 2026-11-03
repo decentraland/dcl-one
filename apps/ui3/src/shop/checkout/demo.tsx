@@ -20,6 +20,7 @@ export type DemoLine = {
   name: string;
   thumbnail?: string;
   category?: string;
+  wearableCategory?: string;
   rarity?: string;
   method?: "credits" | "mana";
   quantity?: number;
@@ -79,7 +80,7 @@ export function createDemo(s: DemoScenario) {
     const line = cart.add({
       asset: offer.asset,
       listing: l.listing ?? {},
-      display: { name: l.name, thumbnail: l.thumbnail, category: l.category, rarity: l.rarity, href: `/shop/items` },
+      display: { name: l.name, thumbnail: l.thumbnail, category: l.category, ...(l.wearableCategory ? { wearableCategory: l.wearableCategory } : {}), rarity: l.rarity, href: `/shop/items` },
       quantity: l.quantity,
       available: offer.available,
       seen: l.unseen ? null : offer,

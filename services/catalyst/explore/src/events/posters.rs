@@ -23,16 +23,23 @@ const POSTER_VERTICAL_FILE_TYPES: [&str; 3] = ["image/jpeg", "image/png", "image
 
 /// Absolute upload links must name a configured deployment origin; stored
 /// URLs use the canonical local path so content is always served here.
-pub(super) fn normalize_image_input(image: &str, settings: &Settings) -> Result<String, ApiError> {
+pub(super) fn normalize_image_input(
+    image: &str,
+    settings: &Settings,
+    expected_kind: &str,
+) -> Result<String, ApiError> {
     let image = image.trim();
     let path = if image.starts_with('/') && !image.starts_with("//") {
         image.to_owned()
     } else {
         let url = url::Url::parse(image)
             .map_err(|_| ApiError::bad_request("Upload the image through the poster endpoint"))?;
-        let own_origin = [&settings.events_base_url, &settings.content_public_url]
-            .iter()
-            .any(|base| url::Url::parse(base).is_ok_and(|base| base.origin() == url.origin()));
+        let own_origin = [
+            &settings.events_asset_base_url,
+            &settings.content_public_url,
+        ]
+        .iter()
+        .any(|base| url::Url::parse(base).is_ok_and(|base| base.origin() == url.origin()));
         if !own_origin
             || !matches!(url.scheme(), "http" | "https")
             || !url.username().is_empty()
@@ -44,9 +51,30 @@ pub(super) fn normalize_image_input(image: &str, settings: &Settings) -> Result<
                 "Image must come from this deployment's poster upload endpoint",
             ));
         }
-        url.path().to_owned()
+        let path = url.path();
+        [
+            &settings.events_asset_base_url,
+            &settings.content_public_url,
+        ]
+        .iter()
+        .filter_map(|base| url::Url::parse(base).ok())
+        .filter(|base| base.origin() == url.origin())
+        .filter_map(|base| {
+            let prefix = base.path().trim_end_matches('/');
+            (!prefix.is_empty())
+                .then(|| path.strip_prefix(prefix))
+                .flatten()
+                .filter(|candidate| {
+                    *candidate == DEFAULT_EVENT_IMAGE || poster_key(candidate).is_some()
+                })
+                .map(str::to_owned)
+        })
+        .next()
+        .unwrap_or_else(|| path.to_owned())
     };
-    if path == DEFAULT_EVENT_IMAGE || poster_key(&path).is_some() {
+    if path == DEFAULT_EVENT_IMAGE
+        || poster_key(&path).is_some_and(|(kind, _)| kind == expected_kind)
+    {
         Ok(path)
     } else {
         Err(ApiError::bad_request(
@@ -64,15 +92,18 @@ fn poster_key(image: &str) -> Option<(&'static str, &str)> {
     None
 }
 
-/// Uploads enter this index only after their bytes land in the blob store.
-pub(super) async fn validate_upload<'e>(
+/// Normalize and verify a poster in the same policy path for HTTP and console authoring.
+pub(super) async fn resolve<'e>(
     executor: impl sqlx::PgExecutor<'e>,
     image: &str,
-) -> Result<(), ApiError> {
+    settings: &Settings,
+    expected_kind: &str,
+) -> Result<String, ApiError> {
+    let image = normalize_image_input(image, settings, expected_kind)?;
     if image == DEFAULT_EVENT_IMAGE {
-        return Ok(());
+        return Ok(image);
     }
-    let (kind, file) = poster_key(image)
+    let (kind, file) = poster_key(&image)
         .ok_or_else(|| ApiError::bad_request("Upload the image through the poster endpoint"))?;
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM explore.poster WHERE kind=$1 AND file=$2 AND origin='local')",
@@ -84,7 +115,28 @@ pub(super) async fn validate_upload<'e>(
     if !exists {
         return Err(ApiError::bad_request("Poster upload not found"));
     }
-    Ok(())
+    Ok(image)
+}
+
+pub fn absolute_default_image(image: &str, events_base_url: &str) -> String {
+    if image == DEFAULT_EVENT_IMAGE {
+        format!(
+            "{}{}",
+            events_base_url.trim_end_matches('/'),
+            DEFAULT_EVENT_IMAGE
+        )
+    } else {
+        image.to_owned()
+    }
+}
+
+#[cfg(test)]
+pub(super) fn default_image_url(settings: &Settings) -> String {
+    format!(
+        "{}{}",
+        settings.events_asset_base_url.trim_end_matches('/'),
+        DEFAULT_EVENT_IMAGE
+    )
 }
 
 /// Bundled first-party fallback, independent of the optional upstream mirror.
@@ -392,5 +444,43 @@ mod tests {
         );
         assert!(detect_and_validate_mime(b"<svg/>", "image/svg+xml", &POSTER_FILE_TYPES).is_err());
         assert_eq!(extension("image/jpeg"), ".jpg");
+    }
+    #[test]
+    fn configured_origins_and_field_kinds_are_preserved_during_normalization() {
+        let settings = Settings {
+            events_asset_base_url: "https://native.example.org/events".into(),
+            content_public_url: "https://content.example.org".into(),
+            ..Settings::for_tests()
+        };
+        assert_eq!(
+            normalize_image_input(
+                "https://native.example.org/events/assets/event-default.webp",
+                &settings,
+                "poster"
+            )
+            .unwrap(),
+            DEFAULT_EVENT_IMAGE
+        );
+        assert_eq!(
+            normalize_image_input(
+                "https://content.example.org/poster-vertical/old.webp",
+                &settings,
+                "poster-vertical"
+            )
+            .unwrap(),
+            "/poster-vertical/old.webp"
+        );
+        assert!(
+            normalize_image_input("/poster/animated.gif", &settings, "poster-vertical").is_err()
+        );
+        assert!(normalize_image_input("/poster-vertical/old.webp", &settings, "poster").is_err());
+        assert!(
+            normalize_image_input(
+                "https://native.example.org/eventsevil/poster/old.webp",
+                &settings,
+                "poster"
+            )
+            .is_err()
+        );
     }
 }

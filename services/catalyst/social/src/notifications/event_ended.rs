@@ -1,6 +1,7 @@
-//! Native equivalent of EVENT_ENDED's community metric effects. Facts,
-//! contributions and the bounded scan cursor commit together; an occurrence
-//! can contribute only once. This does not calculate partial ranking scores.
+//! Native equivalent of EVENT_ENDED's community metric effects. Facts and
+//! contributions commit together. An activation cutoff excludes historical
+//! imports; each occurrence contributes once, including after schedule edits.
+//! This does not calculate partial ranking scores.
 
 use chrono::NaiveDateTime;
 use sqlx::PgPool;
@@ -20,9 +21,12 @@ struct Ended {
 }
 
 pub(super) async fn run_once(pool: &PgPool, now: NaiveDateTime) -> anyhow::Result<u64> {
-    let mut tx = pool.begin().await?;
+    let mut tx = super::events::timed_transaction(pool).await?;
+    sqlx::query("SET LOCAL statement_timeout = '2s'")
+        .execute(&mut *tx)
+        .await?;
     let initialized = sqlx::query(
-        "INSERT INTO social.event_ended_cursor (due_at) VALUES ($1) ON CONFLICT DO NOTHING",
+        "INSERT INTO social.event_ended_activation (activated_at) VALUES ($1) ON CONFLICT DO NOTHING",
     )
     .bind(now)
     .execute(&mut *tx)
@@ -33,13 +37,11 @@ pub(super) async fn run_once(pool: &PgPool, now: NaiveDateTime) -> anyhow::Resul
         tx.commit().await?;
         return Ok(0);
     }
-    let (since, after_id, after_start): (NaiveDateTime, String, NaiveDateTime) = sqlx::query_as(
-        "SELECT due_at,event_id,occurrence_start FROM social.event_ended_cursor WHERE singleton FOR UPDATE",
-    ).fetch_one(&mut *tx).await?;
-    if now < since {
-        tx.commit().await?;
-        return Ok(0);
-    }
+    let activated_at: NaiveDateTime = sqlx::query_scalar(
+        "SELECT activated_at FROM social.event_ended_activation WHERE singleton FOR UPDATE",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
     let rows: Vec<Ended> = sqlx::query_as(
         "SELECT DISTINCT e.id AS event_id,d.starts_at, \
             d.starts_at + e.duration_ms * interval '1 millisecond' AS ends_at,c.id AS community_id, \
@@ -50,15 +52,17 @@ pub(super) async fn run_once(pool: &PgPool, now: NaiveDateTime) -> anyhow::Resul
             FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(e.raw->'recurrent_dates')='array' \
                 AND e.raw->'recurrent_dates'<>'[]'::jsonb THEN e.raw->'recurrent_dates' \
                 ELSE jsonb_build_array(e.raw->'start_at') END) \
-         ) d LEFT JOIN social.communities c ON c.id::text=e.community_id AND c.origin='local' AND c.active AND NOT c.suspended \
+         ) d LEFT JOIN social.communities c ON c.id=CASE WHEN pg_input_is_valid(e.community_id,'uuid') THEN e.community_id::uuid END AND c.origin='local' AND c.active AND NOT c.suspended \
          WHERE e.origin='local' AND e.approved AND e.duration_ms >= 0 \
             AND COALESCE(e.raw->>'rejected','false')<>'true' \
             AND COALESCE(e.raw->>'deleted_by_user','false')<>'true' \
             AND COALESCE(e.raw->>'deleted_by_admin','false')<>'true' \
-            AND (d.starts_at + e.duration_ms * interval '1 millisecond',e.id,d.starts_at)>($1,$2,$3) \
-            AND d.starts_at + e.duration_ms * interval '1 millisecond'<=$4 \
-         ORDER BY ends_at,event_id,starts_at LIMIT $5",
-    ).bind(since).bind(&after_id).bind(after_start).bind(now).bind(PAGE).fetch_all(&mut *tx).await?;
+            AND d.starts_at + e.duration_ms * interval '1 millisecond'>$1 \
+            AND d.starts_at + e.duration_ms * interval '1 millisecond'<=$2 \
+            AND NOT EXISTS (SELECT 1 FROM social.event_ended_occurrences done \
+                WHERE done.event_id=e.id AND done.occurrence_start=d.starts_at) \
+         ORDER BY ends_at,event_id,starts_at LIMIT $3",
+    ).bind(activated_at).bind(now).bind(PAGE).fetch_all(&mut *tx).await?;
     let event_ids: Vec<&str> = rows.iter().map(|row| row.event_id.as_str()).collect();
     let starts: Vec<NaiveDateTime> = rows.iter().map(|row| row.starts_at).collect();
     let ends: Vec<NaiveDateTime> = rows.iter().map(|row| row.ends_at).collect();
@@ -80,14 +84,6 @@ pub(super) async fn run_once(pool: &PgPool, now: NaiveDateTime) -> anyhow::Resul
         .fetch_one(&mut *tx).await?;
     use sqlx::Row;
     let inserted: i64 = inserted.get(0);
-    if let Some(last) = rows.last() {
-        sqlx::query("UPDATE social.event_ended_cursor SET due_at=$1,event_id=$2,occurrence_start=$3 WHERE singleton")
-            .bind(last.ends_at).bind(&last.event_id).bind(last.starts_at).execute(&mut *tx).await?;
-    }
-    if rows.len() < PAGE as usize && rows.last().is_none_or(|last| last.ends_at < now) {
-        sqlx::query("UPDATE social.event_ended_cursor SET due_at=$1,event_id='',occurrence_start='0001-01-01' WHERE singleton")
-            .bind(now).execute(&mut *tx).await?;
-    }
     tx.commit().await?;
     Ok(inserted as u64)
 }
@@ -111,7 +107,7 @@ mod tests {
             .map(|date| date.and_utc().to_rfc3339())
             .collect();
         sqlx::query("INSERT INTO explore.event (id,name,approved,origin,community_id,duration_ms,raw) VALUES ($1,'Ending event',true,$2,$3,3600000,$4)")
-            .bind(id).bind(origin).bind(community.to_string()).bind(json!({"start_at":dates[0],"recurrent_dates":dates,"latest_attendees":["0xpreview"],"total_attendees":100}))
+            .bind(id).bind(origin).bind(community.to_string().to_uppercase()).bind(json!({"start_at":dates[0],"recurrent_dates":dates,"latest_attendees":["0xpreview"],"total_attendees":100}))
             .execute(pool).await.unwrap();
     }
 
@@ -122,7 +118,7 @@ mod tests {
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
         };
-        sqlx::query("TRUNCATE social.event_ended_occurrences,social.event_ended_cursor,social.community_event_metrics").execute(&pool).await.unwrap();
+        sqlx::query("TRUNCATE social.event_ended_occurrences,social.event_ended_activation,social.community_event_metrics").execute(&pool).await.unwrap();
         let now = chrono::DateTime::parse_from_rfc3339("2099-06-01T18:00:00Z")
             .unwrap()
             .naive_utc();
@@ -161,7 +157,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(facts, 0, "fact, cursor and projection roll back together");
+        assert_eq!(facts, 0, "fact and projection roll back together");
         sqlx::query(
             "ALTER TABLE social.community_event_metrics DROP CONSTRAINT simulate_failed_projection",
         )
@@ -170,8 +166,7 @@ mod tests {
         .unwrap();
         assert_eq!(run_once(&pool, ended).await.unwrap(), 1);
         assert_eq!(run_once(&pool, ended).await.unwrap(), 0);
-        // Even a cursor replay cannot contribute an occurrence twice.
-        sqlx::query("UPDATE social.event_ended_cursor SET due_at=$1,event_id='',occurrence_start='0001-01-01'").bind(now).execute(&pool).await.unwrap();
+        // Repeated scans cannot contribute an occurrence twice.
         assert_eq!(run_once(&pool, ended).await.unwrap(), 0);
         sqlx::query(
             "UPDATE explore.event_attendance_local SET action='cancel' WHERE signer='0xgoing'",
@@ -190,12 +185,101 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recurring_duration_edits_reconcile_earlier_endings_after_prior_scans() {
+        use crate::explore::events::{moderation, writes};
+        use axum::extract::{OriginalUri, Path, State};
+        use axum::http::{HeaderMap, Method};
+        let _guard = TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        sqlx::query("TRUNCATE social.event_ended_occurrences,social.event_ended_activation,social.community_event_metrics").execute(&pool).await.unwrap();
+        let now = chrono::DateTime::parse_from_rfc3339("2099-09-01T18:00:00Z")
+            .unwrap()
+            .naive_utc();
+        let owner = "0x1111111111111111111111111111111111111111";
+        let community = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.communities(id,name,owner_address) VALUES($1,'Mutable schedule',$2)")
+            .bind(community).bind(owner).execute(&pool).await.unwrap();
+        let body: moderation::CreateEvent = serde_json::from_value(json!({
+            "name":"Mutable occurrence", "start_at":now.and_utc().to_rfc3339(),
+            "duration":1800000,"x":0,"y":0,"community_id":community.to_string(),
+            "recurrent":true,"recurrent_frequency":"DAILY","recurrent_count":2
+        }))
+        .unwrap();
+        let mut settings = catalyst_explore::Settings::for_tests();
+        settings.events_admin_token = Some("metric-fixture".into());
+        settings.operator_writes_enabled = true;
+        let event_id = moderation::create_as(&pool, &body, owner, owner, &settings)
+            .await
+            .unwrap();
+        moderation::moderate(
+            &pool,
+            &event_id,
+            &moderation::AdminPatch {
+                approved: Some(true),
+                ..Default::default()
+            },
+            "operator",
+            &settings,
+        )
+        .await
+        .unwrap();
+        crate::explore::events::attendees::rsvp_going(&pool, &event_id, owner, None)
+            .await
+            .unwrap();
+        assert_eq!(run_once(&pool, now).await.unwrap(), 0);
+        assert_eq!(
+            run_once(&pool, now + Duration::minutes(10)).await.unwrap(),
+            0
+        );
+        let state = std::sync::Arc::new(catalyst_explore::ExploreState::new(
+            pool.clone(),
+            settings,
+            None,
+        ));
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer metric-fixture".parse().unwrap());
+        let axum::Json(updated) = writes::patch_event(
+            State(state),
+            Method::PATCH,
+            OriginalUri(format!("/api/events/{event_id}").parse().unwrap()),
+            headers,
+            Path(event_id.clone()),
+            serde_json::to_vec(&json!({"duration":300000}))
+                .unwrap()
+                .into(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated.data.duration, Some(300000));
+        assert_eq!(
+            run_once(&pool, now + Duration::minutes(11)).await.unwrap(),
+            1
+        );
+        assert_eq!(
+            run_once(&pool, now + Duration::minutes(12)).await.unwrap(),
+            0
+        );
+        let metric:(i64,i64) = sqlx::query_as("SELECT events_count,events_total_attendees FROM social.community_event_metrics WHERE community_id=$1").bind(community).fetch_one(&pool).await.unwrap();
+        assert_eq!(metric, (1, 1));
+        let ended: NaiveDateTime = sqlx::query_scalar(
+            "SELECT ended_at FROM social.event_ended_occurrences WHERE event_id=$1",
+        )
+        .bind(event_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(ended, now + Duration::minutes(5));
+    }
+
+    #[tokio::test]
     async fn equal_time_endings_page_and_concurrent_scans_deduplicate() {
         let _guard = TEST_LOCK.lock().await;
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
         };
-        sqlx::query("TRUNCATE social.event_ended_occurrences,social.event_ended_cursor,social.community_event_metrics").execute(&pool).await.unwrap();
+        sqlx::query("TRUNCATE social.event_ended_occurrences,social.event_ended_activation,social.community_event_metrics").execute(&pool).await.unwrap();
         let now = chrono::DateTime::parse_from_rfc3339("2099-07-01T18:00:00Z")
             .unwrap()
             .naive_utc();

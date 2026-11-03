@@ -150,6 +150,8 @@ pub struct Settings {
     pub places_admin_addresses: Vec<String>,
     /// `EVENTS_BASE_URL`: the events site the sitemaps point at.
     pub events_base_url: String,
+    /// Backend asset mount derived from the node public URL, never the events website.
+    pub events_asset_base_url: String,
     /// This node's realm name, the `serverName` a place's `realms_detail`
     /// carries.
     pub realm_name: String,
@@ -169,6 +171,10 @@ impl Settings {
             })
             .filter(|h| h.contains('.'))
             .filter(|h| h != "decentraland.org" && !h.ends_with(".decentraland.org"))
+    }
+
+    pub fn events_asset_base_for(public_url: &str) -> String {
+        format!("{}/events", public_url.trim_end_matches('/'))
     }
 
     pub fn for_tests() -> Self {
@@ -191,6 +197,7 @@ impl Settings {
             data_team_token: None,
             places_admin_addresses: Vec::new(),
             events_base_url: "https://events.decentraland.org".to_string(),
+            events_asset_base_url: Self::events_asset_base_for("http://localhost"),
             realm_name: "main".to_string(),
         }
     }
@@ -233,7 +240,11 @@ impl ExploreState {
         Self {
             places: PlacesComponent::new(pool.clone(), &settings.content_public_url)
                 .with_worlds_mirror(settings.worlds_upstream.is_some()),
-            events: EventsComponent::new(pool.clone(), settings.asset_rewrite_domain.clone()),
+            events: EventsComponent::new(
+                pool.clone(),
+                settings.asset_rewrite_domain.clone(),
+                settings.events_asset_base_url.clone(),
+            ),
             schedules: SchedulesComponent::new(pool.clone()),
             live: Arc::new(places::live::Live::new(pool.clone())),
             pass_markers: copies::Markers::new(copies::MARKER_TTL),
@@ -722,7 +733,7 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/api/poster", post(events::posters::upload_poster))
         .route(
-            "/assets/event-default.webp",
+            events::posters::DEFAULT_EVENT_IMAGE,
             get(events::posters::default_image),
         )
         .route(
@@ -769,6 +780,22 @@ pub fn router(state: SharedState) -> Router {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn event_assets_use_the_node_mount_independently_of_the_website() {
+        assert_eq!(
+            super::Settings::events_asset_base_for("http://localhost:8080/"),
+            "http://localhost:8080/events"
+        );
+        assert_eq!(
+            super::Settings::events_asset_base_for("https://node.example.org/prefix/"),
+            "https://node.example.org/prefix/events"
+        );
+        assert_ne!(
+            super::Settings::for_tests().events_asset_base_url,
+            super::Settings::for_tests().events_base_url
+        );
+    }
+
     use super::*;
 
     #[test]

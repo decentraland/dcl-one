@@ -104,6 +104,10 @@ struct Args {
     #[arg(long, value_name = "key", help_heading = HEADLESS)]
     pulse_realm: Option<String>,
 
+    // the loopback console server: a client run only (see `parse_args`)
+    #[command(flatten)]
+    automation: webgpu_build::automation::AutomationOptions,
+
     // resolved after parsing: realm defaults to a local preview server, position to 0,0
     #[arg(skip)]
     realm: String,
@@ -170,6 +174,13 @@ fn parse_args() -> Args {
     if args.pulse_realm.is_some() && args.orchestrated {
         usage_error(
             "--pulse-realm is a --server-mode flag; orchestrated scenes carry their own realm",
+        );
+    }
+    // a server serves scenes and takes no commands from outside; the environment variables are
+    // ignored there, so one set for a client run elsewhere does not stop it
+    if args.server_mode && args.automation != Default::default() {
+        usage_error(
+            "--automation-token and --automation-port are for a client run: --server-mode takes no console server",
         );
     }
     args
@@ -393,6 +404,14 @@ fn main() -> AppExit {
         wallet,
     );
     app.insert_resource(delegations);
+    if !args.server_mode {
+        // a test client answers `/world_state` (and, from the comms plugin, `/chat_history` and
+        // `/voice_state`) without a window; with a token, the loopback server runs them
+        app.add_plugins(webgpu_build::world_state::WorldStatePlugin);
+        if let Some(server) = args.automation.server() {
+            app.add_plugins(server);
+        }
+    }
     if args.orchestrated {
         // never load by player position — scenes come ONLY from the control channel
         // (portables are exempt from distance loading).

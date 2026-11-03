@@ -12,7 +12,7 @@ vi.mock("@/data/lib/catalyst/places/events", async (original) => ({ ...await ori
 describe("when the public hangout catalogue is paginated", () => {
   let events: Event[];
   let request: Request;
-  let data: Awaited<ReturnType<typeof loader>>["data"];
+  let data: Extract<Awaited<ReturnType<typeof loader>>, { data: unknown }>["data"];
   let html: string;
   let renderPage: () => string;
   beforeEach(() => {
@@ -61,6 +61,20 @@ describe("when the public hangout catalogue is paginated", () => {
       expect(html).toContain("Hangouts are temporarily unavailable");
       expect(html).toContain("Retry");
       expect(html).not.toContain("No events right now");
+    });
+  });
+
+  describe("and only the live feed fails", () => {
+    beforeEach(() => {
+      vi.mocked(fetchEvents).mockImplementation(async (params) => {
+        if (params?.list === "live") throw new Error("offline");
+        return { data: events, total: events.length };
+      });
+    });
+    it("should keep the successful page and offer a retry for the missing feed", async () => {
+      data = await loader({ request } as never) as unknown as typeof data;
+      expect(data.upcoming).toHaveLength(24);
+      expect(renderPage()).toContain("Hangouts are temporarily unavailable");
     });
   });
 

@@ -18,6 +18,8 @@ import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 import EventManagement, { EventDiscoveryNavigation } from "@/features/explorer/event-management/EventManagement";
 
+import styles from "./whats-on.module.css";
+
 import type { Route } from "./+types/whats-on";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
@@ -43,6 +45,9 @@ const FALLBACK: PageDefaults = {
 
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
+  if (url.searchParams.get("tab") === "my") {
+    return { tab: "my" as const, sid: "", offset: 0, hasMore: false, unavailable: false, filter: "" as FilterId, search: "", live: [], upcoming: [], allDays: [], dayLabels: [], copy: { stamp: null, now: Date.now() } };
+  }
   const rawFilter = url.searchParams.get("filter")?.trim() ?? "";
   const filter: FilterId = (FILTERS.some((f) => f.id === rawFilter) ? rawFilter : "") as FilterId;
   const search = url.searchParams.get("search")?.trim() ?? "";
@@ -72,8 +77,9 @@ export async function loader({ request }: Route.LoaderArgs) {
   const upcoming = activeRes.data.slice(0, UPCOMING_LIMIT);
   const copy = { stamp: olderCopy(liveRes.copy, activeRes.copy), now: now.getTime() };
   const liveIds = new Set(live.map((event) => event.id));
-  const { allDays, dayLabels } = groupEventsByDay(upcoming, liveIds, 28, now);
-  const unavailable = activeRes.unavailable;
+  const liveById = new Map(live.map((event) => [event.id, event]));
+  const { allDays, dayLabels } = groupEventsByDay(upcoming.map((event) => liveById.get(event.id) ?? event), liveIds, 28, now);
+  const unavailable = activeRes.unavailable || liveRes.unavailable;
   const payload = {
     sid,
     offset,
@@ -182,7 +188,7 @@ function WhatsOnFeed({
     <LdWhatsOnPage
       navigationSlot={<>
         <EventDiscoveryNavigation />
-        <Form method="get" role="search" className="whatson-route__search">
+        <Form method="get" role="search" className={styles.search}>
           {filter && <input type="hidden" name="filter" value={filter} />}
           <label htmlFor="hangout-search">Search hangouts</label>
           <input key={search} id="hangout-search" name="search" type="search" defaultValue={search} maxLength={150} />
@@ -190,7 +196,7 @@ function WhatsOnFeed({
           {search && <Link to={filter ? `/whats-on?filter=${filter}` : "/whats-on"}>Clear search</Link>}
         </Form>
       </>}
-      statusSlot={unavailable ? <div role="alert" className="whatson-route__empty"><p>Hangouts are temporarily unavailable.</p><button onClick={() => { void revalidator.revalidate(); }}>Retry</button></div> : undefined}
+      statusSlot={unavailable ? <div role="alert" className={styles.unavailable}><p>Hangouts are temporarily unavailable.</p><button onClick={() => { void revalidator.revalidate(); }}>Retry</button></div> : undefined}
       liveNow={liveCards}
       upcoming={upcomingCards}
       allDays={allDays}
@@ -207,7 +213,7 @@ function WhatsOnFeed({
       promoSlot={
         <>
           <FreshnessNotice copy={copy.stamp} now={copy.now} />
-          {!unavailable && <nav className="whatson-route__pager" aria-label="Event pages">
+          {!unavailable && <nav className={styles.pager} aria-label="Event pages">
             {offset > 0 && <Link to={pageHref(Math.max(0, offset - UPCOMING_LIMIT))}>Previous page</Link>}
             <span>Page {Math.floor(offset / UPCOMING_LIMIT) + 1}</span>
             {hasMore && <Link to={pageHref(offset + UPCOMING_LIMIT)}>Next page</Link>}

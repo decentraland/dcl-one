@@ -9,9 +9,7 @@ on:
       - 'infra/dev/**'
       - 'tooling/dev*'
       - 'tooling/enet-provenance.py'
-      - 'tooling/fetch-play.py'
-      - 'tooling/play-artifact.py'
-      - 'tooling/benchmark-inputs.py'
+      - 'tooling/*.py'
       - 'tooling/tests/**'
       - 'services/catalyst/**'
       - 'library/**'
@@ -28,9 +26,7 @@ on:
       - 'infra/dev/**'
       - 'tooling/dev*'
       - 'tooling/enet-provenance.py'
-      - 'tooling/fetch-play.py'
-      - 'tooling/play-artifact.py'
-      - 'tooling/benchmark-inputs.py'
+      - 'tooling/*.py'
       - 'tooling/tests/**'
       - 'services/catalyst/**'
       - 'library/**'
@@ -47,12 +43,29 @@ concurrency:
   group: development-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  changes:
+    name: Changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    outputs:
+      macos: ${{ steps.plan.outputs.macos }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - name: Select the Rust test platforms
+        id: plan
+        run: python3 tooling/dev-ci.py plan
   rust:
     name: Rust tests
+    needs: changes
+    # Runs whatever the plan's outcome; without a plan (other events, a failed job) it includes macOS.
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-26.04, macos-26]
+        os: ${{ fromJSON((needs.changes.outputs.macos != 'false' || contains(github.event.pull_request.labels.*.name, 'ci:macos')) && '["ubuntu-26.04", "macos-26"]' || '["ubuntu-26.04"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 100
     env:
@@ -80,9 +93,9 @@ jobs:
             services/catalyst/target
             ~/.cargo/registry
             ~/.cargo/git
-          key: foundation-dev-nodebug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
+          key: foundation-dev-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
           restore-keys: |
-            foundation-dev-nodebug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
+            foundation-dev-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
       - name: Run backend tests with PostgreSQL and isolated NATS
         run: nix develop --command bash tooling/dev-test.sh rust
       - name: Preserve database logs
@@ -137,9 +150,9 @@ jobs:
             services/catalyst/target
             ~/.cargo/registry
             ~/.cargo/git
-          key: foundation-dev-nodebug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
+          key: foundation-dev-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
           restore-keys: |
-            foundation-dev-nodebug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
+            foundation-dev-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
       - name: Restore the pnpm store
         id: pnpm-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0

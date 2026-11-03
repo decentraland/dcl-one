@@ -50,13 +50,20 @@ use util::SceneUtilPlugin;
 
 use web_time::Instant;
 
-use crate::{asset_preload::plugin::AssetPreloadPlugin, initialize_scene::SuperUserScene};
+use crate::{
+    asset_preload::plugin::AssetPreloadPlugin,
+    initialize_scene::SuperUserScene,
+    scene_partition::{
+        publish_download_priorities, update_scene_partitions, Partition, BEHIND_SCENE_TICK_PENALTY,
+    },
+};
+use common::partition::PartitionData;
 
 use self::{
     initialize_scene::{
         LiveScenes, PointerResult, SceneLifecyclePlugin, SceneLoading, ScenePointers, PARCEL_SIZE,
     },
-    renderer_context::{RendererSceneContext, SceneState},
+    renderer_context::{RendererSceneContext, SceneState, SCENE_FIRST_DISPATCH_TICK},
     update_scene::SceneInputPlugin,
     update_world::{CrdtExtractors, SceneOutputPlugin},
 };
@@ -69,9 +76,11 @@ pub mod automatic_testing;
 pub use common::bounds_calc;
 pub mod gltf_resolver;
 pub mod initialize_scene;
+pub mod load_timing;
 pub mod permissions;
 pub mod primary_entities;
 pub mod renderer_context;
+pub mod scene_partition;
 #[cfg(test)]
 pub mod test;
 pub mod update_scene;
@@ -386,7 +395,12 @@ impl Plugin for SceneRunnerPlugin {
 
         app.add_systems(
             Update,
-            (update_scene_priority, run_scene_loop)
+            (
+                update_scene_partitions,
+                publish_download_priorities,
+                update_scene_priority,
+                run_scene_loop,
+            )
                 .chain()
                 .in_set(SceneSets::RunLoop),
         );
@@ -423,6 +437,11 @@ impl Plugin for SceneRunnerPlugin {
         app.add_plugins(AssetPreloadPlugin);
 
         app.add_systems(Update, update_scene_room.in_set(SceneSets::PostLoop));
+        app.init_resource::<load_timing::FirstRingTiming>();
+        app.add_systems(
+            Update,
+            load_timing::report_scene_load_times.in_set(SceneSets::PostLoop),
+        );
         app.add_systems(Update, log_app_errors.in_set(SceneSets::PostLoop));
         app.add_systems(Update, set_ui_constraints.in_set(SceneSets::PostLoop));
 
@@ -508,13 +527,13 @@ fn update_scene_priority(
     mut scenes: Query<
         (
             Entity,
-            &GlobalTransform,
+            Option<&Partition>,
             &mut RendererSceneContext,
             Option<&SuperUserScene>,
         ),
         Without<SceneLoading>,
     >,
-    player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
+    player: Query<Entity, With<PrimaryUser>>,
     mut updates: ResMut<SceneUpdates>,
     time: Res<Time>,
     containing_scene: ContainingScene,
@@ -522,9 +541,9 @@ fn update_scene_priority(
     updates.eligible_jobs = 0;
     updates.frames += 1;
 
-    let (active_scenes, player_translation) = player
+    let active_scenes = player
         .single()
-        .map(|(e, gt)| (containing_scene.get(e), gt.translation()))
+        .map(|e| containing_scene.get(e))
         .unwrap_or_default();
 
     // mark scenes that have been in-flight past the timeout as broken and free their
@@ -583,31 +602,22 @@ fn update_scene_priority(
             }
             allow
         })
-        .filter_map(|(ent, transform, mut context, _)| {
-            // clamp to scene bounds instead of using distance to scene origin
-            let nearest_point = player_translation.xz().clamp(
-                transform.translation().xz() - Vec2::Y * PARCEL_SIZE,
-                transform.translation().xz() + Vec2::X * PARCEL_SIZE,
-            );
-            let distance = (nearest_point - player_translation.xz()).length_squared();
-            context.priority = if active_scenes.contains(&ent) {
-                0.0
-            } else {
-                distance
-            };
+        .filter_map(|(ent, maybe_partition, mut context, _)| {
+            let partition = maybe_partition.map_or(PartitionData::NEAREST, |p| p.0);
+            let active = active_scenes.contains(&ent);
+            context.priority = if active { 0.0 } else { partition.sqr_distance };
             let not_yet_run = context.last_sent < time.elapsed_secs_f64();
 
             if !context.in_flight() && !not_yet_run {
                 skipped_already_sent += 1;
             }
 
-            (!context.in_flight() && not_yet_run).then(|| {
-                updates.eligible_jobs += 1;
-                let priority = FloatOrd(
-                    context.priority / (time.elapsed_secs_f64() - context.last_sent) as f32,
-                );
-                (ent, priority)
-            })
+            if context.in_flight() || !not_yet_run {
+                return None;
+            }
+            let age = time.elapsed_secs_f64() - context.last_sent;
+            updates.eligible_jobs += 1;
+            Some((ent, scene_tick_key(partition, active, age)))
         })
         .collect();
     updates.skipped_in_flight += skipped_in_flight;
@@ -621,6 +631,22 @@ fn update_scene_priority(
     updates.jobs_in_flight = &updates.jobs_in_flight - &missing_in_flight;
 }
 
+/// The queue key of a scene due this frame: its distance over the time since it was last
+/// sent, 0 for the player's scenes. A scene behind the camera counts as
+/// `BEHIND_SCENE_TICK_PENALTY` times farther: it still ticks, and yields first when frame time
+/// runs short.
+fn scene_tick_key(partition: PartitionData, active: bool, age: f64) -> FloatOrd {
+    if active {
+        return FloatOrd(0.0);
+    }
+    let penalty = if partition.is_behind {
+        BEHIND_SCENE_TICK_PENALTY
+    } else {
+        1.0
+    };
+    FloatOrd(partition.sqr_distance / age as f32 * penalty)
+}
+
 // TODO: work out how to set this intelligently
 // we need to keep enough scheduler time to ensure the main loop wakes enough
 // otherwise we end up overrunning the budget
@@ -629,6 +655,9 @@ fn update_scene_priority(
 // - reduce bevy primary thread pool
 // - see if we can get v8 single threaded / no native threads working
 // const MAX_CONCURRENT_SCENES: usize = 8;
+
+#[cfg(test)]
+mod tick_key_tests;
 
 pub use common::structs::OutOfWorld;
 
@@ -739,6 +768,16 @@ impl ContainingScene<'_, '_> {
                     self.get_position(gt.translation())
                 }
             })
+            .unwrap_or_default()
+    }
+
+    // the parcel at the entity's position, even if they are out of world (arriving: the player
+    // is placed in the destination and kept out of world until it is ready), plus any global
+    // scenes
+    pub fn get_oow(&self, ent: Entity) -> HashSet<Entity> {
+        self.transforms
+            .get(ent)
+            .map(|(gt, _)| self.get_position(gt.translation()))
             .unwrap_or_default()
     }
 
@@ -875,6 +914,32 @@ pub fn realm_base_url_and_name(realm: &CurrentRealm) -> (String, String) {
             .unwrap_or(base_url)
     };
     (base_url.to_owned(), realm_name)
+}
+
+/// Engine time since a scene's previous dispatch, sent with this dispatch as the scene's next
+/// tick dt. 0 for the first dispatch: before it, `last_sent` is the initialization stamp.
+fn dispatch_dt(tick_number: u32, last_sent: f64, now: f64) -> f64 {
+    if tick_number > SCENE_FIRST_DISPATCH_TICK {
+        now - last_sent
+    } else {
+        0.0
+    }
+}
+
+#[cfg(test)]
+mod dispatch_dt_tests {
+    use super::*;
+
+    #[test]
+    fn first_dispatch_is_zero_then_engine_interval() {
+        // up to and including the first dispatch, last_sent is the init stamp
+        assert_eq!(dispatch_dt(SCENE_FIRST_DISPATCH_TICK - 1, 1.0, 2.5), 0.0);
+        assert_eq!(dispatch_dt(SCENE_FIRST_DISPATCH_TICK, 1.0, 2.5), 0.0);
+        assert_eq!(
+            dispatch_dt(SCENE_FIRST_DISPATCH_TICK + 1, 2.5, 2.516),
+            2.516 - 2.5
+        );
+    }
 }
 
 fn send_scene_updates(
@@ -1151,9 +1216,13 @@ fn send_scene_updates(
         died: std::mem::take(&mut context.outbound_died),
     };
 
+    let now = time.elapsed_secs_f64();
+    let dt = dispatch_dt(context.tick_number, context.last_sent, now);
+
     if let Err(e) = sender.send(RendererResponse::Ok(
         context.crdt_store.take_updates(),
         census,
+        dt,
     )) {
         error!(
             "failed to send updates to scene {ent:?} [{:?}]: {e:?}",
@@ -1162,7 +1231,7 @@ fn send_scene_updates(
         context.state = SceneState::Broken;
     } else {
         context.set_in_flight(true);
-        context.last_sent = time.elapsed_secs_f64();
+        context.last_sent = now;
         dcl_assert!(!updates.jobs_in_flight.contains(&ent));
         updates.jobs_in_flight.insert(ent);
     }

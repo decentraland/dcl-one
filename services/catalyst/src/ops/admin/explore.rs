@@ -62,7 +62,7 @@ use super::console::{
     str_field, valid_path_segment,
 };
 use crate::explore::api::{denylist, feature_flags, lists};
-use crate::explore::events::moderation::{self as event_moderation, AdminPatch, CreateEvent};
+use crate::explore::events::moderation::{self as event_moderation, CreateEvent};
 use crate::explore::places::moderation::{self as place_moderation, Decision, Target};
 use crate::explore::places::reports::{self, ReportPatch, ReportQuery};
 
@@ -708,26 +708,33 @@ pub async fn event_moderate(
             patch_body[key] = json!(b);
         }
     }
-    let patch = match super::console::body_as::<AdminPatch>(patch_body.clone()) {
+    let patch = match event_moderation::parse_admin_patch(patch_body.clone()) {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(error) => return error.into_response(),
     };
     let explore = match explore_for(&state) {
         Ok(e) => e,
         Err(resp) => return resp,
     };
-    let answer =
-        match event_moderation::moderate(&explore.pool, &id, &patch, session.address()).await {
-            Ok(false) => {
-                crate::shared::errors::ApiError::not_found(format!("Not found event \"{id}\""))
-                    .into_response()
-            }
-            Ok(true) => match explore.events.get(&id).await {
-                Ok(event) => Json(json!({ "ok": true, "data": event })).into_response(),
-                Err(e) => e.into_response(),
-            },
+    let answer = match event_moderation::moderate(
+        &explore.pool,
+        &id,
+        &patch,
+        session.address(),
+        &explore.settings,
+    )
+    .await
+    {
+        Ok(false) => {
+            crate::shared::errors::ApiError::not_found(format!("Not found event \"{id}\""))
+                .into_response()
+        }
+        Ok(true) => match explore.events.get(&id).await {
+            Ok(event) => Json(json!({ "ok": true, "data": event })).into_response(),
             Err(e) => e.into_response(),
-        };
+        },
+        Err(e) => e.into_response(),
+    };
     finish(
         &state,
         Call::new(&session, DOMAIN, "events.moderate")
@@ -793,7 +800,9 @@ pub async fn event_create(
         Err(resp) => return resp,
     };
     let (answer, id) =
-        match event_moderation::create(&explore.pool, &typed, session.address()).await {
+        match event_moderation::create(&explore.pool, &typed, session.address(), &explore.settings)
+            .await
+        {
             Ok(id) => match explore.events.get(&id).await {
                 Ok(event) => (
                     Json(json!({ "ok": true, "data": event })).into_response(),

@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { useCommunityProfiles } from "./useCommunityProfiles";
+import { fetchCommunityProfiles, useCommunityProfiles } from "./useCommunityProfiles";
 
 const first = "0x1111111111111111111111111111111111111111";
 const second = "0x2222222222222222222222222222222222222222";
@@ -31,4 +31,16 @@ test("preserves member rows when profiles are unavailable", async () => {
   const { result } = renderHook(() => useCommunityProfiles([member(first)], true), { wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider> });
   await waitFor(() => expect(client.isFetching()).toBe(0));
   expect(result.current[0]).toMatchObject({ memberAddress: first, name: "", profilePictureUrl: "" });
+});
+
+test("reads every profile of a batch even when one carries a null birthdate or an unreadable shape", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([
+    { avatars: [{ ethAddress: first, name: "First member", birthdate: null }] },
+    { avatars: [{ ethAddress: "0x3333333333333333333333333333333333333333", name: 7 }] },
+    { avatars: [{ ethAddress: second, name: "Second member" }] },
+  ])));
+  const profiles = await fetchCommunityProfiles([first, second, "0x3333333333333333333333333333333333333333"]);
+  expect(profiles[first]?.name).toBe("First member");
+  expect(profiles[second]?.name).toBe("Second member");
+  expect(profiles["0x3333333333333333333333333333333333333333"]).toBeUndefined();
 });

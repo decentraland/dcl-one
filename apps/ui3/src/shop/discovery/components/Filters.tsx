@@ -203,6 +203,8 @@ export type FiltersProps = {
   hideNames?: boolean;
   hideAll?: boolean;
   hideStatus?: boolean;
+  /** Hides the price range, for a status whose items have no price (Not for sale). */
+  hidePrice?: boolean;
   collections?: boolean;
   onCollections?: () => void;
 };
@@ -245,7 +247,7 @@ export default function Filters(props: FiltersProps) {
   const maxPct = priceToSliderPct(sliderMax);
 
   return (
-    <div className="shop-filters" data-testid="filters">
+    <div className="shop-filters">
       <FilterSection title={t("assets.category")} open={openCategory} onToggle={() => setOpenCategory((o) => !o)} summary={categorySummary} desktopStatic>
         <CategoryFilter
           category={category}
@@ -261,6 +263,8 @@ export default function Filters(props: FiltersProps) {
 
       <hr className="shop-filters__divider" />
 
+      {props.hidePrice ? null : (
+        <>
       <FilterSection title={t("filter.price")} open={openPrice} onToggle={() => setOpenPrice((o) => !o)} summary={priceSummary} desktopStatic>
         <div className="shop-filters__prices">
           <label>
@@ -306,7 +310,7 @@ export default function Filters(props: FiltersProps) {
             onBlur={commitSlide}
           />
         </div>
-        <div className="shop-filters__range" data-testid="price-range-labels">
+        <div className="shop-filters__range">
           <span>
             <Icon name="credits" size={16} />
             {sliderMin.toLocaleString("en-US")}
@@ -319,6 +323,8 @@ export default function Filters(props: FiltersProps) {
       </FilterSection>
 
       <hr className="shop-filters__divider" />
+        </>
+      )}
 
       <FilterSection title={t("assets.rarity")} open={openRarity} onToggle={() => setOpenRarity((o) => !o)} summary={raritySummary} testId="sidebar-section-toggle">
         <div className="shop-filters__rarities" data-testid="rarity-filter">

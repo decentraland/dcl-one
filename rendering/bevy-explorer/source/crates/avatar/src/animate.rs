@@ -137,6 +137,14 @@ impl MaskedEmote {
     pub fn is_playing(&self) -> bool {
         self.request.as_ref().is_some_and(|request| request.active)
     }
+
+    /// The upper-body emote driving the avatar this frame, if there is one.
+    pub fn active_request(&self) -> Option<&EmotePlayback> {
+        self.request
+            .as_ref()
+            .filter(|request| request.active)
+            .map(|request| &request.playback)
+    }
 }
 
 pub struct AvatarAnimationPlugin;
@@ -434,6 +442,10 @@ impl ActiveEmote {
 
     pub fn transition_seconds(&self) -> f32 {
         self.transition_seconds
+    }
+
+    pub fn source(&self) -> ActiveEmoteSource {
+        self.source
     }
 }
 

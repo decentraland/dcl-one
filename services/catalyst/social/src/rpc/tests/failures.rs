@@ -7,6 +7,7 @@
 //! every query fails without a database.
 
 use super::*;
+use crate::rpc::drpc::rpc_protocol::RemoteError;
 use crate::rpc::proto::errors::InternalServerError;
 
 fn unreachable_ctx() -> Context {
@@ -147,4 +148,114 @@ async fn a_failed_database_call_answers_as_upstream_does() {
         ),
         "{incoming:?}"
     );
+}
+
+/// A failure a procedure refuses with (a dcl-rpc RemoteError 500) says only
+/// `Internal Server Error`, for every procedure: the database's text goes to
+/// the log, never to the client.
+#[tokio::test]
+async fn an_internal_refusal_carries_no_database_text() {
+    let ctx = unreachable_ctx();
+    let me = addr("fail3");
+    let svc = SocialServiceImpl;
+    let end = svc
+        .end_private_voice_chat(
+            EndPrivateVoiceChatPayload {
+                call_id: Uuid::new_v4().to_string(),
+            },
+            procedure_ctx(&ctx, &me, 69),
+        )
+        .await
+        .unwrap_err();
+    let community = svc
+        .start_community_voice_chat(
+            StartCommunityVoiceChatPayload {
+                community_id: Uuid::new_v4().to_string(),
+            },
+            procedure_ctx(&ctx, &me, 70),
+        )
+        .await
+        .unwrap_err();
+    for (name, refusal) in [("end", end), ("community", community)] {
+        let remote = RemoteError::from(refusal);
+        assert_eq!(remote.error_code, 500, "{name}");
+        assert_eq!(remote.error_message, "Internal Server Error", "{name}");
+    }
+}
+
+/// Gatekeeper execution errors propagate through all shared operations. An
+/// unsuccessful end publishes no ENDED notification (upstream
+/// community-voice.ts:323-366; moderation.ts awaits every executor call).
+#[tokio::test]
+async fn community_executor_failures_are_reported_and_do_not_announce_an_end() {
+    use crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime;
+    use crate::rpc::service::{Refusal, ops};
+
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let owner = addr("vfowner");
+    let community = seed_community(&pool, true, &owner, "owner").await;
+    let cid = community.to_string();
+    let ctx = test_ctx(Db::new(pool.clone()), Arc::new(NoVoiceRuntime));
+    let mut updates = ctx.pubsub().subscribe(&owner);
+    for (action, result) in [
+        (
+            "raise",
+            ops::request_to_speak(&ctx, &owner, &cid, true).await,
+        ),
+        (
+            "lower",
+            ops::request_to_speak(&ctx, &owner, &cid, false).await,
+        ),
+        (
+            "promote",
+            ops::set_speaker(&ctx, &owner, &cid, &owner, true)
+                .await
+                .map(|_| ()),
+        ),
+        (
+            "demote",
+            ops::set_speaker(&ctx, &owner, &cid, &owner, false)
+                .await
+                .map(|_| ()),
+        ),
+        ("kick", ops::kick_player(&ctx, &owner, &cid, &owner).await),
+        (
+            "mute",
+            ops::mute_speaker(&ctx, &owner, &cid, &owner, true).await,
+        ),
+        (
+            "reject",
+            ops::reject_speak_request(&ctx, &owner, &cid, &owner).await,
+        ),
+        (
+            "end",
+            ops::end_community_voice_chat(&ctx, &owner, &cid).await,
+        ),
+    ] {
+        assert!(
+            matches!(result, Err(Refusal::Internal(_))),
+            "{action}: {result:?}"
+        );
+    }
+    let end = SocialServiceImpl
+        .end_community_voice_chat(
+            EndCommunityVoiceChatPayload { community_id: cid },
+            procedure_ctx(&ctx, &owner, 71),
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            end.response,
+            Some(end_community_voice_chat_response::Response::InternalServerError(_))
+        ),
+        "{end:?}"
+    );
+    assert!(
+        updates.try_recv().is_err(),
+        "failed execution announced an end"
+    );
+    drop_community(&pool, community).await;
 }
