@@ -204,3 +204,24 @@ columns and key, not production latency or a sustained-throughput measurement.
 They exclude HTTP, profile enrichment and queueing, and do not establish cold
 cache behavior, repeated percentiles or capacity under concurrent presence
 writes. No index or schema change was added.
+
+## Community child deletion indexes
+
+An owned PostgreSQL 18.6 scratch database held 10,000 communities and 100,000
+rows in each of `community_voice_notifications` and `community_ranking_events`,
+with ten children per selected community. Five samples per operation used
+`EXPLAIN (ANALYZE, BUFFERS, WAL, FORMAT JSON)` and rolled back each mutation.
+
+| Operation | Without community-id indexes, median | With indexes, median |
+| --- | ---: | ---: |
+| Delete ten notification rows | 4.384 ms | 0.128 ms |
+| Delete ten ranking receipts | 4.499 ms | 0.127 ms |
+| Delete parent with both cascades | 10.142 ms | 1.603 ms |
+| Insert 10,000 notification rows | 39.582 ms | 48.747 ms |
+| Insert 10,000 ranking receipts | 47.042 ms | 86.380 ms |
+
+The child deletion plans changed from sequential scans discarding 99,990 rows
+to bitmap scans selecting ten rows. Each index occupied 2,072,576 bytes.
+The insertion medians increased by 23.2% and 83.6%, respectively. These warm,
+synthetic samples establish the tradeoff for this fixture; they do not establish
+production latency, sustained throughput or a service-level bound.

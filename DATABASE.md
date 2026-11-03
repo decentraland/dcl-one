@@ -402,12 +402,13 @@ drops, renames or retypes is its own reviewed release under `schemas/releases/`.
 The binary requires schema version 3. Stop all writers, pollers and administrative
 write paths, and verify a backup restore before a release. A version-1 database
 first takes `schemas/releases/v2-shop-schema.sql`, then a compatible version-2
-binary runs `catalyst schema migrate` and `catalyst schema status`. The pinned
-`c1fab3991` binary includes the historical notification step 0020 required by the
-version-3 preflight. Do not use the version-3 binary to prepare version2 or edit
-`meta.schema_steps` to bypass preparation.
+binary runs `catalyst schema migrate` and `catalyst schema status`. Do not use the
+version-3 binary to prepare version 2 or edit `meta.schema_steps` to bypass
+preparation.
 
-A prepared version-2 database takes the Social voice release:
+The Social voice release accepts shipped main version 2 without historical step
+`0020_social_voice_notifications` or its retired objects, and genuinely prepared
+version 2 with that step's matching real receipt and complete legacy layout:
 
 ```sh
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f schemas/releases/v3-private-voice-pending.sql
@@ -415,31 +416,32 @@ catalyst schema migrate
 catalyst schema status
 ```
 
-Keep every writer stopped through that sequence. The release requires the
-unchanged historical 0020 ledger record and its old notification layout. It audits
-pending wallets across both roles, refuses overlapping or non-normalized pending
-state, and refuses an existing destination relation. In one transaction it includes
-the canonical `41_social_voice_notifications.sql` table definition, copies the
-legacy audience/generation/expiry facts, verifies equality in both directions,
-retires the three old columns and their constraint/index, drops the two private
-caller/callee uniqueness constraints, and stamps version 3 last. It neither renews
-expired facts nor rewrites a call or participant. Legacy UUID columns have already
-lost raw identifier spelling: their backfill uses `id::text` and cannot reconstruct
-historical aliases.
+Keep every writer stopped through that sequence. The release refuses mixed
+layouts, changed receipt hashes and a pre-existing destination. It audits pending
+wallets across both roles and refuses overlapping or non-normalized pending state.
+In one transaction it creates the canonical exact-key notification relation,
+preserves prepared legacy generations and TTLs, verifies the backfill both ways,
+retires the legacy layout when present, creates the canonical caller/callee
+indexes, drops the former uniqueness constraints and stamps version 3 last. It
+neither renews expired facts nor rewrites a call or participant. Legacy UUID
+columns have already lost raw identifier spelling: their backfill uses `id::text`
+and cannot reconstruct historical aliases.
 
-The canonical object pass of `schema migrate` creates the nonunique
-`private_voice_chats_caller_idx` and `private_voice_chats_callee_idx`; verify both
-valid indexes and a clean schema status before traffic resumes. A failed release
-transaction preserves the version-2 stamp, facts and constraints. Both older and
-newer binaries refuse a mismatched stamp.
+Run the current `schema migrate` for the remaining additive layout, and verify a
+clean schema status before traffic resumes. From version 3 onward, the exact
+immutable historical 0020 is retired: apply/migrate never execute it or invent a
+receipt. Status/bootstrap verify any genuine receipt and reject the five known
+retired columns, constraint and index if present. A failed release transaction
+preserves the version-2 stamp, facts and constraints. Both older and newer
+binaries refuse a mismatched stamp.
 
 Retained media and independent raw notification aliases can coexist in version 3.
 Reinstalling the former uniqueness or single-row layout is not a general rollback.
 Quiesce and use a reviewed forward fix or restore; never delete or deduplicate
 media calls or notification facts to force old constraints back. Owned upgrade
 tests exercise the composed release and real migrator against captured, genuinely
-prepared version-2 state; deployment backup, restore, historical raw-alias loss and
-cutover validation remain separate operating gates.
+prepared and shipped-main version-2 state; deployment backup, restore, historical
+raw-alias loss and cutover validation remain separate operating gates.
 
 Peer sync is not a backup of local state. Keep local write paths disabled until a backup restore of the node's database, blobs and credentials has been demonstrated. Record the restore and rollback evidence in the task report before enabling writes. Development and commit builds sharing a database must agree on its schema; do not reset or silently migrate shared state to fit a working tree.
 
@@ -510,6 +512,13 @@ External decoded events preserve the upstream consumer's repeated increments,
 including its finally-acknowledge behavior on handler failure. The receipt relation
 does not turn that transport into an exactly-once consumer.
 
+Community deletion probes `community_voice_notifications.community_id` and
+`community_ranking_events.community_id` through their cascading foreign keys.
+Both have a leading community-id index. The raw notification key and the ranking
+receipt's `(kind,event_key,community_id)` key serve different access patterns.
+Synthetic warm measurements and insertion costs are recorded in `METRICS.md`;
+they are not production capacity measurements.
+
 New camera uploads start with `ranking_published=false`. After both blobs are
 written, one transaction marks the row and applies local photo contributions.
 Existing photos receive `true` during migration, preserving the history boundary.
@@ -528,12 +537,14 @@ hour, rechecking expiry to preserve concurrent refreshes. Provider failures are 
 cached. Cache-read SQL failures remain handler failures; a cache-write failure is
 reported by the source's compliance-unavailable branch.
 
-The compliance adapter builds one lazy Outbound client per community State. Its
-600-second whole-response deadline and 4 MiB response cap are explicit bounds.
-The pinned OpenAI SDK clears its 600-second timer at response headers and relies
-on the runtime's body inactivity timeout, so these bounds have a narrower scope
-than unrestricted SDK responses. The POST/PUT source contracts exercise 20 mocked
-provider cases; they do not establish exhaustive provider equivalence.
+The compliance adapter retains one lazy Outbound provider profile per community
+State. Its 600-second SDK budget ends at response headers; a progressing body may
+continue beyond that budget. The native connect and read inactivity budgets are
+10 and 300 seconds. Provider bodies have no separate 4 MiB cap. Source-paired
+factory/SDK and native-fetch probes cover these boundaries, missing versus empty
+credentials and compliance metric outcomes. Delayed DNS, combined network phases
+and deployed providers remain unverified; the probes do not establish exhaustive
+provider equivalence.
 
 ## Shared social registry profile facts
 
