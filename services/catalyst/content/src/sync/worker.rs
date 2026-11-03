@@ -221,6 +221,38 @@ pub async fn start(
     Ok(SyncHandles { control })
 }
 
+/// Without a sync worker in this process: the deleter repair the sync leader
+/// runs at its bootstrap, once, as job `deleter-repair`. It runs under the
+/// `sync` lease so it never overlaps a leader's flushes; while another process
+/// holds that lease the leader's own bootstrap repair covers the database.
+pub fn spawn_startup_repair(jobs: &Arc<Jobs>, pool: PgPool) {
+    let leases = jobs.leases().cloned();
+    jobs.spawn_leased("deleter-repair", move |ctx| {
+        let (leases, pool) = (leases.clone(), pool.clone());
+        async move {
+            let guard = match &leases {
+                Some(leases) => match leases.try_acquire("sync").await? {
+                    Some(guard) => Some(guard),
+                    None => {
+                        ctx.progress("skipped: a sync leader holds the sync lease");
+                        return Ok(());
+                    }
+                },
+                None => None,
+            };
+            let result = LiveDeploymentRepository::new(pool, Arc::new(SyncStatus::default()))
+                .resolve_deleter_deployments()
+                .await;
+            if let Some(guard) = guard {
+                guard.release().await;
+            }
+            result.map_err(|e| anyhow::anyhow!("deleter repair: {e}"))?;
+            ctx.progress("done");
+            Ok(())
+        }
+    });
+}
+
 /// Everything the process holding the `sync` lease builds and runs: the
 /// deployer and its flush ticker, the bloom filter over the deployed entity
 /// ids, the orchestrator, the failed-deployments retry and prune loops and

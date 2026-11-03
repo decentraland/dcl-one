@@ -385,6 +385,76 @@ mod tests {
         .unwrap()
     }
 
+    /// The repair a process without a sync worker runs at startup: skipped while a
+    /// sync leader holds the `sync` lease, applied once the lease is free.
+    #[tokio::test]
+    async fn the_startup_repair_runs_only_without_a_sync_leader() {
+        use crate::jobs::{JobState, Jobs, LeaseSettings, Leases};
+        let Some((admin, pool, name)) = repair_database().await else {
+            return;
+        };
+        insert_scene(&pool, "bafyolder", 1_000.0, "0,0").await;
+        insert_scene(&pool, "bafynewer", 2_000.0, "0,0").await;
+        let lease_settings = LeaseSettings {
+            namespace: format!("repair-{}", &unique()[..12]),
+            ..LeaseSettings::default()
+        };
+        let leader = Arc::new(Leases::new(pool.clone(), lease_settings.clone()));
+        let held = leader
+            .try_acquire("sync")
+            .await
+            .unwrap()
+            .expect("sync lease");
+
+        let run = |jobs: Arc<Jobs>| {
+            let pool = pool.clone();
+            async move {
+                super::super::worker::spawn_startup_repair(&jobs, pool);
+                for _ in 0..200 {
+                    let report = jobs.report();
+                    let job = report.iter().find(|j| j.name == "deleter-repair").unwrap();
+                    if job.state == JobState::Finished {
+                        return job.progress.clone();
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+                panic!(
+                    "the repair job never finished: {:?}",
+                    jobs.report()
+                        .iter()
+                        .map(|j| (&j.name, j.state))
+                        .collect::<Vec<_>>()
+                );
+            }
+        };
+        let jobs = Arc::new(Jobs::with_leases(pool.clone(), lease_settings.clone()));
+        let progress = run(jobs.clone()).await;
+        assert_eq!(
+            progress.as_deref(),
+            Some("skipped: a sync leader holds the sync lease")
+        );
+        jobs.shutdown(std::time::Duration::from_secs(5)).await;
+        assert_eq!(
+            deleters(&pool).await,
+            vec![("bafynewer".into(), None), ("bafyolder".into(), None)]
+        );
+
+        held.release().await;
+        let jobs = Arc::new(Jobs::with_leases(pool.clone(), lease_settings));
+        assert_eq!(run(jobs.clone()).await.as_deref(), Some("done"));
+        jobs.shutdown(std::time::Duration::from_secs(5)).await;
+        assert_eq!(
+            deleters(&pool).await,
+            vec![
+                ("bafynewer".into(), None),
+                ("bafyolder".into(), Some("bafynewer".into())),
+            ]
+        );
+        drop(leader);
+
+        drop_repair_database(admin, pool, &name).await;
+    }
+
     /// The bootstrap repair walks each pointer's chain of undeleted rows; an
     /// unpublished local scene is a link of it like any other, so the peer scene
     /// older than it gains the tombstone as its deleter.

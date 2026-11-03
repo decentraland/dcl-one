@@ -1046,12 +1046,14 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
                  development only, never a readiness signal"
             );
             worker::serve_unsynced(&config, &sync_status);
+            worker::spawn_startup_repair(&jobs, pool.clone());
             None
         }
         None => {
             tracing::info!(
                 "SYNC_ENABLED=false: no sync worker; the node reports the sync leader's state from the database, Bootstrapping until one has written it"
             );
+            worker::spawn_startup_repair(&jobs, pool.clone());
             None
         }
     };
