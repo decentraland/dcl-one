@@ -770,3 +770,216 @@ async fn a_global_moderators_deletion_tells_the_owner_of_the_violation() {
     assert_eq!(kinds(&rig, &member, c).await, ["community_deleted"]);
     rig.finish();
 }
+
+/// Upstream's `COMMUNITY_MEMBER_STATUS_UPDATES_CHANNEL` and
+/// `COMMUNITY_DELETED_UPDATES_CHANNEL` (`src/logic/community/members.ts`,
+/// `requests.ts`, `bans.ts`, `communities.ts`; delivered by
+/// `src/logic/updates.ts` `communityMemberStatusHandler` and
+/// `communityDeletedUpdateHandler` at `b6b2cef`): a join (directly or by an
+/// accepted request) is ONLINE, a leave, kick or ban OFFLINE, to the
+/// community's members on an open stream and to the wallet itself, member or
+/// no longer; a deletion tells each member on an open stream it went
+/// OFFLINE. Wallets outside the community hear nothing.
+#[tokio::test]
+async fn membership_changes_and_deletion_reach_the_open_member_streams() {
+    use crate::rpc::proto::v2::ConnectivityStatus;
+    use crate::rpc::pubsub::{PubSub, SocialEvent};
+    let Some(rig) = Rig::new(admin_settings(None)).await else {
+        return;
+    };
+    let updates = PubSub::new();
+    rig.state.set_updates(updates.clone());
+    let (owner, joiner, kicked, banned, asker, stranger) =
+        (wallet(), wallet(), wallet(), wallet(), wallet(), wallet());
+    let c = rig.community(&owner, false).await;
+    rig.member(c, &kicked, "member").await;
+    let mut rx: Vec<_> = [&owner, &joiner, &kicked, &banned, &asker, &stranger]
+        .iter()
+        .map(|w| updates.subscribe(w.address.as_str()))
+        .collect();
+    let (owner_rx, joiner_rx, kicked_rx, banned_rx, asker_rx, stranger_rx) = (0, 1, 2, 3, 4, 5);
+    let mut heard = |i: usize| -> Vec<(String, String, i32)> {
+        std::iter::from_fn(|| rx[i].try_recv().ok())
+            .map(|e| match &*e {
+                SocialEvent::CommunityMemberStatus(u) => (
+                    u.community_id.clone(),
+                    u.member.as_ref().unwrap().address.clone(),
+                    u.status,
+                ),
+                _ => panic!("unexpected event"),
+            })
+            .collect()
+    };
+    let (online, offline) = (
+        ConnectivityStatus::Online as i32,
+        ConnectivityStatus::Offline as i32,
+    );
+    let about = |w: &Wallet, status| vec![(c.to_string(), w.address.to_string(), status)];
+    let member_path = |w: &Wallet| format!("/v1/communities/{c}/members/{}", w.address);
+    let join = format!("/v1/communities/{c}/members");
+
+    // a join
+    let (status, body) = hit(&rig.app, Case::new("post", &join).signed(&joiner).await).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(heard(owner_rx), about(&joiner, online), "the owner");
+    assert_eq!(heard(kicked_rx), about(&joiner, online), "a member");
+    assert_eq!(
+        heard(joiner_rx),
+        about(&joiner, online),
+        "the joiner itself"
+    );
+    assert!(heard(stranger_rx).is_empty(), "not a member");
+    // joining again changes nothing and tells no one
+    let (status, _) = hit(&rig.app, Case::new("post", &join).signed(&joiner).await).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert!(heard(owner_rx).is_empty());
+
+    // a leave: the members and the wallet that left
+    let (status, _) = hit(
+        &rig.app,
+        Case::new("delete", member_path(&joiner))
+            .signed(&joiner)
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(heard(owner_rx), about(&joiner, offline));
+    assert_eq!(heard(kicked_rx), about(&joiner, offline));
+    assert_eq!(
+        heard(joiner_rx),
+        about(&joiner, offline),
+        "no longer a member"
+    );
+    // a kick
+    let (status, _) = hit(
+        &rig.app,
+        Case::new("delete", member_path(&kicked))
+            .signed(&owner)
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(heard(owner_rx), about(&kicked, offline));
+    assert_eq!(heard(kicked_rx), about(&kicked, offline));
+    assert!(heard(joiner_rx).is_empty(), "a former member");
+    // a ban of a wallet that never joined still tells it
+    let (status, _) = hit(
+        &rig.app,
+        Case::new("post", format!("{}/bans", member_path(&banned)))
+            .signed(&owner)
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(heard(owner_rx), about(&banned, offline));
+    assert_eq!(heard(banned_rx), about(&banned, offline));
+
+    // an accepted request to join
+    let request = rig.request(c, &asker, "request_to_join").await;
+    let (status, body) = hit(
+        &rig.app,
+        Case::new("patch", format!("/v1/communities/{c}/requests/{request}"))
+            .signed(&owner)
+            .await
+            .json(&json!({ "intention": "accepted" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(heard(owner_rx), about(&asker, online));
+    assert_eq!(heard(asker_rx), about(&asker, online));
+
+    // the deletion: each member hears itself OFFLINE
+    let (status, _) = hit(
+        &rig.app,
+        Case::new("delete", format!("/v1/communities/{c}"))
+            .signed(&owner)
+            .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(heard(owner_rx), about(&owner, offline));
+    assert_eq!(heard(asker_rx), about(&asker, offline));
+    for i in [joiner_rx, kicked_rx, banned_rx, stranger_rx] {
+        assert!(heard(i).is_empty(), "{i}");
+    }
+    rig.finish();
+}
+
+/// Upstream `startCommunityVoiceChat` (`src/logic/community-voice/community-voice.ts:156-230`
+/// at `b6b2cef`): STARTED carries the positions and worlds of the
+/// community's places and its thumbnail, and the `community_voice_chat_started`
+/// notification the thumbnail as `thumbnailUrl`.
+#[tokio::test]
+async fn a_started_room_carries_the_places_and_the_thumbnail() {
+    use crate::rpc::proto::v2::CommunityVoiceChatStatus;
+    use crate::rpc::pubsub::SocialEvent;
+    let _voice = VOICE_ROWS.lock().await;
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let (owner, member) = (wallet(), wallet());
+    let c = rig.community(&owner, false).await;
+    rig.member(c, &member, "member").await;
+    let (place, world) = rig.world_place(c, &owner).await;
+    sqlx::query("INSERT INTO social.community_thumbnails (community_id, thumbnail_hash) VALUES ($1, 'bafythumb')")
+        .bind(c)
+        .execute(&rig.pool)
+        .await
+        .unwrap();
+    let voice = Arc::new(crate::rpc::voice::fake::FakeVoiceRooms::new(
+        rig.pool.clone(),
+    ));
+    let ctx = crate::rpc::context::Context::new(
+        Default::default(),
+        crate::rpc::db::Db::new(rig.pool.clone()),
+        crate::rpc::profiles::Profiles::new(None, Default::default()),
+        voice,
+    );
+    ctx.set_communities(rig.state.clone());
+    {
+        use crate::comms::protocol::pulse::decentraland::kernel::comms::v3::{
+            IslandData, IslandStatusMessage,
+        };
+        use prost::Message as _;
+        let frame = IslandStatusMessage {
+            data: vec![IslandData {
+                peers: vec![member.address.to_string()],
+                ..Default::default()
+            }],
+        }
+        .encode_to_vec();
+        ctx.topology().receive(&frame).unwrap();
+    }
+    let mut to_member = ctx.pubsub().subscribe(member.address.as_str());
+    crate::rpc::service::ops::start_community_voice_chat(
+        &ctx,
+        owner.address.as_str(),
+        &c.to_string(),
+    )
+    .await
+    .unwrap();
+    let image = format!("http://cdn.test/social/communities/{c}/raw-thumbnail.png");
+    let started = match &*to_member.try_recv().unwrap() {
+        SocialEvent::CommunityVoice(u) => u.clone(),
+        _ => panic!("not a voice update"),
+    };
+    assert_eq!(
+        started.status,
+        CommunityVoiceChatStatus::CommunityVoiceChatStarted as i32
+    );
+    assert_eq!(started.worlds, vec![world]);
+    assert!(started.positions.is_empty());
+    assert_eq!(started.community_image.as_deref(), Some(image.as_str()));
+    assert!(started.is_member);
+    let thumbnail: Vec<String> = sqlx::query_scalar(
+        "SELECT metadata->>'thumbnailUrl' FROM social.notifications \
+         WHERE type = 'community_voice_chat_started' AND metadata->>'communityId' = $1",
+    )
+    .bind(c.to_string())
+    .fetch_all(&rig.pool)
+    .await
+    .unwrap();
+    assert_eq!(thumbnail, vec![image]);
+    rig.clear_world_place(place).await;
+    rig.finish();
+}

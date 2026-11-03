@@ -1016,6 +1016,13 @@ async fn event_data(ctx: &Context, me: &str, stream: Stream, event: &SocialEvent
             }
             Some(json!({ "address": friend.address, "status": connectivity_name(update.status)? }))
         }
+        (Stream::CommunityMemberConnectivity, SocialEvent::CommunityMemberStatus(update)) => {
+            Some(json!({
+                "communityId": update.community_id,
+                "memberAddress": update.member.as_ref()?.address,
+                "status": connectivity_name(update.status)?,
+            }))
+        }
         (
             Stream::CommunityMemberConnectivity,
             SocialEvent::CommunityMember(update) | SocialEvent::TopologyCommunityMember(update, _),

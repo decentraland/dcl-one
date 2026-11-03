@@ -17,6 +17,41 @@ use super::http::{CommError, EnvelopeData};
 use super::places::{destinations_of, positions_and_worlds};
 use super::{SharedState, queries, signed_path};
 
+/// What a community voice STARTED update carries beyond the name (upstream
+/// `startCommunityVoiceChat`): the positions and worlds of the community's
+/// places and its thumbnail when one is stored. A failed lookup is none, as
+/// upstream logs it and goes on.
+pub(crate) async fn started_enrichment(
+    state: &SharedState,
+    id: CommunityId,
+) -> (Vec<String>, Vec<String>, Option<String>) {
+    let row: Result<(Vec<String>, bool), _> = sqlx::query_as(
+        "SELECT ARRAY(SELECT place_id FROM social.community_places WHERE community_id = $1 ORDER BY place_id), \
+                EXISTS (SELECT 1 FROM social.community_thumbnails WHERE community_id = $1)",
+    )
+    .bind(id)
+    .fetch_one(&state.pool)
+    .await;
+    let (place_ids, has_thumbnail) = match row {
+        Ok(row) => row,
+        Err(e) => {
+            tracing::warn!(error = %e, community_id = %id, "voice chat started: places lookup failed");
+            return (Vec::new(), Vec::new(), None);
+        }
+    };
+    let image = has_thumbnail.then(|| state.thumbnail_url(id));
+    let (positions, worlds) = match destinations_of(state, place_ids.iter().map(String::as_str))
+        .await
+    {
+        Ok(destinations) => positions_and_worlds(&destinations),
+        Err(e) => {
+            tracing::warn!(error = %e, community_id = %id, "voice chat started: destinations lookup failed");
+            (Vec::new(), Vec::new())
+        }
+    };
+    (positions, worlds, image)
+}
+
 pub async fn get_active_voice_chats(
     State(state): State<SharedState>,
     headers: HeaderMap,

@@ -50,7 +50,7 @@ mod places;
 mod posts;
 mod referral;
 mod requests;
-mod voice;
+pub(crate) mod voice;
 mod write_support;
 
 #[cfg(test)]
@@ -166,6 +166,9 @@ pub struct State {
     pub voice: std::sync::OnceLock<Arc<dyn VoiceEviction>>,
     /// The worlds module's re-admission on a membership exit, attached in `serve`.
     pub worlds: std::sync::OnceLock<Arc<dyn WorldAccessRevocation>>,
+    /// The social RPC's fan-out, attached in `serve`: membership changes and
+    /// deletions reach the open community-member connectivity streams.
+    pub updates: std::sync::OnceLock<crate::rpc::pubsub::PubSub>,
     /// The communities mirror's upstream, set when its job is attached: the
     /// listing then answers that mirror's copy ([`copies`]).
     pub mirror_source: std::sync::OnceLock<String>,
@@ -247,6 +250,7 @@ impl State {
             dm_limiter,
             voice: std::sync::OnceLock::new(),
             worlds: std::sync::OnceLock::new(),
+            updates: std::sync::OnceLock::new(),
             mirror_source: std::sync::OnceLock::new(),
             pass_markers: copies::Markers::new(copies::MARKER_TTL),
             sources: copies::Sources::bounded(copies::MARKER_TTL, copies::SOURCES_CAP),
@@ -308,6 +312,48 @@ impl State {
     /// Attaches the worlds module's re-admission (once).
     pub fn set_world_access_revocation(&self, worlds: Arc<dyn WorldAccessRevocation>) {
         let _ = self.worlds.set(worlds);
+    }
+
+    /// Attaches the social RPC's fan-out (once).
+    pub fn set_updates(&self, updates: crate::rpc::pubsub::PubSub) {
+        let _ = self.updates.set(updates);
+    }
+
+    /// A join (`online`) or a leave, kick or ban reaches the community's
+    /// members on open community-member connectivity streams and the member
+    /// itself (upstream's `COMMUNITY_MEMBER_STATUS_UPDATES_CHANNEL`).
+    pub async fn member_status_changed(
+        &self,
+        community_id: CommunityId,
+        member: &Address,
+        online: bool,
+    ) {
+        use crate::rpc::proto::v2::ConnectivityStatus;
+        if let Some(updates) = self.updates.get() {
+            let status = if online {
+                ConnectivityStatus::Online
+            } else {
+                ConnectivityStatus::Offline
+            };
+            updates
+                .community_member_status(
+                    &self.pool,
+                    community_id.as_uuid(),
+                    member.as_str(),
+                    status,
+                )
+                .await;
+        }
+    }
+
+    /// A deleted community: its members on open streams hear it went
+    /// OFFLINE (upstream's `COMMUNITY_DELETED_UPDATES_CHANNEL`).
+    pub async fn community_deleted_update(&self, community_id: CommunityId) {
+        if let Some(updates) = self.updates.get() {
+            updates
+                .community_deleted(&self.pool, community_id.as_uuid())
+                .await;
+        }
     }
 
     /// A wallet left, was kicked or was banned: worlds re-decide its admission.

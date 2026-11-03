@@ -465,14 +465,9 @@ async fn blocks_run_through_the_http_routes() {
         SocialEvent::Block(BlockUpdate {
             stream_closed: None, address, is_blocked: true }) if *address == a
     ));
-    // The procedure's FriendshipUpdate::Block follows, as on the RPC socket.
-    assert!(matches!(
-        &*to_b.try_recv().unwrap(),
-        SocialEvent::Friendship(FriendshipUpdate {
-            stream_closed: None,
-            update: Some(friendship_update::Update::Block(_))
-        })
-    ));
+    // A stranger has no friendship to end: no FriendshipUpdate::Block
+    // follows (upstream `applyBlock` publishes it only with a friendship).
+    assert!(to_b.try_recv().is_err());
 
     let (_, body) = rig
         .call("GET", "/v1/blocking-status", Some(&a_key), None)
@@ -970,7 +965,10 @@ async fn a_community_room_runs_through_the_http_routes() {
         (status, body),
         (
             StatusCode::FORBIDDEN,
-            error("Forbidden", "requires moderator or owner role")
+            error(
+                "Forbidden",
+                &format!("User {guest} is not a member of community {id}")
+            )
         )
     );
     let (status, body) = rig
@@ -1124,5 +1122,24 @@ async fn a_community_room_runs_through_the_http_routes() {
         )
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
+    // the room ended: a second end is not found
+    let (status, body) = rig
+        .call(
+            "DELETE",
+            &format!("/v1/community-voice-chats/{id}"),
+            Some(&owner_key),
+            None,
+        )
+        .await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::NOT_FOUND,
+            error(
+                "Not Found",
+                &format!("Community voice chat not found for community {id}")
+            )
+        )
+    );
     drop_community(&rig.pool, community).await;
 }

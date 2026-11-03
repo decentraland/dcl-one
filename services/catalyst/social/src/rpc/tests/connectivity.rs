@@ -180,3 +180,63 @@ async fn a_live_update_published_after_subscribing_follows_the_snapshot() {
     cleanup_pair(&db, &alice, &bob).await;
     server.jobs.shutdown(Duration::from_secs(2)).await;
 }
+
+/// A membership change reaches the stream as published (upstream
+/// `communityMemberStatusHandler`, `src/logic/updates.ts:262-297` at
+/// `b6b2cef`): the wallet that left hears its own OFFLINE though it is no
+/// longer a member, and a co-member hears a join's ONLINE whatever the
+/// joiner's presence; neither meets the co-member or presence check of a
+/// connectivity update.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_membership_change_reaches_the_departed_wallet_and_the_members() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let server = spawn_server(Some(pool.clone()), 5).await;
+    let (me, _client, social) = explorer_as(&server, &PrivateKeySigner::random()).await;
+    let owner = addr("cms1");
+    let joiner = addr("cms2");
+    let community = seed_community(&pool, true, &owner, "owner").await;
+    let mut updates = subscribed(
+        &server,
+        &me,
+        social.subscribe_to_community_member_connectivity_updates(),
+    )
+    .await;
+    let pubsub = server.state.ctx.pubsub();
+    // `me` is not a member (it left): it still hears its own OFFLINE
+    pubsub
+        .community_member_status(&pool, community, &me, ConnectivityStatus::Offline)
+        .await;
+    let got = next_update(&mut updates).await;
+    assert_eq!(
+        (
+            got.community_id.as_str(),
+            got.member.map(|m| m.address),
+            got.status
+        ),
+        (
+            community.to_string().as_str(),
+            Some(me.clone()),
+            ConnectivityStatus::Offline as i32
+        )
+    );
+    // now a member: a join's ONLINE arrives though the joiner is not online
+    sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'member')")
+        .bind(community)
+        .bind(&me)
+        .execute(&pool)
+        .await
+        .unwrap();
+    pubsub
+        .community_member_status(&pool, community, &joiner, ConnectivityStatus::Online)
+        .await;
+    let got = next_update(&mut updates).await;
+    assert_eq!(
+        (got.member.map(|m| m.address), got.status),
+        (Some(joiner.clone()), ConnectivityStatus::Online as i32)
+    );
+    drop_community(&pool, community).await;
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}

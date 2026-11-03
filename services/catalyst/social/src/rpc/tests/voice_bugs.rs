@@ -311,7 +311,8 @@ async fn a_stranger_cannot_end_an_accepted_call() {
 }
 
 /// Regression guard: a failed LiveKit room delete is logged, never leaves the
-/// call row behind, and both parties still hear ENDED.
+/// call row behind, and the other party still hears ENDED (the ender, as
+/// upstream, does not).
 #[tokio::test]
 async fn a_failed_room_delete_still_removes_the_call() {
     let Some(rig) = Rig::new().await else {
@@ -340,7 +341,7 @@ async fn a_failed_room_delete_still_removes_the_call() {
     assert!(!kept, "the refused room delete left the call row");
     assert!(asked, "the room delete was never asked for");
     assert!(
-        heard.0.contains(&ended) && heard.1.contains(&ended),
+        heard.0.contains(&ended) && !heard.1.contains(&ended),
         "{heard:?}"
     );
 }
