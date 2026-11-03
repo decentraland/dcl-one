@@ -63,8 +63,11 @@ pub struct Entity {
     pub metadata: Option<serde_json::Value>,
 }
 
+/// The version of an entity file that names none.
+pub const DEFAULT_ENTITY_VERSION: &str = "v3";
+
 fn default_version() -> String {
-    "v3".to_string()
+    DEFAULT_ENTITY_VERSION.to_string()
 }
 
 /// `null` reads as absent, like the reference's `version ?? 'v3'`.
