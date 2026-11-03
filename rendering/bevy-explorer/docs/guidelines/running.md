@@ -40,8 +40,10 @@ For a gateway virtual host behind a mounted proxy, the proxy must strip the moun
 eligible for routing. Only HTTPS image URLs on that exact host qualify. The realm provider, peer,
 worlds, places, gatekeepers, auth API, map API, profile registry, social API and camera reels use the
 gateway when enabled. Explicit catalyst, social API and camera-reel bases also reach the native
-HUD bridge when the gateway flag is omitted. The native HUD uses gateway routes for events, badges, notifications
-and community thumbnails. Its super-user bridge receives the resolved service bases from the engine.
+HUD bridge when the gateway flag is omitted. In that mode the ordinary scene transport requires a
+public service address outside preview. For a private deployment, pass `--gateway` to enable
+signed HUD requests on supported routes, or use preview for local development. The native HUD
+uses gateway routes for events, badges, notifications and community thumbnails. Its super-user bridge receives the resolved service bases from the engine.
 A native signed bridge request can reach a configured private gateway on the HUD's supported API routes.
 The engine-generated headers authorize one method and URL. The transport rejects redirects and
 supports cancellation and bounds the request and response bodies. Explicit service flags take precedence. Other services, external resources
