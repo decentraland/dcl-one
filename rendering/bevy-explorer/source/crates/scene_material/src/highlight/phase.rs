@@ -34,7 +34,7 @@ use bevy::{
         },
         renderer::{RenderDevice, RenderQueue},
         sync_world::MainEntity,
-        view::{ExtractedView, RetainedViewEntity},
+        view::{ExtractedView, RenderVisibleEntities, RetainedViewEntity},
         Extract,
     },
 };
@@ -366,8 +366,8 @@ pub fn queue_highlight_meshes(
     view_key_cache: Res<ViewKeyCache>,
     mut phases: ResMut<ViewSortedRenderPhases<HighlightMaskItem>>,
     mut uniforms: ResMut<HighlightItemUniforms>,
-    views: Query<&ExtractedView>,
-    highlighted: Query<(Entity, &MainEntity, &Highlight)>,
+    views: Query<(&ExtractedView, &RenderVisibleEntities)>,
+    highlighted: Query<&Highlight>,
 ) {
     uniforms.buffer.clear();
     if highlighted.is_empty() {
@@ -377,7 +377,7 @@ pub fn queue_highlight_meshes(
     debug_assert_eq!(punch_offset, PUNCH_OFFSET);
     let draw_function = draw_functions.read().id::<DrawHighlightMask>();
 
-    for view in &views {
+    for (view, visible) in &views {
         let Some(phase) = phases.get_mut(&view.retained_view_entity) else {
             continue;
         };
@@ -388,8 +388,12 @@ pub fn queue_highlight_meshes(
             | view_key.intersection(VIEW_LAYOUT_BITS);
         let rangefinder = view.rangefinder3d();
 
-        for (entity, main_entity, highlight) in &highlighted {
-            let Some(mesh_instance) = mesh_instances.render_mesh_queue_data(entity, *main_entity)
+        // the view's own visible meshes, so its layers and frustum apply
+        for (entity, main_entity) in visible.iter::<Mesh3d>() {
+            let Ok(highlight) = highlighted.get(*entity) else {
+                continue;
+            };
+            let Some(mesh_instance) = mesh_instances.render_mesh_queue_data(*entity, *main_entity)
             else {
                 continue;
             };
@@ -411,7 +415,7 @@ pub fn queue_highlight_meshes(
             });
             phase.add(HighlightMaskItem {
                 sort_key: FloatOrd(rangefinder.distance_translation(&mesh_instance.translation)),
-                entity: (entity, *main_entity),
+                entity: (*entity, *main_entity),
                 pipeline,
                 draw_function,
                 batch_range: 0..1,
