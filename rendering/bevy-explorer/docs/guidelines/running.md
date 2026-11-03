@@ -87,6 +87,8 @@ The room, voice, rendering, media and avatar sections appear with the plugins th
 supply them. A missing reading displays **Unavailable**. Development-only mutations
 require preview mode. To add a section, follow the [plugin recipe](recipes.md#a-plugin-section-in-the-runtime-debug-panel).
 
+![Performance and World sections open in the Windows Explorer at Genesis Plaza](runtime-debug-panel.png)
+
 ## Test commands
 
 > **Implementation and acceptance:** the web driver, HUD automation helper and native
