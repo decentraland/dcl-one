@@ -240,8 +240,8 @@ struct Held {
     prev: HashMap<String, Option<tokio::time::Instant>>,
 }
 
-/// Pointers held from a passed check until the deploy is accepted ([`Reservation::keep`]);
-/// dropping it releases them.
+/// Pointers held from a passed check; [`Reservation::release`] frees them when the deploy is
+/// known not to have been stored. Dropping it keeps them, since a cancelled write may have committed.
 struct Reservation<'a> {
     limiter: &'a DeployRateLimiter,
     etype: String,
@@ -250,20 +250,13 @@ struct Reservation<'a> {
 }
 
 impl Reservation<'_> {
-    fn keep(mut self) {
-        self.held = None;
-        self.unchanged = None;
-    }
-}
-
-impl Drop for Reservation<'_> {
-    fn drop(&mut self) {
-        if let Some(held) = self.held.take()
+    fn release(self) {
+        if let Some(held) = self.held
             && let Some(bk) = self.limiter.buckets.lock().get_mut(self.etype.as_str())
         {
             bk.release(held);
         }
-        if let Some(held) = self.unchanged.take() {
+        if let Some(held) = self.unchanged {
             self.limiter.unchanged_profile.lock().release(held);
         }
     }
@@ -322,7 +315,14 @@ impl DeployRateLimiter {
             unchanged: None,
         };
         if unchanged {
-            reservation.unchanged = Some(self.unchanged_profile.lock().try_reserve(pointers)?);
+            let held = self.unchanged_profile.lock().try_reserve(pointers);
+            match held {
+                Some(held) => reservation.unchanged = Some(held),
+                None => {
+                    reservation.release();
+                    return None;
+                }
+            }
         }
         Some(reservation)
     }
@@ -725,18 +725,25 @@ impl WriteDeployer {
 
         let validation_us = validation_started.elapsed().as_micros() as u64;
         let persist_started = Instant::now();
-        // Dropped on any error below, so only an accepted deploy holds its pointers.
+        // Released on a failed or no-op write, so only an accepted deploy holds its pointers.
         let Some(reservation) =
             self.rate_limiter
                 .reserve(entity.entity_type.as_str(), &pointers_lc, content_unchanged)
         else {
             return Err(rate_limited_msg().into());
         };
-        let persisted = self
+        let persisted = match self
             .persist(&entity, &entity_bytes, &uploads, &auth_chain, context)
-            .await?;
-        if persisted.inserted {
-            reservation.keep();
+            .await
+        {
+            Ok(persisted) => persisted,
+            Err(e) => {
+                reservation.release();
+                return Err(e);
+            }
+        };
+        if !persisted.inserted {
+            reservation.release();
         }
 
         let persist_us = persist_started.elapsed().as_micros() as u64;

@@ -272,7 +272,7 @@ async fn rate_limiter_ttl_and_size() {
 }
 
 #[test]
-fn a_reservation_holds_its_pointers_only_once_kept() {
+fn a_reservation_holds_its_pointers_until_released() {
     let rl = DeployRateLimiter::with_reference_defaults();
     let ptrs = vec!["0,0".to_string(), "0,1".to_string(), "0,0".to_string()];
 
@@ -281,23 +281,23 @@ fn a_reservation_holds_its_pointers_only_once_kept() {
         rl.reserve("scene", &ptrs[1..2], false).is_none(),
         "a held pointer refuses a second reservation"
     );
-    drop(held);
+    held.release();
     assert!(
         !rl.is_rate_limited("scene", &ptrs),
-        "a dropped reservation is released"
+        "a released reservation frees its pointers"
     );
 
-    rl.reserve("scene", &ptrs, false).unwrap().keep();
+    drop(rl.reserve("scene", &ptrs, false).unwrap());
     assert!(
         rl.is_rate_limited("scene", &ptrs),
-        "an accepted deploy is still limited"
+        "a reservation that is not released keeps its pointers"
     );
 
     let profile = vec!["0xabc".to_string()];
-    rl.reserve("profile", &profile, true).unwrap().keep();
+    drop(rl.reserve("profile", &profile, true).unwrap());
     assert!(rl.is_unchanged_limited(&profile));
     rl.clear();
-    rl.reserve("profile", &profile, true).unwrap().keep();
+    drop(rl.reserve("profile", &profile, true).unwrap());
     rl.buckets
         .lock()
         .get_mut("profile")
@@ -448,8 +448,8 @@ async fn of_two_concurrent_deploys_to_one_pointer_only_one_passes_the_limit() {
     first.abort();
     assert!(first.await.unwrap_err().is_cancelled());
     assert!(
-        !deployer.is_rate_limited("scene", "5,5"),
-        "a cancelled deploy releases its pointers"
+        deployer.is_rate_limited("scene", "5,5"),
+        "a deploy cancelled mid-write keeps its pointers"
     );
     silent.abort();
     let _ = std::fs::remove_dir_all(&tmp);
