@@ -336,6 +336,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             config.node.public_url.as_deref(),
         ),
         events_admin_token: config.explore.catalyrst_events_admin_token.clone(),
+        events_slack_webhook: config.explore.events_slack_webhook.clone(),
         places_upstream: source(
             config.explore.places_mirror_upstream,
             &config.explore.places_upstream_url,
@@ -528,13 +529,20 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         eip1654.clone(),
         content::validator::Settings::parse(
             config.validator.ignore_blockchain_access_checks,
+            config.writes.content_writes_enabled,
             config.validator.additional_decentraland_address.as_deref(),
             &config.node.eth_network,
             config.content.eth_rpc_url()?,
             config.economy.rpc_endpoint_polygon.as_deref(),
         )
-        .context("ADDITIONAL_DECENTRALAND_ADDRESS configuration")?,
+        .context("content validator configuration")?,
     ));
+    if config.writes.content_writes_enabled && !config.validator.ignore_blockchain_access_checks {
+        content_validator
+            .verify_chain_ids()
+            .await
+            .context("deploy access check RPCs")?;
+    }
     // Entities copied from peers pass the same validator (sync attaches it below).
     if let Some(read_through) = &read_through {
         read_through.attach_validator(content_validator.clone());

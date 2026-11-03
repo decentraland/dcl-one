@@ -63,9 +63,19 @@ pub fn block_info(result: &Value) -> Result<Option<BlockInfo>, RpcError> {
 }
 
 /// The search and the blocks it has read (timestamp to the highest block seen at it).
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct BlockSearch {
     known: Mutex<BTreeMap<i64, u64>>,
+    cap: usize,
+}
+
+impl Default for BlockSearch {
+    fn default() -> Self {
+        Self {
+            known: Mutex::default(),
+            cap: KNOWN_CAP,
+        }
+    }
 }
 
 impl BlockSearch {
@@ -75,7 +85,7 @@ impl BlockSearch {
 
     fn remember(&self, block: BlockInfo) {
         let mut known = self.known.lock().unwrap_or_else(|e| e.into_inner());
-        if known.len() >= KNOWN_CAP {
+        if known.len() >= self.cap {
             known.clear();
         }
         let slot = known.entry(block.timestamp).or_insert(block.number);
@@ -187,6 +197,26 @@ mod tests {
         );
         assert_eq!(at(1000).await.unwrap().unwrap().number, 0);
         assert_eq!(at(999).await.unwrap(), None, "before the first block");
+    }
+
+    #[tokio::test]
+    async fn a_full_memo_starts_over_and_still_finds_the_block() {
+        let reads = AtomicUsize::new(0);
+        let search = BlockSearch {
+            cap: 8,
+            ..BlockSearch::default()
+        };
+        for t in [1501, 1777, 1203, 1999, 1501] {
+            let block = search.block_at(t, chain(&reads)).await.unwrap().unwrap();
+            assert_eq!(block.number, ((t - 1000) / 2) as u64, "{t}");
+            assert!(search.known.lock().unwrap().len() <= 8);
+        }
+        reads.store(0, Ordering::SeqCst);
+        search.block_at(1999, chain(&reads)).await.unwrap();
+        assert!(
+            reads.load(Ordering::SeqCst) > 0,
+            "the cleared memo reads again"
+        );
     }
 
     #[tokio::test]

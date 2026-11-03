@@ -650,6 +650,37 @@ mod settings {
         assert_eq!(s.commit_hash, "unknown");
         assert_eq!(s.trades_sync_interval.as_secs(), 60);
     }
+
+    #[test]
+    fn the_third_party_registry_is_a_public_https_upstream() {
+        let registry = |url: &str| {
+            let cfg = config(&[
+                "--public-url",
+                "https://node.example",
+                "--third-party-registry-l2-subgraph-url",
+                url,
+            ]);
+            Settings::from_config(&cfg, &Upstreams::default()).map_err(|e| e.to_string())
+        };
+        assert_eq!(
+            registry("https://subgraph.example/tp/")
+                .unwrap()
+                .third_party_registry_subgraph_url
+                .as_deref(),
+            Some("https://subgraph.example/tp")
+        );
+        for (url, needle) in [
+            ("http://subgraph.example/tp", "not https"),
+            ("https://127.0.0.1/tp", "publicly routable"),
+            ("https://node.example/tp", "own host"),
+        ] {
+            let err = registry(url).unwrap_err();
+            assert!(
+                err.contains("THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL") && err.contains(needle),
+                "{url}: {err}"
+            );
+        }
+    }
 }
 
 fn tag() -> String {

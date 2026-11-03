@@ -533,13 +533,18 @@ async fn owned_items_come_from_the_chain_and_the_escrow_overlay() {
     let mine = "0xaaa0000000000000000000000000000000000001";
     let theirs = "0xccc0000000000000000000000000000000000003";
     let escrowed = "0xddd0000000000000000000000000000000000004";
+    let recent = "0xeee0000000000000000000000000000000000005";
     let holder = owner.clone();
-    let chain = fake_chain::serve(move |q, _| match q {
-        Query::OwnerOf { contract, .. } => Reply::Owner(if *contract == addr(mine) {
-            addr(&holder)
-        } else {
-            addr(STRANGER)
-        }),
+    let chain = fake_chain::serve(move |q, block| match q {
+        Query::OwnerOf { contract, .. } => Reply::Owner(
+            if *contract == addr(mine)
+                || (*contract == addr(recent) && block == fake_chain::at_deployment(TS))
+            {
+                addr(&holder)
+            } else {
+                addr(STRANGER)
+            },
+        ),
         other => panic!("{other:?}"),
     })
     .await;
@@ -585,6 +590,16 @@ async fn owned_items_come_from_the_chain_and_the_escrow_overlay() {
             "The following items ({unowned}) are not owned by the address {owner}."
         )]),
         "an active escrow lease is ownership of its token"
+    );
+    let bought_now = format!("urn:decentraland:matic:collections-v2:{recent}:0:1");
+    let mut d2 = profile(&owner, "", &[&bought_now, &leased_token]);
+    d2.entity.metadata.as_mut().unwrap()["avatars"][0]["hasClaimedName"] = json!(false);
+    assert_eq!(
+        validate_profile_access(&d2.view(), &s, &owner)
+            .await
+            .into_result(),
+        Ok(()),
+        "a leased item does not hold the others to one block"
     );
 
     sqlx::query("UPDATE shop.usage_grants SET status = 'revoked' WHERE grantee_address = $1")
@@ -958,6 +973,7 @@ fn settings_keep_https_rpcs_only_and_refuse_bad_addresses() {
     let parse = |l2: Option<&str>, extra: Option<&str>| {
         Settings::parse(
             false,
+            false,
             extra,
             " mainnet ",
             Some("https://l1.example/KEY".into()),
@@ -994,6 +1010,45 @@ fn settings_keep_https_rpcs_only_and_refuse_bad_addresses() {
     );
     let err = format!("{:#}", parse(None, Some("not-an-address")).unwrap_err());
     assert!(err.contains("ADDITIONAL_DECENTRALAND_ADDRESS"), "{err}");
+}
+
+#[test]
+fn a_node_taking_deploys_needs_both_rpcs_and_a_known_network() {
+    let parse = |ignore: bool, writes: bool, network: &str, l1: Option<&str>, l2: Option<&str>| {
+        Settings::parse(ignore, writes, None, network, l1.map(str::to_string), l2)
+            .map_err(|e| format!("{e:#}"))
+    };
+    let (l1, l2) = (
+        Some("https://l1.example/KEY"),
+        Some("https://l2.example/KEY"),
+    );
+    assert!(parse(false, true, "mainnet", l1, l2).is_ok());
+    assert!(parse(false, true, "sepolia", l1, l2).is_ok());
+    for (network, l1, l2, needle) in [
+        ("goerli", l1, l2, "ETH_NETWORK=goerli"),
+        ("mainnet", None, l2, "ETH_RPC_URL"),
+        ("mainnet", l1, None, "RPC_ENDPOINT_POLYGON"),
+        (
+            "mainnet",
+            l1,
+            Some("http://l2.example/KEY"),
+            "RPC_ENDPOINT_POLYGON",
+        ),
+        ("mainnet", l1, Some("not a url"), "RPC_ENDPOINT_POLYGON"),
+    ] {
+        let err = parse(false, true, network, l1, l2).unwrap_err();
+        assert!(err.contains(needle), "{err}");
+        assert!(err.contains("IGNORE_BLOCKCHAIN_ACCESS_CHECKS"), "{err}");
+        assert!(!err.contains("KEY"), "never the value: {err}");
+        assert!(
+            parse(true, true, network, l1, l2).is_ok(),
+            "ignored checks need no chain"
+        );
+        assert!(
+            parse(false, false, network, l1, l2).is_ok(),
+            "a node without local deploys starts"
+        );
+    }
 }
 
 #[test]

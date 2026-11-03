@@ -5,6 +5,7 @@
 //! the old ones byte for byte.
 
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use tracing::{debug, warn};
@@ -23,6 +24,10 @@ use super::scene_parcels::validate_scene_parcels_match_pointers;
 use super::spring_bones::validate_spring_bones_metadata;
 use super::types::*;
 use crate::auth::{AuthChain, AuthError};
+
+/// The longest an entity's access checks take together before the deploy
+/// is undecided, well under the usual client and proxy timeouts.
+const ACCESS_DEADLINE: Duration = Duration::from_secs(30);
 
 /// What the rules read from this node: its blob store and the auth-chain
 /// verifier. [`super::Sources`] is the live implementation; the store-fault
@@ -877,40 +882,51 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             );
         }
 
-        match entity.entity_type {
-            EntityType::Scene => {
-                validate_scene_access(deployment, self.blockchain_checker, &deployer).await
-            }
-            EntityType::Profile => {
-                validate_profile_access(deployment, self.blockchain_checker, &deployer).await
-            }
-            EntityType::Store => validate_store_access(deployment, &deployer),
-            EntityType::Wearable | EntityType::Emote => {
-                let single = self
-                    .synced
-                    .then(|| super::collections_v1::single_item_pointer(&entity.pointers))
-                    .flatten();
-                match single {
-                    Some(pointer) => {
-                        let one = Entity {
-                            pointers: vec![pointer],
-                            ..(*entity).clone()
-                        };
-                        let view = Deployment {
-                            entity: &one,
-                            ..*deployment
-                        };
-                        validate_item_access(&view, self.blockchain_checker, &deployer).await
-                    }
-                    None => {
-                        validate_item_access(deployment, self.blockchain_checker, &deployer).await
+        let checks = async {
+            match entity.entity_type {
+                EntityType::Scene => {
+                    validate_scene_access(deployment, self.blockchain_checker, &deployer).await
+                }
+                EntityType::Profile => {
+                    validate_profile_access(deployment, self.blockchain_checker, &deployer).await
+                }
+                EntityType::Store => validate_store_access(deployment, &deployer),
+                EntityType::Wearable | EntityType::Emote => {
+                    let single = self
+                        .synced
+                        .then(|| super::collections_v1::single_item_pointer(&entity.pointers))
+                        .flatten();
+                    match single {
+                        Some(pointer) => {
+                            let one = Entity {
+                                pointers: vec![pointer],
+                                ..(*entity).clone()
+                            };
+                            let view = Deployment {
+                                entity: &one,
+                                ..*deployment
+                            };
+                            validate_item_access(&view, self.blockchain_checker, &deployer).await
+                        }
+                        None => {
+                            validate_item_access(deployment, self.blockchain_checker, &deployer)
+                                .await
+                        }
                     }
                 }
+                EntityType::Outfits => {
+                    validate_outfits_access(deployment, self.blockchain_checker, &deployer).await
+                }
             }
-            EntityType::Outfits => {
-                validate_outfits_access(deployment, self.blockchain_checker, &deployer).await
-            }
-        }
+        };
+        tokio::time::timeout(ACCESS_DEADLINE, checks)
+            .await
+            .unwrap_or_else(|_| {
+                ValidationResponse::unavailable(format!(
+                    "Error checking access: the checks did not finish within {} s",
+                    ACCESS_DEADLINE.as_secs()
+                ))
+            })
     }
 }
 
@@ -1056,6 +1072,143 @@ mod tests {
                 );
             }
             other => panic!("non-embedded thumbnail must be rejected, got {other}"),
+        }
+    }
+
+    mod access_deadline {
+        use super::super::super::checker::BlockchainLayer;
+        use super::super::super::error::{PermissionResult, ValidatorError};
+        use super::*;
+        use crate::auth::{AuthLink, AuthLinkType};
+
+        const OWNER: &str = "0xaaaa000000000000000000000000000000000001";
+
+        struct NoCalls;
+
+        #[async_trait]
+        impl ExternalCalls for NoCalls {
+            async fn is_content_stored_already(
+                &self,
+                _hashes: &[String],
+            ) -> Result<HashMap<String, bool>, String> {
+                unreachable!()
+            }
+
+            async fn fetch_content_file_size(&self, _hash: &str) -> Result<Option<usize>, String> {
+                unreachable!()
+            }
+
+            async fn validate_signature(
+                &self,
+                _entity_id: &str,
+                _auth_chain: &AuthChain,
+                _timestamp: Timestamp,
+            ) -> Result<(), AuthError> {
+                unreachable!()
+            }
+        }
+
+        /// Grants every name and item after `0`.
+        struct SlowChecker(Duration);
+
+        #[async_trait]
+        impl BlockchainChecker for SlowChecker {
+            async fn check_land_access(
+                &self,
+                _eth_address: &str,
+                _parcels: &[(i32, i32)],
+                _timestamp: Timestamp,
+            ) -> Result<Vec<bool>, ValidatorError> {
+                unreachable!()
+            }
+
+            async fn check_names_ownership(
+                &self,
+                _eth_address: &str,
+                _names: &[String],
+                _timestamp: Timestamp,
+            ) -> Result<PermissionResult, ValidatorError> {
+                tokio::time::sleep(self.0).await;
+                Ok(PermissionResult::ok())
+            }
+
+            async fn check_items_ownership(
+                &self,
+                _eth_address: &str,
+                _urns: &[String],
+                _timestamp: Timestamp,
+            ) -> Result<PermissionResult, ValidatorError> {
+                tokio::time::sleep(self.0).await;
+                Ok(PermissionResult::ok())
+            }
+
+            async fn check_collection_access(
+                &self,
+                _eth_address: &str,
+                _contract_address: &str,
+                _item_id: &str,
+                _deployment: &Deployment<'_>,
+                _timestamp: Timestamp,
+                _layer: BlockchainLayer,
+            ) -> Result<bool, ValidatorError> {
+                unreachable!()
+            }
+
+            async fn check_third_party_access(
+                &self,
+                _asset_urn: &str,
+                _entity: &Entity,
+                _deployment: &Deployment<'_>,
+                _timestamp: Timestamp,
+            ) -> Result<bool, ValidatorError> {
+                unreachable!()
+            }
+
+            fn is_address_owned_by_decentraland(&self, _address: &str) -> bool {
+                false
+            }
+        }
+
+        async fn access_with(delay: Duration) -> ValidationResponse {
+            let mut d = OwnedDeployment::new(Entity {
+                id: "bafkreiprofile".into(),
+                entity_type: EntityType::Profile,
+                pointers: vec![OWNER.to_string()],
+                timestamp: 1_700_000_000_000,
+                content: vec![],
+                version: "v3".into(),
+                metadata: Some(serde_json::json!({ "avatars": [{
+                    "name": "alice", "hasClaimedName": true,
+                    "avatar": { "wearables": [
+                        "urn:decentraland:matic:collections-v2:0x0002000000000000000000000000000000000001:0:1"
+                    ] }
+                }]})),
+            });
+            d.auth_chain = vec![AuthLink {
+                link_type: AuthLinkType::SIGNER,
+                payload: OWNER.into(),
+                signature: None,
+            }];
+            ContentValidator {
+                external_calls: &NoCalls,
+                blockchain_checker: &SlowChecker(delay),
+                ignore_blockchain_access: false,
+                synced: false,
+            }
+            .validate_access(&d.view())
+            .await
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn the_checks_of_one_entity_share_one_deadline() {
+            assert!(access_with(Duration::from_secs(10)).await.is_ok());
+            // Names and items each within the deadline, together past it.
+            let late = access_with(ACCESS_DEADLINE * 2 / 3).await;
+            assert!(
+                matches!(&late, ValidationResponse::Unavailable { errors }
+                    if errors == &["Error checking access: the checks did not finish within 30 s"]),
+                "{late:?}"
+            );
         }
     }
 }

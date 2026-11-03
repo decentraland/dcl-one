@@ -383,6 +383,16 @@ fn env_prints_the_named_keys_as_the_posture_sets_them() {
     assert!(err.to_string().contains("NOT_A_KEY is not a key"), "{err}");
     let all = env_file(Posture::Journey, &[]).unwrap();
     assert!(all.contains("CONTENT_WRITES_ENABLED=true\n"), "{all}");
+    assert!(
+        all.contains("IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true\n"),
+        "the journey stack reads no chain: {all}"
+    );
+    for posture in [Posture::Mirror, Posture::Island] {
+        assert_eq!(
+            expanded(posture, &[])["IGNORE_BLOCKCHAIN_ACCESS_CHECKS"],
+            "false"
+        );
+    }
 }
 
 #[test]
@@ -742,4 +752,30 @@ fn island_refuses_the_secrets_that_call_a_third_party() {
         refusal(&[db, (ENV, "mirror"), ("SENDGRID_API_KEY", "s3cr3t")]),
         None
     );
+}
+
+#[test]
+fn optional_moderation_webhooks_obey_posture_before_and_after_secret_resolution() {
+    for posture in ["island", "journey"] {
+        let error = refusal(&[
+            ("DATABASE_URL", "postgres:///catalyst"),
+            (ENV, posture),
+            (
+                "SLACK_WEBHOOK",
+                "https://hooks.slack.com/services/private-token",
+            ),
+        ])
+        .unwrap();
+        assert!(error.contains("SLACK_WEBHOOK"));
+        assert!(!error.contains("private-token"));
+        let mut config = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, posture)]);
+        config.explore.events_slack_webhook =
+            Some("https://hooks.slack.com/services/private-token".into());
+        assert!(
+            refuse_remote_secrets(&mut config).is_err(),
+            "credential-file values obey the same posture"
+        );
+        config.explore.events_slack_webhook = Some("http://127.0.0.1:9999/slack-fixture".into());
+        refuse_remote_secrets(&mut config).unwrap();
+    }
 }

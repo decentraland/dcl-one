@@ -1,0 +1,4 @@
+.root { display: flex; flex-direction: column; gap: 12px; }
+.communityLabel { flex: initial; }
+.schedules { border: 1px solid var(--ink-45); border-radius: 8px; padding: 12px; min-width: 0; }
+.root :focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }

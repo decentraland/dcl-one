@@ -419,9 +419,8 @@ pub(super) async fn fill_connected(
     let connected = live.connected_by_key(keys).await;
     for e in events {
         let key = connected_key(e.world, e.server.as_deref(), e.x, e.y);
-        // Legacy events clients expect an array; a failed/unknown room
-        // lookup keeps the upstream's empty-array fallback.
-        e.connected_addresses = Some(connected.get(&key).cloned().flatten().unwrap_or_default());
+        // An omitted observation is unknown; a successful empty room remains an empty array.
+        e.connected_addresses = connected.get(&key).cloned().flatten();
     }
 }
 
