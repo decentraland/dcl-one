@@ -186,3 +186,20 @@ compare source performance or establish production capacity, contention latency,
 cold-cache behavior or a service-level bound. Explicit isolation adds one SQL
 command to pending creation so waiting writers observe the prior winner even
 under a role whose default isolation is REPEATABLE READ.
+
+## Community voice read separation
+
+A 2026-11-03 PostgreSQL 18.6 TEMP fixture held 100,000 synthetic voice-presence
+rows across 10,000 communities with the current `(community_id,address)` primary
+key. Single local `EXPLAIN (ANALYZE, BUFFERS)` samples during a concurrent build
+measured the former all-community status aggregation at 21.030 ms (100,000 rows
+scanned), the existing comms bulk query for 50 community IDs at 0.999 ms (500 rows
+through bitmap primary-key/heap scans), and the all-active-room query at
+17.344 ms (100,000 rows scanned). Ordinary community pages now use the bulk
+query after core SQL; active filters still require the all-room query.
+
+These are individual query observations on a temporary relation with matching
+columns and key, not production latency or a sustained-throughput measurement.
+They exclude HTTP, profile enrichment and queueing, and do not establish cold
+cache behavior, repeated percentiles or capacity under concurrent presence
+writes. No index or schema change was added.

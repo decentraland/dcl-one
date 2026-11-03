@@ -608,3 +608,13 @@ traffic is low-rate two-wallet writes and indexed existence probes, with at most
 one pending per normalized wallet; retained media depends on its connection and
 cleanup lifecycle. Capacity and production latency are not established by the
 functional tests.
+
+Community detail, listing and member-request reads fetch voice status separately
+through the existing comms `VoiceDb` on the same pool and presence configuration.
+An ordinary page uses one primary-key-bounded bulk read for its community IDs;
+core community query errors remain fallible. Voice-query errors become idle
+statuses, matching the pinned companion's SQL catch. Active-room filters and the
+active-room endpoint first read all active rooms; an empty or failed voice read
+returns an empty response before community SQL. This all-room query still grows
+with stored voice presence. These local SQL catches do not describe direct
+HTTP-provider errors in the separate Social deployment.

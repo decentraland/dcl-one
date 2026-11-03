@@ -70,13 +70,12 @@ pub async fn get_active_voice_chats(
     )
     .all_active_community_voice_chats()
     .await
-    .map_err(|error| {
-        tracing::error!(%error,"active voice: comms status lookup failed");
-        CommError::MessageOnly(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Server responded with status 500".into(),
-        )
-    })?;
+    .unwrap_or_else(|error| {
+        // The companion voice component catches its SQL failures and returns
+        // an empty provider result before Social reads any community rows.
+        tracing::warn!(%error,"active voice: comms status SQL unavailable");
+        Vec::new()
+    });
     if stats.is_empty() {
         return Ok(Json(EnvelopeData {
             data: ActiveVoiceChatsData {
