@@ -1376,7 +1376,7 @@ impl IpfsIo {
                             anyhow!("timed out awaiting active-entities headers")
                         }
                         platform::FetchError::Send(e) => anyhow!(e),
-                        platform::FetchError::Status(s) => anyhow!("status: {s}"),
+                        platform::FetchError::Status(s, _) => anyhow!("status: {s}"),
                         platform::FetchError::Stalled => {
                             anyhow!("active-entities response stalled")
                         }
@@ -2093,7 +2093,7 @@ impl IpfsIo {
                         platform::FetchError::Headers => "timed out awaiting headers".to_owned(),
                         platform::FetchError::Stalled => "stalled (no data for 10s)".to_owned(),
                         platform::FetchError::Send(e) => format!("server responded `{e}`"),
-                        platform::FetchError::Status(s) => {
+                        platform::FetchError::Status(s, _) => {
                             format!("server responded with status {s}")
                         }
                         platform::FetchError::Body(e) => format!("body stream error: {e}"),
