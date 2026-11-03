@@ -905,8 +905,12 @@ fn profile(owner: &str, wearables: &[&str]) -> Value {
         "content": [],
         "metadata": {"avatars": [{
             "name": "writepath", "hasClaimedName": false, "description": "",
+            "ethAddress": owner, "version": 1, "tutorialStep": 0,
             "avatar": {
                 "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+                "eyes": {"color": {"r": 0.1, "g": 0.2, "b": 0.3}},
+                "hair": {"color": {"r": 0.1, "g": 0.2, "b": 0.3}},
+                "skin": {"color": {"r": 0.1, "g": 0.2, "b": 0.3}},
                 "wearables": wearables,
                 "emotes": [{"slot": 0, "urn": "urn:decentraland:off-chain:base-emotes:wave"}]
             }

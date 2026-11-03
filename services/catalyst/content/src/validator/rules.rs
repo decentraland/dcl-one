@@ -1,4 +1,4 @@
-//! The rules, in the old order: structure, IPFS hashing, ADR-45, signature,
+//! The rules, in the old order: structure, IPFS hashing, metadata schema, ADR-45, signature,
 //! size, item representations, profile content, item and face thumbnails,
 //! scene content, the content cross-check, outfits, the third-party merkle
 //! proof content, access. The first failing step answers; its strings are
@@ -72,6 +72,12 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         let result = self.validate_ipfs_hashing(deployment);
         if !result.is_ok() {
             debug!("Validation failed at IPFS hashing");
+            return result;
+        }
+
+        let result = super::metadata_schema::validate_metadata(deployment.entity);
+        if !result.is_ok() {
+            debug!("Validation failed at metadata schema");
             return result;
         }
 
@@ -339,40 +345,13 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
     }
 
     fn validate_wearable_representations(&self, deployment: &Deployment<'_>) -> ValidationResponse {
-        let entity = &deployment.entity;
-        let metadata = match &entity.metadata {
-            Some(m) => m,
-            None => return ValidationResponse::fail("No wearable metadata found".to_string()),
-        };
-
-        let representations = metadata
-            .get("data")
-            .and_then(|d| d.get("representations"))
-            .and_then(|r| r.as_array());
-
-        if let Some(reps) = representations
-            && !reps.is_empty()
-        {
-            let entity_files: HashSet<&str> =
-                entity.content.iter().map(|c| c.file.as_str()).collect();
-
-            for rep in reps {
-                if let Some(contents) = rep.get("contents").and_then(|c| c.as_array()) {
-                    for content_ref in contents {
-                        if let Some(file_name) = content_ref.as_str()
-                            && !entity_files.contains(file_name)
-                        {
-                            return ValidationResponse::fail(format!(
-                                "Representation content: '{file_name}' is not one \
-                                 of the content files"
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        ValidationResponse::Ok
+        let representations = deployment
+            .entity
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("data"))
+            .and_then(|d| d.get("representations"));
+        validate_representation_contents(deployment.entity, representations, "wearable")
     }
 
     fn validate_emote_representations(&self, deployment: &Deployment<'_>) -> ValidationResponse {
@@ -386,39 +365,19 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             ));
         }
 
-        let metadata = match &entity.metadata {
-            Some(m) => m,
-            None => return ValidationResponse::fail("No emote metadata found".to_string()),
-        };
-
-        let representations = metadata
-            .get("emoteDataADR74")
-            .and_then(|d| d.get("representations"))
-            .and_then(|r| r.as_array());
-
-        if let Some(reps) = representations
-            && !reps.is_empty()
-        {
-            let entity_files: HashSet<&str> =
-                entity.content.iter().map(|c| c.file.as_str()).collect();
-
-            for rep in reps {
-                if let Some(contents) = rep.get("contents").and_then(|c| c.as_array()) {
-                    for content_ref in contents {
-                        if let Some(file_name) = content_ref.as_str()
-                            && !entity_files.contains(file_name)
-                        {
-                            return ValidationResponse::fail(format!(
-                                "Representation content: '{file_name}' is not one \
-                                 of the content files"
-                            ));
-                        }
-                    }
-                }
-            }
+        let data = entity
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("emoteDataADR74"));
+        let result = validate_representation_contents(
+            entity,
+            data.and_then(|d| d.get("representations")),
+            "emote",
+        );
+        if !result.is_ok() {
+            return result;
         }
-
-        ValidationResponse::Ok
+        validate_social_emote(data)
     }
 
     async fn validate_item_thumbnail(&self, deployment: &Deployment<'_>) -> ValidationResponse {
@@ -892,6 +851,91 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
     }
 }
 
+/// Representations must exist and each listed file must be in `content`.
+fn validate_representation_contents(
+    entity: &Entity,
+    representations: Option<&serde_json::Value>,
+    kind: &str,
+) -> ValidationResponse {
+    let reps = match representations.and_then(|r| r.as_array()) {
+        Some(reps) if !reps.is_empty() => reps,
+        _ => return ValidationResponse::fail(format!("No {kind} representations found")),
+    };
+    if entity.content.is_empty() {
+        return ValidationResponse::fail("No content found".to_string());
+    }
+    let entity_files: HashSet<&str> = entity.content.iter().map(|c| c.file.as_str()).collect();
+    for rep in reps {
+        if let Some(contents) = rep.get("contents").and_then(|c| c.as_array()) {
+            for content_ref in contents {
+                if let Some(file_name) = content_ref.as_str()
+                    && !entity_files.contains(file_name)
+                {
+                    return ValidationResponse::fail(format!(
+                        "Representation content: '{file_name}' is not one \
+                         of the content files"
+                    ));
+                }
+            }
+        }
+    }
+    ValidationResponse::Ok
+}
+
+const MAX_SOCIAL_EMOTE_OUTCOMES: usize = 3;
+
+/// ADR-287: a social emote sets `startAnimation`, `randomizeOutcomes` and
+/// `outcomes` together, with up to three valid outcomes.
+fn validate_social_emote(data: Option<&serde_json::Value>) -> ValidationResponse {
+    let Some(data) = data else {
+        return ValidationResponse::fail("No emote data found".to_string());
+    };
+    const PROPS: [&str; 3] = ["startAnimation", "randomizeOutcomes", "outcomes"];
+    let missing: Vec<&str> = PROPS
+        .into_iter()
+        .filter(|p| data.get(p).is_none())
+        .collect();
+    if missing.len() == PROPS.len() {
+        return ValidationResponse::Ok;
+    }
+    if !missing.is_empty() {
+        return ValidationResponse::fail(format!(
+            "For social emote definition, all properties must be present. Missing: {}",
+            missing.join(", ")
+        ));
+    }
+    if super::metadata_schema::start_animation_error(&data["startAnimation"]).is_some() {
+        return ValidationResponse::fail(
+            "Some properties of StartAnimation are not valid".to_string(),
+        );
+    }
+    let outcomes = data["outcomes"].as_array();
+    match outcomes {
+        None => {
+            if data["outcomes"].is_null() {
+                return ValidationResponse::fail("Outcomes array cannot be empty".to_string());
+            }
+            ValidationResponse::fail("Some properties of Outcome are not valid".to_string())
+        }
+        Some(o) if o.is_empty() => {
+            ValidationResponse::fail("Outcomes array cannot be empty".to_string())
+        }
+        Some(o) if o.len() > MAX_SOCIAL_EMOTE_OUTCOMES => ValidationResponse::fail(format!(
+            "Outcomes array can contain up to {MAX_SOCIAL_EMOTE_OUTCOMES} items"
+        )),
+        Some(o) => {
+            if o.iter()
+                .any(|outcome| super::metadata_schema::outcome_error(outcome).is_some())
+            {
+                return ValidationResponse::fail(
+                    "Some properties of Outcome are not valid".to_string(),
+                );
+            }
+            ValidationResponse::Ok
+        }
+    }
+}
+
 fn validate_scene_navmap_thumbnail(
     metadata: &serde_json::Value,
     content: &[ContentMapping],
@@ -950,6 +994,118 @@ mod tests {
             file: file.to_string(),
             hash: "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenosa7776".to_string(),
         }]
+    }
+
+    fn failure(result: ValidationResponse) -> Vec<String> {
+        result.errors().map(<[String]>::to_vec).unwrap_or_default()
+    }
+
+    fn item(content: Vec<ContentMapping>) -> Entity {
+        Entity {
+            id: "bafkreiitem".into(),
+            entity_type: EntityType::Wearable,
+            pointers: vec!["urn:decentraland:matic:collections-v2:0xabc:0".into()],
+            timestamp: 1_780_000_000_000,
+            content,
+            version: "v3".into(),
+            metadata: None,
+        }
+    }
+
+    #[test]
+    fn items_without_representations_or_content_are_rejected() {
+        let reps = serde_json::json!([{"contents": ["thumbnail.png"]}]);
+        for kind in ["wearable", "emote"] {
+            for missing in [
+                None,
+                Some(serde_json::json!([])),
+                Some(serde_json::json!({})),
+            ] {
+                assert_eq!(
+                    failure(validate_representation_contents(
+                        &item(scene_content("thumbnail.png")),
+                        missing.as_ref(),
+                        kind
+                    )),
+                    vec![format!("No {kind} representations found")]
+                );
+            }
+            assert_eq!(
+                failure(validate_representation_contents(
+                    &item(vec![]),
+                    Some(&reps),
+                    kind
+                )),
+                vec!["No content found".to_string()]
+            );
+        }
+        assert!(
+            validate_representation_contents(
+                &item(scene_content("thumbnail.png")),
+                Some(&reps),
+                "wearable"
+            )
+            .is_ok()
+        );
+    }
+
+    fn social(outcomes: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "startAnimation": {"loop": true, "Armature": {"animation": "Start"}},
+            "randomizeOutcomes": false,
+            "outcomes": outcomes
+        })
+    }
+
+    fn outcome() -> serde_json::Value {
+        serde_json::json!({"title": "t", "loop": false, "clips": {"Armature": {"animation": "a"}}})
+    }
+
+    #[test]
+    fn social_emotes_follow_adr_287() {
+        let plain = serde_json::json!({"loop": false});
+        assert!(validate_social_emote(Some(&plain)).is_ok());
+        assert!(validate_social_emote(Some(&social(serde_json::json!([outcome()])))).is_ok());
+        assert_eq!(
+            failure(validate_social_emote(None)),
+            vec!["No emote data found".to_string()]
+        );
+        let partial = serde_json::json!({"startAnimation": null});
+        assert_eq!(
+            failure(validate_social_emote(Some(&partial))),
+            vec![
+                "For social emote definition, all properties must be present. \
+                 Missing: randomizeOutcomes, outcomes"
+                    .to_string()
+            ]
+        );
+        let mut bad_start = social(serde_json::json!([outcome()]));
+        bad_start["startAnimation"] = serde_json::Value::Null;
+        assert_eq!(
+            failure(validate_social_emote(Some(&bad_start))),
+            vec!["Some properties of StartAnimation are not valid".to_string()]
+        );
+        for empty in [serde_json::json!([]), serde_json::Value::Null] {
+            assert_eq!(
+                failure(validate_social_emote(Some(&social(empty)))),
+                vec!["Outcomes array cannot be empty".to_string()]
+            );
+        }
+        assert_eq!(
+            failure(validate_social_emote(Some(&social(serde_json::json!([
+                outcome(),
+                outcome(),
+                outcome(),
+                outcome()
+            ]))))),
+            vec!["Outcomes array can contain up to 3 items".to_string()]
+        );
+        assert_eq!(
+            failure(validate_social_emote(Some(&social(serde_json::json!([
+                {"title": "", "loop": false, "clips": {}}
+            ]))))),
+            vec!["Some properties of Outcome are not valid".to_string()]
+        );
     }
 
     #[test]
