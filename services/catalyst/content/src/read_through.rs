@@ -35,7 +35,7 @@ use super::deploy_remote_entity::{
 };
 use super::queries::{self, EntityDoc};
 use super::sync::{parse_entity_types, parse_sync_sources};
-use super::sync_deployer::{LiveSyncDeployer, SyncValidation};
+use super::sync_deployer::{LiveSyncDeployer, SyncValidation, is_buffered, is_entity_deployed};
 use super::sync_types::{AuthChain, DeploymentContext, SyncError};
 use super::validator::{Sources, SyncedContent};
 use crate::auth::is_canonical_cid;
@@ -799,17 +799,31 @@ impl Upstream {
             },
         )
         .await;
-        if let Err(e @ (SyncError::DeploymentRejected(_) | SyncError::ValidationUndecided(_))) =
-            deployed
-        {
-            // Refused once its content was in: the entity file goes too.
-            if let Err(evict) = self.storage.delete(id).await {
-                tracing::warn!(entity_id = id, error = %evict, "read-through: refused entity file not removed");
-            }
+        if let Err(e @ SyncError::DeploymentRejected(_)) = deployed {
+            // Refused once its content was in: the entity file goes too, unless sync holds it.
+            self.evict_refused(id).await;
             return Err(e);
         }
         deployed?;
         Ok(pointers)
+    }
+
+    /// Removes a refused entity's file unless a deployment row or a sync buffer refers to it.
+    async fn evict_refused(&self, id: &str) {
+        if is_buffered(id) {
+            return;
+        }
+        match is_entity_deployed(&self.pool, id, 0).await {
+            Ok(false) => {}
+            Ok(true) => return,
+            Err(e) => {
+                tracing::warn!(entity_id = id, error = %e, "read-through: refused entity file kept");
+                return;
+            }
+        }
+        if let Err(evict) = self.storage.delete(id).await {
+            tracing::warn!(entity_id = id, error = %evict, "read-through: refused entity file not removed");
+        }
     }
 
     /// Whether every local reference to `hash` is a profile render file, which sync does not

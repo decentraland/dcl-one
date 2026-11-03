@@ -57,6 +57,49 @@ struct ParsedEntity {
     /// The flush-backlog slot this entity occupies from `deploy_entity` until the flush that
     /// carries it is done ([`SyncMemoryLimits::flush_backlog_max`]); dropped with the entity.
     backlog_permit: Option<OwnedSemaphorePermit>,
+    /// Marks the id as buffered ([`is_buffered`]) until the entity is dropped.
+    buffered: Option<BufferedMark>,
+}
+
+/// Entity ids a deployer of this process accepted and has not finished flushing.
+static BUFFERED: std::sync::LazyLock<std::sync::Mutex<HashMap<String, usize>>> =
+    std::sync::LazyLock::new(Default::default);
+
+struct BufferedMark(String);
+
+impl BufferedMark {
+    fn new(entity_id: &str) -> Self {
+        let mut ids = BUFFERED.lock().unwrap_or_else(|e| e.into_inner());
+        *ids.entry(entity_id.to_string()).or_default() += 1;
+        Self(entity_id.to_string())
+    }
+}
+
+impl Drop for BufferedMark {
+    fn drop(&mut self) {
+        let mut ids = BUFFERED.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(n) = ids.get_mut(&self.0) {
+            *n -= 1;
+            if *n == 0 {
+                ids.remove(&self.0);
+            }
+        }
+    }
+}
+
+/// Marks `entity_id` as buffered until the guard drops.
+#[cfg(test)]
+pub(crate) fn hold_buffered(entity_id: &str) -> impl Drop {
+    BufferedMark::new(entity_id)
+}
+
+/// Whether any deployer of this process holds `entity_id` between its validation and the end
+/// of the flush that carries it.
+pub fn is_buffered(entity_id: &str) -> bool {
+    BUFFERED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .contains_key(entity_id)
 }
 
 fn flush_failure_record(
@@ -192,6 +235,7 @@ fn parse_entity_for_deploy(
         retry_count: 0,
         backoff_ms: 0,
         backlog_permit: None,
+        buffered: None,
     })
 }
 
@@ -832,6 +876,7 @@ impl LiveSyncDeployer {
         let verdict = self
             .verify_entity(entity_data, entity_id, auth_chain, SyncedContent::Fetched)
             .await?;
+        parsed.buffered = Some(BufferedMark::new(entity_id));
         scene_parcels::report_drift(
             &parsed.entity_type,
             entity_id,

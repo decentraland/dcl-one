@@ -511,6 +511,68 @@ async fn an_entity_the_content_validator_refuses_is_not_copied_and_nothing_is_st
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_entity_refused_once_its_content_is_in_leaves_no_entity_file() {
+    let fake = start_fake().await;
+    require_test_db!(Some(node) = Node::validated("refused-late", &fake, HANG_GUARD, true).await);
+    // Valid until its 1.1 MB file is downloaded: outfits allow 1 MB.
+    let file = vec![b'x'; 1_100_000];
+    let file_hash = hash_bytes_v1(&file);
+    let entity = json!({
+        "version": "v3", "type": "outfits",
+        "pointers": ["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266:outfits"],
+        "timestamp": now_ms(),
+        "content": [{"file": "big.png", "hash": file_hash}],
+        "metadata": {"outfits": [], "namesForExtraSlots": [], "tag": unique()}
+    });
+    let bytes = serde_json::to_vec(&entity).unwrap();
+    let id = hash_bytes_v1(&bytes);
+    let mut doc = entity;
+    doc["id"] = json!(id);
+    let fx = Fixture {
+        id: id.clone(),
+        bytes,
+        doc,
+        pointer: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266:outfits".into(),
+        file_hash,
+        file,
+    };
+    fake.publish(&fx, &signed_chain(&fx.id).await);
+
+    assert!(node.active(json!({"ids": [fx.id]})).await.is_empty());
+    assert_eq!(fake.active_calls(), 1);
+    assert_eq!(node.deployments(&fx.id).await, 0);
+    assert!(
+        node.holds(&fx.file_hash).await,
+        "refused only after its content was in"
+    );
+    assert!(!node.holds(&fx.id).await, "the refused entity file is removed");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_entity_file_stays_while_a_row_or_a_sync_buffer_refers_to_it() {
+    let fake = start_fake().await;
+    require_test_db!(Some(node) = Node::new("refused-kept", &fake, HANG_GUARD, true).await);
+    let deployed = Fixture::new("wearable", &pointer(), now_ms());
+    fake.publish(&deployed, &signed_chain(&deployed.id).await);
+    assert_eq!(node.active(json!({"ids": [deployed.id]})).await.len(), 1);
+    assert_eq!(node.deployments(&deployed.id).await, 1);
+    node.read_through.upstream.evict_refused(&deployed.id).await;
+    assert!(node.holds(&deployed.id).await, "a deployment row refers to it");
+
+    let buffered = Fixture::new("wearable", &pointer(), now_ms());
+    node.storage
+        .store(&buffered.id, buffered.bytes.clone().into())
+        .await
+        .unwrap();
+    let held = crate::sync_deployer::hold_buffered(&buffered.id);
+    node.read_through.upstream.evict_refused(&buffered.id).await;
+    assert!(node.holds(&buffered.id).await, "sync holds it");
+    drop(held);
+    node.read_through.upstream.evict_refused(&buffered.id).await;
+    assert!(!node.holds(&buffered.id).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_content_file_that_does_not_hash_to_its_name_is_refused() {
     let fake = start_fake().await;
     require_test_db!(Some(node) = Node::new("forged-file", &fake, HANG_GUARD, true).await);
