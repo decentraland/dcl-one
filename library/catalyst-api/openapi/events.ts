@@ -421,7 +421,7 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** @description Bearer-only event edit and moderation body. Unknown fields are ignored for legacy compatibility. Moderation-only requests apply overlays on mirrored events; native content edits of mirrored events return 409. Explicit reason takes precedence over rejection_reason, including null. */
+        /** @description Bearer-only event edit and moderation body. Unknown fields are ignored for legacy compatibility. Moderation-only requests apply overlays on mirrored events; native content edits of mirrored events return 409. Explicit reason takes precedence over rejection_reason, including null. Non-null reasons update rejected local events or existing local rejections of mirrored events, including when combined with feature fields. Editing an upstream-owned rejection reason returns 409 unless the request explicitly rejects locally; approved=false alone is not a local rejection. To clear a reason, an explicit rejected=true with reason=null re-rejects and records the current actor. */
         AdminEventPatch: {
             /**
              * @description Bearer admin only. Applied before explicit approved/rejected/highlighted/trending fields; signed-wallet edits reject this field.
@@ -446,7 +446,7 @@ export interface components {
             /** @description Local uploaded image from POST /api/poster-vertical; the upload kind must match this field. Configured same-origin URLs normalize to local paths. An unchanged stored image may be resent without becoming an explicit replacement. */
             image_vertical?: string | null;
             name?: string | null;
-            /** @description Bearer admin only. Moderation rejection reason; rejection_reason is also accepted. Signed-wallet edits use rejection_reason. */
+            /** @description Bearer admin only. Moderation rejection reason; rejection_reason is also accepted. Signed-wallet edits use rejection_reason. A reason without a new rejection preserves the existing rejection actor and requires a local rejection for mirrored events. On a non-rejected event, a standalone reason returns 400; a reason accompanying other fields is ignored. Explicit rejected=true with reason=null replaces the rejection actor. */
             reason?: string | null;
             recurrent?: boolean | null;
             /** Format: int64 */

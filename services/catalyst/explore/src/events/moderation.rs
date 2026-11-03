@@ -269,6 +269,26 @@ pub async fn moderate(
         return Err(mirrored_event(pool, event_id).await);
     }
     apply_admin_state(&mut raw, body, actor)?;
+    if mirrored && body.reason.is_some() && flag(&raw, "rejected") {
+        let resolved = body.resolved()?;
+        if resolved.rejected != Some(true) {
+            // Keep the ownership check and local moderation update in the
+            // same row-locked transaction. A feature-only overlay does not
+            // grant authority over the upstream's rejection decision.
+            let locally_rejected: bool = sqlx::query_scalar(
+                "SELECT COALESCE(rejected, false) FROM explore.event_moderation WHERE event_id=$1",
+            )
+            .bind(event_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .unwrap_or(false);
+            if !locally_rejected {
+                return Err(ApiError::conflict(
+                    "This rejection belongs to the upstream; make an explicit local rejection decision before editing its reason",
+                ));
+            }
+        }
+    }
     let decision = mirrored.then(|| Decision::of(body, &raw));
     raw.insert("updated_at".into(), json!(Utc::now().to_rfc3339()));
     let name = raw
