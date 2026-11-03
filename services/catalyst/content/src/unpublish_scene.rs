@@ -13,7 +13,8 @@
 //! are left empty. Answers: 200 `{entityId, unpublished: true, parcels}`,
 //! 400 for a malformed chain or coordinate, 401 for a chain that does not
 //! verify, 403 without LAND rights on any of those parcels, 404 with no
-//! local scene there, 409 when a concurrent deploy moved the parcel, 503
+//! local scene there (or no longer: a concurrent unpublish took it down),
+//! 409 when a concurrent deploy replaced the scene on the parcel, 503
 //! when LAND rights cannot be decided; the [`super::writes`] gates first.
 //!
 //! [`land_publish`]: super::land_publish

@@ -24,7 +24,8 @@
 //! the tombstone as the successor of any older scene on those parcels. A
 //! concurrent write that moved the parcel between the lookup and the lock,
 //! or another scene than the authorized one active there, makes the
-//! tombstone a no-op ([`UnpublishError::Conflict`]).
+//! tombstone a no-op ([`UnpublishError::Conflict`]); a concurrent unpublish
+//! of the same scene leaves nothing to take down ([`UnpublishError::NotLocal`]).
 //!
 //! The functions of the write path live in the schema, not in the binary's
 //! startup: the runtime role cannot create them (`deploy/nix/postgresql.nix`
@@ -251,7 +252,8 @@ pub async fn local_scene_at(
 }
 
 /// Takes the local scene `entity_id` active at `pointer` down (module
-/// docs); [`UnpublishError::Conflict`] when another scene is active there.
+/// docs); [`UnpublishError::NotLocal`] when it is already unpublished,
+/// [`UnpublishError::Conflict`] when another scene is active there.
 pub async fn unpublish_local_scene(
     pool: &PgPool,
     pointer: &str,
@@ -267,14 +269,14 @@ pub async fn unpublish_local_scene(
     .fetch_all(pool)
     .await?;
 
-    let Some(first) = rows.first() else {
-        return Err(UnpublishError::NotLocal(pointer));
+    let tombstoned: i64 = match rows.first() {
+        Some(first) => first.try_get("tombstoned")?,
+        None => 0,
     };
-    let entity_id: String = first.try_get("entity_id")?;
-    let tombstoned: i64 = first.try_get("tombstoned")?;
     if tombstoned != 1 {
-        return Err(UnpublishError::Conflict);
+        return Err(missed(pool, &pointer, entity_id).await?);
     }
+    let entity_id = entity_id.to_string();
 
     let mut parcels: Vec<String> = Vec::with_capacity(rows.len());
     for row in &rows {
@@ -284,6 +286,25 @@ pub async fn unpublish_local_scene(
     }
     parcels.sort_unstable();
     Ok(UnpublishOutcome { entity_id, parcels })
+}
+
+/// Why the unpublish of `entity_id` took nothing down: gone already (tombstoned,
+/// or never a local scene) or still there behind another scene.
+async fn missed(
+    pool: &PgPool,
+    pointer: &str,
+    entity_id: &str,
+) -> Result<UnpublishError, sqlx::Error> {
+    let tombstoned: Option<bool> = sqlx::query_scalar(
+        "SELECT tombstoned_at IS NOT NULL FROM content.local_entities WHERE entity_id = $1",
+    )
+    .bind(entity_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(match tombstoned {
+        Some(false) => UnpublishError::Conflict,
+        _ => UnpublishError::NotLocal(pointer.to_string()),
+    })
 }
 
 #[cfg(test)]

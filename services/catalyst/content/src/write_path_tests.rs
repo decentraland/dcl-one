@@ -966,6 +966,213 @@ async fn unpublishing_a_scene_needs_rights_on_every_parcel_and_empties_them() {
     db.drop_now().await;
 }
 
+/// What the LAND check's subgraph does before it answers, standing in for a
+/// write that lands between the route's lookup and its unpublish.
+enum Race {
+    /// A peer scene replaces the local one on the parcel.
+    PeerReplaces {
+        local: String,
+        peer: String,
+        pointer: String,
+    },
+    /// A concurrent DELETE takes the local scene down first.
+    Unpublished { local: String, pointer: String },
+}
+
+/// The marketplace subgraph on the loopback: `owner` owns every parcel asked
+/// for, and each request first runs the armed [`Race`] against `pool`.
+async fn serve_racing_land_subgraph(
+    pool: PgPool,
+    owner: String,
+    race: Arc<parking_lot::Mutex<Option<Race>>>,
+) -> String {
+    use axum::extract::State;
+    type Shared = (PgPool, String, Arc<parking_lot::Mutex<Option<Race>>>);
+    async fn graphql(
+        State(shared): State<Arc<Shared>>,
+        axum::Json(body): axum::Json<Value>,
+    ) -> axum::Json<Value> {
+        let (pool, owner, race) = &*shared;
+        let armed = race.lock().take();
+        match armed {
+            Some(Race::PeerReplaces {
+                local,
+                peer,
+                pointer,
+            }) => {
+                let id: i32 = sqlx::query_scalar(
+                    "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id,
+                         entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain)
+                     VALUES ('0xpeer', 'v3', 'scene', $1, NULL, timezone('UTC', now()), ARRAY[$2],
+                             timezone('UTC', now()), '[]'::json)
+                     RETURNING id",
+                )
+                .bind(&peer)
+                .bind(&pointer)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+                sqlx::query(
+                    "UPDATE content.deployments SET deleter_deployment = $2 WHERE entity_id = $1",
+                )
+                .bind(&local)
+                .bind(id)
+                .execute(pool)
+                .await
+                .unwrap();
+                sqlx::query("UPDATE content.active_pointers SET entity_id = $2 WHERE pointer = $1")
+                    .bind(&pointer)
+                    .bind(&peer)
+                    .execute(pool)
+                    .await
+                    .unwrap();
+            }
+            Some(Race::Unpublished { local, pointer }) => {
+                super::land_publish::unpublish_local_scene(pool, &pointer, &local)
+                    .await
+                    .unwrap();
+            }
+            None => {}
+        }
+        let xs: Vec<String> = serde_json::from_value(body["variables"]["xs"].clone()).unwrap();
+        let ys: Vec<String> = serde_json::from_value(body["variables"]["ys"].clone()).unwrap();
+        let nfts: Vec<Value> = xs
+            .iter()
+            .flat_map(|x| ys.iter().map(move |y| (x, y)))
+            .map(|(x, y)| {
+                json!({"id": format!("0xland-{x}-{y}"), "searchParcelX": x, "searchParcelY": y,
+                       "owner": {"id": owner}, "parcel": {"estate": null}})
+            })
+            .collect();
+        axum::Json(json!({"data": {"nfts": nfts}}))
+    }
+    let app = Router::new()
+        .route("/", axum::routing::post(graphql))
+        .with_state(Arc::new((pool, owner, race)));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://{addr}/")
+}
+
+/// A local scene on `pointer`, as the deploy function leaves it.
+async fn seed_local_scene(pool: &PgPool, entity_id: &str, pointer: &str) {
+    sqlx::query(
+        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id,
+             entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain)
+         VALUES ('0xowner', 'v3', 'scene', $1, NULL, timezone('UTC', now()) - interval '1 day',
+                 ARRAY[$2], timezone('UTC', now()), '[]'::json)",
+    )
+    .bind(entity_id)
+    .bind(pointer)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ($1, $2, 'scene')")
+        .bind(pointer)
+        .bind(entity_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO content.local_entities (entity_id, signer) VALUES ($1, '0xowner')")
+        .bind(entity_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// A write between the route's lookup and its unpublish: a peer scene that
+/// replaced the local one answers 409 and stays; a concurrent DELETE that took
+/// the scene down first leaves this one a 404.
+#[tokio::test]
+async fn an_unpublish_raced_by_another_write_answers_409_or_404() {
+    require_test_db!(Some(db) = OwnDb::create("contentr").await);
+    let owner = key(OWNER_KEY);
+    let race = Arc::new(parking_lot::Mutex::new(None));
+    let subgraph = serve_racing_land_subgraph(db.pool.clone(), address(&owner), race.clone()).await;
+    let market = Arc::new(crate::chain_index::ChainIndex::new(
+        Outbound::for_tests(),
+        crate::chain_index::IndexSettings {
+            marketplace_subgraph_url: Some(subgraph),
+            ..crate::chain_index::IndexSettings::for_tests()
+        },
+    ));
+    market.allow_loopback_for_tests();
+
+    let tmp = std::env::temp_dir().join(format!(
+        "catalyst-write-path-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
+    let state = Arc::new(ContentState::new(
+        db.pool.clone(),
+        Settings::for_tests(),
+        storage.clone(),
+    ));
+    state.sync.set_state(SyncState::Syncing);
+    let land = Arc::new(LandAuthzState::new(
+        db.pool.clone(),
+        Outbound::for_tests(),
+        crate::land_authz::Settings::for_tests(),
+        Some(market),
+    ));
+    attach(&state, true, Some(land), None);
+    let router = build_router(state.clone());
+
+    let (replaced, gone) = ("23,-7", "29,-7");
+    seed_local_scene(&db.pool, "bafylocalreplaced", replaced).await;
+    seed_local_scene(&db.pool, "bafylocalgone", gone).await;
+
+    *race.lock() = Some(Race::PeerReplaces {
+        local: "bafylocalreplaced".into(),
+        peer: "bafypeerreplacing".into(),
+        pointer: replaced.into(),
+    });
+    let path = format!("/content/scenes/{replaced}");
+    let (status, _, body) = call(&router, signed_delete(&owner, &path).await).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{}", json_of(&body));
+    assert!(
+        race.lock().is_none(),
+        "the race ran during the rights check"
+    );
+    let tombstoned: Option<chrono::NaiveDateTime> = sqlx::query_scalar(
+        "SELECT tombstoned_at FROM content.local_entities WHERE entity_id = 'bafylocalreplaced'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        tombstoned, None,
+        "the replaced local scene is not tombstoned"
+    );
+    let holder: String =
+        sqlx::query_scalar("SELECT entity_id FROM content.active_pointers WHERE pointer = $1")
+            .bind(replaced)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(holder, "bafypeerreplacing");
+
+    *race.lock() = Some(Race::Unpublished {
+        local: "bafylocalgone".into(),
+        pointer: gone.into(),
+    });
+    let path = format!("/content/scenes/{gone}");
+    let (status, _, body) = call(&router, signed_delete(&owner, &path).await).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::NOT_FOUND,
+            json!({"error": format!("No locally published scene at {gone}.")})
+        )
+    );
+
+    drop((router, state));
+    let _ = std::fs::remove_dir_all(&tmp);
+    db.drop_now().await;
+}
+
 /// The collections subgraph on the loopback: `owned` is `(owner, item urn,
 /// token id)`; every request is counted.
 async fn serve_collections(owned: Vec<(String, String, String)>, hits: Arc<AtomicUsize>) -> String {

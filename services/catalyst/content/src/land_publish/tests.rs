@@ -330,7 +330,8 @@ async fn unpublish_refuses_synced_and_already_tombstoned_entities() {
 }
 
 /// The function takes down only the scene the caller authorized: another
-/// scene active at the pointer is a conflict and nothing changes.
+/// scene active at the pointer (a local one, or a peer scene that replaced
+/// the authorized one since the lookup) is a conflict and nothing changes.
 #[tokio::test]
 async fn unpublish_of_another_scene_than_the_active_one_is_a_conflict() {
     let Some(pool) = pool().await else {
@@ -339,9 +340,13 @@ async fn unpublish_of_another_scene_than_the_active_one_is_a_conflict() {
     };
     let s = Scope::new();
     let (local, other, p) = (s.id("local6"), s.id("other6"), s.parcel(0, 6));
+    let (peer, q) = (s.id("peer6"), s.parcel(1, 6));
     insert_deployment(&pool, &local, 2_000, &[&p]).await;
     set_active_pointer(&pool, &p, &local).await;
     record_provenance(&pool, &local, "0xowner").await;
+    insert_deployment(&pool, &other, 2_500, &[&q]).await;
+    set_active_pointer(&pool, &q, &other).await;
+    record_provenance(&pool, &other, "0xowner").await;
 
     let err = unpublish_local_scene(&pool, &p, &other).await.unwrap_err();
     assert!(matches!(err, UnpublishError::Conflict), "{err:?}");
@@ -353,6 +358,79 @@ async fn unpublish_of_another_scene_than_the_active_one_is_a_conflict() {
         local_provenance(&pool, &local).await.unwrap().unwrap()["status"],
         "active"
     );
+
+    // A peer scene replaced the authorized one between the lookup and the call.
+    let t = insert_deployment(&pool, &peer, 3_000, &[&p]).await;
+    set_deleter(&pool, &local, t).await;
+    set_active_pointer(&pool, &p, &peer).await;
+    let err = unpublish_local_scene(&pool, &p, &local).await.unwrap_err();
+    assert!(matches!(err, UnpublishError::Conflict), "{err:?}");
+    assert_eq!(
+        active_pointer(&pool, &p).await.as_deref(),
+        Some(peer.as_str())
+    );
+    pool.close().await;
+}
+
+/// Two unpublishes of one scene at once: the second, waiting on the pointer
+/// lock the first holds, finds the scene already gone (not a conflict).
+#[tokio::test]
+async fn a_second_concurrent_unpublish_finds_the_scene_gone() {
+    let Some(pool) = pool().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let s = Scope::new();
+    let (local, p) = (s.id("local8"), s.parcel(0, 8));
+    insert_deployment(&pool, &local, 2_000, &[&p]).await;
+    set_active_pointer(&pool, &p, &local).await;
+    record_provenance(&pool, &local, "0xowner").await;
+
+    // The first unpublish's effect, uncommitted, under the pointer lock it takes.
+    let mut first = pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind(&p)
+        .execute(&mut *first)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE content.local_entities SET tombstoned_at = timezone('UTC', now()) WHERE entity_id = $1")
+        .bind(&local)
+        .execute(&mut *first)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM content.active_pointers WHERE pointer = $1")
+        .bind(&p)
+        .execute(&mut *first)
+        .await
+        .unwrap();
+
+    let second = tokio::spawn({
+        let (pool, p, local) = (pool.clone(), p.clone(), local.clone());
+        async move { unpublish_local_scene(&pool, &p, &local).await }
+    });
+    // Commit only once the second call waits on the lock.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let waiting: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted AND objid::int = hashtext($1))",
+        )
+        .bind(&p)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        if waiting {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the second unpublish never waited"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    first.commit().await.unwrap();
+
+    let err = second.await.unwrap().unwrap_err();
+    assert!(matches!(err, UnpublishError::NotLocal(_)), "{err:?}");
     pool.close().await;
 }
 
