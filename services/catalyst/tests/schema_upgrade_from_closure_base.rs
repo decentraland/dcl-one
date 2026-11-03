@@ -680,13 +680,12 @@ async fn earlier_event_hook_layouts_upgrade_without_losing_intents() {
     schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
         .await
         .unwrap();
-    // Model a shared development database stamped before creator throttling,
-    // buckets and the prioritized claim index were introduced.
+    // Model the actual earlier development layout: buckets already existed,
+    // but creator throttling and prioritized claim ordering did not.
     sqlx::raw_sql("ALTER TABLE explore.event_moderation_hooks DROP COLUMN creator_address CASCADE;
-        ALTER TABLE explore.event_moderation_hooks DROP COLUMN edit_bucket CASCADE;
         DROP INDEX explore.event_moderation_hooks_due_idx;
         CREATE INDEX event_moderation_hooks_due_idx ON explore.event_moderation_hooks(next_attempt_at,id) WHERE completed_at IS NULL AND attempts<6;
-        DELETE FROM meta.schema_steps WHERE step='0018_event_hook_compatibility';
+        DELETE FROM meta.schema_steps WHERE step IN ('0018_event_hook_compatibility','0019_event_hook_admin_priority');
         INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event) VALUES(gen_random_uuid(),'retained-submission','submitted','{\"name\":\"Retained intent\"}')")
         .execute(pool).await.unwrap();
     let result =
@@ -706,7 +705,7 @@ async fn earlier_event_hook_layouts_upgrade_without_losing_intents() {
     let due:String=sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname='explore' AND indexname='event_moderation_hooks_due_idx'")
         .fetch_one(pool).await.unwrap();
     assert!(
-        due.contains("CASE"),
+        due.contains("CASE") && due.contains("THEN 1") && due.contains("ELSE 2"),
         "the object pass replaces the old due ordering: {due}"
     );
     let creator:String=sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname='explore' AND indexname='event_moderation_hooks_creator_idx'")

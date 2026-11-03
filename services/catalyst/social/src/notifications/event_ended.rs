@@ -321,10 +321,6 @@ mod tests {
             let event_id = moderation::create_as(&pool, &body, owner, owner, &settings)
                 .await
                 .unwrap();
-            // This fixture represents a series created before its six recorded occurrences.
-            sqlx::query("UPDATE explore.event SET raw=jsonb_set(jsonb_set(raw,'{_metrics_schedule_after}',to_jsonb($2::text)),'{created_at}',to_jsonb($2::text)) WHERE id=$1")
-                .bind(&event_id).bind((start-Duration::days(1)).and_utc().to_rfc3339())
-                .execute(&pool).await.unwrap();
             moderation::moderate(
                 &pool,
                 &event_id,
@@ -337,6 +333,10 @@ mod tests {
             )
             .await
             .unwrap();
+            // This fixture represents a series created before its six recorded occurrences.
+            sqlx::query("UPDATE explore.event SET raw=jsonb_set(jsonb_set(raw,'{_metrics_schedule_after}',to_jsonb($2::text)),'{created_at}',to_jsonb($2::text)) WHERE id=$1")
+                .bind(&event_id).bind((start-Duration::days(1)).and_utc().to_rfc3339())
+                .execute(&pool).await.unwrap();
             crate::explore::events::attendees::rsvp_going(&pool, &event_id, owner, None)
                 .await
                 .unwrap();
@@ -400,6 +400,18 @@ mod tests {
         uuid::Uuid,
         std::sync::Arc<catalyst_explore::ExploreState>,
     ) {
+        created_series_with_approval(pool, starts_at, true).await
+    }
+
+    async fn created_series_with_approval(
+        pool: &PgPool,
+        starts_at: NaiveDateTime,
+        approve: bool,
+    ) -> (
+        String,
+        uuid::Uuid,
+        std::sync::Arc<catalyst_explore::ExploreState>,
+    ) {
         use crate::explore::events::moderation;
         let owner = "0x1111111111111111111111111111111111111111";
         let community = Uuid::new_v4();
@@ -423,18 +435,20 @@ mod tests {
         let id = moderation::create_as(pool, &body, owner, owner, &settings)
             .await
             .unwrap();
-        moderation::moderate(
-            pool,
-            &id,
-            &moderation::AdminPatch {
-                approved: Some(true),
-                ..Default::default()
-            },
-            "operator",
-            &settings,
-        )
-        .await
-        .unwrap();
+        if approve {
+            moderation::moderate(
+                pool,
+                &id,
+                &moderation::AdminPatch {
+                    approved: Some(true),
+                    ..Default::default()
+                },
+                "operator",
+                &settings,
+            )
+            .await
+            .unwrap();
+        }
         crate::explore::events::attendees::rsvp_going(pool, &id, owner, None)
             .await
             .unwrap();
@@ -492,6 +506,139 @@ mod tests {
         let metrics:(i64,i64)=sqlx::query_as("SELECT events_count,events_total_attendees FROM social.community_event_metrics WHERE community_id=$1")
             .bind(community).fetch_one(&pool).await.unwrap();
         assert_eq!(metrics, (1, 1));
+        sqlx::query("DELETE FROM explore.event WHERE id=$1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn creation_and_approval_keep_live_occurrences_but_never_import_pending_history() {
+        let _guard = TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        sqlx::query("TRUNCATE social.event_ended_occurrences,social.event_ended_activation,social.community_event_metrics").execute(&pool).await.unwrap();
+        let now = chrono::Utc::now().naive_utc();
+        run_once(&pool, now - Duration::days(30)).await.unwrap();
+        for pending_days in [0, 3] {
+            let start = now - Duration::days(pending_days) - Duration::minutes(30);
+            let (id, community, state) = created_series_with_approval(&pool, start, false).await;
+            assert_eq!(run_once(&pool, now).await.unwrap(), 0);
+            // An approval with a content field exercises store_locked; approval-only
+            // goes through moderate. Both use the same row-locked eligibility reset.
+            let patch = if pending_days == 0 {
+                json!({"approved":true,"name":"Approved live"})
+            } else {
+                json!({"approved":true})
+            };
+            edit_series(state, &id, patch).await;
+            assert_eq!(run_once(&pool, now + Duration::hours(1)).await.unwrap(), 1);
+            assert_eq!(run_once(&pool, now + Duration::hours(1)).await.unwrap(), 0);
+            let recorded: chrono::NaiveDateTime = sqlx::query_scalar(
+                "SELECT occurrence_start FROM social.event_ended_occurrences WHERE event_id=$1",
+            )
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert!(recorded > now - Duration::hours(1));
+            let count: i64 = sqlx::query_scalar(
+                "SELECT events_count FROM social.community_event_metrics WHERE community_id=$1",
+            )
+            .bind(community)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(count, 1);
+            sqlx::query("DELETE FROM explore.event WHERE id=$1")
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn reapproval_does_not_backfill_occurrences_that_ended_while_pending() {
+        let _guard = TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        sqlx::query("TRUNCATE social.event_ended_occurrences,social.event_ended_activation,social.community_event_metrics").execute(&pool).await.unwrap();
+        let now = chrono::Utc::now().naive_utc();
+        run_once(&pool, now - Duration::days(30)).await.unwrap();
+        for content_patch in [false, true] {
+            let (id, community, state) =
+                created_series(&pool, now - Duration::days(3) - Duration::minutes(30)).await;
+            edit_series(state.clone(), &id, json!({"approved":false})).await;
+            // Model a review interval spanning earlier occurrences without moving the
+            // current ongoing occurrence or altering its identity.
+            sqlx::query("UPDATE explore.event SET raw=jsonb_set(raw,'{_metrics_schedule_after}',to_jsonb($2::text)) WHERE id=$1")
+            .bind(&id).bind((now-Duration::days(4)).and_utc().to_rfc3339()).execute(&pool).await.unwrap();
+            assert_eq!(run_once(&pool, now).await.unwrap(), 0);
+            let approval = if content_patch {
+                json!({"approved":true,"name":"Re-approved series"})
+            } else {
+                json!({"approved":true})
+            };
+            edit_series(state, &id, approval).await;
+            assert_eq!(run_once(&pool, now + Duration::hours(1)).await.unwrap(), 1);
+            let count: i64 = sqlx::query_scalar(
+                "SELECT events_count FROM social.community_event_metrics WHERE community_id=$1",
+            )
+            .bind(community)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(count, 1);
+            sqlx::query("DELETE FROM explore.event WHERE id=$1")
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn approval_never_reenables_a_new_backdated_reschedule_even_while_it_is_live() {
+        let _guard = TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        sqlx::query("TRUNCATE social.event_ended_occurrences,social.event_ended_activation,social.community_event_metrics").execute(&pool).await.unwrap();
+        let now = chrono::Utc::now().naive_utc();
+        run_once(&pool, now - Duration::days(3)).await.unwrap();
+        let start = now - Duration::hours(2);
+        let (id, community, state) = created_series(&pool, start).await;
+        sqlx::query("UPDATE explore.event SET raw=jsonb_set(raw,'{_metrics_schedule_after}',to_jsonb($2::text)) WHERE id=$1")
+            .bind(&id).bind((start-Duration::days(1)).and_utc().to_rfc3339()).execute(&pool).await.unwrap();
+        assert_eq!(run_once(&pool, now).await.unwrap(), 1);
+        edit_series(
+            state.clone(),
+            &id,
+            json!({"start_at":(now-Duration::minutes(30)).and_utc().to_rfc3339(),"approved":false}),
+        )
+        .await;
+        edit_series(
+            state,
+            &id,
+            json!({"approved":true,"name":"Reviewed moved series"}),
+        )
+        .await;
+        assert_eq!(run_once(&pool, now + Duration::hours(1)).await.unwrap(), 0);
+        let count: i64 = sqlx::query_scalar(
+            "SELECT events_count FROM social.community_event_metrics WHERE community_id=$1",
+        )
+        .bind(community)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            count, 1,
+            "approval cannot resurrect a newly backdated identity"
+        );
         sqlx::query("DELETE FROM explore.event WHERE id=$1")
             .bind(id)
             .execute(&pool)

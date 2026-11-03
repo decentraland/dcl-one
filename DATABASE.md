@@ -267,8 +267,12 @@ Unchanged eligible starts shared by the old and new materialized schedules
 remain eligible, including live occurrences and deferred endings. A private
 lookup stores only those pre-edit starts still in the current schedule, bounded
 by that schedule rather than growing across edits. Newly introduced backdated
-starts cannot contribute. Creation also sets a database-clock eligibility cutoff,
-so backdated recurring creates cannot import historical attendance. These keys
+starts cannot contribute. Creation and each transition into approved state start
+an eligibility window using the database clock: already-ended occurrences are
+excluded, while an already eligible occurrence still in progress is retained.
+Thus a late first submission counts its ongoing occurrence without importing
+historical attendance, and later approval cannot backfill endings from pending
+review or resurrect a newly backdated schedule identity. These keys
 are excluded from the public event projection and notification snapshots.
 Existing immutable facts remain intact. Ordinary
 owners must obtain moderation again after changing dates or durations. Recovery
@@ -287,8 +291,9 @@ once, bounded to six attempts with five-second HTTP timeouts, and starts at its
 first capture cutoff, written atomically with the intent using the database clock.
 Exhausted delivery attempts remain distinct from successful completion. A creator
 can enqueue at most two edited notices per rolling minute; unsent edits
-coalesce per event. Every submission retains an alert, and submissions or administrative transitions take priority
-over edits. Deployment configuration supplies the secret endpoint;
+coalesce per event. Every submission retains its own durable alert. Approvals,
+rejections and deletions precede all submissions, and submissions precede edits;
+submission volume therefore cannot delay operator moderation alerts. Deployment configuration supplies the secret endpoint;
 operator writes and deployment posture gate outbound delivery. Unconfigured or
 operator-write-disabled authoring captures no webhook intent. The same worker
 performs bounded cleanup even when its endpoint is disabled: at most 1000 rows
@@ -392,15 +397,17 @@ stored client-supplied sale category never establishes eligibility.
   required offset APIs. Define tie-breaking, replay windows and deletion
   handling; a cursor alone does not give snapshot consistency.
 
-The public What's On calendar caches only completed, valid catalogue responses
+The public What's On calendar caches completed, parsed catalogue responses
 for 30 seconds in each Sites process. Its key is the catalogue base, search,
 recurrence selector and exact date window; catalogue page offsets and accounts
 are not inputs. At most eight entries of up to 500 records are retained, with
-expired and least-recently-used entries evicted on reads. Request cancellation
-stays independent, failures and malformed results are not retained, and process
-restart rebuilds from the events API. Sequential page views therefore reuse the
-same calendar read within the freshness budget while live/catalogue reads stay
-uncached.
+expired and least-recently-used entries evicted on reads. Parsed responses
+retain malformed-row counts so a damaged record does not bypass the cache. Concurrent reads of one key share one upstream request with
+an independent five-second budget; each request can cancel only its own wait.
+At most eight shared reads run at once; a new key at capacity fails retryably.
+Failed or timed-out reads are not retained, and process restart rebuilds from
+the events API. Page views reuse the same calendar read within the freshness
+budget while live/catalogue reads stay uncached.
 
 ## Measurement and acceptance
 
