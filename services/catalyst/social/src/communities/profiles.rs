@@ -984,8 +984,13 @@ mod tests {
                 }
                 other => panic!("unknown source operation {other}"),
             }
-            let keys: Vec<String> = sqlx::query_scalar("SELECT profile_key FROM social.registry_profile_cache WHERE lower(profile_key)=$1 ORDER BY profile_key")
+            let mut keys: Vec<String> = sqlx::query_scalar("SELECT profile_key FROM social.registry_profile_cache WHERE lower(profile_key)=$1")
                 .bind(pointer).fetch_all(&pool).await.unwrap();
+            // The capture sorts its cache-key inventory with JavaScript's
+            // default sort, not the database's locale-dependent collation.
+            // Only this ASCII key inventory is unordered; profiles above
+            // still compare the source's returned order and duplicates.
+            keys.sort_unstable();
             let source = step["cache_keys"]
                 .as_array()
                 .unwrap()
