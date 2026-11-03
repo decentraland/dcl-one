@@ -996,12 +996,22 @@ mod tests {
             "argv-token",
         ])
         .unwrap();
-        assert_eq!(config.secret_slots().len(), 73);
-        assert!(
-            config
-                .secret_slots()
+        let slots = config.secret_slots();
+        assert_eq!(
+            slots.len(),
+            slots
                 .iter()
-                .any(|(key, _)| *key == "ANALYTICS_API_TOKEN")
+                .map(|(key, _)| *key)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+            "secret slot names must be unique"
+        );
+        assert_eq!(
+            slots
+                .iter()
+                .find(|(key, _)| *key == "ANALYTICS_API_TOKEN")
+                .map(|(_, value)| value.as_deref()),
+            Some(Some("argv-token"))
         );
         assert!(
             config
