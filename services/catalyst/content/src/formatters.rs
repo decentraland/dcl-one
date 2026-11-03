@@ -46,9 +46,6 @@ pub fn parse_range_header(
     let total = total_size?;
 
     if let Some(rest) = header.strip_prefix("bytes=") {
-        if total == 0 {
-            return Some(ParsedRange::Unsatisfiable);
-        }
         if let Some(suffix) = rest.strip_prefix('-') {
             let suffix_len: u64 = suffix.parse().ok()?;
             if suffix_len == 0 || total == 0 {
@@ -64,19 +61,20 @@ pub fn parse_range_header(
         let parts: Vec<&str> = rest.splitn(2, '-').collect();
         if parts.len() == 2 {
             let start: u64 = parts[0].parse().ok()?;
-            let end: u64 = if parts[1].is_empty() {
-                total - 1
+            let end: Option<u64> = if parts[1].is_empty() {
+                None
             } else {
-                parts[1].parse().ok()?
+                Some(parts[1].parse().ok()?)
             };
 
-            if start > end || start >= total {
+            // `start >= total` also covers an empty file.
+            if start >= total || end.is_some_and(|end| start > end) {
                 return Some(ParsedRange::Unsatisfiable);
             }
 
             return Some(ParsedRange::Range {
                 start,
-                end: end.min(total - 1),
+                end: end.map_or(total - 1, |end| end.min(total - 1)),
             });
         }
     }
@@ -199,6 +197,16 @@ mod tests {
                 parse_range_header(Some(header), Some(0)),
                 Some(ParsedRange::Unsatisfiable)
             ));
+        }
+    }
+
+    #[test]
+    fn parse_range_on_empty_file_ignores_a_malformed_header() {
+        for header in ["bytes=abc", "bytes=0-1,2-3", "bytes=-1,2", "items=0-1"] {
+            assert!(
+                parse_range_header(Some(header), Some(0)).is_none(),
+                "{header}"
+            );
         }
     }
 

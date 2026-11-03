@@ -378,7 +378,10 @@ impl OpenedContent {
         }
         let len = end.min(self.size - 1) - start + 1;
         self.file.seek(std::io::SeekFrom::Start(start)).await?;
-        let stream = tokio_util::io::ReaderStream::with_capacity(self.file.take(len), 64 * 1024);
+        let stream = tokio_util::io::ReaderStream::with_capacity(
+            self.file.take(len),
+            len.min(64 * 1024) as usize,
+        );
         Ok(axum::body::Body::from_stream(stream))
     }
 
