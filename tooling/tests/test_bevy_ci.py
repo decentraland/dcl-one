@@ -79,6 +79,10 @@ class SelectionTest(unittest.TestCase):
                      '.cargo/config.toml', 'rust-toolchain.toml', ci.WORKFLOW,
                      'library/vendor/rusty_enet/src/packet.rs',
                      'library/vendor/rusty_enet/checksums.sha256',
+                     'library/uuav/uuav-client/src/lib.rs',
+                     'library/uuav/uuav-ipc/src/lib.rs',
+                     'library/uuav/dist/linux-x86_64/uuav-helper',
+                     'tooling/uuav/stage-dist.py',
                      'tooling/dev-regressions.py', 'tooling/dev-regressions.json'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
@@ -161,13 +165,25 @@ class SelectionTest(unittest.TestCase):
                                   if selected[lane]}, {'web', 'test'})
 
     def test_the_end_to_end_suite_selects_no_engine_lane(self):
-        for name in ('driver/explorer.ts', 'specs/chat.test.ts', 'scenes/core/scene.json', 'README.md'):
+        for name in ('specs/chat.test.ts', 'specs/pages.ts', 'specs/visual/visual.test.ts', 'README.md',
+                     'test/explorer.test.ts', 'references/core.png'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write('apps/bevy-explorer/e2e/' + name, 'changed')
                 selected = ci.select(before, self.commit())
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, set())
+
+    def test_what_the_graphical_run_plays_from_the_end_to_end_suite_selects_scenes(self):
+        for name in ('driver/explorer.ts', 'scenes/video/src/index.ts', 'scenes/video/assets/video/red_tone.mp4',
+                     'scenes/core/scene.json', 'scenes/dcl-workspace.json', 'specs/visual/video.test.ts',
+                     'specs/visual/realm.ts', 'specs/visual/scenes.ts', 'scripts/e2e.ts', 'package-lock.json'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write('apps/bevy-explorer/e2e/' + name, 'changed')
+                selected = ci.select(before, self.commit())
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
+                                  if selected[lane]}, {'scenes'})
 
     def test_web_change_cannot_hide_a_native_or_shared_input_change(self):
         self.write('rendering/bevy-explorer/source/react-web/src/App.tsx', 'web edit')
