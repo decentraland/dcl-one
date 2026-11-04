@@ -18,7 +18,8 @@
 //! - items, as the reference validator: no thumbnail check, and pointers
 //!   naming one collections-v1 asset by address and by name count as one.
 //! - a timestamp more than `REQUEST_TTL_FORWARDS_MS` ahead of this node's
-//!   clock is undecided until the clock catches up.
+//!   clock is undecided until the clock catches up; more than a day ahead,
+//!   refused.
 //! - one deadline bounds the whole validation of an entity, its contract
 //!   wallet included; past it the entity is undecided.
 //! - access: every check asks the chain at the entity timestamp's block, then
@@ -264,6 +265,12 @@ fn not_fetched_hashes(entity: &Entity) -> HashSet<String> {
         .collect()
 }
 
+/// How far ahead of this node's clock a synced entity may be and still wait
+/// for it; beyond it the entity is refused. A node accepts a deploy at most
+/// `REQUEST_TTL_FORWARDS_MS` ahead of its own clock, so only a skew of a day
+/// between two nodes' clocks would put an honest entity past it.
+const MAX_FUTURE_MS: i64 = 24 * 60 * 60 * 1000;
+
 /// The longest one synced entity's validation (signature and access) takes
 /// before it is undecided.
 const SYNCED_DEADLINE: Duration = Duration::from_secs(60);
@@ -302,10 +309,16 @@ async fn validate_synced_within(
 ) -> Result<ChainVerdict, Vec<ValidationError>> {
     let entity = entity_parser::parse_entity_from_bytes(entity_bytes, entity_id)
         .map_err(|e| vec![ValidationError::Rejected(e.to_string())])?;
-    // Retried until this node's clock catches up, never judged ahead of it.
-    let latest =
-        chrono::Utc::now().timestamp_millis() + crate::write_deployer::REQUEST_TTL_FORWARDS_MS;
-    if entity.timestamp > latest {
+    // Never judged ahead of this node's clock: retried until it catches up,
+    // or refused past any honest clock skew.
+    let now = chrono::Utc::now().timestamp_millis();
+    if entity.timestamp > now + MAX_FUTURE_MS {
+        return Err(vec![ValidationError::Rejected(format!(
+            "The entity timestamp {} is more than a day in the future",
+            entity.timestamp
+        ))]);
+    }
+    if entity.timestamp > now + crate::write_deployer::REQUEST_TTL_FORWARDS_MS {
         return Err(vec![ValidationError::Unavailable(format!(
             "The entity timestamp {} is too far in the future",
             entity.timestamp
@@ -592,7 +605,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_entity_from_the_future_is_undecided_until_the_clock_catches_up() {
+    async fn an_entity_from_the_future_waits_for_the_clock_and_past_a_day_is_refused() {
         let (_, _, _, sources, tmp) = wearable(&[HAT_BY_NAME]).await;
         let at = |timestamp: i64| {
             let bytes = serde_json::to_vec(&serde_json::json!({
@@ -621,6 +634,16 @@ mod tests {
         validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched, false)
             .await
             .expect("inside the clock skew");
+
+        let (bytes, id) = at(now + MAX_FUTURE_MS + 60_000);
+        let chain = crate::sync_test_support::signed_chain(&id).await;
+        let errors = validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched, false)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&errors[..], [ValidationError::Rejected(m)] if m.contains("more than a day")),
+            "past a day ahead it is refused: {errors:?}"
+        );
         let _ = std::fs::remove_dir_all(tmp);
     }
 
