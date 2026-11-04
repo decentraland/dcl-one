@@ -173,6 +173,10 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    env:
+      # The workspace's rust-toolchain.toml adds components and wasm targets the CLI never uses:
+      # every cargo call takes the minimal toolchain installed below instead.
+      RUSTUP_TOOLCHAIN: 1.99.1
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -296,7 +300,8 @@ jobs:
       - name: Build the visual scenes
         if: env.GROUP != 'inworld' && needs.scene-cli.result == 'success'
         env:
-          DCL_SCENE_CLI: ${{ github.workspace }}/scene-cli/dcl-scene-cli.exe
+          # A backslash path: build-scenes.ts spawns it through cmd.exe, which reads a `/` as a switch.
+          DCL_SCENE_CLI: ${{ github.workspace }}\scene-cli\dcl-scene-cli.exe
         run: npm run build-scenes
       - name: Visual scenarios
         id: visual
