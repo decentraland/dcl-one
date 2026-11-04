@@ -72,7 +72,7 @@ pub async fn get_world_limits(
     let owner = if limits.size_overridden {
         None
     } else {
-        let Some(owner) = state.policy.limits_owner(&world).await? else {
+        let Some(owner) = state.policy.current_owner(&world).await? else {
             return Err(ApiError::not_found(format!(
                 "Could not determine owner for world {}",
                 world.key()

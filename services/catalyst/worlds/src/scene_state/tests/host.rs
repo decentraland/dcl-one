@@ -36,13 +36,29 @@ struct Host {
 }
 
 async fn host(js: bool) -> Option<Host> {
+    host_with(js, None).await
+}
+
+/// A host whose names reader refuses every connection.
+async fn host_with_names_down() -> Option<Host> {
+    let settings = crate::chain_index::IndexSettings {
+        marketplace_subgraph_url: Some("http://127.0.0.1:1/subgraph".to_string()),
+        eth_network: "mainnet".to_string(),
+        ..Default::default()
+    };
+    let index = crate::chain_index::ChainIndex::new(crate::http::Outbound::for_tests(), settings);
+    index.allow_loopback_for_tests();
+    host_with(false, Some(Arc::new(index))).await
+}
+
+async fn host_with(js: bool, names: Option<Arc<crate::chain_index::ChainIndex>>) -> Option<Host> {
     let pool = crate::db::scratch::pool(4).await?;
     let tmp = std::env::temp_dir().join(format!("catalyst-scene-host-{}", Uuid::new_v4().simple()));
     let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
     let policy = Arc::new(Policy::new(
         pool.clone(),
         PersonalWorldsPolicy::disabled(),
-        None,
+        names,
     ));
     let raw = RawSettings {
         disable_js_runtime: !js,
@@ -399,6 +415,65 @@ async fn closed(ws: &mut Ws) -> bool {
             Err(_) => return false,
         }
     }
+}
+
+/// With the name authority down, re-admission keeps a client whose answer
+/// depends on it (the stored owner) and still removes a refused stranger.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_authority_outage_keeps_undetermined_clients_through_the_sweep() {
+    let Some(h) = host_with_names_down().await else {
+        return;
+    };
+    let key = || format!("0x{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let (owner_key, stranger_key) = (key(), key());
+    let owner = Address::parse(&Wallet::from_hex(&owner_key).unwrap().address()).unwrap();
+    let world = world_name();
+    seed_world(
+        &h.state.pool,
+        &world,
+        Some(&owner),
+        AccessType::Unrestricted,
+    )
+    .await;
+    seed_scene(
+        &h.state,
+        &world,
+        "bafyOut1",
+        "",
+        None,
+        "0,0",
+        &["0,0"],
+        false,
+    )
+    .await;
+    let addr = serve(h.state.clone()).await;
+    let (_owner_ws, _) = join(addr, &world, &owner_key, "{}").await.expect("open");
+    let (mut stranger_ws, _) = join(addr, &world, &stranger_key, "{}").await.expect("open");
+    let scene = h.state.scenes.get(world.key()).unwrap();
+    assert_eq!(scene.clients().len(), 2);
+
+    sqlx::query("UPDATE worlds.worlds SET access_type = 'allow-list' WHERE name = $1")
+        .bind(world.key())
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        h.state.sweep().await,
+        SweepSummary {
+            kicked: 1,
+            errors: 1,
+            ..Default::default()
+        }
+    );
+    assert!(closed(&mut stranger_ws).await);
+    let left: Vec<Address> = scene
+        .clients()
+        .iter()
+        .map(|c| Address::parse(&c.address).unwrap())
+        .collect();
+    assert_eq!(left, vec![owner]);
+    assert_eq!(h.state.readmit_world(&world, true).await, 0);
+    assert_eq!(scene.clients().len(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

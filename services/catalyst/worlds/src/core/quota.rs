@@ -410,7 +410,7 @@ impl CoreState {
             Some(owner) => owner.clone(),
             None => self
                 .policy
-                .limits_owner(world)
+                .current_owner(world)
                 .await
                 .map_err(|e| CapError::Unavailable(e.to_string()))?
                 .ok_or(CapError::OwnerNotFound)?,
