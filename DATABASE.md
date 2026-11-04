@@ -62,6 +62,12 @@ the data and its operations.
    lists the old ones as superseded after migrate (run before `migrate`, that
    includes the one the running binary still calls); drop them by hand once no
    process runs an older binary.
+   The `deleter_deployment` repair runs once per database and repair version
+   (`content.system_properties` key `deleter_repair_version`, only ever
+   raised), at a sync leader's bootstrap or a non-syncing process's startup.
+   During a rolling deploy an older binary still writing can leave rows the
+   repair's rules would change after the marker is set; the next sync leader
+   bootstrap repairs them, or restart a sync leader once the rollout is done.
 
 ## Worlds, persistent storage and scene hosting
 

@@ -146,7 +146,9 @@ impl LiveDeploymentRepository {
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|e| SyncError::Storage(e.to_string()))?;
-        Ok(value.as_deref() == Some(DELETER_REPAIR_VERSION))
+        Ok(value
+            .and_then(|v| v.parse::<i64>().ok())
+            .is_some_and(|v| v >= DELETER_REPAIR_VERSION))
     }
 
     /// Repairs `deleter_deployment` for every row an intra-batch overwrite could not see:
@@ -243,10 +245,11 @@ impl LiveDeploymentRepository {
         // Only ever raised: an older binary never lowers what a newer one recorded.
         sqlx::query(
             "INSERT INTO content.system_properties (key, value) VALUES ($1, $2)
-             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+             ON CONFLICT (key) DO UPDATE SET value =
+                 GREATEST(content.system_properties.value::bigint, EXCLUDED.value::bigint)::text",
         )
         .bind(DELETER_REPAIR_KEY)
-        .bind(DELETER_REPAIR_VERSION)
+        .bind(DELETER_REPAIR_VERSION.to_string())
         .execute(&mut *tx)
         .await
         .map_err(storage)?;
@@ -266,7 +269,7 @@ impl LiveDeploymentRepository {
 /// The `content.system_properties` key the deleter repair records its version under.
 const DELETER_REPAIR_KEY: &str = "deleter_repair_version";
 /// Bumped whenever the repair's rules change, so every database runs the new rules once.
-const DELETER_REPAIR_VERSION: &str = "2";
+const DELETER_REPAIR_VERSION: i64 = 2;
 
 /// GREATEST-monotonic upsert: a stale offer can never rewind the persisted frontier.
 const ADVANCE_SYNC_FRONTIER_SQL: &str = "INSERT INTO content.system_properties (key, value) VALUES ('sync_frontier', $1) ON CONFLICT (key) DO UPDATE SET value = GREATEST(content.system_properties.value::bigint, EXCLUDED.value::bigint)::text";
@@ -642,6 +645,41 @@ mod tests {
         jobs.shutdown(Duration::from_secs(5)).await;
         held.release().await;
         drop(leader);
+        drop_repair_database(admin, pool, &name).await;
+    }
+
+    /// The repair's version marker only rises: a newer version recorded on the
+    /// database survives a run of this one, and counts as done.
+    #[tokio::test]
+    async fn the_deleter_repair_marker_is_never_lowered() {
+        let Some((admin, pool, name)) = repair_database().await else {
+            return;
+        };
+        let repo = LiveDeploymentRepository::new(pool.clone(), Arc::new(SyncStatus::default()));
+        let marker = || async {
+            sqlx::query_scalar::<_, String>(
+                "SELECT value FROM content.system_properties WHERE key = $1",
+            )
+            .bind(DELETER_REPAIR_KEY)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        assert!(!repo.deleter_repair_done().await.unwrap());
+        repo.resolve_deleter_deployments().await.unwrap();
+        assert_eq!(marker().await, DELETER_REPAIR_VERSION.to_string());
+
+        let newer = (DELETER_REPAIR_VERSION + 1).to_string();
+        sqlx::query("UPDATE content.system_properties SET value = $2 WHERE key = $1")
+            .bind(DELETER_REPAIR_KEY)
+            .bind(&newer)
+            .execute(&pool)
+            .await
+            .unwrap();
+        repo.resolve_deleter_deployments().await.unwrap();
+        assert_eq!(marker().await, newer);
+        assert!(repo.deleter_repair_done().await.unwrap());
+
         drop_repair_database(admin, pool, &name).await;
     }
 
