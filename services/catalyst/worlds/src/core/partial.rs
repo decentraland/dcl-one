@@ -549,6 +549,8 @@ async fn stage_batch(
         entity_id,
         &receipts,
         staged.max_size_bytes,
+        // Never budget the world below this scene's own cap.
+        staged.world_size_cap.max(staged.max_size_bytes),
         incoming,
     )
     .await
@@ -784,6 +786,7 @@ async fn reserve(
     entity_id: &str,
     receipts: &[Receipt],
     max_scene_bytes: i64,
+    world_scene_cap: i64,
     incoming: i64,
 ) -> Result<(), Response> {
     let owner: Option<(String, String, NaiveDateTime)> = sqlx::query_as(
@@ -900,7 +903,7 @@ async fn reserve(
     .await
     .map_err(db_error)?;
     let account_bytes = limits.max_pending_bytes_per_deployer as i64;
-    let world_bytes = max_scene_bytes.saturating_mul(limits.pending_bytes_per_world_factor as i64);
+    let world_bytes = world_scene_cap.saturating_mul(limits.pending_bytes_per_world_factor as i64);
     let node_bytes = limits.max_pending_bytes as i64;
     if t.scene > max_scene_bytes {
         return Err(failed(TOO_BIG_MESSAGE).into_response());

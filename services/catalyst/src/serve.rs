@@ -827,6 +827,27 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .land_operators_url
         .as_deref()
         .map(|url| worlds::policy::LandOperatorsReader::new(http_client.clone(), url));
+    let ens = if config.worlds.allow_ens_domains {
+        let rpc = config
+            .content
+            .eth_rpc_url()
+            .context("ETH_RPC_URL")?
+            .context("ALLOW_ENS_DOMAINS=true needs ETH_RPC_URL to read ENS owners")?;
+        let contracts = worlds::ens::EnsContracts::for_network(&config.node.eth_network)
+            .with_context(|| {
+                format!(
+                    "ALLOW_ENS_DOMAINS=true: no ENS contracts for ETH_NETWORK={}",
+                    config.node.eth_network
+                )
+            })?;
+        Some(Arc::new(worlds::ens::EnsResolver::new(
+            http_client.clone(),
+            &rpc,
+            contracts,
+        )))
+    } else {
+        None
+    };
     let ban_status: Arc<dyn comms::gatekeeper::moderation::BanStatus> =
         Arc::new(comms::gatekeeper::moderation::Moderation::new(pool.clone()));
     let policy = Arc::new(
@@ -834,7 +855,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .with_ban_status(ban_status.clone())
             .with_land_operators(land_operators)
             .with_land_authz(Some(land.clone()))
-            .with_max_parcels(config.worlds.max_parcels),
+            .with_max_parcels(config.worlds.max_parcels)
+            .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024),
     );
     // A world read-through holds each mirrored scene's signer to this policy and shares the
     // content read-through's download bound.
@@ -1600,6 +1622,9 @@ async fn worlds_states(
                     .with_scene_eviction_ttl_ms(config.worlds.scene_eviction_ttl_ms)
                     .with_public_url(&worlds::Settings::from_config(config).public_url)
                     .with_max_file_count(config.worlds.max_file_count)
+                    .with_owner_reconcile_interval_secs(
+                        config.worlds.worlds_owner_reconcile_interval_secs,
+                    )
                     .with_partial_uploads(worlds::core::PartialUploadLimits {
                         pending_deployment_ttl_ms: config.worlds.pending_deployment_ttl,
                         cleanup_interval_ms: config.worlds.partial_upload_cleanup_interval_ms,
@@ -1624,6 +1649,18 @@ async fn worlds_states(
             eip1654.clone(),
         )
         .with_presence(presence)
+        .with_allowance(Arc::new(worlds::core::quota::AccountHoldings::new(
+            http_client.clone(),
+            config.worlds.dcl_name_stats_url.as_deref(),
+            Duration::from_millis(config.worlds.dcl_name_stats_timeout_ms),
+        )))
+        // World notices persist through social's directory, as comms' do.
+        .with_notices(worlds::core::notices::Notices::new(
+            Some(Arc::new(social::comms_directory::Directory::new(
+                pool.clone(),
+            ))),
+            &config.worlds.builder_url,
+        ))
         .with_forwarder(forwarder(
             "WORLDS_FORWARD_UPSTREAM_URL",
             config.worlds.worlds_forward_upstream_url.as_deref(),

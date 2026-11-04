@@ -114,6 +114,23 @@ pub struct WorldsConfig {
     #[arg(long, env = "MAX_PARCELS", default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..))]
     pub max_parcels: u32,
 
+    /// Publish and own ENS (`*.eth`) worlds, their holder read on chain over ETH_RPC_URL.
+    #[arg(long, env = "ALLOW_ENS_DOMAINS", default_value_t = false, action = clap::ArgAction::Set)]
+    pub allow_ens_domains: bool,
+
+    /// Size cap of an ENS world, MiB, unless `worlds.world_limit_overrides` says otherwise.
+    #[arg(long, env = "ENS_MAX_SIZE", default_value_t = 36, value_parser = clap::value_parser!(u32).range(1..=300))]
+    pub ens_max_size: u32,
+
+    /// Pause between passes of the job that rewrites `worlds.owner` from the name authority.
+    #[arg(
+        long,
+        env = "WORLDS_OWNER_RECONCILE_INTERVAL_SECS",
+        default_value_t = 3600,
+        value_parser = clap::value_parser!(u64).range(60..)
+    )]
+    pub worlds_owner_reconcile_interval_secs: u64,
+
     /// Entries a deployed entity's `content` may list.
     #[arg(long, env = "MAX_FILE_COUNT", default_value_t = 10_000, value_parser = clap::value_parser!(u32).range(1..))]
     pub max_file_count: u32,
@@ -210,6 +227,22 @@ pub struct WorldsConfig {
     /// How long a completed partial upload answers its retried final batch, ms.
     #[arg(long, env = "COMPLETED_UPLOAD_TTL", default_value_t = 86_400_000)]
     pub completed_upload_ttl: u64,
+    /// The account-holdings service whose `spaceAllowance` (MiB) is a wallet's
+    /// storage allowance across its DCL worlds; unset, the allowance is unlimited.
+    #[arg(long, env = "DCL_NAME_STATS_URL")]
+    pub dcl_name_stats_url: Option<String>,
+
+    /// Per-attempt timeout of the account-holdings request (3 attempts).
+    #[arg(long, env = "DCL_NAME_STATS_TIMEOUT_MS", default_value_t = 3_000, value_parser = clap::value_parser!(u64).range(1..))]
+    pub dcl_name_stats_timeout_ms: u64,
+
+    /// The Builder whose `/worlds?tab=dcl` page world notifications link to.
+    #[arg(
+        long,
+        env = "BUILDER_URL",
+        default_value = "https://decentraland.org/builder"
+    )]
+    pub builder_url: String,
 
     /// 64 hex characters (or ENCRYPTION_KEY_FILE): the AES-256-GCM key of the
     /// env values; unset, the `/env` routes answer 503 and the rest serve.

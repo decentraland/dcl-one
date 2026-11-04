@@ -672,3 +672,23 @@ CREATE TABLE worlds.partial_upload_rates (
     CONSTRAINT partial_upload_rates_bytes_nonneg CHECK (bytes >= 0)
 );
 -- ==== end section: partial-uploads ====
+
+-- ==== section: world-quota ====
+-- Wallets over their storage allowance (the old `blocked` table): the
+-- block-if-over-quota pass inserts or refreshes `updated_at` every 12 hours
+-- and on demand; an unblock or a pass that no longer refreshes the row
+-- deletes it. `created_at` starts the 2-day grace after which the wallet's
+-- worlds (`worlds.worlds.owner`) are refused on /about and comms. Workload:
+-- tens to hundreds of rows; one primary-key probe per /about, comms
+-- admission, wallet stats and deploy, a join from the worlds listing, and a
+-- sweep per pass. Distinct from `blocked_wallets` (a platform-wide visitor
+-- ban) and `worlds.blocked_since` (an operator disable). No FK: the wallet
+-- need not own a worlds row.
+CREATE TABLE worlds.quota_blocks (
+    wallet text NOT NULL,
+    created_at timestamp without time zone NOT NULL,
+    updated_at timestamp without time zone NOT NULL,
+    CONSTRAINT quota_blocks_pkey PRIMARY KEY (wallet),
+    CONSTRAINT quota_blocks_lowercase_address CHECK (wallet ~ '^0x[0-9a-f]{40}$')
+);
+-- ==== end section: world-quota ====

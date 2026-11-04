@@ -13,16 +13,13 @@ difference not listed here is a gap, not a decision.
   parse the world name first and answer 400 `Invalid world name: …` for a
   name that is not a valid world key. The upstream service answers defaults
   or 404 for such names.
-- **Wallet storage allowance.** `GET /wallet/{wallet}/stats` reports
-  `maxAllowedSpace` as one world-size cap (the publish limit, smaller for a
-  personal world) per DCL world the wallet owns: the NAMEs the names
-  authority says it holds now, plus its personal world when personal worlds
-  are enabled. The upstream service derives it from an account-holdings
-  service. `dclNames` and `ensNames` list the wallet's worlds that have a
-  world row here; a DCL world counts when the names authority names the
-  wallet as its holder (the stored owner when no names reader is
-  configured). `usedSpace` sums the stored size of every scene in the
-  wallet's DCL worlds, mirrored copies included.
+- **Wallet storage allowance.** `GET /wallet/{wallet}/stats`, the publish
+  size cap and `GET /world/{name}/limits` count only scenes published here:
+  mirrored worlds and scenes are left out. Personal worlds are outside the
+  allowance and are not listed. Without `DCL_NAME_STATS_URL`, the allowance
+  is unlimited and `maxAllowedSpace` is `9223372036854775807`. When the
+  account-holdings service fails after its three attempts, these routes and
+  the publish answer 503.
 - **Legacy content keys.** The worlds `/contents/{key}` route also accepts a
   64-hex sha256 key and serves the blob whose raw-leaf CIDv1 has that
   digest, which covers files of one chunk (256 KiB) or less. An invalid key
@@ -36,9 +33,10 @@ difference not listed here is a gap, not a decision.
 
 ## Comms
 
-- **World blocks apply at once.** `blocked_since` is set by an operator
-  disable, so `/about` and the comms mints refuse the world immediately.
-  Upstream's two-day grace belongs to storage-quota blocks.
+- **Operator disables apply at once.** An operator disable
+  (`/admin/worlds/{name}/disable`) refuses the world on `/about` and the
+  comms mints immediately. A storage-quota block keeps the upstream two-day
+  grace.
 - **Shared-secret throttle.** Failed attempts are counted in Postgres per
   world and client address over a fixed 60-second window from the first
   failure (`SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE`). If the counter cannot
@@ -52,6 +50,11 @@ difference not listed here is a gap, not a decision.
   `.dcl.eth` from `/about`'s `realmName` for worlds published here, so a
   stock client does not resolve them against Decentraland's registry.
   Mirrored worlds keep the suffix.
+- **Owner admission.** The owner is the name authority's current holder,
+  memoized for 30 seconds per DCL NAME (60 seconds per ENS name; upstream
+  one minute). When the authority cannot answer, nobody is admitted as
+  owner and the world's access setting still decides; only a refusal by
+  that setting answers 503 (upstream fails the whole mint).
 - **Capacity check fails closed.** When the live occupancy of a world cannot
   be recovered, the comms mint answers 503 instead of counting zero
   participants and admitting the user.
@@ -82,8 +85,15 @@ difference not listed here is a gap, not a decision.
   it (including Genesis content) without uploading it again. Upstream could
   only reuse files from its own bucket.
 - **Thumbnails** are hashed as CIDv1.
-- **Publish names.** Only `.dcl.eth` worlds (and personal worlds) accept
-  publishes and owner routes.
+- **ENS names.** With `ALLOW_ENS_DOMAINS=true` the holder is read over
+  `ETH_RPC_URL` (required then; the process refuses to start without it).
+  Only names whose labels are lowercase ASCII letters, digits, `-` and `_`
+  resolve; any other ENS name has no owner here (no ENSIP-15
+  normalization).
+- **Owner reconcile.** `worlds.owner` is rewritten from the name authority
+  every `WORLDS_OWNER_RECONCILE_INTERVAL_SECS` (default one hour; upstream
+  every 12 hours), ENS worlds included. A previous holder the world's
+  access setting no longer admits is removed from the world's live rooms.
 - **Newer-entity check** compares against the lower of the stored entity's
   timestamp and its row's update time, so a future-dated mirrored or
   imported entity cannot block redeploys.
@@ -94,7 +104,9 @@ difference not listed here is a gap, not a decision.
 - **Per-source upload limits** key on the gateway's `X-Real-IP` (IPv6 by
   /64), not `cf-connecting-ip`.
 - **Per-world limits** come from `MAX_PARCELS`, `MAX_FILE_COUNT` and the
-  `worlds.world_limit_overrides` table; there is no `WHITELIST_URL`.
+  `worlds.world_limit_overrides` table; there is no `WHITELIST_URL`. Only a
+  row with a size takes the world out of its owner's storage allowance; a
+  row that sets parcels alone leaves the allowance in force.
 - **Retired scenes.** Replaced and undeployed scenes are kept for
   `SCENE_EVICTION_TTL_MS` and removed by an hourly sweep. Scenes a mirror
   pass retires are deleted at once.
@@ -119,6 +131,15 @@ difference not listed here is a gap, not a decision.
     `mode="partial"`.
 - **`GET /worlds` search** adds trigram similarity only when the `pg_trgm`
   extension is installed. `%` and `_` in the query match literally.
+
+## Notifications
+
+- **Delivery.** World notices are written to the catalyst's own inbox and
+  email outbox, in the same transaction as the grant edit or quota change,
+  instead of being published to SNS. Re-detecting the same quota block keeps
+  the first notice unchanged.
+- **Last parcel removed.** Removing a parcel-scoped grant's last parcel
+  sends `worlds_permission_revoked`, because the grant is deleted.
 
 ## Permissions
 

@@ -139,13 +139,16 @@ async fn fixture_with_limits(limits: PartialUploadLimits) -> Option<Fixture> {
     let mut f = fixture().await?;
     let mut settings = Settings::for_tests(Some(ADMIN_TOKEN));
     settings.partial_uploads = limits;
-    let state = Arc::new(CoreState::new(
-        f.pool.clone(),
-        f.storage.clone(),
-        f.state.policy.clone(),
-        settings,
-        None,
-    ));
+    let state = Arc::new(
+        CoreState::new(
+            f.pool.clone(),
+            f.storage.clone(),
+            f.state.policy.clone(),
+            settings,
+            None,
+        )
+        .with_allowance(f.allowance.clone()),
+    );
     f.app = router(state.clone());
     f.state = state;
     Some(f)
@@ -635,4 +638,42 @@ async fn a_scene_over_the_world_cap_is_refused_while_staging() {
         body["message"],
         "Deployment failed: The deployment is too big."
     );
+}
+
+#[tokio::test]
+async fn staging_is_held_to_the_owners_storage_allowance() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload_of(&world, &["0,0"], 2, 64);
+    // An allowance that cannot be read refuses the batch, as a publish.
+    f.allowance.set(&owner.address, None);
+    let body = expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 503).await;
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("storage allowance"),
+        "{body}"
+    );
+    f.allowance.set(&owner.address, Some(100));
+    expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 202).await;
+    // The resume skips the permission, not the allowance.
+    let body = expect_batch(&f.app, &u, Batch::of(&owner, false, &[1]), 400).await;
+    assert_eq!(
+        body["message"],
+        "Deployment failed: The deployment is too big."
+    );
+    f.allowance.set(&owner.address, Some(128));
+    expect_batch(&f.app, &u, Batch::of(&owner, false, &[1]), 200).await;
+
+    // An owner without allowance left is refused at the first batch carrying content.
+    let (world, owner) = owned(&f).await;
+    f.allowance.set(&owner.address, Some(0));
+    let v = upload_of(&world, &["0,0"], 1, 64);
+    let body = expect_batch(&f.app, &v, Batch::of(&owner, true, &[0]), 400).await;
+    assert_eq!(
+        body["message"],
+        "Deployment failed: The deployment is too big."
+    );
+    assert_eq!(pending_count(&f.pool, &v.entity_id).await, 0);
 }

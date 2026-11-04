@@ -175,6 +175,17 @@ pub enum ModerationNotificationKind {
     },
 }
 
+/// One user notice a lower domain produces (worlds' permission and storage
+/// quota notices); `id` is its idempotency key, `metadata` the inbox payload.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UserNotification {
+    pub id: uuid::Uuid,
+    pub recipient: Address,
+    pub kind: &'static str,
+    pub metadata: serde_json::Value,
+    pub occurred_at: NaiveDateTime,
+}
+
 /// Social owns membership, privacy and notification storage.
 #[async_trait::async_trait]
 pub trait SocialDirectory: Send + Sync {
@@ -210,6 +221,13 @@ pub trait SocialDirectory: Send + Sync {
         transaction: &mut sqlx::PgConnection,
         notification: &ModerationNotification,
     ) -> Result<(), sqlx::Error>;
+    /// Insert user notices (inbox and email delivery rows) in the producer's
+    /// transaction; a repeated `id` is ignored. No network work.
+    async fn notify_user_notifications(
+        &self,
+        transaction: &mut sqlx::PgConnection,
+        notifications: &[UserNotification],
+    ) -> Result<(), sqlx::Error>;
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -225,6 +243,7 @@ pub mod test_support {
         pub community_events: std::sync::Mutex<Vec<serde_json::Value>>,
         pub fail_community_notifications: std::sync::atomic::AtomicUsize,
         pub fail_moderation_notifications: std::sync::atomic::AtomicBool,
+        pub user_notifications: std::sync::Mutex<Vec<UserNotification>>,
     }
 
     #[async_trait::async_trait]
@@ -305,6 +324,19 @@ pub mod test_support {
                 n.event_key == notification.event_key && n.recipient == notification.recipient
             }) {
                 notifications.push(notification.clone());
+            }
+            Ok(())
+        }
+        async fn notify_user_notifications(
+            &self,
+            _: &mut sqlx::PgConnection,
+            notifications: &[UserNotification],
+        ) -> Result<(), sqlx::Error> {
+            let mut saved = self.user_notifications.lock().unwrap();
+            for notification in notifications {
+                if !saved.iter().any(|n| n.id == notification.id) {
+                    saved.push(notification.clone());
+                }
             }
             Ok(())
         }

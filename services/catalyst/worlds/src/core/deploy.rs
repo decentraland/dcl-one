@@ -9,7 +9,8 @@
 //! `worlds::policy::Policy::can_deploy` (the NAME/personal owner replaces
 //! every overlapping scene; a deployment grantee exactly the overlapping
 //! scenes its grant covers), the minimap, skybox and navmap files, the
-//! uploaded files (none extra, none missing) and the world size cap. The
+//! uploaded files (none extra, none missing) and the scene size cap (the
+//! owner's remaining storage allowance, `CoreState::max_scene_size`). The
 //! files go to the ONE blob store and the scene row lands in
 //! `worlds.world_scenes` in one transaction (`store::deploy_scene`). A
 //! `partial=true` batch is staged by [`super::partial`] instead.
@@ -480,9 +481,13 @@ pub(super) struct Validated {
     pub(super) parcels: ParcelSet,
     /// `None` only for a staging check that skipped the permission.
     pub(super) replacement: Option<Deploy>,
+    /// The live NAME holder `worlds.owner` is refreshed to; `None` with `replacement`.
+    pub(super) name_owner: Option<Address>,
     pub(super) size: i64,
-    /// The world's scene size cap.
+    /// This scene's size cap: the owner's remaining storage allowance, capped per world.
     pub(super) max_size_bytes: i64,
+    /// The world's scene size cap, whatever the owner's allowance (the staging budget's unit).
+    pub(super) world_size_cap: i64,
 }
 
 /// Which checks [`validate`] runs and where it takes the content sizes from.
@@ -538,6 +543,12 @@ pub(super) async fn validate(
         })?;
     let world = match WorldName::parse(world_name) {
         Ok(parsed) if parsed.key().ends_with(DCL_ETH_SUFFIX) => parsed,
+        Ok(parsed) if parsed.is_ens_world() && state.policy.ens_enabled() => parsed,
+        _ if state.policy.ens_enabled() => {
+            return Err(failed(format!(
+                "Only .dcl.eth and .eth world names are supported for publishing (got \"{world_name}\")"
+            )));
+        }
         _ => {
             return Err(failed(format!(
                 "Only .dcl.eth world names are supported for publishing (got \"{world_name}\")"
@@ -612,6 +623,29 @@ pub(super) async fn validate(
             return Err(internal("Failed to persist deployment"));
         }
     }
+    // Every publish refreshes worlds.owner to the live NAME holder.
+    let name_owner = match &replacement {
+        None => None,
+        Some(Deploy::Owner) => Some(signer.clone()),
+        Some(Deploy::Scoped(_)) => match state.policy.live_name_owner(&world).await {
+            Ok(Some(owner)) => Some(owner),
+            Ok(None) => {
+                return Err(Refusal(
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "Cannot deploy scene \"{entity_id}\" to world \"{}\": owner address could not be resolved.",
+                        world.display()
+                    ),
+                ));
+            }
+            Err(e) => {
+                tracing::warn!(world = %world, error = %e, "deploy denied: NAME owner undetermined");
+                return Err(unavailable(
+                    "Deployment failed: the world's owner could not be resolved right now",
+                ));
+            }
+        },
+    };
 
     let minimap = missing_minimap_images(entity);
     if !minimap.is_empty() {
@@ -677,8 +711,15 @@ pub(super) async fn validate(
         return Err(failed(file_errors.join(", ")));
     }
     let size: i64 = sizes.values().copied().fold(0, i64::saturating_add);
-    if size > limits.max_size_bytes {
-        let max = limits.max_size_bytes;
+    // A staging batch that skipped the permission resolves the owner here; it is refused alike.
+    let max = state
+        .max_scene_size(&world, &limits, name_owner.as_ref(), Some(pointers.as_slice()))
+        .await
+        .map_err(|e| {
+            tracing::warn!(world = %world, error = ?e, "deploy denied: storage allowance undetermined");
+            unavailable("Deployment failed: the storage allowance could not be determined right now")
+        })?;
+    if size > max {
         return Err(failed(format!(
             "The deployment is too big. The maximum total size allowed is {max} bytes for scenes. You can upload up to {max} bytes but you tried to upload {size}."
         )));
@@ -689,8 +730,10 @@ pub(super) async fn validate(
         world_name: world_name.to_string(),
         parcels,
         replacement,
+        name_owner,
         size,
-        max_size_bytes: limits.max_size_bytes,
+        max_size_bytes: max,
+        world_size_cap: limits.max_size_bytes,
     })
 }
 
@@ -710,31 +753,12 @@ pub(super) async fn publish(
         world,
         parcels,
         replacement,
+        name_owner,
         size,
         ..
     } = validated;
-    let replacement = replacement
-        .as_ref()
-        .ok_or_else(|| internal("Publish without a deploy authorization").into_response())?;
-    // Every publish refreshes worlds.owner to the live NAME holder.
-    let name_owner = match replacement {
-        Deploy::Owner => signer.clone(),
-        Deploy::Scoped(_) => match state.policy.live_name_owner(world).await {
-            Ok(Some(owner)) => owner,
-            Ok(None) => {
-                return Err(err_one(format!(
-                    "Cannot deploy scene \"{entity_id}\" to world \"{}\": owner address could not be resolved.",
-                    world.display()
-                )));
-            }
-            Err(e) => {
-                tracing::warn!(world = %world, error = %e, "deploy denied: NAME owner undetermined");
-                return Err(unavailable(
-                    "Deployment failed: the world's owner could not be resolved right now",
-                )
-                .into_response());
-            }
-        },
+    let (Some(replacement), Some(name_owner)) = (replacement, name_owner) else {
+        return Err(internal("Publish without a deploy authorization").into_response());
     };
 
     let persisted = store::deploy_scene_with(
@@ -742,7 +766,7 @@ pub(super) async fn publish(
         &state.storage,
         SceneDeployment {
             world,
-            name_owner: Some(&name_owner),
+            name_owner: Some(name_owner),
             entity_id,
             deployer: signer,
             deployment_auth_chain,
@@ -788,6 +812,10 @@ pub(super) async fn publish(
         "POST /entities - deployed (validated + authorized + persisted)"
     );
     worlds_metrics::world_deployed(world.key());
+    // The publish may have freed space (a smaller scene replaced a larger one).
+    state
+        .unblock_if_under_quota(name_owner, chrono::Utc::now().naive_utc())
+        .await;
     if let Some(forwarder) = &state.forwarder {
         forwarder.kick();
     }
