@@ -34,6 +34,27 @@ export const SUBCAT_MAP: Record<string, string[]> = {
   Miscellaneous: ["miscellaneous"],
 };
 
+/** The emote sub-categories (`emoteCategory` on the server), as the on-chain values SUBCAT_MAP maps to. */
+const EMOTE_CATEGORIES = new Set(["dance", "stunt", "greetings", "fun", "poses", "reactions", "horror", "miscellaneous"]);
+const HEAD_GROUP = new Set(SUBCAT_MAP.Head);
+const ACCESSORY_GROUP = new Set(SUBCAT_MAP.Accessories);
+
+/**
+ * The `/v3/catalog/items` parameters for a list of on-chain categories. That route reads one
+ * `wearableCategory` (wearables only), so a list inside the Head or Accessories group goes through its
+ * `isWearableHead` / `isWearableAccessory` flag (with or without `head`, which the server's head list
+ * lacks), an emote sub-category through `emoteCategory`, and any other list keeps its first value,
+ * the most that route can apply, rather than dropping the filter.
+ */
+export function catalogCategoryParams(categories: string[] | undefined): Record<string, string> {
+  if (!categories?.length) return {};
+  const [first] = categories as [string, ...string[]];
+  if (categories.length > 1 && categories.every((c) => HEAD_GROUP.has(c))) return { isWearableHead: "true" };
+  if (categories.length > 1 && categories.every((c) => ACCESSORY_GROUP.has(c))) return { isWearableAccessory: "true" };
+  if (EMOTE_CATEGORIES.has(first)) return { emoteCategory: first };
+  return { wearableCategory: first };
+}
+
 export type SubSub = { key: string; labelKey: string; icon: IconName };
 export type Sub = { key: string; labelKey: string; icon: IconName; expandable?: boolean; subs?: SubSub[] };
 export type Top = { key: string; labelKey: string; expandable?: boolean; subs?: Sub[] };

@@ -24,6 +24,7 @@ export type ChatCommand =
   | { kind: 'reload' }
   /** `/commands` — list the engine console commands. */
   | { kind: 'commands' }
+  | { kind: 'debug'; target: string }
   /** Any other `/command args` — run it on the engine console (no leading slash, args pre-split). */
   | { kind: 'console'; command: string; args: string[] }
   /** `/help` (and invalid usage) — echo this text as a system message. */
@@ -39,6 +40,7 @@ export const HELP_TEXT = [
   '/world <world> — jump to a world (alias of /goto <world>)',
   '/reload — reload the current scene',
   '/commands — list the engine console commands',
+  '/debug [section | help] — open the debug panel, find a section, or list its sections',
   '/<command> [args] — run any engine console command (see /commands; /help <command> for its usage)',
 ].join('\n')
 
@@ -152,6 +154,7 @@ export function parseChatCommand(input: string): ChatCommand {
       // `/help <command>` → the engine's per-command usage (its registry keys carry the slash).
       if (restParts.length > 0) return { kind: 'console', command: 'help', args: [`/${restParts[0].replace(/^\//, '')}`] }
       return { kind: 'system', message: HELP_TEXT }
+    case 'debug': return { kind: 'debug', target: rest.trim() }
     case 'commands':
       return { kind: 'commands' }
     case 'reload':

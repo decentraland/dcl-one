@@ -10,6 +10,7 @@ pub(crate) use dcl_http as http;
 pub mod as_of;
 pub mod audit;
 pub mod cache;
+pub mod client_ip;
 pub mod cors;
 pub mod drain;
 pub mod errors;

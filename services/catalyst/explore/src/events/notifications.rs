@@ -50,6 +50,7 @@ pub async fn record_transition(
     before: Option<&Value>,
     after: &Value,
     local: bool,
+    settings: &crate::Settings,
 ) -> Result<(), sqlx::Error> {
     let empty = Value::Null;
     let before = before.unwrap_or(&empty);
@@ -81,6 +82,14 @@ pub async fn record_transition(
              VALUES ($1,$2,$3,$4,$5,$6)",
         ).bind(Uuid::new_v4()).bind(event_id).bind(kind).bind(&snapshot).bind(local)
             .bind(Utc::now().naive_utc()).execute(&mut **tx).await?;
+    }
+    if settings.operator_writes_enabled
+        && settings
+            .events_slack_webhook
+            .as_deref()
+            .is_some_and(|endpoint| !endpoint.trim().is_empty())
+    {
+        super::hooks::record(tx, event_id, before, after, local).await?;
     }
     Ok(())
 }

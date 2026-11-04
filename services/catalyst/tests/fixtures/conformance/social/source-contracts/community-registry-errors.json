@@ -1,0 +1,652 @@
+{
+  "source": "https://github.com/decentraland/social-service-ea",
+  "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+  "runtime": "v26.12.0",
+  "scope": "Actual shared registry adapter, community wrappers and HTTP handlers; local cache/fetch/domain dependencies. Read failures propagate; cache put failures are swallowed. The mGet Error message is chosen to match the target SQL permission fault; the source cache provider is Redis, not SQL.",
+  "sources": [
+    {
+      "path": "src/utils/fetch.ts",
+      "sha256": "fb4175ac375e0140625939569185fafbc9203d4dd1b2770404ee081d02a152a0"
+    },
+    {
+      "path": "src/utils/tracing.ts",
+      "sha256": "2e948bf1112aec0cd64d2558db89a0cfff06c051e4f2df6891c29fff9150e480"
+    },
+    {
+      "path": "src/adapters/registry.ts",
+      "sha256": "2c00eeec7ae8df9c24fef67b6c7b941f1688cf387af794aa38927ec7e2fca15c"
+    },
+    {
+      "path": "src/logic/community/owners.ts",
+      "sha256": "6f17cd102f41bf183a2507f3cf9da100a67eade865b7472cdc89ff1abac8c293"
+    },
+    {
+      "path": "src/logic/community/communities.ts",
+      "sha256": "b5da768f47f9fcb5a400c25fa16a278fb4c2b7b8be7bbabbda94981951ad1391"
+    },
+    {
+      "path": "src/logic/community/members.ts",
+      "sha256": "b0dc7df3813564faeb11e7cd6e2d187b436cc79af8df0542e3968c57ce5160d1"
+    },
+    {
+      "path": "src/logic/community/bans.ts",
+      "sha256": "915b2cbc7c886e39b08150681a2bcd31c2a8a0494c8d1b310dd5475a5bf6e72d"
+    },
+    {
+      "path": "src/logic/community/requests.ts",
+      "sha256": "7198b9ec1ed580691496061d3ce75a98fb3dc063675ed45ac4227ea17d99d8bf"
+    },
+    {
+      "path": "src/logic/community/posts.ts",
+      "sha256": "ba46eac87c0577bdda3e2f9d8c0ff3a8c7e84b5ad11798faf1f2ea78f5fd239d"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-communities-handler.ts",
+      "sha256": "67cf8ada1ca4edd5cc896bdaa68148cd44d57fdd268afc5c6cb10cb0df867503"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-community-members-handlers.ts",
+      "sha256": "d268d59023df85b25d2d0d4d5faef984c1ea97ec51c4222040c0993ca69c1936"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-banned-members-handler.ts",
+      "sha256": "0dbe05a18a075310854e5e1223e7534c4335da38eae223600113ed79fa6f6d55"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-community-requests-handler.ts",
+      "sha256": "af3d973123ac646338856ead741cd8c78fabcc5324fd7a12db0aeff6ad3930ae"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-member-requests-handler.ts",
+      "sha256": "0b1902fdba36774ccac98b85662e9df7c422e1bd53a20dadf6a092e3f379d24e"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-community-posts-handler.ts",
+      "sha256": "c0ec65507b28491fed53742648252da536040f7f02a767ab2032288669db4789"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-communities-v2-handler.ts",
+      "sha256": "f3b8403592f6d069d40568bb8f186be96b7e5124f0e303a7dbaf22536d78c0b2"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-community-members-v2-handler.ts",
+      "sha256": "087af4fad0cf831ba7ec3cbd8af9f2aab5c45c49b466840b8ea118eaf04cf2db"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-banned-members-v2-handler.ts",
+      "sha256": "486ef6067fbbf4f2889e0e1fb8bd5e2d451333e0e53c7df3815c6924d579241d"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-community-requests-v2-handler.ts",
+      "sha256": "27c951504b312ed2128e443485536054be78633c69f45449f45bd4e4ac009572"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-member-requests-v2-handler.ts",
+      "sha256": "5f9f66050c31007a9143e4c9a147a9ccb6938f3c84f2a4a8f4e7c6822b75e79d"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-community-posts-v2-handler.ts",
+      "sha256": "f0cc0ca943e4c56e948e4d1316b9a1fbad88cd279d90fe36a4bb58281f696cae"
+    }
+  ],
+  "cases": [
+    {
+      "phase": "read-error",
+      "path": "/v1/communities",
+      "handler": "getCommunitiesHandler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table registry_profile_cache"
+        }
+      },
+      "trace": [
+        {
+          "phase": "cache-read",
+          "keys": [
+            "catalyst:minimal:profile:0x1111111111111111111111111111111111111111"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "read-error",
+      "path": "/v1/communities/:id/members",
+      "handler": "getCommunityMembersHandler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table registry_profile_cache"
+        }
+      },
+      "trace": [
+        {
+          "phase": "cache-read",
+          "keys": [
+            "catalyst:minimal:profile:0x1111111111111111111111111111111111111111"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "read-error",
+      "path": "/v1/communities/:id/bans",
+      "handler": "getBannedMembersHandler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table registry_profile_cache"
+        }
+      },
+      "trace": [
+        {
+          "phase": "cache-read",
+          "keys": [
+            "catalyst:minimal:profile:0x1111111111111111111111111111111111111111"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "read-error",
+      "path": "/v1/communities/:id/requests",
+      "handler": "getCommunityRequestsHandler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table registry_profile_cache"
+        }
+      },
+      "trace": [
+        {
+          "phase": "cache-read",
+          "keys": [
+            "catalyst:minimal:profile:0x1111111111111111111111111111111111111111"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "read-error",
+      "path": "/v1/members/:address/requests",
+      "handler": "getMemberRequestsHandler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table registry_profile_cache"
+        }
+      },
+      "trace": [
+        {
+          "phase": "cache-read",
+          "keys": [
+            "catalyst:minimal:profile:0x1111111111111111111111111111111111111111"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "read-error",
+      "path": "/v1/communities/:id/posts",
+      "handler": "getCommunityPostsHandler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table registry_profile_cache"
+        }
+      },
+      "trace": [
+        {
+          "phase": "cache-read",
+          "keys": [
+            "catalyst:minimal:profile:0x1111111111111111111111111111111111111111"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "read-error",
+      "path": "/v2/communities",
+      "handler": "getCommunitiesV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "id": "00000000-0000-4000-8000-000000000001",
+                "name": "Fixture",
+                "description": "Description",
+                "ownerAddress": "0x1111111111111111111111111111111111111111",
+                "privacy": "public",
+                "visibility": "all",
+                "active": true,
+                "role": "owner",
+                "membersCount": 1,
+                "friends": [],
+                "voiceChatStatus": {
+                  "isActive": false,
+                  "participantCount": 0,
+                  "moderatorCount": 0
+                }
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "phase": "read-error",
+      "path": "/v2/communities/:id/members",
+      "handler": "getCommunityMembersV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "phase": "read-error",
+      "path": "/v2/communities/:id/bans",
+      "handler": "getBannedMembersV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "phase": "read-error",
+      "path": "/v2/communities/:id/requests",
+      "handler": "getCommunityRequestsV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "id": "00000000-0000-4000-8000-000000000002",
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "type": "request_to_join",
+                "status": "pending",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "phase": "read-error",
+      "path": "/v2/members/:address/requests",
+      "handler": "getMemberRequestsV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "name": "Fixture",
+                "description": "Description",
+                "ownerAddress": "0x1111111111111111111111111111111111111111",
+                "privacy": "public",
+                "visibility": "all",
+                "active": true,
+                "role": "owner",
+                "membersCount": 1,
+                "friends": [],
+                "voiceChatStatus": {
+                  "isActive": false,
+                  "participantCount": 0,
+                  "moderatorCount": 0
+                },
+                "id": "00000000-0000-4000-8000-000000000002",
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "type": "request_to_join",
+                "status": "pending"
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "phase": "read-error",
+      "path": "/v2/communities/:id/posts",
+      "handler": "getCommunityPostsV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "posts": [
+              {
+                "id": "00000000-0000-4000-8000-000000000002",
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "authorAddress": "0x1111111111111111111111111111111111111111",
+                "content": "Post",
+                "createdAt": 1,
+                "likesCount": 0,
+                "likedByUser": false
+              }
+            ],
+            "total": 1
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "phase": "write-error",
+      "path": "/v1/communities",
+      "handler": "getCommunitiesHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "id": "00000000-0000-4000-8000-000000000001",
+                "name": "Fixture",
+                "description": "Description",
+                "ownerAddress": "0x1111111111111111111111111111111111111111",
+                "privacy": "public",
+                "visibility": "all",
+                "active": true,
+                "role": "owner",
+                "membersCount": 1,
+                "friends": [],
+                "ownerName": "Owner",
+                "voiceChatStatus": {
+                  "isActive": false,
+                  "participantCount": 0,
+                  "moderatorCount": 0
+                }
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "phase": "cache-read",
+          "keys": [
+            "catalyst:minimal:profile:0x1111111111111111111111111111111111111111"
+          ]
+        },
+        {
+          "phase": "registry-read"
+        },
+        {
+          "phase": "cache-write"
+        }
+      ]
+    },
+    {
+      "phase": "write-error",
+      "path": "/v1/communities/:id/members",
+      "handler": "getCommunityMembersHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "friendshipStatus": 7,
+                "profilePictureUrl": "http://cdn.test/face.png",
+                "hasClaimedName": true,
+                "name": "Owner"
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "phase": "cache-read",
+          "keys": [
+            "catalyst:minimal:profile:0x1111111111111111111111111111111111111111"
+          ]
+        },
+        {
+          "phase": "registry-read"
+        },
+        {
+          "phase": "cache-write"
+        }
+      ]
+    },
+    {
+      "phase": "write-error",
+      "path": "/v1/communities/:id/bans",
+      "handler": "getBannedMembersHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "friendshipStatus": 7,
+                "profilePictureUrl": "http://cdn.test/face.png",
+                "hasClaimedName": true,
+                "name": "Owner"
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "phase": "cache-read",
+          "keys": [
+            "catalyst:minimal:profile:0x1111111111111111111111111111111111111111"
+          ]
+        },
+        {
+          "phase": "registry-read"
+        },
+        {
+          "phase": "cache-write"
+        }
+      ]
+    },
+    {
+      "phase": "write-error",
+      "path": "/v1/communities/:id/requests",
+      "handler": "getCommunityRequestsHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "id": "00000000-0000-4000-8000-000000000002",
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "type": "request_to_join",
+                "status": "pending",
+                "profilePictureUrl": "http://cdn.test/face.png",
+                "hasClaimedName": true,
+                "name": "Owner",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "phase": "cache-read",
+          "keys": [
+            "catalyst:minimal:profile:0x1111111111111111111111111111111111111111"
+          ]
+        },
+        {
+          "phase": "registry-read"
+        },
+        {
+          "phase": "cache-write"
+        }
+      ]
+    },
+    {
+      "phase": "write-error",
+      "path": "/v1/members/:address/requests",
+      "handler": "getMemberRequestsHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "name": "Fixture",
+                "description": "Description",
+                "ownerAddress": "0x1111111111111111111111111111111111111111",
+                "privacy": "public",
+                "visibility": "all",
+                "active": true,
+                "role": "owner",
+                "membersCount": 1,
+                "friends": [],
+                "ownerName": "Owner",
+                "voiceChatStatus": {
+                  "isActive": false,
+                  "participantCount": 0,
+                  "moderatorCount": 0
+                },
+                "id": "00000000-0000-4000-8000-000000000002",
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "type": "request_to_join",
+                "status": "pending"
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "phase": "cache-read",
+          "keys": [
+            "catalyst:minimal:profile:0x1111111111111111111111111111111111111111"
+          ]
+        },
+        {
+          "phase": "registry-read"
+        },
+        {
+          "phase": "cache-write"
+        }
+      ]
+    },
+    {
+      "phase": "write-error",
+      "path": "/v1/communities/:id/posts",
+      "handler": "getCommunityPostsHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "posts": [
+              {
+                "id": "00000000-0000-4000-8000-000000000002",
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "authorAddress": "0x1111111111111111111111111111111111111111",
+                "content": "Post",
+                "createdAt": 1,
+                "likesCount": 0,
+                "likedByUser": false,
+                "authorName": "Owner",
+                "authorProfilePictureUrl": "http://cdn.test/face.png",
+                "authorHasClaimedName": true
+              }
+            ],
+            "total": 1
+          }
+        }
+      },
+      "trace": [
+        {
+          "phase": "cache-read",
+          "keys": [
+            "catalyst:minimal:profile:0x1111111111111111111111111111111111111111"
+          ]
+        },
+        {
+          "phase": "registry-read"
+        },
+        {
+          "phase": "cache-write"
+        }
+      ]
+    }
+  ]
+}

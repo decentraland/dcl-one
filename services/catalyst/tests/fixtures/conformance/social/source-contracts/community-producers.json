@@ -1,0 +1,201 @@
+{
+  "source": "decentraland/social-service-ea",
+  "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+  "node": "v26.12.0",
+  "sources": [
+    "src/logic/community/communities.ts",
+    "src/logic/community/members.ts",
+    "src/logic/community/bans.ts",
+    "src/logic/community/posts.ts",
+    "src/logic/community/requests.ts",
+    "src/logic/community-voice/community-voice.ts"
+  ],
+  "timestamp": 1793721600000,
+  "events": [
+    {
+      "operation": "delete-by-global-moderator",
+      "event": {
+        "type": "community",
+        "subType": "community-deleted-content-violation",
+        "key": "00000000-0000-4000-8000-000000000001",
+        "timestamp": 1793721600000,
+        "metadata": {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "name": "Fixture community",
+          "ownerAddress": "0x0000000000000000000000000000000000000001",
+          "thumbnailUrl": "N/A"
+        }
+      }
+    },
+    {
+      "operation": "delete-by-global-moderator",
+      "event": {
+        "type": "community",
+        "subType": "community-deleted",
+        "key": "00000000-0000-4000-8000-000000000001",
+        "timestamp": 1793721600000,
+        "metadata": {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "name": "Fixture community",
+          "thumbnailUrl": "N/A"
+        }
+      }
+    },
+    {
+      "operation": "rename",
+      "event": {
+        "type": "community",
+        "subType": "community-renamed",
+        "key": "00000000-0000-4000-8000-000000000001-after-fixture-community",
+        "timestamp": 1793721600000,
+        "metadata": {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "oldName": "Fixture community",
+          "newName": "After",
+          "thumbnailUrl": "N/A"
+        }
+      }
+    },
+    {
+      "operation": "kick",
+      "event": {
+        "type": "community",
+        "subType": "community-member-removed",
+        "key": "00000000-0000-4000-8000-000000000001-0x0000000000000000000000000000000000000004-1793721600000",
+        "timestamp": 1793721600000,
+        "metadata": {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "name": "Fixture community",
+          "memberAddress": "0x0000000000000000000000000000000000000004",
+          "thumbnailUrl": "http://cdn.test/social/communities/00000000-0000-4000-8000-000000000001/raw-thumbnail.png"
+        }
+      }
+    },
+    {
+      "operation": "leave",
+      "event": {
+        "type": "community",
+        "subType": "community-member-left",
+        "key": "00000000-0000-4000-8000-000000000001-0x0000000000000000000000000000000000000004-1793721600000",
+        "timestamp": 1793721600000,
+        "metadata": {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "memberAddress": "0x0000000000000000000000000000000000000004"
+        }
+      }
+    },
+    {
+      "operation": "transfer",
+      "event": {
+        "type": "community",
+        "subType": "community-ownership-transferred",
+        "key": "00000000-0000-4000-8000-000000000001-0x0000000000000000000000000000000000000001-0x0000000000000000000000000000000000000004-1793721600000",
+        "timestamp": 1793721600000,
+        "metadata": {
+          "communityId": "00000000-0000-4000-8000-000000000001",
+          "communityName": "Fixture community",
+          "oldOwnerAddress": "0x0000000000000000000000000000000000000001",
+          "newOwnerAddress": "0x0000000000000000000000000000000000000004",
+          "thumbnailUrl": "http://cdn.test/social/communities/00000000-0000-4000-8000-000000000001/raw-thumbnail.png"
+        }
+      }
+    },
+    {
+      "operation": "ban",
+      "event": {
+        "type": "community",
+        "subType": "community-member-banned",
+        "key": "00000000-0000-4000-8000-000000000001-0x0000000000000000000000000000000000000004",
+        "timestamp": 1793721600000,
+        "metadata": {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "name": "Fixture community",
+          "memberAddress": "0x0000000000000000000000000000000000000004",
+          "thumbnailUrl": "http://cdn.test/social/communities/00000000-0000-4000-8000-000000000001/raw-thumbnail.png"
+        }
+      }
+    },
+    {
+      "operation": "post",
+      "event": {
+        "type": "community",
+        "subType": "community-post-added",
+        "key": "00000000-0000-4000-8000-000000000002",
+        "timestamp": 1793721600000,
+        "metadata": {
+          "postId": "00000000-0000-4000-8000-000000000002",
+          "communityId": "00000000-0000-4000-8000-000000000001",
+          "communityName": "Fixture community",
+          "thumbnailUrl": "http://cdn.test/social/communities/00000000-0000-4000-8000-000000000001/raw-thumbnail.png",
+          "authorAddress": "0x0000000000000000000000000000000000000001",
+          "addressesToNotify": []
+        }
+      }
+    },
+    {
+      "operation": "request",
+      "event": {
+        "type": "community",
+        "subType": "community-request-to-join-received",
+        "key": "community-request-to-join-received-00000000-0000-4000-8000-000000000001-00000000-0000-4000-8000-000000000003",
+        "timestamp": 1793721600000,
+        "metadata": {
+          "communityId": "00000000-0000-4000-8000-000000000001",
+          "communityName": "Fixture community",
+          "memberAddress": "0x0000000000000000000000000000000000000004",
+          "memberName": "Member",
+          "thumbnailUrl": "http://cdn.test/social/communities/00000000-0000-4000-8000-000000000001/raw-thumbnail.png"
+        }
+      }
+    },
+    {
+      "operation": "invite",
+      "event": {
+        "type": "community",
+        "subType": "community-invite-received",
+        "key": "community-invite-received-00000000-0000-4000-8000-000000000001-00000000-0000-4000-8000-000000000003",
+        "timestamp": 1793721600000,
+        "metadata": {
+          "communityId": "00000000-0000-4000-8000-000000000001",
+          "communityName": "Fixture community",
+          "memberAddress": "0x0000000000000000000000000000000000000004",
+          "thumbnailUrl": "http://cdn.test/social/communities/00000000-0000-4000-8000-000000000001/raw-thumbnail.png"
+        }
+      }
+    },
+    {
+      "operation": "accept-request",
+      "event": {
+        "type": "community",
+        "subType": "community-request-to-join-accepted",
+        "key": "community-request-to-join-accepted-00000000-0000-4000-8000-000000000001-00000000-0000-4000-8000-000000000003",
+        "timestamp": 1793721600000,
+        "metadata": {
+          "communityId": "00000000-0000-4000-8000-000000000001",
+          "communityName": "Fixture community",
+          "memberAddress": "0x0000000000000000000000000000000000000004",
+          "thumbnailUrl": "http://cdn.test/social/communities/00000000-0000-4000-8000-000000000001/raw-thumbnail.png"
+        }
+      }
+    },
+    {
+      "operation": "start-voice",
+      "event": {
+        "type": "community",
+        "subType": "community-voice-chat-started",
+        "key": "00000000-0000-4000-8000-000000000001-1793721600000",
+        "timestamp": 1793721600001,
+        "metadata": {
+          "communityId": "00000000-0000-4000-8000-000000000001",
+          "communityName": "Fixture community",
+          "thumbnailUrl": ""
+        }
+      },
+      "options": {
+        "excludeAddresses": [
+          "0x0000000000000000000000000000000000000001"
+        ]
+      }
+    }
+  ]
+}

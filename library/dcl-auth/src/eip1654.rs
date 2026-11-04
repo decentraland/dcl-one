@@ -10,6 +10,20 @@ pub trait Eip1654Validator: Send + Sync {
         hash: &[u8],
         signature: &[u8],
     ) -> Result<bool, AuthError>;
+
+    /// The same question at `block`. A validator that cannot answer for a past block fails
+    /// the call (undecidable).
+    async fn validate_signature_at_block(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+        _block: u64,
+    ) -> Result<bool, AuthError> {
+        Err(AuthError::Eip1654ValidationFailed(
+            "this validator cannot answer for a past block".to_string(),
+        ))
+    }
 }
 
 /// Accepts every contract-wallet link. For entities a peer already holds: the
@@ -27,6 +41,16 @@ impl Eip1654Validator for PeerValidated {
         _contract_address: &str,
         _hash: &[u8],
         _signature: &[u8],
+    ) -> Result<bool, AuthError> {
+        Ok(true)
+    }
+
+    async fn validate_signature_at_block(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+        _block: u64,
     ) -> Result<bool, AuthError> {
         Ok(true)
     }

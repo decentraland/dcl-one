@@ -1,0 +1,100 @@
+{
+  "wearableCategories": [
+    "eyebrows",
+    "eyes",
+    "facial_hair",
+    "hair",
+    "body_shape",
+    "mouth",
+    "upper_body",
+    "lower_body",
+    "feet",
+    "earring",
+    "eyewear",
+    "hat",
+    "helmet",
+    "mask",
+    "tiara",
+    "top_head",
+    "skin",
+    "hands_wear"
+  ],
+  "hideableBodyParts": [
+    "head",
+    "hands"
+  ],
+  "bodyShapes": [
+    "urn:decentraland:off-chain:base-avatars:BaseMale",
+    "urn:decentraland:off-chain:base-avatars:BaseFemale"
+  ],
+  "rarities": [
+    "unique",
+    "mythic",
+    "exotic",
+    "legendary",
+    "epic",
+    "rare",
+    "uncommon",
+    "common"
+  ],
+  "locales": [
+    "en",
+    "es"
+  ],
+  "emoteCategories": [
+    "dance",
+    "stunt",
+    "greetings",
+    "fun",
+    "poses",
+    "reactions",
+    "horror",
+    "miscellaneous"
+  ],
+  "scenePermissions": [
+    "ALLOW_TO_MOVE_PLAYER_INSIDE_SCENE",
+    "ALLOW_TO_TRIGGER_AVATAR_EMOTE",
+    "ALLOW_MEDIA_HOSTNAMES",
+    "USE_WEB3_API",
+    "USE_FETCH",
+    "USE_WEBSOCKET",
+    "OPEN_EXTERNAL_LINK"
+  ],
+  "voiceChatToggles": [
+    "enabled",
+    "disabled"
+  ],
+  "portableExperiencesToggles": [
+    "enabled",
+    "disabled",
+    "hideUi"
+  ],
+  "nearbyVoiceChatToggles": [
+    "enabled",
+    "disabled"
+  ],
+  "sceneSourceRotations": [
+    "north",
+    "east",
+    "south",
+    "west"
+  ],
+  "mappingNetworks": [
+    "mainnet",
+    "base_mainnet",
+    "base_sepolia",
+    "monad_mainnet",
+    "monad_testnet",
+    "ape_mainnet",
+    "ape_caldera",
+    "matic",
+    "sepolia",
+    "amoy"
+  ],
+  "mappingTypes": [
+    "single",
+    "any",
+    "multiple",
+    "range"
+  ]
+}

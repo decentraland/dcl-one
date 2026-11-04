@@ -143,3 +143,41 @@ The crate needs `assets` and `naga_oil` as dev-dependencies, the latter only to 
 `cargo test -p <crate> <test> -- --ignored --nocapture`. The native pass compiles the same
 variants as web, but the web-only rules on the [platforms](platforms.md#web) page still need
 the web build once.
+
+## A plugin section in the runtime debug panel
+
+In the plugin that registers the commands, call `app.add_debug_section(DebugSection { ... })`
+from `console::{AddDebugSection, DebugSection}`. Give it a unique title, a read-only JSON
+query and labeled fields using dot-separated keys or array indices. Actions pair a button
+label with a console command line. Use commands available in the same builds as the section.
+The HUD discovers sections through `/debug_panel` and polls only expanded sections.
+Return numeric groups as arrays. For a tuple with named components, end the field label
+with their ordered names, for example `Scene definitions per batch (min / mean / max)`
+or `Position (X / Y / Z)`. The HUD puts each caption beside its value.
+If a measurement needs a peer, scene or sample, an object reply can include an
+`unavailable` map from field paths to reasons. The HUD uses the closest matching path
+prefix (or the empty key as a default) only when the value is missing or null.
+Fields waiting for the same prerequisite share one explanation.
+When developing a runtime feature, include the diagnostics that answer a concrete testing
+question. Show the effective state, units, scope and reason for an unavailable reading.
+For an adjustable feature, bind its existing validated action or setting. Register controls
+only where the feature and its permission level are available. Keep keys, tokens, private
+messages and signed URLs out of the panel.
+
+Keep section labels, console bindings and JSON formatting in a diagnostics module beside
+the feature. The feature owns its state, transitions and permission checks. Read existing
+components on demand. For rates and histories, retain the smallest counters or bounded
+window needed to answer the first query after activity. When the panel reopens, show
+activity that occurred while polling was stopped. Build charts and format snapshots
+only when queried, after releasing any producer lock. Verify the first read with the
+panel closed throughout the activity being measured.
+
+Use `DebugInput` for a toggle, choice, number or text argument. A field path binds the
+control to live state. A command template substitutes `{value}` into its arguments.
+For opposite actions such as Connect and Disconnect, register one `ActionButton`.
+Bind it to the boolean the command changes and give each direction its caption and
+argument. When neither action is available, return null and the reason.
+Validate user input in the owning handler. For HUD-owned features, use the existing
+session handler and apply the same lifecycle rules. Verify a real value change or
+side effect through an open panel in a built client. See `WorldStatePlugin` for a
+readout with navigation controls and `AvatarPlugin` for an action.

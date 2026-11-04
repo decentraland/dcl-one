@@ -1,5 +1,5 @@
 import ContentStatus from "../../components/ContentStatus";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import Button from "../../atoms/Button";
 import Person from "../components/Person";
@@ -14,7 +14,7 @@ type PlaceDetailData = {
   coords: string;
   parcels: number;
   favorites: number;
-  views: number;
+  views: number | null;
   approval: number;
   creator: string;
   creatorAddress?: string | null;
@@ -52,6 +52,8 @@ type PlaceDetailProps = {
   onRetry?: () => void;
   onClose?: () => void;
   onJumpIn?: () => void;
+  jumpHref?: string;
+  detailSlot?: ReactNode;
   onLike?: (placeId: string, like: boolean | null) => Promise<unknown>;
   onFavorite?: (placeId: string, favorite: boolean) => Promise<unknown>;
 };
@@ -62,7 +64,7 @@ function categoryLabel(key: string): string {
   return CATEGORY_LABELS[key] ?? key.replace(/[_-]+/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 }
 
-export default function PlaceDetail({ place, viewer = null, notFound = false, loading = false, error = false, onRetry, onClose, onJumpIn, onLike = setPlaceLike, onFavorite = setPlaceFavorite }: PlaceDetailProps = {}) {
+export default function PlaceDetail({ place, viewer = null, notFound = false, loading = false, error = false, onRetry, onClose, onJumpIn, jumpHref, detailSlot, onLike = setPlaceLike, onFavorite = setPlaceFavorite }: PlaceDetailProps = {}) {
   const p = place ?? PLACE;
   const [liked, setLiked] = useState<boolean | null>(viewer?.liked ?? null);
   const [faved, setFaved] = useState(viewer?.favorite ?? false);
@@ -117,7 +119,7 @@ export default function PlaceDetail({ place, viewer = null, notFound = false, lo
     "--hue": p.hue,
     ...(p.image ? { "--thumb-img": `url("${p.image}")` } : null),
   };
-  const showStats = p.views > 0 || p.approval > 0;
+  const showStats = (p.views ?? 0) > 0 || p.approval > 0;
   const categories = (p.categories ?? []).filter((c) => c && c !== "all");
   return (
     <div className="ep__backdrop" onClick={onClose}>
@@ -154,7 +156,7 @@ export default function PlaceDetail({ place, viewer = null, notFound = false, lo
                   <path d="M1 9s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5z" fill="none" stroke="currentColor" strokeWidth="1.4" />
                   <circle cx="9" cy="9" r="2.2" fill="currentColor" />
                 </svg>
-                {p.views}
+                {p.views ?? "—"}
               </span>
               <span className="pld__stat-inline" title="Likes">
                 <svg viewBox="0 0 18 18" width="15" height="15" aria-hidden="true">
@@ -185,7 +187,7 @@ export default function PlaceDetail({ place, viewer = null, notFound = false, lo
           </div>
 
           <div className="pld__actions">
-            <Button variant="primary" className="pld__jump" data-sb-linkto="Explorer/Workflows/SceneLoading" onClick={onJumpIn}>
+            <Button {...(jumpHref ? { as: "a" as const, href: jumpHref } : {})} variant="primary" className="pld__jump" data-sb-linkto="Explorer/Workflows/SceneLoading" onClick={onJumpIn}>
               JUMP IN
               <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
                 <path d="M3 8h8M8 4l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
@@ -246,6 +248,7 @@ export default function PlaceDetail({ place, viewer = null, notFound = false, lo
               </div>
 
             </div>
+            {detailSlot}
           </div>
         </div>
       </div>

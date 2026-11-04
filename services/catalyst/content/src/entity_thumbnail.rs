@@ -191,10 +191,10 @@ async fn serve_content_blob(
             Ok(response)
         }
         Some(ParsedRange::Range { start, end }) => {
-            let body: Bytes = if *method == Method::HEAD {
-                Bytes::new()
+            let body = if *method == Method::HEAD {
+                Body::empty()
             } else {
-                opened.read_range(start, end).await?
+                opened.into_range_body(start, end).await?
             };
             let mut response = (StatusCode::PARTIAL_CONTENT, body).into_response();
             apply(&mut response, &base_headers);
@@ -643,6 +643,41 @@ mod tests {
                 .unwrap(),
             value()
         );
+    }
+
+    #[tokio::test]
+    async fn a_blob_range_streams_only_the_window() {
+        use crate::tests::support::{TEST_CID, TestNode};
+        let node = TestNode::without_db("blob-range").await;
+        let mut blob = vec![0u8; 4096];
+        blob[..8].copy_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        for (i, b) in blob.iter_mut().enumerate().skip(8) {
+            *b = (i % 251) as u8;
+        }
+        let blob = Bytes::from(blob);
+        node.store(TEST_CID, blob.clone()).await;
+        let mut headers = HeaderMap::new();
+        headers.insert(header::RANGE, "bytes=100-4999".parse().unwrap());
+
+        for method in [Method::GET, Method::HEAD] {
+            let resp = serve_content_blob(&node.state, TEST_CID, &method, &headers)
+                .await
+                .unwrap();
+            let get = |name| resp.headers()[name].to_str().unwrap().to_string();
+            assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+            assert_eq!(get(header::CONTENT_TYPE), "image/png");
+            assert_eq!(get(header::CONTENT_RANGE), "bytes 100-4095/4096");
+            assert_eq!(get(header::CONTENT_LENGTH), "3996");
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let expected = if method == Method::HEAD {
+                Bytes::new()
+            } else {
+                blob.slice(100..)
+            };
+            assert_eq!(body, expected, "{method}");
+        }
     }
 
     #[tokio::test]
