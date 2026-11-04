@@ -689,8 +689,7 @@ fn content_routes(max_deploy_body: usize) -> Router<SharedState> {
         )
         .route(
             "/entities",
-            post(create_entity::create_entity)
-                .layer(DefaultBodyLimit::max(max_deploy_body)),
+            post(create_entity::create_entity).layer(DefaultBodyLimit::max(max_deploy_body)),
         )
         .route("/scenes/{coord}", delete(unpublish_scene::unpublish_scene))
         .route("/forwarding", get(forward::list_forwards))

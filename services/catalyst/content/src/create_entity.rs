@@ -270,11 +270,7 @@ async fn read_form(
             // without one (the Explorer names its parts by hash only).
             let file_name = field.file_name().unwrap_or("undefined").to_string();
             let mut buf = BytesMut::new();
-            while let Some(chunk) = field
-                .chunk()
-                .await
-                .map_err(|e| read_error(e, max_fields))?
-            {
+            while let Some(chunk) = field.chunk().await.map_err(|e| read_error(e, max_fields))? {
                 if buf.len().saturating_add(chunk.len()) > MAX_DEPLOY_FILE_BYTES {
                     return Err(too_large(format!(
                         "File '{file_name}' is too large. The maximum allowed size per file is {MAX_DEPLOY_FILE_BYTES} bytes."
@@ -292,11 +288,7 @@ async fn read_form(
             }
             field_count += 1;
             let mut buf = Vec::new();
-            while let Some(chunk) = field
-                .chunk()
-                .await
-                .map_err(|e| read_error(e, max_fields))?
-            {
+            while let Some(chunk) = field.chunk().await.map_err(|e| read_error(e, max_fields))? {
                 if buf.len().saturating_add(chunk.len()) > max_field_bytes {
                     return Err(too_large(format!(
                         "Field '{name}' is too large. The maximum allowed size per field is {max_field_bytes} bytes."
@@ -424,8 +416,7 @@ pub async fn create_entity(
     let multipart = match multipart {
         Ok(multipart) => multipart,
         Err(refusal) => {
-            if !declared_partial
-                && let Some(retry_after) = state.deploy_quota.exhausted(&client_ip)
+            if !declared_partial && let Some(retry_after) = state.deploy_quota.exhausted(&client_ip)
             {
                 return Ok(quota_exceeded_response(retry_after));
             }

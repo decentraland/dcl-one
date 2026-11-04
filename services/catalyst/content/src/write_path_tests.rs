@@ -277,7 +277,10 @@ async fn the_write_routes_answer_their_gates_in_order() {
         deploy_request("/entities", "bafy", &chain, &[]),
     )
     .await;
-    assert_eq!((status, &body[..]), (StatusCode::NOT_FOUND, &b"Not found"[..]));
+    assert_eq!(
+        (status, &body[..]),
+        (StatusCode::NOT_FOUND, &b"Not found"[..])
+    );
     attach(&node.state, true, None, None);
     node.state.set_read_only(true);
     let unrouted = call(
@@ -292,10 +295,17 @@ async fn the_write_routes_answer_their_gates_in_order() {
         deploy_request("/content/entities", "bafy", &chain, &[]),
     )
     .await;
-    assert_eq!((status, &body[..]), (StatusCode::NOT_FOUND, &b"Not found"[..]));
+    assert_eq!(
+        (status, &body[..]),
+        (StatusCode::NOT_FOUND, &b"Not found"[..])
+    );
     assert_eq!(
         (status, headers[header::CONTENT_TYPE].clone(), body),
-        (unrouted.0, unrouted.1[header::CONTENT_TYPE].clone(), unrouted.2),
+        (
+            unrouted.0,
+            unrouted.1[header::CONTENT_TYPE].clone(),
+            unrouted.2
+        ),
         "the same answer as a path the router does not serve"
     );
     let (status, _, body) = call(
@@ -303,7 +313,10 @@ async fn the_write_routes_answer_their_gates_in_order() {
         Request::delete("/scenes/0,0").body(Body::empty()).unwrap(),
     )
     .await;
-    assert_eq!((status, &body[..]), (StatusCode::NOT_FOUND, &b"Not found"[..]));
+    assert_eq!(
+        (status, &body[..]),
+        (StatusCode::NOT_FOUND, &b"Not found"[..])
+    );
     node.state.set_read_only(false);
 
     for req in [
@@ -805,7 +818,10 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
     assert!(deployer.is_rate_limited("scene", &parcel));
     for (replay_chain, files) in [
         (chain.clone(), vec![(entity_id.as_str(), &entity_bytes)]),
-        (json!([{"type": "SIGNER", "payload": "0xabc", "signature": ""}]), vec![]),
+        (
+            json!([{"type": "SIGNER", "payload": "0xabc", "signature": ""}]),
+            vec![],
+        ),
     ] {
         let (status, _, body) = call(
             &router,
@@ -820,7 +836,12 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
     deployer.clear_rate_limits();
     assert_eq!(
         deployer
-            .deploy_entity(vec![entity_bytes.clone()], &entity_id, chain.clone(), "LOCAL")
+            .deploy_entity(
+                vec![entity_bytes.clone()],
+                &entity_id,
+                chain.clone(),
+                "LOCAL"
+            )
             .await
             .ok(),
         Some(created),
@@ -1636,7 +1657,12 @@ async fn a_form_past_upstreams_multipart_limits_is_413() {
     let big = Bytes::from(vec![0u8; super::create_entity::MAX_DEPLOY_FILE_BYTES + 1]);
     let (status, _, body) = call(
         &router,
-        deploy_request("/content/entities", "bafy", &json!([]), &[("big.glb", &big)]),
+        deploy_request(
+            "/content/entities",
+            "bafy",
+            &json!([]),
+            &[("big.glb", &big)],
+        ),
     )
     .await;
     assert_eq!(
