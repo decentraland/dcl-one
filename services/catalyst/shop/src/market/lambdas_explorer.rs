@@ -498,9 +498,12 @@ async fn fetch_base_items(state: &MarketplaceState) -> Vec<OwnedItem> {
         .collect()
 }
 
-async fn fetch_third_party_items(state: &MarketplaceState, owner: &str) -> Vec<OwnedItem> {
-    fetch_all_third_party_wearables(state, owner, None)
-        .await
+async fn fetch_third_party_items(
+    state: &MarketplaceState,
+    owner: &str,
+) -> Result<Vec<OwnedItem>, String> {
+    Ok(fetch_all_third_party_wearables(state, owner, None)
+        .await?
         .into_iter()
         .map(|e| OwnedItem {
             amount: e.individual_data.len() as i64,
@@ -517,7 +520,7 @@ async fn fetch_third_party_items(state: &MarketplaceState, owner: &str) -> Vec<O
             is_third_party: true,
             has_date: false,
         })
-        .collect()
+        .collect())
 }
 
 async fn explorer_items(
@@ -618,12 +621,12 @@ async fn compute_explorer_items(
         if third_party_allowed {
             fetch_third_party_items(state, addr).await
         } else {
-            Vec::new()
+            Ok(Vec::new())
         }
     };
     let (mut items, owned, third_party) = tokio::join!(base_leg, owned_leg, third_party_leg);
     items.extend(owned?);
-    items.extend(third_party);
+    items.extend(third_party?);
     items.retain(|it| passes_filters(it, &q));
     sort_items(&mut items, &q.sort, &q.direction);
     let total = items.len() as i64;

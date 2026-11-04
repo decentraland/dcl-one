@@ -435,8 +435,11 @@ async fn items_by_owner(
             return bad_request("'collectionId' must be a valid third-party collection URN");
         };
         let content_public_url = &state.settings.content_public_url;
-        let body: Vec<Value> = super::third_party::owned_third_party_urns(state, owner, &name)
-            .await
+        let owned = match super::third_party::owned_third_party_urns(state, owner, &name).await {
+            Ok(owned) => owned,
+            Err(e) => return super::third_party::fetch_error(owner, &e),
+        };
+        let body: Vec<Value> = owned
             .into_iter()
             .map(|(urn, amount, entity)| {
                 let mut obj = json!({ "urn": urn, "amount": amount });
