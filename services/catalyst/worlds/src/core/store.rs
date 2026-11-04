@@ -423,15 +423,17 @@ pub async fn get_world(pool: &PgPool, world: &WorldName) -> Result<Option<WorldR
 /// Upstream's `isWorldValid`: the world has scenes and is neither disabled
 /// nor its owner quota-blocked past the grace.
 pub async fn world_is_valid(pool: &PgPool, world: &WorldName) -> Result<bool, ApiError> {
-    let row: Option<(bool, Option<NaiveDateTime>, Option<NaiveDateTime>)> = sqlx::query_as(
-        "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes s WHERE s.world_name = w.name), \
+    let row: Option<(bool, Option<NaiveDateTime>, Option<NaiveDateTime>)> =
+        sqlx::query_as(concat!(
+            "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes s WHERE s.world_name = w.name), \
                 w.blocked_since, q.created_at \
-           FROM worlds.worlds w LEFT JOIN worlds.quota_blocks q ON q.wallet = w.owner \
-          WHERE w.name = $1",
-    )
-    .bind(world.key())
-    .fetch_optional(pool)
-    .await?;
+           FROM worlds.worlds w LEFT JOIN worlds.quota_blocks q ON q.wallet = w.owner AND ",
+            super::quota::quota_blockable_world!(),
+            " WHERE w.name = $1"
+        ))
+        .bind(world.key())
+        .fetch_optional(pool)
+        .await?;
     let now = chrono::Utc::now().naive_utc();
     Ok(row.is_some_and(|(has_scenes, disabled, quota)| {
         has_scenes && !crate::comms::access::world_blocked(disabled, quota, now)
@@ -1747,6 +1749,7 @@ pub async fn list_worlds_public(
     } else {
         ""
     };
+    let blockable = super::quota::quota_blockable_world!();
     let base_from = format!(
         r#"
         FROM worlds.worlds w
@@ -1761,7 +1764,7 @@ pub async fn list_worlds_public(
             FROM worlds.world_scenes ws, unnest(ws.parcels) AS p
             GROUP BY ws.world_name
         ) ss ON ss.world_name = w.name
-        LEFT JOIN worlds.quota_blocks b ON w.owner = b.wallet
+        LEFT JOIN worlds.quota_blocks b ON w.owner = b.wallet AND {blockable}
         WHERE ($1::text IS NULL
                 OR w.owner = $1
                 OR EXISTS (SELECT 1 FROM worlds.world_permissions wp

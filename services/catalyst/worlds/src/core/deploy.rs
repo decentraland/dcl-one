@@ -806,9 +806,12 @@ async fn deploy_entity_inner(
     );
     worlds_metrics::world_deployed(world.key());
     // The publish may have freed space (a smaller scene replaced a larger one).
-    state
-        .unblock_if_under_quota(&name_owner, chrono::Utc::now().naive_utc())
-        .await;
+    let (quota_state, owner) = (state.clone(), name_owner.clone());
+    tokio::spawn(async move {
+        quota_state
+            .unblock_if_under_quota(&owner, chrono::Utc::now().naive_utc())
+            .await
+    });
     if let Some(forwarder) = &state.forwarder {
         forwarder.kick();
     }

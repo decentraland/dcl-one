@@ -22,8 +22,13 @@ use super::http::ApiError;
 use super::permissions::parse_world;
 use super::store;
 
-/// Freed space may lift the stored owner's quota block (best effort).
-async fn recheck_owner_quota(state: &SharedState, world: &WorldName) {
+/// Freed space may lift the stored owner's quota block (best effort, off the request).
+fn recheck_owner_quota(state: &SharedState, world: &WorldName) {
+    let (state, world) = (state.clone(), world.clone());
+    tokio::spawn(async move { recheck_owner_quota_now(&state, &world).await });
+}
+
+async fn recheck_owner_quota_now(state: &SharedState, world: &WorldName) {
     match state.policy.world(world).await {
         Ok(Some(row)) => {
             if let Some(owner) = row.owner.filter(|_| row.quota_blocked_since.is_some()) {
@@ -90,7 +95,7 @@ pub async fn delete_scene(
     };
 
     store::undeploy_scene(&state.pool, &world, parcel, authorized.as_deref()).await?;
-    recheck_owner_quota(&state, &world).await;
+    recheck_owner_quota(&state, &world);
     Ok(Json(json!({
         "message": format!("Scene at parcel {scene_coord} undeployed successfully")
     })))
@@ -132,7 +137,7 @@ pub async fn undeploy_world(
     }
 
     let removed = store::undeploy_world(&state.pool, &world).await?;
-    recheck_owner_quota(&state, &world).await;
+    recheck_owner_quota(&state, &world);
     tracing::info!(world = %world, signer = %auth.signer.as_str(), removed, "world undeployed");
     Ok(Json(json!({})))
 }

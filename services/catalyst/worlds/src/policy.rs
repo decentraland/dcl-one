@@ -475,12 +475,13 @@ impl Policy {
     }
 
     pub async fn world(&self, world: &WorldName) -> Result<Option<WorldRow>, sqlx::Error> {
-        let row = sqlx::query(
+        let row = sqlx::query(concat!(
             "SELECT w.name, w.owner, w.access_type, w.access_secret_hash, w.access_nft, w.blocked_since, \
                     q.created_at AS quota_blocked_since, w.mirror_source \
-             FROM worlds.worlds w LEFT JOIN worlds.quota_blocks q ON q.wallet = w.owner \
-             WHERE w.name = $1",
-        )
+             FROM worlds.worlds w LEFT JOIN worlds.quota_blocks q ON q.wallet = w.owner AND ",
+            crate::core::quota::quota_blockable_world!(),
+            " WHERE w.name = $1"
+        ))
         .bind(world.key())
         .fetch_optional(&self.pool)
         .await?;

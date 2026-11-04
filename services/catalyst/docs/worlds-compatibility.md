@@ -19,7 +19,9 @@ difference not listed here is a gap, not a decision.
   allowance and are not listed. Without `DCL_NAME_STATS_URL`, the allowance
   is unlimited and `maxAllowedSpace` is `9223372036854775807`. When the
   account-holdings service fails after its three attempts, these routes and
-  the publish answer 503.
+  the publish answer 503. An answered allowance is reused for 60 seconds.
+  A publish credits back only the replaced scenes of a world already
+  charged to the same owner.
 - **Legacy content keys.** The worlds `/contents/{key}` route also accepts a
   64-hex sha256 key and serves the blob whose raw-leaf CIDv1 has that
   digest, which covers files of one chunk (256 KiB) or less. An invalid key
@@ -36,7 +38,8 @@ difference not listed here is a gap, not a decision.
 - **Operator disables apply at once.** An operator disable
   (`/admin/worlds/{name}/disable`) refuses the world on `/about` and the
   comms mints immediately. A storage-quota block keeps the upstream two-day
-  grace.
+  grace and refuses only the owner's local DCL NAME and ENS worlds, not its
+  personal world or mirrored worlds.
 - **Shared-secret throttle.** Failed attempts are counted in Postgres per
   world and client address over a fixed 60-second window from the first
   failure (`SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE`). If the counter cannot
@@ -120,7 +123,9 @@ difference not listed here is a gap, not a decision.
 - **Delivery.** World notices are written to the catalyst's own inbox and
   email outbox, in the same transaction as the grant edit or quota change,
   instead of being published to SNS. Re-detecting the same quota block keeps
-  the first notice unchanged.
+  the first notice unchanged; a new block notifies again even on the same
+  day. A grant or revoke notice for the same world, permission and address
+  is sent once per clock hour.
 - **Last parcel removed.** Removing a parcel-scoped grant's last parcel
   sends `worlds_permission_revoked`, because the grant is deleted.
 

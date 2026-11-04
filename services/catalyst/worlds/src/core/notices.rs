@@ -32,6 +32,11 @@ const QUOTA_NS: Uuid = Uuid::from_bytes([
     0x5b, 0x0e, 0x7c, 0x31, 0x9a, 0x4d, 0x4f, 0x8e, 0xa1, 0x52, 0x3c, 0x77, 0x08, 0xd4, 0x6e, 0x19,
 ]);
 
+/// Namespace of the permission notices' ids (v5 over kind, world, permission, recipient and hour).
+const PERMISSION_NS: Uuid = Uuid::from_bytes([
+    0x2f, 0x81, 0x4a, 0xc6, 0x13, 0x5e, 0x4b, 0x07, 0x9d, 0x3a, 0x60, 0xe2, 0x71, 0xbc, 0x58, 0x0d,
+]);
+
 pub struct Notices {
     social: Option<Arc<dyn SocialDirectory>>,
     builder_url: String,
@@ -89,20 +94,30 @@ impl Notices {
         } else {
             format!("Your {permission} permission for world {world} has been revoked.")
         };
+        // Repeats within the hour share an id, so they insert once.
+        let hour = now.and_utc().timestamp().div_euclid(3600);
         addresses
             .iter()
             .filter_map(|a| Address::parse(a).ok())
             .map(|recipient| UserNotification {
-                id: Uuid::new_v4(),
-                recipient,
-                kind,
+                id: Uuid::new_v5(
+                    &PERMISSION_NS,
+                    format!(
+                        "{kind}\n{world}\n{permission}\n{}\n{hour}",
+                        recipient.as_str()
+                    )
+                    .as_bytes(),
+                ),
                 metadata: json!({
                     "title": title,
                     "description": description,
                     "world": world,
                     "permissions": [permission],
                     "url": self.worlds_url(),
+                    "address": recipient.as_str(),
                 }),
+                recipient,
+                kind,
                 occurred_at: now,
             })
             .collect()
@@ -129,6 +144,7 @@ impl Notices {
                     "description": "World access at risk in 48hs. Rectify now to prevent disruption.",
                     "url": self.worlds_url(),
                     "when": when,
+                    "address": wallet.as_str(),
                 }),
             )
         } else {
@@ -141,6 +157,7 @@ impl Notices {
                     "title": "Worlds restricted",
                     "description": "Access to your Worlds has been restricted due to insufficient resources.",
                     "when": when,
+                    "address": wallet.as_str(),
                 }),
             )
         }
@@ -162,13 +179,14 @@ impl Notices {
                 "title": "Worlds available",
                 "description": "Access to your Worlds has been restored.",
                 "url": self.worlds_url(),
+                "attendee": wallet.as_str(),
             }),
         )
     }
 }
 
-/// The old event key `detected-<block day>` per kind and wallet, as the
-/// notifications service's (event_key, type, address) dedupe.
+/// The old `detected-<...>` event key per kind and wallet, keyed on the
+/// block's full creation time so a later block is a new notice.
 fn quota_notice(
     kind: &'static str,
     wallet: &Address,
@@ -176,7 +194,7 @@ fn quota_notice(
     occurred_at: NaiveDateTime,
     metadata: serde_json::Value,
 ) -> UserNotification {
-    let key = format!("detected-{}", created_at.format("%Y-%m-%d"));
+    let key = format!("detected-{}", created_at.and_utc().timestamp_micros());
     let identity = format!("{kind}\n{key}\n{}", wallet.as_str());
     UserNotification {
         id: Uuid::new_v5(&QUOTA_NS, identity.as_bytes()),
@@ -220,6 +238,7 @@ mod tests {
                 "world": "foo.dcl.eth",
                 "permissions": ["deployment"],
                 "url": "https://builder.example/worlds?tab=dcl",
+                "address": WALLET,
             })
         );
         let out = notices.permission_changed(
@@ -234,6 +253,47 @@ mod tests {
         assert_eq!(
             out[0].metadata["description"],
             "Your streaming permission for world foo.dcl.eth has been revoked."
+        );
+    }
+
+    #[test]
+    fn permission_notices_repeat_with_one_id_within_the_hour() {
+        let notices = Notices::default();
+        let world = WorldName::parse("foo.dcl.eth").unwrap();
+        let id = |granted: bool, permission, secs| {
+            notices.permission_changed(granted, &world, permission, &[WALLET.to_string()], at(secs))
+                [0]
+            .id
+        };
+        let base = 3600 * 500_000;
+        let first = id(true, Permission::Deployment, base);
+        assert_eq!(first, id(true, Permission::Deployment, base + 3599));
+        assert_ne!(first, id(true, Permission::Deployment, base + 3600));
+        assert_ne!(first, id(false, Permission::Deployment, base));
+        assert_ne!(first, id(true, Permission::Streaming, base));
+        let other = notices.permission_changed(
+            true,
+            &world,
+            Permission::Deployment,
+            &["0x2222222222222222222222222222222222222222".to_string()],
+            at(base),
+        );
+        assert_ne!(first, other[0].id);
+    }
+
+    #[test]
+    fn a_second_block_on_the_same_day_is_a_new_notice() {
+        let notices = Notices::default();
+        let wallet = Address::parse(WALLET).unwrap();
+        let first = at(1_800_000_000);
+        let second = first + chrono::TimeDelta::hours(1);
+        assert_ne!(
+            notices.quota_block(&wallet, first, first).id,
+            notices.quota_block(&wallet, second, second).id
+        );
+        assert_ne!(
+            notices.quota_restored(&wallet, first, second).id,
+            notices.quota_restored(&wallet, second, second).id
         );
     }
 
@@ -253,6 +313,7 @@ mod tests {
                 "description": "World access at risk in 48hs. Rectify now to prevent disruption.",
                 "url": "https://b.example/worlds?tab=dcl",
                 "when": ends.and_utc().timestamp_millis(),
+                "address": WALLET,
             })
         );
         // The same block re-detected keeps its id; the restriction is another notice.
@@ -263,6 +324,7 @@ mod tests {
         assert_eq!(restricted.occurred_at, ends);
         assert_ne!(restricted.id, warn.id);
         assert_eq!(restricted.metadata.get("url"), None);
+        assert_eq!(restricted.metadata["address"], WALLET);
         let restored = notices.quota_restored(&wallet, created, ends);
         assert_eq!(restored.kind, ACCESS_RESTORED);
         assert_eq!(
@@ -271,6 +333,7 @@ mod tests {
                 "title": "Worlds available",
                 "description": "Access to your Worlds has been restored.",
                 "url": "https://b.example/worlds?tab=dcl",
+                "attendee": WALLET,
             })
         );
     }

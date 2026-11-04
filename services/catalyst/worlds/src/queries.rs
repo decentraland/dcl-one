@@ -76,19 +76,21 @@ fn world_scene_from_row(r: &PgRow) -> WorldScene {
 /// The world row (if any) and its scenes newest-first in one statement;
 /// either side may be absent independently.
 pub async fn world_about(pool: &PgPool, world_name: &str) -> AppResult<WorldAbout> {
-    let rows = sqlx::query(
+    let rows = sqlx::query(concat!(
         r#"SELECT w.name, w.blocked_since, q.created_at AS quota_blocked_since,
                   w.spawn_coordinates, w.skybox_time,
                   w.single_player, w.realm_name_override,
                   s.entity_id, s.entity, s.parcels, s.deployer, s.mirror_source
            FROM (SELECT * FROM worlds.worlds WHERE name = lower($1)) w
-           LEFT JOIN worlds.quota_blocks q ON q.wallet = w.owner
+           LEFT JOIN worlds.quota_blocks q ON q.wallet = w.owner AND "#,
+        crate::core::quota::quota_blockable_world!(),
+        r#"
            FULL OUTER JOIN (
              SELECT entity_id, entity, parcels, deployer, mirror_source, created_at
              FROM worlds.world_scenes WHERE world_name = lower($1)
            ) s ON true
            ORDER BY s.created_at DESC NULLS LAST"#,
-    )
+    ))
     .bind(world_name)
     .fetch_all(pool)
     .await?;
