@@ -7,6 +7,7 @@ import { useState, type ReactNode } from "react";
 
 import { SHOP_DEFAULT_TITLE, shopDocumentTitle } from "@ui/shop/discovery/hooks";
 import { primeShopQuery, resetShopQueries } from "@ui/shop/discovery/query";
+import { primeRemoteFlags } from "@ui/shop/discovery/lib/remoteFlags";
 import type { ShopPageId } from "@ui/shop/routes";
 
 import { defaultShopSeo, shopMetaDescriptors, type ShopPageData } from "@/data/lib/shop/pages";
@@ -20,6 +21,8 @@ export function primeShopPageData(data: ShopPageData | null | undefined): void {
   // The server's cache only ever holds primed answers; keeping just this document's bounds it. A page
   // reads its answers in the same synchronous render pass that primed them.
   if (typeof window === "undefined") resetShopQueries();
+  // The flags the server rendered with, so the first client render (hydration) takes the same branches.
+  if (data.featureFlags) primeRemoteFlags(data.featureFlags);
   for (const [key, value, at] of data.queries) primeShopQuery(key, value, at);
 }
 

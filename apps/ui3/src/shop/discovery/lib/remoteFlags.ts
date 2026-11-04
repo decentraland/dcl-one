@@ -20,6 +20,8 @@ const BACKOFF_MS = 10_000;
 export const REMOTE_FLAG = {
   /** Whether the Shop asks for personalised suggestions at all; the row still hides itself without a signal. */
   suggestedForYou: "shop-suggested-for-you",
+  /** Creators' running sales: discounted prices, the Best Deals rail and the deals filter (shop@94584a5c useCreatorSalesEnabled). */
+  creatorSales: "shop-creator-sales",
 } as const;
 
 export type RemoteFlag = (typeof REMOTE_FLAG)[keyof typeof REMOTE_FLAG];
@@ -99,6 +101,14 @@ export function primeRemoteFlags(flags: Record<string, boolean> | null): void {
   // A read already running belongs to the old generation; the next refresh starts its own.
   inflight = null;
   publish(flags ? { at: Date.now(), primed: true, flags: { ...flags } } : null);
+}
+
+/**
+ * One rollout flag as last answered, outside React: false until an answer says yes. A page the server rendered has
+ * its answer primed before its first render (sites primes the loader's flags on both sides), so the two agree.
+ */
+export function remoteFlag(flag: RemoteFlag): boolean {
+  return snapshot?.flags[`${APP}-${flag}`] === true;
 }
 
 /** One rollout flag; false until the service answers yes. */
