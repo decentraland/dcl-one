@@ -457,6 +457,38 @@ async fn call_json(
 }
 
 /// A live job context (cancelled by `jobs.shutdown`) to run a pass under.
+/// A replica that never runs the leased mirror pass still follows the
+/// shared denylist tables through its own periodic reload.
+#[tokio::test]
+async fn every_replica_reloads_the_shared_denylist() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let replica = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    let wallet = "0x00000000000000000000000000000000000000fe";
+    assert!(!replica.state.denylist.contains(wallet));
+    let jobs = Jobs::new();
+    denylist::spawn_reload(&replica.state, &jobs, std::time::Duration::from_millis(20));
+    denylist::set_local(&db.pool, wallet, true).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !replica.state.denylist.contains(wallet) {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the replica reloads the shared overlay");
+    denylist::set_local(&db.pool, wallet, false).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while replica.state.denylist.contains(wallet) {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("and its removal");
+    jobs.shutdown(std::time::Duration::from_secs(2)).await;
+    db.teardown().await;
+}
+
 async fn job_ctx() -> (Jobs, crate::jobs::JobContext) {
     let jobs = Jobs::new();
     let (tx, rx) = tokio::sync::oneshot::channel();
