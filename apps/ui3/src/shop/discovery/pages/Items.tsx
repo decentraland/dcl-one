@@ -3,7 +3,7 @@
 //       marketplace@f3956826:webapp/src/components/Routes/Routes.tsx (`/browse`), webapp/src/modules/item/actions.ts (FETCH_ITEMS_REQUEST)
 // Licence of the Marketplace parts: Apache-2.0, Copyright 2020 Metaverse Holdings Ltd.
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Navigate, useNavigate, useSearchParams } from "react-router";
 
 import Button from "../../../atoms/Button";
@@ -64,6 +64,8 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
 
   const listingsFreshness = useListingsFreshness(isUnified && category !== "names");
 
+  // How many cards the grid last showed (see skeletonCount); declared before the early return, as every hook.
+  const shownCount = useRef(0);
   if (category === "names") return <Navigate to={NAMES_ROUTE} replace />;
 
   const pickCategory = (key: string) => setFilters({ category: key, subCategory: null, ...emoteFilters.resetFor(key) });
@@ -89,7 +91,11 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
 
   const unavailable = indexUnavailable(grid.error);
   const showSkeletons = grid.isLoading || grid.isPlaceholder;
-  const skeletonCount = grid.isLoading ? 15 : Math.max(grid.items.length, 1);
+  // While a filter's results load over the previous ones, as many skeletons as cards were showing (upstream's
+  // gridSkeletonCount reads them from the kept page): the grid keeps its height instead of collapsing to one card.
+  // The infinite query hides the kept page during a placeholder, so the count is remembered here.
+  if (!showSkeletons) shownCount.current = grid.items.length;
+  const skeletonCount = grid.isLoading ? 15 : Math.max(shownCount.current, 1);
 
   return (
     <div className="shop-page shop-items" data-testid="items-page">

@@ -4,7 +4,8 @@ import { useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ShopClient } from "../../api/shop";
-import { catalogClient, COLLECTION, CREATOR, ShopHarness, type CatalogScenario, type SessionKind } from "../fixtures";
+import { createShopClient } from "../../api/shop";
+import { catalogClient, catalogTransport, COLLECTION, CREATOR, ShopHarness, type CatalogScenario, type SessionKind } from "../fixtures";
 import { invalidateShopQueries } from "../query";
 import Items from "./Items";
 
@@ -134,6 +135,20 @@ describe("the collectibles grid", () => {
     expect(head(/^Body shape/)).toHaveAttribute("aria-expanded", "true");
     expect(head(/^Creators/)).toHaveAttribute("aria-expanded", "true");
     expect(head(/^Sale type/)).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("while a filter's results load, holds as many skeletons as cards were showing, not one", async () => {
+    const transport = catalogTransport();
+    let hold = false;
+    const slow = Object.assign((req: Parameters<typeof transport>[0]) => (hold && req.url.includes("/catalog/") ? new Promise<never>(() => {}) : transport(req)), { calls: transport.calls });
+    const client = Object.assign(createShopClient({ base: "http://shop.test", mode: "canonical", transport: slow, signer: null }), { calls: transport.calls });
+    items("/shop/items", { client });
+    const before = (await screen.findAllByTestId("card")).length;
+    expect(before).toBeGreaterThan(1);
+    hold = true;
+    fireEvent.click(screen.getByRole("button", { name: "Sort by" }));
+    fireEvent.click(within(screen.getByTestId("sort-select")).getByRole("option", { name: /cheapest/i }));
+    await waitFor(() => expect(screen.getAllByTestId("skeleton-card")).toHaveLength(before));
   });
 
   it("Not for Sale reads the catalogue as view cards with no purchase", async () => {
