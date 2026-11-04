@@ -53,13 +53,13 @@ serves the same router at the root and under `/content`
 | 4 | GET | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:639-642` -> `get_content.rs:90` | GAP |
 | 5 | HEAD | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:641` -> `get_content.rs:90` | GAP |
 | 6 | GET | `/contents/:hashId/active-entities` | `/content` | `services/catalyst/content/src/lib.rs:643-646` -> `active_entities.rs:169` | MATCH |
-| 7 | GET | `/available-content` | `/content` | `services/catalyst/content/src/lib.rs:647-650` -> `available_content.rs:14` | DIVERGENT |
-| 8 | GET | `/audit/:type/:entityId` | `/content` | `services/catalyst/content/src/lib.rs:651` -> `audit.rs:13` | DIVERGENT |
+| 7 | GET | `/available-content` | `/content` | `services/catalyst/content/src/lib.rs:647-650` -> `available_content.rs:14` | MATCH |
+| 8 | GET | `/audit/:type/:entityId` | `/content` | `services/catalyst/content/src/lib.rs:651` -> `audit.rs:13` | MATCH |
 | X1 | any | unknown path (router miss) | `/content` | `services/catalyst/content/src/lib.rs:623-625,712` | DIVERGENT |
 | X2 | wrong method on a known path | any | `/content` | axum `MethodRouter` default | DIVERGENT |
 | X3 | OPTIONS (preflight) and CORS on every response | any | `/content` | `services/catalyst/shared/src/cors.rs:20-70` | DIVERGENT |
 
-Counts: 8 endpoints: MATCH 1, GAP 2, DIVERGENT 5, MISSING 0. Cross-cutting: 3 DIVERGENT.
+Counts: 8 endpoints: MATCH 3, GAP 2, DIVERGENT 3, MISSING 0. Cross-cutting: 3 DIVERGENT.
 
 ---
 
@@ -88,7 +88,7 @@ Deprecated upstream in favour of `POST /entities/active` (comment at `decentrala
 
 | trigger | status | body | headers | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
-| type not recognised | 400 | `{"error":"Unrecognized type: <raw :type>"}` | `Content-Type: application/json` | `get-entities-handler.ts:37-42` | `active_entities.rs:130-134` | DIVERGENT: dcl-one rejects `outfits` (`services/catalyst/shared/src/query_params.rs:18,66-72`); upstream accepts it |
+| type not recognised | 400 | `{"error":"Unrecognized type: <raw :type>"}` | `Content-Type: application/json` | `get-entities-handler.ts:37-42` | `active_entities.rs:130-134`, `shared/src/query_params.rs` `parse_entity_type` | MATCH (fixtures `entities-200-outfits-accepted.json`, `entities-400-outfitss-rejected.json`, `entities-400-outfit-rejected.json`) |
 | both or neither of id/pointer | 400 | `{"error":"ids or pointers must be present, but not both"}` | json | `get-entities-handler.ts:45-50` | `active_entities.rs:142-147`, `validation.rs:14` | MATCH, except a multi-value list containing an empty element (`?pointer=a&pointer=`): upstream 200, dcl-one 400 (`validation.rs:40-46`) |
 | > 1000 ids or pointers | 400 | `{"error":"Too many ids or pointers; the maximum allowed is 1000"}` | json | `get-entities-handler.ts:52-57` | `validation.rs:26-28,49-51` | MATCH |
 | success, no `fields` | 200 | `Entity[]` (example below); unknown ids/pointers are omitted; denylisted ids dropped | `Cache-Control: public, max-age=<ENTITIES_CACHE_CONTROL_MAX_AGE>` (default 10; 0 omits the header) | `get-entities-handler.ts:66-77`, `Environment.ts:713-717` | `active_entities.rs:151-164`, `config/src/node.rs:71-72` | MATCH on fields and values; object key order differs (see CR-14) |
@@ -236,7 +236,7 @@ pointer of the same entity answered from the DB can return that entity twice
 | plain GET | 200 | the bytes | `Content-Type: application/octet-stream` (or sniffed), `ETag: "<hash>"`, `Access-Control-Expose-Headers: ETag, Content-Range, Accept-Ranges, Content-Length`, `Accept-Ranges: bytes`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Content-Length` | `utils.ts:115-135` | `formatters.rs:85-102`, `get_content.rs:193-198` | DIVERGENT: upstream serves a gzip-stored file as stored, with `Content-Encoding: gzip` and the compressed `Content-Length`, regardless of `Accept-Encoding` (`utils.ts:128-133`); dcl-one never sets `Content-Encoding` (`storage/src/content.rs:333-338`). Upstream omits `Content-Length` for a 0-byte file (`if (content.size)`); dcl-one sends `0` |
 | plain GET with `STORAGE_X_ACCEL_BASE` set | 200 | empty; nginx serves the file | `X-Accel-Redirect` | n/a | `get_content.rs:177-191` | deploy-dependent; headers nginx emits need a capture |
 | plain HEAD | 200 | none | as plain GET | `get-content-handler.ts:62` | `get_content.rs:163-167` | MATCH, except sniffing (next row) |
-| `?includeMimeType` | 200/206 | | `Content-Type` from `file-type` on the stream head, else `application/octet-stream` | `utils.ts:137-153` | `get_content.rs:20-61,137-140,169-175` | DIVERGENT: dcl-one detects only png, glb, mp4 (`ftyp`), jpeg, webp, ogg, webm, and answers `application/json` for a body starting with `{`/`[`; `file-type` returns no type for JSON (so `application/octet-stream`) and detects gif, mp3, wav, zip, ktx2 and more; HEAD in dcl-one never sniffs (returns before `get_content.rs:169`) |
+| `?includeMimeType` | 200/206 | | `Content-Type` from `file-type` on the stream head, else `application/octet-stream` | `utils.ts:137-153` | `get_content.rs` `detect_content_type`, sniffed on GET, HEAD and the head of a range | DIVERGENT on rarer formats only: dcl-one detects png, glb, mp4 (any `ftyp`), jpeg, gif, mp3 (ID3 or a Layer III frame), wav, webp, zip, ogg, webm, and answers `application/octet-stream` for anything else (JSON and text included, as `file-type`); `file-type`'s other formats (ktx2, `ftyp` brands such as `qt`/`M4A`/`heic`, Ogg codec subtypes, zip-based documents) need its table, which is not vendored (CR-7) |
 | storage fault | 500 | `{"error":"Internal Server Error"}` | | `middlewares.ts:72-81` | `get_content.rs:107`, `errors.rs:95-99` | MATCH |
 
 **Data dependency**: the blob store (`storage/src/content.rs:202-224`), filled by sync for every
@@ -267,9 +267,9 @@ No CID validation; denylisted cids are dropped from the answer; existence checke
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| no `cid`, or a single empty `cid=` | 400 | `{"error":"Please set at least one cid."}` | `get-available-content-handler.ts:24-26`, `logic/query-params/component.ts:25` | `available_content.rs:21-23` | DIVERGENT for `cid=`: dcl-one gets `[""]`, answers 200 `[{"cid":"","available":false}]` |
+| no `cid`, or a single empty `cid=` | 400 | `{"error":"Please set at least one cid."}` | `get-available-content-handler.ts:24-26`, `logic/query-params/component.ts:25` | `available_content.rs:21-23`, `qs_get_filter_array` | MATCH (fixtures `available-content-400-missing-cid.json`, `available-content-400-empty-cid.json`) |
 | > 1000 cids | 400 | `{"error":"Too many cids requested; the maximum allowed is 1000."}` | `get-available-content-handler.ts:27-29` | `available_content.rs:24-28` | MATCH |
-| success | 200 | `[{"cid": string, "available": boolean}]` in input order | `get-available-content-handler.ts:33-47` | `available_content.rs:30-45` | DIVERGENT: upstream builds a `Map` keyed by cid, so a repeated cid appears once; dcl-one emits one item per input value |
+| success | 200 | `[{"cid": string, "available": boolean}]` in input order | `get-available-content-handler.ts:33-47` | `available_content.rs:30-45` | MATCH: a repeated cid appears once, as upstream's `Map` |
 | storage fault | 500 | `{"error":"Internal Server Error"}` | | `available_content.rs:35`, `storage/src/content.rs:139-165` | MATCH (invalid ids are `false` in both, fixture `available-content-200-bogus-cid.json`) |
 
 **Data dependency**: the blob store. No read-through: on a node that syncs a subset of types (or
@@ -283,8 +283,8 @@ relies on read-through), cids an upstream full node holds answer `false`.
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| type not recognised | 400 | `{"error":"Unrecognized type: <raw :type>"}` | `decentraland/catalyst:src/controllers/handlers/get-audit-handler.ts:17-20` | `audit.rs:17-21` | DIVERGENT for `outfits` (dcl-one 400; fixture `tests/fixtures/content/audit-400-outfits-plural-rejected.json` pins the old behaviour) |
-| no deployment with that id **and that type** | 404 | `{"error":"No deployment found"}` | `get-audit-handler.ts:22-30` (filters `entityIds` and `entityTypes`, includes overwritten and denylisted) | `audit.rs:23-25`, `queries.rs:883-925` | DIVERGENT: dcl-one ignores the type (`WHERE d.entity_id = $1`, `queries.rs:905`), so `/audit/profile/<scene id>` is 200 in dcl-one, 404 upstream |
+| type not recognised | 400 | `{"error":"Unrecognized type: <raw :type>"}` | `decentraland/catalyst:src/controllers/handlers/get-audit-handler.ts:17-20` | `audit.rs:17-21` | MATCH (fixtures `audit-404-outfits-accepted.json`, `audit-400-outfitss-rejected.json`, `audit-400-outfit-rejected.json`) |
+| no deployment with that id **and that type** | 404 | `{"error":"No deployment found"}` | `get-audit-handler.ts:22-30` (filters `entityIds` and `entityTypes`, includes overwritten and denylisted) | `audit.rs`, `queries.rs` `audit_info` (`WHERE d.entity_id = $1 AND d.entity_type = $2`) | MATCH |
 | found | 200 | `{"version":"v3","localTimestamp":number,"authChain":[{"type":string,"payload":string,"signature":string}]}`; `overwrittenBy`, `isDenylisted`, `denylistedContent` are never set by the query (`adapters/deployments-repository/component.ts:84-98` selects no `overwritten_by`), so they are absent | `get-audit-handler.ts:32-44` | `queries.rs:913-925` | MATCH on fields; dcl-one adds `localProvenance` for entities published to its write API |
 | DB error | 500 | `{"error":"Internal Server Error"}` | `middlewares.ts:72-81` | `errors.rs:84-93` | MATCH |
 
@@ -389,33 +389,32 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
      `limit_req_zone` key) in `infra/gateway/gateway.py:257-258`.
    - Severity: P1.
 
-5. **CR-5** GET /entities/:type and GET /audit/:type/:entityId: accept `outfits`.
-   - Gap: `DEPLOYABLE_ENTITY_TYPES` omits `outfits`, so both answer 400.
-   - Expected: `outfits` accepted, `outfit` and `outfitss` rejected; `scene|profile|wearable|store|emote`
-     with or without one `s` (`decentraland/catalyst:src/types.ts:212-221`,
-     `test/integration/controller/entity-type-parsing.spec.ts:19-56`).
-   - Place: `services/catalyst/shared/src/query_params.rs:18,66-72`. Look the raw value up in a table of the exact
-     type names plus `<type>s` for each type that does not end in `s`, as upstream builds `ENTITY_TYPES_BY_NAME`.
-     `parse_entity_type` (`query_params.rs:58-62`) is not that table: it strips one trailing `s` from any value, so
-     it accepts `outfitss`; fix it the same way, since `/deployments` and `/pointer-changes` use it;
-     `content/src/active_entities.rs:130`, `content/src/audit.rs:17`; replace fixtures
-     `tests/fixtures/content/entities-400-outfits-rejected.json`, `audit-400-outfits-plural-rejected.json`.
-   - Severity: P1.
+5. **CR-5** GET /entities/:type and GET /audit/:type/:entityId: accept `outfits`. Status: MATCH, no work.
+   - Upstream: an exact lookup of the trimmed, lower-cased value in the type names plus `<type>s` for names
+     not ending in `s`: `outfits` and `scenes` accepted, `outfit` and `outfitss` rejected
+     (`decentraland/catalyst:src/types.ts:212-221`, `test/integration/controller/entity-type-parsing.spec.ts:19-56`).
+   - dcl-one: `parse_entity_type` builds the same set (`services/catalyst/shared/src/query_params.rs`); `/entities`,
+     `/audit`, `/deployments` and `/pointer-changes` use it. Fixtures `entities-200-outfits-accepted.json`,
+     `entities-400-outfitss-rejected.json`, `audit-404-outfits-accepted.json`, `audit-400-outfitss-rejected.json`.
+   - Severity: none (closed).
 
-6. **CR-6** GET /audit/:type/:entityId: filter by type.
-   - Gap: the query ignores the type.
-   - Expected: 404 `No deployment found` unless a deployment has that id and that type
+6. **CR-6** GET /audit/:type/:entityId: filter by type. Status: MATCH, no work.
+   - Upstream: 404 `No deployment found` unless a deployment has that id and that type
      (`decentraland/catalyst:src/controllers/handlers/get-audit-handler.ts:22-30`).
-   - Place: `services/catalyst/content/src/queries.rs:883-907` (add `AND d.entity_type = $2`), `content/src/audit.rs:23`.
-   - Severity: P1.
+   - dcl-one: `queries::audit_info` filters on the id and the canonical type (`services/catalyst/content/src/queries.rs`,
+     `content/src/audit.rs`); pinned in `content/src/tests.rs` (a scene id under `/audit/wearable/` is 404).
+   - Severity: none (closed).
 
 7. **CR-7** GET /contents/:hashId?includeMimeType: sniff like `file-type`.
-   - Gap: a short list of signatures; JSON reported as `application/json`; HEAD never sniffs.
+   - Gap: GET, HEAD and ranges sniff png, glb, jpeg, gif, mp3, wav, webp, zip, ogg, webm and any `ftyp` as
+     `video/mp4`, and answer `application/octet-stream` otherwise (JSON and text included). `file-type`'s
+     other formats and its `ftyp` brand and Ogg codec subtypes differ; its signature table is not in the
+     pinned tree, so match it from the `file-type` 21.1.1 source or a capture.
    - Expected: the `file-type` result on the stream head (gif, mp3, wav, zip, png, jpeg, webp, glb, mp4,
      ogg, webm, ...), `application/octet-stream` when it finds none (JSON and text included), on GET and
      HEAD (`decentraland/catalyst:src/controllers/utils.ts:137-153`, `get-content-handler.ts:54`).
-   - Place: `services/catalyst/content/src/get_content.rs:20-61,163-167`.
-   - Severity: P1.
+   - Place: `services/catalyst/content/src/get_content.rs` (`detect_content_type`).
+   - Severity: P2.
 
 8. **CR-8** POST /entities/active: no `Cache-Control`, no `fields`.
    - Gap: dcl-one adds `Cache-Control: public, max-age=10` and honours `?fields=`.
@@ -473,12 +472,12 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
     - Place: `services/catalyst/content/src/queries.rs:112-127` (build the document bytes in order).
     - Severity: P2.
 
-15. **CR-15** /available-content duplicates and empty cid.
-    - Gap: a repeated cid is answered twice; `cid=` is 200.
-    - Expected: one item per distinct cid in first-seen order; `cid=` alone is 400 `Please set at least one cid.`
+15. **CR-15** /available-content duplicates and empty cid. Status: MATCH, no work.
+    - Upstream: one item per distinct cid in first-seen order; `cid=` alone is 400 `Please set at least one cid.`
       (`decentraland/catalyst:src/controllers/handlers/get-available-content-handler.ts:22-47`).
-    - Place: `services/catalyst/content/src/available_content.rs:19-43`.
-    - Severity: P2.
+    - dcl-one: the same (`services/catalyst/content/src/available_content.rs`; fixture
+      `available-content-400-empty-cid.json`, unit test `a_repeated_cid_is_listed_once`).
+    - Severity: none (closed).
 
 16. **CR-16** Case-insensitive paths.
     - Gap: axum matches paths case-sensitively.
