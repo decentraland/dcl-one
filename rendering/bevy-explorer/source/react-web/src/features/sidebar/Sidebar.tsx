@@ -40,6 +40,7 @@ import { bugReportUrl } from '../../lib/bugReport'
 import { registerCancelLayer } from '../../lib/cancelLayers'
 import { NearbyVoiceWidget } from '../voice/NearbyVoiceWidget'
 import { PermissionsPopover } from '../permissions/PermissionsPopover'
+import { SmartWearablesPopover, showSmartWearables, smartWearablesTooltip } from '../smartWearables/SmartWearablesPopover'
 import { useNearbyVoice, type NearbyVoice } from '../voice/useNearbyVoice'
 import { withUtm } from '../../lib/utm'
 
@@ -59,6 +60,7 @@ type Item =
   | { kind: 'events'; icon: IconName; label: string }
   | { kind: 'skybox'; icon: IconName; label: string }
   | { kind: 'permissions'; icon: IconName; label: string }
+  | { kind: 'smartWearables'; icon: IconName; label: string }
   | { kind: 'gallery'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'create'; icon: IconName; label: string }
   | { kind: 'link'; icon: IconName; label: string; url: string | (() => string) }
@@ -111,6 +113,7 @@ const BOTTOM: Item[] = [
   { kind: 'mic', icon: 'mic', label: 'Voice chat' },
   { kind: 'skybox', icon: 'skybox', label: 'Skybox' },
   { kind: 'permissions', icon: 'permissions', label: 'Scene permissions' },
+  { kind: 'smartWearables', icon: 'smart-wearables', label: 'Smart wearables' },
   { kind: 'divider' },
   { kind: 'emotes', icon: 'emotes', label: 'Emotes', hotkey: 'Emote' },
   { kind: 'divider' },
@@ -119,9 +122,10 @@ const BOTTOM: Item[] = [
 ]
 
 type VoiceProps = NearbyVoice & { onOpen: (button: HTMLElement) => void }
-type PermissionsProps = { open: boolean; onOpen: (button: HTMLElement) => void }
+type PopoverProps = { open: boolean; onOpen: (button: HTMLElement) => void }
+type Popovers = { permissions: PopoverProps; smartWearables: PopoverProps }
 
-function renderItem(item: Item, i: number, session: EngineSession, snap: BindingsSnapshot, liveEvents: number, voice: VoiceProps, permissions: PermissionsProps, create: boolean, onViewProfile?: () => void): React.JSX.Element | null {
+function renderItem(item: Item, i: number, session: EngineSession, snap: BindingsSnapshot, liveEvents: number, voice: VoiceProps, popovers: Popovers, create: boolean, onViewProfile?: () => void): React.JSX.Element | null {
   if (item.kind === 'divider') return <div key={`d${i}`} className={styles.divider} />
   const shortcut = 'hotkey' in item && item.hotkey != null ? keyHintFor(snap, item.hotkey) : undefined
   if (item.kind === 'chat')
@@ -273,8 +277,22 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
         icon={item.icon}
         label={item.label}
         badge={session.permissions.unseenDenied}
-        active={permissions.open}
-        onClick={(e) => permissions.onOpen(e.currentTarget)}
+        active={popovers.permissions.open}
+        onClick={(e) => popovers.permissions.onOpen(e.currentTarget)}
+      />
+    )
+  }
+  if (item.kind === 'smartWearables') {
+    // only while a smart wearable runs, is held back or waits for the player's answer
+    if (!showSmartWearables(session.smartWearables.entries)) return null
+    return (
+      <RailButton
+        key="smartWearables"
+        icon={item.icon}
+        label={item.label}
+        tooltip={smartWearablesTooltip(session.smartWearables)}
+        active={popovers.smartWearables.open}
+        onClick={(e) => popovers.smartWearables.onOpen(e.currentTarget)}
       />
     )
   }
@@ -335,19 +353,32 @@ export function Sidebar({
   const debugPanel = useDebugPanel(session)
   const [voiceAnchor, setVoiceAnchor] = useState<HTMLElement | null>(null)
   const [permissionsAnchor, setPermissionsAnchor] = useState<HTMLElement | null>(null)
-  const autoHide = useAutoHide(configOpen || voiceAnchor != null || permissionsAnchor != null)
+  const [smartWearablesAnchor, setSmartWearablesAnchor] = useState<HTMLElement | null>(null)
+  const autoHide = useAutoHide(configOpen || voiceAnchor != null || permissionsAnchor != null || smartWearablesAnchor != null)
   const nearby = useNearbyVoice(session)
   const voice: VoiceProps = { ...nearby, onOpen: (button) => setVoiceAnchor((a) => (a == null ? button : null)) }
   const closeVoice = useCallback(() => setVoiceAnchor(null), [])
-  const permissions: PermissionsProps = {
-    open: permissionsAnchor != null,
-    onOpen: (button) => {
-      session.permissions.markSeen()
-      session.permissions.loadRules()
-      setPermissionsAnchor((a) => (a == null ? button : null))
+  const popovers: Popovers = {
+    permissions: {
+      open: permissionsAnchor != null,
+      onOpen: (button) => {
+        session.permissions.markSeen()
+        session.permissions.loadRules()
+        setPermissionsAnchor((a) => (a == null ? button : null))
+      }
+    },
+    smartWearables: {
+      open: smartWearablesAnchor != null,
+      onOpen: (button) => setSmartWearablesAnchor((a) => (a == null ? button : null))
     }
   }
   const closePermissions = useCallback(() => setPermissionsAnchor(null), [])
+  const closeSmartWearables = useCallback(() => setSmartWearablesAnchor(null), [])
+  // The button leaves the rail once nothing runs or waits; its popover goes with it.
+  const smartWearablesShown = showSmartWearables(session.smartWearables.entries)
+  useEffect(() => {
+    if (!smartWearablesShown) setSmartWearablesAnchor(null)
+  }, [smartWearablesShown])
   // The "..." panel closes on an outside click or Cancel, like the other popovers.
   useEffect(() => {
     if (!configOpen) return
@@ -394,9 +425,9 @@ export function Sidebar({
           >
             <DotsGlyph />
           </ControlButton>
-          {TOP.map((item, i) => renderItem(item, i, session, snap, liveEvents, voice, permissions, create, onViewProfile))}
+          {TOP.map((item, i) => renderItem(item, i, session, snap, liveEvents, voice, popovers, create, onViewProfile))}
         </div>
-        <div className={styles.group}>{BOTTOM.map((item, i) => renderItem(item, i, session, snap, liveEvents, voice, permissions, create, onViewProfile))}</div>
+        <div className={styles.group}>{BOTTOM.map((item, i) => renderItem(item, i, session, snap, liveEvents, voice, popovers, create, onViewProfile))}</div>
       </nav>
       {voiceAnchor != null && (
         <NearbyVoiceWidget
@@ -427,6 +458,15 @@ export function Sidebar({
           clearRule={session.permissions.clearRule}
           resetDefaults={session.permissions.resetDefaults}
           onClose={closePermissions}
+        />
+      )}
+      {smartWearablesAnchor != null && (
+        <SmartWearablesPopover
+          anchor={smartWearablesAnchor}
+          info={session.smartWearables}
+          onStop={session.smartWearables.kill}
+          onRestart={session.smartWearables.restart}
+          onClose={closeSmartWearables}
         />
       )}
       {configOpen && (
