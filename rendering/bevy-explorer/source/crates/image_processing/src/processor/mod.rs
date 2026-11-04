@@ -219,8 +219,10 @@ const KTX2_MAX_SIZE: u32 = 8192;
 
 /// Checks a KTX2 header against the file before `basisu` reads it: `basisu` sizes buffers from
 /// the declared dimensions and level lengths without checking them against the data, and ktx2
-/// files are scene content. Only a single 2D image within `KTX2_MAX_SIZE` passes, every range
-/// must lie within the file, and no level may declare more than 16 bytes per 4x4 block.
+/// files are scene content. Only a single 2D UASTC image within `KTX2_MAX_SIZE` passes, every
+/// range must lie within the file, and no level may declare more than 16 bytes per 4x4 block.
+/// ETC1S is rejected: its BasisLZ global data holds lengths `basisu` adds unchecked, which wrap
+/// on wasm32.
 fn check_ktx2_header(bytes: &[u8]) -> Result<(), ImageProcessError> {
     let u32_at = |at: usize| -> Option<u32> {
         Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
@@ -238,7 +240,11 @@ fn check_ktx2_header(bytes: &[u8]) -> Result<(), ImageProcessError> {
         let (width, height) = (u32_at(20)?, u32_at(24)?);
         let (depth, layers, faces) = (u32_at(28)?, u32_at(32)?, u32_at(36)?);
         let levels = u32_at(40)?.max(1);
+        // basis universal data (vkFormat undefined), stored plain or zstd-supercompressed
+        let (format, scheme) = (u32_at(12)?, u32_at(44)?);
         if !bytes.starts_with(KTX2_MAGIC)
+            || format != 0
+            || !matches!(scheme, 0 | 2)
             || !(1..=KTX2_MAX_SIZE).contains(&width)
             || !(1..=KTX2_MAX_SIZE).contains(&height)
             // one 2d image: the loader and the gltf repair take a single texture
@@ -803,6 +809,9 @@ mod tests {
         // more levels than an 8x8 mip chain has
         assert!(transcode_ktx2(&patched(40, &5u32.to_le_bytes())).is_err());
         assert!(transcode_ktx2(&UASTC_8[..UASTC_8.len() / 2]).is_err());
+        // BasisLZ (ETC1S), and a declared GPU format such as BC7
+        assert!(transcode_ktx2(&patched(44, &1u32.to_le_bytes())).is_err());
+        assert!(transcode_ktx2(&patched(12, &145u32.to_le_bytes())).is_err());
     }
 
     #[test]
