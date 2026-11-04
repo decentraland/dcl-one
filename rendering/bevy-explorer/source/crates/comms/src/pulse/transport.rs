@@ -75,7 +75,7 @@ pub enum PulseStatus {
     /// Connected-then-dropped, carrying the server's reason (see [`PulseDisconnect`]).
     Disconnected(PulseDisconnect),
     /// A failure the driver reports itself, before or after the connection came up: DNS, a connect
-    /// timeout, an inbound backlog over its cap, and the like. Always retryable.
+    /// timeout, an inbound backlog over a cap, and the like. Always retryable.
     Failed(String),
 }
 

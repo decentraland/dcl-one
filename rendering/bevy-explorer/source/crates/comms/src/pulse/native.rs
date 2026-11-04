@@ -49,6 +49,10 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Reliable messages held while the protocol layer's queue is full. Past it the connection fails
 /// (retryably) rather than grow without end behind an engine that has stopped reading.
 const MAX_HELD_RELIABLE: usize = 65_536;
+/// Bytes held while the protocol layer's queue is full. The host keeps ENet's default limit of
+/// 32 MiB a packet, so the count alone would not bound the memory held; past either cap the
+/// connection fails alike.
+const MAX_HELD_BYTES: usize = 16 * 1024 * 1024;
 
 pub(super) fn spawn(
     config: PulseTransportConfig,
@@ -168,23 +172,28 @@ fn pick_address(addrs: impl IntoIterator<Item = SocketAddr>) -> Option<SocketAdd
 /// that stops acknowledging within seconds.
 struct Backlog {
     held: VecDeque<Vec<u8>>,
-    cap: usize,
+    /// The bytes of the messages in `held`.
+    held_bytes: usize,
+    max_messages: usize,
+    max_bytes: usize,
 }
 
-/// The backlog is at its cap.
+/// Holding one more message would put the backlog over one of its caps.
 #[derive(Debug, PartialEq)]
 struct BacklogFull;
 
 impl Backlog {
-    fn with_cap(cap: usize) -> Self {
+    fn with_caps(max_messages: usize, max_bytes: usize) -> Self {
         Self {
             held: VecDeque::new(),
-            cap,
+            held_bytes: 0,
+            max_messages,
+            max_bytes,
         }
     }
 
     /// Hand `bytes` over, or, when the queue is full, hold it (reliable) or drop it (unreliable).
-    /// A reliable message never overtakes one already held.
+    /// A reliable message never overtakes one already held, and is not held past either cap.
     fn deliver(
         &mut self,
         tx: &mpsc::Sender<Vec<u8>>,
@@ -205,9 +214,10 @@ impl Backlog {
         } else {
             bytes
         };
-        if self.held.len() >= self.cap {
+        if self.held.len() >= self.max_messages || self.held_bytes + bytes.len() > self.max_bytes {
             return Err(BacklogFull);
         }
+        self.held_bytes += bytes.len();
         self.held.push_back(bytes);
         Ok(())
     }
@@ -215,10 +225,12 @@ impl Backlog {
     /// Hand over what is held, in order, while there is room.
     fn flush(&mut self, tx: &mpsc::Sender<Vec<u8>>) {
         while let Some(bytes) = self.held.pop_front() {
+            let len = bytes.len();
             if let Err(TrySendError::Full(bytes)) = tx.try_send(bytes) {
                 self.held.push_front(bytes);
                 break;
             }
+            self.held_bytes -= len;
         }
     }
 }
@@ -263,7 +275,7 @@ async fn drive(
     };
     let connecting_since = Instant::now();
     let mut connected = false;
-    let mut backlog = Backlog::with_cap(MAX_HELD_RELIABLE);
+    let mut backlog = Backlog::with_caps(MAX_HELD_RELIABLE, MAX_HELD_BYTES);
 
     while !stop.load(Ordering::Relaxed) {
         // Whatever the protocol layer has made room for since the last pass.
@@ -327,7 +339,10 @@ async fn drive(
                             &mut host,
                             peer,
                             channels,
-                            format!("inbound backlog over {MAX_HELD_RELIABLE} messages"),
+                            format!(
+                                "inbound backlog over {MAX_HELD_RELIABLE} messages or \
+                                 {MAX_HELD_BYTES} bytes"
+                            ),
                         );
                     }
                 }
@@ -383,7 +398,7 @@ fn queue_frame(host: &mut enet::Host<PulseSocket>, peer: enet::PeerID, frame: &P
 }
 
 /// Report a failure the driver detects itself, before or after the connection comes up: setup,
-/// DNS, connect, the inbound backlog over its cap, or servicing ENet. Always retryable — the
+/// DNS, connect, the inbound backlog over a cap, or servicing ENet. Always retryable — the
 /// protocol layer reconnects.
 fn fail(channels: &mut PulseDriverChannels, message: String) {
     bevy::log::warn!("pulse: {message}");

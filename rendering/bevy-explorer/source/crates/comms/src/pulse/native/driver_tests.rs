@@ -29,7 +29,7 @@ fn falls_back_to_the_first_ipv6_address() {
 #[test]
 fn a_full_queue_holds_reliable_and_drops_unreliable() {
     let (tx, mut rx) = mpsc::channel(2);
-    let mut backlog = Backlog::with_cap(8);
+    let mut backlog = Backlog::with_caps(8, MAX_HELD_BYTES);
 
     backlog.deliver(&tx, vec![1], true).unwrap();
     backlog.deliver(&tx, vec![2], true).unwrap();
@@ -47,7 +47,7 @@ fn a_full_queue_holds_reliable_and_drops_unreliable() {
 #[test]
 fn a_reliable_message_never_overtakes_a_held_one() {
     let (tx, mut rx) = mpsc::channel(1);
-    let mut backlog = Backlog::with_cap(8);
+    let mut backlog = Backlog::with_caps(8, MAX_HELD_BYTES);
 
     backlog.deliver(&tx, vec![1], true).unwrap();
     backlog.deliver(&tx, vec![2], true).unwrap();
@@ -63,14 +63,32 @@ fn a_reliable_message_never_overtakes_a_held_one() {
 }
 
 #[test]
-fn holding_past_the_cap_is_an_error() {
+fn holding_past_the_message_cap_is_an_error() {
     let (tx, _rx) = mpsc::channel(1);
-    let mut backlog = Backlog::with_cap(1);
+    let mut backlog = Backlog::with_caps(1, MAX_HELD_BYTES);
 
     backlog.deliver(&tx, vec![1], true).unwrap();
     backlog.deliver(&tx, vec![2], true).unwrap();
 
     assert_eq!(backlog.deliver(&tx, vec![3], true), Err(BacklogFull));
+}
+
+#[test]
+fn holding_past_the_byte_cap_is_an_error() {
+    let (tx, mut rx) = mpsc::channel(1);
+    let mut backlog = Backlog::with_caps(8, 4);
+
+    backlog.deliver(&tx, vec![1], true).unwrap();
+    // The queue is full now: three bytes are held, and two more would be over the four.
+    backlog.deliver(&tx, vec![2; 3], true).unwrap();
+    assert_eq!(backlog.deliver(&tx, vec![3; 2], true), Err(BacklogFull));
+
+    // Handed over, a held message frees its bytes: with the queue full again, all four can be
+    // held at once.
+    assert_eq!(rx.try_recv(), Ok(vec![1]));
+    backlog.flush(&tx);
+    assert_eq!(backlog.deliver(&tx, vec![4; 4], true), Ok(()));
+    assert_eq!(rx.try_recv(), Ok(vec![2; 3]));
 }
 
 /// A host on a loopback socket of its own, with the driver's settings.
