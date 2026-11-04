@@ -1,0 +1,174 @@
+{
+  "source": "decentraland/social-service-ea",
+  "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+  "node": "v26.12.0",
+  "owner": "0x9222222222222222222222222222222222222222",
+  "alias": "0x9333333333333333333333333333333333333333",
+  "sources": [
+    "src/adapters/registry.ts",
+    "src/logic/community/owners.ts",
+    "src/logic/community/communities.ts",
+    "src/controllers/handlers/http/get-community-handler.ts",
+    "src/controllers/handlers/http/create-community-handler.ts"
+  ],
+  "cases": [
+    {
+      "name": "alias",
+      "documents": [
+        {
+          "avatars": [
+            {
+              "userId": "0x9333333333333333333333333333333333333333",
+              "name": "Source profile",
+              "hasClaimedName": true,
+              "avatar": {
+                "snapshots": {
+                  "face256": "https://images.example.org/raw-face.png"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "get": {
+        "status": 200,
+        "body": {
+          "data": {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "name": "Fixture community",
+            "description": "seeded community",
+            "ownerAddress": "0x9222222222222222222222222222222222222222",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 1,
+            "ownerName": "Source profile",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          }
+        }
+      },
+      "create": {
+        "status": 201,
+        "body": {
+          "message": "Community created successfully",
+          "data": {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "name": "Fixture created community",
+            "description": "fixture description",
+            "ownerAddress": "0x9222222222222222222222222222222222222222",
+            "privacy": "public",
+            "visibility": "all",
+            "active": true,
+            "isHostingLiveEvent": false,
+            "ownerName": "Source profile"
+          }
+        }
+      }
+    },
+    {
+      "name": "regular",
+      "documents": [
+        {
+          "avatars": [
+            {
+              "userId": "0x9222222222222222222222222222222222222222",
+              "name": "Source profile",
+              "hasClaimedName": true,
+              "avatar": {
+                "snapshots": {
+                  "face256": "https://images.example.org/raw-face.png"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "get": {
+        "status": 200,
+        "body": {
+          "data": {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "name": "Fixture community",
+            "description": "seeded community",
+            "ownerAddress": "0x9222222222222222222222222222222222222222",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 1,
+            "ownerName": "Source profile",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          }
+        }
+      },
+      "create": {
+        "status": 201,
+        "body": {
+          "message": "Community created successfully",
+          "data": {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "name": "Fixture created community",
+            "description": "fixture description",
+            "ownerAddress": "0x9222222222222222222222222222222222222222",
+            "privacy": "public",
+            "visibility": "all",
+            "active": true,
+            "isHostingLiveEvent": false,
+            "ownerName": "Source profile"
+          }
+        }
+      }
+    },
+    {
+      "name": "missing",
+      "documents": [],
+      "get": {
+        "status": 500,
+        "body": {
+          "message": "Profile not found: 0x9222222222222222222222222222222222222222"
+        }
+      },
+      "create": {
+        "status": 500,
+        "body": {
+          "message": "Profile not found: 0x9222222222222222222222222222222222222222"
+        }
+      }
+    },
+    {
+      "name": "invalid",
+      "documents": [
+        {
+          "avatars": [
+            {
+              "name": "Source profile",
+              "hasClaimedName": true,
+              "avatar": {
+                "snapshots": {
+                  "face256": "https://images.example.org/raw-face.png"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "get": {
+        "status": 500,
+        "body": {
+          "message": "Invalid profile received from registry: 0x9222222222222222222222222222222222222222"
+        }
+      },
+      "create": {
+        "status": 500,
+        "body": {
+          "message": "Invalid profile received from registry: 0x9222222222222222222222222222222222222222"
+        }
+      }
+    }
+  ]
+}

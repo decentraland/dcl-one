@@ -1,0 +1,1504 @@
+{
+  "source": "https://github.com/decentraland/social-service-ea",
+  "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+  "runtime": "v26.12.0",
+  "scope": "Actual community handlers/components and communities-db friendship-bearing SQL builders. A local pg provider rejects generated queries referencing friendships with a permission Error; it does not execute those SQL statements. Other DB/profile/domain dependencies are local fixtures. Anonymous paths omit the relationship CTE; community request aggregation performs no relationship read.",
+  "sources": [
+    {
+      "path": "src/adapters/communities-db.ts",
+      "sha256": "0748e0d7f408e5565a89ff87975eea64fd84ff9c2213bb1038149a3473f0ad8a"
+    },
+    {
+      "path": "src/logic/queries.ts",
+      "sha256": "9f689b2f019c87aa32550c91ae6bbc3d1a0619e0d09b6cc517140bf0688e38a1"
+    },
+    {
+      "path": "src/logic/community/communities.ts",
+      "sha256": "b5da768f47f9fcb5a400c25fa16a278fb4c2b7b8be7bbabbda94981951ad1391"
+    },
+    {
+      "path": "src/logic/community/members.ts",
+      "sha256": "b0dc7df3813564faeb11e7cd6e2d187b436cc79af8df0542e3968c57ce5160d1"
+    },
+    {
+      "path": "src/logic/community/bans.ts",
+      "sha256": "915b2cbc7c886e39b08150681a2bcd31c2a8a0494c8d1b310dd5475a5bf6e72d"
+    },
+    {
+      "path": "src/logic/community/requests.ts",
+      "sha256": "7198b9ec1ed580691496061d3ce75a98fb3dc063675ed45ac4227ea17d99d8bf"
+    },
+    {
+      "path": "src/logic/community/utils.ts",
+      "sha256": "43d548b3d69a378bf9b629125805bc6f9aa6f966185dbd0235ca26c03e5b9f31"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-communities-handler.ts",
+      "sha256": "67cf8ada1ca4edd5cc896bdaa68148cd44d57fdd268afc5c6cb10cb0df867503"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-communities-v2-handler.ts",
+      "sha256": "f3b8403592f6d069d40568bb8f186be96b7e5124f0e303a7dbaf22536d78c0b2"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-community-members-handlers.ts",
+      "sha256": "d268d59023df85b25d2d0d4d5faef984c1ea97ec51c4222040c0993ca69c1936"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-community-members-v2-handler.ts",
+      "sha256": "087af4fad0cf831ba7ec3cbd8af9f2aab5c45c49b466840b8ea118eaf04cf2db"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-banned-members-handler.ts",
+      "sha256": "0dbe05a18a075310854e5e1223e7534c4335da38eae223600113ed79fa6f6d55"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-banned-members-v2-handler.ts",
+      "sha256": "486ef6067fbbf4f2889e0e1fb8bd5e2d451333e0e53c7df3815c6924d579241d"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-community-requests-handler.ts",
+      "sha256": "af3d973123ac646338856ead741cd8c78fabcc5324fd7a12db0aeff6ad3930ae"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-community-requests-v2-handler.ts",
+      "sha256": "27c951504b312ed2128e443485536054be78633c69f45449f45bd4e4ac009572"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-member-requests-handler.ts",
+      "sha256": "0b1902fdba36774ccac98b85662e9df7c422e1bd53a20dadf6a092e3f379d24e"
+    },
+    {
+      "path": "src/controllers/handlers/http/get-member-requests-v2-handler.ts",
+      "sha256": "5f9f66050c31007a9143e4c9a147a9ccb6938f3c84f2a4a8f4e7c6822b75e79d"
+    }
+  ],
+  "cases": [
+    {
+      "phase": "friendship-read-error",
+      "path": "/v1/communities",
+      "handler": "getCommunitiesHandler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH user_friends AS (SELECT DISTINCT\n    CASE\n      WHEN f.address_requester = $1 \n      THEN f.address_requested\n      ELSE f.address_requester\n    END as address, created_at\n  FROM friendships f\n  WHERE f.is_active = true\n    AND (\n      f.address_requester = $2\n      OR f.address_requested = $3\n    )), \ncommunities_with_members_count AS (\n    SELECT c.id, COUNT(cm.member_address) as \"membersCount\"\n    FROM communities c\n    LEFT JOIN community_members cm ON c.id = cm.community_id\n    WHERE c.active = true\n   GROUP BY c.id), \ncommunity_friends AS (\n        SELECT \n          c.id as community_id,\n          (\n            SELECT array_agg(address ORDER BY address)\n            FROM (\n              SELECT DISTINCT uf.address\n              FROM user_friends uf\n              JOIN community_members cm ON cm.member_address = uf.address\n              WHERE cm.community_id = c.id\n              LIMIT 3\n            ) subq\n          ) as friends\n        FROM communities c\n        WHERE c.active = true\n      )\n\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          COALESCE(cm.role, $4) as role,\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n          cwmc.\"membersCount\",\n          COALESCE(cf.friends, ARRAY[]::text[]) as friends\n        FROM communities c\n         LEFT  JOIN community_members cm ON c.id = cm.community_id AND cm.member_address = $5\n        LEFT JOIN communities_with_members_count cwmc ON c.id = cwmc.id\n        LEFT JOIN community_friends cf ON c.id = cf.community_id\n        LEFT JOIN community_bans cb ON c.id = cb.community_id AND cb.banned_address = $6 AND cb.active = true\n        WHERE c.active = true AND cb.banned_address IS NULL AND c.unlisted = false ORDER BY c.editors_choice DESC, c.ranking_score DESC, c.name ASC LIMIT $7 OFFSET $8",
+          "values": [
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "none",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "friendship-read-error",
+      "path": "/v2/communities",
+      "handler": "getCommunitiesV2Handler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH user_friends AS (SELECT DISTINCT\n    CASE\n      WHEN f.address_requester = $1 \n      THEN f.address_requested\n      ELSE f.address_requester\n    END as address, created_at\n  FROM friendships f\n  WHERE f.is_active = true\n    AND (\n      f.address_requester = $2\n      OR f.address_requested = $3\n    )), \ncommunities_with_members_count AS (\n    SELECT c.id, COUNT(cm.member_address) as \"membersCount\"\n    FROM communities c\n    LEFT JOIN community_members cm ON c.id = cm.community_id\n    WHERE c.active = true\n   GROUP BY c.id), \ncommunity_friends AS (\n        SELECT \n          c.id as community_id,\n          (\n            SELECT array_agg(address ORDER BY address)\n            FROM (\n              SELECT DISTINCT uf.address\n              FROM user_friends uf\n              JOIN community_members cm ON cm.member_address = uf.address\n              WHERE cm.community_id = c.id\n              LIMIT 3\n            ) subq\n          ) as friends\n        FROM communities c\n        WHERE c.active = true\n      )\n\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          COALESCE(cm.role, $4) as role,\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n          cwmc.\"membersCount\",\n          COALESCE(cf.friends, ARRAY[]::text[]) as friends\n        FROM communities c\n         LEFT  JOIN community_members cm ON c.id = cm.community_id AND cm.member_address = $5\n        LEFT JOIN communities_with_members_count cwmc ON c.id = cwmc.id\n        LEFT JOIN community_friends cf ON c.id = cf.community_id\n        LEFT JOIN community_bans cb ON c.id = cb.community_id AND cb.banned_address = $6 AND cb.active = true\n        WHERE c.active = true AND cb.banned_address IS NULL AND c.unlisted = false ORDER BY c.editors_choice DESC, c.ranking_score DESC, c.name ASC LIMIT $7 OFFSET $8",
+          "values": [
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "none",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "friendship-read-error",
+      "path": "/v1/communities/:id/members",
+      "handler": "getCommunityMembersHandler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "friendship-read-error",
+      "path": "/v2/communities/:id/members",
+      "handler": "getCommunityMembersV2Handler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "friendship-read-error",
+      "path": "/v1/communities/:id/bans",
+      "handler": "getBannedMembersHandler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "friendship-read-error",
+      "path": "/v2/communities/:id/bans",
+      "handler": "getBannedMembersV2Handler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "friendship-read-error",
+      "path": "/v1/communities/:id/requests",
+      "handler": "getCommunityRequestsHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "id": "00000000-0000-4000-8000-000000000002",
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "type": "request_to_join",
+                "status": "pending",
+                "profilePictureUrl": "http://cdn.test/face.png",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "phase": "friendship-read-error",
+      "path": "/v2/communities/:id/requests",
+      "handler": "getCommunityRequestsV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "id": "00000000-0000-4000-8000-000000000002",
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "type": "request_to_join",
+                "status": "pending",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "phase": "friendship-read-error",
+      "path": "/v1/members/:address/requests",
+      "handler": "getMemberRequestsHandler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH user_friends AS (SELECT DISTINCT\n    CASE\n      WHEN f.address_requester = $1 \n      THEN f.address_requested\n      ELSE f.address_requester\n    END as address, created_at\n  FROM friendships f\n  WHERE f.is_active = true\n    AND (\n      f.address_requester = $2\n      OR f.address_requested = $3\n    )), \ncommunities_with_members_count AS (\n    SELECT c.id, COUNT(cm.member_address) as \"membersCount\"\n    FROM communities c\n    LEFT JOIN community_members cm ON c.id = cm.community_id\n    WHERE c.active = true\n   GROUP BY c.id), \ncommunity_friends AS (\n        SELECT \n          c.id as community_id,\n          (\n            SELECT array_agg(address ORDER BY address)\n            FROM (\n              SELECT DISTINCT uf.address\n              FROM user_friends uf\n              JOIN community_members cm ON cm.member_address = uf.address\n              WHERE cm.community_id = c.id\n              LIMIT 3\n            ) subq\n          ) as friends\n        FROM communities c\n        WHERE c.active = true\n      )\n\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          COALESCE(cm.role, $4) as role,\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n          cwmc.\"membersCount\",\n          COALESCE(cf.friends, ARRAY[]::text[]) as friends\n        FROM communities c\n         LEFT  JOIN community_members cm ON c.id = cm.community_id AND cm.member_address = $5\n        LEFT JOIN communities_with_members_count cwmc ON c.id = cwmc.id\n        LEFT JOIN community_friends cf ON c.id = cf.community_id\n        LEFT JOIN community_bans cb ON c.id = cb.community_id AND cb.banned_address = $6 AND cb.active = true\n        WHERE c.active = true AND cb.banned_address IS NULL AND c.id = ANY($7) ORDER BY c.editors_choice DESC, c.ranking_score DESC, c.name ASC LIMIT $8 OFFSET $9",
+          "values": [
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "none",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            [
+              "00000000-0000-4000-8000-000000000001"
+            ],
+            1,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "friendship-read-error",
+      "path": "/v2/members/:address/requests",
+      "handler": "getMemberRequestsV2Handler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH user_friends AS (SELECT DISTINCT\n    CASE\n      WHEN f.address_requester = $1 \n      THEN f.address_requested\n      ELSE f.address_requester\n    END as address, created_at\n  FROM friendships f\n  WHERE f.is_active = true\n    AND (\n      f.address_requester = $2\n      OR f.address_requested = $3\n    )), \ncommunities_with_members_count AS (\n    SELECT c.id, COUNT(cm.member_address) as \"membersCount\"\n    FROM communities c\n    LEFT JOIN community_members cm ON c.id = cm.community_id\n    WHERE c.active = true\n   GROUP BY c.id), \ncommunity_friends AS (\n        SELECT \n          c.id as community_id,\n          (\n            SELECT array_agg(address ORDER BY address)\n            FROM (\n              SELECT DISTINCT uf.address\n              FROM user_friends uf\n              JOIN community_members cm ON cm.member_address = uf.address\n              WHERE cm.community_id = c.id\n              LIMIT 3\n            ) subq\n          ) as friends\n        FROM communities c\n        WHERE c.active = true\n      )\n\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          COALESCE(cm.role, $4) as role,\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n          cwmc.\"membersCount\",\n          COALESCE(cf.friends, ARRAY[]::text[]) as friends\n        FROM communities c\n         LEFT  JOIN community_members cm ON c.id = cm.community_id AND cm.member_address = $5\n        LEFT JOIN communities_with_members_count cwmc ON c.id = cwmc.id\n        LEFT JOIN community_friends cf ON c.id = cf.community_id\n        LEFT JOIN community_bans cb ON c.id = cb.community_id AND cb.banned_address = $6 AND cb.active = true\n        WHERE c.active = true AND cb.banned_address IS NULL AND c.id = ANY($7) ORDER BY c.editors_choice DESC, c.ranking_score DESC, c.name ASC LIMIT $8 OFFSET $9",
+          "values": [
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "none",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            [
+              "00000000-0000-4000-8000-000000000001"
+            ],
+            1,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "accepted-friend",
+      "path": "/v1/communities",
+      "handler": "getCommunitiesHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "id": "00000000-0000-4000-8000-000000000001",
+                "name": "Fixture",
+                "description": "Description",
+                "ownerAddress": "0x1111111111111111111111111111111111111111",
+                "privacy": "public",
+                "active": true,
+                "visibility": "all",
+                "role": "owner",
+                "membersCount": 1,
+                "friends": [
+                  {
+                    "address": "0x2222222222222222222222222222222222222222",
+                    "name": "Profile",
+                    "hasClaimedName": true,
+                    "profilePictureUrl": "http://cdn.test/face.png"
+                  }
+                ],
+                "ownerName": "Profile",
+                "voiceChatStatus": {
+                  "isActive": false,
+                  "participantCount": 0,
+                  "moderatorCount": 0
+                }
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH user_friends AS (SELECT DISTINCT\n    CASE\n      WHEN f.address_requester = $1 \n      THEN f.address_requested\n      ELSE f.address_requester\n    END as address, created_at\n  FROM friendships f\n  WHERE f.is_active = true\n    AND (\n      f.address_requester = $2\n      OR f.address_requested = $3\n    )), \ncommunities_with_members_count AS (\n    SELECT c.id, COUNT(cm.member_address) as \"membersCount\"\n    FROM communities c\n    LEFT JOIN community_members cm ON c.id = cm.community_id\n    WHERE c.active = true\n   GROUP BY c.id), \ncommunity_friends AS (\n        SELECT \n          c.id as community_id,\n          (\n            SELECT array_agg(address ORDER BY address)\n            FROM (\n              SELECT DISTINCT uf.address\n              FROM user_friends uf\n              JOIN community_members cm ON cm.member_address = uf.address\n              WHERE cm.community_id = c.id\n              LIMIT 3\n            ) subq\n          ) as friends\n        FROM communities c\n        WHERE c.active = true\n      )\n\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          COALESCE(cm.role, $4) as role,\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n          cwmc.\"membersCount\",\n          COALESCE(cf.friends, ARRAY[]::text[]) as friends\n        FROM communities c\n         LEFT  JOIN community_members cm ON c.id = cm.community_id AND cm.member_address = $5\n        LEFT JOIN communities_with_members_count cwmc ON c.id = cwmc.id\n        LEFT JOIN community_friends cf ON c.id = cf.community_id\n        LEFT JOIN community_bans cb ON c.id = cb.community_id AND cb.banned_address = $6 AND cb.active = true\n        WHERE c.active = true AND cb.banned_address IS NULL AND c.unlisted = false ORDER BY c.editors_choice DESC, c.ranking_score DESC, c.name ASC LIMIT $7 OFFSET $8",
+          "values": [
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "none",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "accepted-friend",
+      "path": "/v2/communities",
+      "handler": "getCommunitiesV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "id": "00000000-0000-4000-8000-000000000001",
+                "name": "Fixture",
+                "description": "Description",
+                "ownerAddress": "0x1111111111111111111111111111111111111111",
+                "privacy": "public",
+                "active": true,
+                "visibility": "all",
+                "role": "owner",
+                "membersCount": 1,
+                "friends": [
+                  "0x2222222222222222222222222222222222222222"
+                ],
+                "voiceChatStatus": {
+                  "isActive": false,
+                  "participantCount": 0,
+                  "moderatorCount": 0
+                }
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH user_friends AS (SELECT DISTINCT\n    CASE\n      WHEN f.address_requester = $1 \n      THEN f.address_requested\n      ELSE f.address_requester\n    END as address, created_at\n  FROM friendships f\n  WHERE f.is_active = true\n    AND (\n      f.address_requester = $2\n      OR f.address_requested = $3\n    )), \ncommunities_with_members_count AS (\n    SELECT c.id, COUNT(cm.member_address) as \"membersCount\"\n    FROM communities c\n    LEFT JOIN community_members cm ON c.id = cm.community_id\n    WHERE c.active = true\n   GROUP BY c.id), \ncommunity_friends AS (\n        SELECT \n          c.id as community_id,\n          (\n            SELECT array_agg(address ORDER BY address)\n            FROM (\n              SELECT DISTINCT uf.address\n              FROM user_friends uf\n              JOIN community_members cm ON cm.member_address = uf.address\n              WHERE cm.community_id = c.id\n              LIMIT 3\n            ) subq\n          ) as friends\n        FROM communities c\n        WHERE c.active = true\n      )\n\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          COALESCE(cm.role, $4) as role,\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n          cwmc.\"membersCount\",\n          COALESCE(cf.friends, ARRAY[]::text[]) as friends\n        FROM communities c\n         LEFT  JOIN community_members cm ON c.id = cm.community_id AND cm.member_address = $5\n        LEFT JOIN communities_with_members_count cwmc ON c.id = cwmc.id\n        LEFT JOIN community_friends cf ON c.id = cf.community_id\n        LEFT JOIN community_bans cb ON c.id = cb.community_id AND cb.banned_address = $6 AND cb.active = true\n        WHERE c.active = true AND cb.banned_address IS NULL AND c.unlisted = false ORDER BY c.editors_choice DESC, c.ranking_score DESC, c.name ASC LIMIT $7 OFFSET $8",
+          "values": [
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "none",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "accepted-friend",
+      "path": "/v1/communities/:id/members",
+      "handler": "getCommunityMembersHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "lastFriendshipAction": "accept",
+                "actingUser": "0x1111111111111111111111111111111111111111",
+                "profilePictureUrl": "http://cdn.test/face.png",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "friendshipStatus": 3
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "accepted-friend",
+      "path": "/v2/communities/:id/members",
+      "handler": "getCommunityMembersV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 3
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "accepted-friend",
+      "path": "/v1/communities/:id/bans",
+      "handler": "getBannedMembersHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "bannedAt": "2024-01-01T00:00:00.000Z",
+                "lastFriendshipAction": "accept",
+                "actingUser": "0x1111111111111111111111111111111111111111",
+                "profilePictureUrl": "http://cdn.test/face.png",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "friendshipStatus": 3
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "accepted-friend",
+      "path": "/v2/communities/:id/bans",
+      "handler": "getBannedMembersV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "bannedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 3
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "accepted-friend",
+      "path": "/v1/communities/:id/requests",
+      "handler": "getCommunityRequestsHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "id": "00000000-0000-4000-8000-000000000002",
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "type": "request_to_join",
+                "status": "pending",
+                "profilePictureUrl": "http://cdn.test/face.png",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "phase": "accepted-friend",
+      "path": "/v2/communities/:id/requests",
+      "handler": "getCommunityRequestsV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "id": "00000000-0000-4000-8000-000000000002",
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "type": "request_to_join",
+                "status": "pending",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "phase": "accepted-friend",
+      "path": "/v1/members/:address/requests",
+      "handler": "getMemberRequestsHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "name": "Fixture",
+                "description": "Description",
+                "ownerAddress": "0x1111111111111111111111111111111111111111",
+                "privacy": "public",
+                "active": true,
+                "visibility": "all",
+                "role": "owner",
+                "membersCount": 1,
+                "friends": [
+                  {
+                    "address": "0x2222222222222222222222222222222222222222",
+                    "name": "Profile",
+                    "hasClaimedName": true,
+                    "profilePictureUrl": "http://cdn.test/face.png"
+                  }
+                ],
+                "ownerName": "Profile",
+                "voiceChatStatus": {
+                  "isActive": false,
+                  "participantCount": 0,
+                  "moderatorCount": 0
+                },
+                "id": "00000000-0000-4000-8000-000000000002",
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "type": "request_to_join",
+                "status": "pending"
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH user_friends AS (SELECT DISTINCT\n    CASE\n      WHEN f.address_requester = $1 \n      THEN f.address_requested\n      ELSE f.address_requester\n    END as address, created_at\n  FROM friendships f\n  WHERE f.is_active = true\n    AND (\n      f.address_requester = $2\n      OR f.address_requested = $3\n    )), \ncommunities_with_members_count AS (\n    SELECT c.id, COUNT(cm.member_address) as \"membersCount\"\n    FROM communities c\n    LEFT JOIN community_members cm ON c.id = cm.community_id\n    WHERE c.active = true\n   GROUP BY c.id), \ncommunity_friends AS (\n        SELECT \n          c.id as community_id,\n          (\n            SELECT array_agg(address ORDER BY address)\n            FROM (\n              SELECT DISTINCT uf.address\n              FROM user_friends uf\n              JOIN community_members cm ON cm.member_address = uf.address\n              WHERE cm.community_id = c.id\n              LIMIT 3\n            ) subq\n          ) as friends\n        FROM communities c\n        WHERE c.active = true\n      )\n\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          COALESCE(cm.role, $4) as role,\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n          cwmc.\"membersCount\",\n          COALESCE(cf.friends, ARRAY[]::text[]) as friends\n        FROM communities c\n         LEFT  JOIN community_members cm ON c.id = cm.community_id AND cm.member_address = $5\n        LEFT JOIN communities_with_members_count cwmc ON c.id = cwmc.id\n        LEFT JOIN community_friends cf ON c.id = cf.community_id\n        LEFT JOIN community_bans cb ON c.id = cb.community_id AND cb.banned_address = $6 AND cb.active = true\n        WHERE c.active = true AND cb.banned_address IS NULL AND c.id = ANY($7) ORDER BY c.editors_choice DESC, c.ranking_score DESC, c.name ASC LIMIT $8 OFFSET $9",
+          "values": [
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "none",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            [
+              "00000000-0000-4000-8000-000000000001"
+            ],
+            1,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "accepted-friend",
+      "path": "/v2/members/:address/requests",
+      "handler": "getMemberRequestsV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "name": "Fixture",
+                "description": "Description",
+                "ownerAddress": "0x1111111111111111111111111111111111111111",
+                "privacy": "public",
+                "active": true,
+                "visibility": "all",
+                "role": "owner",
+                "membersCount": 1,
+                "friends": [
+                  "0x2222222222222222222222222222222222222222"
+                ],
+                "voiceChatStatus": {
+                  "isActive": false,
+                  "participantCount": 0,
+                  "moderatorCount": 0
+                },
+                "id": "00000000-0000-4000-8000-000000000002",
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "type": "request_to_join",
+                "status": "pending"
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH user_friends AS (SELECT DISTINCT\n    CASE\n      WHEN f.address_requester = $1 \n      THEN f.address_requested\n      ELSE f.address_requester\n    END as address, created_at\n  FROM friendships f\n  WHERE f.is_active = true\n    AND (\n      f.address_requester = $2\n      OR f.address_requested = $3\n    )), \ncommunities_with_members_count AS (\n    SELECT c.id, COUNT(cm.member_address) as \"membersCount\"\n    FROM communities c\n    LEFT JOIN community_members cm ON c.id = cm.community_id\n    WHERE c.active = true\n   GROUP BY c.id), \ncommunity_friends AS (\n        SELECT \n          c.id as community_id,\n          (\n            SELECT array_agg(address ORDER BY address)\n            FROM (\n              SELECT DISTINCT uf.address\n              FROM user_friends uf\n              JOIN community_members cm ON cm.member_address = uf.address\n              WHERE cm.community_id = c.id\n              LIMIT 3\n            ) subq\n          ) as friends\n        FROM communities c\n        WHERE c.active = true\n      )\n\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          COALESCE(cm.role, $4) as role,\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n          cwmc.\"membersCount\",\n          COALESCE(cf.friends, ARRAY[]::text[]) as friends\n        FROM communities c\n         LEFT  JOIN community_members cm ON c.id = cm.community_id AND cm.member_address = $5\n        LEFT JOIN communities_with_members_count cwmc ON c.id = cwmc.id\n        LEFT JOIN community_friends cf ON c.id = cf.community_id\n        LEFT JOIN community_bans cb ON c.id = cb.community_id AND cb.banned_address = $6 AND cb.active = true\n        WHERE c.active = true AND cb.banned_address IS NULL AND c.id = ANY($7) ORDER BY c.editors_choice DESC, c.ranking_score DESC, c.name ASC LIMIT $8 OFFSET $9",
+          "values": [
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "none",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            [
+              "00000000-0000-4000-8000-000000000001"
+            ],
+            1,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "empty-page-error",
+      "path": "/v1/communities",
+      "handler": "getCommunitiesHandler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH user_friends AS (SELECT DISTINCT\n    CASE\n      WHEN f.address_requester = $1 \n      THEN f.address_requested\n      ELSE f.address_requester\n    END as address, created_at\n  FROM friendships f\n  WHERE f.is_active = true\n    AND (\n      f.address_requester = $2\n      OR f.address_requested = $3\n    )), \ncommunities_with_members_count AS (\n    SELECT c.id, COUNT(cm.member_address) as \"membersCount\"\n    FROM communities c\n    LEFT JOIN community_members cm ON c.id = cm.community_id\n    WHERE c.active = true\n   GROUP BY c.id), \ncommunity_friends AS (\n        SELECT \n          c.id as community_id,\n          (\n            SELECT array_agg(address ORDER BY address)\n            FROM (\n              SELECT DISTINCT uf.address\n              FROM user_friends uf\n              JOIN community_members cm ON cm.member_address = uf.address\n              WHERE cm.community_id = c.id\n              LIMIT 3\n            ) subq\n          ) as friends\n        FROM communities c\n        WHERE c.active = true\n      )\n\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          COALESCE(cm.role, $4) as role,\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n          cwmc.\"membersCount\",\n          COALESCE(cf.friends, ARRAY[]::text[]) as friends\n        FROM communities c\n         LEFT  JOIN community_members cm ON c.id = cm.community_id AND cm.member_address = $5\n        LEFT JOIN communities_with_members_count cwmc ON c.id = cwmc.id\n        LEFT JOIN community_friends cf ON c.id = cf.community_id\n        LEFT JOIN community_bans cb ON c.id = cb.community_id AND cb.banned_address = $6 AND cb.active = true\n        WHERE c.active = true AND cb.banned_address IS NULL AND c.unlisted = false ORDER BY c.editors_choice DESC, c.ranking_score DESC, c.name ASC LIMIT $7 OFFSET $8",
+          "values": [
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "none",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "empty-page-error",
+      "path": "/v2/communities",
+      "handler": "getCommunitiesV2Handler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH user_friends AS (SELECT DISTINCT\n    CASE\n      WHEN f.address_requester = $1 \n      THEN f.address_requested\n      ELSE f.address_requester\n    END as address, created_at\n  FROM friendships f\n  WHERE f.is_active = true\n    AND (\n      f.address_requester = $2\n      OR f.address_requested = $3\n    )), \ncommunities_with_members_count AS (\n    SELECT c.id, COUNT(cm.member_address) as \"membersCount\"\n    FROM communities c\n    LEFT JOIN community_members cm ON c.id = cm.community_id\n    WHERE c.active = true\n   GROUP BY c.id), \ncommunity_friends AS (\n        SELECT \n          c.id as community_id,\n          (\n            SELECT array_agg(address ORDER BY address)\n            FROM (\n              SELECT DISTINCT uf.address\n              FROM user_friends uf\n              JOIN community_members cm ON cm.member_address = uf.address\n              WHERE cm.community_id = c.id\n              LIMIT 3\n            ) subq\n          ) as friends\n        FROM communities c\n        WHERE c.active = true\n      )\n\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          COALESCE(cm.role, $4) as role,\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n          cwmc.\"membersCount\",\n          COALESCE(cf.friends, ARRAY[]::text[]) as friends\n        FROM communities c\n         LEFT  JOIN community_members cm ON c.id = cm.community_id AND cm.member_address = $5\n        LEFT JOIN communities_with_members_count cwmc ON c.id = cwmc.id\n        LEFT JOIN community_friends cf ON c.id = cf.community_id\n        LEFT JOIN community_bans cb ON c.id = cb.community_id AND cb.banned_address = $6 AND cb.active = true\n        WHERE c.active = true AND cb.banned_address IS NULL AND c.unlisted = false ORDER BY c.editors_choice DESC, c.ranking_score DESC, c.name ASC LIMIT $7 OFFSET $8",
+          "values": [
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "none",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "empty-page-error",
+      "path": "/v1/communities/:id/members",
+      "handler": "getCommunityMembersHandler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "empty-page-error",
+      "path": "/v2/communities/:id/members",
+      "handler": "getCommunityMembersV2Handler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "empty-page-error",
+      "path": "/v1/communities/:id/bans",
+      "handler": "getBannedMembersHandler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "empty-page-error",
+      "path": "/v2/communities/:id/bans",
+      "handler": "getBannedMembersV2Handler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "empty-page-error",
+      "path": "/v1/communities/:id/requests",
+      "handler": "getCommunityRequestsHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [],
+            "total": 0,
+            "page": 1,
+            "pages": 0,
+            "limit": 100
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "phase": "empty-page-error",
+      "path": "/v2/communities/:id/requests",
+      "handler": "getCommunityRequestsV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [],
+            "total": 0,
+            "page": 1,
+            "pages": 0,
+            "limit": 100
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "phase": "empty-page-error",
+      "path": "/v1/members/:address/requests",
+      "handler": "getMemberRequestsHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [],
+            "total": 0,
+            "page": 1,
+            "pages": 0,
+            "limit": 100
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "phase": "empty-page-error",
+      "path": "/v2/members/:address/requests",
+      "handler": "getMemberRequestsV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [],
+            "total": 0,
+            "page": 1,
+            "pages": 0,
+            "limit": 100
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "phase": "anonymous-error",
+      "path": "/v1/communities",
+      "handler": "getCommunitiesHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "id": "00000000-0000-4000-8000-000000000001",
+                "name": "Fixture",
+                "description": "Description",
+                "ownerAddress": "0x1111111111111111111111111111111111111111",
+                "privacy": "public",
+                "active": true,
+                "visibility": "all",
+                "role": "owner",
+                "membersCount": 1,
+                "friends": [
+                  "0x2222222222222222222222222222222222222222"
+                ],
+                "ownerName": "Profile",
+                "voiceChatStatus": null
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH communities_with_members_count AS (\n    SELECT c.id, COUNT(cm.member_address) as \"membersCount\"\n    FROM communities c\n    LEFT JOIN community_members cm ON c.id = cm.community_id\n    WHERE c.active = true\n   AND c.private = false GROUP BY c.id)\n\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          c.active,\n          cwmc.\"membersCount\"\n        FROM communities c\n        LEFT JOIN communities_with_members_count cwmc ON c.id = cwmc.id\n        WHERE c.active = true AND c.private = false AND c.unlisted = false ORDER BY c.editors_choice DESC, c.ranking_score DESC, c.name ASC LIMIT $1 OFFSET $2",
+          "values": [
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "anonymous-error",
+      "path": "/v2/communities",
+      "handler": "getCommunitiesV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "id": "00000000-0000-4000-8000-000000000001",
+                "name": "Fixture",
+                "description": "Description",
+                "ownerAddress": "0x1111111111111111111111111111111111111111",
+                "privacy": "public",
+                "active": true,
+                "visibility": "all",
+                "role": "owner",
+                "membersCount": 1,
+                "friends": [
+                  "0x2222222222222222222222222222222222222222"
+                ],
+                "voiceChatStatus": null
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH communities_with_members_count AS (\n    SELECT c.id, COUNT(cm.member_address) as \"membersCount\"\n    FROM communities c\n    LEFT JOIN community_members cm ON c.id = cm.community_id\n    WHERE c.active = true\n   AND c.private = false GROUP BY c.id)\n\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          c.active,\n          cwmc.\"membersCount\"\n        FROM communities c\n        LEFT JOIN communities_with_members_count cwmc ON c.id = cwmc.id\n        WHERE c.active = true AND c.private = false AND c.unlisted = false ORDER BY c.editors_choice DESC, c.ranking_score DESC, c.name ASC LIMIT $1 OFFSET $2",
+          "values": [
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "anonymous-error",
+      "path": "/v1/communities/:id/members",
+      "handler": "getCommunityMembersHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "profilePictureUrl": "http://cdn.test/face.png",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members)\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\" FROM community_members cm WHERE cm.community_id = $2 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $3 OFFSET $4",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "anonymous-error",
+      "path": "/v2/communities/:id/members",
+      "handler": "getCommunityMembersV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 1,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members)\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\" FROM community_members cm WHERE cm.community_id = $2 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $3 OFFSET $4",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "missing-profile",
+      "path": "/v1/communities/:id/members",
+      "handler": "getCommunityMembersHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "lastFriendshipAction": "accept",
+                "actingUser": "0x1111111111111111111111111111111111111111",
+                "profilePictureUrl": "http://cdn.test/face.png",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "friendshipStatus": 3
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "missing-profile",
+      "path": "/v2/communities/:id/members",
+      "handler": "getCommunityMembersV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "role": "member",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 3
+              },
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "joinedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 3
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "missing-profile",
+      "path": "/v1/communities/:id/bans",
+      "handler": "getBannedMembersHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "bannedAt": "2024-01-01T00:00:00.000Z",
+                "lastFriendshipAction": "accept",
+                "actingUser": "0x1111111111111111111111111111111111111111",
+                "role": "owner",
+                "profilePictureUrl": "http://cdn.test/face.png",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "friendshipStatus": 3
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "missing-profile",
+      "path": "/v2/communities/:id/bans",
+      "handler": "getBannedMembersV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "bannedAt": "2024-01-01T00:00:00.000Z",
+                "friendshipStatus": 3
+              },
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "bannedAt": "2024-01-01T00:00:00.000Z",
+                "role": "owner",
+                "friendshipStatus": 3
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "missing-profile",
+      "path": "/v1/communities/:id/requests",
+      "handler": "getCommunityRequestsHandler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "id": "00000000-0000-4000-8000-000000000003",
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "type": "request_to_join",
+                "status": "pending",
+                "profilePictureUrl": "http://cdn.test/face.png",
+                "hasClaimedName": true,
+                "name": "Profile",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "phase": "missing-profile",
+      "path": "/v2/communities/:id/requests",
+      "handler": "getCommunityRequestsV2Handler",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "results": [
+              {
+                "id": "00000000-0000-4000-8000-000000000002",
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x2222222222222222222222222222222222222222",
+                "type": "request_to_join",
+                "status": "pending",
+                "friendshipStatus": 7
+              },
+              {
+                "id": "00000000-0000-4000-8000-000000000003",
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "memberAddress": "0x1111111111111111111111111111111111111111",
+                "type": "request_to_join",
+                "status": "pending",
+                "friendshipStatus": 7
+              }
+            ],
+            "total": 2,
+            "page": 1,
+            "pages": 1,
+            "limit": 100
+          }
+        }
+      },
+      "trace": []
+    },
+    {
+      "phase": "friend-and-profile-error",
+      "path": "/v1/communities",
+      "handler": "getCommunitiesHandler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH user_friends AS (SELECT DISTINCT\n    CASE\n      WHEN f.address_requester = $1 \n      THEN f.address_requested\n      ELSE f.address_requester\n    END as address, created_at\n  FROM friendships f\n  WHERE f.is_active = true\n    AND (\n      f.address_requester = $2\n      OR f.address_requested = $3\n    )), \ncommunities_with_members_count AS (\n    SELECT c.id, COUNT(cm.member_address) as \"membersCount\"\n    FROM communities c\n    LEFT JOIN community_members cm ON c.id = cm.community_id\n    WHERE c.active = true\n   GROUP BY c.id), \ncommunity_friends AS (\n        SELECT \n          c.id as community_id,\n          (\n            SELECT array_agg(address ORDER BY address)\n            FROM (\n              SELECT DISTINCT uf.address\n              FROM user_friends uf\n              JOIN community_members cm ON cm.member_address = uf.address\n              WHERE cm.community_id = c.id\n              LIMIT 3\n            ) subq\n          ) as friends\n        FROM communities c\n        WHERE c.active = true\n      )\n\n        SELECT \n          c.id,\n          c.name,\n          c.description,\n          c.owner_address as \"ownerAddress\",\n          COALESCE(cm.role, $4) as role,\n          CASE WHEN c.private THEN 'private' ELSE 'public' END as privacy,\n          CASE WHEN c.unlisted THEN 'unlisted' ELSE 'all' END as visibility,\n          c.active,\n          cwmc.\"membersCount\",\n          COALESCE(cf.friends, ARRAY[]::text[]) as friends\n        FROM communities c\n         LEFT  JOIN community_members cm ON c.id = cm.community_id AND cm.member_address = $5\n        LEFT JOIN communities_with_members_count cwmc ON c.id = cwmc.id\n        LEFT JOIN community_friends cf ON c.id = cf.community_id\n        LEFT JOIN community_bans cb ON c.id = cb.community_id AND cb.banned_address = $6 AND cb.active = true\n        WHERE c.active = true AND cb.banned_address IS NULL AND c.unlisted = false ORDER BY c.editors_choice DESC, c.ranking_score DESC, c.name ASC LIMIT $7 OFFSET $8",
+          "values": [
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "none",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "friend-and-profile-error",
+      "path": "/v1/communities/:id/members",
+      "handler": "getCommunityMembersHandler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\nSELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\", lfa.action AS \"lastFriendshipAction\", lfa.acting_user AS \"actingUser\" FROM community_members cm LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cm.member_address WHERE cm.community_id = $5 ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "friend-and-profile-error",
+      "path": "/v1/communities/:id/bans",
+      "handler": "getBannedMembersHandler",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "permission denied for table friendships"
+        }
+      },
+      "trace": [
+        {
+          "text": "WITH members AS (SELECT member_address FROM (SELECT banned_address as member_address FROM community_bans WHERE community_id = $1) AS members), \nlatest_friendship_actions AS (SELECT DISTINCT ON (f.id) \n            f.id as friendship_id,\n            fa.action,\n            fa.acting_user,\n            CASE \n              WHEN f.address_requester = $2 THEN f.address_requested\n              ELSE f.address_requester\n            END as other_user\n          FROM friendships f\n          INNER JOIN friendship_actions fa ON f.id = fa.friendship_id\n          INNER JOIN members cm ON cm.member_address IN (f.address_requester, f.address_requested)\n          WHERE (f.address_requester, f.address_requested) IN (\n            ($3, cm.member_address),\n            (cm.member_address, $4)\n          )\n          ORDER BY f.id, fa.timestamp DESC\n        )\n\n        SELECT \n          cb.community_id AS \"communityId\",\n          cb.banned_address AS \"memberAddress\",\n          cb.banned_at AS \"bannedAt\",\n          lfa.action AS \"lastFriendshipAction\",\n          lfa.acting_user AS \"actingUser\"\n        FROM community_bans cb\n        LEFT JOIN latest_friendship_actions lfa ON lfa.other_user = cb.banned_address\n        WHERE cb.community_id = $5\n          AND cb.active = true\n        ORDER BY cb.banned_at ASC\n       LIMIT $6 OFFSET $7",
+          "values": [
+            "00000000-0000-4000-8000-000000000001",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "0x1111111111111111111111111111111111111111",
+            "00000000-0000-4000-8000-000000000001",
+            100,
+            0
+          ]
+        }
+      ]
+    }
+  ]
+}
