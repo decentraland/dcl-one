@@ -43,6 +43,8 @@ pub const REFERENCE_SOURCES: &[&str] = &[
     "content.processed_snapshots.hash",
     "content.failed_deployments.snapshot_hash",
     "content.failed_deployments.entity_id",
+    "content.pending_deployments.entity_id",
+    "content.pending_deployment_files.hash",
     "explore.satellite_region.blob_cid",
     "explore.world_manifest.blob_cid",
     "explore.poster.blob_cid",
@@ -94,6 +96,16 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "a URL (the view over the place tables)",
     ),
     ("explore.schedules_local.image", "a URL"),
+    (
+        "content.pending_deployments.content_hashes",
+        "a partial upload's manifest: content.pending_deployment_files names every key \
+         it stored or found stored",
+    ),
+    (
+        "content.pending_deployment_files.entity_id",
+        "the upload a receipt belongs to: content.pending_deployments.entity_id holds the \
+         reference to its entity file",
+    ),
     (
         "content.forward_outbox.entity_id",
         "a forwarding record: content.deployments holds the reference, and a deployment gone \

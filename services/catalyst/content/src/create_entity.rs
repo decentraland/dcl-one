@@ -25,11 +25,17 @@
 //! entity's type (503) still count: the client chose them.
 //! The per-second request rate is the gateway's (`limit_req zone=deploy`,
 //! `infra/gateway/gateway.py`); the per-pointer TTLs are the deployer's.
+//!
+//! A form with `partial=true` is a batch of a partial upload
+//! ([`super::partial_deployments`]): 202 `{missing}` until the upload is
+//! complete, then 200. `?partial=true` declares it before the body, so the
+//! quota is not counted on admission but once the form is read (the upload
+//! once, when created); the query flag on a form without the field is a 400.
 
 use std::collections::BTreeMap;
 
 use axum::Json;
-use axum::extract::{Multipart, State};
+use axum::extract::{Multipart, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use bytes::{Bytes, BytesMut};
@@ -37,6 +43,7 @@ use serde_json::{Value, json};
 
 use super::SharedState;
 use super::errors::{AppError, AppResult};
+use super::partial_deployments;
 use super::write_deployer::DeployFailure;
 use super::writes;
 use crate::auth::MAX_AUTH_CHAIN_LINKS;
@@ -154,15 +161,15 @@ fn is_file_part(file_name: Option<&str>, content_type: Option<&str>) -> bool {
 }
 
 /// Reads the whole form: text fields by name, at most `max_fields` of up to
-/// `max_field_bytes` each, and file parts in order, each under
-/// [`MAX_DEPLOY_FILE_BYTES`], at most [`MAX_DEPLOY_FILES`] of them.
+/// `max_field_bytes` each, and file parts in order with their field names,
+/// each under [`MAX_DEPLOY_FILE_BYTES`], at most [`MAX_DEPLOY_FILES`] of them.
 async fn read_form(
     multipart: &mut Multipart,
     max_fields: usize,
     max_field_bytes: usize,
-) -> AppResult<(BTreeMap<String, String>, Vec<Bytes>)> {
+) -> AppResult<(BTreeMap<String, String>, Vec<(String, Bytes)>)> {
     let mut fields: BTreeMap<String, String> = BTreeMap::new();
-    let mut files: Vec<Bytes> = Vec::new();
+    let mut files: Vec<(String, Bytes)> = Vec::new();
     let mut field_count = 0usize;
 
     while let Some(mut field) = multipart
@@ -191,7 +198,7 @@ async fn read_form(
                 }
                 buf.extend_from_slice(&chunk);
             }
-            files.push(buf.freeze());
+            files.push((name, buf.freeze()));
         } else {
             // Repeated names count too.
             if field_count >= max_fields {
@@ -277,6 +284,7 @@ fn declared_body_bytes(headers: &HeaderMap) -> u64 {
 
 pub async fn create_entity(
     State(state): State<SharedState>,
+    RawQuery(query): RawQuery,
     headers: HeaderMap,
     multipart: Multipart,
 ) -> AppResult<Response> {
@@ -309,15 +317,29 @@ pub async fn create_entity(
         ));
     };
     let client_ip = crate::shared::client_ip::client_ip(&headers);
-    let charge = match state.deploy_quota.try_consume(&client_ip) {
-        Ok(charge) => charge,
-        Err(retry_after) => return Ok(quota_exceeded_response(retry_after)),
+    // A declared partial batch is counted once its form is read
+    // ([`partial_deployments`]): a source that spent its quota may still
+    // resume its own uploads.
+    let declared_partial = partial_deployments::is_declared(query.as_deref());
+    let charge = if declared_partial {
+        None
+    } else {
+        match state.deploy_quota.try_consume(&client_ip) {
+            Ok(charge) => charge,
+            Err(retry_after) => return Ok(quota_exceeded_response(retry_after)),
+        }
     };
 
+    let request = Request {
+        headers: &headers,
+        client_ip: &client_ip,
+        declared_partial,
+        started: request_started,
+    };
     Ok(
-        match deploy_form(&state, deployer, &headers, multipart, request_started).await {
+        match deploy_form(&state, deployer, &request, multipart).await {
             Ok(Answer::Decided(response)) => response,
-            Ok(Answer::Undecided(response)) => {
+            Ok(Answer::Undecided(response)) | Ok(Answer::Partial(response)) => {
                 if let Some(charge) = charge {
                     charge.refund();
                 }
@@ -328,21 +350,32 @@ pub async fn create_entity(
     )
 }
 
+/// What `deploy_form` needs of the request besides its body.
+struct Request<'a> {
+    headers: &'a HeaderMap,
+    client_ip: &'a str,
+    declared_partial: bool,
+    started: std::time::Instant,
+}
+
 /// An admitted deploy's answer: [`Answer::Undecided`] is the deployer's
-/// 503 for this node's own state, which the client's quota gets back.
+/// 503 for this node's own state, which the client's quota gets back;
+/// [`Answer::Partial`] a partial batch, which counted itself.
 enum Answer {
     Decided(Response),
     Undecided(Response),
+    Partial(Response),
 }
 
 /// Reads an admitted form and deploys it.
 async fn deploy_form(
     state: &SharedState,
     deployer: std::sync::Arc<super::write_deployer::WriteDeployer>,
-    headers: &HeaderMap,
+    request: &Request<'_>,
     mut multipart: Multipart,
-    request_started: std::time::Instant,
 ) -> AppResult<Answer> {
+    let headers = request.headers;
+    let request_started = request.started;
     let settings = &state.settings;
     let (fields, files) = read_form(
         &mut multipart,
@@ -354,6 +387,16 @@ async fn deploy_form(
         .get("entityId")
         .ok_or_else(|| invalid("Missing entityId field"))?
         .clone();
+    if fields.get("partial").map(String::as_str) == Some("true") {
+        return partial_batch(state, &deployer, request, fields, files, entity_id).await;
+    }
+    // Otherwise the query flag would carry a regular deploy past the quota.
+    if request.declared_partial {
+        return Err(invalid(
+            "The 'partial=true' query parameter requires the 'partial=true' form field",
+        ));
+    }
+    let files: Vec<Bytes> = files.into_iter().map(|(_, bytes)| bytes).collect();
     if !state.sync.takes_deploys() {
         let Some(entity_type) = entity_type_of(&files, &entity_id) else {
             return Ok(Answer::Decided(deployment_failure_response(
@@ -418,6 +461,63 @@ async fn deploy_form(
             })
         }
     }
+}
+
+/// A batch of a partial upload. The daily quota counts the upload once,
+/// when its first batch creates it, and a batch refused with a 400 before
+/// joining its upload; a spent source may only resume the signer's own.
+async fn partial_batch(
+    state: &SharedState,
+    deployer: &super::write_deployer::WriteDeployer,
+    request: &Request<'_>,
+    fields: BTreeMap<String, String>,
+    files: Vec<(String, Bytes)>,
+    entity_id: String,
+) -> AppResult<Answer> {
+    if !state.sync.takes_deploys_of("scene") {
+        return Err(AppError::ServiceUnavailable(
+            writes::BOOTSTRAPPING_MESSAGE.to_string(),
+        ));
+    }
+    // Counted for good: the charge is never refunded.
+    let count = || {
+        let _ = state.deploy_quota.try_consume(request.client_ip);
+    };
+    let auth_chain = match auth_chain_of(&fields, &entity_id) {
+        Ok(chain) => chain,
+        Err(e) => {
+            count();
+            return Err(e);
+        }
+    };
+    tracing::info!(
+        entity_id = %entity_id,
+        file_count = files.len(),
+        "POST /entities - Partial deployment batch"
+    );
+    let batch = partial_deployments::Batch {
+        entity_id,
+        auth_chain,
+        files,
+        requested_at_ms: chrono::Utc::now().timestamp_millis()
+            - request.started.elapsed().as_millis() as i64,
+    };
+    let mut admission = partial_deployments::Admission::default();
+    let response = partial_deployments::handle(
+        deployer,
+        &state.settings.partial_uploads,
+        batch,
+        state.deploy_quota.exhausted(request.client_ip),
+        &mut admission,
+    )
+    .await;
+    if admission.created || (response.status() == StatusCode::BAD_REQUEST && !admission.admitted) {
+        count();
+    }
+    if response.status() == StatusCode::OK {
+        state.deployments_cache.clear();
+    }
+    Ok(Answer::Partial(response))
 }
 
 #[cfg(test)]
