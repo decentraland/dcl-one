@@ -305,8 +305,8 @@ unsafe fn copy_rows(
             .checked_mul(src_stride)
             .ok_or_else(|| anyhow!("row offset overflow"))?;
         unsafe {
-            std::ptr::copy_nonoverlapping(src.add(src_offset), dst.add(dst_offset), row_bytes)
-        };
+            std::ptr::copy_nonoverlapping(src.add(src_offset), dst.add(dst_offset), row_bytes);
+        }
     }
     Ok(())
 }
