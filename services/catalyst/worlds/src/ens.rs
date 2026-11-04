@@ -99,7 +99,7 @@ pub fn resolvable(name: &str) -> bool {
 }
 
 /// Whether a JSON-RPC error is the call's own revert.
-fn is_revert(e: &RpcError) -> bool {
+pub(crate) fn is_revert(e: &RpcError) -> bool {
     matches!(e, RpcError::Response { code, message }
     if *code == 3 || {
         let m = message.to_ascii_lowercase();
@@ -281,7 +281,7 @@ impl EnsResolver {
 }
 
 /// A contract and the calldata of a view returning one address.
-type Call = (EvmAddress, Vec<u8>);
+pub(crate) type Call = (EvmAddress, Vec<u8>);
 
 fn owner_of_call(contract: EvmAddress, id: U256) -> Call {
     (contract, OwnerOf::ownerOfCall { id }.abi_encode())
@@ -291,7 +291,7 @@ fn registry_owner_call(registry: EvmAddress, node: B256) -> Call {
     (registry, RegistryOwner::ownerCall { node }.abi_encode())
 }
 
-fn call_params((contract, data): &Call) -> Value {
+pub(crate) fn call_params((contract, data): &Call) -> Value {
     json!([
         { "to": format!("{contract:#x}"), "data": format!("0x{}", hex::encode(data)) },
         "latest"

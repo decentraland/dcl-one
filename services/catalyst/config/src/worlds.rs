@@ -236,14 +236,6 @@ pub struct WorldsConfig {
     /// How long a completed partial upload answers its retried final batch, ms.
     #[arg(long, env = "COMPLETED_UPLOAD_TTL", default_value_t = 86_400_000)]
     pub completed_upload_ttl: u64,
-    /// The account-holdings service whose `spaceAllowance` (MiB) is a wallet's
-    /// storage allowance across its DCL worlds; unset, the allowance is unlimited.
-    #[arg(long, env = "DCL_NAME_STATS_URL")]
-    pub dcl_name_stats_url: Option<String>,
-
-    /// Per-attempt timeout of the account-holdings request (3 attempts).
-    #[arg(long, env = "DCL_NAME_STATS_TIMEOUT_MS", default_value_t = 3_000, value_parser = clap::value_parser!(u64).range(1..))]
-    pub dcl_name_stats_timeout_ms: u64,
 
     /// The Builder whose `/worlds?tab=dcl` page world notifications link to.
     #[arg(

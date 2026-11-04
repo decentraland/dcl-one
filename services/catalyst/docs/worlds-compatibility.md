@@ -21,12 +21,20 @@ difference not listed here is a gap, not a decision.
   world's publish is capped at 500 MiB per scene (the upstream
   `MAX_SCENE_SIZE` default; not configurable here) and by what the owner's
   allowance leaves; the publish re-checks the allowance in its transaction,
-  so concurrent publishes cannot exceed it together. Without
-  `DCL_NAME_STATS_URL` the allowance is unlimited and `maxAllowedSpace`
-  reports the per-scene caps of the wallet's DCL NAME worlds; the stats
-  route reports the same when the account-holdings service fails, while the
-  publish and `/limits` answer 503. An answered allowance is reused for 60
-  seconds and a failed lookup for 15 seconds; at most 8 lookups run at once.
+  so concurrent publishes cannot exceed it together. The allowance is
+  computed in process, as dcl-name-stats' `account-holdings` does: 100 MiB
+  per DCL NAME (registrar `balanceOf`), per LAND (`balanceOf`) and per
+  estate LAND (`getLANDsSize`), plus 100 MiB per whole 2000 MANA held
+  across Ethereum and Polygon, read with `eth_call` at `latest` over
+  `ETH_RPC_URL` (one batch) and `RPC_ENDPOINT_POLYGON` for `ETH_NETWORK`
+  (mainnet with Polygon, sepolia with Amoy). Unlike upstream, which counts a
+  failed or reverted call as zero, any failed call is an allowance outage.
+  Without either RPC URL, or on another network, the allowance is unlimited
+  (logged at startup) and `maxAllowedSpace` reports the per-scene caps of
+  the wallet's DCL NAME worlds; the stats route reports the same during an
+  outage, while the publish and `/limits` answer 503 and the quota pass
+  keeps existing blocks. An answered allowance is reused for 60 seconds and
+  a failed lookup for 15 seconds; at most 8 lookups run at once.
   A publish credits back only the replaced scenes of a world charged to
   the same owner.
 - **Legacy content keys.** The worlds `/contents/{key}` route also accepts a

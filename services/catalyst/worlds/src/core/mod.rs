@@ -34,6 +34,7 @@ pub mod deploy;
 mod deploy_form;
 mod deploy_validate;
 pub mod forwarding;
+pub mod holdings;
 pub mod http;
 pub mod limits;
 pub mod manifest;
@@ -284,7 +285,7 @@ pub struct CoreState {
     /// `WORLDS_FORWARD_UPSTREAM_URL`: every local publish is queued for it in
     /// the publish transaction and sent by the `worlds-forward` job.
     pub forwarder: Option<Arc<crate::content::forward::Forwarder>>,
-    /// `DCL_NAME_STATS_URL`: the per-wallet storage allowance (unlimited unset).
+    /// The per-wallet storage allowance (unlimited without chain reads).
     pub allowance: Arc<dyn quota::SpaceAllowance>,
     /// The user notices (permission grants, storage quota) and their links.
     pub notices: Arc<notices::Notices>,
@@ -318,7 +319,7 @@ impl CoreState {
         }
     }
 
-    /// The storage allowance source (`DCL_NAME_STATS_URL`).
+    /// The storage allowance source ([`holdings::configured`]).
     pub fn with_allowance(mut self, allowance: Arc<dyn quota::SpaceAllowance>) -> Self {
         self.allowance = allowance;
         self
