@@ -28,7 +28,7 @@
 //! | [`Policy::is_owner`] (world, actor): the owner question of every mutation (publish, permission and settings edits, unpublish, storage clears) | 1. personal world (`<addr>.dcl.eth`, only when the personal-worlds policy is enabled): the label is the owner. 2. the name authority: `owned_names(actor)` contains the label right now (the old deploy's `resolve_name_owner_id` through squid); an ENS world (`ALLOW_ENS_DOMAINS`): the ENS registry's holder ([`crate::ens`]). 3. only without a configured names reader: `worlds.owner` (the old permission routes' degrade). | 1: compare; 2: `Allowed` / refused, a reader fault is undetermined (503 on the routes, 403 fail-closed on a publish); 3: compare, refused when unset |
 //! | [`Policy::can_deploy`] (world, actor, footprint) | 1. personal world: the actor is its owner and the realm cap admits it (a world already published here is always admitted; otherwise the count of personal worlds published here, mirrored copies excluded, must be below the cap). 2. else the name authority names the actor as the label's holder; **no names reader denies outright** (the old squid-less node denied every non-personal publish). 3. else a `deployment` grant covering the footprint **and** every parcel of every already-deployed scene it overlaps. | 1/2: `Deploy::Owner` (replaces every overlapping scene, and the publish rewrites `worlds.owner` from this answer, so a NAME transfer flips ownership on the new holder's next publish); 3: `Deploy::Scoped(overlapping ids)` (may replace exactly those); a lookup fault is undetermined (the old route rendered it 403 "could not verify", fail-closed) |
 //! | [`Policy::can_stream`] (world, actor, parcels) | the owner, else a `streaming` grant covering the parcels (world-wide when none are given) | `Allowed` / refused |
-//! | [`Policy::can_access`] (world, actor, secret, scene) | 1. `worlds.blocked_wallets` or an in-force `social.user_bans` row (address or recorded device) → banned from the platform. 2. a `social.scene_bans` row for the resolved scene → banned from the world. 3. the access setting: `unrestricted` → allowed; `allow-list` → the actor holds an `access` grant, else is a member of a listed active community (`social.community_members`, not banned); `shared-secret` → bcrypt-verify the presented secret; `nft-ownership` → refused (the old code never checked ownership). 4. only when the setting refuses: the current holder ([`Policy::current_owner`]: the personal rule, else the name authority by name, memoized briefly and waited on at most 3 s; `worlds.owner` only without a reader) → allowed. An authority fault there is undetermined for the stored `worlds.owner` and the setting's refusal for anyone else. An unknown world is unrestricted with no owner (the old lookup's default). | [`Access`] |
+//! | [`Policy::can_access`] (world, actor, secret, scene) | 1. `worlds.blocked_wallets` or an in-force `social.user_bans` row (address or recorded device) → banned from the platform. 2. a `social.scene_bans` row for the resolved scene → banned from the world. 3. the access setting: `unrestricted` → allowed; `allow-list` → the actor holds an `access` grant, else is a member of a listed active community (`social.community_members`, not banned); `shared-secret` → bcrypt-verify the presented secret; `nft-ownership` → refused (the old code never checked ownership). 4. only when the setting refuses: the current holder ([`Policy::current_owner`]: the personal rule, else the name authority by name, memoized briefly and waited on at most 3 s; `worlds.owner` only without a reader) → allowed. An authority fault there is undetermined for the stored `worlds.owner` and for a connected client admitted as owner ([`Policy::readmit`]), and the setting's refusal for anyone else. An unknown world is unrestricted with no owner (the old lookup's default). | [`Access`] |
 //! | [`Policy::is_admin`] (scene, actor) | 1. an active `social.scene_admins` row keyed by the scene id (comms' write). 2. world scene: the world's owner. Genesis scene: LAND ownership at any of its parcels (directly or through the estate) through the marketplace reader. | `Allowed` / refused; a reader fault is undetermined; no reader configured refuses non-admins (the old degrade) |
 //! | [`Policy::may_manage_land_storage`] (parcel, actor): the storage routes' Genesis cell | never a scene admin: the LAND manager document of `parcel` ([`LandOperatorsReader`], the lambdas `/parcels/{x}/{y}/operators` comms reads for its protected set): owner (the estate's owner when the parcel sits in one), operator, updateOperator, an updateManager or an approvedForAll operator (the old world-storage `has_any()` matrix); with no document source, LAND ownership at `parcel` through the marketplace reader. | `Allowed` / refused; a reader fault is undetermined; no source configured refuses |
 //! | [`Policy::is_banned`] (actor, scene, device, now) | worlds `blocked_wallets`, then the comms-owned `BanStatus` answer for platform/device and scene bans | the first [`Ban`] in that order, or none |
@@ -1058,6 +1058,26 @@ impl Policy {
         device_id: Option<&str>,
         now: NaiveDateTime,
     ) -> Result<Access, AuthorityNotEstablished> {
+        self.readmit(world, actor, secret, scene, device_id, None, now)
+            .await
+    }
+
+    /// [`Policy::can_access`] for a connected client admitted with `prior`:
+    /// an authority fault is also undetermined when `prior` is the owner grant.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "can_access plus the connected client's prior grant"
+    )]
+    pub async fn readmit(
+        &self,
+        world: &WorldName,
+        actor: &Address,
+        secret: Option<&str>,
+        scene: Option<&SceneId>,
+        device_id: Option<&str>,
+        prior: Option<AccessGrant>,
+        now: NaiveDateTime,
+    ) -> Result<Access, AuthorityNotEstablished> {
         if let Some(ban) = self.is_banned(actor, scene, device_id, now).await? {
             return Ok(Access::Banned(ban));
         }
@@ -1066,7 +1086,7 @@ impl Policy {
             .await
             .map_err(|e| store_unavailable("worlds.worlds", &e))?;
         // The owner is asked only when the setting refuses; a fault then is
-        // undetermined for the stored owner and the setting's refusal for anyone else.
+        // undetermined for the stored or previously admitted owner, the setting's refusal otherwise.
         let by_setting = self
             .setting_access(world, row.as_ref(), actor, secret)
             .await?;
@@ -1082,7 +1102,8 @@ impl Policy {
                 ..
             }) => Ok(by_setting),
             PermissionDecision::Refused(undetermined)
-                if row.as_ref().and_then(|r| r.owner.as_ref()) == Some(actor) =>
+                if prior == Some(AccessGrant::Owner)
+                    || row.as_ref().and_then(|r| r.owner.as_ref()) == Some(actor) =>
             {
                 Err(undetermined)
             }
@@ -1887,6 +1908,53 @@ mod tests {
                 .unwrap()
                 .contains(&owner),
             "no ban or kick of the stored owner on a fault"
+        );
+    }
+
+    /// A new holder connected as owner before it published (so `worlds.owner`
+    /// still names the previous holder) is undetermined on a fault, not refused.
+    #[tokio::test]
+    async fn an_authority_fault_leaves_a_client_admitted_as_owner_undetermined() {
+        let Some(p) = scratch_with_names_down().await else {
+            return;
+        };
+        let (world, previous, holder) = (world_name(), wallet(), wallet());
+        seed_world(&p, &world, Some(&previous), AccessType::AllowList, None).await;
+        assert_eq!(
+            p.can_access(&world, &holder, None, None, None, now())
+                .await
+                .unwrap(),
+            Access::NotAllowed,
+            "a first entry is not carried"
+        );
+        assert_eq!(
+            p.readmit(
+                &world,
+                &holder,
+                None,
+                None,
+                None,
+                Some(AccessGrant::AllowListed),
+                now()
+            )
+            .await
+            .unwrap(),
+            Access::NotAllowed
+        );
+        assert_eq!(
+            p.readmit(
+                &world,
+                &holder,
+                None,
+                None,
+                None,
+                Some(AccessGrant::Owner),
+                now()
+            )
+            .await
+            .unwrap_err()
+            .http_status(),
+            503
         );
     }
 

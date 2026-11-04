@@ -476,6 +476,67 @@ async fn an_authority_outage_keeps_undetermined_clients_through_the_sweep() {
     assert_eq!(scene.clients().len(), 1);
 }
 
+/// With the name authority down, a client admitted by the shared secret is
+/// carried by its grant, and a new holder connected as owner (`worlds.owner`
+/// still the previous holder) is undetermined; a rotated secret still voids
+/// the secret grant.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_authority_outage_keeps_secret_and_owner_grants_through_the_sweep() {
+    let Some(h) = host_with_names_down().await else {
+        return;
+    };
+    let visitor_key = format!("0x{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let previous = Address::parse("0x3333333333333333333333333333333333333333").unwrap();
+    let holder = Address::parse("0x4444444444444444444444444444444444444444").unwrap();
+    let world = world_name();
+    let hash = bcrypt::hash("open sesame", 4).unwrap();
+    sqlx::query("INSERT INTO worlds.worlds (name, owner, access_type, access_secret_hash) VALUES ($1, $2, 'shared-secret', $3)")
+        .bind(world.key())
+        .bind(&previous)
+        .bind(&hash)
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    seed_scene(
+        &h.state,
+        &world,
+        "bafyOut2",
+        "",
+        None,
+        "0,0",
+        &["0,0"],
+        false,
+    )
+    .await;
+    let addr = serve(h.state.clone()).await;
+    let (mut visitor_ws, _) = join(addr, &world, &visitor_key, r#"{"secret":"open sesame"}"#)
+        .await
+        .expect("the secret admits without asking the authority");
+    let scene = h.state.scenes.get(world.key()).unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(16);
+    scene.add_client_admitted(
+        holder.as_str().to_string(),
+        tx,
+        Some(crate::policy::AccessGrant::Owner),
+    );
+    assert_eq!(scene.clients().len(), 2);
+
+    assert_eq!(
+        h.state.sweep().await,
+        SweepSummary {
+            errors: 1,
+            ..Default::default()
+        },
+        "the secret client is carried; the owner-admitted holder is undetermined"
+    );
+    assert_eq!(scene.clients().len(), 2);
+    assert_eq!(h.state.readmit_world(&world, false).await, 0);
+    assert_eq!(h.state.readmit_world(&world, true).await, 1);
+    assert!(closed(&mut visitor_ws).await);
+    let left: Vec<String> = scene.clients().iter().map(|c| c.address.clone()).collect();
+    assert_eq!(left, vec![holder.as_str().to_string()]);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_socket_admits_by_policy_and_the_sweep_enforces_revocation_and_redeploy() {
     let Some(h) = host(false).await else { return };

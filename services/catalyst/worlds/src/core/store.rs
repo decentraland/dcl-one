@@ -540,6 +540,11 @@ async fn missing_stored_file(
         }))
 }
 
+/// The transaction advisory lock key a scene publish of `world` holds.
+pub(crate) fn publish_lock_key(world: &WorldName) -> String {
+    format!("worlds-publish:{}", world.key())
+}
+
 /// Persists one scene deploy; `Ok(Some(previous))` when it replaced the
 /// world's stored owner with a different one.
 pub async fn deploy_scene(
@@ -573,6 +578,11 @@ pub async fn deploy_scene(
         return Err(error);
     }
 
+    // Serializes publishes of one world, so a first publish cannot race past the owner read.
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(publish_lock_key(world))
+        .execute(&mut *tx)
+        .await?;
     // Locks an existing row so the owner read is the one this write replaces.
     let previous_owner: Option<String> =
         sqlx::query_scalar("SELECT owner FROM worlds.worlds WHERE name = $1 FOR UPDATE")

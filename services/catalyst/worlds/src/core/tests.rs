@@ -5814,6 +5814,86 @@ async fn a_deploy_reusing_a_blob_the_collector_removed_is_deferred_under_the_sto
     assert!(entity_ids(&f, &world).await.is_empty());
 }
 
+/// Two first publishes of one world by different holders serialize: the
+/// second sees the first's owner and reports it replaced.
+#[tokio::test]
+async fn concurrent_first_publishes_by_different_holders_report_the_replaced_owner() {
+    let Some(f) = fixture().await else { return };
+    let world = world_name();
+    let mut held = f.pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(store::publish_lock_key(&world))
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let mut publishes = Vec::new();
+    for (i, base) in ["0,0", "5,5"].into_iter().enumerate() {
+        let owner = Wallet::random().address;
+        let thumb = hash_bytes_v1(b"race thumb");
+        f.storage
+            .store(&thumb, bytes::Bytes::from_static(b"race thumb"))
+            .await
+            .unwrap();
+        let entity = scene_entity(&world, &format!("Race {i}"), &thumb, base, &[base]);
+        let entity_bytes = serde_json::to_vec(&entity).unwrap();
+        let entity_id = hash_bytes_v1(&entity_bytes);
+        f.storage
+            .store(&entity_id, bytes::Bytes::from(entity_bytes))
+            .await
+            .unwrap();
+        let (pool, storage, world) = (f.pool.clone(), f.storage.clone(), world.clone());
+        publishes.push(tokio::spawn(async move {
+            store::deploy_scene(
+                &pool,
+                &storage,
+                SceneDeployment {
+                    world: &world,
+                    name_owner: Some(&owner),
+                    entity_id: &entity_id,
+                    deployer: &owner,
+                    deployment_auth_chain: &json!([]),
+                    entity: &entity,
+                    parcels: &parcels(&[base]),
+                    size: 1,
+                    replacement: &Deploy::Owner,
+                    forward_to: None,
+                },
+            )
+            .await
+            .map(|previous| (owner, previous))
+        }));
+    }
+    // Both publishes queue on the world's lock before either reads the owner.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted \
+               AND ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)",
+        )
+        .bind(store::publish_lock_key(&world))
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+        if waiting == 2 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "both publishes wait on the world's publish lock"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    held.commit().await.unwrap();
+    let mut outcomes = Vec::new();
+    for publish in publishes {
+        outcomes.push(publish.await.unwrap().unwrap());
+    }
+    let replaced: Vec<&Address> = outcomes.iter().filter_map(|(_, p)| p.as_ref()).collect();
+    assert_eq!(replaced.len(), 1, "{outcomes:?}");
+    let (first, _) = outcomes.iter().find(|(_, p)| p.is_none()).unwrap();
+    assert_eq!(replaced[0], first);
+}
+
 fn ens_world_name() -> WorldName {
     WorldName::parse(&format!(
         "e{}.eth",

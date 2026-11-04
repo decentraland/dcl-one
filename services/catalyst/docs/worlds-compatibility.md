@@ -67,11 +67,16 @@ difference not listed here is a gap, not a decision.
   included) is shared for 5 seconds. When the authority cannot answer,
   nobody is admitted as owner: the stored owner's refusal answers 503
   (upstream fails the whole mint), anyone else gets the access setting's
-  401/403. The scene host's periodic re-admission keeps connected clients
-  while the answer is undetermined. `GET /world/{name}/permissions` reports
-  the live holder (no `owner` while the authority cannot answer), and the
-  comms owner read for stream-key notices is unavailable then; neither
-  falls back to the stored owner.
+  401/403. The scene host's re-admission (periodic and on access changes)
+  keeps a connected client whose answer is undetermined: an authority
+  fault for the stored owner or a client admitted as owner, and a database
+  fault reading the world, its grants or bans; a client admitted by the
+  shared secret keeps that grant until the secret or access type changes.
+  `GET /world/{name}/permissions` reports the live holder (no `owner` while
+  the authority cannot answer), and the comms owner read for stream-key
+  notices is unavailable then; neither falls back to the stored owner.
+  Publishes of one world are serialized, so a publish by a new holder
+  always sees the owner it replaces.
 - **Capacity check fails closed.** When the live occupancy of a world cannot
   be recovered, the comms mint answers 503 instead of counting zero
   participants and admitting the user.
