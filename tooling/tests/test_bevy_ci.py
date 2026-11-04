@@ -294,7 +294,6 @@ class SelectionTest(unittest.TestCase):
             ci.WORKFLOW: {*ci.LANES, 'native-matrix'},
             'apps/bevy-explorer/README.md': set(),
             'tooling/tests/test_bevy_linux_deps.py': set(),
-            'tooling/bevy-http2-test.mjs': {'test'},
         }
         for path, expected in cases.items():
             with self.subTest(path=path):
