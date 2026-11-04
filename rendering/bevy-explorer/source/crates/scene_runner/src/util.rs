@@ -23,7 +23,13 @@ use ipfs::{
 use multihash_codetable::MultihashDigest;
 
 use crate::{
-    initialize_scene::LiveScenes, renderer_context::RendererSceneContext, ContainingScene, Toaster,
+    initialize_scene::LiveScenes,
+    renderer_context::RendererSceneContext,
+    update_world::{
+        animation::Clips,
+        gltf_container::{GltfDefinition, GltfHandle, GltfLoaded, GltfProcessed, GltfReady},
+    },
+    ContainingScene, Toaster,
 };
 
 pub struct SceneUtilPlugin;
@@ -35,9 +41,30 @@ impl Plugin for SceneUtilPlugin {
         app.add_preview_console_command::<DebugDumpScene, _>(debug_dump_scene);
         app.add_console_command::<ReloadCommand, _>(reload_command);
         app.add_preview_console_command::<ClearStoreCommand, _>(clear_store_command);
-        app.add_systems(Update, (console_relay, handle_preview_command));
+        app.add_systems(
+            Update,
+            (
+                console_relay,
+                (handle_preview_command, remove_model, reload_model).chain(),
+            ),
+        );
+
+        app.add_event::<ReloadModel>();
+        app.add_event::<RemoveModel>();
     }
 }
+
+struct ModifiedModel {
+    scene_id: String,
+    hash: String,
+    src: String,
+}
+
+#[derive(Event)]
+struct ReloadModel(ModifiedModel);
+
+#[derive(Event)]
+struct RemoveModel(ModifiedModel);
 
 #[derive(Resource)]
 pub struct ConsoleRelay {
@@ -286,21 +313,12 @@ fn handle_preview_command(
     mut live_scenes: ResMut<LiveScenes>,
     scenes: Query<&RendererSceneContext>,
     mut toaster: Toaster,
+    mut reload_model: EventWriter<ReloadModel>,
+    mut remove_model: EventWriter<RemoveModel>,
 ) {
     for command in events.read() {
         match command {
-            PreviewCommand::ReloadScene { hash }
-            // TODO properly handle model commands
-            | PreviewCommand::ReloadModel {
-                hash: _,
-                src: _,
-                scene_id: hash,
-            }
-            | PreviewCommand::RemoveModel {
-                hash: _,
-                src: _,
-                scene_id: hash,
-            } => {
+            PreviewCommand::ReloadScene { hash } => {
                 if let Some(ctx) = live_scenes
                     .scenes
                     .get(hash)
@@ -312,6 +330,98 @@ fn handle_preview_command(
                     }
                 };
                 live_scenes.scenes.remove(hash);
+            }
+            PreviewCommand::ReloadModel {
+                hash,
+                src,
+                scene_id,
+            } => {
+                reload_model.write(ReloadModel(ModifiedModel {
+                    scene_id: scene_id.to_owned(),
+                    hash: hash.to_owned(),
+                    src: src.to_owned(),
+                }));
+            }
+            PreviewCommand::RemoveModel {
+                hash,
+                src,
+                scene_id,
+            } => {
+                remove_model.write(RemoveModel(ModifiedModel {
+                    scene_id: scene_id.to_owned(),
+                    hash: hash.to_owned(),
+                    src: src.to_owned(),
+                }));
+            }
+        }
+    }
+}
+
+fn reload_model(
+    mut remove_model: EventReader<ReloadModel>,
+    children: Query<&Children>,
+    live_scenes: Res<LiveScenes>,
+    mut gltf_containers: Query<&mut GltfDefinition>,
+) {
+    for ReloadModel(ModifiedModel {
+        scene_id,
+        hash,
+        src,
+    }) in remove_model.read()
+    {
+        debug!("Reload model {} ({}) from {}", src, hash, scene_id);
+        let Some(scene) = live_scenes.scenes.get(scene_id) else {
+            error!("ReloadModel event sent to a scene that is not live.");
+            return;
+        };
+
+        for child in children.iter_descendants(*scene) {
+            if let Ok(mut gltf_container) = gltf_containers.get_mut(child) {
+                if &gltf_container.src == src {
+                    gltf_container.set_changed();
+                }
+            }
+        }
+    }
+}
+
+fn remove_model(
+    mut commands: Commands,
+    mut remove_model: EventReader<RemoveModel>,
+    children: Query<&Children>,
+    live_scenes: Res<LiveScenes>,
+    gltf_containers: Query<(&GltfDefinition, Option<&GltfReady>)>,
+    mut scene_spawner: ResMut<SceneSpawner>,
+) {
+    for RemoveModel(ModifiedModel {
+        scene_id,
+        hash,
+        src,
+    }) in remove_model.read()
+    {
+        debug!("Removing model {} ({}) from {}", src, hash, scene_id);
+        let Some(scene) = live_scenes.scenes.get(scene_id) else {
+            error!("RemoveModel event sent to a scene that is not live.");
+            return;
+        };
+
+        for child in children.iter_descendants(*scene) {
+            if let Ok((gltf_container, maybe_gltf_ready)) = gltf_containers.get(child) {
+                if &gltf_container.src == src {
+                    if let Some(gltf_ready) = maybe_gltf_ready {
+                        scene_spawner.despawn_instance(**gltf_ready);
+                    }
+
+                    commands.entity(child).try_remove::<(
+                        GltfReady,
+                        GltfLoaded,
+                        GltfProcessed,
+                        GltfHandle,
+                        AnimationPlayer,
+                        Clips,
+                        AnimationGraphHandle,
+                    )>();
+                }
             }
         }
     }
