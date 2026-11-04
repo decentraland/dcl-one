@@ -127,6 +127,13 @@ concurrent builds and per-query timings do not establish production throughput;
 full-cycle latency also depends on the three-second pass budget, the 1,024-page
 cap, the 100-new-receipt cap, recurrence lengths and the minute cadence.
 
+The actual Rust worker at `23d612d2d`, using an isolated full-schema database with
+100,000 completed ordinary events and receipts, finished one cycle in two passes
+and 5,550.080 ms of active work without receipt/counter writes. This execution did
+not sleep between passes. Adding the normal 60-second interval gives a derived
+65.550-second cycle for this sample, rather than a measured production freshness
+bound. The page timings above exclude these transaction and driver round trips.
+
 ## Pending photo repair scheduling
 
 A disposable PostgreSQL 18.6 fixture at `6b155ec89` contained 100,000 pending
