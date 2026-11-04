@@ -285,6 +285,13 @@ const ROWS: &[Row] = &[
         "MARKETPLACE_SUBGRAPH_URL",
         "https://subgraph.decentraland.org/marketplace",
     ),
+    // lamb2's LAND subgraph: parcel operators and permissions until the
+    // land-authz index is published.
+    upstream(
+        "mirrors",
+        "LAND_SUBGRAPH_URL",
+        "https://subgraph.decentraland.org/land-manager",
+    ),
     mirrored("indexes", "MARKETPLACE_NFT_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
     // The MANA transfer walk stays an operator's opt-in under every posture.

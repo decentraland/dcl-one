@@ -19,6 +19,7 @@ pub mod identity;
 pub mod livekit;
 pub mod nul_guard;
 pub mod openapi;
+pub mod parcel;
 pub mod query_params;
 pub mod rpc;
 pub mod signed_fetch;
