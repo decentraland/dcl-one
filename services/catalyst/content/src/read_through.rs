@@ -3,7 +3,7 @@
 //! path: its file must hash to its id and the entity, under its auth chain (the peer's
 //! `/audit`), must pass the content validator sync runs before anything is stored; its content
 //! files are hash-verified as sync downloads them, the validator runs again over them (a refusal
-//! then removes the entity file; so does an undecided verdict, recorded for the retry worker), and [`LiveSyncDeployer`] writes the row as a synced
+//! then removes the entity file; so does an undecided verdict, recorded for the retry worker, which runs with sync off too), and [`LiveSyncDeployer`] writes the row as a synced
 //! deployment (the newest timestamp wins, nothing is marked local). What sync skips is skipped here too: entity types
 //! outside `SYNC_ENTITY_TYPES` (only `SYNC_PROFILE_MAX_AGE_DAYS` is not applied, so an old
 //! profile is still found), and a content file every local reference to which is a profile
@@ -455,6 +455,11 @@ impl ReadThrough {
         &self.upstream.downloads
     }
 
+    /// The peers entities are read through, in order: the retry worker's peers with sync off.
+    pub fn sources(&self) -> &[String] {
+        &self.upstream.sources
+    }
+
     /// The active entities for `values` (ids, or pointers), as the local lookup answers them
     /// once the misses have been filled. Denylisted ids and pointers are never asked for; the
     /// caller still filters the answer.
@@ -857,6 +862,10 @@ impl Upstream {
                 tracing::warn!(entity_id = id, error = %e, "read-through: refused entity file kept");
                 return;
             }
+        }
+        // Sync may have taken its hold during the lookup.
+        if is_buffered(id) {
+            return;
         }
         if let Err(evict) = self.storage.delete(id).await {
             tracing::warn!(entity_id = id, error = %evict, "read-through: refused entity file not removed");

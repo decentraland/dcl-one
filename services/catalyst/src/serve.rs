@@ -1074,6 +1074,20 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             None
         }
     };
+    // With sync off the read-through's undecided rows still need the retry and prune loops.
+    if sync_settings.is_none()
+        && let Some(read_through) = &read_through
+    {
+        worker::start_failed_deployments(
+            &worker::FailedDeploymentSettings::from_config(&config),
+            read_through.sources().to_vec(),
+            pool.clone(),
+            storage.clone(),
+            http_client.raw().clone(),
+            content::sync_deployer::SyncValidation::Content(content_validator.clone()),
+            &jobs,
+        );
+    }
 
     // The operator console (the old catalyrst-live /admin API): SIWE sign-in
     // over ADMIN_ADDRESSES + SESSION_SECRET, the sync controls, the cache

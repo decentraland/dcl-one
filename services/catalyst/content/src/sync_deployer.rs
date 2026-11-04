@@ -14,9 +14,10 @@
 //! source unset or failing, no EIP-1654 validator, an RPC without that block's
 //! state) as
 //! [`SyncError::ValidationUndecided`]. The callers record both in
-//! `content.failed_deployments`: the retry worker re-attempts an undecided
-//! entity with backoff, outside the retry cap, for up to a week, and never
-//! retries a refusal.
+//! `content.failed_deployments`: the retry worker (the sync leader's, or with
+//! sync off the read-through's, [`crate::sync::worker::start_failed_deployments`])
+//! re-attempts an undecided entity with backoff, outside the retry cap, for up
+//! to a week, and never retries a refusal.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;

@@ -261,16 +261,18 @@ impl Node {
             Settings::for_tests(),
             storage.clone(),
         ));
-        let read_through = Arc::new(ReadThrough::new(
-            pool.clone(),
-            storage.clone(),
-            reqwest::Client::new(),
-            vec![fake.source.clone()],
-            entity_types.map(|types| types.iter().map(|t| t.to_string()).collect()),
-            Fills::with_negative_ttl(4, wait, TEST_NEGATIVE_TTL),
-            validation,
-        )
-        .with_file_sources(file_sources));
+        let read_through = Arc::new(
+            ReadThrough::new(
+                pool.clone(),
+                storage.clone(),
+                reqwest::Client::new(),
+                vec![fake.source.clone()],
+                entity_types.map(|types| types.iter().map(|t| t.to_string()).collect()),
+                Fills::with_negative_ttl(4, wait, TEST_NEGATIVE_TTL),
+                validation,
+            )
+            .with_file_sources(file_sources),
+        );
         if attach {
             assert!(state.attach_read_through(read_through.clone()));
         }
@@ -545,7 +547,10 @@ async fn an_entity_refused_once_its_content_is_in_leaves_no_entity_file() {
         node.holds(&fx.file_hash).await,
         "refused only after its content was in"
     );
-    assert!(!node.holds(&fx.id).await, "the refused entity file is removed");
+    assert!(
+        !node.holds(&fx.id).await,
+        "the refused entity file is removed"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -557,7 +562,10 @@ async fn a_refused_entity_file_stays_while_a_row_or_a_sync_buffer_refers_to_it()
     assert_eq!(node.active(json!({"ids": [deployed.id]})).await.len(), 1);
     assert_eq!(node.deployments(&deployed.id).await, 1);
     node.read_through.upstream.evict_refused(&deployed.id).await;
-    assert!(node.holds(&deployed.id).await, "a deployment row refers to it");
+    assert!(
+        node.holds(&deployed.id).await,
+        "a deployment row refers to it"
+    );
 
     let buffered = Fixture::new("wearable", &pointer(), now_ms());
     node.storage
@@ -570,6 +578,31 @@ async fn a_refused_entity_file_stays_while_a_row_or_a_sync_buffer_refers_to_it()
     drop(held);
     node.read_through.upstream.evict_refused(&buffered.id).await;
     assert!(!node.holds(&buffered.id).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_sync_hold_taken_during_the_deployment_lookup_keeps_the_refused_file() {
+    let fake = start_fake().await;
+    require_test_db!(Some(node) = Node::new("refused-race", &fake, HANG_GUARD, true).await);
+    let fx = Fixture::new("wearable", &pointer(), now_ms());
+    node.storage
+        .store(&fx.id, fx.bytes.clone().into())
+        .await
+        .unwrap();
+    // Every connection taken, so the eviction parks in its deployment lookup.
+    let mut taken = Vec::new();
+    for _ in 0..node.pool.options().get_max_connections() {
+        taken.push(node.pool.acquire().await.unwrap());
+    }
+    let upstream = node.read_through.upstream.clone();
+    let id = fx.id.clone();
+    let evict = tokio::spawn(async move { upstream.evict_refused(&id).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let held = crate::sync_deployer::hold_buffered(&fx.id);
+    drop(taken);
+    evict.await.unwrap();
+    assert!(node.holds(&fx.id).await, "sync took it during the lookup");
+    drop(held);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -990,14 +1023,22 @@ async fn read_through_is_off_by_default_and_needs_a_source() {
         ]
     );
     assert!(on.upstream.file_sources.is_empty());
-    let peer = ["--read-through-enabled", "true", "--sync-source", "https://peer.example/content"];
+    let peer = [
+        "--read-through-enabled",
+        "true",
+        "--sync-source",
+        "https://peer.example/content",
+    ];
     let with_worlds = |worlds: &str| {
         let mut args = peer.to_vec();
         args.extend(["--worlds-content-mirror-source", worlds]);
         build(&args)
     };
     let on = with_worlds("https://worlds.example/").unwrap().expect("on");
-    assert_eq!(on.upstream.file_sources, vec!["https://worlds.example".to_string()]);
+    assert_eq!(
+        on.upstream.file_sources,
+        vec!["https://worlds.example".to_string()]
+    );
     assert!(
         with_worlds("https://this.node.example").is_err(),
         "a worlds source naming this node is refused"
