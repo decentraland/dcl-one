@@ -1,0 +1,258 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+    "sources": [
+      {
+        "path": "src/adapters/registry.ts",
+        "sha256": "2c00eeec7ae8df9c24fef67b6c7b941f1688cf387af794aa38927ec7e2fca15c"
+      },
+      {
+        "path": "src/logic/profiles.ts",
+        "sha256": "3856e67cd3fcc10b9e4e40c5b775b93a2714cdd10bd1484996cd1aff501333ff"
+      },
+      {
+        "path": "src/utils/address.ts",
+        "sha256": "5eae8d1630d2edea3d7e4955fe243d1df01cb8d7a72f1f7a2541392e76210c04"
+      }
+    ]
+  },
+  "runtime": {
+    "node": "v26.12.0"
+  },
+  "scope": "Actual source registry with exact requested cache keys and case-sensitive Set deduplication. The profile-fetch dependency is injected with one normalized document per known pointer; no claim about deployed registry case handling or response ordering.",
+  "pointer": "0xaabb111111111111111111111111111111111111",
+  "document": {
+    "avatars": [
+      {
+        "userId": "0xaabb111111111111111111111111111111111111",
+        "name": "Case profile",
+        "hasClaimedName": true,
+        "avatar": {
+          "snapshots": {
+            "face256": "https://images.example.org/case.png"
+          }
+        }
+      }
+    ]
+  },
+  "steps": [
+    {
+      "operation": "single",
+      "addresses": [
+        "0xAABB111111111111111111111111111111111111"
+      ],
+      "profiles": [
+        {
+          "name": "Case profile",
+          "userId": "0xaabb111111111111111111111111111111111111",
+          "hasClaimedName": true,
+          "profilePictureUrl": "https://images.example.org/case.png"
+        }
+      ],
+      "fetches": [
+        [
+          "0xAABB111111111111111111111111111111111111"
+        ]
+      ],
+      "cache_keys": [
+        "catalyst:minimal:profile:0xAABB111111111111111111111111111111111111"
+      ]
+    },
+    {
+      "operation": "single",
+      "addresses": [
+        "0xaabb111111111111111111111111111111111111"
+      ],
+      "profiles": [
+        {
+          "name": "Case profile",
+          "userId": "0xaabb111111111111111111111111111111111111",
+          "hasClaimedName": true,
+          "profilePictureUrl": "https://images.example.org/case.png"
+        }
+      ],
+      "fetches": [
+        [
+          "0xAABB111111111111111111111111111111111111"
+        ],
+        [
+          "0xaabb111111111111111111111111111111111111"
+        ]
+      ],
+      "cache_keys": [
+        "catalyst:minimal:profile:0xAABB111111111111111111111111111111111111",
+        "catalyst:minimal:profile:0xaabb111111111111111111111111111111111111"
+      ]
+    },
+    {
+      "operation": "batch",
+      "addresses": [
+        "0xAABB111111111111111111111111111111111111",
+        "0xaabb111111111111111111111111111111111111",
+        "0xAABB111111111111111111111111111111111111"
+      ],
+      "profiles": [
+        {
+          "name": "Case profile",
+          "userId": "0xaabb111111111111111111111111111111111111",
+          "hasClaimedName": true,
+          "profilePictureUrl": "https://images.example.org/case.png"
+        },
+        {
+          "name": "Case profile",
+          "userId": "0xaabb111111111111111111111111111111111111",
+          "hasClaimedName": true,
+          "profilePictureUrl": "https://images.example.org/case.png"
+        }
+      ],
+      "fetches": [
+        [
+          "0xAABB111111111111111111111111111111111111"
+        ],
+        [
+          "0xaabb111111111111111111111111111111111111"
+        ]
+      ],
+      "cache_keys": [
+        "catalyst:minimal:profile:0xAABB111111111111111111111111111111111111",
+        "catalyst:minimal:profile:0xaabb111111111111111111111111111111111111"
+      ]
+    },
+    {
+      "operation": "expire",
+      "addresses": [
+        "0xAABB111111111111111111111111111111111111"
+      ],
+      "fetches": [
+        [
+          "0xAABB111111111111111111111111111111111111"
+        ],
+        [
+          "0xaabb111111111111111111111111111111111111"
+        ]
+      ],
+      "cache_keys": [
+        "catalyst:minimal:profile:0xaabb111111111111111111111111111111111111"
+      ]
+    },
+    {
+      "operation": "batch",
+      "addresses": [
+        "0xAABB111111111111111111111111111111111111"
+      ],
+      "profiles": [
+        {
+          "name": "Case profile",
+          "userId": "0xaabb111111111111111111111111111111111111",
+          "hasClaimedName": true,
+          "profilePictureUrl": "https://images.example.org/case.png"
+        }
+      ],
+      "fetches": [
+        [
+          "0xAABB111111111111111111111111111111111111"
+        ],
+        [
+          "0xaabb111111111111111111111111111111111111"
+        ],
+        [
+          "0xAABB111111111111111111111111111111111111"
+        ]
+      ],
+      "cache_keys": [
+        "catalyst:minimal:profile:0xaabb111111111111111111111111111111111111"
+      ]
+    },
+    {
+      "operation": "batch",
+      "addresses": [
+        "0xAABB111111111111111111111111111111111111"
+      ],
+      "profiles": [
+        {
+          "name": "Case profile",
+          "userId": "0xaabb111111111111111111111111111111111111",
+          "hasClaimedName": true,
+          "profilePictureUrl": "https://images.example.org/case.png"
+        }
+      ],
+      "fetches": [
+        [
+          "0xAABB111111111111111111111111111111111111"
+        ],
+        [
+          "0xaabb111111111111111111111111111111111111"
+        ],
+        [
+          "0xAABB111111111111111111111111111111111111"
+        ],
+        [
+          "0xAABB111111111111111111111111111111111111"
+        ]
+      ],
+      "cache_keys": [
+        "catalyst:minimal:profile:0xaabb111111111111111111111111111111111111"
+      ]
+    },
+    {
+      "operation": "batch",
+      "addresses": [
+        "0xAABB111111111111111111111111111111111111",
+        "0xaabb111111111111111111111111111111111111"
+      ],
+      "profiles": [
+        {
+          "name": "Case profile",
+          "userId": "0xaabb111111111111111111111111111111111111",
+          "hasClaimedName": true,
+          "profilePictureUrl": "https://images.example.org/case.png"
+        }
+      ],
+      "fetches": [
+        [
+          "0xAABB111111111111111111111111111111111111"
+        ],
+        [
+          "0xaabb111111111111111111111111111111111111"
+        ],
+        [
+          "0xAABB111111111111111111111111111111111111"
+        ],
+        [
+          "0xAABB111111111111111111111111111111111111"
+        ]
+      ],
+      "cache_keys": [
+        "catalyst:minimal:profile:0xaabb111111111111111111111111111111111111"
+      ]
+    },
+    {
+      "operation": "single",
+      "addresses": [
+        "0xCaFe222222222222222222222222222222222222"
+      ],
+      "error": "Profile not found: 0xCaFe222222222222222222222222222222222222",
+      "fetches": [
+        [
+          "0xAABB111111111111111111111111111111111111"
+        ],
+        [
+          "0xaabb111111111111111111111111111111111111"
+        ],
+        [
+          "0xAABB111111111111111111111111111111111111"
+        ],
+        [
+          "0xAABB111111111111111111111111111111111111"
+        ],
+        [
+          "0xCaFe222222222222222222222222222222222222"
+        ]
+      ],
+      "cache_keys": [
+        "catalyst:minimal:profile:0xaabb111111111111111111111111111111111111"
+      ]
+    }
+  ]
+}
