@@ -1,0 +1,19 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/content/nope",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8",
+      "content-length": "9"
+    },
+    "body": "Not found",
+    "body_is_text": true
+  }
+}

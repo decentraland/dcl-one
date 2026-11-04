@@ -120,6 +120,10 @@ written. The packages are:
 - `@dcl/schemas`: parcel bounds, ERC-721 traits;
 - `@dcl/catalyst-contracts`.
 
+Captures taken from the production peer on 2026-11-04 are in [`captures/`](captures/README.md); the rows
+they settle cite them. `@dcl/content-validator` rejection strings are not among them: reaching them needs
+`POST /entities`, a write.
+
 The existing replay fixtures are relevant here too. Those in `tests/fixtures/content/` and
 `shop/src/market/fixtures/` are hand-authored. Several of them pin behaviour that differs from the
 upstream revisions above; each file names them in its backlog (CR-2, CR-5, CW-8, LI, LL).
