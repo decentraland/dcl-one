@@ -165,6 +165,41 @@ pub struct ContentConfig {
     /// and a restart resets it.
     #[arg(long, env = "POST_ENTITIES_DAILY_QUOTA_MAX", default_value_t = 300)]
     pub post_entities_daily_quota_max: u32,
+
+    /// Milliseconds a partial (multi-request) upload lives from its first
+    /// batch; batches do not extend it.
+    #[arg(long, env = "PENDING_DEPLOYMENT_TTL", default_value_t = 60 * 60 * 1000)]
+    pub pending_deployment_ttl_ms: u64,
+
+    /// Milliseconds between two runs of the expired partial-upload cleanup.
+    #[arg(long, env = "PENDING_DEPLOYMENTS_CLEANUP_INTERVAL", default_value_t = 5 * 60 * 1000)]
+    pub pending_deployments_cleanup_interval_ms: u64,
+
+    /// Partial uploads one account may hold, expired ones awaiting cleanup included.
+    #[arg(
+        long,
+        env = "MAX_PENDING_DEPLOYMENTS_PER_DEPLOYER",
+        default_value_t = 10
+    )]
+    pub max_pending_deployments_per_deployer: u32,
+
+    /// Live partial uploads holding any one parcel across accounts; one
+    /// account gets all but one of them (at least 1).
+    #[arg(long, env = "MAX_PENDING_UPLOADS_PER_POINTER", default_value_t = 4)]
+    pub max_pending_uploads_per_pointer: u32,
+
+    /// Bytes partial uploads hold per account (all but content a published
+    /// deployment already keeps), expired uploads included until cleanup.
+    #[arg(long, env = "MAX_PENDING_BYTES_PER_DEPLOYER", default_value_t = 1024 * 1024 * 1024)]
+    pub max_pending_bytes_per_deployer: u64,
+
+    /// Bytes partial uploads hold on this server.
+    #[arg(long, env = "MAX_PENDING_BYTES", default_value_t = 50 * 1024 * 1024 * 1024)]
+    pub max_pending_bytes: u64,
+
+    /// Partial-upload batch bytes one account may send per minute.
+    #[arg(long, env = "MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE", default_value_t = 512 * 1024 * 1024)]
+    pub max_partial_upload_bytes_per_minute: u64,
 }
 
 impl ContentConfig {

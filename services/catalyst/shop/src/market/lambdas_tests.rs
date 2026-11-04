@@ -102,11 +102,14 @@ async fn serve_graph(answer: fn(&str) -> Value) -> String {
 }
 
 fn matic_collections(query: &str) -> Value {
-    if query.contains("category: \"wearable\"") {
+    if query.contains("urn_in") {
+        // The ownership document of the profiles and outfits: the owner holds the hat.
+        json!({ "o0": [{ "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1") }] })
+    } else if query.contains("category: \"wearable\"") {
         json!({ "nfts": [
-            { "id": "a1", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10", "transferredAt": "200",
+            { "id": "a1", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10", "itemType": "wearable_v2", "transferredAt": "200",
               "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } },
-            { "id": "a2", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "11", "transferredAt": "300",
+            { "id": "a2", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "11", "itemType": "wearable_v2", "transferredAt": "300",
               "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } }
         ] })
     } else {
@@ -236,6 +239,17 @@ fn answer_call(to: &str, data: &str) -> String {
     let data = data.trim_start_matches("0x");
     let owner: Address = OWNER.parse().unwrap();
     match &data[..8] {
+        "6352211e" => {
+            let token = IERC721::ownerOfCall::abi_decode(&hex::decode(data).unwrap())
+                .unwrap()
+                .tokenId;
+            let holder = if token == U256::from(2) {
+                owner
+            } else {
+                Address::ZERO
+            };
+            format!("0x{}", hex::encode(holder.abi_encode()))
+        }
         "70a08231" => format!("0x{:064x}", 1),
         "01ffc9a7" => format!("0x{:064x}", 0),
         "949d225d" => format!("0x{:064x}", 1),
@@ -416,12 +430,21 @@ async fn seed(pool: &PgPool) {
     tp["mappings"] =
         json!({ "matic": { TP_CONTRACT: [{ "type": "range", "from": "1", "to": "3" }] } });
     deploy(pool, "bafytphat", "wearable", TP_URN, tp, &files).await;
+    let linked = |token: u32| format!("{TP_URN}:matic:{TP_CONTRACT}:{token}");
+    let outfit = |slot: u32, wearables: Vec<String>| json!({ "slot": slot, "outfit": { "wearables": wearables } });
     deploy(
         pool,
         "bafyoutfits",
         "outfits",
         &format!("{OWNER}:outfits"),
-        json!({ "outfits": [{ "slot": 0 }, { "slot": 6 }] }),
+        json!({ "outfits": [
+            outfit(0, vec!["urn:decentraland:off-chain:base-avatars:Eyes_00".into(), hat_urn.clone()]),
+            outfit(1, vec![format!("{hat_urn}:10")]),
+            outfit(2, vec![format!("{hat_urn}:99")]),
+            outfit(3, vec![linked(2), format!("urn:decentraland:matic:collections-v2:{COFFEE}:7")]),
+            outfit(4, vec![linked(3)]),
+            outfit(6, vec![]),
+        ] }),
         &[],
     )
     .await;
@@ -728,10 +751,21 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     let (status, body) = get(&state, &format!("/lambdas/outfits/{OWNER}")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["metadata"]["namesForExtraSlots"], json!(["alice"]));
+    let hat = format!("urn:decentraland:matic:collections-v2:{COFFEE}:1");
     assert_eq!(
-        body["metadata"]["outfits"].as_array().unwrap().len(),
-        2,
-        "a name owner keeps the extra slots"
+        body["metadata"]["outfits"],
+        json!([
+            // The newest copy's token when none is named; lowercased.
+            { "slot": 0, "outfit": { "wearables": ["urn:decentraland:off-chain:base-avatars:eyes_00", format!("{hat}:11")] } },
+            { "slot": 1, "outfit": { "wearables": [format!("{hat}:10")] } },
+            // Slot 2 names a token the owner does not hold. Slot 3 keeps the
+            // upstream quirk: the walk stops at the item not owned and the
+            // owned third-party item decides. Slot 4's NFT is not held.
+            { "slot": 3, "outfit": { "wearables": [format!("{TP_URN}:matic:{TP_CONTRACT}:2")] } },
+            // A name owner keeps the extra slots.
+            { "slot": 6, "outfit": { "wearables": [] } },
+        ]),
+        "{body}"
     );
     let (status, _) = get(
         &state,
@@ -782,6 +816,58 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     .await;
     assert_eq!(body["totalAmount"], 1);
     assert_eq!(body["elements"][0]["entity"]["thumbnail"], "bafythumb");
+    assert_eq!(body["elements"][0]["entity"]["metadata"]["isSmart"], false);
+    assert!(
+        body["elements"][0].get("amount").is_none(),
+        "amount only with includeAmount: {body}"
+    );
+    // The item-type filters keep the on-chain leg's matching types and drop
+    // the base and third-party legs.
+    for (filter, total) in [
+        ("isSmartWearable=true", 0),
+        ("network=MATIC", 1),
+        ("network=ETHEREUM", 0),
+        ("network=polygon", 4),
+    ] {
+        let (_, body) = get(&state, &format!("/explorer/{OWNER}/wearables?{filter}")).await;
+        assert_eq!(body["totalAmount"], total, "{filter}: {body}");
+    }
+    let tp_collection = "urn:decentraland:matic:collections-thirdparty:tp";
+    for (filter, total) in [
+        (format!("thirdPartyCollectionId={tp_collection}"), 1),
+        (
+            format!(
+                "thirdPartyCollectionId={tp_collection}&thirdPartyCollectionId={tp_collection}"
+            ),
+            1,
+        ),
+        // Two values naming one provider list it once (the old handler
+        // listed it twice).
+        (
+            format!(
+                "thirdPartyCollectionId={tp_collection}:c1&thirdPartyCollectionId={tp_collection}"
+            ),
+            1,
+        ),
+        ("thirdPartyCollectionId=not-a-urn".to_string(), 0),
+    ] {
+        let (_, body) = get(
+            &state,
+            &format!("/explorer/{OWNER}/wearables?collectionType=third-party&{filter}"),
+        )
+        .await;
+        assert_eq!(body["totalAmount"], total, "{filter}: {body}");
+    }
+    let not_found = json!({ "error": "The requested items cannot be fetched right now", "message": "Third Party not found: other" });
+    let (status, body) = get(
+        &state,
+        &format!("/explorer/{OWNER}/wearables?thirdPartyCollectionId=urn:decentraland:matic:collections-thirdparty:other"),
+    )
+    .await;
+    assert_eq!((status, &body), (StatusCode::BAD_GATEWAY, &not_found));
+    let too_many = "thirdPartyCollectionId=urn:a&".repeat(101);
+    let (status, body) = get(&state, &format!("/explorer/{OWNER}/wearables?{too_many}")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     let (_, body) = get(&state, &format!("/explorer/{OWNER}/emotes")).await;
     assert_eq!(
         body["totalAmount"], 0,
@@ -801,14 +887,101 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     assert!(body["elements"][0]["definition"].is_object(), "{body}");
     let (_, body) = get(&state, &format!("/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:tp")).await;
     assert_eq!(body["totalAmount"], 1, "{body}");
-    let (_, body) = get(&state, &format!("/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:other")).await;
-    assert_eq!(body["totalAmount"], 0, "{body}");
+    let (status, body) = get(&state, &format!("/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:other")).await;
+    assert_eq!((status, body), (StatusCode::BAD_GATEWAY, not_found));
     let (_, body) = get(&state, &format!("/lambdas/collections/wearables-by-owner/{OWNER}?collectionId=urn:decentraland:matic:collections-thirdparty:tp")).await;
     assert_eq!(body, json!([{ "urn": TP_URN, "amount": 1 }]));
     let (_, body) = get(&state, "/lambdas/third-party-integrations").await;
     assert_eq!(
         body,
         json!({ "data": [{ "name": "TP", "description": "A provider", "urn": "urn:decentraland:matic:collections-thirdparty:tp" }] })
+    );
+
+    // Profiles keep the v1 third-party items unchecked and the linked items
+    // whose NFT the mapping includes and the owner holds, after the others.
+    let hat = format!("urn:decentraland:matic:collections-v2:{COFFEE}:1");
+    let linked = |token: u32| format!("{TP_URN}:matic:{TP_CONTRACT}:{token}");
+    deploy(
+        &db.pool,
+        "bafyprofile",
+        "profile",
+        OWNER,
+        json!({ "avatars": [{ "name": "alice", "avatar": { "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseFemale", "wearables": [
+            linked(2),
+            "urn:decentraland:off-chain:base-avatars:eyes_00",
+            linked(3),
+            TP_URN,
+            hat,
+            linked(9),
+        ], "emotes": [] } }] }),
+        &[],
+    )
+    .await;
+    let (status, body) = get(&state, &format!("/lambdas/profiles/{OWNER}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["avatars"][0]["avatar"]["wearables"],
+        json!([
+            "urn:decentraland:off-chain:base-avatars:eyes_00",
+            hat,
+            TP_URN,
+            linked(2)
+        ]),
+        "token 3 is mapped but not held, token 9 is not mapped: {body}"
+    );
+
+    // The chain endpoint down: the explorer and the profiles leave the
+    // third-party items they could not check out, the dedicated route and
+    // the outfits answer the old lambdas' FetcherError.
+    let down = {
+        use axum::routing::post;
+        serve(Router::new().route("/", post(|| async { StatusCode::BAD_GATEWAY }))).await
+    };
+    let mut down_settings = state.settings.clone();
+    down_settings.eth_rpc_url = Some(down.clone());
+    down_settings.polygon_rpc_url = Some(down.clone());
+    down_settings.market.trade_rpc_urls = RpcEndpoints::from_env(Some(&format!("137={down}")));
+    let down_state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        down_settings,
+    ));
+    down_state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let (status, body) = get(&down_state, &format!("/explorer/{OWNER}/wearables")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["totalAmount"], 3, "{body}");
+    assert!(
+        body["elements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["type"] != "third-party"),
+        "{body}"
+    );
+    let fetcher_error = json!({ "error": "The requested items cannot be fetched right now", "message": format!("Cannot fetch elements for {OWNER}") });
+    for uri in [
+        format!("/lambdas/users/{OWNER}/third-party-wearables"),
+        format!("/lambdas/outfits/{OWNER}"),
+    ] {
+        let (status, body) = get(&down_state, &uri).await;
+        assert_eq!(
+            (status, body),
+            (StatusCode::BAD_GATEWAY, fetcher_error.clone()),
+            "{uri}"
+        );
+    }
+    let (status, body) = get(&down_state, &format!("/lambdas/profiles/{OWNER}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["avatars"][0]["avatar"]["wearables"],
+        json!([
+            "urn:decentraland:off-chain:base-avatars:eyes_00",
+            hat,
+            TP_URN
+        ]),
+        "the v1 item needs no check: {body}"
     );
 
     let (status, body) = get(&state, &format!("/lambdas/users/{OWNER}/lands")).await;

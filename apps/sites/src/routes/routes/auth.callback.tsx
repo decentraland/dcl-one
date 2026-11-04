@@ -7,6 +7,7 @@ import {
 } from "@/core/lib/telemetry/session";
 import { useAuth } from "@/data/lib/auth/context";
 import { getWalletForToken } from "@/data/lib/auth/thirdweb/index";
+import { safeRedirectTarget } from "@/features/auth/login/redirect";
 
 import type { Route } from "./+types/auth.callback";
 
@@ -82,7 +83,8 @@ export default function AuthCallbackRoute() {
     if (ran.current) return;
     ran.current = true;
 
-    const next = params.get("next") || "/";
+    // Only a path on this site: a crafted `next` must not carry the new session away, nor read as another host.
+    const next = safeRedirectTarget(params.get("next"), new URL(window.location.href));
     const authResultRaw = params.get("authResult");
     if (!authResultRaw) {
       setError("Sign-in didn't return a result. Please try again.");
