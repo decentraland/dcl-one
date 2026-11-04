@@ -39,7 +39,9 @@ pub mod limits;
 pub mod manifest;
 pub mod metrics;
 pub mod names;
+pub mod notices;
 pub mod permissions;
+pub mod quota;
 pub mod scenes;
 pub mod settings;
 pub mod settings_policy;
@@ -257,6 +259,10 @@ pub struct CoreState {
     /// `WORLDS_FORWARD_UPSTREAM_URL`: every local publish is queued for it in
     /// the publish transaction and sent by the `worlds-forward` job.
     pub forwarder: Option<Arc<crate::content::forward::Forwarder>>,
+    /// `DCL_NAME_STATS_URL`: the per-wallet storage allowance (unlimited unset).
+    pub allowance: Arc<dyn quota::SpaceAllowance>,
+    /// The user notices (permission grants, storage quota) and their links.
+    pub notices: Arc<notices::Notices>,
 }
 
 pub type SharedState = Arc<CoreState>;
@@ -282,7 +288,21 @@ impl CoreState {
             access_log_rx: Mutex::new(Some(access_log_rx)),
             revocation_sinks: parking_lot::RwLock::new(Vec::new()),
             forwarder: None,
+            allowance: Arc::new(quota::Unlimited),
+            notices: Arc::new(notices::Notices::default()),
         }
+    }
+
+    /// The storage allowance source (`DCL_NAME_STATS_URL`).
+    pub fn with_allowance(mut self, allowance: Arc<dyn quota::SpaceAllowance>) -> Self {
+        self.allowance = allowance;
+        self
+    }
+
+    /// Where user notices go (social's directory) and the Builder they link.
+    pub fn with_notices(mut self, notices: notices::Notices) -> Self {
+        self.notices = Arc::new(notices);
+        self
     }
 
     /// Turns on upstream forwarding ([`forwarding::LANE`]); `serve` spawns its job.
@@ -425,6 +445,15 @@ impl CoreState {
                     tracing::info!(evicted, "retired world scenes evicted");
                     Ok(())
                 }
+            },
+        );
+        let state = self.clone();
+        jobs.spawn_periodic_leased(
+            "worlds-quota",
+            crate::jobs::PeriodicCfg::every(quota::QUOTA_PASS_INTERVAL),
+            move |_ctx| {
+                let state = state.clone();
+                async move { state.quota_pass().await }
             },
         );
         let limits = &self.settings.upload_limits;

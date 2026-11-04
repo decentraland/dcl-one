@@ -58,8 +58,7 @@ use crate::shared::identity::{
 
 // The access vocabulary `Policy` returns and reads lives in `comms::access`.
 pub use crate::comms::access::{
-    Access, AccessGrant, AccessType, Ban, LandOperators, SceneRef, WorldAdmission,
-    blocked_past_grace,
+    Access, AccessGrant, AccessType, Ban, LandOperators, SceneRef, WorldAdmission, world_blocked,
 };
 
 /// The permission-relevant columns of one `worlds.worlds` row.
@@ -71,11 +70,15 @@ pub struct WorldRow {
     pub access_type: AccessType,
     pub access_secret_hash: Option<String>,
     pub access_nft: Option<String>,
+    /// The operator disable.
     pub blocked_since: Option<NaiveDateTime>,
+    /// The stored owner's `worlds.quota_blocks.created_at`.
+    pub quota_blocked_since: Option<NaiveDateTime>,
     pub mirror_source: Option<String>,
 }
 
-pub const MAX_WORLD_SIZE_BYTES: i64 = 300 * 1024 * 1024;
+/// A scene's size cap (WCS `MAX_SCENE_SIZE`, 500 MiB).
+pub const MAX_WORLD_SIZE_BYTES: i64 = 500 * 1024 * 1024;
 pub const DEFAULT_PERSONAL_WORLD_MAX_SIZE_BYTES: i64 = 50 * 1024 * 1024;
 /// `MAX_PARCELS`' default, as the old service's.
 pub const DEFAULT_MAX_PARCELS: u32 = 4;
@@ -444,8 +447,10 @@ impl Policy {
 
     pub async fn world(&self, world: &WorldName) -> Result<Option<WorldRow>, sqlx::Error> {
         let row = sqlx::query(
-            "SELECT name, owner, access_type, access_secret_hash, access_nft, blocked_since, mirror_source \
-             FROM worlds.worlds WHERE name = $1",
+            "SELECT w.name, w.owner, w.access_type, w.access_secret_hash, w.access_nft, w.blocked_since, \
+                    q.created_at AS quota_blocked_since, w.mirror_source \
+             FROM worlds.worlds w LEFT JOIN worlds.quota_blocks q ON q.wallet = w.owner \
+             WHERE w.name = $1",
         )
         .bind(world.key())
         .fetch_optional(&self.pool)
@@ -460,6 +465,7 @@ impl Policy {
             access_secret_hash: r.get("access_secret_hash"),
             access_nft: r.get("access_nft"),
             blocked_since: r.get("blocked_since"),
+            quota_blocked_since: r.get("quota_blocked_since"),
             mirror_source: r.get("mirror_source"),
         }))
     }
@@ -1097,7 +1103,9 @@ impl crate::comms::interfaces::AccessPolicy for Policy {
             .map_err(|e| store_unavailable("worlds.worlds", &e))?;
         Ok(match row {
             None => WorldAdmission::Unknown,
-            Some(row) if blocked_past_grace(row.blocked_since, now) => WorldAdmission::Blocked,
+            Some(row) if world_blocked(row.blocked_since, row.quota_blocked_since, now) => {
+                WorldAdmission::Blocked
+            }
             Some(row) => WorldAdmission::Open(row.access_type),
         })
     }
@@ -1505,6 +1513,36 @@ mod tests {
             .execute(p.pool())
             .await
             .unwrap();
+        assert_eq!(
+            p.world_admission(&world, now()).await.unwrap(),
+            WorldAdmission::Blocked
+        );
+    }
+
+    #[tokio::test]
+    async fn world_admission_refuses_a_quota_blocked_owner_only_after_two_days() {
+        use crate::comms::interfaces::AccessPolicy;
+        let Some(p) = scratch().await else {
+            return;
+        };
+        let _quota = crate::core::quota::test_support::QUOTA_DB.lock().await;
+        let (world, owner) = (world_name(), wallet());
+        seed_world(&p, &world, Some(&owner), AccessType::Unrestricted, None).await;
+        let block = |age: chrono::TimeDelta| {
+            sqlx::query(
+                "INSERT INTO worlds.quota_blocks (wallet, created_at, updated_at) VALUES ($1, $2, $2) \
+                 ON CONFLICT (wallet) DO UPDATE SET created_at = EXCLUDED.created_at",
+            )
+            .bind(&owner)
+            .bind(now() - age)
+            .execute(p.pool())
+        };
+        block(chrono::TimeDelta::hours(47)).await.unwrap();
+        assert_eq!(
+            p.world_admission(&world, now()).await.unwrap(),
+            WorldAdmission::Open(AccessType::Unrestricted)
+        );
+        block(chrono::TimeDelta::hours(49)).await.unwrap();
         assert_eq!(
             p.world_admission(&world, now()).await.unwrap(),
             WorldAdmission::Blocked

@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use chrono::NaiveDateTime;
 use serde_json::{Value, json};
 use sqlx::postgres::PgRow;
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Postgres, Row};
 use uuid::Uuid;
 
 use crate::comms::world_identity::{Parcel, ParcelSet, SceneId, WorldName};
@@ -420,15 +420,22 @@ pub async fn get_world(pool: &PgPool, world: &WorldName) -> Result<Option<WorldR
     Ok(row.as_ref().map(world_from_row))
 }
 
-/// Upstream's `isWorldValid`: the world has scenes and is not disabled.
+/// Upstream's `isWorldValid`: the world has scenes and is neither disabled
+/// nor its owner quota-blocked past the grace.
 pub async fn world_is_valid(pool: &PgPool, world: &WorldName) -> Result<bool, ApiError> {
-    let has_scenes: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes WHERE world_name = $1)",
+    let row: Option<(bool, Option<NaiveDateTime>, Option<NaiveDateTime>)> = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes s WHERE s.world_name = w.name), \
+                w.blocked_since, q.created_at \
+           FROM worlds.worlds w LEFT JOIN worlds.quota_blocks q ON q.wallet = w.owner \
+          WHERE w.name = $1",
     )
     .bind(world.key())
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await?;
-    Ok(has_scenes && !is_world_disabled(pool, world).await?)
+    let now = chrono::Utc::now().naive_utc();
+    Ok(row.is_some_and(|(has_scenes, disabled, quota)| {
+        has_scenes && !crate::comms::access::world_blocked(disabled, quota, now)
+    }))
 }
 
 pub async fn ensure_world(
@@ -1033,46 +1040,58 @@ pub async fn entities_for_worlds(
 
 /// `POST /permissions/{deployment|streaming}` in one statement: ensure the
 /// worlds row (signer as owner), drop the addresses no longer listed, add the
-/// new ones (existing rows keep their scoping).
-pub async fn replace_world_wide_permission(
-    pool: &PgPool,
+/// new ones (existing rows keep their scoping). Returns `(added, removed)`.
+pub async fn replace_world_wide_permission<'e, E>(
+    executor: E,
     world: &WorldName,
     owner: &Address,
     permission: Permission,
     addresses: &[Address],
-) -> Result<(), ApiError> {
-    sqlx::query(
+) -> Result<(Vec<String>, Vec<String>), ApiError>
+where
+    E: sqlx::Executor<'e, Database = Postgres>,
+{
+    let rows: Vec<(bool, String)> = sqlx::query_as(
         r#"WITH ensured AS (
              INSERT INTO worlds.worlds (name, owner) VALUES ($1, $4) ON CONFLICT (name) DO NOTHING
            ), removed AS (
              DELETE FROM worlds.world_permissions
              WHERE world_name = $1 AND permission = $2 AND NOT (address = ANY($3::text[]))
+             RETURNING address
            ), added AS (
              INSERT INTO worlds.world_permissions (world_name, permission, address)
              SELECT $1, $2, addr FROM unnest($3::text[]) AS addr
              ON CONFLICT (world_name, permission, address) DO NOTHING
+             RETURNING address
            )
-           SELECT 1"#,
+           SELECT true, address FROM added UNION ALL SELECT false, address FROM removed"#,
     )
     .bind(world.key())
     .bind(permission.as_str())
     .bind(addresses)
     .bind(owner)
-    .execute(pool)
+    .fetch_all(executor)
     .await?;
-    Ok(())
+    let (added, removed): (Vec<_>, Vec<_>) = rows.into_iter().partition(|(added, _)| *added);
+    Ok((
+        added.into_iter().map(|(_, a)| a).collect(),
+        removed.into_iter().map(|(_, a)| a).collect(),
+    ))
 }
 
 /// Grants world-wide `permission` to `addresses`: new rows are inserted and any
 /// parcel scoping the addresses had is cleared. `ensure_owner` creates the
 /// worlds row first. Returns the newly added addresses.
-pub async fn grant_addresses_world_wide_permission(
-    pool: &PgPool,
+pub async fn grant_addresses_world_wide_permission<'e, E>(
+    executor: E,
     world: &WorldName,
     permission: Permission,
     addresses: &[Address],
     ensure_owner: Option<&Address>,
-) -> Result<Vec<String>, ApiError> {
+) -> Result<Vec<String>, ApiError>
+where
+    E: sqlx::Executor<'e, Database = Postgres>,
+{
     if addresses.is_empty() {
         return Ok(Vec::new());
     }
@@ -1096,17 +1115,20 @@ pub async fn grant_addresses_world_wide_permission(
     .bind(permission.as_str())
     .bind(addresses)
     .bind(ensure_owner)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
     Ok(inserted.into_iter().map(|r| r.get("address")).collect())
 }
 
-pub async fn remove_addresses_permission(
-    pool: &PgPool,
+pub async fn remove_addresses_permission<'e, E>(
+    executor: E,
     world: &WorldName,
     permission: Permission,
     addresses: &[Address],
-) -> Result<Vec<String>, ApiError> {
+) -> Result<Vec<String>, ApiError>
+where
+    E: sqlx::Executor<'e, Database = Postgres>,
+{
     if addresses.is_empty() {
         return Ok(Vec::new());
     }
@@ -1116,20 +1138,23 @@ pub async fn remove_addresses_permission(
     .bind(world.key())
     .bind(permission.as_str())
     .bind(addresses)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
     Ok(rows.into_iter().map(|r| r.get("address")).collect())
 }
 
 /// Adds canonical parcels under a grant, creating it when absent; `true` when
 /// the grant was created by this call.
-pub async fn add_parcels_to_permission(
-    pool: &PgPool,
+pub async fn add_parcels_to_permission<'e, E>(
+    executor: E,
     world: &WorldName,
     permission: Permission,
     address: &Address,
     parcels: &ParcelSet,
-) -> Result<bool, ApiError> {
+) -> Result<bool, ApiError>
+where
+    E: sqlx::Executor<'e, Database = Postgres>,
+{
     let created: bool = sqlx::query_scalar(
         r#"WITH perm AS (
              INSERT INTO worlds.world_permissions (world_name, permission, address)
@@ -1147,22 +1172,26 @@ pub async fn add_parcels_to_permission(
     .bind(permission.as_str())
     .bind(address)
     .bind(parcels.canonical())
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await?;
     Ok(created)
 }
 
-/// `false` when the address holds no such permission (the caller's 400).
-/// Removing the last parcel drops the grant: zero parcels would read as
-/// world-wide (deliberate divergence from upstream, which keeps the row).
-pub async fn remove_parcels_from_permission(
-    pool: &PgPool,
+/// `None` when the address holds no such permission (the caller's 400),
+/// else whether the grant was dropped. Removing the last parcel drops the
+/// grant: zero parcels would read as world-wide (deliberate divergence from
+/// upstream, which keeps the row).
+pub async fn remove_parcels_from_permission<'c, A>(
+    conn: A,
     world: &WorldName,
     permission: Permission,
     address: &Address,
     parcels: &ParcelSet,
-) -> Result<bool, ApiError> {
-    let mut tx = pool.begin().await?;
+) -> Result<Option<bool>, ApiError>
+where
+    A: sqlx::Acquire<'c, Database = Postgres>,
+{
+    let mut tx = conn.begin().await?;
     let found = sqlx::query(
         "SELECT 1 FROM worlds.world_permissions
          WHERE world_name = $1 AND permission = $2 AND address = $3 FOR UPDATE",
@@ -1174,7 +1203,7 @@ pub async fn remove_parcels_from_permission(
     .await?
     .is_some();
     if !found {
-        return Ok(false);
+        return Ok(None);
     }
     let removed = sqlx::query(
         "DELETE FROM worlds.world_permission_parcels
@@ -1213,7 +1242,7 @@ pub async fn remove_parcels_from_permission(
         .await?;
     }
     tx.commit().await?;
-    Ok(true)
+    Ok(Some(dropped))
 }
 
 /// `None` when the address holds no such permission, otherwise the filtered
@@ -1732,7 +1761,7 @@ pub async fn list_worlds_public(
             FROM worlds.world_scenes ws, unnest(ws.parcels) AS p
             GROUP BY ws.world_name
         ) ss ON ss.world_name = w.name
-        LEFT JOIN worlds.blocked_wallets b ON w.owner = b.wallet
+        LEFT JOIN worlds.quota_blocks b ON w.owner = b.wallet
         WHERE ($1::text IS NULL
                 OR w.owner = $1
                 OR EXISTS (SELECT 1 FROM worlds.world_permissions wp

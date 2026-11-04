@@ -1607,6 +1607,18 @@ async fn worlds_states(
             eip1654.clone(),
         )
         .with_presence(presence)
+        .with_allowance(Arc::new(worlds::core::quota::AccountHoldings::new(
+            http_client.clone(),
+            config.worlds.dcl_name_stats_url.as_deref(),
+            Duration::from_millis(config.worlds.dcl_name_stats_timeout_ms),
+        )))
+        // World notices persist through social's directory, as comms' do.
+        .with_notices(worlds::core::notices::Notices::new(
+            Some(Arc::new(social::comms_directory::Directory::new(
+                pool.clone(),
+            ))),
+            &config.worlds.builder_url,
+        ))
         .with_forwarder(forwarder(
             "WORLDS_FORWARD_UPSTREAM_URL",
             config.worlds.worlds_forward_upstream_url.as_deref(),

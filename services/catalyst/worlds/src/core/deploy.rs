@@ -9,7 +9,8 @@
 //! `worlds::policy::Policy::can_deploy` (the NAME/personal owner replaces
 //! every overlapping scene; a deployment grantee exactly the overlapping
 //! scenes its grant covers), the minimap, skybox and navmap files, the
-//! uploaded files (none extra, none missing) and the world size cap. The
+//! uploaded files (none extra, none missing) and the scene size cap (the
+//! owner's remaining storage allowance, `CoreState::max_scene_size`). The
 //! files go to the ONE blob store and the scene row lands in
 //! `worlds.world_scenes` in one transaction (`store::deploy_scene`).
 //!
@@ -463,6 +464,8 @@ struct Validated {
     world_name: String,
     parcels: ParcelSet,
     replacement: Deploy,
+    /// The live NAME holder `worlds.owner` is refreshed to.
+    name_owner: Address,
     size: i64,
 }
 
@@ -576,6 +579,28 @@ async fn validate(
             return Err(internal("Failed to persist deployment"));
         }
     }
+    // Every publish refreshes worlds.owner to the live NAME holder.
+    let name_owner = match &replacement {
+        Deploy::Owner => signer.clone(),
+        Deploy::Scoped(_) => match state.policy.live_name_owner(&world).await {
+            Ok(Some(owner)) => owner,
+            Ok(None) => {
+                return Err(Refusal(
+                    StatusCode::BAD_REQUEST,
+                    format!(
+                        "Cannot deploy scene \"{entity_id}\" to world \"{}\": owner address could not be resolved.",
+                        world.display()
+                    ),
+                ));
+            }
+            Err(e) => {
+                tracing::warn!(world = %world, error = %e, "deploy denied: NAME owner undetermined");
+                return Err(unavailable(
+                    "Deployment failed: the world's owner could not be resolved right now",
+                ));
+            }
+        },
+    };
 
     let minimap = missing_minimap_images(entity);
     if !minimap.is_empty() {
@@ -633,8 +658,14 @@ async fn validate(
         return Err(failed(file_errors.join(", ")));
     }
     let size: i64 = sizes.values().copied().fold(0, i64::saturating_add);
-    if size > limits.max_size_bytes {
-        let max = limits.max_size_bytes;
+    let max = state
+        .max_scene_size(&world, &limits, Some(&name_owner), Some(pointers.as_slice()))
+        .await
+        .map_err(|e| {
+            tracing::warn!(world = %world, error = ?e, "deploy denied: storage allowance undetermined");
+            unavailable("Deployment failed: the storage allowance could not be determined right now")
+        })?;
+    if size > max {
         return Err(failed(format!(
             "The deployment is too big. The maximum total size allowed is {max} bytes for scenes. You can upload up to {max} bytes but you tried to upload {size}."
         )));
@@ -645,6 +676,7 @@ async fn validate(
         world_name: world_name.to_string(),
         parcels,
         replacement,
+        name_owner,
         size,
     })
 }
@@ -704,32 +736,13 @@ async fn deploy_entity_inner(
         world_name,
         parcels,
         replacement,
+        name_owner,
         size,
     } = match validate(state, &entity, &signer, &entity_id, &uploads, now_ms).await {
         Ok(v) => v,
         Err(refusal) => return refusal.into_response(),
     };
-    // Every publish refreshes worlds.owner to the live NAME holder.
-    let name_owner = match &replacement {
-        Deploy::Owner => signer.clone(),
-        Deploy::Scoped(_) => match state.policy.live_name_owner(&world).await {
-            Ok(Some(owner)) => owner,
-            Ok(None) => {
-                return err_one(format!(
-                    "Cannot deploy scene \"{entity_id}\" to world \"{}\": owner address could not be resolved.",
-                    world.display()
-                ));
-            }
-            Err(e) => {
-                tracing::warn!(world = %world, error = %e, "deploy denied: NAME owner undetermined");
-                return unavailable(
-                    "Deployment failed: the world's owner could not be resolved right now",
-                )
-                .into_response();
-            }
-        },
-    };
-    let name_owner = Some(&name_owner);
+    let owner_ref = Some(&name_owner);
 
     // Extra files are refused in validation, so every upload is referenced.
     for (hash, blob) in &uploads.by_hash {
@@ -744,7 +757,7 @@ async fn deploy_entity_inner(
         &state.storage,
         SceneDeployment {
             world: &world,
-            name_owner,
+            name_owner: owner_ref,
             entity_id: &entity_id,
             deployer: &signer,
             deployment_auth_chain: &auth_chain_value,
@@ -786,6 +799,10 @@ async fn deploy_entity_inner(
         "POST /entities - deployed (validated + authorized + persisted)"
     );
     worlds_metrics::world_deployed(world.key());
+    // The publish may have freed space (a smaller scene replaced a larger one).
+    state
+        .unblock_if_under_quota(&name_owner, chrono::Utc::now().naive_utc())
+        .await;
     if let Some(forwarder) = &state.forwarder {
         forwarder.kick();
     }

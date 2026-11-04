@@ -159,6 +159,23 @@ pub struct WorldsConfig {
     )]
     pub deployment_processing_timeout_ms: u64,
 
+    /// The account-holdings service whose `spaceAllowance` (MiB) is a wallet's
+    /// storage allowance across its DCL worlds; unset, the allowance is unlimited.
+    #[arg(long, env = "DCL_NAME_STATS_URL")]
+    pub dcl_name_stats_url: Option<String>,
+
+    /// Per-attempt timeout of the account-holdings request (3 attempts).
+    #[arg(long, env = "DCL_NAME_STATS_TIMEOUT_MS", default_value_t = 3_000, value_parser = clap::value_parser!(u64).range(1..))]
+    pub dcl_name_stats_timeout_ms: u64,
+
+    /// The Builder whose `/worlds?tab=dcl` page world notifications link to.
+    #[arg(
+        long,
+        env = "BUILDER_URL",
+        default_value = "https://decentraland.org/builder"
+    )]
+    pub builder_url: String,
+
     /// 64 hex characters (or ENCRYPTION_KEY_FILE): the AES-256-GCM key of the
     /// env values; unset, the `/env` routes answer 503 and the rest serve.
     #[arg(long, env = "ENCRYPTION_KEY", hide_env_values = true)]

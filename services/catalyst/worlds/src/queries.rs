@@ -12,7 +12,10 @@ use crate::content::errors::AppResult;
 #[derive(Debug, Clone)]
 pub struct WorldRecord {
     pub name: String,
+    /// The operator disable.
     pub blocked_since: Option<NaiveDateTime>,
+    /// The owner's storage quota block.
+    pub quota_blocked_since: Option<NaiveDateTime>,
     pub spawn_coordinates: Option<String>,
     pub skybox_time: Option<i32>,
     pub single_player: bool,
@@ -74,10 +77,12 @@ fn world_scene_from_row(r: &PgRow) -> WorldScene {
 /// either side may be absent independently.
 pub async fn world_about(pool: &PgPool, world_name: &str) -> AppResult<WorldAbout> {
     let rows = sqlx::query(
-        r#"SELECT w.name, w.blocked_since, w.spawn_coordinates, w.skybox_time,
+        r#"SELECT w.name, w.blocked_since, q.created_at AS quota_blocked_since,
+                  w.spawn_coordinates, w.skybox_time,
                   w.single_player, w.realm_name_override,
                   s.entity_id, s.entity, s.parcels, s.deployer, s.mirror_source
            FROM (SELECT * FROM worlds.worlds WHERE name = lower($1)) w
+           LEFT JOIN worlds.quota_blocks q ON q.wallet = w.owner
            FULL OUTER JOIN (
              SELECT entity_id, entity, parcels, deployer, mirror_source, created_at
              FROM worlds.world_scenes WHERE world_name = lower($1)
@@ -92,6 +97,7 @@ pub async fn world_about(pool: &PgPool, world_name: &str) -> AppResult<WorldAbou
         r.get::<Option<String>, _>("name").map(|name| WorldRecord {
             name,
             blocked_since: r.get("blocked_since"),
+            quota_blocked_since: r.get("quota_blocked_since"),
             spawn_coordinates: r.get("spawn_coordinates"),
             skybox_time: r.get("skybox_time"),
             single_player: r.get::<Option<bool>, _>("single_player").unwrap_or(false),

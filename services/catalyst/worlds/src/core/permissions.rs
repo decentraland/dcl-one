@@ -183,6 +183,30 @@ fn parse_permission(raw: &str) -> Option<Permission> {
     Permission::parse(raw)
 }
 
+/// Notifies each address the edit in `tx` actually `added` or `removed`
+/// (the old permission events) in the same transaction, then commits.
+async fn commit_with_notices(
+    state: &SharedState,
+    mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    world: &WorldName,
+    permission: Permission,
+    added: &[String],
+    removed: &[String],
+) -> Result<(), ApiError> {
+    let now = chrono::Utc::now().naive_utc();
+    let mut notices = state
+        .notices
+        .permission_changed(false, world, permission, removed, now);
+    notices.extend(
+        state
+            .notices
+            .permission_changed(true, world, permission, added, now),
+    );
+    state.notices.send(&mut tx, &notices).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// POST /world/{world_name}/permissions/{permission_name}
 pub async fn post_permissions(
     State(state): State<SharedState>,
@@ -213,14 +237,17 @@ pub async fn post_permissions(
                 ));
             }
             let wallets = metadata_wallets(meta)?;
-            store::replace_world_wide_permission(
-                &state.pool,
+            let mut tx = state.pool.begin().await?;
+            let (added, removed) = store::replace_world_wide_permission(
+                &mut *tx,
                 &world,
                 &auth.signer,
                 Permission::Deployment,
                 &wallets,
             )
             .await?;
+            commit_with_notices(&state, tx, &world, Permission::Deployment, &added, &removed)
+                .await?;
         }
         "streaming" => {
             let ty = meta.get("type").and_then(|v| v.as_str()).unwrap_or("");
@@ -234,14 +261,17 @@ pub async fn post_permissions(
             } else {
                 metadata_wallets(meta)?
             };
-            store::replace_world_wide_permission(
-                &state.pool,
+            let mut tx = state.pool.begin().await?;
+            let (added, removed) = store::replace_world_wide_permission(
+                &mut *tx,
                 &world,
                 &auth.signer,
                 Permission::Streaming,
                 &wallets,
             )
             .await?;
+            commit_with_notices(&state, tx, &world, Permission::Streaming, &added, &removed)
+                .await?;
         }
         "access" => {
             let access = access_from_metadata(meta)?;
@@ -406,14 +436,16 @@ pub async fn put_permissions_address(
     let ensure_owner = (!owner.world_found).then_some(&owner.signer);
 
     if is_allow_list_permission(permission) {
-        store::grant_addresses_world_wide_permission(
-            &state.pool,
+        let mut tx = state.pool.begin().await?;
+        let added = store::grant_addresses_world_wide_permission(
+            &mut *tx,
             &world,
             permission,
             std::slice::from_ref(&address),
             ensure_owner,
         )
         .await?;
+        commit_with_notices(&state, tx, &world, permission, &added, &[]).await?;
     } else {
         if let Some(signer) = ensure_owner {
             store::ensure_world(&state.pool, &world, signer).await?;
@@ -457,13 +489,15 @@ pub async fn delete_permissions_address(
     }
 
     if is_allow_list_permission(permission) {
-        store::remove_addresses_permission(
-            &state.pool,
+        let mut tx = state.pool.begin().await?;
+        let removed = store::remove_addresses_permission(
+            &mut *tx,
             &world,
             permission,
             std::slice::from_ref(&address),
         )
         .await?;
+        commit_with_notices(&state, tx, &world, permission, &[], &removed).await?;
     } else {
         apply_allow_list_edit(
             &state,
@@ -549,7 +583,15 @@ pub async fn post_permission_parcels(
         &world,
     )
     .await?;
-    store::add_parcels_to_permission(&state.pool, &world, permission, &address, &parcels).await?;
+    let mut tx = state.pool.begin().await?;
+    let created =
+        store::add_parcels_to_permission(&mut *tx, &world, permission, &address, &parcels).await?;
+    let added: &[String] = if created {
+        &[address.as_str().to_string()]
+    } else {
+        &[]
+    };
+    commit_with_notices(&state, tx, &world, permission, added, &[]).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -573,16 +615,24 @@ pub async fn delete_permission_parcels(
         &world,
     )
     .await?;
-    let found =
-        store::remove_parcels_from_permission(&state.pool, &world, permission, &address, &parcels)
+    let mut tx = state.pool.begin().await?;
+    let removal =
+        store::remove_parcels_from_permission(&mut *tx, &world, permission, &address, &parcels)
             .await?;
-    if !found {
+    let Some(dropped) = removal else {
         return Err(ApiError::bad_request(format!(
             "Permission not found. Address {} does not have {permission_name} permission for world {}.",
             address.as_str(),
             world.display()
         )));
-    }
+    };
+    // Removing the last parcel drops the grant, so the address hears it was revoked.
+    let removed: &[String] = if dropped {
+        &[address.as_str().to_string()]
+    } else {
+        &[]
+    };
+    commit_with_notices(&state, tx, &world, permission, &[], removed).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
