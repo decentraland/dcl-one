@@ -3,6 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use anyhow::anyhow;
 use bevy::log::debug;
 use common::rpc::{RpcCall, RpcResultReceiver, RpcResultSender};
+use sha2::{Digest, Sha256};
 
 use crate::State;
 use dcl_types::RpcCalls;
@@ -10,17 +11,7 @@ use dcl_types::RpcCalls;
 pub type SignedFetchResult = Result<Vec<(String, String)>, String>;
 pub type SignedFetchReceiver = RpcResultReceiver<SignedFetchResult>;
 
-pub async fn op_signed_fetch_headers(
-    state: Rc<RefCell<impl State>>,
-    uri: String,
-    method: Option<String>,
-    body: Option<String>,
-) -> Result<Vec<(String, String)>, anyhow::Error> {
-    let rx = start_signed_fetch_headers(state, uri, method, body)?;
-    finish_signed_fetch_headers(rx).await
-}
-
-/// Queue synchronously so a WASM caller cannot accumulate body copies in pending futures.
+/// Hash the scene's UTF-8 body before queuing so only its digest crosses the engine boundary.
 pub fn start_signed_fetch_headers(
     state: Rc<RefCell<impl State>>,
     uri: String,
@@ -28,6 +19,7 @@ pub fn start_signed_fetch_headers(
     body: Option<String>,
 ) -> Result<SignedFetchReceiver, anyhow::Error> {
     debug!("op_signed_fetch_headers");
+    let body_hash = body.map(|body| format!("{:x}", Sha256::digest(body.as_bytes())));
     let (sx, rx) = RpcResultSender::channel();
 
     state
@@ -36,7 +28,7 @@ pub fn start_signed_fetch_headers(
         .push(RpcCall::SignRequest(common::rpc::SignRequest {
             method: method.unwrap_or_else(|| String::from("get")),
             uri,
-            body,
+            body_hash,
             response: sx,
         }))?;
 

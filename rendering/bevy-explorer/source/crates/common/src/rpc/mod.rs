@@ -17,26 +17,26 @@ pub use tokio_util::sync::CancellationToken;
 pub use result_sender::{RpcResultReceiver, RpcResultSender};
 pub use stream_sender::{RpcStreamReceiver, RpcStreamSender};
 
-/// Scene signing request. Bodyless requests retain the original compact wire layout;
-/// bodyful requests use named fields so older engines can ignore the added body safely.
+/// Requests without a body retain the original compact wire layout.
+/// A supplied body adds a named SHA-256 digest field that older engines can ignore.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SignRequest {
     pub method: String,
     pub uri: String,
     pub response: RpcResultSender<Result<Vec<(String, String)>, String>>,
     #[serde(default)]
-    pub body: Option<String>,
+    pub body_hash: Option<String>,
 }
 
 impl Serialize for SignRequest {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::{SerializeMap, SerializeTuple};
-        if let Some(body) = &self.body {
+        if let Some(body_hash) = &self.body_hash {
             let mut map = serializer.serialize_map(Some(4))?;
             map.serialize_entry("method", &self.method)?;
             map.serialize_entry("uri", &self.uri)?;
             map.serialize_entry("response", &self.response)?;
-            map.serialize_entry("body", body)?;
+            map.serialize_entry("body_hash", body_hash)?;
             map.end()
         } else {
             let mut tuple = serializer.serialize_tuple(3)?;

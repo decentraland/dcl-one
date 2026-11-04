@@ -62,34 +62,6 @@ pub enum RendererResponse {
 /// frame (and unbounded engine-side work for side-effectful calls) — none of it requiring
 /// scene-side retention. A well-behaved scene issues a handful per tick.
 pub const MAX_RPC_CALLS_PER_TICK: usize = 1000;
-/// Signing bodies share the existing 10 MiB scene fetch body ceiling per tick.
-pub const MAX_SIGNING_BODY_BYTES_PER_TICK: usize = 10 * 1024 * 1024;
-
-fn signing_body_len(call: &RpcCall) -> usize {
-    match call {
-        RpcCall::SignRequest(common::rpc::SignRequest {
-            body: Some(body), ..
-        }) => body.len(),
-        _ => 0,
-    }
-}
-
-/// Recheck the untrusted batch at the engine boundary; reject only excess sign calls.
-pub fn enforce_signing_body_budget(calls: &mut Vec<RpcCall>) {
-    let mut bytes = 0usize;
-    calls.retain(|call| {
-        let size = signing_body_len(call);
-        if size > MAX_SIGNING_BODY_BYTES_PER_TICK.saturating_sub(bytes) {
-            if let RpcCall::SignRequest(common::rpc::SignRequest { response, .. }) = call {
-                response.send(Err("per-tick signed fetch body limit exceeded".into()));
-            }
-            false
-        } else {
-            bytes += size;
-            true
-        }
-    });
-}
 
 /// Per-tick queue of scene-issued RpcCalls. `push` is bounded: the queue is drained (via
 /// `std::mem::take`) each tick at the flush, so its current length is exactly this tick's
@@ -99,20 +71,12 @@ pub fn enforce_signing_body_budget(calls: &mut Vec<RpcCall>) {
 pub struct RpcCalls(Vec<RpcCall>);
 
 impl RpcCalls {
-    /// Remaining signing-body bytes, checked before copying a JS string into WASM.
-    pub fn remaining_signing_body_bytes(&self) -> usize {
-        MAX_SIGNING_BODY_BYTES_PER_TICK.saturating_sub(self.0.iter().map(signing_body_len).sum())
-    }
-
     /// Enqueue a call for the next flush. Over the per-tick ceiling it returns an error the op
     /// propagates to its caller (`push(..)?`), so a scene spamming RPCs sees its own call fail
     /// rather than growing an unbounded outbound frame.
     pub fn push(&mut self, call: RpcCall) -> Result<(), anyhow::Error> {
         if self.0.len() >= MAX_RPC_CALLS_PER_TICK {
             anyhow::bail!("exceeded the per-tick RPC call limit ({MAX_RPC_CALLS_PER_TICK})");
-        }
-        if signing_body_len(&call) > self.remaining_signing_body_bytes() {
-            anyhow::bail!("per-tick signed fetch body limit exceeded");
         }
         self.0.push(call);
         Ok(())
@@ -211,48 +175,6 @@ mod rpc_calls_tests {
         RpcCall::MoveCamera {
             facing: Quat::IDENTITY,
         }
-    }
-
-    fn sign(body: String) -> RpcCall {
-        let (response, _) = common::rpc::RpcResultSender::channel();
-        RpcCall::SignRequest(common::rpc::SignRequest {
-            method: "POST".into(),
-            uri: "https://example.org/".into(),
-            response,
-            body: Some(body),
-        })
-    }
-
-    #[test]
-    fn signing_body_budget_rejects_oversize_and_resets_after_flush() {
-        let mut calls = RpcCalls::default();
-        assert!(calls
-            .push(sign("x".repeat(MAX_SIGNING_BODY_BYTES_PER_TICK + 1)))
-            .is_err());
-        calls
-            .push(sign("x".repeat(MAX_SIGNING_BODY_BYTES_PER_TICK)))
-            .unwrap();
-        assert!(calls.push(sign("x".into())).is_err());
-        let _ = std::mem::take(&mut calls);
-        assert!(calls.push(sign("x".into())).is_ok());
-    }
-
-    #[test]
-    fn engine_batch_rejects_excess_sign_calls_only() {
-        let (response, mut receiver) = common::rpc::RpcResultSender::channel();
-        let mut calls = vec![
-            sign("x".repeat(MAX_SIGNING_BODY_BYTES_PER_TICK)),
-            RpcCall::SignRequest(common::rpc::SignRequest {
-                method: "POST".into(),
-                uri: "https://example.org".into(),
-                response,
-                body: Some("x".into()),
-            }),
-            a_call(),
-        ];
-        enforce_signing_body_budget(&mut calls);
-        assert_eq!(calls.len(), 2);
-        assert!(receiver.try_recv().unwrap().is_err());
     }
 
     // push accepts up to the per-tick ceiling then rejects, without enqueuing the rejected call;

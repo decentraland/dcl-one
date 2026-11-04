@@ -2201,31 +2201,28 @@ struct SignedFetchMeta {
     hash_payload: Option<String>,
 }
 
-async fn signed_fetch_hash(body: Option<&str>) -> Option<String> {
-    use sha2::{Digest, Sha256};
-    let body = body?;
-    let mut hasher = Sha256::new();
-    for chunk in body.as_bytes().chunks(64 * 1024) {
-        hasher.update(chunk);
-        // Let the task executor schedule other work between chunks, including on web.
-        futures_lite::future::yield_now().await;
-    }
-    Some(format!("{:x}", hasher.finalize()))
-}
-
-async fn delegated_signed_fetch_meta(
-    meta: &str,
-    body: Option<&str>,
+fn delegated_signed_fetch_meta(
+    meta: String,
+    body_hash: Option<String>,
 ) -> Result<String, serde_json::Error> {
-    let Some(hash) = signed_fetch_hash(body).await else {
-        return Ok(meta.to_owned());
+    let Some(hash) = body_hash else {
+        return Ok(meta);
     };
-    let mut value: serde_json::Value = serde_json::from_str(meta)?;
+    let mut value: serde_json::Value = serde_json::from_str(&meta)?;
     value["hashPayload"] = hash.into();
     Ok(value.to_string())
 }
 
-fn signed_fetch_uri(uri: &str, preview: bool) -> Result<Uri, String> {
+fn validate_signed_fetch(
+    uri: &str,
+    body_hash: Option<&str>,
+    preview: bool,
+) -> Result<(Uri, Option<String>), String> {
+    if let Some(hash) = body_hash {
+        if hash.len() != 64 || !hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            return Err("expected a 64-character lowercase hexadecimal body hash".to_owned());
+        }
+    }
     let mut parsed = url::Url::parse(uri).map_err(|_| format!("failed to parse uri: {uri}"))?;
     if !(preview || ["https", "wss"].contains(&parsed.scheme()) || parsed.is_loopback())
         || !parsed.username().is_empty()
@@ -2235,7 +2232,8 @@ fn signed_fetch_uri(uri: &str, preview: bool) -> Result<Uri, String> {
     }
     // Fetch applies WHATWG path normalization and strips fragments before transmission.
     parsed.set_fragment(None);
-    Uri::try_from(parsed.as_str()).map_err(|_| format!("failed to parse uri: {uri}"))
+    let uri = Uri::try_from(parsed.as_str()).map_err(|_| format!("failed to parse uri: {uri}"))?;
+    Ok((uri, body_hash.map(str::to_owned)))
 }
 
 fn signed_fetch_tld(domain: &str) -> &'static str {
@@ -2299,18 +2297,19 @@ fn handle_sign_request(
             RpcCall::SignRequest(common::rpc::SignRequest {
                 method,
                 uri,
-                body,
+                body_hash,
                 response,
             }),
         ) = (&ev.origin, &ev.call)
         {
-            let uri = match signed_fetch_uri(uri, preview_mode.is_preview) {
-                Ok(uri) => uri,
-                Err(error) => {
-                    response.send(Err(error));
-                    continue;
-                }
-            };
+            let (uri, hash_payload) =
+                match validate_signed_fetch(uri, body_hash.as_deref(), preview_mode.is_preview) {
+                    Ok(inputs) => inputs,
+                    Err(error) => {
+                        response.send(Err(error));
+                        continue;
+                    }
+                };
 
             // world-storage requests from a delegated scene are signed with the
             // delegation's ephemeral key + scope header instead of the engine wallet
@@ -2329,12 +2328,10 @@ fn handle_sign_request(
             {
                 let method = method.clone();
                 let meta = delegation.meta.clone();
-                let body = body.clone();
                 let scope_header = delegation.scope_header.clone();
                 let ephemeral = delegation.wallet.clone();
                 let task = IoTaskPool::get().spawn_compat(async move {
-                    let meta = delegated_signed_fetch_meta(&meta, body.as_deref()).await?;
-                    drop(body);
+                    let meta = delegated_signed_fetch_meta(meta, hash_payload)?;
                     let mut headers = sign_request(&method, &uri, &ephemeral, meta).await?;
                     headers.push(("x-authoritative-scope".to_owned(), scope_header));
                     Ok(headers)
@@ -2362,14 +2359,11 @@ fn handle_sign_request(
             let hostname = signed_fetch_realm_hostname(&realm.about_url, &realm_name);
 
             let method = method.clone();
-            let body = body.clone();
             let tld = signed_fetch_tld(common::base_domain::get()).to_owned();
             let scene = scene.to_string();
             let wallet = wallet.clone();
             let ipfs = ipfs.ipfs().clone();
             let task = IoTaskPool::get().spawn_compat(async move {
-                let hash_payload = signed_fetch_hash(body.as_deref()).await;
-                drop(body);
                 let (definition, _) = ipfs
                     .entity_definition(&scene)
                     .await
@@ -2784,94 +2778,68 @@ mod signed_fetch_identity_tests {
 mod signed_fetch_body_tests {
     use super::*;
     #[test]
-    fn hashes_utf8_body_and_distinguishes_absence() {
-        for (body, expected) in [
-            (None, None),
-            (
-                Some(""),
-                Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
-            ),
-            (
-                Some("{}"),
-                Some("44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"),
-            ),
-            (
-                Some("piñata\r\n🦊"),
-                Some("867ee32bed3423b5d737ff3d6afa68cf9478857edba007c744c63d507b8a4d30"),
-            ),
+    fn malformed_scene_body_hash_is_rejected() {
+        for hash in [
+            String::new(),
+            "0".repeat(63),
+            "0".repeat(65),
+            "A".repeat(64),
+            format!("{}g", "a".repeat(63)),
+            format!("{}é", "a".repeat(62)),
         ] {
-            assert_eq!(
-                futures_lite::future::block_on(signed_fetch_hash(body)).as_deref(),
-                expected
+            assert!(
+                validate_signed_fetch("https://example.org", Some(&hash), false).is_err(),
+                "accepted {hash:?}"
             );
         }
     }
+
+    #[test]
+    fn ordinary_metadata_distinguishes_an_absent_body_from_an_empty_body() {
+        let empty_body = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        for hash in [None, Some(empty_body)] {
+            let (_, hash_payload) =
+                validate_signed_fetch("https://example.org", hash, false).unwrap();
+            let meta = serde_json::to_value(SignedFetchMeta {
+                hash_payload,
+                ..Default::default()
+            })
+            .unwrap();
+            assert_eq!(meta.get("hashPayload"), hash.map(|s| json!(s)).as_ref());
+        }
+    }
+
     #[test]
     fn delegation_claims_are_preserved_when_body_is_bound() {
         let original = r#"{"signer":"dcl:authoritative-server","sceneId":"Mixed","parcel":"1,2"}"#;
+        let digest = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+        let (_, hash_payload) =
+            validate_signed_fetch("https://storage.decentraland.org", Some(digest), false).unwrap();
         assert_eq!(
-            futures_lite::future::block_on(delegated_signed_fetch_meta(original, None)).unwrap(),
+            delegated_signed_fetch_meta(original.to_owned(), None).unwrap(),
             original
         );
         let meta: serde_json::Value = serde_json::from_str(
-            &futures_lite::future::block_on(delegated_signed_fetch_meta(original, Some("{}")))
-                .unwrap(),
+            &delegated_signed_fetch_meta(original.to_owned(), hash_payload).unwrap(),
         )
         .unwrap();
         assert_eq!(meta["sceneId"], "Mixed");
         assert_eq!(meta["signer"], "dcl:authoritative-server");
         assert_eq!(meta["parcel"], "1,2");
-        assert_eq!(
-            meta["hashPayload"],
-            "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
-        );
+        assert_eq!(meta["hashPayload"], digest);
     }
     #[test]
     fn normalizes_fetch_url_before_signing() {
-        let uri = signed_fetch_uri(
+        let (uri, _) = validate_signed_fetch(
             "https://Example.org/assets/../API/Mixed?Q=Yes#fragment",
+            None,
             false,
         )
         .unwrap();
         assert_eq!(uri.path(), "/API/Mixed");
         assert_eq!(uri.query(), Some("Q=Yes"));
         assert_eq!(uri.authority().unwrap().as_str(), "example.org");
-        assert!(signed_fetch_uri("https://user:secret@example.org/", false).is_err());
-    }
-    #[test]
-    fn signed_metadata_fixture_for_independent_verifier() {
-        let mut wallet = Wallet::default();
-        wallet.finalize_as_guest();
-        let uri = signed_fetch_uri("https://example.org/Scene/Mixed?Ignored=YES", false).unwrap();
-        let hash_payload = futures_lite::future::block_on(signed_fetch_hash(Some("{}")));
-        let meta = SignedFetchMeta {
-            origin: Some("https://realm.example/Mixed".into()),
-            scene_id: Some("SceneMixed".into()),
-            parcel: Some("52,68".into()),
-            tld: Some(signed_fetch_tld("decentraland.zone").into()),
-            network: Some("mainnet".into()),
-            is_guest: Some(true),
-            realm: SignedFetchMetaRealm {
-                hostname: "peer.decentraland.zone".into(),
-                protocol: "v3".into(),
-                server_name: "MixedCase".into(),
-            },
-            signer: "decentraland-kernel-scene".into(),
-            hash_payload,
-        };
-        let ordinary = serde_json::to_string(&meta).unwrap();
-        let delegated = futures_lite::future::block_on(delegated_signed_fetch_meta(
-            r#"{"signer":"dcl:authoritative-server","sceneId":"SceneMixed","parcel":"52,68","realm":{"serverName":"MixedCase"}}"#, Some("{}")
-        )).unwrap();
-        for (kind, meta) in [("ordinary", ordinary), ("delegated", delegated)] {
-            let headers =
-                futures_lite::future::block_on(sign_request("POST", &uri, &wallet, meta)).unwrap();
-            println!(
-                "SIGN_FIXTURE {} {}",
-                kind,
-                serde_json::to_string(&headers).unwrap()
-            );
-        }
+        assert!(validate_signed_fetch("https://user:secret@example.org/", None, false).is_err());
     }
 
     #[test]

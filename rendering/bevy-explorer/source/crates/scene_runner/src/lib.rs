@@ -1306,8 +1306,7 @@ fn receive_scene_updates(
                     }
                     Some(root)
                 }
-                SceneResponse::Ok(census, mut crdt, runtime, messages, mut rpc_calls) => {
-                    dcl_types::enforce_signing_body_budget(&mut rpc_calls);
+                SceneResponse::Ok(census, mut crdt, runtime, messages, rpc_calls) => {
                     // scene ids are the scene root entity
                     let root = scene_id.0;
                     debug!(
@@ -1386,11 +1385,6 @@ fn receive_scene_updates(
                     Some(root)
                 }
                 SceneResponse::ImmediateRpcCall(call) => {
-                    let mut calls = vec![call];
-                    dcl_types::enforce_signing_body_budget(&mut calls);
-                    let Some(call) = calls.pop() else {
-                        continue;
-                    };
                     debug!("[{scene_id:?}] immediate rpc: {call:?}");
                     if let Ok(context) = scenes.get(scene_id.0) {
                         rpc_call_events.write(RpcCallEvent {

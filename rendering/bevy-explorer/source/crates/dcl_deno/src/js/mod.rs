@@ -700,7 +700,7 @@ mod tests {
     }
 
     #[test]
-    fn signed_fetch_scene_module_passes_body_through_runtime_ops() {
+    fn signed_fetch_scene_module_queues_only_rust_computed_body_hashes() {
         let (mut runtime, _) =
             create_runtime(false, false, "test-signed-fetch", false, Default::default());
         let op_state = runtime.op_state();
@@ -717,75 +717,52 @@ mod tests {
                 return { ok: true, status: 200, statusText: 'OK', headers: {}, text: async () => '' };
             };
             globalThis.__done = false;
-            (async () => {
-                const api = require('~system/SignedFetch');
-                await api.getHeaders({url:'https://example.org/First', init:{method:'POST',body:''}});
-                await api.signedFetch({url:'https://example.org/Second', init:{method:'PUT',body:'pi\u00f1ata',headers:{'X-Identity-Metadata':'forged'}}});
-                globalThis.__done = true;
-            })();
+            const api = require('~system/SignedFetch');
+            const forged = 'f'.repeat(64);
+            const init = { method: 'POST', body_hash: forged, hashPayload: forged,
+                headers: { 'X-Identity-Metadata': JSON.stringify({ hashPayload: forged }) } };
+            Promise.all([
+                api.getHeaders({url:'https://example.org/absent', init}),
+                api.getHeaders({url:'https://example.org/empty', init:{...init, body:''}}),
+                api.signedFetch({url:'https://example.org/unicode', init:{...init, body:'pi\u00f1ata\r\n\u{1f98a}'}}),
+                api.getHeaders({url:'https://example.org/large', init:{...init, body:'x'.repeat(10 * 1024 * 1024 + 1)}}),
+            ]).then(() => { globalThis.__done = true; });
         "#)).unwrap();
-        let (sign_sx, sign_rx) = std::sync::mpsc::channel::<
-            common::rpc::RpcResultSender<Result<Vec<(String, String)>, String>>,
-        >();
-        let responder = std::thread::spawn(move || {
-            for response in sign_rx {
-                response.send(Ok(vec![(
-                    "x-identity-metadata".into(),
-                    format!(r#"{{"hashPayload":"{}"}}"#, "a".repeat(64)),
-                )]));
-            }
-        });
-        let calls = rt.block_on(async {
-            let dispatch = async {
-                let mut observed = Vec::new();
-                while observed.len() < 2 {
-                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-                    let calls = std::mem::take(
-                        &mut **op_state.borrow_mut().borrow_mut::<dcl_types::RpcCalls>(),
-                    );
-                    for call in calls {
-                        if let common::rpc::RpcCall::SignRequest(common::rpc::SignRequest {
-                            method,
-                            uri,
-                            body,
-                            response,
-                        }) = call
-                        {
-                            observed.push((method, uri, body));
-                            sign_sx.send(response).unwrap();
-                        }
-                    }
-                }
-                observed
+        const UNICODE_HASH: &str =
+            "867ee32bed3423b5d737ff3d6afa68cf9478857edba007c744c63d507b8a4d30";
+        let expected = [
+            ("absent", None),
+            (
+                "empty",
+                Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+            ),
+            ("unicode", Some(UNICODE_HASH)),
+            (
+                "large",
+                Some("e2be3b83c289189dd311afb0db7a79ec8cfbb993ca5267315b437e41edccec98"),
+            ),
+        ];
+        // All four requests must be queued before the event loop polls any pending promises.
+        let calls = std::mem::take(op_state.borrow_mut().borrow_mut::<dcl_types::RpcCalls>());
+        assert_eq!(calls.len(), expected.len());
+        for (call, (path, digest)) in calls.into_iter().zip(expected) {
+            let common::rpc::RpcCall::SignRequest(request) = call else {
+                panic!("expected a signing request")
             };
-            tokio::time::timeout(std::time::Duration::from_secs(10), async {
-                let (result, observed) = tokio::join!(
-                    runtime.run_event_loop(deno_core::PollEventLoopOptions::default()),
-                    dispatch
-                );
-                result.unwrap();
-                observed
-            })
-            .await
-            .expect("signed fetch did not finish")
-        });
-        drop(sign_sx);
-        responder.join().unwrap();
-        assert_eq!(
-            calls,
-            vec![
-                (
-                    "POST".into(),
-                    "https://example.org/First".into(),
-                    Some("".into())
-                ),
-                (
-                    "PUT".into(),
-                    "https://example.org/Second".into(),
-                    Some("piñata".into())
-                )
-            ]
-        );
+            assert_eq!(request.method, "POST");
+            assert_eq!(request.uri, format!("https://example.org/{path}"));
+            assert_eq!(request.body_hash.as_deref(), digest);
+            let metadata = match request.body_hash {
+                Some(hash) => serde_json::json!({ "hashPayload": hash }),
+                None => serde_json::json!({}),
+            };
+            request.response.send(Ok(vec![(
+                "x-identity-metadata".into(),
+                metadata.to_string(),
+            )]));
+        }
+        rt.block_on(runtime.run_event_loop(Default::default()))
+            .unwrap();
         let value = runtime
             .execute_script(
                 "<test>",
@@ -798,12 +775,12 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result["done"], true);
-        assert_eq!(result["sent"]["body"], "piñata");
+        assert_eq!(result["sent"]["body"], "piñata\r\n🦊");
         assert_eq!(
             result["sent"]["headers"],
             serde_json::json!([[
                 "x-identity-metadata",
-                format!(r#"{{"hashPayload":"{}"}}"#, "a".repeat(64))
+                format!(r#"{{"hashPayload":"{UNICODE_HASH}"}}"#)
             ]])
         );
     }
