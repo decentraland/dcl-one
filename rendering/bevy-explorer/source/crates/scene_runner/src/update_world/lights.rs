@@ -1,5 +1,8 @@
 use std::f32::consts::PI;
 
+use bevy_console::ConsoleCommand;
+use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+
 use bevy::{
     math::FloatOrd,
     pbr::decal::clustered::{CubemapLayout, PointLightTexture, SpotLightTexture},
@@ -34,6 +37,43 @@ pub struct LightsPlugin;
 
 impl Plugin for LightsPlugin {
     fn build(&self, app: &mut App) {
+        app.insert_resource(LightSwitches {
+            lights: true,
+            shadows: true,
+            point_shadows: true,
+        })
+        .add_console_command::<LightCommand, _>(light_command)
+        .add_preview_console_command::<SetLightSwitch, _>(set_light_switch)
+        .add_preview_debug_inputs(DebugSection {
+            title: "Light sources",
+            query: "/scene_lights",
+            fields: &[
+                ("SDK lights", "count"),
+                ("Visible SDK lights", "visible"),
+                ("Active shadow casters", "casters"),
+            ],
+            actions: &[],
+            inputs: &[
+                DebugInput {
+                    label: "Lights",
+                    field: "lights",
+                    command: "/set_scene_lights lights {value}",
+                    kind: DebugInputKind::Toggle,
+                },
+                DebugInput {
+                    label: "Shadows",
+                    field: "shadows",
+                    command: "/set_scene_lights shadows {value}",
+                    kind: DebugInputKind::Toggle,
+                },
+                DebugInput {
+                    label: "Point light shadows",
+                    field: "pointShadows",
+                    command: "/set_scene_lights point-shadows {value}",
+                    kind: DebugInputKind::Toggle,
+                },
+            ],
+        });
         app.add_crdt_lww_component::<PbLightSource, LightSource>(
             SceneComponentId::LIGHT_SOURCE,
             ComponentPosition::Any,
@@ -53,6 +93,58 @@ impl Plugin for LightsPlugin {
                 .in_set(SceneSets::PostLoop),
         );
     }
+}
+
+#[derive(Resource)]
+struct LightSwitches {
+    lights: bool,
+    shadows: bool,
+    point_shadows: bool,
+}
+
+/// Inspect the SDK lights and their shadow budget.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/scene_lights")]
+struct LightCommand;
+
+/// Toggle a class of SDK lights or shadows for the preview session.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/set_scene_lights")]
+struct SetLightSwitch {
+    #[arg(value_parser = ["lights", "shadows", "point-shadows"])]
+    setting: String,
+    #[arg(action = clap::ArgAction::Set)]
+    value: bool,
+}
+
+fn set_light_switch(mut cmd: ConsoleCommand<SetLightSwitch>, mut switches: ResMut<LightSwitches>) {
+    let Some(Ok(args)) = cmd.take() else { return };
+    match args.setting.as_str() {
+        "lights" => switches.lights = args.value,
+        "shadows" => switches.shadows = args.value,
+        _ => switches.point_shadows = args.value,
+    }
+    cmd.reply_ok(format!("{} {}", args.setting, args.value));
+}
+
+fn light_command(
+    mut cmd: ConsoleCommand<LightCommand>,
+    switches: Res<LightSwitches>,
+    lights: Query<(&Visibility, Option<&PointLight>, Option<&SpotLight>), With<LightEntity>>,
+) {
+    let Some(Ok(_)) = cmd.take() else { return };
+    let mut visible = 0;
+    let mut casters = 0;
+    for (vis, point, spot) in &lights {
+        if *vis != Visibility::Hidden {
+            visible += 1;
+            if point.is_some_and(|l| l.shadows_enabled) || spot.is_some_and(|l| l.shadows_enabled) {
+                casters += 1;
+            }
+        }
+    }
+    cmd.reply_ok(serde_json::json!({"lights": switches.lights, "shadows": switches.shadows, "pointShadows":switches.point_shadows,
+        "count":lights.iter().len(), "visible":visible, "casters":casters}).to_string());
 }
 
 #[derive(Component, Debug, Default)]
@@ -473,6 +565,7 @@ fn manage_shadow_casters(
     player: Single<(Entity, &GlobalTransform), With<PrimaryUser>>,
     containing_scene: ContainingScene,
     config: Res<AppConfig>,
+    switches: Res<LightSwitches>,
     mut lights: Local<Vec<(Entity, bool, FloatOrd, bool)>>,
 ) {
     let (player, player_gt) = player.into_inner();
@@ -504,12 +597,16 @@ fn manage_shadow_casters(
     // sort by scene-active and distance
     lights.sort_by_key(|(_, scene_active, importance, _)| (*scene_active, *importance));
     // enable up to limit
-    let mut max_enabled = config.graphics.light_count;
+    let mut max_enabled = if switches.lights {
+        config.graphics.light_count
+    } else {
+        0
+    };
     let mut max_casters = match config.graphics.shadow_settings {
         common::structs::ShadowSetting::Off => 0,
         _ => config.graphics.shadow_caster_count,
     };
-    if config.graphics.shadow_distance <= 0. {
+    if !switches.shadows || config.graphics.shadow_distance <= 0. {
         max_casters = 0;
     }
     debug!(
@@ -526,7 +623,8 @@ fn manage_shadow_casters(
             vis.set_if_neq(Visibility::Visible);
             max_enabled -= 1;
 
-            let cast = shadows_enabled && max_casters > 0;
+            let cast =
+                shadows_enabled && max_casters > 0 && (maybe_p.is_none() || switches.point_shadows);
             if cast {
                 max_casters -= 1;
             }
