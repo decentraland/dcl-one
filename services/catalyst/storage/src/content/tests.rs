@@ -291,6 +291,32 @@ async fn read_range_serves_only_the_window() {
 }
 
 #[tokio::test]
+async fn into_range_body_streams_only_the_window() {
+    let (tmp, storage) = fresh("range-body").await;
+    storage
+        .store(HASH, Bytes::from_static(b"0123456789"))
+        .await
+        .unwrap();
+
+    for (start, end, expected) in [
+        (0, 3, &b"0123"[..]),
+        (4, 6, b"456"),
+        (8, 4096, b"89"),
+        (10, 20, b""),
+    ] {
+        let opened = storage.open(HASH).await.unwrap().unwrap();
+        let body = opened.into_range_body(start, end).await.unwrap();
+        assert_eq!(
+            axum::body::to_bytes(body, usize::MAX).await.unwrap(),
+            Bytes::from_static(expected),
+            "window {start}-{end}"
+        );
+    }
+
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+}
+
+#[tokio::test]
 async fn open_replays_the_sniffed_head_and_streams_the_rest() {
     let (tmp, storage) = fresh("open").await;
     let mut blob = vec![0u8; 200 * 1024];

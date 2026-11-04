@@ -976,6 +976,14 @@ async fn entity_reads_over_seeded_rows() {
 
     let (status, body) = get_json(
         node.router(),
+        "/content/entities/active/collections/URN:Decentraland:matic:Collections-V2:0x000000000000000000000000000000000000CAFE",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["total"], 1, "the prefix matches case-insensitively");
+
+    let (status, body) = get_json(
+        node.router(),
         &format!("/content/audit/scenes/{}", scene.id),
     )
     .await;

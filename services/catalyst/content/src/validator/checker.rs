@@ -11,8 +11,8 @@ use super::error::{PermissionResult, ValidationResponse, ValidatorError};
 use super::types::*;
 
 /// What the access step reads: [`super::Sources`] is the live implementation
-/// (`chain.rs`: the land_authz index and the marketplace readers where the
-/// old one read the squid); the tests stub it.
+/// (`chain.rs`: the Checker contract and the item contracts at the entity
+/// timestamp's block); the tests stub it.
 #[async_trait]
 pub trait BlockchainChecker: Send + Sync {
     async fn check_land_access(
@@ -41,7 +41,7 @@ pub trait BlockchainChecker: Send + Sync {
         eth_address: &str,
         contract_address: &str,
         item_id: &str,
-        entity: &Entity,
+        deployment: &Deployment<'_>,
         timestamp: Timestamp,
         layer: BlockchainLayer,
     ) -> Result<bool, ValidatorError>;
@@ -210,6 +210,9 @@ pub async fn validate_profile_access(
                         ));
                     }
                 }
+                Err(e @ ValidatorError::TooManyItems(_)) => {
+                    return ValidationResponse::fail(format!("Error checking item ownership: {e}"));
+                }
                 Err(e) => {
                     return ValidationResponse::unavailable(format!(
                         "Error checking item ownership: {e}"
@@ -362,6 +365,11 @@ pub async fn validate_outfits_access(
                         ));
                     }
                 }
+                Err(e @ ValidatorError::TooManyItems(_)) => {
+                    return ValidationResponse::fail(format!(
+                        "Error checking wearable ownership: {e}"
+                    ));
+                }
                 Err(e) => {
                     return ValidationResponse::unavailable(format!(
                         "Error checking wearable ownership: {e}"
@@ -441,7 +449,7 @@ pub async fn validate_item_access(
                         deployer_address,
                         &contract,
                         &item_id,
-                        entity,
+                        deployment,
                         entity.timestamp,
                         layer,
                     )

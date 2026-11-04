@@ -108,7 +108,7 @@ impl BlockchainChecker for StubChecker {
         _eth_address: &str,
         _contract_address: &str,
         _item_id: &str,
-        _entity: &Entity,
+        _deployment: &Deployment<'_>,
         _timestamp: Timestamp,
         _layer: BlockchainLayer,
     ) -> Result<bool, ValidatorError> {

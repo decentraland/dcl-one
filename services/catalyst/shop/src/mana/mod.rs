@@ -75,7 +75,7 @@ pub type SharedState = Arc<State>;
 
 impl State {
     /// The production state: the venues book over the market's per-chain
-    /// endpoints (`TRADE_RPC_URLS`, `ETH_RPC_URL` for Ethereum).
+    /// endpoints (`TRADE_RPC_URLS`, `ETH_RPC_URL` for Ethereum on mainnet).
     pub fn new(
         pool: PgPool,
         http: Outbound,
@@ -85,14 +85,7 @@ impl State {
         eip1654: Option<Arc<dyn Eip1654Validator>>,
     ) -> Self {
         let m = market.clone();
-        let venues = venues::Book::production(move |chain_id| {
-            let net = match chain_id {
-                1 => crate::market::chain_walk::ChainNet::Ethereum,
-                137 => crate::market::chain_walk::ChainNet::Matic,
-                _ => return None,
-            };
-            m.chain_rpc_url(net)
-        });
+        let venues = venues::Book::production(move |chain_id| m.venue_rpc_url(chain_id));
         Self {
             pool,
             http,

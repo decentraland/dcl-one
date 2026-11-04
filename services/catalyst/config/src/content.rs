@@ -27,10 +27,14 @@ pub struct ContentConfig {
     #[arg(long, env = "PHASED_SYNC", default_value_t = true, action = clap::ArgAction::Set)]
     pub phased_sync: bool,
 
-    /// https JSON-RPC endpoint the EIP-1654 (contract wallet) signature check
-    /// of local deployments calls; peer sync does not use it. Plaintext
-    /// http:// is refused at startup.
-    #[arg(long, env = "ETH_RPC_URL")]
+    /// https L1 JSON-RPC endpoint: the EIP-1654 (contract wallet) signature
+    /// check and the L1 deploy access checks (LAND, names, v1 items) of local
+    /// deployments; the L2 checks use RPC_ENDPOINT_POLYGON. Plaintext http://
+    /// is refused at startup. Unset or empty:
+    /// https://rpc.decentraland.org/<mainnet|sepolia>?project=catalyst-content
+    /// by ETH_NETWORK, except under NODE_POSTURE island and journey. May come
+    /// from ETH_RPC_URL_FILE; an empty file fails startup.
+    #[arg(long, env = "ETH_RPC_URL", hide_env_values = true)]
     pub eth_rpc_url: Option<String>,
 
     /// Content files downloaded at once across every peer.
@@ -165,7 +169,8 @@ pub struct ContentConfig {
 }
 
 impl ContentConfig {
-    /// `ETH_RPC_URL` trimmed, `None` when unset or blank. A plaintext endpoint is refused:
+    /// `ETH_RPC_URL` trimmed, `None` when unset or blank (after
+    /// `Config::default_rpc_urls`, only under island and journey). A plaintext endpoint is refused:
     /// the contract's answer decides who may deploy, so it must come over TLS. The error names
     /// the host only; the URL commonly carries an API key.
     pub fn eth_rpc_url(&self) -> anyhow::Result<Option<String>> {
@@ -191,23 +196,19 @@ impl ContentConfig {
     }
 }
 
-/// The content validator: the L2 subgraphs and the access policy of local deploys.
+/// The content validator: the access policy of local deploys.
 #[derive(Args, Clone, Debug)]
 pub struct ValidatorConfig {
-    // content validator (src/content/validator): the L2 subgraphs a
-    // third-party wearable or emote deploy is proven against, and the access
-    // policy of local deploys (the old catalyrst-server names).
-    /// Third Party Registry subgraph on L2 (approved merkle roots); public https, set with BLOCKS_L2_SUBGRAPH_URL.
+    // content validator (src/content/validator): the access policy of local
+    // deploys (the old catalyrst-server names); its chain checks read
+    // ETH_RPC_URL and RPC_ENDPOINT_POLYGON.
+    /// Third Party Registry subgraph on L2 (the approved providers the shop lists); public https.
     #[arg(
         long,
         env = "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
         hide_env_values = true
     )]
     pub third_party_registry_l2_subgraph_url: Option<String>,
-
-    /// L2 blocks subgraph (the block a deploy's timestamp falls in); public https.
-    #[arg(long, env = "BLOCKS_L2_SUBGRAPH_URL", hide_env_values = true)]
-    pub blocks_l2_subgraph_url: Option<String>,
 
     /// Skip the chain-derived access checks of local deploys (LAND, names, items, collections, third party); the pointer-ownership rule still runs.
     #[arg(long, env = "IGNORE_BLOCKCHAIN_ACCESS_CHECKS", default_value_t = false, action = clap::ArgAction::Set)]
@@ -378,10 +379,7 @@ mod tests {
     fn data_plane_defaults_are_the_old_binaries_values_and_writes_are_off() {
         let cli = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
         let c = cli;
-        assert!(
-            c.validator.third_party_registry_l2_subgraph_url.is_none()
-                && c.validator.blocks_l2_subgraph_url.is_none()
-        );
+        assert!(c.validator.third_party_registry_l2_subgraph_url.is_none());
         assert!(
             !c.validator.ignore_blockchain_access_checks
                 && c.validator.additional_decentraland_address.is_none(),

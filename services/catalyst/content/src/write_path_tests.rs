@@ -1,17 +1,16 @@
 //! The local write path through the content router, the way `serve` wires
-//! it: the multipart deploy with the content validator attached (the LAND
-//! leg over the `land_authz` index), the durable denylist on deploy and on
-//! the reads, and the signed unpublish; the gates in front of both routes.
+//! it: the multipart deploy with the content validator attached (its access
+//! checks against a chain on the loopback), the durable denylist on deploy
+//! and on the reads, and the signed unpublish (its LAND check over the
+//! `land_authz` index); the gates in front of both routes.
 //!
 //! The scene round trip runs on a database of its own (the LAND index's
-//! cursor row is global, as in the validator's index test), created from
-//! `CATALYST_TEST_DATABASE_URL` and dropped at the end; the profile
-//! contract runs on the process's scratch database against a loopback
-//! collections subgraph. Both skip without the variable.
+//! cursor row is global), created from `CATALYST_TEST_DATABASE_URL` and
+//! dropped at the end; the profile contract runs on the process's scratch
+//! database. Both skip without the variable.
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use alloy::signers::{Signer as _, local::PrivateKeySigner};
 use axum::Router;
@@ -33,6 +32,7 @@ use crate::shared::signed_fetch::{
     AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, build_payload_v6,
 };
 use crate::storage::Storage;
+use crate::validator::fake_chain::{self, FakeChain, Query, Reply};
 
 /// Hardhat accounts #0 and #1: the LAND owner and a stranger.
 const OWNER_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -189,22 +189,26 @@ async fn active_by_pointers(router: &Router, pointers: &[&str]) -> Value {
     json_of(&body)
 }
 
-/// Attaches a deployer over the node's pool and store: the validator with
-/// the given sources, the node's denylist.
+/// Attaches a deployer over the node's pool and store: the validator over
+/// `chain` (none: chain checks undecidable), the unpublish LAND check over
+/// `land`, the node's denylist.
 fn attach(
     state: &SharedState,
     enabled: bool,
     land: Option<Arc<LandAuthzState>>,
-    market: Option<Arc<crate::chain_index::ChainIndex>>,
+    chain: Option<&FakeChain>,
 ) {
     let sources = super::validator::Sources::new(
         state.pool.clone(),
         state.storage.clone(),
         Outbound::for_tests(),
         None,
-        land.clone(),
-        market,
-        super::validator::Settings::default(),
+        super::validator::Settings {
+            eth_network: "mainnet".into(),
+            l1_rpc_url: chain.map(|c| c.url.clone()),
+            l2_rpc_url: chain.map(|c| c.url.clone()),
+            ..Default::default()
+        },
     );
     let deployer =
         WriteDeployer::with_optional_eip1654(state.pool.clone(), state.storage.clone(), None)
@@ -214,11 +218,6 @@ fn attach(
     assert!(state.attach_writes(enabled, Arc::new(deployer)));
 }
 
-/// The gates, in order, on a node whose database is never reached: the
-/// multipart extraction first (the stage-1 fixture's 400), then
-/// `CONTENT_WRITES_ENABLED` (503, `Retry-After`), then the console's
-/// read-only toggle (the old 403), then bootstrapping (the old 503). The
-/// unpublish route has the same two gates.
 #[tokio::test]
 async fn the_write_routes_answer_their_gates_in_order() {
     let node = TestNode::without_db("write-gates").await;
@@ -661,7 +660,12 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
         crate::land_authz::Settings::for_tests(),
         None,
     ));
-    attach(&state, true, Some(land), None);
+    let chain = fake_chain::serve(fake_chain::land_owners(vec![
+        (address(&owner), x.into(), y.into()),
+        (address(&owner), (x + 1).into(), y.into()),
+    ]))
+    .await;
+    attach(&state, true, Some(land), Some(&chain));
     let router = build_router(state.clone());
 
     let code = Bytes::from_static(b"export function onUpdate() {}");
@@ -734,6 +738,10 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
     assert!(
         errors.to_string().contains("does not have access"),
         "{errors}"
+    );
+    assert!(
+        !deployer.is_rate_limited("scene", &parcel),
+        "a rejected deploy does not hold the pointer"
     );
 
     // The denylist: a listed hash is not served and cannot be deployed
@@ -840,65 +848,6 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
     db.drop_now().await;
 }
 
-/// The collections subgraph on the loopback: `owned` is `(owner, item urn,
-/// token id)`; every request is counted.
-async fn serve_collections(owned: Vec<(String, String, String)>, hits: Arc<AtomicUsize>) -> String {
-    use axum::extract::State;
-    type Owned = (Vec<(String, String, String)>, Arc<AtomicUsize>);
-    async fn handle(
-        State(shared): State<Arc<Owned>>,
-        axum::Json(body): axum::Json<Value>,
-    ) -> axum::Json<Value> {
-        let (owned, hits) = &*shared;
-        hits.fetch_add(1, Ordering::SeqCst);
-        let query = body["query"].as_str().unwrap_or_default();
-        let owner = body["variables"]["owner"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let mine: Vec<(&String, &String)> = owned
-            .iter()
-            .filter(|(o, ..)| *o == owner)
-            .map(|(_, urn, token)| (urn, token))
-            .collect();
-        if query.contains("ownedCopies") {
-            let urns: Vec<&str> = body["variables"]["urns"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter_map(Value::as_str)
-                .collect();
-            let rows: Vec<Value> = mine
-                .iter()
-                .filter(|(urn, _)| urns.contains(&urn.as_str()))
-                .enumerate()
-                .map(|(i, (urn, token))| json!({"id": format!("nft-{i}"), "urn": urn, "tokenId": token}))
-                .collect();
-            return axum::Json(json!({"data": {"nfts": rows}}));
-        }
-        let alias = regex::Regex::new(r#"p(\d+): nfts\(first: 1, where: \{ owner: \$owner, urn_starts_with: ("(?:[^"\\]|\\.)*") \}\)"#).unwrap();
-        let mut data = serde_json::Map::new();
-        for cap in alias.captures_iter(query) {
-            let prefix: String = serde_json::from_str(&cap[2]).unwrap();
-            let hit: Vec<Value> = mine
-                .iter()
-                .filter(|(urn, _)| urn.starts_with(&prefix))
-                .map(|(urn, _)| json!({"urn": urn}))
-                .take(1)
-                .collect();
-            data.insert(format!("p{}", &cap[1]), Value::Array(hit));
-        }
-        axum::Json(json!({"data": data}))
-    }
-    let app = Router::new()
-        .route("/", axum::routing::post(handle))
-        .with_state(Arc::new((owned, hits)));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    format!("http://{addr}/")
-}
-
 fn profile(owner: &str, wearables: &[&str]) -> Value {
     json!({
         "version": "v3",
@@ -923,8 +872,8 @@ const PROFILE_CLIENT_IP: &str = "203.0.113.30";
 /// escrow lease anywhere, a worn item counts for the wallet that holds that
 /// token and for no one else (alice holds token 7 of item 1, bob token 9 of
 /// item 2; a profile deployed now names each item with its token id, the
-/// validator's token tier), another token of an item one holds is not
-/// ownership, and a profile wearing only base items asks the subgraph
+/// item's `ownerOf`), another token of an item one holds is not
+/// ownership, and a profile wearing only base items asks the chain
 /// nothing.
 #[tokio::test]
 async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
@@ -937,24 +886,25 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
         format!("urn:decentraland:matic:collections-v2:{contract}:2"),
     );
     let (alices, bobs) = (format!("{item1}:7"), format!("{item2}:9"));
-    let hits = Arc::new(AtomicUsize::new(0));
-    let graph = serve_collections(
-        vec![
-            (address(&alice), item1.clone(), "7".to_string()),
-            (address(&bob), item2.clone(), "9".to_string()),
-        ],
-        hits.clone(),
-    )
+    let holders = [
+        (contract.clone(), 7u64, address(&alice)),
+        (contract.clone(), 9, address(&bob)),
+    ];
+    let chain = fake_chain::serve(move |q, _| match q {
+        Query::OwnerOf { contract, token } => Reply::Owner(
+            holders
+                .iter()
+                .find(|(c, t, _)| {
+                    c.parse::<alloy_primitives::Address>().ok() == Some(*contract)
+                        && alloy_primitives::U256::from(*t) == *token
+                })
+                .map_or(alloy_primitives::Address::ZERO, |(_, _, who)| {
+                    who.parse().unwrap()
+                }),
+        ),
+        other => panic!("{other:?}"),
+    })
     .await;
-    let market = Arc::new(crate::chain_index::ChainIndex::new(
-        Outbound::for_tests(),
-        crate::chain_index::IndexSettings {
-            eth_collections_subgraph_url: Some(graph.clone()),
-            matic_collections_subgraph_url: Some(graph),
-            ..crate::chain_index::IndexSettings::for_tests()
-        },
-    ));
-    market.allow_loopback_for_tests();
     let granted: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM shop.usage_grants WHERE grantee_address = ANY($1)",
     )
@@ -976,7 +926,7 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
         storage,
     ));
     state.sync.set_state(SyncState::Syncing);
-    attach(&state, true, None, Some(market));
+    attach(&state, true, None, Some(&chain));
     let router = build_router(state.clone());
 
     let deployer = state.deployer().unwrap().clone();
@@ -1030,7 +980,7 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
     let (status, body, bob_id) = deploy(bob.clone(), vec![bobs.clone()]).await;
     assert_eq!(status, StatusCode::OK, "{body}");
 
-    let before = hits.load(Ordering::SeqCst);
+    chain.clear();
     let carol = PrivateKeySigner::random();
     let (status, body, carol_id) = deploy(
         carol.clone(),
@@ -1038,11 +988,7 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(
-        hits.load(Ordering::SeqCst),
-        before,
-        "base items are never asked about"
-    );
+    assert!(chain.calls().is_empty(), "base items are never asked about");
     assert_eq!(
         state.deploy_quota.counted_for(PROFILE_CLIENT_IP),
         6,
