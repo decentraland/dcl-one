@@ -732,6 +732,10 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
         errors.to_string().contains("does not have access"),
         "{errors}"
     );
+    assert!(
+        !deployer.is_rate_limited("scene", &parcel),
+        "a rejected deploy does not hold the pointer"
+    );
 
     // The denylist: a listed hash is not served and cannot be deployed
     // again; a listed entity drops out of the reads.
