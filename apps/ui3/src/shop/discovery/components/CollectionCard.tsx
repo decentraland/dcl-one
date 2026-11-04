@@ -1,5 +1,5 @@
 // from: shop@2d3bf62:app/src/components/CollectionCard/CollectionCard.tsx, app/src/components/CollectionThumb/CollectionThumb.tsx (CollectionMosaic, useCollectionPreview), app/src/components/CreatorBadge/CreatorBadge.tsx
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 
 import { shortAddress } from "../../model/address";
@@ -15,10 +15,10 @@ import "./collectioncard.css";
 
 const MOSAIC_COUNT = 4;
 
-export function CollectionMosaic({ items }: { items: CatalogItem[] }) {
+export function CollectionMosaic({ items, className }: { items: CatalogItem[]; className?: string }) {
   const cells = items.slice(0, MOSAIC_COUNT);
   return (
-    <span className="shop-colcard__mosaic" data-count={cells.length} aria-hidden>
+    <span className={className ? `shop-colcard__mosaic ${className}` : "shop-colcard__mosaic"} data-count={cells.length} aria-hidden>
       {cells.map((item) => (
         <span key={item.id} className="shop-colcard__cell" data-testid="coll-thumb-cell" style={{ backgroundImage: rarityMedia(item.rarity) }}>
           {item.thumbnail ? <img src={item.thumbnail} alt="" loading="lazy" /> : null}
@@ -26,6 +26,17 @@ export function CollectionMosaic({ items }: { items: CatalogItem[] }) {
       ))}
     </span>
   );
+}
+
+/**
+ * upstream's CollectionThumb: the mosaic for a collection's address, fetching its first items under the same
+ * key as the card (one request per collection wherever it shows), with `fallback` while loading or when empty.
+ */
+export function CollectionThumb({ contractAddress, className, fallback = null }: { contractAddress: string; className?: string; fallback?: ReactNode }) {
+  const preview = useShopQuery(["collection-preview", contractAddress], (signal) => fetchCollectionItems(contractAddress, { first: MOSAIC_COUNT }, { signal }), { staleMs: 5 * 60_000 });
+  const items = preview.data?.items ?? [];
+  if (items.length === 0) return <>{fallback}</>;
+  return <CollectionMosaic items={items} className={className} />;
 }
 
 function CreatorRow({ address }: { address: string }) {
