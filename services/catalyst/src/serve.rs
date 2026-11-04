@@ -1592,6 +1592,10 @@ async fn worlds_states(
     jobs: &Arc<jobs::Jobs>,
     presence: Arc<comms::presence::Presence>,
 ) -> anyhow::Result<worlds::Stage5> {
+    worlds::core::partial::check_pool_headroom(
+        config.worlds.max_concurrent_uploads,
+        config.node.pg_pool_size,
+    )?;
     let non_empty = Config::non_empty;
 
     let core = Arc::new(
@@ -1638,6 +1642,7 @@ async fn worlds_states(
                         max_pending_bytes_per_deployer: config
                             .worlds
                             .max_pending_bytes_per_deployer,
+                        max_pending_bytes_per_source: config.worlds.max_pending_bytes_per_source,
                         max_pending_bytes: config.worlds.max_pending_bytes,
                         max_bytes_per_minute: config.worlds.max_partial_upload_bytes_per_minute,
                         completed_upload_ttl_ms: config.worlds.completed_upload_ttl,

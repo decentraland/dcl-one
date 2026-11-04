@@ -52,6 +52,8 @@ struct Batch<'a> {
     query: &'static str,
     /// Sends the first listed file twice.
     repeat: bool,
+    /// The client address the gateway reports.
+    source: Option<&'static str>,
 }
 
 impl<'a> Batch<'a> {
@@ -64,6 +66,7 @@ impl<'a> Batch<'a> {
             partial_field: true,
             query: "",
             repeat: false,
+            source: None,
         }
     }
 }
@@ -94,6 +97,7 @@ async fn send(app: &Router, u: &Upload, b: Batch<'_>) -> (StatusCode, HeaderMap,
         .method("POST")
         .uri(format!("/entities{}", b.query))
         .header(header::CONTENT_TYPE, content_type)
+        .header("x-real-ip", b.source.unwrap_or(""))
         .body(Body::from(body))
         .unwrap();
     let response = app.clone().oneshot(request).await.unwrap();
@@ -134,11 +138,20 @@ async fn world_rows(pool: &PgPool, world: &WorldName) -> i64 {
         .unwrap()
 }
 
+fn gc_pins(f: &Fixture) -> catalyst_storage::gc::Pins<'_> {
+    catalyst_storage::gc::Pins::new(&f.storage, &f.state.settings.global_scenes_urn)
+}
+
 /// A fixture whose deploy route runs under `limits`.
 async fn fixture_with_limits(limits: PartialUploadLimits) -> Option<Fixture> {
+    fixture_with_settings(|s| s.partial_uploads = limits).await
+}
+
+/// A fixture whose deploy route runs under the edited test settings.
+async fn fixture_with_settings(edit: impl FnOnce(&mut Settings)) -> Option<Fixture> {
     let mut f = fixture().await?;
     let mut settings = Settings::for_tests(Some(ADMIN_TOKEN));
-    settings.partial_uploads = limits;
+    edit(&mut settings);
     let state = Arc::new(
         CoreState::new(
             f.pool.clone(),
@@ -338,6 +351,9 @@ async fn a_single_request_publish_supersedes_the_pending_upload() {
     assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
 }
 
+/// Held from aging an upload to checking its cleanup: a run reclaims every expired upload.
+static CLEANUP: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Moves `entity_id`'s upload and its stored files `by` into the past.
 async fn age_upload(f: &Fixture, u: &Upload, by: std::time::Duration) {
     sqlx::query(
@@ -370,6 +386,7 @@ async fn an_expired_upload_is_refused_and_reclaimed_by_the_cleanup() {
     let u = upload(&world, 2);
     expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 202).await;
     assert!(f.storage.exist(&u.files[0].0).await.unwrap());
+    let _cleanup = CLEANUP.lock().await;
     age_upload(&f, &u, std::time::Duration::from_secs(2 * 3600)).await;
 
     // Without a live upload a resume must restart, and the expired one cannot be resumed.
@@ -415,6 +432,7 @@ async fn the_cleanup_keeps_files_something_else_names() {
         files: u.files.clone(),
     };
     expect_batch(&f.app, &shared, Batch::of(&other_owner, true, &[]), 200).await;
+    let _cleanup = CLEANUP.lock().await;
     age_upload(&f, &u, std::time::Duration::from_secs(2 * 3600)).await;
 
     partial::delete_expired_uploads(&f.state).await;
@@ -443,11 +461,11 @@ async fn the_collector_keeps_a_pending_uploads_files() {
         u.files[0].0.clone(),
         u.files[1].0.clone(),
     ];
-    let referenced = catalyst_storage::gc::referenced_among(&f.pool, &keys)
+    let referenced = catalyst_storage::gc::referenced_among(&f.pool, gc_pins(&f), &keys)
         .await
         .unwrap();
     assert_eq!(referenced.len(), 3, "{referenced:?}");
-    let published = catalyst_storage::gc::published_among(&f.pool, &keys)
+    let published = catalyst_storage::gc::published_among(&f.pool, gc_pins(&f), &keys)
         .await
         .unwrap();
     assert!(published.is_empty(), "{published:?}");
@@ -475,6 +493,7 @@ async fn the_collector_keeps_a_pending_uploads_files() {
 #[tokio::test]
 async fn gc_reports_the_expired_upload_cleanup() {
     let Some(f) = fixture().await else { return };
+    let _cleanup = CLEANUP.lock().await;
     let body = gc(&f.app, "/gc").await;
     assert!(
         ["success", "deferred", "error"]
@@ -676,4 +695,199 @@ async fn staging_is_held_to_the_owners_storage_allowance() {
         "Deployment failed: The deployment is too big."
     );
     assert_eq!(pending_count(&f.pool, &v.entity_id).await, 0);
+}
+
+/// Moves each stored key's modification time `by` into the past.
+async fn age_keys(f: &Fixture, keys: &[&String], by: std::time::Duration) {
+    let past = std::time::SystemTime::now() - by;
+    for key in keys {
+        let path = f.storage.file_path(key).await.unwrap().unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
+    }
+}
+
+async fn put(f: &Fixture, bytes: &[u8]) -> String {
+    let key = hash_bytes_v1(bytes);
+    f.storage
+        .store(&key, bytes::Bytes::copy_from_slice(bytes))
+        .await
+        .unwrap();
+    key
+}
+
+#[tokio::test]
+async fn the_cleanup_unlinks_only_what_the_upload_stored() {
+    let tag = Uuid::new_v4().simple().to_string();
+    let global_file_bytes = format!("global file {tag}").into_bytes();
+    let global_file = hash_bytes_v1(&global_file_bytes);
+    let global_bytes =
+        serde_json::to_vec(&json!({ "content": [{ "file": "g.js", "hash": global_file }] }))
+            .unwrap();
+    let urn = format!(
+        "urn:decentraland:entity:{}?baseUrl=https://x/contents/",
+        hash_bytes_v1(&global_bytes)
+    );
+    let Some(f) = fixture_with_settings(|s| s.global_scenes_urn = vec![urn]).await else {
+        return;
+    };
+    put(&f, &global_file_bytes).await;
+    let global = put(&f, &global_bytes).await;
+    let pack_file = put(&f, format!("pack file {tag}").as_bytes()).await;
+    let foreign = put(&f, format!("foreign file {tag}").as_bytes()).await;
+    sqlx::query(
+        "INSERT INTO builder.asset_catalog (id, packs, source, built_at) \
+         VALUES (1, $1, 'test', timezone('UTC', now())) \
+         ON CONFLICT (id) DO UPDATE SET packs = builder.asset_catalog.packs || EXCLUDED.packs",
+    )
+    .bind(json!([{ "assets": [{ "contents": { "a.glb": pack_file } }] }]))
+    .execute(&f.pool)
+    .await
+    .unwrap();
+
+    // A manifest naming stored files it never sends, one of its own and one left outstanding.
+    let (world, owner) = owned(&f).await;
+    let mut u = upload(&world, 2);
+    let mut content: Vec<Value> = u
+        .files
+        .iter()
+        .enumerate()
+        .map(|(i, (hash, _))| json!({ "file": format!("f{i}.bin"), "hash": hash }))
+        .collect();
+    let named = [&global_file, &global, &pack_file, &foreign];
+    for (i, hash) in named.iter().enumerate() {
+        content.push(json!({ "file": format!("named{i}.bin"), "hash": hash }));
+    }
+    u.entity_bytes =
+        serde_json::to_vec(&publish_entity(&world, &["0,0"], Value::Array(content))).unwrap();
+    u.entity_id = hash_bytes_v1(&u.entity_bytes);
+    let body = expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 202).await;
+    assert_eq!(body, json!({ "missing": hashes(&u, &[1]) }));
+
+    let two_hours = std::time::Duration::from_secs(2 * 3600);
+    let _cleanup = CLEANUP.lock().await;
+    age_upload(&f, &u, two_hours).await;
+    age_keys(&f, &named, two_hours).await;
+    partial::delete_expired_uploads(&f.state).await;
+    assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
+    assert!(!f.storage.exist(&u.files[0].0).await.unwrap());
+    assert!(!f.storage.exist(&u.entity_id).await.unwrap());
+    for key in named {
+        assert!(f.storage.exist(key).await.unwrap(), "{key} stays");
+    }
+    let referenced = catalyst_storage::gc::referenced_among(
+        &f.pool,
+        gc_pins(&f),
+        &[global_file.clone(), global.clone(), pack_file.clone()],
+    )
+    .await
+    .unwrap();
+    assert_eq!(referenced.len(), 3, "{referenced:?}");
+}
+
+#[tokio::test]
+async fn the_cleanup_leaves_a_young_file_to_the_collector() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 2);
+    expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 202).await;
+    let _cleanup = CLEANUP.lock().await;
+    sqlx::query(
+        "UPDATE worlds.pending_scenes SET created_at = created_at - interval '2 hours' \
+         WHERE entity_id = $1",
+    )
+    .bind(&u.entity_id)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    partial::delete_expired_uploads(&f.state).await;
+    assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
+    assert!(f.storage.exist(&u.files[0].0).await.unwrap());
+}
+
+#[tokio::test]
+async fn a_stored_file_collected_before_completion_is_asked_for_again() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 2);
+    put(&f, &u.files[0].1).await;
+    let body = expect_batch(&f.app, &u, Batch::of(&owner, true, &[]), 202).await;
+    assert_eq!(body, json!({ "missing": hashes(&u, &[1]) }));
+    f.storage.delete_strict(&u.files[0].0).await.unwrap();
+
+    let body = expect_batch(&f.app, &u, Batch::of(&owner, false, &[1]), 202).await;
+    assert_eq!(body, json!({ "missing": hashes(&u, &[0]) }));
+    let done = expect_batch(&f.app, &u, Batch::of(&owner, false, &[0]), 200).await;
+    assert!(done["creationTimestamp"].is_i64(), "{done}");
+}
+
+#[tokio::test]
+async fn a_personal_world_stages_only_once_published() {
+    let personal = PersonalWorldsPolicy::new(
+        1_000_000,
+        50 * 1024 * 1024,
+        crate::policy::MAX_WORLD_SIZE_BYTES,
+    )
+    .unwrap();
+    let Some(f) = fixture_with(personal, None).await else {
+        return;
+    };
+    let owner = Wallet::random();
+    let world = WorldName::parse(&format!("{}.dcl.eth", owner.address.as_str())).unwrap();
+    let u = upload(&world, 2);
+    let body = expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 400).await;
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Partial uploads to a personal world"),
+        "{body}"
+    );
+    assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
+    // Its world row, as a first publish leaves it; no scene, so the realm count stays as other tests expect.
+    sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
+        .bind(world.key())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 202).await;
+}
+
+#[tokio::test]
+async fn uploads_from_one_source_share_its_staging_budget() {
+    let Some(f) = fixture_with_limits(limits(|l| {
+        l.max_pending_bytes_per_deployer = 4_000;
+        l.max_pending_bytes_per_source = 4_000;
+    }))
+    .await
+    else {
+        return;
+    };
+    let ip = format!("198.51.100.{}", Uuid::new_v4().as_u128() % 250 + 1);
+    let ip: &'static str = Box::leak(ip.into_boxed_str());
+    let (world_a, a) = owned(&f).await;
+    let (world_b, b) = owned(&f).await;
+    let ua = upload_of(&world_a, &["0,0"], 2, 1_200);
+    let ub = upload_of(&world_b, &["0,0"], 2, 1_200);
+    let from = |signer, manifest, files: &[usize]| Batch {
+        source: Some(ip),
+        ..Batch::of(signer, manifest, files)
+    };
+    expect_batch(&f.app, &ua, from(&a, true, &[0]), 202).await;
+    expect_batch(&f.app, &ub, from(&b, true, &[0]), 202).await;
+    // Each wallet stays under its own budget; together they fill the source's.
+    let (status, headers, body) = send(&f.app, &ub, from(&b, false, &[1])).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("for uploads from this source"),
+        "{body}"
+    );
+    assert!(retry_after(&headers) >= 1);
 }

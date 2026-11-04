@@ -212,6 +212,15 @@ pub struct WorldsConfig {
     )]
     pub max_pending_bytes_per_deployer: u64,
 
+    /// Staged bytes the live uploads started from one client source may hold
+    /// (>= MAX_PENDING_BYTES_PER_DEPLOYER).
+    #[arg(
+        long,
+        env = "MAX_PENDING_BYTES_PER_SOURCE",
+        default_value_t = 4_294_967_296
+    )]
+    pub max_pending_bytes_per_source: u64,
+
     /// Staged bytes across the node (>= MAX_PENDING_BYTES_PER_DEPLOYER).
     #[arg(long, env = "MAX_PENDING_BYTES", default_value_t = 53_687_091_200)]
     pub max_pending_bytes: u64,
@@ -590,6 +599,7 @@ mod tests {
                 w.max_pending_deployments_per_world,
                 w.pending_bytes_per_world_factor,
                 w.max_pending_bytes_per_deployer,
+                w.max_pending_bytes_per_source,
                 w.max_pending_bytes,
                 w.max_partial_upload_bytes_per_minute,
                 w.completed_upload_ttl
@@ -601,6 +611,7 @@ mod tests {
                 4,
                 2,
                 1_073_741_824,
+                4_294_967_296,
                 53_687_091_200,
                 536_870_912,
                 86_400_000

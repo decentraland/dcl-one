@@ -590,7 +590,7 @@ CREATE TABLE worlds.world_limit_overrides (
 -- batch that completes its content. Workload: a handful of live uploads per
 -- node (10 per deployer, 4 per world), each with up to MAX_FILE_COUNT file
 -- rows, written once per batch under advisory locks (deployer, world, the
--- staging budget, the entity); read by entity id per batch, summed per
+-- staging budget); read by entity id per batch, summed per
 -- deployer/world/node at admission, swept by created_at every 5 minutes.
 -- No FK to worlds.worlds or world_scenes: a half-uploaded world must not
 -- create a world row (listings, validity checks); the world name is checked
@@ -601,8 +601,10 @@ CREATE TABLE worlds.world_limit_overrides (
 -- (PENDING_DEPLOYMENT_TTL); an expired row keeps its slot and bytes charged
 -- until the cleanup job reclaims its files and deletes it. `reserved_bytes`
 -- caches sum(pending_scene_files.size) WHERE charged, rewritten with every
--- file upsert under the budget lock. The publish transaction deletes the
--- row of any publish of the entity.
+-- file upsert under the budget lock. `source` is the first batch's client
+-- source key (NULL without a client address), whose live uploads share
+-- MAX_PENDING_BYTES_PER_SOURCE. The publish transaction deletes the row of
+-- any publish of the entity.
 CREATE TABLE worlds.pending_scenes (
     entity_id text NOT NULL,
     world_name text NOT NULL,
@@ -613,6 +615,7 @@ CREATE TABLE worlds.pending_scenes (
     initialized boolean NOT NULL DEFAULT false,
     reserved_bytes bigint NOT NULL DEFAULT 0,
     batches integer NOT NULL DEFAULT 0,
+    source text,
     CONSTRAINT pending_scenes_pkey PRIMARY KEY (entity_id),
     CONSTRAINT pending_scenes_world_lowercase CHECK (world_name = lower(world_name) AND world_name <> ''),
     CONSTRAINT pending_scenes_deployer_lowercase CHECK (deployer = lower(deployer) AND deployer <> ''),
@@ -624,17 +627,22 @@ CREATE TABLE worlds.pending_scenes (
 CREATE INDEX pending_scenes_created_at_idx ON worlds.pending_scenes (created_at);
 -- The per-deployer upload count and byte sums.
 CREATE INDEX pending_scenes_deployer_created_at_idx ON worlds.pending_scenes (deployer, created_at);
+-- The per-world live upload count and staged byte sums.
+CREATE INDEX pending_scenes_world_name_created_at_idx ON worlds.pending_scenes (world_name, created_at);
 
 -- One row per file an upload names or stores: `stored` once this node
 -- holds it for the upload (written by a batch, or already in the store when
--- the upload started), `charged` when its bytes count toward the staging
--- budgets (false for content published content already referenced at the
--- upload's start). Publication takes the scene's file sizes from here.
+-- the upload started), `written` only when one of the upload's batches
+-- stored it (the expiry cleanup unlinks nothing else), `charged` when its
+-- bytes count toward the staging budgets (false for content published
+-- content already referenced at the upload's start). Publication takes the
+-- scene's file sizes from here.
 CREATE TABLE worlds.pending_scene_files (
     entity_id text NOT NULL,
     hash text NOT NULL,
     size bigint NOT NULL,
     stored boolean NOT NULL DEFAULT false,
+    written boolean NOT NULL DEFAULT false,
     charged boolean NOT NULL DEFAULT true,
     CONSTRAINT pending_scene_files_pkey PRIMARY KEY (entity_id, hash),
     CONSTRAINT pending_scene_files_size_nonneg CHECK (size >= 0),

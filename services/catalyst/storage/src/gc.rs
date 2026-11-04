@@ -440,12 +440,13 @@ fn split_source(source: &str) -> (&str, &str) {
     (table, column)
 }
 
-/// Refuses a run over world scenes whose content lists cannot be read
-/// exactly (a caller deletes what the references do not name).
+/// Refuses a run over world scenes or pending uploads whose content lists
+/// cannot be read exactly (a caller deletes what the references do not name).
 async fn check_json_sources(pool: &PgPool) -> Result<(), GcError> {
     let bad: Option<String> = sqlx::query_scalar(
         "SELECT entity_id FROM (SELECT entity_id, entity FROM worlds.world_scenes \
-           UNION ALL SELECT entity_id, entity FROM worlds.retired_world_scenes) s \
+           UNION ALL SELECT entity_id, entity FROM worlds.retired_world_scenes \
+           UNION ALL SELECT entity_id, entity FROM worlds.pending_scenes) s \
          WHERE jsonb_typeof(s.entity) <> 'object' \
             OR jsonb_typeof(s.entity -> 'content') NOT IN ('array', 'null') \
             OR (jsonb_typeof(s.entity -> 'content') = 'array' AND EXISTS ( \
@@ -463,24 +464,40 @@ async fn check_json_sources(pool: &PgPool) -> Result<(), GcError> {
     }
 }
 
+/// What every reference check keeps beyond the database rows: the global
+/// scenes the configuration names, read from the store.
+#[derive(Clone, Copy)]
+pub struct Pins<'a> {
+    pub storage: &'a Storage,
+    pub global_scenes_urn: &'a [String],
+}
+
+impl<'a> Pins<'a> {
+    pub fn new(storage: &'a Storage, global_scenes_urn: &'a [String]) -> Self {
+        Self {
+            storage,
+            global_scenes_urn,
+        }
+    }
+}
+
 /// The small reference documents read whole: the asset-pack catalogue and
 /// the global scenes the configuration names (their entity file and its
 /// content list).
-async fn fixed_references(
-    pool: &PgPool,
-    storage: &Storage,
-    global_scenes_urn: &[String],
+pub async fn fixed_references(
+    conn: &mut sqlx::PgConnection,
+    pins: Pins<'_>,
 ) -> Result<HashSet<String>, GcError> {
     let mut keys = HashSet::new();
     let catalogue: Option<Value> =
         sqlx::query_scalar("SELECT packs FROM builder.asset_catalog WHERE id = 1")
-            .fetch_optional(pool)
+            .fetch_optional(&mut *conn)
             .await?;
     if let Some(packs) = catalogue {
         catalogue_hashes(&packs, &mut keys)?;
     }
-    for entity_id in global_scene_entity_ids(global_scenes_urn) {
-        if let Some(bytes) = storage.retrieve(&entity_id).await? {
+    for entity_id in global_scene_entity_ids(pins.global_scenes_urn) {
+        if let Some(bytes) = pins.storage.retrieve(&entity_id).await? {
             let entity: Value = serde_json::from_slice(&bytes).map_err(|e| {
                 GcError::Unreadable(format!(
                     "global scene entity {entity_id} does not parse: {e}"
@@ -513,30 +530,56 @@ async fn any_reference(pool: &PgPool) -> Result<bool, GcError> {
     Ok(false)
 }
 
-/// The keys among `keys` some domain names: one `= ANY` probe per source
-/// (index-served on the large tables) and the world scenes' content lists,
-/// retired ones included until evicted.
-pub async fn referenced_among(pool: &PgPool, keys: &[String]) -> Result<HashSet<String>, GcError> {
-    let mut conn = pool.acquire().await?;
-    referenced_among_on(&mut conn, keys).await
-}
-
-/// [`referenced_among`] on one connection (the unlink batch's, under its lock).
+/// The keys among `keys` some domain names: the fixed references, one
+/// `= ANY` probe per source (index-served on the large tables) and the world
+/// scenes' and pending uploads' content lists, retired ones included until
+/// evicted. Every path that unlinks by reference runs this check.
 pub async fn referenced_among_on(
     conn: &mut sqlx::PgConnection,
+    pins: Pins<'_>,
     keys: &[String],
 ) -> Result<HashSet<String>, GcError> {
-    references_among(conn, keys, true).await
+    references_among(conn, pins, keys, true).await
+}
+
+/// [`referenced_among_on`] on a pooled connection.
+pub async fn referenced_among(
+    pool: &PgPool,
+    pins: Pins<'_>,
+    keys: &[String],
+) -> Result<HashSet<String>, GcError> {
+    let mut conn = pool.acquire().await?;
+    referenced_among_on(&mut conn, pins, keys).await
 }
 
 /// The keys among `keys` published content names: [`referenced_among`] without the pending
 /// partial uploads, which charge for content only they keep.
-pub async fn published_among(pool: &PgPool, keys: &[String]) -> Result<HashSet<String>, GcError> {
+pub async fn published_among(
+    pool: &PgPool,
+    pins: Pins<'_>,
+    keys: &[String],
+) -> Result<HashSet<String>, GcError> {
     let mut conn = pool.acquire().await?;
-    references_among(&mut conn, keys, false).await
+    references_among(&mut conn, pins, keys, false).await
 }
 
 async fn references_among(
+    conn: &mut sqlx::PgConnection,
+    pins: Pins<'_>,
+    keys: &[String],
+    pending: bool,
+) -> Result<HashSet<String>, GcError> {
+    if keys.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let fixed = fixed_references(conn, pins).await?;
+    let mut found = rows_among(conn, keys, pending).await?;
+    found.extend(keys.iter().filter(|k| fixed.contains(*k)).cloned());
+    Ok(found)
+}
+
+/// The database rows' part of [`references_among`].
+async fn rows_among(
     conn: &mut sqlx::PgConnection,
     keys: &[String],
     pending: bool,
@@ -588,7 +631,8 @@ pub async fn collect(
     options: GcOptions,
 ) -> Result<GcReport, GcError> {
     check_json_sources(pool).await?;
-    let fixed = fixed_references(pool, storage, global_scenes_urn).await?;
+    let pins = Pins::new(storage, global_scenes_urn);
+    let fixed = fixed_references(&mut *pool.acquire().await?, pins).await?;
     let refuse_empty =
         !options.allow_empty_reference_set && fixed.is_empty() && !any_reference(pool).await?;
     let now = SystemTime::now();
@@ -624,7 +668,8 @@ pub async fn collect(
         if chunk.len() >= CHUNK || (next.is_none() && !chunk.is_empty()) {
             chunk.sort();
             chunk.dedup();
-            let referenced = referenced_among(pool, &chunk).await?;
+            // The fixed references never enter a chunk.
+            let referenced = rows_among(&mut *pool.acquire().await?, &chunk, true).await?;
             report.references += referenced.len();
             orphans.extend(chunk.drain(..).filter(|id| !referenced.contains(id)));
         }
@@ -639,7 +684,7 @@ pub async fn collect(
     if !options.dry_run {
         for batch in orphans.chunks(CHUNK) {
             let mut lock = lock_store_exclusive(pool).await?;
-            let referenced_now = referenced_among_on(&mut lock, batch).await?;
+            let referenced_now = referenced_among_on(&mut lock, pins, batch).await?;
             for id in batch.iter().filter(|id| !referenced_now.contains(*id)) {
                 let size = match super::resolve_file_path(storage.root(), id) {
                     Ok(path) => tokio::fs::metadata(path).await.map_or(0, |m| m.len()),
@@ -734,7 +779,10 @@ mod tests {
             unclassified.is_empty(),
             "classify these columns in storage::gc (REFERENCE_SOURCES or NOT_STORE_KEYS): {unclassified:?}"
         );
-        referenced_among(&pool, &["none".to_string()])
+        let dir =
+            std::env::temp_dir().join(format!("catalyst-gc-{}", uuid::Uuid::new_v4().simple()));
+        let storage = Storage::from_config(&dir).await.unwrap();
+        referenced_among(&pool, Pins::new(&storage, &[]), &["none".to_string()])
             .await
             .expect("every source statement runs against the schema");
     }
@@ -908,6 +956,17 @@ mod tests {
         ] {
             assert!(storage.exist(key).await.unwrap(), "{key} stays");
         }
+        // The key-level check other unlink paths run counts the fixed references too.
+        let pack_file = put(b"asset pack file".to_vec()).await;
+        sqlx::query("INSERT INTO builder.asset_catalog (id, packs, source, built_at) VALUES (1, $1, 'test', timezone('UTC', now()))")
+            .bind(json!([{ "assets": [{ "contents": { "a.glb": pack_file } }] }]))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let keys = vec![global.clone(), global_file.clone(), pack_file.clone()];
+        let pins = Pins::new(&storage, &globals);
+        assert_eq!(referenced_among(&pool, pins, &keys).await.unwrap().len(), 3);
+        assert_eq!(published_among(&pool, pins, &keys).await.unwrap().len(), 3);
         pool.close().await;
         let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP DATABASE \"{name}\" WITH (FORCE)"

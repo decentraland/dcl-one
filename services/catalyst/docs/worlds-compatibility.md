@@ -121,10 +121,21 @@ difference not listed here is a gap, not a decision.
   - A stored file is free of staging charges when any domain of the shared
     blob store names it, not only world scenes and thumbnails.
   - The collector keeps every file a pending upload names, expired uploads
-    included, until the cleanup removes the upload. The cleanup leaves a
-    file written after the upload expired to the collector.
-  - Batches of one entity are serialized by a database advisory lock held
-    on a pool connection. There is no `CONTENT_LOCK_CONNECTIONS`.
+    included, until the cleanup removes the upload. The cleanup unlinks
+    only files the upload's own batches stored, nothing else names and are
+    older than the collector's age floor; it leaves any other file to the
+    collector.
+  - A file found stored when the upload began and gone by its completion
+    is listed in `missing` again (202) instead of failing the publish.
+  - Batches of one entity are serialized within a process by an in-memory
+    lock; across replicas each staging step is atomic in the database.
+    There is no `CONTENT_LOCK_CONNECTIONS`. `MAX_CONCURRENT_UPLOADS` must
+    be at most three quarters of `PG_POOL_SIZE`.
+  - A personal world accepts partial uploads only once it is published on
+    this realm; its first scene goes in a single request.
+  - `MAX_PENDING_BYTES_PER_SOURCE` (default 4 GiB, at least
+    `MAX_PENDING_BYTES_PER_DEPLOYER`) caps the bytes staged by the live
+    uploads one client address started (429 with `Retry-After`).
   - The cleanup runs as a fleet-wide leased job. Its `Retry-After` estimate
     uses the last run this process finished.
   - Partial batches record only the `total` processing stage, labelled
