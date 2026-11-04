@@ -465,6 +465,14 @@ impl super::State {
         {
             return Ok(());
         }
+        // A provider is configured by its own settings. The source refuses to
+        // start without OPEN_AI_API_KEY; a node without any compliance setting
+        // runs without the provider, so the check is skipped (and logged at
+        // boot), not failed on every write. A partly configured provider is
+        // refused at boot by `validate_provider_bootstrap`.
+        if self.settings.compliance.api_key.is_none() {
+            return Ok(());
+        }
         let started = std::time::Instant::now();
         let hash = cache_hash(content);
         let model = if self.settings.compliance.model.is_empty() {

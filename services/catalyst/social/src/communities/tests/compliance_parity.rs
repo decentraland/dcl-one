@@ -230,6 +230,34 @@ async fn valid_slow_provider_outlives_the_shared_readers_twenty_five_second_budg
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
     rig.finish();
 }
+/// Without OPEN_AI_API_KEY the node runs without the provider: an enabled
+/// flag in production skips the classification instead of failing the write.
+#[tokio::test]
+async fn an_unconfigured_provider_is_skipped_not_failed() {
+    let case = goldens()["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["name"] == "noncompliant")
+        .unwrap()
+        .clone();
+    let provider = provider(&case, std::time::Duration::ZERO).await;
+    let mut settings = enabled_settings(&provider.url);
+    settings.compliance.api_key = None;
+    let Some(rig) = Rig::new(settings).await else {
+        return;
+    };
+    rig.state
+        .validate_content(Content {
+            name: Some("Rejected"),
+            description: Some("Rejected description"),
+            thumbnail: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    rig.finish();
+}
 #[tokio::test]
 async fn enabled_compliance_rejects_before_community_or_thumbnail_writes_and_skips_unchanged_text()
 {

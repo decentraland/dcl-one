@@ -36,12 +36,12 @@ struct Inner {
 }
 
 impl Analytics {
-    /// The monolith permits analytics to be absent; a configured replacement
-    /// requires the source's four strings, including explicitly empty values.
+    /// The monolith permits analytics to be absent. Analytics is configured
+    /// by its own settings, never by `ENV` alone; once configured it requires
+    /// the source's four strings, including explicitly empty values.
     pub fn new(http: &crate::http::Outbound, settings: Settings) -> Result<Option<Self>, String> {
         if settings.context.is_none()
             && settings.api_token.is_none()
-            && settings.environment.is_none()
             && settings.request_timeout_ms.is_none()
             && settings.api_url.as_deref().is_none_or(str::is_empty)
         {

@@ -51,18 +51,20 @@ fn source_required_strings_and_node_timeout_buckets_are_preserved() {
         .is_none(),
         "posture-injected empty URL alone does not activate a provider"
     );
-    assert_eq!(
-        Analytics::new(
-            &http,
-            Settings {
-                environment: Some(String::new()),
-                ..Default::default()
-            }
-        )
-        .err()
-        .unwrap(),
-        "Configuration: string ANALYTICS_CONTEXT is required"
-    );
+    for environment in ["", "prd"] {
+        assert!(
+            Analytics::new(
+                &http,
+                Settings {
+                    environment: Some(environment.into()),
+                    ..Default::default()
+                }
+            )
+            .unwrap()
+            .is_none(),
+            "ENV alone does not configure analytics"
+        );
+    }
     for case in source["configuration"].as_array().unwrap() {
         let mut settings = settings("https://analytics.example/events".into());
         match case["omitted"].as_str() {

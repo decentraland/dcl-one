@@ -807,6 +807,7 @@ impl SocialConfig {
                 &self.social_analytics_api_token,
                 "ANALYTICS_API_TOKEN",
             ),
+            (analytics, &self.social_environment, "ENV"),
             (
                 compliance,
                 &self.community_compliance_api_key,
@@ -957,12 +958,16 @@ mod tests {
             check(&[("ENV", "prd"), ("ANALYTICS_API_TOKEN", "fixture")]).unwrap_err(),
             "Configuration: string ANALYTICS_CONTEXT is required"
         );
-        check(&[
+        let analytics = [
             ("ANALYTICS_CONTEXT", "fixture"),
             ("ANALYTICS_API_URL", "https://analytics.example.org"),
             ("ANALYTICS_API_TOKEN", "fixture"),
-        ])
-        .unwrap();
+        ];
+        assert_eq!(
+            check(&analytics).unwrap_err(),
+            "Configuration: string ENV is required"
+        );
+        check(&[analytics.as_slice(), &[("ENV", "prd")]].concat()).unwrap();
     }
 
     /// The island posture refuses a Slack token, so `ENV` must not require one:
