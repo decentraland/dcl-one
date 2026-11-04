@@ -16,6 +16,7 @@ LANES = ('clippy', 'test', 'headless', 'web')
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
 INPUTS = ('rendering/bevy-explorer/source', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
           'library/uuav/uuav-client', 'library/uuav/uuav-ipc', 'library/uuav/dist', 'tooling/uuav',
+          'apps/dcl-scene-cli',
           'tooling/bevy-ci.py', 'tooling/bevy-http2-test.mjs', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
           'tooling/tests/test_bevy_*.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
@@ -220,9 +221,9 @@ def select(base, head):
             # Launcher/package assembly cannot affect web or graphical/native tests.
             # Keep the headless build/smoke; main also packages all four platforms.
             affected = ('headless',)
-        elif path.startswith(SCENES_E2E_INPUTS):
-            # The scenes, the driver, the runner scripts, the video spec and its realm, and the
-            # package files select the scenes lane.
+        elif path.startswith(SCENES_E2E_INPUTS) or path.startswith('apps/dcl-scene-cli/'):
+            # The scenes, the driver, the runner scripts, the visual specs, the package files and
+            # the CLI that builds the scenes select the scenes lane.
             affected = ('scenes',)
         elif path.startswith('apps/bevy-explorer/e2e/'):
             # The rest of the end-to-end suite drives a built client; its own workflow

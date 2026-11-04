@@ -222,9 +222,24 @@ jobs:
           path: apps/bevy-explorer/e2e/report/
           if-no-files-found: ignore
           retention-days: 14
-      - name: Fail on a video playback failure
-        if: always() && steps.video.outcome == 'failure'
-        run: exit 1
+      - name: Fail on a video playback failure, or on a run that played no test
+        if: always() && steps.video.outcome != '' && steps.video.outcome != 'skipped'
+        env:
+          VIDEO_OUTCOME: ${{ steps.video.outcome }}
+        # `--filter` is a name pattern and node's runner exits 0 when nothing matches, so the
+        # JUnit report must name a test that ran.
+        run: |
+          python3 - <<'PY'
+          import os, sys, xml.etree.ElementTree as ET
+          report = "../../../apps/bevy-explorer/e2e/report/junit-visual.xml"
+          try:
+              cases = ET.parse(report).getroot().iter("testcase")
+              ran = [case for case in cases if case.find("skipped") is None]
+          except (OSError, ET.ParseError) as error:
+              sys.exit(f"no readable JUnit report at {report}: {error}")
+          print(f"{len(ran)} video test(s) ran; outcome {os.environ['VIDEO_OUTCOME']}")
+          sys.exit(0 if ran and os.environ["VIDEO_OUTCOME"] == "success" else 1)
+          PY
     defaults:
       run:
         working-directory: rendering/bevy-explorer/source

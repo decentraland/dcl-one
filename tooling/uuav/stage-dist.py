@@ -61,6 +61,17 @@ def sha256(path: str) -> str:
     return digest.hexdigest()
 
 
+def hashes_of(path: str) -> list[str]:
+    """The file's sha256, plus, for a text file, the sha256 of its bytes with CRLF line ends
+    turned back into LF: a checkout with core.autocrlf=true rewrites the license texts and
+    the lock holds the LF bytes."""
+    hashes = [sha256(path)]
+    if path.endswith(".txt"):
+        with open(path, "rb") as handle:
+            hashes.append(hashlib.sha256(handle.read().replace(b"\r\n", b"\n")).hexdigest())
+    return hashes
+
+
 def locked_hashes(repo: str, target: str) -> dict[str, str]:
     """The lock's sha256 of every file of the target's runtime set, by file name."""
     with open(os.path.join(repo, LOCK), encoding="utf-8") as handle:
@@ -94,9 +105,9 @@ def stage(repo: str, target: str, directory: str) -> list[str]:
         if expected is None:
             problems.append(f"{name} is not in the lock; relock the target or remove the file")
             continue
-        actual = sha256(os.path.join(source, name))
-        if actual != expected:
-            problems.append(f"{name} differs from the lock (sha256 {actual[:12]}, locked "
+        actual = hashes_of(os.path.join(source, name))
+        if expected not in actual:
+            problems.append(f"{name} differs from the lock (sha256 {actual[0][:12]}, locked "
                             f"{expected[:12]}); the runtime set changed without a relock")
     problems += [f"{name} is in the lock but missing from {os.path.relpath(source, repo)}"
                  for name in sorted(set(locked) - set(names))]

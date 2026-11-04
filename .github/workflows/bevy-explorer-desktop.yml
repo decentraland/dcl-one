@@ -197,9 +197,6 @@ jobs:
           cp -r ../../assets BevyExplorer.AppDir/usr/bin/assets
           cp "$cef"/*.bin "$cef"/*.pak "$cef"/*.dat "$cef"/*.json BevyExplorer.AppDir/usr/lib/
           cp -r "$cef/locales" BevyExplorer.AppDir/usr/lib/locales
-          # the video helper and its FFmpeg/libva, spawned as siblings of the binary; they
-          # resolve from the helper's own directory ($ORIGIN), so linuxdeploy must leave them
-          python3 ../../../../../tooling/uuav/stage-dist.py linux-x86_64 BevyExplorer.AppDir/usr/bin
           wget https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
           wget https://github.com/AppImage/appimagetool/releases/latest/download/appimagetool-x86_64.AppImage
           chmod +x ./linuxdeploy-x86_64.AppImage ./appimagetool-x86_64.AppImage
@@ -213,17 +210,20 @@ jobs:
           # it would pair our build machine's copy with the host's -x11 half — the keymap
           # winit builds through that mix is corrupt (hangs on every keypress, SEGV in
           # xkb_keymap_unref at exit). winit dlopens both from the host instead.
-          # The staged FFmpeg and libva stay where the helper finds them (usr/bin).
-          ./linuxdeploy-x86_64.AppImage --appdir BevyExplorer.AppDir --output appimage --create-desktop-file \
+          # linuxdeploy fills usr/lib and rewrites the RUNPATH of every ELF it finds in the
+          # AppDir, so the video helper and its FFmpeg/libva are staged after it: they resolve
+          # from the helper's own directory ($ORIGIN, checked below) and appimagetool packs
+          # the AppDir as it stands.
+          ./linuxdeploy-x86_64.AppImage --appdir BevyExplorer.AppDir --create-desktop-file \
             --executable=../../target/release/decentra-bevy \
             --executable=../../target/release/dcl_deno_ipc \
             --executable=../../target/release/decentra-bevy-cef \
             --exclude-library="libxkbcommon*" \
-            --exclude-library="libav*" \
-            --exclude-library="libsw*" \
-            --exclude-library="libva*" \
             --icon-file=decentra-bevy.png
-          mv ./decentra-bevy-x86_64.AppImage ${{ env.APPIMAGE_FILE }}
+          python3 ../../../../../tooling/uuav/stage-dist.py linux-x86_64 BevyExplorer.AppDir/usr/bin
+          readelf -d BevyExplorer.AppDir/usr/bin/uuav-helper | grep -E 'R(UN)?PATH' | tee runpath.txt
+          grep -q '\$ORIGIN' runpath.txt
+          ./appimagetool-x86_64.AppImage BevyExplorer.AppDir ${{ env.APPIMAGE_FILE }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Collect desktop artifacts

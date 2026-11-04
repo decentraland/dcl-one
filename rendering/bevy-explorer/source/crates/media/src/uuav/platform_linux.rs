@@ -12,6 +12,9 @@ use bevy::render::{
     renderer::{RenderAdapter, RenderDevice, RenderQueue},
 };
 
+/// Frames are presented on this platform.
+pub const PRESENTS_FRAMES: bool = true;
+
 /// Nothing is derived from a host GPU object on Linux; the client accepts a null probe.
 pub struct Probe;
 

@@ -33,6 +33,10 @@ use windows::{
     core::Interface as _,
 };
 
+/// No frames are presented yet (see the module doc): the render world skips the per-player
+/// render event, so the client makes no D3D11 copy nothing would show.
+pub const PRESENTS_FRAMES: bool = false;
+
 /// A 1x1 texture on a D3D11 device of our own: the decode device the client captures. It is
 /// not the renderer's device, which is what the TODO above is about.
 pub struct Probe {

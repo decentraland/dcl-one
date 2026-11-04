@@ -54,6 +54,14 @@ const PROTOCOL_WHITELIST: &CStr = c"https,http,tls,tcp,crypto";
 const LOG_LEVEL: i32 = 24;
 /// Frames to retry a busy render device before giving up on the player runtime.
 const INIT_ATTEMPTS: u32 = 600;
+/// Waits before the runtime is started again after a failed start, by failure count; the last
+/// one repeats. A source arriving after the wait starts it.
+const INIT_RETRY_DELAYS: [Duration; 4] = [
+    Duration::from_secs(1),
+    Duration::from_secs(3),
+    Duration::from_secs(10),
+    Duration::from_secs(30),
+];
 /// How often a playing player's clock goes to the scene while no frame is presented (no target
 /// image yet, or a platform without frames).
 const CLOCK_INTERVAL: Duration = Duration::from_millis(250);
@@ -86,13 +94,27 @@ pub fn uuav_shutdown() {
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// `(width, height)` in one atomic: 0 is "no size yet".
+pub(crate) fn pack_size(width: u32, height: u32) -> u64 {
+    (u64::from(width) << 32) | u64::from(height)
+}
+
+fn unpack_size(packed: u64) -> Option<(u32, u32)> {
+    (packed != 0).then_some(((packed >> 32) as u32, packed as u32))
 }
 
 /// A video player's target image and how many frames the render world has presented into it.
 pub(crate) struct Target {
     pub image: AssetId<Image>,
     pub presented: AtomicU64,
+    /// The size of the planes the render world presents, [`pack_size`]d, once it has read them;
+    /// the main world sizes the image to it.
+    pub presented_size: AtomicU64,
     /// Set by the render world when the player's frames cannot be presented (a size the device
     /// refuses); it presents nothing more for the player.
     pub failed: AtomicBool,
@@ -179,6 +201,10 @@ enum Runtime {
     Pending {
         attempts: u32,
     },
+    /// The start failed; a source arriving at or after `retry_at` starts it again.
+    Failed {
+        retry_at: Instant,
+    },
     /// `uuav_init` runs on its own thread: it spawns the helper and waits for its handshake. The
     /// probe stays alive until the call has answered.
     Starting {
@@ -186,7 +212,6 @@ enum Runtime {
         done: oneshot::Receiver<Result<(), String>>,
     },
     Ready,
-    Failed,
 }
 
 /// A source whose player is being created on another thread (`uuav_player_new` round-trips to
@@ -199,6 +224,8 @@ struct Creating {
 #[derive(Resource)]
 struct UuavRuntime {
     runtime: Runtime,
+    /// Failed starts so far, for the retry wait.
+    init_failures: u32,
     creating: Vec<Creating>,
     players: Vec<Player>,
     shared: Arc<Shared>,
@@ -208,6 +235,7 @@ impl UuavRuntime {
     fn new(shared: Arc<Shared>) -> Self {
         Self {
             runtime: Runtime::Pending { attempts: 0 },
+            init_failures: 0,
             creating: Vec::new(),
             players: Vec::new(),
             shared,
@@ -231,8 +259,9 @@ impl UuavRuntime {
                     Err(e) => {
                         *attempts += 1;
                         if *attempts >= INIT_ATTEMPTS {
-                            error!("uuav: no decode device probe after {INIT_ATTEMPTS} frames: {e}");
-                            self.runtime = Runtime::Failed;
+                            self.fail_start(format!(
+                                "no decode device probe after {INIT_ATTEMPTS} frames: {e}"
+                            ));
                         } else {
                             debug!("uuav: probe not ready: {e}");
                         }
@@ -268,34 +297,51 @@ impl UuavRuntime {
                             done,
                         }
                     }
-                    Err(e) => {
-                        error!("uuav: player runtime failed to start: {e}");
-                        self.runtime = Runtime::Failed;
-                    }
+                    Err(e) => self.fail_start(e.to_string()),
                 }
             }
             Runtime::Starting { done, .. } => match done.try_recv() {
                 Ok(Ok(())) => {
                     info!("uuav: player runtime started");
+                    self.init_failures = 0;
                     self.runtime = Runtime::Ready;
                 }
-                Ok(Err(e)) => {
-                    error!("uuav: player runtime failed to start: {e}");
-                    self.runtime = Runtime::Failed;
-                }
+                Ok(Err(e)) => self.fail_start(e),
                 Err(oneshot::error::TryRecvError::Closed) => {
-                    error!("uuav: player runtime failed to start: the init thread ended");
-                    self.runtime = Runtime::Failed;
+                    self.fail_start("the init thread ended".to_owned());
                 }
                 Err(oneshot::error::TryRecvError::Empty) => {}
             },
-            Runtime::Ready | Runtime::Failed => {}
+            Runtime::Ready | Runtime::Failed { .. } => {}
         }
+    }
+
+    /// Parks the runtime until the retry wait for this many failures has passed.
+    fn fail_start(&mut self, why: String) {
+        self.init_failures += 1;
+        let delay =
+            INIT_RETRY_DELAYS[(self.init_failures as usize - 1).min(INIT_RETRY_DELAYS.len() - 1)];
+        error!(
+            "uuav: player runtime failed to start (failure {}): {why}; next try after {delay:?}",
+            self.init_failures
+        );
+        self.runtime = Runtime::Failed {
+            retry_at: Instant::now() + delay,
+        };
     }
 
     /// Begins creating a player for the source; [`poll_creating`](Self::poll_creating) starts
     /// it once the helper has answered.
     fn adopt(&mut self, source: NewSource, has_renderer: bool) {
+        if has_renderer
+            && matches!(&self.runtime, Runtime::Failed { retry_at } if Instant::now() >= *retry_at)
+        {
+            info!(
+                "uuav: starting the player runtime again for `{}`",
+                source.url
+            );
+            self.runtime = Runtime::Pending { attempts: 0 };
+        }
         match self.runtime {
             Runtime::Ready => {}
             Runtime::Pending { .. } | Runtime::Starting { .. } if has_renderer => {
@@ -340,7 +386,10 @@ impl UuavRuntime {
             match created {
                 Ok(id) => self.start(id, creating.source),
                 Err(e) => {
-                    warn!("uuav: player for `{}` not created: {e}", creating.source.url);
+                    warn!(
+                        "uuav: player for `{}` not created: {e}",
+                        creating.source.url
+                    );
                     send(
                         creating.source.video.as_ref(),
                         VideoData::State(VideoState::VsError),
@@ -370,6 +419,7 @@ impl UuavRuntime {
             let target = Arc::new(Target {
                 image: source.image,
                 presented: AtomicU64::new(0),
+                presented_size: AtomicU64::new(0),
                 failed: AtomicBool::new(false),
             });
             lock(&self.shared.targets).insert(id, target.clone());
@@ -386,6 +436,7 @@ impl UuavRuntime {
             alive,
             target,
             last_state: None,
+            seeking: false,
             last_info: None,
             last_presented: 0,
             last_clock: None,
@@ -407,6 +458,9 @@ struct Player {
     /// What went out last; a send the channel refused leaves these as they were, so it is
     /// tried again next frame.
     last_state: Option<VideoState>,
+    /// A seek went out this frame: the helper's state is read again next frame, so the scene
+    /// sees Seeking before the state the seek lands in.
+    seeking: bool,
     /// (width, height, framerate, duration)
     last_info: Option<(u32, u32, f64, f64)>,
     last_presented: u64,
@@ -455,7 +509,9 @@ impl Player {
         {
             state = VideoState::VsError;
         }
-        if self.last_state != Some(state)
+        if std::mem::take(&mut self.seeking) {
+            // Seeking went out with the seek; the helper answers it from next frame
+        } else if self.last_state != Some(state)
             && send(self.video.as_ref(), VideoData::State(state))
         {
             debug!("uuav player {}: {state:?}", self.id);
@@ -463,8 +519,7 @@ impl Player {
         }
 
         if self.video.is_some() {
-            if let Some((width, height)) = ffi::video_size(self.id) {
-                // the header size: the render world sizes the image to the presented planes
+            if let Some((width, height)) = self.size() {
                 let rate = ffi::framerate(self.id).unwrap_or(0.0);
                 // live streams have no duration
                 let length = ffi::duration(self.id).unwrap_or(-1.0);
@@ -501,6 +556,15 @@ impl Player {
         true
     }
 
+    /// The size the image is kept at: the planes the render world presents once it has read
+    /// them, the stream header until then.
+    fn size(&self) -> Option<(u32, u32)> {
+        self.target
+            .as_ref()
+            .and_then(|target| unpack_size(target.presented_size.load(Ordering::Acquire)))
+            .or_else(|| ffi::video_size(self.id))
+    }
+
     fn apply(&mut self, command: AVCommand) {
         let id = self.id;
         let result = match command {
@@ -510,9 +574,10 @@ impl Player {
                 ffi::consume(uuav::uuav_player_set_looping(id, u8::from(repeat)))
             }
             AVCommand::Seek(time) => {
-                // the real state is reported again after the seek
-                self.last_state = None;
-                send(self.video.as_ref(), VideoData::State(VideoState::VsSeeking));
+                if send(self.video.as_ref(), VideoData::State(VideoState::VsSeeking)) {
+                    self.last_state = Some(VideoState::VsSeeking);
+                }
+                self.seeking = true;
                 ffi::consume(uuav::uuav_player_seek_async(id, time))
             }
             AVCommand::Volume(volume) => {
@@ -609,8 +674,16 @@ mod tests {
         Arc::new(Target {
             image: AssetId::default(),
             presented: AtomicU64::new(0),
+            presented_size: AtomicU64::new(0),
             failed: AtomicBool::new(false),
         })
+    }
+
+    #[test]
+    fn a_size_round_trips_and_zero_is_none() {
+        assert_eq!(unpack_size(pack_size(852, 480)), Some((852, 480)));
+        assert_eq!(unpack_size(pack_size(4096, 4096)), Some((4096, 4096)));
+        assert_eq!(unpack_size(0), None);
     }
 
     #[test]

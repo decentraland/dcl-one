@@ -73,6 +73,13 @@ class StageDistTests(unittest.TestCase):
             self.assertIn("libavutil.so.60 is in the lock but missing", problems[2])
             self.assertEqual(os.listdir(out), [])
 
+    def test_a_license_text_with_crlf_line_ends_matches_its_lf_lock_entry(self):
+        (self.dist / "uuav-helper").write_bytes(b"\x7fELF")
+        (self.dist / "LICENSE-ffmpeg.txt").write_bytes(b"GNU\r\nLESSER\r\n")
+        self.write_lock({"uuav-helper": b"\x7fELF", "LICENSE-ffmpeg.txt": b"GNU\nLESSER\n"})
+        with tempfile.TemporaryDirectory() as out:
+            self.assertEqual(self.module.stage(self.repo.name, "linux-x86_64", out), [])
+
     def test_a_missing_lock_is_reported(self):
         (self.dist / "uuav-helper").write_bytes(b"\x7fELF")
         with tempfile.TemporaryDirectory() as out:

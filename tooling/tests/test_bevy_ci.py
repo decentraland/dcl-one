@@ -175,13 +175,14 @@ class SelectionTest(unittest.TestCase):
                                   if selected[lane]}, set())
 
     def test_what_the_graphical_run_plays_from_the_end_to_end_suite_selects_scenes(self):
-        for name in ('driver/explorer.ts', 'scenes/video/src/index.ts', 'scenes/video/assets/video/red_tone.mp4',
-                     'scenes/core/scene.json', 'scenes/dcl-workspace.json', 'specs/visual/video.test.ts',
-                     'specs/visual/visual.test.ts', 'specs/visual/realm.ts', 'specs/visual/scenes.ts',
-                     'scripts/e2e.ts', 'package-lock.json'):
+        for name in ('e2e/driver/explorer.ts', 'e2e/scenes/video/src/index.ts',
+                     'e2e/scenes/video/assets/video/red_tone.mp4', 'e2e/scenes/core/scene.json',
+                     'e2e/scenes/dcl-workspace.json', 'e2e/specs/visual/video.test.ts',
+                     'e2e/specs/visual/visual.test.ts', 'e2e/specs/visual/realm.ts', 'e2e/specs/visual/scenes.ts',
+                     'e2e/scripts/e2e.ts', 'e2e/package-lock.json', '../dcl-scene-cli/src/main.rs'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
-                self.write('apps/bevy-explorer/e2e/' + name, 'changed')
+                self.write('apps/bevy-explorer/' + name, 'changed')
                 selected = ci.select(before, self.commit())
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, {'scenes'})

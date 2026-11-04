@@ -4,9 +4,9 @@ use dcl_component::proto_components::sdk::components::VideoState;
 use ipfs::IpfsResource;
 use media::{AVCommand, VideoData};
 
-use crate::{AVPlayer, AVSinks};
 #[cfg(feature = "uuav")]
 use crate::audio_sink::AudioSink;
+use crate::{AVPlayer, AVSinks};
 
 pub struct VideoSink {
     pub source: String,

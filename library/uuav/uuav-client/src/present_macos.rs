@@ -6,7 +6,7 @@
 //! flow is untouched.
 
 use crate::platform::UnityDevice;
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, ensure};
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2_core_foundation::CFRetained;
@@ -20,6 +20,12 @@ use std::os::raw::c_void;
 use uuav_ipc::mach_channel::SurfaceTag;
 
 type Texture = Retained<ProtocolObject<dyn MTLTexture>>;
+
+/// Pixels a generation may announce: 4096 x 4096, DCI 4K and a little more.
+/// The helper is the untrusted side of this channel and its dimensions size
+/// what this side allocates or wraps per slot, so a frame past this is
+/// refused before anything is allocated.
+const MAX_PIXELS: u64 = 4096 * 4096;
 
 const SLOTS: usize = 3;
 const PLANES: usize = 2;
@@ -249,6 +255,10 @@ fn wrap_generation(unity: &UnityDevice, pending: &PendingGen) -> Result<ActiveGe
     let (width, height) = pending
         .dims
         .ok_or_else(|| anyhow!("generation has no dims"))?;
+    ensure!(
+        u64::from(width).saturating_mul(u64::from(height)) <= MAX_PIXELS,
+        "helper announced {width}x{height}, past the {MAX_PIXELS} pixel cap"
+    );
 
     let wrap_slot =
         |slot: &[Option<CFRetained<IOSurfaceRef>>; PLANES]| -> Result<[Texture; PLANES]> {

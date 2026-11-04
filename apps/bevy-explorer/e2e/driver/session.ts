@@ -153,22 +153,35 @@ export async function signIn(explorer: Explorer, target: Target, mode: SignIn, f
   return enterWorld(explorer, undefined, heldRealm)
 }
 
+/** How long a held, realm-connected world is left to its HUD before the console is asked for the
+ *  realm: a `Jump In` that mounts within it wins. */
+export const HELD_GRACE_MS = 5000
+
 /** Wait for the world. Until it comes, one action at most: `Jump In` is pressed once the HUD
  *  offers it as actionable; otherwise, with `heldRealm`, `/changerealm <heldRealm>` is sent once
- *  the state is signed in, held and realm-connected. */
-export async function enterWorld(explorer: Explorer, timeoutMs = 300_000, heldRealm?: string): Promise<WorldState> {
+ *  the state has been signed in, held and realm-connected for `heldGraceMs` with no `Jump In`.
+ *  The path taken is logged. */
+export async function enterWorld(explorer: Explorer, timeoutMs = 300_000, heldRealm?: string, heldGraceMs = HELD_GRACE_MS): Promise<WorldState> {
   let jumped = false
+  let heldSince: number | undefined
   return until(
     async () => {
       const state = await explorer.worldState()
       if (state.inWorld || jumped) return state
       const jump = await explorer.hud.find({ name: 'Jump In', role: 'button', index: 0 }).catch(() => undefined)
       if (jump?.actionable) {
+        console.error('[e2e] entering the world through the HUD Jump In')
         await explorer.hud.click({ name: 'Jump In', role: 'button', index: 0 })
         jumped = true
       } else if (heldRealm && state.signedIn && state.worldHeld && state.realmConnected) {
-        await explorer.run(`/changerealm ${heldRealm}`)
-        jumped = true
+        heldSince ??= Date.now()
+        if (Date.now() - heldSince >= heldGraceMs) {
+          console.error(`[e2e] no Jump In after ${heldGraceMs} ms of a held world: asking the console for ${heldRealm}`)
+          await explorer.run(`/changerealm ${heldRealm}`)
+          jumped = true
+        }
+      } else {
+        heldSince = undefined
       }
       return state
     },

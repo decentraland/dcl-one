@@ -9,6 +9,9 @@ use bevy::render::{
 };
 use metal::foreign_types::{ForeignType, ForeignTypeRef};
 
+/// Frames are presented on this platform.
+pub const PRESENTS_FRAMES: bool = true;
+
 /// A live `id<MTLTexture>` on the renderer's device: `uuav_init` derives the device from it and
 /// retains the device itself, so the probe only has to outlive the call.
 pub struct Probe {

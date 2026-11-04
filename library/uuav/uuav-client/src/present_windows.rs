@@ -16,6 +16,12 @@ use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC}
 use windows::Win32::Graphics::Dxgi::IDXGIKeyedMutex;
 use windows::core::Interface as _;
 
+/// Pixels a generation may announce: 4096 x 4096, DCI 4K and a little more.
+/// The helper is the untrusted side of this channel and its dimensions size
+/// what this side allocates or wraps per slot, so a frame past this is
+/// refused before anything is allocated.
+const MAX_PIXELS: u64 = 4096 * 4096;
+
 const SLOTS: usize = 3;
 
 /// A generation announced by the helper but not yet opened. The NT handle
@@ -239,6 +245,12 @@ fn open_generation(unity: &UnityDevice, mut pending: PendingSet) -> Result<Activ
         pending.handles.len() == SLOTS,
         "expected {SLOTS} slot handles, got {}",
         pending.handles.len()
+    );
+    ensure!(
+        u64::from(pending.width).saturating_mul(u64::from(pending.height)) <= MAX_PIXELS,
+        "helper announced {}x{}, past the {MAX_PIXELS} pixel cap",
+        pending.width,
+        pending.height
     );
     let handles = std::mem::take(&mut pending.handles);
 

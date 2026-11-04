@@ -1,7 +1,8 @@
 //! The render-world half: each frame, every video player's latest presented NV12 planes are
-//! converted into its target image, sized to the planes (the main world's image only follows
-//! suit through `VideoData::Info`, it never uploads a video image itself). Players the main
-//! world closed are freed here, once their planes are no longer read.
+//! converted into its target image once the main world has sized the image to the planes (it
+//! reads the size from [`super::Target`] and resizes the asset, which rebinds the materials;
+//! this side never replaces the image's texture or uploads pixels through the main world).
+//! Players the main world closed are freed here, once their planes are no longer read.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -217,7 +218,9 @@ fn check_size(width: u32, height: u32, max_dimension: u32) -> Result<(), String>
         ));
     }
     if u64::from(width) * u64::from(height) > MAX_PIXELS {
-        return Err(format!("{width}x{height} exceeds the {MAX_PIXELS} pixel cap"));
+        return Err(format!(
+            "{width}x{height} exceeds the {MAX_PIXELS} pixel cap"
+        ));
     }
     Ok(())
 }
@@ -241,6 +244,9 @@ fn present_uuav_frames(
     let Some(mut pipeline) = pipeline else {
         return;
     };
+    if !platform::PRESENTS_FRAMES {
+        return;
+    }
     // A capture holds the frame it was requested on until it is read back.
     if snapshot.is_some_and(|snapshot| snapshot.0) {
         return;
@@ -281,12 +287,40 @@ fn present_uuav_frames(
             continue;
         }
 
+        target.presented_size.store(
+            super::pack_size(presented.width, presented.height),
+            std::sync::atomic::Ordering::Release,
+        );
+
         let Some(gpu_image) = images.get_mut(target.image) else {
             trace!("uuav player {id}: no target image yet");
             continue;
         };
+        let size = wgpu::Extent3d {
+            width: presented.width,
+            height: presented.height,
+            depth_or_array_layers: 1,
+        };
+        // the main world sizes the image from `Target::presented_size`; a texture of another
+        // size is the one the materials are bound to and this pass must not swap it
+        if gpu_image.size != size
+            || !gpu_image
+                .texture_descriptor
+                .usage
+                .contains(TextureUsages::RENDER_ATTACHMENT)
+        {
+            trace!(
+                "uuav player {id}: target image {:?} is not the presented {size:?} yet",
+                gpu_image.size
+            );
+            continue;
+        }
 
-        if !planes.0.get(&id).is_some_and(|planes| planes.holds(&presented)) {
+        if !planes
+            .0
+            .get(&id)
+            .is_some_and(|planes| planes.holds(&presented))
+        {
             let Some(textures) = platform::make_planes(
                 &render_device,
                 presented.y,
@@ -314,31 +348,6 @@ fn present_uuav_frames(
         let Some(planes) = planes.0.get_mut(&id) else {
             continue;
         };
-
-        let size = wgpu::Extent3d {
-            width: presented.width,
-            height: presented.height,
-            depth_or_array_layers: 1,
-        };
-        if gpu_image.size != size
-            || !gpu_image
-                .texture_descriptor
-                .usage
-                .contains(TextureUsages::RENDER_ATTACHMENT)
-        {
-            debug!("uuav player {id}: resize {:?} -> {size:?}", gpu_image.size);
-            let mut descriptor = gpu_image.texture_descriptor.clone();
-            descriptor.size = size;
-            descriptor.usage |= TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT;
-            let texture = render_device.create_texture(&descriptor);
-            gpu_image.texture_view = match &gpu_image.texture_view_descriptor {
-                Some(view_descriptor) => texture.create_view(view_descriptor),
-                None => texture.create_view(&Default::default()),
-            };
-            gpu_image.texture = texture;
-            gpu_image.texture_descriptor = descriptor;
-            gpu_image.size = size;
-        }
 
         // nothing new to show and the target still holds the last conversion
         let target_texture = gpu_image.texture.id();

@@ -95,6 +95,11 @@ impl Drop for Mapping {
 /// host allocates inside the render event, so an absurd pair must be
 /// refused as a protocol error rather than reach `vec!`.
 const MAX_DIMENSION: u32 = 16_384;
+/// Pixels a generation may announce: 4096 x 4096, DCI 4K and a little more.
+/// The helper is the untrusted side of this channel and its dimensions size
+/// what this side allocates or wraps per slot, so a frame past this is
+/// refused before anything is allocated.
+const MAX_PIXELS: u64 = 4096 * 4096;
 
 /// A generation being assembled: mappings arrive over the fd channel,
 /// dimensions over the control channel (`TextureSet`), in either order.
@@ -330,6 +335,10 @@ fn activate(pending: PendingGen) -> Result<ActiveGen> {
     ensure!(
         width % 2 == 0 && height % 2 == 0,
         "helper announced odd NV12 dimensions {width}x{height}"
+    );
+    ensure!(
+        u64::from(width).saturating_mul(u64::from(height)) <= MAX_PIXELS,
+        "helper announced {width}x{height}, past the {MAX_PIXELS} pixel cap"
     );
     let y_len = (width as usize)
         .checked_mul(height as usize)
