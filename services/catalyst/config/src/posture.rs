@@ -285,6 +285,11 @@ const ROWS: &[Row] = &[
         "MARKETPLACE_SUBGRAPH_URL",
         "https://subgraph.decentraland.org/marketplace",
     ),
+    upstream(
+        "mirrors",
+        "NFT_WORKER_BASE_URL",
+        "https://nfts.decentraland.org",
+    ),
     // lamb2's LAND subgraph: parcel operators and permissions until the
     // land-authz index is published.
     upstream(

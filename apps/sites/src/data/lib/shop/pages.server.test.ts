@@ -107,6 +107,22 @@ describe("the other pages", () => {
     expect(collection.data.seo.title).toBe("Halloween 2019");
   });
 
+  it("the overview reads its Best Deals rail once decentraland.org's creator-sales rollout is on, and sends the flags on", async () => {
+    const { asked, client } = node([
+      { path: "/shop-api/v3/catalog/unified", body: { data: [], total: 0 } },
+      { path: "/shop-api/v3/catalog/trending", body: { data: [] } },
+    ]);
+    const flags = { "dapps-shop-creator-sales": true, "dapps-shop-suggested-for-you": false };
+    const overview = await loadShopPage("overview", { request: request("/shop/overview"), params: {}, client, now, env: {}, flags });
+    expect(overview.data.queries.map(([key]) => key)).toEqual([["overview-listings"], ["overview-trending", "all"], ["overview-deals"]]);
+    expect(asked.some((u) => u.includes("discounted=true"))).toBe(true);
+    // The browser primes the same answer before it hydrates.
+    expect(overview.data.featureFlags).toEqual(flags);
+
+    const off = await loadShopPage("overview", { request: request("/shop/overview"), params: {}, client, now, env: {}, flags: {} });
+    expect(off.data.queries.map(([key]) => key)).toEqual([["overview-listings"], ["overview-trending", "all"]]);
+  });
+
   it("the collectibles and LAND grids prime their first page under the keys the pages ask for", async () => {
     const { asked, client } = node([
       { path: "/shop-api/v3/catalog/unified", body: { data: [], total: 0 } },

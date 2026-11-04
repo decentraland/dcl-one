@@ -584,6 +584,16 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     .with_denylist(content.denylist.clone())
     .with_forwarder(content_forwarder);
     content.attach_writes(config.writes.content_writes_enabled, Arc::new(deployer));
+    // Expired partial uploads (content::partial_deployments) are reclaimed
+    // only where they can be made: a node taking local writes.
+    if config.writes.content_writes_enabled {
+        content::partial_deployments::spawn(
+            &jobs,
+            pool.clone(),
+            storage.clone(),
+            content::partial_deployments::Limits::from_config(&config),
+        );
+    }
     let denylisted = content
         .load_denylist()
         .await

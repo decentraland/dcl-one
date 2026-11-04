@@ -326,6 +326,32 @@ pub async fn validate(
     .into_result()
 }
 
+/// Validates one batch of a partial upload ([`ContentValidator::validate_staging`]):
+/// `files` holds the entity file under its id and the batch's other keys
+/// (their bytes are not read).
+pub async fn validate_staging(
+    entity: &Entity,
+    files: &HashMap<String, bytes::Bytes>,
+    ctx: &Context<'_>,
+    include_access: bool,
+) -> Result<(), Vec<ValidationError>> {
+    let deployment = Deployment {
+        entity,
+        files,
+        auth_chain: ctx.auth_chain,
+    };
+    ContentValidator {
+        external_calls: ctx.sources,
+        blockchain_checker: ctx.sources,
+        ignore_blockchain_access: ctx.sources.ignore_blockchain_access,
+        synced: false,
+        access_passed: false,
+    }
+    .validate_staging(&deployment, include_access)
+    .await
+    .into_result()
+}
+
 /// The write deployer's failure for a refused validation: `Unavailable`
 /// (503) when this node could not decide, `Unverifiable` (503) for a
 /// contract-wallet signature not checked here, `Rejected` (400) otherwise.
