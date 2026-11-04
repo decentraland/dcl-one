@@ -227,6 +227,32 @@ describe('enterWorld', () => {
     assert.deepEqual(fake.sent('hud_click'), ['/hud_click {"name":"Jump In","role":"button","index":0}'])
   })
 
+  test('a held world without a Jump In is asked for the realm through the console', async () => {
+    let asked = false
+    const fake = new FakeConsole({
+      world_state: () => world(asked ? {} : { inWorld: false, worldHeld: true, signedIn: true, realmConnected: true }),
+      hud_read: '{"found":false}',
+      changerealm: () => {
+        asked = true
+        return 'ok'
+      }
+    })
+    const state = await enterWorld(new Explorer(fake), 10_000, 'http://127.0.0.1:18744')
+    assert.equal(state.inWorld, true)
+    assert.deepEqual(fake.sent('changerealm'), ['/changerealm http://127.0.0.1:18744'])
+  })
+
+  test('a held world is left to its Jump In without a realm to ask for', async () => {
+    let reads = 0
+    const fake = new FakeConsole({
+      world_state: () => world(++reads > 2 ? {} : { inWorld: false, worldHeld: true, signedIn: true, realmConnected: true }),
+      hud_read: '{"found":false}',
+      changerealm: 'ok'
+    })
+    await enterWorld(new Explorer(fake), 10_000)
+    assert.deepEqual(fake.sent('changerealm'), [])
+  })
+
   test('needs no Jump In when the world comes on its own', async () => {
     const fake = new FakeConsole({ world_state: () => world(), hud_read: '{"found":false}' })
     await enterWorld(new Explorer(fake), 1000)

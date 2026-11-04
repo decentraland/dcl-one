@@ -111,7 +111,7 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
   }
   const explorer = new Explorer(console_)
   try {
-    await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin)
+    await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin, target.transport === 'native' ? realm : undefined)
   } catch (error) {
     await explorer.close()
     throw error
@@ -142,18 +142,21 @@ async function nativeConsole(target: Target, realm: string, position: string): P
   return spawnNative({ bin, port, token, args: ['--realm', realm, '--position', position, ...args] })
 }
 
-/** Sign in and enter the world. With the world held by the lobby, the page's `Jump In` lands. */
-export async function signIn(explorer: Explorer, target: Target, mode: SignIn, firstLogin: { name?: string; look?: number } = {}): Promise<WorldState> {
+/** Sign in, then wait for the world as `enterWorld` does: `Jump In` when the HUD offers it, or
+ *  `heldRealm` asked for through the console when the world is held and no `Jump In` exists. */
+export async function signIn(explorer: Explorer, target: Target, mode: SignIn, firstLogin: { name?: string; look?: number } = {}, heldRealm?: string): Promise<WorldState> {
   if (mode === 'account') {
     await explorer.loginIdentity(buildAuthIdentity(accountKey(target)), { name: firstLogin.name ?? 'e2etester', look: firstLogin.look ?? 1 })
   } else if (mode === 'guest') {
     await explorer.loginGuest()
   }
-  return enterWorld(explorer)
+  return enterWorld(explorer, undefined, heldRealm)
 }
 
-/** Wait for the world, pressing the lobby's `Jump In` when it offers one. */
-export async function enterWorld(explorer: Explorer, timeoutMs = 300_000): Promise<WorldState> {
+/** Wait for the world. Until it comes, one action at most: `Jump In` is pressed once the HUD
+ *  offers it as actionable; otherwise, with `heldRealm`, `/changerealm <heldRealm>` is sent once
+ *  the state is signed in, held and realm-connected. */
+export async function enterWorld(explorer: Explorer, timeoutMs = 300_000, heldRealm?: string): Promise<WorldState> {
   let jumped = false
   return until(
     async () => {
@@ -162,6 +165,9 @@ export async function enterWorld(explorer: Explorer, timeoutMs = 300_000): Promi
       const jump = await explorer.hud.find({ name: 'Jump In', role: 'button', index: 0 }).catch(() => undefined)
       if (jump?.actionable) {
         await explorer.hud.click({ name: 'Jump In', role: 'button', index: 0 })
+        jumped = true
+      } else if (heldRealm && state.signedIn && state.worldHeld && state.realmConnected) {
+        await explorer.run(`/changerealm ${heldRealm}`)
         jumped = true
       }
       return state
