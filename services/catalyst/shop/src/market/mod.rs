@@ -356,9 +356,21 @@ impl Settings {
             land_subgraph_url: checked("LAND_SUBGRAPH_URL", &upstreams.land_subgraph_url)?,
             eth_rpc_url: config.content.eth_rpc_url().context("ETH_RPC_URL")?,
             polygon_rpc_url: non_empty(&config.economy.rpc_endpoint_polygon),
-            third_party_registry_subgraph_url: non_empty(
+            third_party_registry_subgraph_url: checked(
+                "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
                 &config.validator.third_party_registry_l2_subgraph_url,
-            ),
+            )?
+            .map(|url| {
+                if url.starts_with("https://") {
+                    Ok(url)
+                } else {
+                    anyhow::bail!(
+                        "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL is not https: the approved \
+                         third-party providers are refused over plaintext"
+                    )
+                }
+            })
+            .transpose()?,
             land_image_base_url: config.map_urls().land_image_base,
             trades_sync_upstream_url: checked(
                 "TRADES_SYNC_UPSTREAM_URL",
@@ -594,10 +606,41 @@ impl MarketplaceState {
     /// `net`: the `TRADE_RPC_URLS` entry of its chain, and for Ethereum
     /// `ETH_RPC_URL` when that list has none.
     pub fn chain_rpc_url(&self, net: chain_walk::ChainNet) -> Option<String> {
+        self.rpc_url_for(net, net.chain_id())
+    }
+
+    /// The endpoint the settlement venues of `chain_id` (1 or 137) are read
+    /// over. Their addresses are mainnet's, so off mainnet `ETH_RPC_URL`,
+    /// which serves `ETH_NETWORK`, does not stand in for chain 1.
+    pub fn venue_rpc_url(&self, chain_id: u64) -> Option<String> {
+        let net = match chain_id {
+            1 => chain_walk::ChainNet::Ethereum,
+            137 => chain_walk::ChainNet::Matic,
+            _ => return None,
+        };
+        if self.settings.eth_network.trim() != "mainnet" {
+            return self
+                .settings
+                .market
+                .trade_rpc_urls
+                .for_chain(chain_id as i64)
+                .map(str::to_string);
+        }
+        self.chain_rpc_url(net)
+    }
+
+    /// The endpoint the trade-events walk of `net` reads: the
+    /// `TRADE_RPC_URLS` entry of the chain it indexes
+    /// (`MARKETPLACE_INDEX_CHAIN_ID_*`), and for Ethereum `ETH_RPC_URL`.
+    pub fn trade_events_rpc_url(&self, net: chain_walk::ChainNet) -> Option<String> {
+        self.rpc_url_for(net, self.settings.market.indexes.chain_id(net))
+    }
+
+    fn rpc_url_for(&self, net: chain_walk::ChainNet, chain_id: i64) -> Option<String> {
         self.settings
             .market
             .trade_rpc_urls
-            .for_chain(net.chain_id())
+            .for_chain(chain_id)
             .map(str::to_string)
             .or_else(|| {
                 (net == chain_walk::ChainNet::Ethereum)
@@ -605,6 +648,25 @@ impl MarketplaceState {
                     .flatten()
             })
     }
+}
+
+/// Refuses to walk an endpoint that serves another chain than `expected`:
+/// the walk would read another network's logs into this one's rows.
+async fn ensure_chain(
+    rpc: &crate::land_authz::indexer::Rpc<'_>,
+    expected: i64,
+) -> anyhow::Result<()> {
+    let v = rpc.call("eth_chainId", serde_json::json!([])).await?;
+    let served = v
+        .get("result")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|s| i64::from_str_radix(s.trim_start_matches("0x"), 16).ok())
+        .ok_or_else(|| anyhow::anyhow!("eth_chainId returned {v}"))?;
+    anyhow::ensure!(
+        served == expected,
+        "the endpoint serves chain {served}, not {expected}: refusing to index it"
+    );
+    Ok(())
 }
 
 /// Attaches `nft-index` and `trade-events-index` when their switches are on:
@@ -635,9 +697,17 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
             );
             continue;
         }
+        let trade_events = name == chain_walk::INDEXER_TRADE_EVENTS;
+        let rpc_url = move |state: &MarketplaceState, net: chain_walk::ChainNet| {
+            if trade_events {
+                state.trade_events_rpc_url(net)
+            } else {
+                state.chain_rpc_url(net)
+            }
+        };
         let nets: Vec<chain_walk::ChainNet> = chain_walk::ChainNet::ALL
             .into_iter()
-            .filter(|n| state.chain_rpc_url(*n).is_some())
+            .filter(|n| rpc_url(state, *n).is_some())
             .collect();
         if nets.is_empty() {
             tracing::warn!(
@@ -658,7 +728,7 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
                     let outcomes = futures::future::join_all(nets.iter().enumerate().map(|(i, net)| {
                         let (state, nft_indexes, ctx) = (&state, &nft_indexes, &ctx);
                         async move {
-                            let Some(url) = state.chain_rpc_url(*net) else { return Ok(()) };
+                            let Some(url) = rpc_url(state, *net) else { return Ok(()) };
                             let rpc = crate::land_authz::indexer::Rpc::at(&state.http, &url);
                             let progress = |m: String| ctx.progress(m);
                             let outcome = if name == chain_walk::INDEXER_NFT {
@@ -670,7 +740,11 @@ fn spawn_index_jobs(state: &Arc<MarketplaceState>, jobs: &Jobs) {
                             } else if name == chain_walk::INDEXER_MANA {
                                 chain_walk::run_pass(&state.pool, &rpc, &mana_transfers::ManaTransfersIndex { net: *net }, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
                             } else {
-                                chain_walk::run_pass(&state.pool, &rpc, &trade_events::TradeEventsIndex { net: *net }, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await
+                                let chain_id = state.settings.market.indexes.chain_id(*net);
+                                match ensure_chain(&rpc, chain_id).await {
+                                    Ok(()) => chain_walk::run_pass(&state.pool, &rpc, &trade_events::TradeEventsIndex { net: *net, chain_id }, &state.settings.market.indexes, Some(&ctx.cancel), &progress).await,
+                                    Err(e) => Err(e),
+                                }
                             };
                             match outcome {
                                 Ok(o) => {

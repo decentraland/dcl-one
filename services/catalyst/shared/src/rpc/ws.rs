@@ -1,29 +1,85 @@
-//! A WebSocket as a dRPC [`Transport`]: binary frames in and out, closed by
-//! `close` or a kill handle.
+//! A WebSocket as a dRPC [`Transport`]: binary frames in and out, ended by
+//! `close` or by its [`SocketClose`] handle with the close frame asked for.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use crate::rpc::drpc::transport::{GuardedDelivery, GuardedSend, MAX_GUARDED_MESSAGE_BYTES};
-use axum::extract::ws::{Message, WebSocket};
+use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use futures::{SinkExt, StreamExt};
+use tokio::sync::Mutex;
 use tokio::sync::mpsc::{
     Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel,
 };
-use tokio::sync::{Mutex, Notify};
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use crate::rpc::drpc::transport::{Transport, TransportError, TransportMessage};
 
+/// The close the RPC layer's own `close` ends a live socket with (upstream
+/// social-service-ea `ws-handler.ts`: `ws.end(1011, 'RPC transport closed')`).
+pub const RPC_TRANSPORT_CLOSED: (u16, &str) = (1011, "RPC transport closed");
+
+/// How long the writer may take to hand the close frame over, and to close.
+const CLOSE_BUDGET: Duration = Duration::from_millis(100);
+
+/// How the server ends one socket: every task serving it stops, and the
+/// first close frame asked for is the one sent. A socket whose peer went
+/// away ends without one.
+#[derive(Default)]
+pub struct SocketClose {
+    ended: CancellationToken,
+    frame: OnceLock<Option<(u16, &'static str)>>,
+}
+
+impl SocketClose {
+    /// Ends the socket with `code` and `reason`, unless it already ended.
+    pub fn end(&self, code: u16, reason: &'static str) {
+        let _ = self.frame.set(Some((code, reason)));
+        self.ended.cancel();
+    }
+
+    /// The peer closed the socket: nothing more is sent.
+    pub fn peer_gone(&self) {
+        let _ = self.frame.set(None);
+        self.ended.cancel();
+    }
+
+    pub fn is_ended(&self) -> bool {
+        self.ended.is_cancelled()
+    }
+
+    pub async fn ended(&self) {
+        self.ended.cancelled().await
+    }
+
+    /// The close frame to send; `None` while the socket lives or once its
+    /// peer is gone.
+    pub fn frame(&self) -> Option<(u16, &'static str)> {
+        self.frame.get().copied().flatten()
+    }
+}
+
+/// The close frame axum sends for `(code, reason)`.
+pub fn close_message((code, reason): (u16, &'static str)) -> Message {
+    Message::Close(Some(CloseFrame {
+        code,
+        reason: reason.into(),
+    }))
+}
+
 /// The socket as a [`Transport`]: a reader task feeds binary frames into an
 /// unbounded queue (text, ping and pong are dropped), a writer task drains
-/// the outbound queue; `close` (or the admin disconnect) fires `kill`, which
-/// ends both.
+/// the outbound queue; `close` or the [`SocketClose`] handle ends both, and
+/// the writer then sends the handle's close frame (`RPC_TRANSPORT_CLOSED`
+/// when the RPC layer closed the transport itself).
 pub struct AxumWsTransport {
     inbound_rx: Mutex<UnboundedReceiver<TransportMessage>>,
     outbound_tx: UnboundedSender<TransportMessage>,
     guarded_tx: Sender<GuardedOutbound>,
     closed: AtomicBool,
-    kill: Arc<Notify>,
+    close: Arc<SocketClose>,
     address: String,
 }
 
@@ -32,22 +88,27 @@ impl AxumWsTransport {
         &self.address
     }
 
-    pub fn kill_handle(&self) -> Arc<Notify> {
-        self.kill.clone()
+    pub fn close_handle(&self) -> Arc<SocketClose> {
+        self.close.clone()
     }
 
-    pub fn spawn(socket: WebSocket, address: String) -> Self {
+    /// The transport over `socket`, and the writer task, which finishes once
+    /// the socket's close frame is out.
+    pub fn spawn(
+        socket: WebSocket,
+        address: String,
+        close: Arc<SocketClose>,
+    ) -> (Self, JoinHandle<()>) {
         let (mut sink, mut stream) = socket.split();
         let (inbound_tx, inbound_rx) = unbounded_channel::<TransportMessage>();
         let (outbound_tx, outbound_rx) = unbounded_channel::<TransportMessage>();
         let (guarded_tx, guarded_rx) = channel(GUARDED_CAPACITY);
-        let kill = Arc::new(Notify::new());
 
-        let reader_kill = kill.clone();
+        let reader_close = close.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = reader_kill.notified() => break,
+                    _ = reader_close.ended() => break,
                     msg = stream.next() => match msg {
                         Some(Ok(Message::Binary(b))) => {
                             if inbound_tx.send(b.to_vec()).is_err() {
@@ -55,25 +116,29 @@ impl AxumWsTransport {
                             }
                         }
                         Some(Ok(Message::Text(_))) | Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {}
-                        Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                        Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
+                            reader_close.peer_gone();
+                            break;
+                        }
                     }
                 }
             }
         });
 
-        let writer_kill = kill.clone();
-        tokio::spawn(async move {
-            run_writer(&mut sink, outbound_rx, guarded_rx, writer_kill).await;
+        let writer_close = close.clone();
+        let writer = tokio::spawn(async move {
+            run_writer(&mut sink, outbound_rx, guarded_rx, &writer_close).await;
         });
 
-        Self {
+        let transport = Self {
             inbound_rx: Mutex::new(inbound_rx),
             outbound_tx,
             guarded_tx,
             closed: AtomicBool::new(false),
-            kill,
+            close,
             address,
-        }
+        };
+        (transport, writer)
     }
 }
 
@@ -85,7 +150,7 @@ impl Transport for AxumWsTransport {
         }
         let mut rx = self.inbound_rx.lock().await;
         let bytes = tokio::select! {
-            _ = self.kill.notified() => None,
+            _ = self.close.ended() => None,
             recv = rx.recv() => recv,
         };
         match bytes {
@@ -133,13 +198,17 @@ impl Transport for AxumWsTransport {
             receiver.await.map_err(|_| TransportError::Closed)?
         };
         tokio::select! {
-            _ = self.kill.notified() => Err(TransportError::Closed),
+            _ = self.close.ended() => Err(TransportError::Closed),
             result = tokio::time::timeout_at(expires_at, exchange) => result.unwrap_or(Err(TransportError::Closed)),
         }
     }
+
+    /// The RPC layer ends the transport: a live socket closes with
+    /// [`RPC_TRANSPORT_CLOSED`] unless another close was asked for first.
     async fn close(&self) {
         self.closed.store(true, Ordering::Release);
-        self.kill.notify_waiters();
+        let (code, reason) = RPC_TRANSPORT_CLOSED;
+        self.close.end(code, reason);
     }
 }
 
@@ -158,7 +227,7 @@ async fn run_writer<S>(
     sink: &mut S,
     mut ordinary: UnboundedReceiver<Vec<u8>>,
     mut guarded: Receiver<GuardedOutbound>,
-    kill: Arc<Notify>,
+    close: &SocketClose,
 ) where
     S: futures::Sink<Message> + Unpin,
 {
@@ -167,13 +236,13 @@ async fn run_writer<S>(
         // Alternate priority when both lanes are ready: neither can indefinitely starve the other.
         let next = if prefer_guarded {
             tokio::select! { biased;
-                _ = kill.notified() => None,
+                _ = close.ended() => None,
                 item = guarded.recv(), if !guarded.is_closed() || !guarded.is_empty() => item.map(Outbound::Guarded),
                 item = ordinary.recv() => item.map(Outbound::Ordinary),
             }
         } else {
             tokio::select! { biased;
-                _ = kill.notified() => None,
+                _ = close.ended() => None,
                 item = ordinary.recv(), if !ordinary.is_closed() || !ordinary.is_empty() => item.map(Outbound::Ordinary),
                 item = guarded.recv() => item.map(Outbound::Guarded),
             }
@@ -184,25 +253,30 @@ async fn run_writer<S>(
         prefer_guarded = !prefer_guarded;
         match next {
             Outbound::Ordinary(bytes) => {
-                let sent = tokio::select! { _ = kill.notified() => false, result = sink.send(Message::Binary(bytes.into())) => result.is_ok() };
+                let sent = tokio::select! { _ = close.ended() => false, result = sink.send(Message::Binary(bytes.into())) => result.is_ok() };
                 if !sent {
                     break;
                 }
             }
             Outbound::Guarded(envelope) => {
-                if !write_guarded(sink, envelope, &kill).await {
+                if !write_guarded(sink, envelope, close).await {
                     break;
                 }
             }
         }
     }
-    // A partial/uncertain guarded sink write poisons this socket and all queued envelopes.
-    kill.notify_waiters();
+    // A partial/uncertain guarded sink write poisons this socket and all queued envelopes;
+    // a socket the writer gives up on is the transport closing.
+    let (code, reason) = RPC_TRANSPORT_CLOSED;
+    close.end(code, reason);
     drop(guarded);
-    let _ = tokio::time::timeout(std::time::Duration::from_millis(100), sink.close()).await;
+    if let Some(frame) = close.frame() {
+        let _ = tokio::time::timeout(CLOSE_BUDGET, sink.send(close_message(frame))).await;
+    }
+    let _ = tokio::time::timeout(CLOSE_BUDGET, sink.close()).await;
 }
 
-async fn write_guarded<S>(sink: &mut S, envelope: GuardedOutbound, kill: &Notify) -> bool
+async fn write_guarded<S>(sink: &mut S, envelope: GuardedOutbound, close: &SocketClose) -> bool
 where
     S: futures::Sink<Message> + Unpin,
 {
@@ -220,7 +294,7 @@ where
         return true;
     }
     let eligibility = tokio::select! {
-        _ = kill.notified() => None,
+        _ = close.ended() => None,
         _ = delivery.cancel.cancelled() => None,
         result = tokio::time::timeout_at(delivery.expires_at, (delivery.guard)()) => Some(result.unwrap_or(Err(()))),
     };
@@ -239,7 +313,7 @@ where
     // This is the irrevocable application handoff. A concurrent change after it cannot
     // revoke bytes already given to the sink/network. Any interrupted write retires it.
     let sent = tokio::select! {
-        _ = kill.notified() => false,
+        _ = close.ended() => false,
         _ = delivery.cancel.cancelled() => false,
         result = tokio::time::timeout_at(delivery.expires_at, sink.send(Message::Binary(bytes.into()))) => matches!(result, Ok(Ok(()))),
     };
@@ -269,6 +343,7 @@ mod guarded_tests {
     struct SinkState {
         flush: AtomicBool,
         frames: std::sync::Mutex<Vec<Vec<u8>>>,
+        closes: std::sync::Mutex<Vec<(u16, String)>>,
         wake: AtomicWaker,
         retired: AtomicBool,
     }
@@ -277,6 +352,7 @@ mod guarded_tests {
             Arc::new(Self {
                 flush: AtomicBool::new(flush),
                 frames: std::sync::Mutex::new(Vec::new()),
+                closes: std::sync::Mutex::new(Vec::new()),
                 wake: AtomicWaker::new(),
                 retired: AtomicBool::new(false),
             })
@@ -293,8 +369,15 @@ mod guarded_tests {
             Poll::Ready(Ok(()))
         }
         fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
-            if let Message::Binary(bytes) = item {
-                self.0.frames.lock().unwrap().push(bytes.to_vec());
+            match item {
+                Message::Binary(bytes) => self.0.frames.lock().unwrap().push(bytes.to_vec()),
+                Message::Close(Some(frame)) => self
+                    .0
+                    .closes
+                    .lock()
+                    .unwrap()
+                    .push((frame.code, frame.reason.to_string())),
+                _ => {}
             }
             Ok(())
         }
@@ -315,17 +398,17 @@ mod guarded_tests {
         let (_, inbound_rx) = unbounded_channel();
         let (outbound_tx, ordinary) = unbounded_channel();
         let (guarded_tx, guarded) = channel(GUARDED_CAPACITY);
-        let kill = Arc::new(Notify::new());
-        let writer_kill = kill.clone();
+        let close = Arc::new(SocketClose::default());
+        let writer_close = close.clone();
         tokio::spawn(async move {
-            run_writer(&mut TestSink(state), ordinary, guarded, writer_kill).await;
+            run_writer(&mut TestSink(state), ordinary, guarded, &writer_close).await;
         });
         Arc::new(AxumWsTransport {
             inbound_rx: Mutex::new(inbound_rx),
             outbound_tx,
             guarded_tx,
             closed: AtomicBool::new(false),
-            kill,
+            close,
             address: String::new(),
         })
     }
@@ -495,6 +578,31 @@ mod guarded_tests {
         output.close().await;
     }
 
+    /// Upstream `ws-handler.ts:177-181`: the RPC layer closing the transport
+    /// ends a live socket with 1011 "RPC transport closed"; a close asked for
+    /// first keeps its own frame, and a socket whose peer left gets none.
+    #[tokio::test]
+    async fn closing_the_transport_ends_a_live_socket_with_1011() {
+        let closes = async |prepare: &dyn Fn(&AxumWsTransport)| {
+            let sink = SinkState::new(true);
+            let output = transport(sink.clone());
+            prepare(&output);
+            output.close().await;
+            settle().await;
+            assert!(sink.retired.load(Ordering::Acquire));
+            sink.closes.lock().unwrap().clone()
+        };
+        assert_eq!(
+            closes(&|_| {}).await,
+            vec![(1011, "RPC transport closed".to_string())]
+        );
+        assert_eq!(
+            closes(&|t| t.close.end(3005, "Replaced by a newer connection")).await,
+            vec![(3005, "Replaced by a newer connection".to_string())]
+        );
+        assert_eq!(closes(&|t| t.close.peer_gone()).await, vec![]);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn unconfirmed_terminal_writer_stall_retires_socket_instead_of_stranding_subscription() {
         let sink = SinkState::new(false);
@@ -517,6 +625,9 @@ mod guarded_tests {
         settle().await;
         assert!(task.await.unwrap().is_ok());
         assert!(output.closed.load(Ordering::Acquire));
+        // The stalled sink takes the close frame's whole budget before it is closed.
+        tokio::time::advance(CLOSE_BUDGET).await;
+        settle().await;
         assert!(sink.retired.load(Ordering::Acquire));
         assert_eq!(handler.pending_ack_count(), 0);
     }
@@ -541,7 +652,7 @@ mod guarded_tests {
                 },
                 completion,
             };
-            assert!(write_guarded(&mut sink, envelope, &Notify::new()).await);
+            assert!(write_guarded(&mut sink, envelope, &SocketClose::default()).await);
             assert!(
                 receiver.await.unwrap().is_err(),
                 "expired/unknown delivery ends affected stream for resync"

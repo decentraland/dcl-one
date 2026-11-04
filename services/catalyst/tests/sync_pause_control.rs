@@ -94,6 +94,7 @@ async fn a_pause_stops_a_running_pointer_changes_stream_at_its_next_poll() {
         Arc::new(LiveSyncDeployer::new(
             pool.clone(),
             DEFAULT_FLUSH_CONCURRENCY,
+            catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
         )),
         Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
         bloom,

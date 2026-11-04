@@ -1,0 +1,50 @@
+{
+  "ecs7": true,
+  "runtimeVersion": "7",
+  "display": {
+    "title": "triggers-raycasts",
+    "description": "Visual regression scene triggers-raycasts (from explorer-automation 955b338)"
+  },
+  "owner": "",
+  "contact": {
+    "name": "explorer-automation",
+    "email": ""
+  },
+  "main": "bin/index.js",
+  "tags": [],
+  "scene": {
+    "parcels": [
+      "168,0",
+      "169,0"
+    ],
+    "base": "168,0"
+  },
+  "requiredPermissions": [
+    "ALLOW_TO_MOVE_PLAYER_INSIDE_SCENE"
+  ],
+  "spawnPoints": [
+    {
+      "name": "default",
+      "default": true,
+      "position": {
+        "x": [
+          23
+        ],
+        "y": [
+          0
+        ],
+        "z": [
+          10
+        ]
+      },
+      "cameraTarget": {
+        "x": 23,
+        "y": 1,
+        "z": 8
+      }
+    }
+  ],
+  "skyboxConfig": {
+    "fixedTime": 43200
+  }
+}

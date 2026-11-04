@@ -20,8 +20,9 @@ pub struct MarketUpstreamsConfig {
     #[arg(long, env = "MARKETPLACE_SUBGRAPH_URL")]
     pub marketplace_subgraph_url: Option<String>,
 
-    /// Land-manager subgraph: parcel operators and update-operator lookups
-    /// before the land-authz index is published; unset answers the envelope.
+    /// Land-manager subgraph: parcel operators, permissions and
+    /// update-operator lookups before the land-authz index is published;
+    /// unset answers the envelope (lamb2's 500 on the permissions route).
     #[arg(long, env = "LAND_SUBGRAPH_URL")]
     pub land_subgraph_url: Option<String>,
 
@@ -137,6 +138,14 @@ pub struct MarketplaceConfig {
     #[arg(long, env = "MARKETPLACE_INDEX_STOP_BLOCK_MATIC")]
     pub marketplace_index_stop_block_matic: Option<u64>,
 
+    /// The chain the trade-events walk of each network reads: its mainnet, or
+    /// its testnet (11155111, 80002) on a stack that trades there.
+    #[arg(long, env = "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM", default_value_t = 1)]
+    pub marketplace_index_chain_id_ethereum: i64,
+
+    #[arg(long, env = "MARKETPLACE_INDEX_CHAIN_ID_MATIC", default_value_t = 137)]
+    pub marketplace_index_chain_id_matic: i64,
+
     /// Between two rebuilds of the co-ownership neighbours (min 600).
     #[arg(
         long,
@@ -189,7 +198,10 @@ pub struct EconomyConfig {
     pub collections_fetch_interval_ms: u64,
 
     /// The collections chain's JSON-RPC (the old RPC_URL; public https, or
-    /// RPC_ENDPOINT_POLYGON_FILE since gateway keys sit in the path).
+    /// RPC_ENDPOINT_POLYGON_FILE since gateway keys sit in the path); the
+    /// content validator's L2 deploy access checks read it too (https only).
+    /// Unset or empty: https://rpc.decentraland.org/<polygon|amoy>?project=catalyst-content
+    /// by ETH_NETWORK, except under NODE_POSTURE island and journey.
     #[arg(long, env = "RPC_ENDPOINT_POLYGON", hide_env_values = true)]
     pub rpc_endpoint_polygon: Option<String>,
 
@@ -549,6 +561,13 @@ mod tests {
                 .marketplace_index_stop_block_ethereum
                 .is_none()
                 && c.marketplace.marketplace_index_stop_block_matic.is_none()
+        );
+        assert_eq!(
+            (
+                c.marketplace.marketplace_index_chain_id_ethereum,
+                c.marketplace.marketplace_index_chain_id_matic
+            ),
+            (1, 137)
         );
         assert_eq!(
             (

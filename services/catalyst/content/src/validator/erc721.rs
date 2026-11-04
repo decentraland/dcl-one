@@ -246,7 +246,7 @@ fn value_to_entity(value: &serde_json::Value) -> Option<Entity> {
     let version = value
         .get("version")
         .and_then(|v| v.as_str())
-        .unwrap_or("v3")
+        .unwrap_or(crate::entity::DEFAULT_ENTITY_VERSION)
         .to_string();
     let metadata = value.get("metadata").cloned();
 

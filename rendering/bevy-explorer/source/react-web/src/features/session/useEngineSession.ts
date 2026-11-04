@@ -23,6 +23,7 @@ import { checkRealm, realmCheckMessage } from '../../lib/realmCheck'
 import { entryRealm } from '../../lib/entryParams'
 import { color3ToHex, hexToColor3 } from '../../lib/color'
 import { closeTopPopup, hasOpenPopup, subscribePopups } from '../../design'
+import { requestDebugPanel } from '../debug/useDebugPanel'
 import { emitFriendEvent } from '../friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
 import { bootMode } from '../../lib/bootMode'
@@ -166,7 +167,24 @@ export interface BackpackState {
   deleteOutfit: (slot: number) => void
   /** Equip a saved outfit (applies its body shape, colors and wearables). */
   equipOutfit: (slot: number) => void
+  /** The randomize bar's state for this Backpack session. */
+  outfitHistory: OutfitHistory
+  /** Put a random look from the owned and base wearables on (keeps body shape and colors). */
+  randomizeOutfit: () => void
+  /** Go back to the look before the last randomize, undo or redo. */
+  undoOutfit: () => void
+  /** Go forward to the look the last undo left. */
+  redoOutfit: () => void
 }
+
+export interface OutfitHistory {
+  canUndo: boolean
+  canRedo: boolean
+  /** A roll is loading; the bar stays locked until it lands. */
+  rolling: boolean
+}
+
+const NO_OUTFIT_HISTORY: OutfitHistory = { canUndo: false, canRedo: false, rolling: false }
 
 export interface CommunitiesState {
   list: Community[]
@@ -681,6 +699,7 @@ export interface EngineSession {
   bindings: BindingsState
   profile: ProfileState
   notifications: NotificationsState
+  runDebugCommand: (line: string) => Promise<string>
   skybox: SkyboxState
   emotes: EmotesState
   backpack: BackpackState
@@ -953,6 +972,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const catalogItemsRef = useRef<Wearable[]>([])
   useEffect(() => { catalogItemsRef.current = catalogItems }, [catalogItems])
   const [outfits, setOutfits] = useState<OutfitsMetadata>({ outfits: [], namesForExtraSlots: [] })
+  const [outfitHistory, setOutfitHistory] = useState<OutfitHistory>(NO_OUTFIT_HISTORY)
   const [backpackOpen, setBackpackOpen] = useState(false)
   const [communities, setCommunities] = useState<Community[]>([])
   const [communitiesOpen, setCommunitiesOpen] = useState(false)
@@ -1209,6 +1229,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'bridgeUnavailable':
           // Every panel behind the bridge would stay empty with nothing to explain why. Not a crash:
           // the engine and the world itself are fine, so it opens as an ordinary dialog (issue #1233).
+          // With the HUD hidden (?hud=0, or a substituted ui scene) there are no panels to explain.
+          if (bootMode().hideHud) break
           setFatalError((prev) => prev ?? {
             message: 'The HUD could not reach the explorer bridge, so panels may stay empty. Restarting usually fixes it.',
             source: 'bridge'
@@ -1293,6 +1315,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'outfits':
           setOutfits(msg.metadata)
+          break
+        case 'outfitHistory':
+          setOutfitHistory({ canUndo: msg.canUndo, canRedo: msg.canRedo, rolling: msg.rolling })
           break
         case 'communities':
           setCommunities(msg.communities)
@@ -1612,6 +1637,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setSeenDenied([])
           skipRefusal.current.clear()
           break
+        case 'debug':
+          requestDebugPanel(cmd.target, pushSystemMessage)
+          break
         case 'commands':
           driverRef.current?.send({ kind: 'consoleCommand', command: 'help' })
           break
@@ -1818,6 +1846,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     panelSetters.forEach((set) => set(open && set === setCreateOpen))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  const runDebugCommand = useCallback((line: string) =>
+    driverRef.current?.command?.(line) ?? Promise.reject(new Error('Engine console unavailable')), [])
+
   // The engine clock as `/time` (no args) reports it; null when there is no engine console.
   const readClock = useCallback(async (): Promise<{ hours: number; speed: number } | null> => {
     const reply = await driverRef.current?.command?.('/time').catch(() => undefined)
@@ -2354,9 +2385,15 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [send])
   // Closing the Backpack (its own toggle, or another page opening) deploys its look in one go, as
   // Unity does; the bridge skips it when nothing changed.
+  // The randomize history only covers one Backpack session. It resets first, so a roll still loading
+  // drops its result instead of editing the look after the commit captured it.
   const backpackWasOpen = useRef(false)
   useEffect(() => {
-    if (backpackWasOpen.current && !backpackOpen) driverRef.current?.send({ kind: 'commitAvatar' })
+    if (backpackWasOpen.current && !backpackOpen) {
+      driverRef.current?.send({ kind: 'resetOutfitHistory' })
+      driverRef.current?.send({ kind: 'commitAvatar' })
+      setOutfitHistory(NO_OUTFIT_HISTORY)
+    }
     backpackWasOpen.current = backpackOpen
   }, [backpackOpen])
   const setAvatarColor = useCallback((target: AvatarColorTarget, hex: string) => {
@@ -2389,6 +2426,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // items off the loaded catalog page), which becomes the authoritative equipped set — so no
     // client-side rebuild here (that dropped off-page items and later un-equipped them).
     driverRef.current?.send({ kind: 'equipOutfit', slot })
+  }, [])
+  // The bridge re-emits the full `wearables` set after each step, like equipOutfit.
+  const randomizeOutfit = useCallback(() => {
+    driverRef.current?.send({ kind: 'randomizeOutfit' })
+  }, [])
+  const undoOutfit = useCallback(() => {
+    driverRef.current?.send({ kind: 'undoOutfit' })
+  }, [])
+  const redoOutfit = useCallback(() => {
+    driverRef.current?.send({ kind: 'redoOutfit' })
   }, [])
   const createCommunity = useCallback(
     (input: { name: string; description: string; privacy: 'public' | 'private'; discoverable: boolean }) => {
@@ -3221,6 +3268,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       requestOwnedNames,
       dismissSaveError: dismissProfileSaveError
     },
+    runDebugCommand,
     skybox: {
       open: skyboxOpen,
       toggle: toggleSkybox,
@@ -3241,7 +3289,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
       equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, forceRender, setForceRender,
       outfits: outfits.outfits, outfitSlots: ownedNames.length > 0 ? 10 : 5,
-      saveOutfit, deleteOutfit, equipOutfit
+      saveOutfit, deleteOutfit, equipOutfit,
+      outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
     communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail },
     map: mapSlice,

@@ -124,6 +124,65 @@
   z-index: 3;
   pointer-events: auto;
 }
+/* Centred under the avatar (the preview's middle, 260px) and lined up with the hints button. */
+.randomizeBar {
+  position: absolute;
+  left: 260px;
+  top: 884px;
+  z-index: 3;
+  display: flex;
+  gap: 8px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+.historyGroup {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  overflow: hidden;
+  border-radius: var(--r-md);
+  background: var(--scrim-40);
+}
+.historyDivider {
+  width: 1px;
+  height: 18px;
+  background: var(--fill-5);
+}
+.historyBtn,
+.randomizeBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 38px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.historyBtn {
+  width: 40px;
+}
+.randomizeBtn {
+  gap: 8px;
+  padding: 0 14px;
+  border-radius: var(--r-md);
+  background: var(--scrim-40);
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+}
+.historyBtn:hover:not(:disabled),
+.randomizeBtn:hover:not(:disabled) {
+  background-color: var(--fill-faint);
+}
+/* Locked: the content fades, the container stays. */
+.historyBtn:disabled,
+.randomizeBtn:disabled {
+  cursor: default;
+}
+.historyBtn:disabled > *,
+.randomizeBtn:disabled > * {
+  opacity: 0.2;
+}
 .card {
   position: absolute;
   left: 538px;

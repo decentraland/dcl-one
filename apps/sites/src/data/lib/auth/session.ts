@@ -130,12 +130,12 @@ export function claimWalletCookieOnUse(win: Window): () => void {
     if (win.document.visibilityState === "visible") claim();
   };
   win.addEventListener("focus", claim);
-  win.addEventListener("pointerdown", claim, true);
+  win.addEventListener("pointerdown", claim, { capture: true });
   win.addEventListener("pageshow", claim);
   win.document.addEventListener("visibilitychange", onVisibility);
   return () => {
     win.removeEventListener("focus", claim);
-    win.removeEventListener("pointerdown", claim, true);
+    win.removeEventListener("pointerdown", claim, { capture: true });
     win.removeEventListener("pageshow", claim);
     win.document.removeEventListener("visibilitychange", onVisibility);
   };

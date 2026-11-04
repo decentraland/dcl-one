@@ -33,6 +33,7 @@ uuid.workspace = true
 tokio-util.workspace = true
 dashmap.workspace = true
 parking_lot.workspace = true
+metrics.workspace = true
 hex.workspace = true
 libc.workspace = true
 urlencoding.workspace = true
