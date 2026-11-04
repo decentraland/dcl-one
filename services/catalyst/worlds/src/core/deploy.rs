@@ -98,27 +98,14 @@ fn rejection(status: StatusCode, message: impl Into<String>) -> Response {
         .into_response()
 }
 
-/// Size and count limits of the multipart body answer 413, as the old service.
-fn is_upload_limit(message: &str) -> bool {
-    [
-        upload_limits::PAYLOAD_TOO_LARGE_MESSAGE,
-        upload_limits::TOO_MANY_PARTS_MESSAGE,
-        TOO_MANY_FILES_MESSAGE,
-        FILE_TOO_LARGE_MESSAGE,
-    ]
-    .contains(&message)
-        || message.starts_with("The multipart request has too many fields")
+/// A request refused before validation: 400.
+pub(super) fn err_one(message: impl Into<String>) -> Response {
+    rejection(StatusCode::BAD_REQUEST, message)
 }
 
-/// A request refused before validation: 400, or 413 for a body limit.
-pub(super) fn err_one(message: impl Into<String>) -> Response {
-    let message = message.into();
-    let status = if is_upload_limit(&message) {
-        StatusCode::PAYLOAD_TOO_LARGE
-    } else {
-        StatusCode::BAD_REQUEST
-    };
-    rejection(status, message)
+/// A size or count limit of the multipart body: 413, as the old service.
+pub(super) fn payload_too_large(message: impl Into<String>) -> Response {
+    rejection(StatusCode::PAYLOAD_TOO_LARGE, message)
 }
 
 /// A refused publish: its status and message.
@@ -166,7 +153,7 @@ pub async fn deploy_entity(
     if let Some(len) = declared
         && declared_length_exceeds_limit(len)
     {
-        return err_one(upload_limits::PAYLOAD_TOO_LARGE_MESSAGE);
+        return payload_too_large(upload_limits::PAYLOAD_TOO_LARGE_MESSAGE);
     }
 
     let _source = match upload_limits::admit_source(
@@ -769,6 +756,10 @@ async fn deploy_entity_inner(
             tracing::info!(world = %world, entity_id = %entity_id, "deploy conflict: overlapping-scene set changed under a scoped authorization");
             return rejection(StatusCode::CONFLICT, reason);
         }
+        if e.status() == 503 {
+            tracing::warn!(world = %world, entity_id = %entity_id, reason = %reason, "deploy deferred: stored content changed under it");
+            return unavailable(reason).into_response();
+        }
         if e.is_forbidden() || e.is_bad_request() {
             tracing::info!(world = %world, entity_id = %entity_id, reason = %reason, "deploy refused");
             return if e.is_forbidden() {
@@ -924,7 +915,7 @@ mod tests {
             FILE_TOO_LARGE_MESSAGE,
         ] {
             assert_eq!(
-                body(err_one(limit)).await,
+                body(payload_too_large(limit)).await,
                 (
                     413,
                     json!({ "error": "Payload Too Large", "message": limit })

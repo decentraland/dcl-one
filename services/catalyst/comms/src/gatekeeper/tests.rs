@@ -1135,8 +1135,17 @@ async fn undetermined_world_token_routes_request_retry() {
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(response.headers()["retry-after"], "1");
         let (_, body) = body_json(response).await;
-        assert_eq!(body["error"], "Service Unavailable");
-        assert!(body["message"].is_string());
+        let reason = "World access could not be decided; retry shortly.";
+        // WCS's world comms handler puts the reason in `error`; the adapter route keeps the label.
+        let error = if path.starts_with("/get-comms-adapter") {
+            "Service Unavailable"
+        } else {
+            reason
+        };
+        assert_eq!(
+            body,
+            serde_json::json!({ "error": error, "message": reason })
+        );
     }
 }
 

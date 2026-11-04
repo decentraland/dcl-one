@@ -533,8 +533,9 @@ async fn missing_stored_file(
         .iter()
         .find(|(_, hash)| !present.get(hash).copied().unwrap_or(false))
         .map(|(file, hash)| {
-            ApiError::bad_request(format!(
-                "The file {file} ({hash}) was not uploaded or its hash does not match its content"
+            // Validation saw every key, so a missing one was collected meanwhile: retryable.
+            ApiError::service_unavailable(format!(
+                "The file {file} ({hash}) was removed from storage while the deployment was in progress, please retry"
             ))
         }))
 }
@@ -1696,16 +1697,18 @@ fn ilike_contains(term: &str) -> String {
 /// component; without it the search is full-text plus ILIKE only.
 async fn trigram_available(pool: &PgPool) -> bool {
     static AVAILABLE: tokio::sync::OnceCell<bool> = tokio::sync::OnceCell::const_new();
-    *AVAILABLE
-        .get_or_init(|| async {
+    // A failed lookup is not cached: the next search asks again.
+    AVAILABLE
+        .get_or_try_init(|| async {
             sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')",
             )
             .fetch_one(pool)
             .await
-            .unwrap_or(false)
         })
         .await
+        .copied()
+        .unwrap_or(false)
 }
 
 /// `GET /worlds`. The search is WCS's: a full-text match over name, title and
