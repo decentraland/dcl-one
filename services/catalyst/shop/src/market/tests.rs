@@ -392,6 +392,34 @@ async fn profiles_reject_too_many_ids_and_malformed_json() {
 }
 
 #[tokio::test]
+async fn profiles_metadata_rejects_missing_and_too_many_ids() {
+    let state = state_without_db();
+    let (status, body) = post_json(
+        router(state.clone()),
+        "/lambdas/profiles/metadata",
+        json!({}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body["message"],
+        "No profile ids were specified. Expected ids:string[] in body"
+    );
+    let ids: Vec<String> = (0..=1000).map(|i| format!("0x{i}")).collect();
+    let (status, body) = post_json(
+        router(state),
+        "/lambdas/profiles/metadata",
+        json!({ "ids": ids }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body["message"],
+        "Too many profile ids were specified. Maximum allowed is 1000"
+    );
+}
+
+#[tokio::test]
 async fn default_profiles_are_synthesized_without_a_database() {
     let state = state_without_db();
     let (status, body) = get_json(router(state.clone()), "/lambdas/profiles/default7").await;
@@ -796,6 +824,42 @@ async fn a_synced_profile_is_served_shaped_and_cached() {
     let (status, body) = get_json(router(state), &format!("/lambdas/profile/{address}")).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({ "avatars": [], "timestamp": 0 }));
+}
+
+#[tokio::test]
+async fn compact_profiles_agree_with_the_full_answer() {
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let t = tag();
+    let address = format!("0x{}00000001", &t[..32]);
+    let unknown = format!("0x{}00000002", &t[..32]);
+    let entity_id = format!("bafymeta{t}");
+    seed_profile(
+        &state.pool,
+        &address,
+        &entity_id,
+        json!({ "avatars": [{
+            "name": "tester",
+            "avatar": { "snapshots": { "face256": "bafyface", "body": "bafybody" } }
+        }] }),
+    )
+    .await;
+
+    let ids = json!({ "ids": [address.to_uppercase(), unknown] });
+    let (status, full) = post_json(router(state.clone()), "/lambdas/profiles", ids.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    let face = full[0]["avatars"][0]["avatar"]["snapshots"]["face256"].clone();
+    let (status, compact) =
+        post_json(router(state.clone()), "/lambdas/profiles/metadata", ids).await;
+    unseed_profile(&state.pool, &address, &entity_id).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        compact,
+        json!([{
+            "pointer": address, "name": "tester", "hasClaimedName": false, "thumbnailUrl": face
+        }])
+    );
 }
 
 fn head(t: &str, i: u64, created_ms: i64) -> Value {
