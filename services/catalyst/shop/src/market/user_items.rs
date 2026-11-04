@@ -17,6 +17,7 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
 use crate::content::queries::active_entity_docs_by_pointers;
+use crate::shared::http_util::fetcher_error;
 use crate::shared::query_params::{
     MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination, QueryParams,
     parse_pagination_with, parse_query_string, qs_get_string,
@@ -334,8 +335,9 @@ pub async fn user_emotes(
     owned_items_response(&state, &address, "emote", &query_string).await
 }
 
-/// Names page with the land routes' pagination: an oversized page clamps to
-/// 1000 and a non-positive page or size clamps to 1.
+/// Names page: a `pageSize` over 1000 answers lamb2's 400 (`max allowed
+/// pageSize is 1000`), a non-positive page or size clamps to 1. A failed
+/// reader answers lamb2's 502 `FetcherError`.
 pub async fn user_names(
     State(state): State<SharedState>,
     Path(address): Path<String>,
@@ -344,20 +346,18 @@ pub async fn user_names(
     if !super::is_valid_eth_address(&address) {
         return bad_request("Address must be a valid Ethereum address");
     }
-    let address = address.to_lowercase();
+    let requested = address;
+    let address = requested.to_lowercase();
     let params = parse_query_string(request.uri().query().unwrap_or(""));
-    let p = parse_pagination_with(
+    let p = match parse_pagination_with(
         &params,
         MAX_PAGE_SIZE as i64,
-        OversizePolicy::Clamp,
+        OversizePolicy::Reject,
         NonPositivePolicy::ClampToOne,
-    )
-    .unwrap_or(Pagination {
-        page_size: 1,
-        page_num: 1,
-        offset: 0,
-        limit: 1,
-    });
+    ) {
+        Ok(p) => p,
+        Err(msg) => return bad_request(&msg),
+    };
     if let Err(envelope) = readers::require_marketplace(&state) {
         return envelope;
     }
@@ -365,7 +365,7 @@ pub async fn user_names(
         Ok(n) => n,
         Err(e) => {
             tracing::warn!(error = %e, address, "names reader failed");
-            return service_unavailable("ownership readers unavailable");
+            return fetcher_error(&requested);
         }
     };
     let total = names.len();

@@ -144,7 +144,6 @@ const DB_FIXTURES: &[&str] = &[
 const READER_FIXTURES: &[&str] = &[
     "users-wearables-200-unknown-address",
     "users-emotes-200-unknown-address",
-    "users-names-200-pagesize-cap-1000",
     "collections-wearables-by-owner-200-unknown",
 ];
 

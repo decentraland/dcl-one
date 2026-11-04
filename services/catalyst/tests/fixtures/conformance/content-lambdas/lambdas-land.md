@@ -62,7 +62,7 @@ Counts: 6 endpoints. MATCH 0, GAP 0, DIVERGENT 6, MISSING 0.
 
 | Aspect | Upstream | dcl-one | Verdict |
 |---|---|---|---|
-| Error envelope | `{error, message}`. Handled errors map as follows (`decentraland/lamb2:src/controllers/handlers/errorHandler.ts:6`): `InvalidRequestError` → 400 `"Bad request"`, `ServiceOverloadedError` → 503 `"Service overloaded, retry shortly"`, `FetcherError` → 502 `"The requested items cannot be fetched right now"`, `NotFoundError` → 404 `"Not Found"`, `ParcelOrStateNotFoundError` → 404 `"Bad Request"`. Anything else → 500 `{"error":"Internal Server Error"}` with **no** `message` (`errorHandler.ts:71`). | `bad_request` matches the 400 label (`services/catalyst/shared/src/http_util.rs:14`). 500 is `{"error":"Internal Server Error","message":"Internal Server Error"}` (`http_util.rs:30`), except on `/permissions`, which answers lamb2's bare 500 (`services/catalyst/land-authz/src/routes.rs:94-100`). Source outages answer 503 `{"error":"Service Unavailable","message":…,"source":…,"configure"?:…}` plus `Retry-After: 60` (`services/catalyst/chain-index/src/source.rs:88`). | DIVERGENT |
+| Error envelope | `{error, message}`. Handled errors map as follows (`decentraland/lamb2:src/controllers/handlers/errorHandler.ts:6`): `InvalidRequestError` → 400 `"Bad request"`, `ServiceOverloadedError` → 503 `"Service overloaded, retry shortly"`, `FetcherError` → 502 `"The requested items cannot be fetched right now"`, `NotFoundError` → 404 `"Not Found"`, `ParcelOrStateNotFoundError` → 404 `"Bad Request"`. Anything else → 500 `{"error":"Internal Server Error"}` with **no** `message` (`errorHandler.ts:71`). | `bad_request` matches the 400 label (`services/catalyst/shared/src/http_util.rs:14`). 500 is `{"error":"Internal Server Error","message":"Internal Server Error"}` (`http_util.rs:30`), except on `/permissions`, which answers lamb2's bare 500 (`services/catalyst/land-authz/src/routes.rs:94-100`). A configured subgraph that fails answers lamb2's 502 `FetcherError` on the element routes (`fetcher_error`, `services/catalyst/shared/src/http_util.rs:41`) and the bare 500 on `/operators` and `/permissions`. An unconfigured or unpublished source answers 503 `{"error":"Service Unavailable","message":…,"source":…,"configure"?:…}` plus `Retry-After: 60` (`services/catalyst/chain-index/src/source.rs:88`), which has no upstream trigger. | DIVERGENT (the 500 `message`; the 503 has no upstream trigger) |
 | Trailing slash | `path-to-regexp` non-strict: accepted | `NormalizePath::trim_trailing_slash` (`services/catalyst/src/serve.rs:1304`) | MATCH |
 | Path case | The well-known-components router uses `path-to-regexp` defaults (case-insensitive), so `/USERS/...` matches | axum is case-sensitive, so 404 | DIVERGENT (P2; covered by the cross-cutting area) |
 | 405 | `router.allowedMethods()` (`decentraland/lamb2:src/service.ts:15`) | axum 405 with `Allow` | MATCH (status) |
@@ -79,7 +79,7 @@ Counts: 6 endpoints. MATCH 0, GAP 0, DIVERGENT 6, MISSING 0.
 | Item | Upstream | dcl-one |
 |---|---|---|
 | `address` | Not validated. Lowercased for the fetch and the cache key (`decentraland/lamb2:src/adapters/elements-fetcher.ts:198`). | Must match `0x`/`0X` + 40 hex digits, else 400 (`services/catalyst/shop/src/market/user_items.rs:344`). Then lowercased. |
-| `pageSize` | `parseInt` (lenient: `"10abc"`→10, `"abc"`→NaN). Default 100. Over 1000 → 400 `max allowed pageSize is 1000` (`decentraland/lamb2:src/logic/pagination.ts:12`, `names-handler.ts:11`). | `i64` parse; a parse failure means default 100. Over 1000 is **clamped** to 1000. Below 1 is clamped to 1 (`user_items.rs:349`). |
+| `pageSize` | `parseInt` (lenient: `"10abc"`→10, `"abc"`→NaN). Default 100. Over 1000 → 400 `max allowed pageSize is 1000` (`decentraland/lamb2:src/logic/pagination.ts:12`, `names-handler.ts:11`). | `i64` parse; a parse failure means default 100. Over 1000 → the same 400 (`OversizePolicy::Reject`, `user_items.rs:355`). Below 1 is clamped to 1. |
 | `pageNum` | `parseInt`, default 1. No lower bound. | Clamped to at least 1 |
 | Other params | None | None |
 
@@ -89,16 +89,16 @@ Counts: 6 endpoints. MATCH 0, GAP 0, DIVERGENT 6, MISSING 0.
 |---|---|---|---|---|---|---|
 | OK, marketplace API answers (primary) | 200 | `{"elements":[{"name":"alice","contractAddress":"0x00000000000000000000000000000000000000aa","tokenId":"123","price":"1000000000000000000"}],"totalAmount":1,"pageNum":1,"pageSize":100}`. `price` is a string, or absent when there is no order. Page and total come from the API (`limit`/`offset`). | JSON | `names-handler.ts:13-31`, `marketplace-api-fetcher.ts:474-512` | `user_items.rs:364-379` (subgraph only) | DIVERGENT: dcl-one never calls the marketplace API. Element order is subgraph `id asc`, not the API's order. The API's `total` is replaced by the subgraph count. |
 | OK, marketplace API failed, subgraph fallback | 200 | Same fields, but `elements` is **every** name: the handler does not slice, because `fetchNames` ignores `pagination` on the graph leg (`fetch-names.ts:58-72`). `totalAmount` = count. `pageNum` and `pageSize` are echoed. | JSON | `fetch-names.ts:58`, `names-handler.ts:13` | `user_items.rs:371-378` slices JS-style | DIVERGENT (upstream quirk; dcl-one slices) |
-| `pageSize` > 1000 | 400 | `{"error":"Bad request","message":"max allowed pageSize is 1000"}` | | `pagination.ts:12` | Clamped: 200 with `pageSize:1000` | DIVERGENT |
+| `pageSize` > 1000 | 400 | `{"error":"Bad request","message":"max allowed pageSize is 1000"}` | | `pagination.ts:12` | The same 400 (`user_items.rs:355`; fixture `shop/src/market/fixtures/users-names-400-pagesize-over-1000.json`) | MATCH |
 | `pageSize=abc` | 200 | `elements: []` (slice NaN), `"pageSize": null` | | `pagination.ts:5` | 200 with default 100 | DIVERGENT (P2) |
 | `pageNum=0` or negative | 200 | API receives a negative offset (behaviour depends on the API). On the fallback, the whole list. | | `fetch-items.ts:36` | Clamped to page 1 | DIVERGENT (P2) |
 | Invalid address (`0x12`) | 200 | The API call fails or returns empty; the subgraph returns `[]`, so the answer is an empty page | | `api-with-fallback.ts:28-45` | 400 `{"error":"Bad request","message":"Address must be a valid Ethereum address"}` | DIVERGENT |
 | Address with `0X` prefix | 200 (lowercased) | | | `elements-fetcher.ts:198` | 200 | MATCH |
 | Marketplace bulkhead full | 503 | `{"error":"Service overloaded, retry shortly","message":…}` | | `marketplace-api-fetcher.ts:136`, `errorHandler.ts:17` | n/a | n/a (dcl-one has no API leg) |
-| Both sources fail | 502 | `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}` (a stale entry is served for up to `maxAge+maxStaleAge` = 120 s) | | `elements-fetcher.ts:265-274` | 503 `{"error":"Service Unavailable","message":"ownership readers unavailable"}` (`user_items.rs:368`), no stale serving, 30 s TTL (`services/catalyst/chain-index/src/graph.rs:34`) | DIVERGENT |
+| Both sources fail | 502 | `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}` (a stale entry is served for up to `maxAge+maxStaleAge` = 120 s) | | `elements-fetcher.ts:265-274` | The same 502, the address as requested (`user_items.rs:368`). No stale serving, 30 s TTL (`services/catalyst/chain-index/src/graph.rs:39`) | MATCH (status and body); stale serving is LL-24 |
 | No subgraph configured | n/a (defaults always exist) | | | `the-graph.ts:38` | 503 envelope, `source:"marketplace-subgraph"`, message "the marketplace subgraph reader (LAND, estates, names) is not configured on this node" (`services/catalyst/shop/src/market/readers.rs:162`) | DIVERGENT |
 | Subgraph name `null` | Element kept with `name: null` | | | `fetch-names.ts:61` | Element dropped (`services/catalyst/chain-index/src/graph.rs:473`) | DIVERGENT (P2) |
-| More than 10,000 names | All returned | | | `fetch-elements.ts:23-44` | Cut at `MAX_PAGES=10` × 1000 (`services/catalyst/chain-index/src/graph.rs:29`) | DIVERGENT |
+| More than 10,000 names | All returned | | | `fetch-elements.ts:23-44` | Every page walked (`FULL_WALK_PAGES`, a 1,000,000-row runaway guard; `services/catalyst/chain-index/src/graph.rs:34`) | MATCH |
 
 Subgraph query: upstream filters on `owner_: {address: $owner}` (`fetch-names.ts:11`); dcl-one on `owner: $owner` (`services/catalyst/chain-index/src/graph.rs:458`). Account ids are addresses in the marketplace subgraph, so these are equivalent (read, not confirmed by capture).
 
@@ -108,7 +108,7 @@ Subgraph query: upstream filters on `owner_: {address: $owner}` (`fetch-names.ts
 
 ## 2. GET `/names/:name/owner`
 
-**Request:** `name` path param. Upstream applies `trim()`, `toLowerCase()`, then strips `/\.dcl\.eth$/` (`decentraland/lamb2:src/controllers/handlers/name-owner-handler.ts:11`). dcl-one applies `to_lowercase()` and strips the `.dcl.eth` suffix, with **no trim** (`services/catalyst/shop/src/market/lambdas_land.rs:354`).
+**Request:** `name` path param. Upstream applies `trim()`, `toLowerCase()`, then strips `/\.dcl\.eth$/` (`decentraland/lamb2:src/controllers/handlers/name-owner-handler.ts:11`). dcl-one applies `trim()`, `to_lowercase()` and strips the `.dcl.eth` suffix (`services/catalyst/shop/src/market/lambdas_land.rs:363`).
 
 **Responses**
 
@@ -116,10 +116,10 @@ Subgraph query: upstream filters on `owner_: {address: $owner}` (`fetch-names.ts
 |---|---|---|---|---|---|
 | Name held | 200 | `{"owner":"0x0000000000000000000000000000000000000001"}` (lowercase, from the subgraph) | `name-owner-handler.ts:25`, `fetch-name-owner.ts:30` | `lambdas_land.rs:332`. `Address::parse` lowercases (`services/catalyst/shared/src/identity.rs:61`). Index path: `shop.nft` where `lower(ens_subdomain)=lower($1)`. | MATCH |
 | `Alice.DCL.ETH` | 200, same as `alice` | | `name-owner-handler.ts:11` | `lambdas_land.rs:354` | MATCH |
-| Name with surrounding whitespace (`%20alice`) | 200 (trimmed) | | `name-owner-handler.ts:11` | 404 | DIVERGENT (P2) |
+| Name with surrounding whitespace (`%20alice`) | 200 (trimmed) | | `name-owner-handler.ts:11` | 200 (trimmed) | MATCH |
 | Empty after strip (`.dcl.eth`) | 404, empty body | | `name-owner-handler.ts:12` | 404, empty body (no row matches `''`) | MATCH |
 | Unknown name, or owner null | 404, empty body | | `name-owner-handler.ts:19` | 404, empty body (`lambdas_land.rs:333`) | MATCH |
-| Subgraph fails | 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <name>"}` (no stale serving; `ownershipDecisions`) | | `components.ts:217`, `elements-fetcher.ts:273` | 503 envelope `source:"marketplace-subgraph"`, "the marketplace names reader did not answer" | DIVERGENT |
+| Subgraph fails | 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <name>"}` (no stale serving; `ownershipDecisions`) | | `components.ts:217`, `elements-fetcher.ts:273` | The same 502, `<name>` trimmed, lowercased and stripped (`lambdas_land.rs:341`) | MATCH |
 | nft index not ready and no subgraph URL | n/a | | | 503 envelope `source:"nft-index"` | DIVERGENT (no upstream equivalent) |
 | Index DB error | 500 | | | 500 with `message` | DIVERGENT (P2) |
 
@@ -136,7 +136,7 @@ Upstream query: `nfts(where:{category: ens, searchText:$name}, first:1)` with no
 | Item | Upstream | dcl-one |
 |---|---|---|
 | `address` | Not validated. Lowercased (`decentraland/lamb2:src/logic/fetch-elements/fetch-elements.ts:20`). | Not validated. Lowercased (`services/catalyst/shop/src/market/lambdas_land.rs:180`). An invalid address yields `[]` on the reader path (`services/catalyst/chain-index/src/graph.rs:740`). |
-| `pageSize` | `parseInt`, default 100, **no maximum** (`maxPageSize = Number.MAX_VALUE`, `lands-handler.ts:10`) | Clamped to 1000. Below 1 is clamped to 1. Parse failure means 100 (`lambdas_land.rs:35`). |
+| `pageSize` | `parseInt`, default 100, **no maximum** (`maxPageSize = Number.MAX_VALUE`, `lands-handler.ts:10`) | No maximum (`i64::MAX`, `lambdas_land.rs:184`). Below 1 is clamped to 1. Parse failure means 100. |
 | `pageNum` | `parseInt`, default 1 | Clamped to at least 1 |
 
 **Element shape** (`decentraland/lamb2:src/logic/fetch-elements/fetch-lands.ts:61-80`, `types.ts:209`):
@@ -156,13 +156,13 @@ Undefined keys are omitted. `x` and `y` are present only when `category == "parc
 | `x`/`y` | Strings from `parcel.x/y` | `fetch-lands.ts:65` | Strings from `token_right.x/y` or `searchParcelX/Y`, parcels only (`lambdas_land.rs:115`) | MATCH |
 | `description` | `data.description`; null when the data record exists with a null description; absent when there is no data | `fetch-lands.ts:67` | `""` when the data record exists with a null description (`lambdas_land.rs:231`, `services/catalyst/chain-index/src/graph.rs:691`) | DIVERGENT (P2) |
 | `price` | Subgraph `activeOrder.price` (wei string). The subgraph's active order does not test expiry. | `fetch-lands.ts:76` | Index: `shop.nft_order` with `status='open' AND expires_at > now AND seller = owner` (`lambdas_land.rs:80`). Reader: `activeOrder.price`. | DIVERGENT on the index path: expired or foreign-seller orders are dropped |
-| `image` | Subgraph `nft.image` (production: `https://api.decentraland.org/v1/{parcels/x/y,estates/id}/map.png`; dcl-one's test at `lambdas_land.rs:449` assumes the same) | `fetch-lands.ts:77` | Synthesized as `<LAND_IMAGE_BASE_URL>/v1/parcels/{x}/{y}/map.png` or `/v1/estates/{id}/map.png`. The default base is the node's own `/api` (`services/catalyst/config/src/config.rs:530`). The reader never asks for `image`. | DIVERGENT by default |
+| `image` | Subgraph `nft.image` (production: `https://api.decentraland.org/v1/{parcels/x/y,estates/id}/map.png`; dcl-one's test in `lambdas_land.rs` assumes the same) | `fetch-lands.ts:77` | Reader: the subgraph's `image` as is (`services/catalyst/chain-index/src/graph.rs:685`). Index: synthesized as `<LAND_IMAGE_BASE_URL>/v1/parcels/{x}/{y}/map.png` or `/v1/estates/{id}/map.png`; `NODE_POSTURE=mirror` sets the base to `https://api.decentraland.org` (`services/catalyst/config/src/posture.rs:469`), other postures to the node's own `/api` | MATCH under `mirror` (index path: read, not captured) |
 | Order | `orderBy: transferredAt desc` per 1000-row page, paged by `id_gt` (so the order is only page-local beyond 1000) | `fetch-lands.ts:9` | Index: latest `Transfer` event (block, log) desc, then contract and token (`lambdas_land.rs:86`). Reader: full sort by `transferredAt` desc (`services/catalyst/chain-index/src/graph.rs:762`). | MATCH for ≤1000 lands. Tie-break differs (P2). |
-| `pageSize` > 1000 | 200 with the requested size | `lands-handler.ts:10` | Clamped to 1000; `pageSize:1000` echoed | DIVERGENT |
+| `pageSize` > 1000 | 200 with the requested size | `lands-handler.ts:10` | 200 with the requested size | MATCH |
 | `pageSize=0` / `pageNum=0` / negative | `[]`, or JS `slice` with a negative start (e.g. `pageSize=-1` gives every element but the last); the value is echoed | `pagination.ts:16-36` | Clamped to 1 | DIVERGENT (P2) |
 | `pageSize=abc` | `elements: []`, `"pageSize": null` | | 100 | DIVERGENT (P2) |
-| More than 10,000 lands | All returned | `fetch-elements.ts:23` | The reader stops at 10 pages (`services/catalyst/chain-index/src/graph.rs:29`). The index has no cap. | DIVERGENT (reader path) |
-| Subgraph fails | Stale list served for up to 10 min. With no stale entry: 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}`. | `elements-fetcher.ts:284-315` | 503 envelope `source:"marketplace-subgraph"` | DIVERGENT |
+| More than 10,000 lands | All returned | `fetch-elements.ts:23` | Every page walked on the reader (`FULL_WALK_PAGES`). The index has no cap. | MATCH |
+| Subgraph fails | Stale list served for up to 10 min. With no stale entry: 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}`. | `elements-fetcher.ts:284-315` | The same 502, the address as requested (`lambdas_land.rs:172`); no stale list | MATCH without a stale entry; stale serving is LL-24 |
 | Indexes not ready, no subgraph | n/a | | 503 envelope `source:"land-authz-index"` or `"nft-index"` (`lambdas_land.rs:186-192`) | DIVERGENT |
 | DB error | n/a | | 500 | n/a |
 
@@ -174,7 +174,7 @@ Estate vs parcel: in both trees a parcel inside an estate belongs on chain to th
 
 ## 4. GET `/users/:address/lands-permissions`
 
-**Request:** `address` is not validated in either tree; both lowercase it (upstream via `decentraland/lamb2:src/adapters/elements-fetcher.ts:198`, dcl-one at `services/catalyst/land-authz/src/routes.rs:185`). Pagination follows the same rules as `/lands`: upstream has no maximum (`user-lands-permissions-handler.ts:13`); dcl-one clamps to 1000 and clamps non-positive values to 1 (`routes.rs:187-192`).
+**Request:** `address` is not validated in either tree; both lowercase it (upstream via `decentraland/lamb2:src/adapters/elements-fetcher.ts:198`, dcl-one at `services/catalyst/land-authz/src/routes.rs:185`). Pagination follows the same rules as `/lands`: neither tree has a maximum (`user-lands-permissions-handler.ts:13`, `routes.rs:185`); dcl-one clamps non-positive values to 1.
 
 **Element** (`decentraland/lamb2:src/logic/fetch-elements/fetch-permissions.ts:57`):
 
@@ -186,12 +186,12 @@ Estate vs parcel: in both trees a parcel inside an estate belongs on chain to th
 
 | Trigger | Status | Upstream | dcl-one | Verdict |
 |---|---|---|---|---|
-| OK, from the LAND subgraph | 200 `{elements,totalAmount,pageNum,pageSize}`. `parcels(where:{updateOperator})`, `orderBy: id asc`, every page fetched (`fetch-permissions.ts:37`). | `user-lands-permissions-handler.ts:15` | Index not ready + `LAND_SUBGRAPH_URL`: same query (`services/catalyst/chain-index/src/land_graph.rs:90`), capped at 20 pages (`land_graph.rs:23`) | MATCH up to 20,000 rows |
+| OK, from the LAND subgraph | 200 `{elements,totalAmount,pageNum,pageSize}`. `parcels(where:{updateOperator})`, `orderBy: id asc`, every page fetched (`fetch-permissions.ts:37`). | `user-lands-permissions-handler.ts:15` | Index not ready + `LAND_SUBGRAPH_URL`: same query (`services/catalyst/chain-index/src/land_graph.rs:90`), every page (`land_graph.rs:24`, the runaway guard) | MATCH |
 | OK, from the index | 200 | n/a | `token_right` where `update_operator = lower($addr)`, `ORDER BY token_id` (numeric), `LIMIT/OFFSET` (`services/catalyst/land-authz/src/resolve.rs:387`). `id` = decimal LAND token id; `owner` = the parcel's direct owner, lowercased; `updateOperator` = the queried address. | DIVERGENT unless the land-manager subgraph `Parcel.id` is the decimal token id and sorts the same way (the id format is not in the sources read; needs a capture). A string `id` order differs from a numeric order. |
 | Estate-level update operator | Not listed (parcel query only) | | Not listed (LAND registry rows only) | MATCH |
-| `pageSize` > 1000 | Honoured | | Clamped to 1000 | DIVERGENT |
+| `pageSize` > 1000 | Honoured | | Honoured | MATCH |
 | non-positive / NaN paging | JS `slice` semantics, as in `/lands` | | Clamped | DIVERGENT (P2) |
-| Subgraph fails | 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}` (no stale; `ownershipDecisions`) | `components.ts:145`, `elements-fetcher.ts:273` | 503 envelope `source:"land-subgraph"`, "the LAND subgraph reader did not answer" (`routes.rs:215`, `routes.rs:84-90`) | DIVERGENT |
+| Subgraph fails | 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}` (no stale; `ownershipDecisions`) | `components.ts:145`, `elements-fetcher.ts:273` | The same 502, the address as requested (`routes.rs:213`) | MATCH |
 | Neither index nor `LAND_SUBGRAPH_URL` | n/a | | 503 envelope `source:"land-authz-index"`, `NOT_READY_MSG` (`routes.rs:40`, `routes.rs:202`) | DIVERGENT |
 | Index DB error | n/a | | 500 | n/a |
 
@@ -237,14 +237,14 @@ Estate handling is the same in both trees: the owner, operator and approved-for-
 | Trigger | Status | Body | Upstream | dcl-one | Verdict |
 |---|---|---|---|---|---|
 | Parcel known | 200 | `{"owner":"0x…01","operator":null,"updateOperator":"0x…02","updateManagers":["0x…03"],"approvedForAll":[]}` | `parcel-rights-fetcher.ts:166-210` | Index (`routes.rs:160-168`) or land-manager subgraph (`routes.rs:147-155`, the same query as `services/catalyst/chain-index/src/land_graph.rs:64`) | MATCH (shape) |
-| `updateManagers` / `approvedForAll` order | | Insertion order of the authorization log (a JS `Map`, timestamps ascending) | `parcel-rights-fetcher.ts:120-163` | Subgraph path: log order (`land_graph.rs:145`). Index path: `ORDER BY operator` (alphabetical; `resolve.rs:255-264`). | DIVERGENT on the index path |
+| `updateManagers` / `approvedForAll` order | | Insertion order of the authorization log (a JS `Map`, timestamps ascending) | `parcel-rights-fetcher.ts:120-163` | Subgraph path: log order (`land_graph.rs:145`). Index path: the position of the approval that opened the current grant, its first approval after its latest revocation (`GRANTED_SINCE`, `resolve.rs:185`) | MATCH (block and log order stand in for the subgraph's `timestamp` order) |
 | Cleared legs | | Whatever the land-manager subgraph stores for a cleared leg (null or the zero address; not in the sources read) | | Index: `NULLIF(…, zero)`, so `null` (`services/catalyst/land-authz/src/indexer.rs:959-960`) | Unconfirmed: needs a capture |
-| More than 1000 authorizations | All pages fetched | `parcel-rights-fetcher.ts:123` | Subgraph path: 20 pages maximum. Index: no cap. | MATCH up to 20,000 |
+| More than 1000 authorizations | All pages fetched | `parcel-rights-fetcher.ts:123` | Subgraph path: every page (the runaway guard). Index: no cap. | MATCH |
 | Exception-block parcel | 200 / 404 | | | Accepted (`routes.rs:121-127`) | MATCH |
 | Not found (no estate or parcel row) | 404 | `{"error":"Bad Request","message":"Parcel or estate rights not found for x: X, y: Y"}` | `parcel-rights-fetcher.ts:189` | `routes.rs:156` / `routes.rs:169` | MATCH |
-| Subgraph fails | 500 | `{"error":"Internal Server Error"}` | `errorHandler.ts:71` | 503 envelope `source:"land-subgraph"` (`routes.rs:157`, `routes.rs:84-90`) | DIVERGENT |
+| Subgraph fails | 500 | `{"error":"Internal Server Error"}` | `errorHandler.ts:71` | The same bare 500 (`routes.rs:150`) | MATCH |
 | No index and no `LAND_SUBGRAPH_URL` | n/a | | | 503 envelope `source:"land-authz-index"` (`routes.rs:144-146`) | DIVERGENT |
-| Index DB error | 500 | | | 500 with `message` (`routes.rs:170-173`) | DIVERGENT (P2) |
+| Index DB error | 500 | | | The same bare 500 (`routes.rs:166`) | MATCH |
 
 **Data dependency:** land-authz index (all `UpdateOperator`, `Approval`, `ApprovalForAll`, `UpdateManager`, `Transfer`, `AddLand` and `RemoveLand` logs), or the land-manager subgraph.
 
@@ -267,11 +267,11 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
    - Expected: upstream always answers, from its production subgraph defaults (`decentraland/lamb2:src/ports/the-graph.ts:19-48`).
    - Change: state `NODE_POSTURE=mirror` as the replacement posture where the node's deployment is described, and correct the `MARKETPLACE_SUBGRAPH_URL` doc comment ("unset answers empty names"; the routes answer 503) in `services/catalyst/config/src/shop.rs:19`.
    - Severity: P2 (configuration; the replacement posture answers).
-4. **LL-4: Names `pageSize` over 1000 is clamped.** Endpoint: `/users/:a/names`.
+4. **LL-4: Names `pageSize` over 1000 is clamped.** Endpoint: `/users/:a/names`. Status: MATCH, no work (`OversizePolicy::Reject`; the fixture is now `users-names-400-pagesize-over-1000.json`).
    - Expected: 400 `{"error":"Bad request","message":"max allowed pageSize is 1000"}` (`decentraland/lamb2:src/logic/pagination.ts:12`).
    - Change: use `OversizePolicy::Reject` in `services/catalyst/shop/src/market/user_items.rs:349`, and fix the fixture `shop/src/market/fixtures/users-names-200-pagesize-cap-1000.json`, which encodes the divergent clamp.
    - Severity: P1.
-5. **LL-5: `/lands` and `/lands-permissions` clamp `pageSize` to 1000.**
+5. **LL-5: `/lands` and `/lands-permissions` clamp `pageSize` to 1000.** Status: MATCH, no work (both pass `i64::MAX`).
    - Expected: no maximum (`decentraland/lamb2:src/controllers/handlers/lands-handler.ts:10`, `user-lands-permissions-handler.ts:13`).
    - Change: pass `i64::MAX` as the maximum in `services/catalyst/shop/src/market/lambdas_land.rs:35` and `services/catalyst/land-authz/src/routes.rs:187-192`.
    - Severity: P1.
@@ -289,22 +289,22 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
    - Expected: 200 with an empty page (`decentraland/lamb2:src/logic/api-with-fallback.ts:28-45`).
    - Change: remove the 400 at `services/catalyst/shop/src/market/user_items.rs:344`.
    - Severity: P2.
-9. **LL-9: Status codes when the source fails.** Endpoints: names, name owner, lands, lands-permissions.
+9. **LL-9: Status codes when the source fails.** Endpoints: names, name owner, lands, lands-permissions. Status: MATCH, no work (`fetcher_error`, `services/catalyst/shared/src/http_util.rs:41`; an unconfigured or unpublished source keeps the 503 envelope, which has no upstream trigger).
    - Gap: dcl-one answers 503 envelopes.
    - Expected: 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <key>"}` (`decentraland/lamb2:src/adapters/elements-fetcher.ts:273`).
    - Change: `services/catalyst/shop/src/market/user_items.rs:368`, `lambdas_land.rs:164`, `lambdas_land.rs:370`, `services/catalyst/land-authz/src/routes.rs:84`.
    - Severity: P1.
-10. **LL-10: Status codes when the subgraph or the index fails.** Endpoint: `/operators`.
+10. **LL-10: Status codes when the subgraph or the index fails.** Endpoint: `/operators`. Status: MATCH, no work.
     - Gap: a subgraph failure answers the 503 envelope, and an index DB error a 500 with `message`.
     - Expected: 500 `{"error":"Internal Server Error"}` with no `message` (`decentraland/lamb2:src/controllers/handlers/errorHandler.ts:71`).
     - Change: `services/catalyst/land-authz/src/routes.rs:157` and `routes.rs:172`. Answer `upstream_internal_error` (`routes.rs:94-100`), which `/permissions` already uses.
     - Severity: P1.
-11. **LL-11: `updateManagers` and `approvedForAll` order.** Endpoint: `/operators` (index path).
+11. **LL-11: `updateManagers` and `approvedForAll` order.** Endpoint: `/operators` (index path). Status: MATCH, no work (`GRANTED_SINCE`, `services/catalyst/land-authz/src/resolve.rs:185`).
     - Gap: dcl-one sorts alphabetically.
     - Expected: first-approval order, as a JS `Map` keeps it (`decentraland/lamb2:src/adapters/parcel-rights-fetcher.ts:120-163`).
     - Change: order by the approval event position (block, log) in `services/catalyst/land-authz/src/resolve.rs:255-264`.
     - Severity: P1.
-12. **LL-12: Default `image` URL.** Endpoint: `/users/:a/lands`.
+12. **LL-12: Default `image` URL.** Endpoint: `/users/:a/lands`. Status: MATCH, no work under `NODE_POSTURE=mirror` (the reader answers the subgraph's `image`; the posture sets `LAND_IMAGE_BASE_URL=https://api.decentraland.org` for the index path). `island` and `journey` keep the node's own `/api`.
     - Gap: the default base is the node's own `/api`.
     - Expected: the subgraph's `image` value (`decentraland/lamb2:src/logic/fetch-elements/fetch-lands.ts:77`; production `https://api.decentraland.org/v1/...`).
     - Change: default `LAND_IMAGE_BASE_URL` in `services/catalyst/config/src/config.rs:530`, or read `image` in `QUERY_OWNED_LANDS` (`services/catalyst/chain-index/src/graph.rs:663`).
@@ -324,7 +324,7 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
     - Expected: the registries of `ETH_NETWORK` (`decentraland/lamb2:src/ports/the-graph.ts:38`).
     - Change: `services/catalyst/shop/src/market/lambdas_land.rs:198`, `lambdas_land.rs:283`, `services/catalyst/shop/src/market/nft_reads.rs:107`.
     - Severity: P1.
-16. **LL-16: Reader page caps.** Endpoints: names and lands (reader path), operators and lands-permissions (subgraph path).
+16. **LL-16: Reader page caps.** Endpoints: names and lands (reader path), operators and lands-permissions (subgraph path). Status: MATCH, no work (`FULL_WALK_PAGES`, a 1,000-page runaway guard; one sequential GraphQL request per 1000 rows per uncached key).
     - Gap: 10 or 20 pages at most, which truncates large holders.
     - Expected: walk every page (`decentraland/lamb2:src/logic/fetch-elements/fetch-elements.ts:23-44`, `fetch-permissions.ts:45`).
     - Change: `services/catalyst/chain-index/src/graph.rs:29`, `services/catalyst/chain-index/src/land_graph.rs:23`.
@@ -349,7 +349,7 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
     - Expected: 400 `"Address must be a valid Ethereum address"` (`EthAddress.validate`, `decentraland/lamb2:src/controllers/handlers/parcel-permissions-handler.ts:20`).
     - Change: `services/catalyst/land-authz/src/routes.rs:288-291`.
     - Severity: P2.
-21. **LL-21: Name owner does not trim the name.**
+21. **LL-21: Name owner does not trim the name.** Status: MATCH, no work.
     - Expected: `trim()` before lowercasing (`decentraland/lamb2:src/controllers/handlers/name-owner-handler.ts:11`).
     - Change: `services/catalyst/shop/src/market/lambdas_land.rs:354`.
     - Severity: P2.

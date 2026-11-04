@@ -267,6 +267,11 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
         c.map_urls().satellite_base.as_deref(),
         Some("https://genesis.city/map/latest")
     );
+    assert_eq!(
+        c.map_urls().land_image_base,
+        "https://api.decentraland.org",
+        "the base of the marketplace subgraph's LAND images"
+    );
 
     // The site's own endpoints feed the trade list; a satellite mirror
     // still advertises genesis.city (its pyramid is another scheme).

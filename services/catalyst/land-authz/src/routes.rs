@@ -24,11 +24,10 @@ use super::{
 };
 use crate::chain_index::source::{Source, unavailable};
 use crate::chain_index::{ChainIndex, land_graph};
-use crate::shared::http_util::{bad_request, internal_server_error, lambdas_error};
+use crate::shared::http_util::{bad_request, fetcher_error, internal_server_error, lambdas_error};
 use crate::shared::parcel::is_inside_world_limits;
 use crate::shared::query_params::{
-    MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination, parse_pagination_with,
-    parse_query_string,
+    NonPositivePolicy, OversizePolicy, Pagination, parse_pagination_with, parse_query_string,
 };
 use crate::shared::{cors, nul_guard};
 
@@ -81,14 +80,6 @@ fn land_graph_reader(state: &SharedState) -> Option<&ChainIndex> {
         .filter(|m| land_graph::configured(m))
 }
 
-fn land_graph_failed(route: &'static str, error: &str) -> Response {
-    tracing::warn!(route, error, "land-authz: LAND subgraph reader failed");
-    unavailable(
-        Source::LandSubgraph,
-        "the LAND subgraph reader did not answer",
-    )
-}
-
 /// lamb2's answer to any error it does not map (`errorHandler.ts`): 500 and
 /// no `message`.
 fn upstream_internal_error() -> Response {
@@ -131,7 +122,7 @@ pub(crate) fn validate_coords(x: &str, y: &str) -> Result<(i64, i64), Box<Respon
 /// from the index; 404 for an unindexed parcel; before the index is ready
 /// the land-manager subgraph, as the old route (owner-only from the
 /// marketplace reader would misreport the operators); the envelope with
-/// neither.
+/// neither. A failed subgraph or index read answers lamb2's bare 500.
 async fn parcel_operators(
     State(state): State<SharedState>,
     Path((x, y)): Path<(String, String)>,
@@ -154,7 +145,10 @@ async fn parcel_operators(
             }))
             .into_response(),
             Ok(None) => parcel_or_estate_not_found(xi, yi),
-            Err(e) => land_graph_failed("parcel-operators", &e),
+            Err(e) => {
+                tracing::warn!(error = %e, "land-authz: LAND subgraph reader failed on parcel operators");
+                upstream_internal_error()
+            }
         };
     }
     match state.store().rights(xi as i32, yi as i32).await {
@@ -169,14 +163,16 @@ async fn parcel_operators(
         Ok(None) => parcel_or_estate_not_found(xi, yi),
         Err(e) => {
             tracing::warn!(x = xi, y = yi, error = %e, "land-authz: local parcel operators lookup failed");
-            internal_server_error()
+            upstream_internal_error()
         }
     }
 }
 
 /// `GET /lambdas/users/{address}/lands-permissions`: the parcels whose own
-/// update operator is `address`, paged (`pageSize` clamps to 1000, a
-/// non-positive page or size to 1), `totalAmount` from the same query.
+/// update operator is `address`, paged (no `pageSize` maximum, as lamb2's
+/// `Number.MAX_VALUE`; a non-positive page or size clamps to 1),
+/// `totalAmount` from the same query. A failed LAND subgraph answers
+/// lamb2's 502 `FetcherError`.
 async fn user_lands_permissions(
     State(state): State<SharedState>,
     Path(addr): Path<String>,
@@ -186,7 +182,7 @@ async fn user_lands_permissions(
     let params = parse_query_string(req.uri().query().unwrap_or(""));
     let p = parse_pagination_with(
         &params,
-        MAX_PAGE_SIZE as i64,
+        i64::MAX,
         OversizePolicy::Clamp,
         NonPositivePolicy::ClampToOne,
     )
@@ -212,7 +208,10 @@ async fn user_lands_permissions(
                     .collect();
                 Json(json!({ "elements": page, "totalAmount": total, "pageNum": p.page_num, "pageSize": p.page_size })).into_response()
             }
-            Err(e) => land_graph_failed("lands-permissions", &e),
+            Err(e) => {
+                tracing::warn!(error = %e, "land-authz: LAND subgraph reader failed on lands-permissions");
+                fetcher_error(&addr)
+            }
         };
     }
     match state

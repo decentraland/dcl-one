@@ -94,7 +94,8 @@ pub struct NodeConfig {
 
     /// The map service `/lambdas/users/{address}/lands` points its parcel and
     /// estate images at (`<base>/v1/parcels/{x}/{y}/map.png`); empty is this
-    /// node's own `<PUBLIC_URL>/api`.
+    /// node's own `<PUBLIC_URL>/api`. `NODE_POSTURE=mirror` sets
+    /// `https://api.decentraland.org`, the base of the subgraph's images.
     #[arg(long, env = "LAND_IMAGE_BASE_URL", default_value = "")]
     pub land_image_base_url: String,
 
