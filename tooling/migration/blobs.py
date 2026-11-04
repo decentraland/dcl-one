@@ -28,11 +28,12 @@ SHA256_HEX = re.compile(r'[0-9a-f]{64}')
 # Upstream reads retried per key; a key still failing is reported, not recorded, and retried next run.
 READ_ATTEMPTS = 3
 RETRY_DELAY = 0.5
-# Keys the preflight probe reads before a copy.
+# Keys the preflight probe reads before a copy: new keys, plus keys an earlier run copied.
 PROBE_KEYS = 16
+PROBE_REFERENCE_KEYS = 4
 # S3 answers worth retrying per key (throttling, server errors).
 S3_RETRYABLE = {'SlowDown', 'InternalError', 'ServiceUnavailable', 'RequestTimeout', 'Throttling',
-                'ThrottlingException', 'RequestTimeTooSkewed'}
+                'ThrottlingException'}
 B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 _seq = itertools.count()
 
@@ -258,6 +259,9 @@ class S3Source:
             status = response.get('ResponseMetadata', {}).get('HTTPStatusCode')
             if code in ('NoSuchKey', 'NotFound', '404') or status == 404:
                 raise Missing('absent upstream') from e
+            if code == 'RequestTimeTooSkewed':
+                raise SourceError('S3 rejects requests signed with this machine\'s clock (RequestTimeTooSkewed);'
+                                  ' sync the system clock and re-run') from e
             if code in S3_RETRYABLE or (isinstance(status, int) and status >= 500):
                 raise ReadError(f'{code or status}: {e}') from e
             # Without s3:ListBucket a missing key answers 403 as well.
@@ -405,11 +409,17 @@ class Probe:
     unreadable: dict  # key -> reason
 
 
-def probe(source, keys, n=PROBE_KEYS):
-    """Opens up to `n` keys spread over `keys`: a wrong folder or credentials make every one unreadable.
-    Marks an S3 source readable when one opens."""
+def _spread(keys, n):
     keys = [k for k in keys if is_canonical_cid(k) or SHA256_HEX.fullmatch(k)]
-    sample = keys if len(keys) <= n else [keys[i * len(keys) // n] for i in range(n)]
+    return keys if len(keys) <= n else [keys[i * len(keys) // n] for i in range(n)]
+
+
+def probe(source, keys, n=PROBE_KEYS, reference=(), n_reference=PROBE_REFERENCE_KEYS):
+    """Opens up to `n` keys spread over `keys`, and up to `n_reference` over `reference` (keys an
+    earlier run read): a wrong folder or credentials make every one unreadable. Marks an S3 source
+    readable when one opens."""
+    sample = _spread(keys, n)
+    sample += [k for k in _spread(reference, n_reference) if k not in sample]
     result = Probe(0, {})
     for key in sample:
         try:

@@ -955,25 +955,41 @@ def cmd_blobs(args, sources):
                     " encode(convert_to(size::text, 'UTF8'), 'hex')"
                     f' FROM dcl_migration.blob_inventory WHERE source = {literal(args.source)};\n'), 3)}
     # A recorded object counts only while the store holds a file of its recorded size.
-    todo = [k for k in keys if not (k in inventory and store.has(*inventory[k]))]
-    log(f'{args.source}: {len(keys)} objects named, {len(keys) - len(todo)} already copied;'
+    held = [k for k in keys if k in inventory and store.has(*inventory[k])]
+    known_missing = recorded_missing(args.source, target_url)
+    fresh = [k for k in keys if k not in inventory and k not in known_missing
+             or k in inventory and not store.has(*inventory[k])]
+    retried = [k for k in keys if k in known_missing and k not in inventory] if args.retry_missing else []
+    todo = fresh + retried
+    log(f'{args.source}: {len(keys)} objects named, {len(held)} already copied,'
+        f' {len(known_missing.intersection(keys))} recorded missing{" (retrying)" if retried else ""};'
         f' copying {len(todo)} from {upstream.describe()} into {store.contents}')
     record = lambda stored, missing: record_blobs(target_url, args.source, stored, missing)  # noqa: E731
+    newly = {'missing': 0}
+
+    def tally(outcomes):
+        for outcome in outcomes:
+            if outcome.status == 'missing' and outcome.key not in known_missing:
+                newly['missing'] += 1
+            yield outcome
+
     try:
-        probe_source(blobs, upstream, todo, args.allow_missing, log)
-        counts, report, missing = record_outcomes(blobs.copy_all(upstream, store, todo, args.workers),
+        if todo:
+            # Keys already recorded missing say nothing about the source; keys copied before do.
+            probe_source(blobs, upstream, fresh, held, args.skip_probe, log)
+        counts, report, missing = record_outcomes(tally(blobs.copy_all(upstream, store, todo, args.workers)),
                                                   record, len(todo), log)
     except blobs.SourceError as e:
         raise MigrationError(f'upstream storage: {e}') from e
     log(f'{args.source}: copied {counts["copied"]}, already in the store {counts["present"]},'
         f' absent or unreadable upstream {counts["missing"]}, hash mismatch {counts["corrupt"]},'
         f' not a content id {counts["invalid"]}, read failed {counts["failed"]}')
-    if counts['missing'] > args.max_missing / 100 * len(todo) and not args.allow_missing:
+    if too_many_missing(newly['missing'], len(fresh), args) and not args.allow_missing:
         for line in report[:20]:
             log(line)
-        log(f'{args.source}: {counts["missing"]} of {len(todo)} objects absent or unreadable upstream, over'
-            f' --max-missing {args.max_missing:g}%; none recorded missing. Check the source and credentials,'
-            ' or pass --allow-missing to record them')
+        log(f'{args.source}: {newly["missing"]} of {len(fresh)} new objects absent or unreadable upstream, over'
+            f' --max-missing {args.max_missing:g}% and --max-missing-count {args.max_missing_count};'
+            ' none recorded missing. Check the source and credentials, or pass --allow-missing to record them')
         return 1
     record_missing(record, missing)
     if report:
@@ -984,19 +1000,25 @@ def cmd_blobs(args, sources):
     return 1 if counts['failed'] else 0
 
 
-def probe_source(blobs, upstream, keys, allow_missing, log):
+def too_many_missing(newly, fresh, args):
+    """Newly missing keys over both the --max-missing share of new keys and --max-missing-count."""
+    return newly > args.max_missing_count and newly > args.max_missing / 100 * fresh
+
+
+def probe_source(blobs, upstream, keys, reference, skip_probe, log):
     """Fails before copying when no sampled key reads: a wrong folder or bucket, or credentials
-    that cannot read it, would otherwise record every object missing."""
-    result = blobs.probe(upstream, keys)
+    that cannot read it, would otherwise record every object missing. `reference` keys were read
+    by an earlier run, so they read from the right source even when every new key is lost."""
+    result = blobs.probe(upstream, keys, reference=reference)
     if result.readable or not result.unreadable:
         return
     reasons = sorted(set(result.unreadable.values()))
-    if not allow_missing:
+    if not skip_probe:
         raise MigrationError(f'none of {len(result.unreadable)} sampled objects reads from {upstream.describe()}'
                              f' ({"; ".join(reasons[:3])}); check the source and credentials, or pass'
-                             ' --allow-missing to record them missing')
+                             ' --skip-probe when these objects are lost upstream')
     log(f'warning: none of {len(result.unreadable)} sampled objects reads from {upstream.describe()};'
-        ' --allow-missing records them missing')
+        ' copying anyway (--skip-probe)')
     upstream.readable = True
 
 
@@ -1226,10 +1248,18 @@ def parser():
     blobs.add_argument('--s3-prefix', default='', help=argparse.SUPPRESS)
     blobs.add_argument('--workers', type=int, default=8)
     blobs.add_argument('--allow-missing', action='store_true',
-                       help='record objects absent or unreadable upstream as missing however many there are')
+                       help='record objects absent or unreadable upstream as missing however many there are'
+                            ' (the probe still runs)')
     blobs.add_argument('--max-missing', type=float, default=1.0, metavar='PERCENT',
-                       help='fail, recording none missing, when more of the copied keys are absent or'
-                            ' unreadable upstream (default 1)')
+                       help='fail, recording none missing, when more of the new keys are absent or'
+                            ' unreadable upstream (default 1) ...')
+    blobs.add_argument('--max-missing-count', type=int, default=10, metavar='N',
+                       help='... and more than N of them (default 10)')
+    blobs.add_argument('--retry-missing', action='store_true',
+                       help='also retry keys recorded missing by an earlier run (never counted against'
+                            ' --max-missing)')
+    blobs.add_argument('--skip-probe', action='store_true',
+                       help='copy even when none of the sampled objects reads upstream')
     blobs.add_argument('--verify', action='store_true',
                        help='list imported rows whose blobs are missing from the store; copies nothing')
     limits = sub.add_parser('worlds-limits', help='seed worlds.world_limit_overrides from a WCS whitelist JSON')

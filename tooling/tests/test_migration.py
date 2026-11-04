@@ -26,6 +26,11 @@ CHUNK = blobs.CHUNK_SIZE
 def pattern(n):
     return (bytes(range(251)) * (n // 251 + 1))[:n]
 
+
+def put_upstream(root, key, data):
+    (root / blobs.shard(key)).mkdir(parents=True, exist_ok=True)
+    (root / blobs.shard(key) / key).write_bytes(data)
+
 MANIFEST = textwrap.dedent('''
     name = "toy"
     repository = "example/toy"
@@ -285,6 +290,15 @@ class BlobCopy(unittest.TestCase):
         result = blobs.probe(blobs.FolderSource(self.upstream), keys)
         self.assertEqual((result.readable, len(result.unreadable)), (1, 3))
 
+    def test_when_every_new_key_is_lost_but_an_earlier_key_reads_it_should_count_the_source_readable(self):
+        earlier = [blobs.hash_bytes_v1(str(i).encode()) for i in range(10)]
+        for i, key in enumerate(earlier):
+            self.put(key, str(i).encode())
+        lost = blobs.hash_bytes_v1(b'lost')
+        result = blobs.probe(blobs.FolderSource(self.upstream), [lost], reference=earlier)
+        self.assertEqual((result.readable, list(result.unreadable)),
+                         (blobs.PROBE_REFERENCE_KEYS, [lost]))
+
     def test_when_upstream_is_flat_or_gzipped_it_should_find_the_bytes(self):
         flat, packed = b'flat file', b'packed file'
         self.put(blobs.hash_bytes_v1(flat), flat, sharded=False)
@@ -485,6 +499,13 @@ class S3Copy(unittest.TestCase):
         self.assertEqual(outcome.status, 'failed')
         self.assertIn('ServiceUnavailable', outcome.reason)
 
+    def test_when_the_clock_is_skewed_it_should_stop_the_copy_without_retrying(self):
+        key = blobs.hash_bytes_v1(b'x')
+        self.client.errors['prefix/' + key] = [FakeClientError('RequestTimeTooSkewed', 403)]
+        with self.assertRaisesRegex(blobs.SourceError, 'sync the system clock'):
+            self.copy(key)
+        self.assertEqual(self.client.calls, 1)
+
     def test_when_another_s3_error_occurs_it_should_stop_the_copy(self):
         key = blobs.hash_bytes_v1(b'x')
         self.client.errors['prefix/' + key] = [FakeClientError('InvalidAccessKeyId', 400)]
@@ -507,6 +528,19 @@ class S3Copy(unittest.TestCase):
         self.assertEqual((outcome.status, self.client.calls), ('copied', 2))
         self.assertEqual(self.store.path(key).read_bytes(), data)
         self.assertEqual(list((self.tmp / 'node').rglob('*.tmp')), [])
+
+
+class MissingThreshold(unittest.TestCase):
+    def setUp(self):
+        self.args = migrate.parser().parse_args(['blobs', 'worlds-content-server'])
+
+    def test_when_a_small_batch_loses_a_few_keys_it_should_stay_under_the_count_floor(self):
+        self.assertFalse(migrate.too_many_missing(1, 5, self.args))
+        self.assertFalse(migrate.too_many_missing(10, 10, self.args))
+
+    def test_when_a_batch_loses_more_than_both_limits_it_should_fail(self):
+        self.assertTrue(migrate.too_many_missing(11, 100, self.args))
+        self.assertFalse(migrate.too_many_missing(11, 2000, self.args))
 
 
 class RecordOutcomes(unittest.TestCase):
@@ -814,17 +848,19 @@ class AgainstPostgres(unittest.TestCase):
         code, out = self.migrate(*steps, sources_dir=migrate.SOURCES)
         self.assertEqual(code, 1)
         copy = ('blobs', 'worlds-content-server', '--from-dir', str(upstream), '--to', str(node))
-        code, out = self.migrate(*copy, sources_dir=migrate.SOURCES)
+        code, out = self.migrate(*copy, '--max-missing-count', '0', sources_dir=migrate.SOURCES)
         self.assertEqual(code, 1, out)
-        self.assertIn('2 of 8 objects absent or unreadable upstream, over --max-missing 1%', out)
+        self.assertIn('2 of 8 new objects absent or unreadable upstream, over --max-missing 1%'
+                      ' and --max-missing-count 0', out)
         self.assertEqual(self.count(tgt, 'dcl_migration.blob_missing'), 0)
-        copy += ('--allow-missing',)
-        code, out = self.migrate(*copy, sources_dir=migrate.SOURCES)
+        code, out = self.migrate(*copy, '--allow-missing', sources_dir=migrate.SOURCES)
         self.assertEqual(code, 0, out)
         self.assertIn('copied 0, already in the store 0, absent or unreadable upstream 2, hash mismatch 0,'
                       ' not a content id 1', out)
-        code, out = self.migrate(*copy, sources_dir=migrate.SOURCES)
-        self.assertIn('8 objects named, 5 already copied', out)
+        # A re-run neither retries nor counts the keys recorded missing.
+        code, out = self.migrate(*copy, '--max-missing-count', '0', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertIn('8 objects named, 5 already copied, 3 recorded missing; copying 0', out)
         missing = self.sql(tgt, 'SELECT reason FROM dcl_migration.blob_missing WHERE object_key IN '
                                 f'({migrate.literal(lost)}, {migrate.literal(lost_thumbnail)}, {migrate.literal(bad)})'
                                 ' ORDER BY 1;\n')
@@ -867,9 +903,69 @@ class AgainstPostgres(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn('none of 3 sampled objects reads', err.getvalue())
         self.assertEqual(self.count(tgt, 'dcl_migration.blob_missing'), 0)
-        code, out = self.migrate(*copy, '--allow-missing', sources_dir=migrate.SOURCES)
+        with contextlib.redirect_stderr(io.StringIO()):
+            code, out = self.migrate(*copy, '--allow-missing', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 1, out)
+        self.assertEqual(self.count(tgt, 'dcl_migration.blob_missing'), 0)
+        code, out = self.migrate(*copy, '--skip-probe', sources_dir=migrate.SOURCES)
         self.assertEqual(code, 0, out)
         self.assertEqual(self.count(tgt, 'dcl_migration.blob_missing'), 3)
+
+    def test_when_rerunning_blobs_it_should_count_only_new_keys_and_still_probe_the_source(self):
+        src, tgt = self.wcs()
+        upstream, empty, node = self.tmp / 'wcs-rerun', self.tmp / 'wcs-rerun-wrong', self.tmp / 'node-rerun'
+        empty.mkdir()
+        for d in (upstream, empty, node):
+            self.addCleanup(shutil.rmtree, d, True)
+
+        def world(i, stored):
+            key = blobs.hash_bytes_v1(f'thumbnail {i}'.encode())
+            if stored:
+                put_upstream(upstream, key, f'thumbnail {i}'.encode())
+            self.sql(src, f"INSERT INTO worlds (name, owner, thumbnail_hash, created_at, updated_at) VALUES "
+                          f"('w{i}.dcl.eth', '0x{'1' * 40}', '{key}', now(), now());\n")
+            return key
+
+        def copy(*extra, source=upstream):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                code, out = self.migrate('blobs', 'worlds-content-server', '--from-dir', str(source),
+                                         '--to', str(node), *extra, sources_dir=migrate.SOURCES)
+            return code, out + err.getvalue()
+
+        def missing():
+            return set(self.sql(tgt, 'SELECT object_key FROM dcl_migration.blob_missing;\n').split())
+
+        for i in range(3):
+            world(i, stored=True)
+        lost = world(3, stored=False)
+        code, out = copy()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(missing(), {lost})
+
+        code, out = copy('--max-missing-count', '0')
+        self.assertEqual(code, 0, out)
+        self.assertIn('copying 0', out)
+
+        # One new key, absent upstream: the probe reads keys copied before.
+        lost_again = world(4, stored=False)
+        code, out = copy()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(missing(), {lost, lost_again})
+
+        later = world(5, stored=False)
+        for extra in ((), ('--allow-missing',), ('--retry-missing',)):
+            code, out = copy(*extra, source=empty)
+            self.assertEqual(code, 1, (extra, out))
+            self.assertIn('none of 4 sampled objects reads', out)
+        self.assertEqual(missing(), {lost, lost_again})
+
+        put_upstream(upstream, lost, b'thumbnail 3')
+        code, out = copy('--retry-missing')
+        self.assertEqual(code, 0, out)
+        self.assertIn('2 recorded missing (retrying); copying 3', out)
+        self.assertEqual(missing(), {lost_again, later})
+        self.assertTrue(blobs.Store(node).has(lost))
 
     def test_when_a_places_world_image_names_a_copied_thumbnail_it_should_name_its_cid(self):
         tgt = self.catalyst_db('places_images')

@@ -78,9 +78,9 @@ python3 tooling/migration/migrate.py worlds-unban-quota-blocks --dry-run   # one
 copies each from upstream storage (`--from-dir`, or `--from-s3 BUCKET`) into
 the node's store under `--to` (`<root>/contents/<sha1 shard>/<cid>`, staging
 file then rename), after re-hashing the bytes against their key; it skips
-objects already recorded and stored, and fails before recording anything
-missing when the source looks wrong (`--allow-missing` overrides), so it is re-run before each
-`run --since last`. `--verify` lists the imported rows whose blobs the store
+objects already recorded and stored and those recorded missing (`--retry-missing`
+retries them), and fails before recording anything missing when the source
+looks wrong, so it is re-run before each `run --since last`. `--verify` lists the imported rows whose blobs the store
 lacks; `run` of that source does the same check at its end (`--storage-root`
 or `STORAGE_ROOT_FOLDER`). `worlds-limits` seeds `worlds.world_limit_overrides` from a copy of
 the old worlds service's whitelist document. Both are described in

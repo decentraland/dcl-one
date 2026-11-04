@@ -83,12 +83,18 @@ thumbnail names, and fails (exit 1, listing them) when one is missing: run
   fails part-way (timeout, truncated stream), S3 throttling (`SlowDown`) or a
   5xx is retried three times with backoff; a key still failing is listed, not
   recorded, and the copy exits 1 so the next run retries it. Any other S3
-  error stops the copy.
-- Before copying, up to 16 keys spread over the work list are opened. When
-  none reads (a wrong `--from-dir` or bucket, or credentials that cannot read
-  it) the copy stops. When more than `--max-missing` percent (default 1) of
-  the copied keys are absent or unreadable upstream, the copy exits 1 and
-  records none of them missing. `--allow-missing` skips both checks.
+  error stops the copy, `RequestTimeTooSkewed` (a wrong system clock)
+  included.
+- Keys recorded in `dcl_migration.blob_missing` by an earlier run are skipped;
+  `--retry-missing` retries them (one that reads is stored and leaves
+  `blob_missing`). They never count toward the checks below.
+- Before copying, up to 16 new keys spread over the work list and up to 4 keys
+  an earlier run copied are opened. When none reads (a wrong `--from-dir` or
+  bucket, or credentials that cannot read it) the copy stops; `--skip-probe`
+  copies anyway. When more of the new keys are absent or unreadable upstream
+  than both `--max-missing` percent (default 1) and `--max-missing-count`
+  (default 10), the copy exits 1 and records none of them missing.
+  `--allow-missing` skips that count, not the probe.
 - At most `--workers` × 4 keys are in flight at a time.
 - Every object is re-hashed before it is stored: a CIDv1 against
   `hash_bytes_v1` (raw leaf up to 256 KiB, the chunked dag-pb tree above), a
