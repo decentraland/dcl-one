@@ -1113,9 +1113,9 @@ mod tests {
     fn errors(entity_type: EntityType, metadata: Value) -> Vec<String> {
         match validate_metadata(&entity(entity_type, metadata)) {
             ValidationResponse::Ok => vec![],
-            ValidationResponse::Failed { errors } | ValidationResponse::Unavailable { errors } => {
-                errors
-            }
+            ValidationResponse::Failed { errors }
+            | ValidationResponse::Unavailable { errors }
+            | ValidationResponse::Unverifiable { errors } => errors,
         }
     }
 

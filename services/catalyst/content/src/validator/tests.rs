@@ -1,11 +1,9 @@
 //! The live [`Sources`] behind the rules: the public [`validate`] over a
-//! signed entity and a real blob store, and every access source against a
-//! stand-in on the loopback (the marketplace and collections subgraphs, the
-//! L2 blocks and third-party registry subgraphs), with the old error strings
+//! signed entity and a real blob store, and every access check against a
+//! chain on the loopback ([`super::fake_chain`]), with the old error strings
 //! compared byte for byte and every missing or failing source answering
 //! `Unavailable`. The escrow overlay runs on the process's scratch database
-//! and the LAND index on a database of its own (its cursor row is global);
-//! both skip without `CATALYST_TEST_DATABASE_URL`.
+//! and skips without `CATALYST_TEST_DATABASE_URL`.
 
 use std::collections::HashMap;
 #[cfg(unix)]
@@ -13,23 +11,21 @@ use std::os::unix::fs::PermissionsExt;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::State;
-use axum::response::IntoResponse;
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use alloy_primitives::{Address, U256};
+use axum::Router;
+use axum::routing::get;
 use bytes::Bytes;
 use serde_json::{Value, json};
 use sqlx::PgPool;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
 
 use super::checker::{BlockchainChecker, validate_item_access, validate_profile_access};
+use super::fake_chain::{self, FakeChain, Query, Reply};
 use super::types::OwnedDeployment;
 use super::*;
 use crate::auth::hash_bytes_v1;
 use crate::http::Outbound;
-use crate::land_authz::events::AuthzEvent;
-use crate::land_authz::indexer;
 use crate::tests::support::require_test_db;
 
 const OWNER: &str = "0xaaaa000000000000000000000000000000000001";
@@ -58,92 +54,29 @@ async fn temp_storage(tag: &str) -> (Arc<Storage>, std::path::PathBuf) {
     (Arc::new(storage), tmp)
 }
 
-type Answer = Arc<dyn Fn(&str, &Value) -> Result<Value, u16> + Send + Sync>;
-
-/// A GraphQL endpoint on the loopback: `answer(query, variables)` is the
-/// `data`, or the HTTP status to fail with.
-async fn serve_graph(
-    answer: impl Fn(&str, &Value) -> Result<Value, u16> + Send + Sync + 'static,
-) -> String {
-    async fn handle(
-        State(answer): State<Answer>,
-        Json(body): Json<Value>,
-    ) -> axum::response::Response {
-        let query = body["query"].as_str().unwrap_or_default().to_string();
-        match answer(&query, &body["variables"]) {
-            Ok(data) => Json(json!({ "data": data })).into_response(),
-            Err(status) => axum::http::StatusCode::from_u16(status)
-                .unwrap()
-                .into_response(),
-        }
+/// Mainnet contracts, no RPC.
+fn mainnet() -> Settings {
+    Settings {
+        eth_network: "mainnet".into(),
+        ..Settings::default()
     }
-    let answer: Answer = Arc::new(answer);
-    let app = Router::new().route("/", post(handle)).with_state(answer);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    format!("http://{addr}/")
 }
 
-#[derive(Default)]
-struct Readers {
-    eth: Option<String>,
-    matic: Option<String>,
-    marketplace: Option<String>,
-}
-
-fn market_over(readers: Readers) -> Arc<ChainIndex> {
-    let state = Arc::new(ChainIndex::new(
-        Outbound::for_tests(),
-        crate::chain_index::IndexSettings {
-            eth_collections_subgraph_url: readers.eth,
-            matic_collections_subgraph_url: readers.matic,
-            marketplace_subgraph_url: readers.marketplace,
-            ..crate::chain_index::IndexSettings::for_tests()
-        },
-    ));
-    state.allow_loopback_for_tests();
-    state
-}
-
-fn land_over(pool: PgPool, market: Option<Arc<ChainIndex>>) -> Arc<LandAuthzState> {
-    Arc::new(LandAuthzState::new(
-        pool,
-        Outbound::for_tests(),
-        crate::land_authz::Settings::for_tests(),
-        market,
-    ))
-}
-
-fn sources(
-    pool: PgPool,
-    storage: Arc<Storage>,
-    land: Option<Arc<LandAuthzState>>,
-    market: Option<Arc<ChainIndex>>,
-    settings: Settings,
-) -> Sources {
-    Sources::new(
-        pool,
-        storage,
-        Outbound::for_tests(),
-        None,
-        land,
-        market,
-        settings,
-    )
-}
-
-/// The marketplace subgraph's `parcelsAt` answer for `(x, y, owner)` rows.
-fn parcels_answer(
-    parcels: &'static [(i32, i32, &'static str)],
-) -> impl Fn(&str, &Value) -> Result<Value, u16> + Send + Sync + 'static {
-    move |query, _| {
-        assert!(query.contains("parcelsAt"), "unexpected query {query}");
-        Ok(json!({ "nfts": parcels.iter().map(|(x, y, owner)| json!({
-            "id": format!("0xland-{x}-{y}"), "searchParcelX": x.to_string(), "searchParcelY": y.to_string(),
-            "owner": { "id": owner }, "parcel": { "estate": null }
-        })).collect::<Vec<_>>() }))
+/// Mainnet contracts over `chain` on both layers.
+fn over(chain: &FakeChain) -> Settings {
+    Settings {
+        l1_rpc_url: Some(chain.url.clone()),
+        l2_rpc_url: Some(chain.url.clone()),
+        ..mainnet()
     }
+}
+
+fn sources(pool: PgPool, storage: Arc<Storage>, settings: Settings) -> Sources {
+    Sources::new(pool, storage, Outbound::for_tests(), None, settings)
+}
+
+fn addr(s: &str) -> Address {
+    s.parse().unwrap()
 }
 
 /// An entity file signed by a fixed key: the entity, its files (the entity
@@ -153,7 +86,7 @@ async fn signed(
     uploads: &[Vec<u8>],
 ) -> (
     Entity,
-    HashMap<String, Vec<u8>>,
+    HashMap<String, bytes::Bytes>,
     crate::auth::AuthChain,
     String,
 ) {
@@ -171,9 +104,9 @@ async fn signed(
     ]))
     .unwrap();
     let parsed = entity_parser::parse_entity_from_bytes(&bytes, &id).unwrap();
-    let mut files = HashMap::from([(id.clone(), bytes)]);
+    let mut files = HashMap::from([(id.clone(), bytes.into())]);
     for upload in uploads {
-        files.insert(hash_bytes_v1(upload), upload.clone());
+        files.insert(hash_bytes_v1(upload), upload.clone().into());
     }
     (parsed, files, chain, signer)
 }
@@ -207,22 +140,12 @@ fn unavailable(messages: &[&str]) -> Result<(), Vec<ValidationError>> {
 async fn a_signed_scene_validates_end_to_end_and_its_land_leg_decides() {
     let (storage, tmp) = temp_storage("scene").await;
     let signer = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
-    let graph = serve_graph(parcels_answer(&[
-        (5, 5, "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"),
-        (5, 6, STRANGER),
+    let chain = fake_chain::serve(fake_chain::land_owners(vec![
+        (signer.to_string(), 5, 5),
+        (STRANGER.to_string(), 5, 6),
     ]))
     .await;
-    let market = market_over(Readers {
-        marketplace: Some(graph),
-        ..Default::default()
-    });
-    let with_land = sources(
-        lazy_pool(),
-        storage.clone(),
-        Some(land_over(lazy_pool(), Some(market.clone()))),
-        Some(market),
-        Settings::default(),
-    );
+    let with_land = sources(lazy_pool(), storage.clone(), over(&chain));
     let model = b"glb bytes".to_vec();
 
     let (entity, files, chain, deployer) =
@@ -303,7 +226,7 @@ async fn a_signed_scene_validates_end_to_end_and_its_land_leg_decides() {
         )])
     );
 
-    let without_land = sources(lazy_pool(), storage, None, None, Settings::default());
+    let without_land = sources(lazy_pool(), storage, mainnet());
     let (entity, files, chain, _) =
         signed(scene(&["5,5"], &model), std::slice::from_ref(&model)).await;
     let ctx = Context {
@@ -313,9 +236,7 @@ async fn a_signed_scene_validates_end_to_end_and_its_land_leg_decides() {
     let verdict = validate(&entity, &files, &ctx).await;
     assert_eq!(
         verdict,
-        unavailable(&[
-            "Error checking parcel access: no LAND rights source: the land_authz state is not attached"
-        ])
+        unavailable(&["Error checking parcel access: no L1 RPC is configured (ETH_RPC_URL)"])
     );
     assert!(matches!(
         into_deploy_failure(verdict.unwrap_err()),
@@ -325,11 +246,9 @@ async fn a_signed_scene_validates_end_to_end_and_its_land_leg_decides() {
     let ignoring = sources(
         lazy_pool(),
         without_land.storage.clone(),
-        None,
-        None,
         Settings {
             ignore_blockchain_access: true,
-            ..Settings::default()
+            ..mainnet()
         },
     );
     let ctx = Context {
@@ -350,11 +269,9 @@ async fn the_structure_signature_and_size_steps_answer_the_old_sentences() {
     let s = sources(
         lazy_pool(),
         storage,
-        None,
-        None,
         Settings {
             ignore_blockchain_access: true,
-            ..Settings::default()
+            ..mainnet()
         },
     );
     let model = b"glb".to_vec();
@@ -441,8 +358,6 @@ async fn the_metadata_schema_and_version_steps_answer_the_reference_sentences() 
     let s = sources(
         lazy_pool(),
         storage,
-        None,
-        None,
         Settings {
             ignore_blockchain_access: true,
             ..Settings::default()
@@ -491,11 +406,9 @@ async fn a_contract_wallet_chain_without_an_rpc_validator_is_unavailable() {
     let s = sources(
         lazy_pool(),
         storage,
-        None,
-        None,
         Settings {
             ignore_blockchain_access: true,
-            ..Settings::default()
+            ..mainnet()
         },
     );
     let model = b"glb".to_vec();
@@ -511,7 +424,7 @@ async fn a_contract_wallet_chain_without_an_rpc_validator_is_unavailable() {
     };
     let verdict = validate(&entity, &files, &ctx).await.unwrap_err();
     assert!(
-        matches!(&verdict[..], [ValidationError::Unavailable(m)] if m.starts_with("The signature is invalid. EIP-1654")),
+        matches!(&verdict[..], [ValidationError::Unverifiable(m)] if m.starts_with("The signature is invalid. EIP-1654")),
         "{verdict:?}"
     );
     let _ = std::fs::remove_dir_all(&tmp);
@@ -533,13 +446,7 @@ fn unseal_shard(shard: &std::path::Path) {
 #[tokio::test]
 async fn an_unreadable_shard_faults_the_size_probe_instead_of_answering_absent() {
     let (storage, tmp) = temp_storage("size").await;
-    let s = sources(
-        lazy_pool(),
-        storage.clone(),
-        None,
-        None,
-        Settings::default(),
-    );
+    let s = sources(lazy_pool(), storage.clone(), mainnet());
     assert_eq!(
         s.fetch_content_file_size(STORED_HASH).await.unwrap(),
         Some(7)
@@ -565,7 +472,7 @@ async fn an_unreadable_shard_faults_the_size_probe_instead_of_answering_absent()
 #[tokio::test]
 async fn an_id_that_cannot_name_content_is_absent_rather_than_a_fault() {
     let (storage, tmp) = temp_storage("invalid").await;
-    let s = sources(lazy_pool(), storage, None, None, Settings::default());
+    let s = sources(lazy_pool(), storage, mainnet());
     let bogus = "../../etc/passwd".to_string();
     assert_eq!(s.fetch_content_file_size(&bogus).await.unwrap(), None);
     let stored = s
@@ -591,36 +498,18 @@ fn profile(owner: &str, name: &str, wearables: &[&str]) -> OwnedDeployment {
     })
 }
 
-fn names_answer(
-    owner: &'static str,
-    names: &'static [&'static str],
-) -> impl Fn(&str, &Value) -> Result<Value, u16> + Send + Sync + 'static {
-    move |query, vars| {
-        assert!(query.contains("query names("), "unexpected query {query}");
-        let rows: Vec<Value> = if vars["owner"] == owner {
-            names.iter().enumerate().map(|(i, n)| json!({ "id": format!("ens-{i}"), "name": n, "contractAddress": "0x2a18", "tokenId": i.to_string(), "activeOrder": null })).collect()
-        } else {
-            vec![]
-        };
-        Ok(json!({ "nfts": rows }))
-    }
-}
+/// The deploy's L1/L2 blocks for the fixed test timestamp.
+const TS: i64 = 1_700_000_000_000;
 
 #[tokio::test]
-async fn claimed_names_come_from_the_marketplace_subgraph() {
+async fn claimed_names_are_asked_of_the_registrar() {
     let (storage, tmp) = temp_storage("names").await;
-    let graph = serve_graph(names_answer(OWNER, &["alice"])).await;
-    let market = market_over(Readers {
-        marketplace: Some(graph),
-        ..Default::default()
-    });
-    let s = sources(
-        lazy_pool(),
-        storage.clone(),
-        None,
-        Some(market),
-        Settings::default(),
-    );
+    let chain = fake_chain::serve(|q, _| match q {
+        Query::Name { sender, name, .. } => Reply::Yes(*sender == addr(OWNER) && name == "alice"),
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let s = sources(lazy_pool(), storage.clone(), over(&chain));
 
     let owned = profile(OWNER, "alice", &[]);
     assert!(
@@ -650,80 +539,25 @@ async fn claimed_names_come_from_the_marketplace_subgraph() {
         ])
     );
 
-    let no_subgraph = sources(
-        lazy_pool(),
-        storage.clone(),
-        None,
-        Some(market_over(Readers::default())),
-        Settings::default(),
-    );
+    let no_rpc = sources(lazy_pool(), storage.clone(), mainnet());
     assert_eq!(
-        validate_profile_access(&owned.view(), &no_subgraph, OWNER)
+        validate_profile_access(&owned.view(), &no_rpc, OWNER)
             .await
             .into_result(),
-        unavailable(&[
-            "Error checking name ownership: no marketplace subgraph is configured (MARKETPLACE_SUBGRAPH_URL)"
-        ])
+        unavailable(&["Error checking name ownership: no L1 RPC is configured (ETH_RPC_URL)"])
     );
-    let failing = serve_graph(|_, _| Err(400)).await;
-    let down = sources(
-        lazy_pool(),
-        storage,
-        None,
-        Some(market_over(Readers {
-            marketplace: Some(failing),
-            ..Default::default()
-        })),
-        Settings::default(),
-    );
+    let failing = fake_chain::serve(|_, _| Reply::Yes(true)).await;
+    failing.set_down(true);
+    let down = sources(lazy_pool(), storage, over(&failing));
     let verdict = validate_profile_access(&owned.view(), &down, OWNER)
         .await
         .into_result()
         .unwrap_err();
     assert!(
-        matches!(&verdict[..], [ValidationError::Unavailable(m)] if m.starts_with("Error checking name ownership: subgraph query failed: ")),
+        matches!(&verdict[..], [ValidationError::Unavailable(m)] if m.starts_with("Error checking name ownership: blockchain query failed: L1 block lookup")),
         "{verdict:?}"
     );
     let _ = std::fs::remove_dir_all(&tmp);
-}
-
-/// Owned copies `(owner, urn, token id)` as the collections subgraph
-/// answers `ownedCopies` (`urn_in`) and `prefixed` (`urn_starts_with`).
-fn copies_answer(
-    copies: Vec<(String, &'static str, &'static str)>,
-) -> impl Fn(&str, &Value) -> Result<Value, u16> + Send + Sync + 'static {
-    let alias = regex::Regex::new(r#"p(\d+): nfts\(first: 1, where: \{ owner: \$owner, urn_starts_with: ("(?:[^"\\]|\\.)*") \}\)"#).unwrap();
-    move |query, vars| {
-        let owner = vars["owner"].as_str().unwrap_or_default();
-        let mine = copies.iter().filter(|(o, ..)| o == owner);
-        if query.contains("ownedCopies") {
-            let urns: Vec<&str> = vars["urns"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter_map(Value::as_str)
-                .collect();
-            let rows: Vec<Value> = mine
-                .filter(|(_, urn, _)| urns.contains(urn))
-                .enumerate()
-                .map(|(i, (_, urn, token))| json!({ "id": format!("nft-{i}"), "urn": urn, "tokenId": token }))
-                .collect();
-            return Ok(json!({ "nfts": rows }));
-        }
-        assert!(query.contains("prefixed"), "unexpected query {query}");
-        let mut data = serde_json::Map::new();
-        for cap in alias.captures_iter(query) {
-            let prefix: String = serde_json::from_str(&cap[2]).unwrap();
-            let hit: Vec<Value> = copies
-                .iter()
-                .filter(|(o, urn, _)| o == owner && urn.starts_with(&prefix))
-                .map(|(_, urn, _)| json!({ "urn": urn }))
-                .take(1)
-                .collect();
-            data.insert(format!("p{}", &cap[1]), Value::Array(hit));
-        }
-        Ok(Value::Object(data))
-    }
 }
 
 fn random_address() -> String {
@@ -735,51 +569,47 @@ fn random_address() -> String {
     format!("0x{}", &hex[..40])
 }
 
-/// The squid's three tiers over the collections subgraphs, and the escrow
-/// lease overlay unioned into each (the overlay's SQL runs on the scratch
-/// database, so the whole check skips without it).
+/// Items with a token are asked by `ownerOf`, assets and off-chain items are
+/// not asked, and an active escrow lease stands in for a token the wearer does
+/// not hold (the overlay's SQL runs on the scratch database, so the whole
+/// check skips without it).
 #[tokio::test]
-async fn owned_items_come_from_the_collections_subgraphs_and_the_escrow_overlay() {
+async fn owned_items_come_from_the_chain_and_the_escrow_overlay() {
     require_test_db!(Some(pool) = crate::db::scratch::pool(2).await);
     let (storage, tmp) = temp_storage("items").await;
     let owner = random_address();
-    let token_item =
-        "urn:decentraland:matic:collections-v2:0xaaa0000000000000000000000000000000000001:1";
-    let v1_item = "urn:decentraland:ethereum:collections-v1:halloween_2019:hat";
-    let prefix_item =
-        "urn:decentraland:matic:collections-v2:0xbbb0000000000000000000000000000000000002:3";
-    let copies = vec![
-        (owner.clone(), token_item, "42"),
-        (owner.clone(), v1_item, "7"),
-        (owner.clone(), prefix_item, "1"),
-    ];
-    let graph = serve_graph(copies_answer(copies)).await;
-    let market = market_over(Readers {
-        eth: Some(graph.clone()),
-        matic: Some(graph.clone()),
-        marketplace: None,
-    });
-    let s = sources(
-        pool.clone(),
-        storage.clone(),
-        None,
-        Some(market),
-        Settings::default(),
-    );
+    let mine = "0xaaa0000000000000000000000000000000000001";
+    let theirs = "0xccc0000000000000000000000000000000000003";
+    let escrowed = "0xddd0000000000000000000000000000000000004";
+    let recent = "0xeee0000000000000000000000000000000000005";
+    let holder = owner.clone();
+    let chain = fake_chain::serve(move |q, block| match q {
+        Query::OwnerOf { contract, .. } => Reply::Owner(
+            if *contract == addr(mine)
+                || (*contract == addr(recent) && block == fake_chain::at_deployment(TS))
+            {
+                addr(&holder)
+            } else {
+                addr(STRANGER)
+            },
+        ),
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let s = sources(pool.clone(), storage.clone(), over(&chain));
 
-    let unowned =
-        "urn:decentraland:matic:collections-v2:0xccc0000000000000000000000000000000000003:0";
-    let leased_token =
-        "urn:decentraland:matic:collections-v2:0xddd0000000000000000000000000000000000004:0:9";
+    let unowned = format!("urn:decentraland:matic:collections-v2:{theirs}:0:3");
+    let leased_token = format!("urn:decentraland:matic:collections-v2:{escrowed}:0:9");
     let wearables = [
-        "urn:decentraland:matic:collections-v2:0xaaa0000000000000000000000000000000000001:1:42",
-        "urn:decentraland:mainnet:collections-v1:halloween_2019:hat",
-        "urn:decentraland:matic:collections-v2:0xbbb0000000000000000000000000000000000002",
-        "urn:decentraland:off-chain:base-avatars:eyes_00",
-        unowned,
-        leased_token,
+        format!("urn:decentraland:matic:collections-v2:{mine}:1:42"),
+        "urn:decentraland:mainnet:collections-v1:halloween_2019:hat".to_string(),
+        format!("urn:decentraland:matic:collections-v2:{theirs}:0"),
+        "urn:decentraland:off-chain:base-avatars:eyes_00".to_string(),
+        unowned.clone(),
+        leased_token.clone(),
     ];
-    let mut d = profile(&owner, "", &wearables);
+    let refs: Vec<&str> = wearables.iter().map(String::as_str).collect();
+    let mut d = profile(&owner, "", &refs);
     d.entity.metadata.as_mut().unwrap()["avatars"][0]["hasClaimedName"] = json!(false);
     assert_eq!(
         validate_profile_access(&d.view(), &s, &owner)
@@ -788,25 +618,39 @@ async fn owned_items_come_from_the_collections_subgraphs_and_the_escrow_overlay(
         rejected(&[&format!(
             "The following items ({unowned}, {leased_token}) are not owned by the address {owner}."
         )]),
-        "the token, exact (mainnet spelled ethereum) and prefix tiers resolve; off-chain items are never asked"
+        "a held token passes; assets and off-chain items are not asked"
     );
 
     sqlx::query(
         "INSERT INTO shop.usage_grants (grantee_address, urn, token_id, category, unlock_at) VALUES \
-         ($1, $2, NULL, 'wearable', timezone('UTC', now()) + interval '2 days'), \
-         ($1, 'urn:decentraland:matic:collections-v2:0xddd0000000000000000000000000000000000004:0', '9', 'wearable', timezone('UTC', now()) + interval '2 days')",
+         ($1, $2, '9', 'wearable', timezone('UTC', now()) + interval '2 days')",
     )
     .bind(&owner)
-    .bind(unowned)
+    .bind(format!("urn:decentraland:matic:collections-v2:{escrowed}:0"))
     .execute(&pool)
     .await
     .unwrap();
-    assert!(
-        validate_profile_access(&d.view(), &s, &owner).await.is_ok(),
-        "an active escrow lease is ownership"
+    assert_eq!(
+        validate_profile_access(&d.view(), &s, &owner)
+            .await
+            .into_result(),
+        rejected(&[&format!(
+            "The following items ({unowned}) are not owned by the address {owner}."
+        )]),
+        "an active escrow lease is ownership of its token"
+    );
+    let bought_now = format!("urn:decentraland:matic:collections-v2:{recent}:0:1");
+    let mut d2 = profile(&owner, "", &[&bought_now, &leased_token]);
+    d2.entity.metadata.as_mut().unwrap()["avatars"][0]["hasClaimedName"] = json!(false);
+    assert_eq!(
+        validate_profile_access(&d2.view(), &s, &owner)
+            .await
+            .into_result(),
+        Ok(()),
+        "a leased item does not hold the others to one block"
     );
 
-    sqlx::query("UPDATE shop.usage_grants SET status = 'revoked' WHERE grantee_address = $1 AND token_id IS NULL")
+    sqlx::query("UPDATE shop.usage_grants SET status = 'revoked' WHERE grantee_address = $1")
         .bind(&owner)
         .execute(&pool)
         .await
@@ -816,27 +660,25 @@ async fn owned_items_come_from_the_collections_subgraphs_and_the_escrow_overlay(
             .await
             .into_result(),
         rejected(&[&format!(
-            "The following items ({unowned}) are not owned by the address {owner}."
+            "The following items ({unowned}, {leased_token}) are not owned by the address {owner}."
         )]),
         "a revoked lease grants nothing"
     );
 
-    let matic_unset = sources(
+    let l2_unset = sources(
         pool.clone(),
         storage,
-        None,
-        Some(market_over(Readers {
-            eth: Some(graph),
-            ..Default::default()
-        })),
-        Settings::default(),
+        Settings {
+            l2_rpc_url: None,
+            ..over(&chain)
+        },
     );
     assert_eq!(
-        validate_profile_access(&d.view(), &matic_unset, &owner)
+        validate_profile_access(&d.view(), &l2_unset, &owner)
             .await
             .into_result(),
         unavailable(&[
-            "Error checking item ownership: no matic collections subgraph is configured (MATIC_COLLECTIONS_SUBGRAPH_URL)"
+            "Error checking item ownership: no L2 RPC is configured (RPC_ENDPOINT_POLYGON)"
         ])
     );
 
@@ -854,83 +696,138 @@ fn wearable(pointer: &str) -> OwnedDeployment {
         id: "bafkreiwearable".into(),
         entity_type: EntityType::Wearable,
         pointers: vec![pointer.to_string()],
-        timestamp: 1_700_000_000_000,
+        timestamp: TS,
         content: vec![],
         version: "v3".into(),
         metadata: None,
     })
 }
 
-#[tokio::test]
-async fn collection_access_reads_the_collections_subgraph_of_the_items_layer() {
-    let (storage, tmp) = temp_storage("collections").await;
-    const COLLECTION: &str = "0xc011000000000000000000000000000000000001";
-    let graph = serve_graph(|query, vars| {
-        assert!(
-            query.contains("collectionAccess"),
-            "unexpected query {query}"
-        );
-        if vars["collection"] != COLLECTION {
-            return Ok(json!({ "collections": [], "items": [] }));
-        }
-        let items = if vars["itemId"] == "3" {
-            json!([{ "creator": OWNER, "managers": [OPERATOR], "minters": [] }])
-        } else {
-            json!([])
-        };
-        Ok(json!({
-            "collections": [{ "creator": OWNER, "owner": OWNER, "managers": [], "minters": [] }],
-            "items": items
-        }))
-    })
-    .await;
-    let s = sources(
-        lazy_pool(),
-        storage.clone(),
-        None,
-        Some(market_over(Readers {
-            matic: Some(graph.clone()),
-            ..Default::default()
-        })),
-        Settings::default(),
-    );
-    let pointer = format!(
-        "urn:decentraland:matic:collections-v2:{}:3",
-        COLLECTION.to_uppercase().replace("0X", "0x")
-    );
-    let d = wearable(&pointer);
+const COMMITTEE: &str = "0xdddd000000000000000000000000000000000004";
+const MINTER: &str = "0xeeee000000000000000000000000000000000005";
 
-    assert!(
-        validate_item_access(&d.view(), &s, OWNER).await.is_ok(),
-        "the collection's creator"
-    );
-    assert!(
-        validate_item_access(&d.view(), &s, OPERATOR).await.is_ok(),
-        "the deployed item's manager"
-    );
-    assert_eq!(
-        validate_item_access(
-            &wearable(&format!(
-                "urn:decentraland:matic:collections-v2:{COLLECTION}:4"
-            ))
-            .view(),
-            &s,
-            OPERATOR
+const EDITABLE: &str = "0xc011000000000000000000000000000000000001";
+const APPROVED: &str = "0xc011000000000000000000000000000000000002";
+const APPROVED_LATELY: &str = "0xc011000000000000000000000000000000000003";
+const PINNED: &str = "0xc011000000000000000000000000000000000004";
+
+/// The ADR-32 hash of the pinned wearable below, written out by hand.
+fn pinned_hash() -> String {
+    hash_bytes_v1(
+        format!(
+            r#"{{"content":[{{"key":"model.glb","hash":"{STORED_HASH}"}}],"metadata":{{"name":"hat","id":"urn:decentraland:matic:collections-v2:{PINNED}:0","data":{{"z":1,"a":[1.5]}}}}}}"#
         )
-        .await
-        .into_result(),
-        rejected(&[&format!(
-            "The provided Eth Address '{OPERATOR}' does not have access to the following item: ({COLLECTION}, 4)"
-        )]),
-        "another item's manager"
+        .as_bytes(),
+    )
+}
+
+/// A wearable of the pinned collection whose metadata keys are not sorted.
+fn pinned_wearable(name: &str) -> OwnedDeployment {
+    let file = format!(
+        r#"{{"version":"v3","type":"wearable","pointers":["urn:decentraland:matic:collections-v2:{PINNED}:0"],"timestamp":1700000000000,"content":[{{"file":"model.glb","hash":"{STORED_HASH}"}}],"metadata":{{"name":"{name}","id":"urn:decentraland:matic:collections-v2:{PINNED}:0","data":{{"z":1,"a":[1.5]}}}}}}"#
     );
+    let id = hash_bytes_v1(file.as_bytes());
+    let mut d =
+        OwnedDeployment::new(entity_parser::parse_entity_from_bytes(file.as_bytes(), &id).unwrap());
+    d.files.insert(id, file.into_bytes().into());
+    d
+}
+
+/// The Checker's `validateWearables` for the collections above: the creator
+/// and an item manager of an editable collection, nobody for an approved one
+/// (one approved only after the block five minutes before the deploy), and a
+/// committee member with the content the pinned item's hash names.
+fn collection_rule(q: &Query, block: u64) -> Reply {
+    let Query::Wearable {
+        sender,
+        collection,
+        item,
+        hash,
+        committees,
+        ..
+    } = q
+    else {
+        panic!("{q:?}")
+    };
+    assert!(!committees.is_empty());
+    let pinned = pinned_hash();
+    let editor = *sender == addr(OWNER) || *sender == addr(OPERATOR);
+    Reply::Yes(match collection.to_string().to_lowercase().as_str() {
+        EDITABLE => editor && *item == U256::from(3),
+        APPROVED => false,
+        APPROVED_LATELY => editor && block == fake_chain::five_min_before(TS),
+        PINNED => *sender == addr(COMMITTEE) && *hash == pinned,
+        _ => false,
+    })
+}
+
+#[tokio::test]
+async fn collection_access_follows_the_checker_at_the_deploy_block() {
+    let (storage, tmp) = temp_storage("collections").await;
+    let chain = fake_chain::serve(collection_rule).await;
+    let s = sources(lazy_pool(), storage.clone(), over(&chain));
+    let item = |collection: &str| {
+        wearable(&format!(
+            "urn:decentraland:matic:collections-v2:{}:3",
+            collection.to_uppercase().replace("0X", "0x")
+        ))
+    };
+    let denied = |who: &str, collection: &str, id: &str| {
+        rejected(&[&format!(
+            "The provided Eth Address '{who}' does not have access to the following item: ({collection}, {id})"
+        )])
+    };
+
+    for who in [OWNER, OPERATOR] {
+        assert!(
+            validate_item_access(&item(EDITABLE).view(), &s, who)
+                .await
+                .is_ok(),
+            "an editable collection: {who}"
+        );
+    }
+    for who in [MINTER, STRANGER] {
+        assert_eq!(
+            validate_item_access(&item(EDITABLE).view(), &s, who)
+                .await
+                .into_result(),
+            denied(who, EDITABLE, "3"),
+            "{who}"
+        );
+    }
     assert_eq!(
-        validate_item_access(&d.view(), &s, STRANGER)
+        validate_item_access(&item(APPROVED).view(), &s, OWNER)
             .await
             .into_result(),
-        rejected(&[&format!(
-            "The provided Eth Address '{STRANGER}' does not have access to the following item: ({COLLECTION}, 3)"
-        )])
+        denied(OWNER, APPROVED, "3"),
+        "an approved collection is frozen"
+    );
+    assert!(
+        validate_item_access(&item(APPROVED_LATELY).view(), &s, OWNER)
+            .await
+            .is_ok(),
+        "editable five minutes before the deploy"
+    );
+
+    assert!(
+        validate_item_access(&pinned_wearable("hat").view(), &s, COMMITTEE)
+            .await
+            .is_ok(),
+        "a committee member deploying the content the item pins"
+    );
+    assert_eq!(
+        validate_item_access(&pinned_wearable("other").view(), &s, COMMITTEE)
+            .await
+            .into_result(),
+        denied(COMMITTEE, PINNED, "0"),
+        "content other than what the item pins"
+    );
+    assert_eq!(
+        validate_item_access(&pinned_wearable("hat").view(), &s, OWNER)
+            .await
+            .into_result(),
+        denied(OWNER, PINNED, "0"),
+        "a pinned item is not the creator's to change"
     );
 
     let v1 = wearable(
@@ -962,44 +859,61 @@ async fn collection_access_reads_the_collections_subgraph_of_the_items_layer() {
             "The provided Eth Address '{STRANGER}' does not have access to the following item: 'urn:decentraland:off-chain:base-avatars:hat'"
         )])
     );
-
-    let eth_unset = wearable(&format!(
-        "urn:decentraland:ethereum:collections-v2:{COLLECTION}:3"
-    ));
     assert_eq!(
-        validate_item_access(&eth_unset.view(), &s, OWNER)
+        validate_item_access(
+            &wearable(&format!(
+                "urn:decentraland:ethereum:collections-v2:{EDITABLE}:3"
+            ))
+            .view(),
+            &s,
+            OWNER
+        )
+        .await
+        .into_result(),
+        denied(OWNER, EDITABLE, "3"),
+        "an L1 collection is the Decentraland address's alone"
+    );
+
+    let no_rpc = sources(lazy_pool(), storage.clone(), mainnet());
+    assert_eq!(
+        validate_item_access(&item(EDITABLE).view(), &no_rpc, OWNER)
             .await
             .into_result(),
         unavailable(&[
-            "Error checking collection access: no ethereum collections subgraph is configured (ETH_COLLECTIONS_SUBGRAPH_URL)"
+            "Error checking collection access: no L2 RPC is configured (RPC_ENDPOINT_POLYGON)"
         ])
     );
-    let failing = serve_graph(|_, _| Err(400)).await;
-    let down = sources(
-        lazy_pool(),
-        storage,
-        None,
-        Some(market_over(Readers {
-            matic: Some(failing),
-            ..Default::default()
-        })),
-        Settings::default(),
-    );
-    let verdict = validate_item_access(&d.view(), &down, OWNER)
+    // The deploy block denies and the node cannot answer for the earlier one.
+    let pruned = fake_chain::serve(|q, block| {
+        if block == fake_chain::at_deployment(TS) {
+            collection_rule(q, block)
+        } else {
+            Reply::Fail
+        }
+    })
+    .await;
+    let s = sources(lazy_pool(), storage, over(&pruned));
+    let verdict = validate_item_access(&item(APPROVED).view(), &s, OWNER)
         .await
         .into_result()
         .unwrap_err();
     assert!(
-        matches!(&verdict[..], [ValidationError::Unavailable(m)] if m.starts_with("Error checking collection access: subgraph query failed: ")),
+        matches!(&verdict[..], [ValidationError::Unavailable(m)] if m.starts_with("Error checking collection access: blockchain query failed: L2 eth_call")),
         "{verdict:?}"
+    );
+    assert!(
+        validate_item_access(&item(EDITABLE).view(), &s, OWNER)
+            .await
+            .is_ok(),
+        "granted at the deploy block, the earlier one is not asked"
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// The production woodie wearable's own proof reproduces the root its
-/// registry held; the check reads that root at the deploy's L2 block.
+/// The production woodie wearable's own proof yields the root the registry
+/// is asked to confirm at the deploy's L2 block.
 #[tokio::test]
-async fn third_party_items_are_proven_against_the_registry_root_at_the_deploy_block() {
+async fn third_party_items_are_proven_against_the_registry_at_the_deploy_block() {
     const WOODIE_0: &[u8] = include_bytes!("third_party_fixtures/woodie_0.entity.json");
     let (storage, tmp) = temp_storage("tp").await;
     let entity = entity_parser::parse_entity_from_bytes(
@@ -1014,262 +928,74 @@ async fn third_party_items_are_proven_against_the_registry_root_at_the_deploy_bl
         .iter()
         .map(|p| merkle::decode_hash32(p).unwrap())
         .collect();
-    let root = format!(
-        "0x{}",
-        hex::encode(merkle::generate_root(
-            proof.index,
-            &proof.entity_hash,
-            &decoded
-        ))
-    );
+    let root = merkle::generate_root(proof.index, &proof.entity_hash, &decoded);
+    let timestamp = entity.timestamp;
     let mut d = OwnedDeployment::new(entity);
-    d.files.insert(d.entity.id.clone(), WOODIE_0.to_vec());
+    d.files
+        .insert(d.entity.id.clone(), WOODIE_0.to_vec().into());
     let pointer = d.entity.pointers[0].clone();
 
-    let blocks = serve_graph(|query, vars| {
-        assert!(query.contains("getBlockForTimestampRange"), "{query}");
-        assert!(vars["timestamp"].as_i64().unwrap() > vars["timestamp5Min"].as_i64().unwrap());
-        Ok(json!({ "max": [{ "number": "70000000" }], "min": [{ "number": "69999900" }] }))
-    })
-    .await;
-    let registry_for = |answer: Value| {
-        move |query: &str, vars: &Value| {
-            assert!(query.contains("MerkleRoot"), "{query}");
-            assert_eq!(vars["block"], 70_000_000);
-            assert_eq!(
-                vars["id"],
-                "urn:decentraland:matic:collections-thirdparty:woodies"
-            );
-            Ok(answer.clone())
+    let registry = |approved: Option<[u8; 32]>| {
+        move |q: &Query, block: u64| match q {
+            Query::ThirdParty { tp_id, root, .. } => {
+                assert_eq!(
+                    tp_id,
+                    "urn:decentraland:matic:collections-thirdparty:woodies"
+                );
+                assert!(
+                    block == fake_chain::at_deployment(timestamp)
+                        || block == fake_chain::five_min_before(timestamp)
+                );
+                match approved {
+                    Some(r) => Reply::Yes(root.0 == r),
+                    None => Reply::Fail,
+                }
+            }
+            other => panic!("{other:?}"),
         }
     };
-    let tp_settings = |registry: String, blocks: &str| Settings {
-        third_party_registry_url: Some(registry),
-        blocks_l2_url: Some(blocks.to_string()),
-        ..Settings::default()
-    };
 
-    let good = serve_graph(registry_for(json!({ "thirdParties": [{ "root": root }] }))).await;
-    let s = sources(
-        lazy_pool(),
-        storage.clone(),
-        None,
-        None,
-        tp_settings(good, &blocks),
-    );
+    let good = fake_chain::serve(registry(Some(root))).await;
+    let s = sources(lazy_pool(), storage.clone(), over(&good));
     assert!(
         validate_item_access(&d.view(), &s, STRANGER).await.is_ok(),
         "the proof, not the deployer, authorizes a third-party item ({pointer})"
     );
 
-    let wrong = serve_graph(registry_for(
-        json!({ "thirdParties": [{ "root": format!("0x{}", "11".repeat(32)) }] }),
-    ))
-    .await;
-    let unapproved = serve_graph(registry_for(json!({ "thirdParties": [] }))).await;
-    for registry in [wrong, unapproved] {
-        let s = sources(
-            lazy_pool(),
-            storage.clone(),
-            None,
-            None,
-            tp_settings(registry, &blocks),
-        );
-        assert_eq!(
-            validate_item_access(&d.view(), &s, STRANGER)
-                .await
-                .into_result(),
-            rejected(&["Couldn't verify merkle proofed entity for third-party wearable"])
-        );
-    }
-
-    let failing = serve_graph(|_, _| Err(400)).await;
-    let s = sources(
-        lazy_pool(),
-        storage.clone(),
-        None,
-        None,
-        tp_settings(failing, &blocks),
+    let other = fake_chain::serve(registry(Some([0x11; 32]))).await;
+    let s = sources(lazy_pool(), storage.clone(), over(&other));
+    assert_eq!(
+        validate_item_access(&d.view(), &s, STRANGER)
+            .await
+            .into_result(),
+        rejected(&["Couldn't verify merkle proofed entity for third-party wearable"])
     );
+
+    let failing = fake_chain::serve(move |q, block| match q {
+        Query::ThirdParty { .. } if block == fake_chain::at_deployment(timestamp) => {
+            Reply::Yes(false)
+        }
+        _ => Reply::Fail,
+    })
+    .await;
+    let s = sources(lazy_pool(), storage.clone(), over(&failing));
+    let verdict = validate_item_access(&d.view(), &s, STRANGER)
+        .await
+        .into_result()
+        .unwrap_err();
+    assert!(
+        matches!(&verdict[..], [ValidationError::Unavailable(m)] if m.starts_with("Error checking third-party access: blockchain query failed: L2 eth_call")),
+        "{verdict:?}"
+    );
+    let s = sources(lazy_pool(), storage, mainnet());
     assert_eq!(
         validate_item_access(&d.view(), &s, STRANGER)
             .await
             .into_result(),
         unavailable(&[
-            "Error checking third-party access: subgraph query failed: third-party registry: HTTP 400 Bad Request"
+            "Error checking third-party access: no L2 RPC is configured (RPC_ENDPOINT_POLYGON)"
         ])
     );
-    let s = sources(lazy_pool(), storage, None, None, Settings::default());
-    assert_eq!(
-        validate_item_access(&d.view(), &s, STRANGER)
-            .await
-            .into_result(),
-        unavailable(&[
-            "Error checking third-party access: no third-party registry is configured (THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL, BLOCKS_L2_SUBGRAPH_URL)"
-        ])
-    );
-    let _ = std::fs::remove_dir_all(&tmp);
-}
-
-/// The decimal token id of LAND (x, y), as the registry packs it.
-fn land_token(x: i32, y: i32) -> String {
-    let hex = format!("{:032x}{:032x}", x as i128 as u128, y as i128 as u128);
-    let mut digits: Vec<u8> = vec![0];
-    for c in hex.chars() {
-        let mut carry = c.to_digit(16).unwrap();
-        for d in digits.iter_mut() {
-            let v = (*d as u32) * 16 + carry;
-            *d = (v % 10) as u8;
-            carry = v / 10;
-        }
-        while carry > 0 {
-            digits.push((carry % 10) as u8);
-            carry /= 10;
-        }
-    }
-    while digits.len() > 1 && *digits.last().unwrap() == 0 {
-        digits.pop();
-    }
-    digits.iter().rev().map(|d| (b'0' + d) as char).collect()
-}
-
-fn land_event(
-    block: i64,
-    kind: &'static str,
-    token: &str,
-    account: Option<&str>,
-    operator: Option<&str>,
-) -> AuthzEvent {
-    AuthzEvent {
-        block_number: block,
-        log_index: 0,
-        block_time: block * 12,
-        token_address: crate::land_authz::LAND_REGISTRY_MAINNET.to_string(),
-        kind,
-        token_id: Some(token.to_string()),
-        estate_id: None,
-        account: account.map(str::to_string),
-        operator: operator.map(str::to_string),
-        approved: None,
-    }
-}
-
-/// The LAND leg reads the index once its fold is published: an update
-/// operator, whom the subgraph fallback cannot see, deploys. The index's
-/// cursor row is global, so this runs on a database of its own.
-#[tokio::test]
-async fn the_land_leg_reads_the_index_once_it_is_ready() {
-    require_test_db!(Ok(base) = std::env::var("CATALYST_TEST_DATABASE_URL"));
-    let opts: PgConnectOptions = base.parse().unwrap();
-    let admin = PgPoolOptions::new()
-        .max_connections(1)
-        .connect_with(opts.database("postgres"))
-        .await
-        .unwrap();
-    let name = format!(
-        "catalyst_test_validator_{}",
-        &uuid::Uuid::new_v4().simple().to_string()[..12]
-    );
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
-        .execute(&admin)
-        .await
-        .unwrap();
-    let mut url = url::Url::parse(&base).unwrap();
-    url.set_path(&format!("/{name}"));
-    let pool = crate::db::connect_pool(
-        url.as_str(),
-        &crate::db::PoolSettings {
-            max_connections: 4,
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap();
-    crate::db::apply_schema(&pool).await.unwrap();
-
-    let (storage, tmp) = temp_storage("index").await;
-    let s = sources(
-        pool.clone(),
-        storage,
-        Some(land_over(pool.clone(), None)),
-        None,
-        Settings::default(),
-    );
-    let token = land_token(1, 1);
-    let settings = crate::land_authz::Settings::for_tests();
-    let start = settings.start_block as i64;
-
-    let not_ready = s
-        .check_land_access(OPERATOR, &[(1, 1)], 0)
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(
-        not_ready.starts_with("no LAND rights source"),
-        "{not_ready}"
-    );
-
-    indexer::ensure_cursor(&pool, &settings).await.unwrap();
-    {
-        let mut conn = pool.acquire().await.unwrap();
-        indexer::insert_events(
-            &mut conn,
-            &[
-                land_event(
-                    start + 10,
-                    crate::land_authz::KIND_TRANSFER,
-                    &token,
-                    Some(OWNER),
-                    None,
-                ),
-                land_event(
-                    start + 20,
-                    crate::land_authz::KIND_UPDATE_OPERATOR,
-                    &token,
-                    None,
-                    Some(OPERATOR),
-                ),
-            ],
-        )
-        .await
-        .unwrap();
-        indexer::set_cursor(&mut conn, crate::land_authz::NETWORK_MAINNET, start + 100)
-            .await
-            .unwrap();
-    }
-    indexer::fold(&pool, &settings, None).await.unwrap();
-    assert!(
-        indexer::mark_folded(
-            &pool,
-            crate::land_authz::NETWORK_MAINNET,
-            (start + 100) as u64
-        )
-        .await
-        .unwrap()
-    );
-
-    assert_eq!(
-        s.check_land_access(OWNER, &[(1, 1), (2, 2)], 0)
-            .await
-            .unwrap(),
-        vec![true, false]
-    );
-    assert_eq!(
-        s.check_land_access(OPERATOR, &[(1, 1)], 0).await.unwrap(),
-        vec![true],
-        "the update operator leg"
-    );
-    assert_eq!(
-        s.check_land_access(STRANGER, &[(1, 1)], 0).await.unwrap(),
-        vec![false]
-    );
-
-    pool.close().await;
-    let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "DROP DATABASE \"{name}\" WITH (FORCE)"
-    )))
-    .execute(&admin)
-    .await;
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -1279,11 +1005,9 @@ async fn the_decentraland_addresses_are_the_constant_and_the_configured_one() {
     let s = sources(
         lazy_pool(),
         storage,
-        None,
-        None,
         Settings {
             additional_dcl_address: Some("0x00000000000000000000000000000000000000ee".into()),
-            ..Settings::default()
+            ..mainnet()
         },
     );
     assert!(s.is_address_owned_by_decentraland(DECENTRALAND_ADDRESS));
@@ -1294,68 +1018,84 @@ async fn the_decentraland_addresses_are_the_constant_and_the_configured_one() {
 }
 
 #[test]
-fn settings_refuse_plaintext_private_half_configured_sources_and_bad_addresses() {
-    let hosts = vec!["catalyst.example".to_string()];
-    let parse = |tpr: Option<&str>, blocks: Option<&str>, extra: Option<&str>| {
-        Settings::parse(false, extra, tpr, blocks, &hosts)
+fn settings_keep_https_rpcs_only_and_refuse_bad_addresses() {
+    let parse = |l2: Option<&str>, extra: Option<&str>| {
+        Settings::parse(
+            false,
+            false,
+            extra,
+            " mainnet ",
+            Some("https://l1.example/KEY".into()),
+            l2,
+        )
     };
     let ok = parse(
-        Some(" https://api.example/tpr/KEY "),
-        Some("https://api.example/blocks"),
+        Some(" https://l2.example/KEY "),
         Some("0x00000000000000000000000000000000000000EE"),
     )
     .unwrap();
-    assert_eq!(
-        ok.third_party_registry_url.as_deref(),
-        Some("https://api.example/tpr/KEY")
-    );
+    assert_eq!(ok.eth_network, "mainnet");
+    assert_eq!(ok.l2_rpc_url.as_deref(), Some("https://l2.example/KEY"));
     assert_eq!(
         ok.additional_dcl_address.as_deref(),
         Some("0x00000000000000000000000000000000000000ee")
     );
     assert!(
         !format!("{ok:?}").contains("KEY"),
-        "the Debug form never prints a subgraph URL"
+        "the Debug form never prints an RPC URL"
+    );
+    assert_eq!(
+        parse(Some("http://127.0.0.1:8545"), None)
+            .unwrap()
+            .l2_rpc_url,
+        None,
+        "a plaintext L2 endpoint is not used for access checks"
     );
     assert!(
-        parse(None, None, Some(""))
+        parse(None, Some(""))
             .unwrap()
             .additional_dcl_address
             .is_none()
     );
+    let err = format!("{:#}", parse(None, Some("not-an-address")).unwrap_err());
+    assert!(err.contains("ADDITIONAL_DECENTRALAND_ADDRESS"), "{err}");
+}
 
-    for (tpr, blocks, extra, needle) in [
+#[test]
+fn a_node_taking_deploys_needs_both_rpcs_and_a_known_network() {
+    let parse = |ignore: bool, writes: bool, network: &str, l1: Option<&str>, l2: Option<&str>| {
+        Settings::parse(ignore, writes, None, network, l1.map(str::to_string), l2)
+            .map_err(|e| format!("{e:#}"))
+    };
+    let (l1, l2) = (
+        Some("https://l1.example/KEY"),
+        Some("https://l2.example/KEY"),
+    );
+    assert!(parse(false, true, "mainnet", l1, l2).is_ok());
+    assert!(parse(false, true, "sepolia", l1, l2).is_ok());
+    for (network, l1, l2, needle) in [
+        ("goerli", l1, l2, "ETH_NETWORK=goerli"),
+        ("mainnet", None, l2, "ETH_RPC_URL"),
+        ("mainnet", l1, None, "RPC_ENDPOINT_POLYGON"),
         (
-            Some("http://api.example/tpr/KEY"),
-            Some("https://api.example/blocks"),
-            None,
-            "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
+            "mainnet",
+            l1,
+            Some("http://l2.example/KEY"),
+            "RPC_ENDPOINT_POLYGON",
         ),
-        (
-            Some("https://127.0.0.1/tpr"),
-            Some("https://api.example/blocks"),
-            None,
-            "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
-        ),
-        (
-            Some("https://api.example/tpr"),
-            Some("https://catalyst.example/blocks"),
-            None,
-            "BLOCKS_L2_SUBGRAPH_URL",
-        ),
-        (Some("https://api.example/tpr"), None, None, "set together"),
-        (
-            None,
-            None,
-            Some("not-an-address"),
-            "ADDITIONAL_DECENTRALAND_ADDRESS",
-        ),
+        ("mainnet", l1, Some("not a url"), "RPC_ENDPOINT_POLYGON"),
     ] {
-        let err = format!("{:#}", parse(tpr, blocks, extra).unwrap_err());
+        let err = parse(false, true, network, l1, l2).unwrap_err();
         assert!(err.contains(needle), "{err}");
+        assert!(err.contains("IGNORE_BLOCKCHAIN_ACCESS_CHECKS"), "{err}");
+        assert!(!err.contains("KEY"), "never the value: {err}");
         assert!(
-            !err.contains("KEY"),
-            "an error never echoes the value: {err}"
+            parse(true, true, network, l1, l2).is_ok(),
+            "ignored checks need no chain"
+        );
+        assert!(
+            parse(false, false, network, l1, l2).is_ok(),
+            "a node without local deploys starts"
         );
     }
 }
@@ -1372,6 +1112,8 @@ fn a_refusal_keeps_its_kind_in_the_deploy_failure() {
     );
     let unavailable = into_deploy_failure(vec![ValidationError::Unavailable("store".into())]);
     assert!(matches!(&unavailable, DeployFailure::Unavailable(e) if e == &["store".to_string()]));
+    let unverifiable = into_deploy_failure(vec![ValidationError::Unverifiable("rpc".into())]);
+    assert!(matches!(&unverifiable, DeployFailure::Unverifiable(e) if e == &["rpc".to_string()]));
 }
 
 /// `GET /queries/erc721/...` over the content database: the active entity

@@ -108,7 +108,7 @@ impl BlockchainChecker for StubChecker {
         _eth_address: &str,
         _contract_address: &str,
         _item_id: &str,
-        _entity: &Entity,
+        _deployment: &Deployment<'_>,
         _timestamp: Timestamp,
         _layer: BlockchainLayer,
     ) -> Result<bool, ValidatorError> {
@@ -153,7 +153,7 @@ fn deployment(
         version: "v3".to_string(),
         metadata,
     });
-    d.files = files;
+    d.files = files.into_iter().map(|(k, v)| (k, v.into())).collect();
     d
 }
 

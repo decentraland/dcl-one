@@ -12,8 +12,10 @@ use serde_json::Value;
 
 use super::{Outbound, SendError, read_body_capped};
 
+mod blocks;
 mod wire;
 
+pub use blocks::*;
 pub use wire::*;
 
 /// The client over one endpoint through the guarded [`Outbound`].
@@ -86,6 +88,14 @@ impl<'a> Rpc<'a> {
     /// A call whose result is a `0x` hex string.
     pub async fn call_hex(&self, method: &str, params: Value) -> Result<String, RpcError> {
         hex_of(self.call(method, params).await?)
+    }
+
+    /// One block's number and timestamp; a block the node does not have is malformed.
+    pub async fn block(&self, tag: BlockTag) -> Result<BlockInfo, RpcError> {
+        let result = self
+            .call("eth_getBlockByNumber", get_block_params(tag))
+            .await?;
+        block_info(&result)?.ok_or_else(|| RpcError::Malformed(format!("no block {}", tag.param())))
     }
 
     /// One HTTP request carrying `requests` (each a [`request`]); the
