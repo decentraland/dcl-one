@@ -621,6 +621,33 @@ async fn a_contract_without_code_is_not_remembered_as_of_no_standard() {
     assert_eq!(probes.load(Ordering::SeqCst), 4);
 }
 
+/// An endpoint without batches still answers `eth_getCode` one address at a
+/// time, so a deployed contract of no known standard is remembered.
+#[tokio::test]
+async fn code_is_asked_address_by_address_when_batches_are_refused() {
+    let not_nft = "0x0000000000000000000000000000000000000bad";
+    let probes = Arc::new(AtomicUsize::new(0));
+    let seen = probes.clone();
+    let chain = fake_chain::serve(move |q, _| {
+        seen.fetch_add(1, Ordering::SeqCst);
+        match q {
+            Query::OwnerOf { .. } | Query::BalanceOf { .. } => Reply::Empty,
+            other => panic!("{other:?}"),
+        }
+    })
+    .await;
+    chain.set_no_batch(true);
+    let a = access(None, Some(&chain.url));
+    let urns = vec![format!(
+        "urn:decentraland:matic:collections-thirdparty:tp:c:i:matic:{not_nft}:1"
+    )];
+    assert_eq!(a.items(OWNER, &urns, TS).await.unwrap(), vec![false]);
+    assert_eq!(probes.load(Ordering::SeqCst), 2);
+    assert!(chain.calls().iter().any(|c| c == "eth_getCode"));
+    assert_eq!(a.items(OWNER, &urns, TS).await.unwrap(), vec![false]);
+    assert_eq!(probes.load(Ordering::SeqCst), 2, "the code was seen: kept");
+}
+
 #[tokio::test]
 async fn synced_caps_ask_past_the_local_ones_and_beyond_their_own_are_undecided() {
     let v2 = "0x0002000000000000000000000000000000000001";

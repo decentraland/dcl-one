@@ -32,8 +32,9 @@ pub struct ContentConfig {
     /// deployments; the L2 checks use RPC_ENDPOINT_POLYGON. Plaintext http://
     /// is refused at startup. Unset or empty:
     /// https://rpc.decentraland.org/<mainnet|sepolia>?project=catalyst-content
-    /// by ETH_NETWORK, except under NODE_POSTURE island and journey.
-    #[arg(long, env = "ETH_RPC_URL")]
+    /// by ETH_NETWORK, except under NODE_POSTURE island and journey. May come
+    /// from ETH_RPC_URL_FILE; an empty file fails startup.
+    #[arg(long, env = "ETH_RPC_URL", hide_env_values = true)]
     pub eth_rpc_url: Option<String>,
 
     /// Content files downloaded at once across every peer.
