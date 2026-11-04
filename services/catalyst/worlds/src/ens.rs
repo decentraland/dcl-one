@@ -2,7 +2,10 @@
 //! `ETH_RPC_URL` as the worlds content server reads it: a second-level name
 //! is the BaseRegistrar's `ownerOf(labelhash)`, unless that owner is the
 //! NameWrapper, whose `ownerOf(namehash)` then answers, as it does for every
-//! deeper name. A reverted call or the zero address is "nobody holds it"; an
+//! deeper name. A wrapped name counts only while the ENS Registry's
+//! `owner(namehash)` is still the NameWrapper (a parent can reclaim an
+//! unwrapped parent's subname). A reverted call or the zero address is
+//! "nobody holds it"; an
 //! RPC fault is an error, never an owner. Answers are memoized per name for
 //! [`ENS_OWNER_TTL`].
 
@@ -24,6 +27,9 @@ sol! {
     interface OwnerOf {
         function ownerOf(uint256 id) external view returns (address);
     }
+    interface RegistryOwner {
+        function owner(bytes32 node) external view returns (address);
+    }
 }
 
 /// The upstream's one-minute name-ownership memo.
@@ -36,6 +42,7 @@ const CALLS_PER_BATCH: usize = 100;
 /// The ENS contracts of one network (the upstream's `ensContracts`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnsContracts {
+    pub registry: EvmAddress,
     pub base_registrar: EvmAddress,
     pub name_wrapper: EvmAddress,
 }
@@ -43,13 +50,16 @@ pub struct EnsContracts {
 impl EnsContracts {
     /// `ETH_NETWORK`'s contracts; `None` for a network ENS is not read on.
     pub fn for_network(network: &str) -> Option<Self> {
+        let registry = address!("00000000000C2E074eC69A0dFb2997BA6C7d2e1e");
         let base_registrar = address!("57f1887a8BF19b14fC0dF6Fd9B2acc9Af147eA85");
         match network {
             "mainnet" => Some(Self {
+                registry,
                 base_registrar,
                 name_wrapper: address!("D4416b13d2b3a9aBae7AcD5D6C2BbDBE25686401"),
             }),
             "sepolia" => Some(Self {
+                registry,
                 base_registrar,
                 name_wrapper: address!("0635513f179D50A207757E05759CbD106d7dFcE8"),
             }),
@@ -114,6 +124,22 @@ impl EnsResolver {
         }
     }
 
+    /// The resolver `ALLOW_ENS_DOMAINS=true` starts with; refuses a missing
+    /// `ETH_RPC_URL` or an `ETH_NETWORK` without ENS contracts.
+    pub fn configured(
+        http: Outbound,
+        rpc_url: Option<&str>,
+        network: &str,
+    ) -> anyhow::Result<Self> {
+        let rpc_url = rpc_url.filter(|u| !u.is_empty()).ok_or_else(|| {
+            anyhow::anyhow!("ALLOW_ENS_DOMAINS=true needs ETH_RPC_URL to read ENS owners")
+        })?;
+        let contracts = EnsContracts::for_network(network).ok_or_else(|| {
+            anyhow::anyhow!("ALLOW_ENS_DOMAINS=true: no ENS contracts for ETH_NETWORK={network}")
+        })?;
+        Ok(Self::new(http, rpc_url, contracts))
+    }
+
     /// Drops every memoized answer (tests).
     pub fn clear_cache(&self) {
         self.cache.clear();
@@ -160,12 +186,12 @@ impl EnsResolver {
                 wrapped.push(name.clone());
             }
         }
-        let calls: Vec<(EvmAddress, U256)> = second_level
+        let calls: Vec<Call> = second_level
             .iter()
             .map(|name| {
                 let label = name.split('.').next().unwrap_or_default();
                 let id = U256::from_be_bytes(keccak256(label.as_bytes()).0);
-                (self.contracts.base_registrar, id)
+                owner_of_call(self.contracts.base_registrar, id)
             })
             .collect();
         for (name, owner) in second_level.into_iter().zip(self.owners_of(&calls).await) {
@@ -176,27 +202,41 @@ impl EnsResolver {
                 }
             }
         }
-        let calls: Vec<(EvmAddress, U256)> = wrapped
+        // The NameWrapper answers only for a node the Registry still gives it.
+        let calls: Vec<Call> = wrapped
+            .iter()
+            .map(|name| registry_owner_call(self.contracts.registry, namehash(name)))
+            .collect();
+        let mut held = Vec::new();
+        for (name, owner) in wrapped.into_iter().zip(self.owners_of(&calls).await) {
+            match owner {
+                Ok(Some(owner)) if owner == self.contracts.name_wrapper => held.push(name),
+                Ok(_) => {
+                    out.insert(name, Ok(None));
+                }
+                Err(e) => {
+                    out.insert(name, Err(e));
+                }
+            }
+        }
+        let calls: Vec<Call> = held
             .iter()
             .map(|name| {
                 let id = U256::from_be_bytes(namehash(name).0);
-                (self.contracts.name_wrapper, id)
+                owner_of_call(self.contracts.name_wrapper, id)
             })
             .collect();
-        for (name, owner) in wrapped.into_iter().zip(self.owners_of(&calls).await) {
+        for (name, owner) in held.into_iter().zip(self.owners_of(&calls).await) {
             out.insert(name, owner.map(|o| o.map(to_address)));
         }
         out
     }
 
-    /// `ownerOf` for each `(contract, id)` in JSON-RPC batches of
+    /// Each address-returning `(contract, calldata)` in JSON-RPC batches of
     /// [`CALLS_PER_BATCH`] (one call goes alone), in `calls`' order.
-    async fn owners_of(
-        &self,
-        calls: &[(EvmAddress, U256)],
-    ) -> Vec<Result<Option<EvmAddress>, String>> {
-        if let [(contract, id)] = calls {
-            return vec![self.owner_of(*contract, *id).await];
+    async fn owners_of(&self, calls: &[Call]) -> Vec<Result<Option<EvmAddress>, String>> {
+        if let [call] = calls {
+            return vec![self.owner_of(call).await];
         }
         let rpc = Rpc::new(&self.http, &self.rpc_url).with_timeout(RPC_TIMEOUT);
         let mut out = Vec::with_capacity(calls.len());
@@ -204,16 +244,14 @@ impl EnsResolver {
             let requests: Vec<Value> = chunk
                 .iter()
                 .enumerate()
-                .map(|(i, (contract, id))| {
-                    request(i as u64, "eth_call", call_params(*contract, *id))
-                })
+                .map(|(i, call)| request(i as u64, "eth_call", call_params(call)))
                 .collect();
             match rpc.batch(&requests).await {
                 Err(e) => out.extend(chunk.iter().map(|_| Err(format!("ENS ownerOf: {e}")))),
                 // An endpoint without batches: one call each.
                 Ok(items) if items.is_empty() => {
-                    for (contract, id) in chunk {
-                        out.push(self.owner_of(*contract, *id).await);
+                    for call in chunk {
+                        out.push(self.owner_of(call).await);
                     }
                 }
                 Ok(items) => {
@@ -231,19 +269,29 @@ impl EnsResolver {
         out
     }
 
-    /// `ownerOf(id)` on `contract` at the head; `None` when reverted or zero.
-    async fn owner_of(&self, contract: EvmAddress, id: U256) -> Result<Option<EvmAddress>, String> {
+    /// One address-returning call at the head; `None` when reverted or zero.
+    async fn owner_of(&self, call: &Call) -> Result<Option<EvmAddress>, String> {
         decode(
             Rpc::new(&self.http, &self.rpc_url)
                 .with_timeout(RPC_TIMEOUT)
-                .call_hex("eth_call", call_params(contract, id))
+                .call_hex("eth_call", call_params(call))
                 .await,
         )
     }
 }
 
-fn call_params(contract: EvmAddress, id: U256) -> Value {
-    let data = OwnerOf::ownerOfCall { id }.abi_encode();
+/// A contract and the calldata of a view returning one address.
+type Call = (EvmAddress, Vec<u8>);
+
+fn owner_of_call(contract: EvmAddress, id: U256) -> Call {
+    (contract, OwnerOf::ownerOfCall { id }.abi_encode())
+}
+
+fn registry_owner_call(registry: EvmAddress, node: B256) -> Call {
+    (registry, RegistryOwner::ownerCall { node }.abi_encode())
+}
+
+fn call_params((contract, data): &Call) -> Value {
     json!([
         { "to": format!("{contract:#x}"), "data": format!("0x{}", hex::encode(data)) },
         "latest"
@@ -284,7 +332,7 @@ pub(crate) mod test_support {
     use axum::{Json, Router};
     use serde_json::{Value, json};
 
-    use super::{EnsContracts, EnsResolver, OwnerOf, namehash};
+    use super::{EnsContracts, EnsResolver, OwnerOf, RegistryOwner, namehash};
     use crate::http::Outbound;
     use crate::shared::identity::Address;
 
@@ -299,6 +347,10 @@ pub(crate) mod test_support {
         /// HTTP requests received (a batch is one).
         pub requests: Arc<AtomicUsize>,
         pub calls: Arc<Mutex<Vec<(EvmAddress, U256)>>>,
+        /// A batch is answered with one error object, not an array.
+        pub no_batches: Arc<AtomicBool>,
+        /// A batch answer leaves out its last envelope.
+        pub drop_last: Arc<AtomicBool>,
     }
 
     pub fn contracts() -> EnsContracts {
@@ -320,22 +372,29 @@ pub(crate) mod test_support {
                 .insert((contracts().base_registrar, id), evm(owner));
         }
 
-        /// A name held through the NameWrapper (the registrar names the wrapper).
+        /// A name held through the NameWrapper (the registrar and the
+        /// Registry name the wrapper).
         pub fn wrap(&self, name: &str, owner: &Address) {
             let c = contracts();
             let labels: Vec<&str> = name.split('.').collect();
+            let mut owners = self.owners.lock().unwrap();
             if labels.len() == 2 {
                 let id = U256::from_be_bytes(keccak256(labels[0].as_bytes()).0);
-                self.owners
-                    .lock()
-                    .unwrap()
-                    .insert((c.base_registrar, id), c.name_wrapper);
+                owners.insert((c.base_registrar, id), c.name_wrapper);
             }
+            let id = U256::from_be_bytes(namehash(name).0);
+            owners.insert((c.registry, id), c.name_wrapper);
+            owners.insert((c.name_wrapper, id), evm(owner));
+        }
+
+        /// The Registry gives `name`'s node to `owner` (a parent's
+        /// `setSubnodeOwner`); the NameWrapper's record is left stale.
+        pub fn reclaim(&self, name: &str, owner: &Address) {
             let id = U256::from_be_bytes(namehash(name).0);
             self.owners
                 .lock()
                 .unwrap()
-                .insert((c.name_wrapper, id), evm(owner));
+                .insert((contracts().registry, id), evm(owner));
         }
 
         pub fn set_down(&self, down: bool) {
@@ -356,10 +415,18 @@ pub(crate) mod test_support {
             return (axum::http::StatusCode::BAD_GATEWAY, "down").into_response();
         }
         match body {
-            Value::Array(calls) => Json(Value::Array(
-                calls.iter().map(|call| answer_one(&ens, call)).collect(),
-            ))
+            Value::Array(_) if ens.no_batches.load(Ordering::Relaxed) => Json(json!({
+                "jsonrpc": "2.0", "id": null,
+                "error": { "code": -32600, "message": "batch requests are not supported" }
+            }))
             .into_response(),
+            Value::Array(calls) => {
+                let mut out: Vec<Value> = calls.iter().map(|call| answer_one(&ens, call)).collect();
+                if ens.drop_last.load(Ordering::Relaxed) {
+                    out.pop();
+                }
+                Json(Value::Array(out)).into_response()
+            }
             call => Json(answer_one(&ens, &call)).into_response(),
         }
     }
@@ -369,7 +436,11 @@ pub(crate) mod test_support {
         let call = &body["params"][0];
         let to: EvmAddress = call["to"].as_str().unwrap().parse().unwrap();
         let data = hex::decode(call["data"].as_str().unwrap().trim_start_matches("0x")).unwrap();
-        let token = OwnerOf::ownerOfCall::abi_decode(&data).unwrap().id;
+        let token = if data[..4] == OwnerOf::ownerOfCall::SELECTOR {
+            OwnerOf::ownerOfCall::abi_decode(&data).unwrap().id
+        } else {
+            U256::from_be_bytes(RegistryOwner::ownerCall::abi_decode(&data).unwrap().node.0)
+        };
         ens.calls.lock().unwrap().push((to, token));
         let owner = ens.owners.lock().unwrap().get(&(to, token)).copied();
         match owner {
@@ -521,8 +592,8 @@ mod tests {
         assert_eq!(owners["xn--caf-dma.eth"], Ok(None));
         assert_eq!(
             ens.requests.load(std::sync::atomic::Ordering::Relaxed),
-            2,
-            "one registrar batch, then one wrapper batch"
+            3,
+            "one registrar batch, one registry batch, then one wrapper batch"
         );
         ens.set_down(true);
         assert!(
@@ -531,5 +602,79 @@ mod tests {
         );
         let owners = r.owners_uncached(&names[..2]).await;
         assert!(owners.values().all(Result::is_err));
+    }
+
+    #[tokio::test]
+    async fn a_reclaimed_subname_has_no_owner() {
+        let (r, ens) = resolver().await;
+        let (wrapped, parent) = (wallet(), wallet());
+        ens.wrap("sub.reclaim.eth", &wrapped);
+        ens.wrap("kept.reclaim.eth", &wrapped);
+        ens.wrap("rewrapped.eth", &wrapped);
+        ens.reclaim("sub.reclaim.eth", &parent);
+        ens.reclaim("rewrapped.eth", &parent);
+        assert_eq!(r.owner(&world("sub.reclaim.eth")).await.unwrap(), None);
+        assert_eq!(r.owner(&world("rewrapped.eth")).await.unwrap(), None);
+        assert_eq!(
+            r.owner(&world("kept.reclaim.eth")).await.unwrap(),
+            Some(wrapped.clone())
+        );
+        let names = ["sub.reclaim.eth", "kept.reclaim.eth"].map(String::from);
+        let owners = r.owners_uncached(&names).await;
+        assert_eq!(owners["sub.reclaim.eth"], Ok(None));
+        assert_eq!(owners["kept.reclaim.eth"], Ok(Some(wrapped)));
+        ens.set_down(true);
+        r.clear_cache();
+        assert!(r.owner(&world("kept.reclaim.eth")).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn an_endpoint_without_batches_is_asked_one_call_at_a_time() {
+        let (r, ens) = resolver().await;
+        let (a, b) = (wallet(), wallet());
+        ens.register("nb1.eth", &a);
+        ens.wrap("x.nb2.eth", &b);
+        ens.wrap("y.nb2.eth", &b);
+        ens.no_batches
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let names = ["nb1.eth", "nb3.eth", "x.nb2.eth", "y.nb2.eth"].map(String::from);
+        let owners = r.owners_uncached(&names).await;
+        assert_eq!(owners["nb1.eth"], Ok(Some(a)));
+        assert_eq!(owners["nb3.eth"], Ok(None));
+        assert_eq!(owners["x.nb2.eth"], Ok(Some(b.clone())));
+        assert_eq!(owners["y.nb2.eth"], Ok(Some(b)));
+    }
+
+    #[tokio::test]
+    async fn a_name_missing_from_the_batch_answer_is_an_error() {
+        let (r, ens) = resolver().await;
+        let (a, b) = (wallet(), wallet());
+        ens.register("miss1.eth", &a);
+        ens.register("miss2.eth", &b);
+        ens.drop_last
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let names = ["miss1.eth", "miss2.eth"].map(String::from);
+        let owners = r.owners_uncached(&names).await;
+        assert_eq!(owners["miss1.eth"], Ok(Some(a)));
+        assert!(owners["miss2.eth"].is_err());
+    }
+
+    #[test]
+    fn ens_worlds_need_an_rpc_url_and_a_known_network() {
+        let http = Outbound::for_tests;
+        let err = |r: anyhow::Result<EnsResolver>| r.err().unwrap().to_string();
+        assert!(err(EnsResolver::configured(http(), None, "mainnet")).contains("ETH_RPC_URL"));
+        assert!(err(EnsResolver::configured(http(), Some(""), "mainnet")).contains("ETH_RPC_URL"));
+        assert!(
+            err(EnsResolver::configured(
+                http(),
+                Some("http://rpc.example"),
+                "polygon"
+            ))
+            .contains("ETH_NETWORK=polygon")
+        );
+        for network in ["mainnet", "sepolia"] {
+            assert!(EnsResolver::configured(http(), Some("http://rpc.example"), network).is_ok());
+        }
     }
 }

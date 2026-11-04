@@ -83,16 +83,15 @@ pub async fn get_permissions(
         .as_ref()
         .map(|w| w.access.clone())
         .unwrap_or_default();
-    // The personal rule or the row's owner, else the NAME holder by name.
-    let owner = match state
+    // The live holder; unknown while the authority cannot answer.
+    let owner = state
         .policy
-        .personal_worlds()
-        .owner_of(&world)
-        .or_else(|| record.as_ref().and_then(|w| w.owner.clone()))
-    {
-        Some(owner) => Some(owner),
-        None => state.policy.owner_by_name(&world, None).await,
-    };
+        .current_owner(&world)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(%world, error = %e, "world owner unresolved");
+            None
+        });
 
     let mut deployment_wallets = Vec::new();
     let mut streaming_wallets = Vec::new();

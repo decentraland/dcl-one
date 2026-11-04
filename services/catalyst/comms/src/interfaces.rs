@@ -41,9 +41,9 @@ pub trait AccessPolicy: Send + Sync {
             None => WorldAdmission::Unknown,
         })
     }
-    /// The world's current holder (the name authority's briefly memoized answer),
-    /// the stored owner when that authority cannot answer. `None` when nobody
-    /// is known; a failed row read remains unavailable.
+    /// The world's current holder (the name authority's briefly memoized
+    /// answer). `None` when nobody holds it; an authority fault or a failed
+    /// row read is unavailable, never the stored owner.
     async fn world_owner(
         &self,
         world: &WorldName,

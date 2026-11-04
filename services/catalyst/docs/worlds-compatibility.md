@@ -65,8 +65,13 @@ difference not listed here is a gap, not a decision.
   one minute). It is asked only when the world's access setting refuses,
   admission waits on it for at most 3 seconds, and its answer (a fault
   included) is shared for 5 seconds. When the authority cannot answer,
-  nobody is admitted as owner; that refusal answers 503 (upstream fails
-  the whole mint).
+  nobody is admitted as owner: the stored owner's refusal answers 503
+  (upstream fails the whole mint), anyone else gets the access setting's
+  401/403. The scene host's periodic re-admission keeps connected clients
+  while the answer is undetermined. `GET /world/{name}/permissions` reports
+  the live holder (no `owner` while the authority cannot answer), and the
+  comms owner read for stream-key notices is unavailable then; neither
+  falls back to the stored owner.
 - **Capacity check fails closed.** When the live occupancy of a world cannot
   be recovered, the comms mint answers 503 instead of counting zero
   participants and admitting the user.
@@ -102,7 +107,9 @@ difference not listed here is a gap, not a decision.
   Only names whose labels the upstream's UTS46 normalization leaves
   unchanged resolve: lowercase ASCII letters, digits and inner `-`, with no
   `--` at the third and fourth characters. Upstream decodes `xn--` labels
-  and resolves other Unicode names; here those have no owner.
+  and resolves other Unicode names; here those have no owner. A wrapped
+  name has an owner only while the ENS Registry still gives its node to
+  the NameWrapper (upstream trusts the NameWrapper alone).
 - **Owner reconcile.** `worlds.owner` is rewritten from the name authority
   every `WORLDS_OWNER_RECONCILE_INTERVAL_SECS` (default 12 hours, as
   upstream) for worlds with a locally published scene, ENS worlds

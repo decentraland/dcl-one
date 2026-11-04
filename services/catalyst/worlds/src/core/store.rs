@@ -573,8 +573,15 @@ pub async fn deploy_scene(
         return Err(error);
     }
 
-    // The RETURNING subquery reads the statement's snapshot: the owner before this write.
-    let (is_insert, disabled, previous_owner): (bool, bool, Option<String>) = sqlx::query_as(
+    // Locks an existing row so the owner read is the one this write replaces.
+    let previous_owner: Option<String> =
+        sqlx::query_scalar("SELECT owner FROM worlds.worlds WHERE name = $1 FOR UPDATE")
+            .bind(world.key())
+            .fetch_optional(&mut *tx)
+            .await?
+            .flatten();
+
+    let (is_insert, disabled): (bool, bool) = sqlx::query_as(
         r#"INSERT INTO worlds.worlds AS w (
                name, owner, blocked_since, spawn_coordinates,
                title, description, content_rating, skybox_time, categories,
@@ -587,8 +594,7 @@ pub async fn deploy_scene(
              mirror_source = NULL,
              spawn_coordinates = COALESCE(w.spawn_coordinates, EXCLUDED.spawn_coordinates),
              updated_at = timezone('UTC', now())
-           RETURNING (xmax = 0), blocked_since IS NOT NULL,
-                     (SELECT p.owner FROM worlds.worlds p WHERE p.name = $1)"#,
+           RETURNING (xmax = 0), blocked_since IS NOT NULL"#,
     )
     .bind(world.key())
     .bind(name_owner)
