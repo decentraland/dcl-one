@@ -118,7 +118,7 @@ fn scene(parcels: &[&str], model: &[u8]) -> Value {
         "pointers": parcels,
         "timestamp": chrono::Utc::now().timestamp_millis(),
         "content": [{"file": "model.glb", "hash": hash_bytes_v1(model)}],
-        "metadata": {"scene": {"base": parcels[0], "parcels": parcels}}
+        "metadata": {"main": "bin/index.js", "scene": {"base": parcels[0], "parcels": parcels}}
     })
 }
 
@@ -201,7 +201,7 @@ async fn a_signed_scene_validates_end_to_end_and_its_land_leg_decides() {
     let referencing_stored = json!({
         "version": "v3", "type": "scene", "pointers": ["5,5"], "timestamp": chrono::Utc::now().timestamp_millis(),
         "content": [{"file": "stored.bin", "hash": STORED_HASH}],
-        "metadata": {"scene": {"base": "5,5", "parcels": ["5,5"]}}
+        "metadata": {"main": "bin/index.js", "scene": {"base": "5,5", "parcels": ["5,5"]}}
     });
     let (entity, files, chain, _) = signed(referencing_stored.clone(), &[]).await;
     let ctx = Context {
@@ -331,7 +331,7 @@ async fn the_structure_signature_and_size_steps_answer_the_old_sentences() {
         json!({
             "version": "v3", "type": "scene", "pointers": ["1,1"], "timestamp": chrono::Utc::now().timestamp_millis(),
             "content": [{"file": "model.glb", "hash": hash_bytes_v1(&model)}],
-            "metadata": {"scene": {"base": "1,1", "parcels": ["1,1"]}, "worldConfiguration": {"name": "x.dcl.eth"}}
+            "metadata": {"main": "bin/index.js", "scene": {"base": "1,1", "parcels": ["1,1"]}, "worldConfiguration": {"name": "x.dcl.eth"}}
         }),
         std::slice::from_ref(&model),
     )
@@ -345,6 +345,54 @@ async fn the_structure_signature_and_size_steps_answer_the_old_sentences() {
         rejected(&[
             "The scene.json contains a worldConfiguration section, which is not allowed for Genesis City scenes (see ADR-173: http://adr.decentraland.org/adr/ADR-173). Please remove it and try again."
         ])
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// The metadata schema of the type runs before the signature: a scene
+/// without its entry point is the depositor's fault, and so is an entity
+/// without a version only when it names another one.
+#[tokio::test]
+async fn the_metadata_schema_and_version_steps_answer_the_reference_sentences() {
+    let (storage, tmp) = temp_storage("metadata").await;
+    let s = sources(
+        lazy_pool(),
+        storage,
+        Settings {
+            ignore_blockchain_access: true,
+            ..Settings::default()
+        },
+    );
+    let model = b"glb".to_vec();
+
+    let mut no_main = scene(&["1,1"], &model);
+    no_main["metadata"].as_object_mut().unwrap().remove("main");
+    let (entity, files, chain, _) = signed(no_main, std::slice::from_ref(&model)).await;
+    let ctx = Context {
+        sources: &s,
+        auth_chain: &chain,
+    };
+    assert_eq!(
+        validate(&entity, &files, &ctx).await,
+        rejected(&[
+            "The metadata for this entity type (scene) is not valid.",
+            "metadata must have required property 'main'"
+        ])
+    );
+
+    let mut unversioned = scene(&["1,1"], &model);
+    unversioned.as_object_mut().unwrap().remove("version");
+    let (_, files, chain, _) = signed(unversioned.clone(), std::slice::from_ref(&model)).await;
+    let mut entity: Entity = serde_json::from_value(unversioned).unwrap();
+    entity.id = chain[1].payload.clone();
+    let ctx = Context {
+        sources: &s,
+        auth_chain: &chain,
+    };
+    assert_eq!(
+        validate(&entity, &files, &ctx).await,
+        Ok(()),
+        "a missing version is v3"
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }

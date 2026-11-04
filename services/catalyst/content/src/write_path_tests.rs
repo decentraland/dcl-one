@@ -443,6 +443,35 @@ async fn an_unsynced_copy_takes_the_deploy_types_it_names() {
     );
 }
 
+/// Pointers are lowercased as the entity file is read, so two that differ
+/// only by case are the same pointer twice.
+#[tokio::test]
+async fn pointers_differing_only_by_case_are_repeated() {
+    let node = TestNode::without_db("case-pointers").await;
+    attach(&node.state, true, None, None);
+    node.state.sync.set_state(SyncState::Syncing);
+    let pointer =
+        "urn:decentraland:matic:collections-v2:0xAbC0000000000000000000000000000000000001:0";
+    let file = Bytes::from(
+        json!({"version": "v3", "type": "wearable", "pointers": [pointer, pointer.to_lowercase()],
+               "timestamp": chrono::Utc::now().timestamp_millis(), "content": [], "metadata": {}})
+        .to_string(),
+    );
+    let id = crate::auth::hash_bytes_v1(&file);
+    let (status, _, body) = call(
+        &node.router(),
+        deploy_request("/content/entities", &id, &json!([]), &[(&id, &file)]),
+    )
+    .await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"errors": ["There are repeated pointers in your request."]})
+        )
+    );
+}
+
 /// A switch that is on still waits for the restore stamps: a stale backup
 /// stamp answers the content 503 naming the stamp and its age, on the
 /// deploy and the unpublish alike, before the read-only and bootstrapping
@@ -1200,8 +1229,12 @@ fn profile(owner: &str, wearables: &[&str]) -> Value {
         "content": [],
         "metadata": {"avatars": [{
             "name": "writepath", "hasClaimedName": false, "description": "",
+            "ethAddress": owner, "version": 1, "tutorialStep": 0,
             "avatar": {
                 "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+                "eyes": {"color": {"r": 0.1, "g": 0.2, "b": 0.3}},
+                "hair": {"color": {"r": 0.1, "g": 0.2, "b": 0.3}},
+                "skin": {"color": {"r": 0.1, "g": 0.2, "b": 0.3}},
                 "wearables": wearables,
                 "emotes": [{"slot": 0, "urn": "urn:decentraland:off-chain:base-emotes:wave"}]
             }
@@ -1600,11 +1633,7 @@ async fn deploys_with_an_unverifiable_signature_count_toward_the_quota() {
     };
     let node = deploying_node("quota-unverifiable", settings).await;
     let router = node.router();
-    let file = Bytes::from(
-        json!({"version": "v3", "type": "profile", "pointers": ["0x0000000000000000000000000000000000000002"],
-               "timestamp": chrono::Utc::now().timestamp_millis(), "content": [], "metadata": {}})
-        .to_string(),
-    );
+    let file = Bytes::from(profile("0x0000000000000000000000000000000000000002", &[]).to_string());
     let id = hash_bytes_v1(&file);
     let chain = serde_json::to_value(
         crate::sync_test_support::signed_chain_behind_contract(

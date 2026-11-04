@@ -1,7 +1,8 @@
 //! The content validator of the local write path: the port of
 //! `catalyrst-validator` (itself the Rust port of `@dcl/content-validator`).
 //! [`validate`] runs the old `ContentValidator` over one deployment in the
-//! old order ([`rules`]): entity structure, IPFS hashing and ADR-45, the auth
+//! old order ([`rules`]): entity structure, IPFS hashing, the metadata
+//! schema of the type ([`metadata_schema`]) and ADR-45, the auth
 //! chain, the size cap of the entity type (skins 9 MB), wearable and emote
 //! representations and spring bones, the profile rules (ADR-74/75/232/244/290,
 //! emote slots), the item and face256 thumbnails ([`image_metadata`]), the
@@ -42,6 +43,7 @@ pub mod image_metadata;
 mod item_hash;
 mod jsjson;
 pub mod merkle;
+mod metadata_schema;
 pub(crate) mod onchain;
 pub mod rules;
 mod scene_parcels;
