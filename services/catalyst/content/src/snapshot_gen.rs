@@ -52,6 +52,10 @@
 //!   still bootstrapping would be marked processed by a peer and replaced
 //!   later, and the replacement is skipped as already covered.
 //!
+//! A window the deleter repair superseded rows in carries `outdated = true`
+//! (its generation time is left as it was, so `/snapshots` keeps publishing
+//! the real one) and is regenerated at the job's next tick.
+//!
 //! A node without a sync worker holds only what its database holds and has
 //! nothing to wait for; it generates as the old node did.
 
@@ -377,12 +381,13 @@ impl SnapshotGenerator {
                 return Err(GenerationError::Cancelled);
             }
             if let Some(candidate) = saved.iter().find(|s| !rebuild && s.time_range == *interval) {
-                let outdated = snapshot_is_outdated(pool, interval, candidate.generation_timestamp)
-                    .await
-                    .unwrap_or_else(|e| {
-                        warn!(error = %e, "outdated probe failed; regenerating the window");
-                        true
-                    });
+                let outdated = candidate.outdated
+                    || snapshot_is_outdated(pool, interval, candidate.generation_timestamp)
+                        .await
+                        .unwrap_or_else(|e| {
+                            warn!(error = %e, "outdated probe failed; regenerating the window");
+                            true
+                        });
                 if !outdated {
                     match self.reusable(candidate).await {
                         Reuse::Verified => {
@@ -490,6 +495,8 @@ struct SavedRow {
     hash: Option<String>,
     time_range: TimeRange,
     generation_timestamp: Timestamp,
+    /// The deleter repair's mark: regenerate whatever the probe says.
+    outdated: bool,
 }
 
 struct Written {
@@ -546,7 +553,8 @@ const WINDOW_SQL: &str = r#"
 /// local unpublish since then touched it: a scene tombstoned after the
 /// generation shares a pointer with a deployment of the window (the scene
 /// itself, which the windows leave out once tombstoned), or the row is
-/// stamped at the epoch (the deleter repair's mark). The
+/// stamped at the epoch (the deleter repair's mark before the `outdated`
+/// column; a pass checks that column before calling this). The
 /// second leg reads the tombstones since the generation
 /// (`local_entities_tombstoned_idx`, a handful) and the GIN pointer index. Planned
 /// per call (`persistent(false)`): with the values, the planner walks
@@ -560,7 +568,7 @@ pub async fn snapshot_is_outdated(
     window: &TimeRange,
     generation_ms: Timestamp,
 ) -> Result<bool, GenerationError> {
-    // The deleter repair marks a window whose rows it superseded with the epoch.
+    // Rows the deleter repair marked before `content.snapshots.outdated` existed.
     if generation_ms == 0 {
         return Ok(true);
     }
@@ -607,11 +615,13 @@ async fn read_horizon_ms(pool: &PgPool) -> Result<Timestamp, GenerationError> {
     Ok(ms - 1)
 }
 
-/// Whether the deleter repair marked a window (a generation stamped at the
-/// epoch) that no pass has regenerated yet. A scan of a few dozen rows.
+/// Whether the deleter repair marked a window (`outdated`, or the epoch an
+/// older binary still writes during a rolling deploy) that no pass has
+/// regenerated yet. A scan of a few dozen rows.
 async fn any_marked_window(pool: &PgPool) -> Result<bool, GenerationError> {
     Ok(sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM content.snapshots WHERE generation_time = 'epoch'::timestamp)",
+        "SELECT EXISTS (SELECT 1 FROM content.snapshots
+                        WHERE outdated OR generation_time = 'epoch'::timestamp)",
     )
     .fetch_one(pool)
     .await?)
@@ -664,11 +674,7 @@ async fn generate_window(
         .execute(&mut *tx)
         .await?;
     // A repair that committed since the read may have superseded rows the file lists: keep its mark.
-    let generation_ms = if deleter_repair_runs(&mut *tx).await? == repairs_before {
-        generation_ms
-    } else {
-        0
-    };
+    let outdated = deleter_repair_runs(&mut *tx).await? != repairs_before;
     let gone: Vec<Option<String>> = sqlx::query_scalar(
         "WITH gone AS (
              DELETE FROM content.snapshots
@@ -683,8 +689,8 @@ async fn generate_window(
     let replaced: Vec<String> = gone.into_iter().flatten().filter(|h| *h != hash).collect();
     sqlx::query(
         "INSERT INTO content.snapshots
-             (hash, init_timestamp, end_timestamp, replaced_hashes, number_of_entities, generation_time)
-         VALUES ($1, $2, $3, $4, $5, $6)",
+             (hash, init_timestamp, end_timestamp, replaced_hashes, number_of_entities, generation_time, outdated)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(&hash)
     .bind(naive(window.init_timestamp)?)
@@ -692,6 +698,7 @@ async fn generate_window(
     .bind(&replaced)
     .bind(number_of_entities)
     .bind(naive(generation_ms)?)
+    .bind(outdated)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -758,20 +765,22 @@ pub fn write_line(buf: &mut Vec<u8>, line: &SnapshotLine<'_>) -> Result<(), Gene
 }
 
 async fn saved_rows(pool: &PgPool) -> Result<Vec<SavedRow>, GenerationError> {
-    let rows: Vec<(Option<String>, NaiveDateTime, NaiveDateTime, NaiveDateTime)> = sqlx::query_as(
-        "SELECT hash, init_timestamp, end_timestamp, generation_time FROM content.snapshots",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(Option<String>, NaiveDateTime, NaiveDateTime, NaiveDateTime, bool)> =
+        sqlx::query_as(
+            "SELECT hash, init_timestamp, end_timestamp, generation_time, outdated FROM content.snapshots",
+        )
+        .fetch_all(pool)
+        .await?;
     Ok(rows
         .into_iter()
-        .map(|(hash, init, end, generated)| SavedRow {
+        .map(|(hash, init, end, generated, outdated)| SavedRow {
             hash,
             time_range: TimeRange {
                 init_timestamp: init.and_utc().timestamp_millis(),
                 end_timestamp: end.and_utc().timestamp_millis(),
             },
             generation_timestamp: generated.and_utc().timestamp_millis(),
+            outdated,
         })
         .collect())
 }

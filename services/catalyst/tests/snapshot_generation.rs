@@ -531,7 +531,8 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
         );
     }
 
-    // /snapshots lists what the table holds, newest window first.
+    // /snapshots lists what the table holds in division order, oldest window
+    // first, as upstream does.
     let listed = get_json(&content_router(state.clone()), "/content/snapshots").await;
     let hashes: Vec<&str> = listed
         .as_array()
@@ -539,8 +540,7 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
         .iter()
         .map(|s| s["hash"].as_str().unwrap())
         .collect();
-    let mut want: Vec<&str> = rows.iter().map(|r| r.hash.as_str()).collect();
-    want.reverse();
+    let want: Vec<&str> = rows.iter().map(|r| r.hash.as_str()).collect();
     assert_eq!(hashes, want);
 
     db.teardown().await;
@@ -1347,6 +1347,17 @@ async fn the_deleter_repair_regenerates_a_window_an_earlier_unpublish_restored()
             .await
             .unwrap();
     assert_eq!(a_pointer, None, "the repair empties the parcel");
+    // Upstream never publishes a generation time of 0: the mark is a flag and
+    // the window keeps its real generation time until the next pass.
+    let window = before
+        .iter()
+        .find(|r| r.number_of_entities == 1)
+        .unwrap()
+        .clone();
+    let (outdated, generated) = window_mark(&db_a.pool, &window.time_range).await;
+    assert!(outdated, "the repair marks the window");
+    assert_eq!(generated, window.generation_timestamp);
+    assert!(generated > 0);
 
     let (after, summary) = generator
         .generate(chrono::Utc::now().timestamp_millis())
@@ -1355,6 +1366,20 @@ async fn the_deleter_repair_regenerates_a_window_an_earlier_unpublish_restored()
     assert!(summary.generated >= 1, "{summary:?}");
     let in_files: u64 = after.iter().map(|r| r.number_of_entities).sum();
     assert_eq!(in_files, 0, "the regenerated window leaves the scene out");
+    let regenerated = after
+        .iter()
+        .find(|r| r.time_range == window.time_range)
+        .unwrap();
+    assert!(regenerated.generation_timestamp >= generated);
+    assert_eq!(
+        window_mark(&db_a.pool, &window.time_range).await,
+        (false, regenerated.generation_timestamp),
+        "the regenerated row is unmarked"
+    );
+    assert!(
+        after.iter().all(|r| r.generation_timestamp > 0),
+        "{after:?}"
+    );
 
     let (url, _, serve) = serve_node(node.clone()).await;
     let changes: Value = reqwest::Client::new()
@@ -1379,6 +1404,21 @@ async fn the_deleter_repair_regenerates_a_window_an_earlier_unpublish_restored()
     serve.abort();
     db_a.teardown().await;
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// A window row's `outdated` mark and its generation time in milliseconds.
+async fn window_mark(pool: &PgPool, window: &TimeRange) -> (bool, i64) {
+    let (outdated, generated): (bool, chrono::NaiveDateTime) = sqlx::query_as(
+        "SELECT outdated, generation_time FROM content.snapshots
+         WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'
+           AND end_timestamp = to_timestamp($2 / 1000.0) AT TIME ZONE 'UTC'",
+    )
+    .bind(window.init_timestamp as f64)
+    .bind(window.end_timestamp as f64)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    (outdated, generated.and_utc().timestamp_millis())
 }
 
 /// Backends of this database waiting on a lock.
@@ -1464,21 +1504,11 @@ async fn a_window_written_beside_the_deleter_repair_keeps_its_mark() {
         .expect("the window's row");
     assert_eq!(row.number_of_entities, 1, "the pass read before the repair");
 
+    let (outdated, generated) = window_mark(&db_a.pool, &window).await;
+    assert!(outdated, "the window keeps the repair's mark");
     assert!(
-        snapshot_is_outdated(&db_a.pool, &window, {
-            let generated: chrono::NaiveDateTime = sqlx::query_scalar(
-                "SELECT generation_time FROM content.snapshots
-                 WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'",
-            )
-            .bind(window.init_timestamp as f64)
-            .fetch_one(&db_a.pool)
-            .await
-            .unwrap();
-            generated.and_utc().timestamp_millis()
-        })
-        .await
-        .unwrap(),
-        "the window keeps the repair's mark"
+        generated > 0,
+        "the mark leaves the generation time as it was"
     );
     let (after, _) = generator
         .generate(chrono::Utc::now().timestamp_millis())
@@ -1565,7 +1595,7 @@ async fn a_window_read_before_the_deleter_repair_commits_is_written_marked() {
         .time_range;
     // Only this window is regenerated, so the pass's first row write is its.
     sqlx::query(
-        "UPDATE content.snapshots SET generation_time = 'epoch'::timestamp
+        "UPDATE content.snapshots SET outdated = true
          WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'",
     )
     .bind(window.init_timestamp as f64)
@@ -1608,19 +1638,13 @@ async fn a_window_read_before_the_deleter_repair_commits_is_written_marked() {
         .find(|r| r.time_range == window)
         .expect("the window's row");
     assert_eq!(row.number_of_entities, 1, "the pass read before the repair");
-    let generated: chrono::NaiveDateTime = sqlx::query_scalar(
-        "SELECT generation_time FROM content.snapshots
-         WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'",
-    )
-    .bind(window.init_timestamp as f64)
-    .fetch_one(&db_a.pool)
-    .await
-    .unwrap();
+    let (outdated, generated) = window_mark(&db_a.pool, &window).await;
+    assert!(outdated, "the window carries the repair's mark");
     assert_eq!(
-        generated.and_utc().timestamp_millis(),
-        0,
-        "the window carries the repair's mark"
+        generated, row.generation_timestamp,
+        "the real generation time is published"
     );
+    assert!(generated > 0);
 
     let (after, _) = generator
         .generate(chrono::Utc::now().timestamp_millis())

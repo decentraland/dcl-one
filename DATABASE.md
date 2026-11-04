@@ -68,6 +68,12 @@ the data and its operations.
    During a rolling deploy an older binary still writing can leave rows the
    repair's rules would change after the marker is set; the next sync leader
    bootstrap repairs them, or restart a sync leader once the rollout is done.
+   The repair marks each snapshot window whose rows it superseded with
+   `content.snapshots.outdated` (step `0025_content_snapshots_outdated`, a
+   constant default without a rewrite; the table holds a few dozen rows, one
+   per generation window). The generator's tick scans for the flag and
+   regenerates those windows; the row keeps its real `generation_time`, which
+   `/snapshots` publishes as upstream does.
 
 ## Worlds, persistent storage and scene hosting
 

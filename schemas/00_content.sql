@@ -122,6 +122,7 @@ CREATE TABLE content.snapshots (
     replaced_hashes text[] NOT NULL,
     number_of_entities integer NOT NULL,
     generation_time timestamp without time zone NOT NULL,
+    outdated boolean NOT NULL DEFAULT false,
     CONSTRAINT snapshots_pkey PRIMARY KEY (init_timestamp, end_timestamp)
 );
 
