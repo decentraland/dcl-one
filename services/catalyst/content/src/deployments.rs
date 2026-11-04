@@ -1,6 +1,4 @@
 use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
@@ -11,8 +9,8 @@ use super::SharedState;
 use super::errors::{AppError, AppResult};
 use super::queries::{self, DeploymentQueryOptions};
 use super::query_params::{
-    QueryParams, camel_to_snake, parse_entity_type, parse_query_string, qs_get_array, qs_get_bool,
-    qs_get_number, qs_get_string, to_query_string,
+    QueryParams, camel_to_snake, parse_entity_type, parse_query_string, qs_get_bool,
+    qs_get_filter_array, qs_get_number, qs_get_string, to_query_string,
 };
 use super::wire_types::{ControllerDeployment, DeploymentsResponse, HistoryPagination};
 
@@ -32,38 +30,26 @@ pub(crate) fn normalize_query_string(qs: &str) -> String {
     pairs.join("&")
 }
 
-/// Answers come out of the 5 s memo keyed by the normalized query string;
-/// `x-cache` says whether this call ran the query.
+/// Answers come out of the 5 s memo keyed by the normalized query string. The
+/// memo is internal: as upstream, the response carries no `cache-control`.
 pub async fn get_deployments(
     State(state): State<SharedState>,
     request: Request,
 ) -> AppResult<Response> {
     let query_string = request.uri().query().unwrap_or("").to_string();
     let cache_key = normalize_query_string(&query_string);
-
-    let fetched = Arc::new(AtomicBool::new(false));
-    let fetched_in_fetch = fetched.clone();
     let state_in_fetch = state.clone();
 
     let response_bytes = state
         .deployments_cache
         .get_or_fetch(cache_key, move || async move {
-            fetched_in_fetch.store(true, Ordering::Relaxed);
             fetch_deployments_response(&state_in_fetch, &query_string).await
         })
         .await?;
 
-    let cache_status = if fetched.load(Ordering::Relaxed) {
-        "MISS"
-    } else {
-        "HIT"
-    };
-
     Ok(Response::builder()
         .status(StatusCode::OK)
         .header("content-type", "application/json")
-        .header("cache-control", "max-age=5")
-        .header("x-cache", cache_status)
         .body(axum::body::Body::from(response_bytes))
         .unwrap())
 }
@@ -127,21 +113,21 @@ async fn fetch_deployments_response(state: &SharedState, query_string: &str) -> 
 
 fn parse_deployment_query_options(params: &QueryParams) -> AppResult<DeploymentQueryOptions> {
     let mut entity_types: Vec<String> = Vec::new();
-    for raw in qs_get_array(params, "entityType") {
+    for raw in qs_get_filter_array(params, "entityType") {
         match parse_entity_type(&raw) {
             Some(canonical) => entity_types.push(canonical.to_string()),
             None => return Err(AppError::invalid("Found an unrecognized entity type")),
         }
     }
 
-    let entity_ids = qs_get_array(params, "entityId");
+    let entity_ids = qs_get_filter_array(params, "entityId");
 
-    let pointers: Vec<String> = qs_get_array(params, "pointer")
+    let pointers: Vec<String> = qs_get_filter_array(params, "pointer")
         .into_iter()
         .map(|p| p.to_lowercase())
         .collect();
 
-    let deployed_by: Vec<String> = qs_get_array(params, "deployedBy")
+    let deployed_by: Vec<String> = qs_get_filter_array(params, "deployedBy")
         .into_iter()
         .map(|a| a.to_lowercase())
         .collect();

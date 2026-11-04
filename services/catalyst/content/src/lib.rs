@@ -490,6 +490,9 @@ pub struct ContentState {
     pub upload_budget: upload_admission::UploadBudget,
     /// `POST /entities` requests per client address and day.
     pub deploy_quota: upload_admission::DailyQuota,
+    /// The `/challenge` text: one bare UUID per process, as upstream's
+    /// peer cluster keeps it; the console's `challenge/refresh` replaces it.
+    challenge: RwLock<String>,
 }
 
 /// See [`ContentState::attach_parcel_grid`].
@@ -535,7 +538,19 @@ impl ContentState {
             parcel_grid: OnceLock::new(),
             upload_budget,
             deploy_quota,
+            challenge: RwLock::new(challenge_text()),
         }
+    }
+
+    pub fn challenge(&self) -> String {
+        self.challenge.read().clone()
+    }
+
+    /// Replaces the `/challenge` text and answers the new one.
+    pub fn refresh_challenge(&self) -> String {
+        let text = challenge_text();
+        *self.challenge.write() = text.clone();
+        text
     }
 
     pub fn is_read_only(&self) -> bool {

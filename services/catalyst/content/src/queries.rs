@@ -880,7 +880,13 @@ pub fn provenance_json(
 /// The `/audit/{type}/{id}` document: version, auth chain and local
 /// timestamp, plus `localProvenance` when the entity was published against
 /// this node's write API.
-pub async fn audit_info(pool: &PgPool, entity_id: &str) -> Result<Option<Value>, sqlx::Error> {
+/// The audit row of `entity_id`, only when it was deployed as `entity_type`
+/// (canonical name): upstream filters on both.
+pub async fn audit_info(
+    pool: &PgPool,
+    entity_type: &str,
+    entity_id: &str,
+) -> Result<Option<Value>, sqlx::Error> {
     #[derive(sqlx::FromRow)]
     struct AuditRow {
         version: String,
@@ -902,11 +908,12 @@ pub async fn audit_info(pool: &PgPool, entity_id: &str) -> Result<Option<Value>,
                d.deleter_deployment IS NOT NULL AS superseded
         FROM content.deployments d
         LEFT JOIN content.local_entities le ON le.entity_id = d.entity_id
-        WHERE d.entity_id = $1
+        WHERE d.entity_id = $1 AND d.entity_type = $2
         LIMIT 1
         "#,
     )
     .bind(entity_id)
+    .bind(entity_type)
     .fetch_optional(pool)
     .await?;
 
@@ -926,8 +933,9 @@ pub async fn audit_info(pool: &PgPool, entity_id: &str) -> Result<Option<Value>,
     }))
 }
 
-/// Every generated snapshot, newest window first; a row without a hash (a
-/// window still being written) lists with an empty hash, as before.
+/// Every stored snapshot in division order (oldest window first), as
+/// upstream lists its current snapshots; a row without a hash is not a stored
+/// snapshot and is left out.
 pub async fn all_snapshots(pool: &PgPool) -> Result<Vec<SnapshotMetadata>, sqlx::Error> {
     #[derive(sqlx::FromRow)]
     struct Row {
@@ -947,7 +955,8 @@ pub async fn all_snapshots(pool: &PgPool) -> Result<Vec<SnapshotMetadata>, sqlx:
                replaced_hashes,
                date_part('epoch', generation_time) * 1000 AS gen_ts_ms
         FROM content.snapshots
-        ORDER BY end_timestamp DESC
+        WHERE hash IS NOT NULL AND hash <> ''
+        ORDER BY init_timestamp, end_timestamp
         "#,
     )
     .fetch_all(pool)

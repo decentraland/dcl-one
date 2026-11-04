@@ -4,7 +4,7 @@ use axum::response::IntoResponse;
 
 use super::SharedState;
 use super::errors::{AppError, AppResult};
-use super::query_params::{parse_query_string, qs_get_array};
+use super::query_params::{parse_query_string, qs_get_filter_array};
 use super::wire_types::AvailableContentItem;
 
 const MAX_AVAILABLE_CONTENT_CIDS: usize = 1000;
@@ -16,7 +16,7 @@ pub async fn get_available_content(
     request: Request,
 ) -> AppResult<impl IntoResponse> {
     let params = parse_query_string(request.uri().query().unwrap_or(""));
-    let cids = qs_get_array(&params, "cid");
+    let cids = qs_get_filter_array(&params, "cid");
 
     if cids.is_empty() {
         return Err(AppError::invalid("Please set at least one cid."));
@@ -27,9 +27,12 @@ pub async fn get_available_content(
         )));
     }
 
+    // Upstream collects the answer in a `Map`: a repeated cid is listed once,
+    // where it first appears.
+    let mut seen = std::collections::HashSet::new();
     let available_cids: Vec<String> = cids
         .into_iter()
-        .filter(|cid| !state.denylist.contains(cid))
+        .filter(|cid| !state.denylist.contains(cid) && seen.insert(cid.clone()))
         .collect();
 
     let existence = state.storage.exist_multiple(&available_cids).await?;
@@ -108,6 +111,27 @@ mod tests {
         assert_eq!(
             body(response).await,
             json!([{ "cid": TEST_CID, "available": true }])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_repeated_cid_is_listed_once() {
+        let node = TestNode::without_db("available-dup").await;
+        node.store(TEST_CID, Bytes::from_static(b"x")).await;
+        let request = Request::builder()
+            .uri(format!("/available-content?cid={TEST_CID}&cid=other&cid={TEST_CID}"))
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = get_available_content(State(node.state.clone()), request)
+            .await
+            .unwrap()
+            .into_response();
+        assert_eq!(
+            body(response).await,
+            json!([
+                { "cid": TEST_CID, "available": true },
+                { "cid": "other", "available": false }
+            ])
         );
     }
 }

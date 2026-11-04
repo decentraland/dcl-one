@@ -119,8 +119,10 @@ const DB_FIXTURES: &[&str] = &[
     "active-entities-200-nonexistent-id",
     "active-entities-200-nonexistent-pointer",
     "audit-200-scenes-canonicalized",
+    "audit-404-outfits-accepted",
     "audit-404-unknown-entity",
     "contents-active-entities-404-unknown-hash",
+    "entities-200-outfits-accepted",
 ];
 
 /// The replay fixtures are the two edge-case directories; `tests/fixtures`
@@ -341,7 +343,8 @@ async fn about_and_status_report_the_sync_state_honestly() {
         body["synchronizationStatus"]["synchronizationState"],
         "Bootstrapping"
     );
-    assert_eq!(body["commitHash"], "unknown");
+    assert_eq!(body["commitHash"], "Unknown");
+    assert_eq!(body["synchronizationStatus"]["lastSyncWithDAO"], 0);
     assert!(body["synchronizationStatus"].get("up").is_none());
 
     node.state.sync.set_state(SyncState::Syncing);
@@ -353,10 +356,17 @@ async fn about_and_status_report_the_sync_state_honestly() {
     let (_, body) = get_json(node.router(), "/status").await;
     assert_eq!(body["synchronizationStatus"]["up"], true);
     assert_eq!(body["synchronizationStatus"]["syncFrontier"], 42);
+    let heartbeat = node.state.sync.heartbeat_ms().unwrap();
+    assert_eq!(body["synchronizationStatus"]["lastSyncWithDAO"], heartbeat);
 
+    // Upstream answers 200 whatever the sync state.
     node.state.sync.set_state(SyncState::Failed);
-    let (status, _) = get_json(node.router(), "/content/status").await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let (status, body) = get_json(node.router(), "/content/status").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["synchronizationStatus"]["synchronizationState"],
+        "Failed"
+    );
 }
 
 struct FakeCore(bool, u64);
@@ -514,15 +524,18 @@ async fn about_golden_replays_with_the_comms_block() {
     assert!(notes.is_empty(), "about-golden: {}", notes.join("\n"));
 }
 
+/// Upstream mints one bare UUID per process (`logic/peer-cluster/component.ts:51`)
+/// and answers it on every call.
 #[tokio::test]
-async fn challenge_is_fresh_per_call() {
+async fn challenge_is_one_uuid_per_process() {
     let node = TestNode::without_db("challenge").await;
     let (status, a) = get_json(node.router(), "/content/challenge").await;
     assert_eq!(status, StatusCode::OK);
     let (_, b) = get_json(node.router(), "/challenge").await;
     let a = a["challengeText"].as_str().unwrap().to_string();
-    assert!(a.starts_with("dcl-crypto-"));
-    assert_ne!(a, b["challengeText"]);
+    assert!(uuid::Uuid::parse_str(&a).is_ok(), "{a}");
+    assert_eq!(a.len(), 36);
+    assert_eq!(a, b["challengeText"]);
 }
 
 #[tokio::test]
@@ -613,10 +626,12 @@ async fn active_entities_parses_the_body_whatever_the_content_type() {
 async fn snapshot_routes_over_the_database() {
     require_test_db!(Some(node) = TestNode::with_db("snapshots").await);
     let pool = node.state.pool.clone();
-    sqlx::query("DELETE FROM content.snapshots WHERE hash LIKE 'test-snap-%'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "DELETE FROM content.snapshots WHERE hash LIKE 'test-snap-%' OR (hash IS NULL AND init_timestamp = to_timestamp(5))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let (status, body) = get_json(node.router(), "/content/snapshots").await;
     if status == StatusCode::OK {
@@ -649,17 +664,43 @@ async fn snapshot_routes_over_the_database() {
         .await
         .unwrap();
     }
+    // A row without a hash is not a stored snapshot: upstream never lists one.
+    sqlx::query(
+        "INSERT INTO content.snapshots (hash, init_timestamp, end_timestamp, replaced_hashes, number_of_entities, generation_time)
+         VALUES (NULL, to_timestamp(5), to_timestamp(6), '{}', 1, to_timestamp(7))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     node.state.deployments_cache.clear();
 
     let (status, body) = get_json(node.router(), "/content/snapshots").await;
     assert_eq!(status, StatusCode::OK);
+    assert!(
+        body.as_array()
+            .unwrap()
+            .iter()
+            .all(|s| !s["hash"].as_str().unwrap().is_empty()),
+        "{body}"
+    );
     let listed: Vec<&Value> = body
         .as_array()
         .unwrap()
         .iter()
         .filter(|s| s["hash"].as_str().unwrap_or("").starts_with("test-snap-"))
         .collect();
-    assert_eq!(listed.len(), 4);
+    // Division order, as upstream: oldest window first, then the shorter
+    // windows that start later.
+    let order: Vec<&str> = listed.iter().map(|s| s["hash"].as_str().unwrap()).collect();
+    assert_eq!(
+        order,
+        [
+            "test-snap-year",
+            "test-snap-month",
+            "test-snap-week",
+            "test-snap-day"
+        ]
+    );
     let month = listed
         .iter()
         .find(|s| s["hash"] == "test-snap-month")
@@ -693,10 +734,12 @@ async fn snapshot_routes_over_the_database() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body, json!({"error": "Unrecognized type: banana"}));
 
-    sqlx::query("DELETE FROM content.snapshots WHERE hash LIKE 'test-snap-%'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "DELETE FROM content.snapshots WHERE hash LIKE 'test-snap-%' OR (hash IS NULL AND init_timestamp = to_timestamp(5))",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 }
 
 struct SeededEntity {
@@ -1037,6 +1080,16 @@ async fn entity_reads_over_seeded_rows() {
     assert_eq!(body["authChain"][0]["type"], "SIGNER");
     assert!(body.get("localProvenance").is_none());
 
+    // Upstream filters the audit lookup on the type too: the scene's id under
+    // another type is not found.
+    let (status, body) = get_json(
+        node.router(),
+        &format!("/content/audit/wearable/{}", scene.id),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body, json!({"error": "No deployment found"}));
+
     node.state.denylist.add(&scene.id);
     let (status, body) = post_json(
         node.router(),
@@ -1116,6 +1169,38 @@ async fn history_reads_over_seeded_rows() {
     assert_eq!(body["deployments"].as_array().unwrap().len(), 1);
     assert_eq!(body["deployments"][0]["entityId"], ids[0]);
     assert_eq!(body["pagination"]["moreData"], false);
+
+    // As upstream `qsGetArray`, a single empty value is no filter, while an
+    // empty element inside a list is kept and matches nothing.
+    let (status, body) = get_json(
+        node.router(),
+        &format!("/content/deployments?{id_filter}&pointer=&entityType="),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["deployments"].as_array().unwrap().len(), 3);
+    let (status, body) = get_json(
+        node.router(),
+        &format!("/content/deployments?{id_filter}&pointer=-1,7000&pointer="),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["deployments"].as_array().unwrap().len(), 1);
+    assert_eq!(body["filters"]["pointers"], json!(["-1,7000", ""]));
+
+    // Upstream sends no cache headers on /deployments; the memo is internal.
+    let resp = node
+        .router()
+        .oneshot(
+            Request::get(format!("/content/deployments?{id_filter}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(resp.headers().get(header::CACHE_CONTROL).is_none());
+    assert!(resp.headers().get("x-cache").is_none());
 
     // Upstream drops denylisted entities from the page after computing
     // `moreData` (`logic/deployments/component.ts:316-318`): the page is

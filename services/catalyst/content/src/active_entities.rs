@@ -11,7 +11,7 @@ use super::errors::{AppError, AppResult};
 use super::formatters::{EntityField, mask_entity};
 use super::queries::{self, EntityDoc, MaskedColumns, retain_non_denylisted};
 use super::query_params::{
-    QueryParams, parse_deployable_entity_type, parse_pagination, parse_query_string, qs_get_array,
+    QueryParams, parse_entity_type, parse_pagination, parse_query_string, qs_get_filter_array,
     qs_get_string,
 };
 use super::validation::{
@@ -127,17 +127,17 @@ pub async fn get_entities(
 ) -> AppResult<Response> {
     let params = parse_query_string(request.uri().query().unwrap_or(""));
 
-    if parse_deployable_entity_type(&entity_type).is_none() {
+    if parse_entity_type(&entity_type).is_none() {
         return Err(AppError::invalid(format!(
             "Unrecognized type: {entity_type}"
         )));
     }
 
-    let pointers: Vec<String> = qs_get_array(&params, "pointer")
+    let pointers: Vec<String> = qs_get_filter_array(&params, "pointer")
         .into_iter()
         .map(|p| p.to_lowercase())
         .collect();
-    let ids = qs_get_array(&params, "id");
+    let ids = qs_get_filter_array(&params, "id");
 
     let use_ids = validate_ids_or_pointers(
         (!ids.is_empty()).then_some(ids.as_slice()),
@@ -290,11 +290,11 @@ mod tests {
 
     fn selector_use_ids(query_string: &str) -> Result<bool, AppError> {
         let params = parse_query_string(query_string);
-        let pointers: Vec<String> = qs_get_array(&params, "pointer")
+        let pointers: Vec<String> = qs_get_filter_array(&params, "pointer")
             .into_iter()
             .map(|p| p.to_lowercase())
             .collect();
-        let ids = qs_get_array(&params, "id");
+        let ids = qs_get_filter_array(&params, "id");
         validate_ids_or_pointers(
             (!ids.is_empty()).then_some(ids.as_slice()),
             (!pointers.is_empty()).then_some(pointers.as_slice()),

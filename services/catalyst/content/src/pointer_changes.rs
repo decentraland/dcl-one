@@ -8,7 +8,7 @@ use super::deployments::normalize_query_string;
 use super::errors::{AppError, AppResult};
 use super::queries::{self, PointerChangesQueryOptions};
 use super::query_params::{
-    camel_to_snake, parse_entity_type, parse_query_string, qs_get_array, qs_get_bool,
+    camel_to_snake, parse_entity_type, parse_query_string, qs_get_bool, qs_get_filter_array,
     qs_get_number, qs_get_string,
 };
 use super::wire_types::{HistoryPagination, PointerChangeDelta, PointerChangesResponse};
@@ -44,7 +44,7 @@ fn parse_pointer_changes_options(query_string: &str) -> AppResult<PointerChanges
     let params = parse_query_string(query_string);
 
     let mut entity_types: Vec<String> = Vec::new();
-    for raw in qs_get_array(&params, "entityType") {
+    for raw in qs_get_filter_array(&params, "entityType") {
         match parse_entity_type(&raw) {
             Some(canonical) => entity_types.push(canonical.to_string()),
             None => return Err(AppError::invalid("Found an unrecognized entity type")),

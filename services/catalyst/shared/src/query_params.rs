@@ -13,10 +13,6 @@ pub type QueryParams = HashMap<String, Vec<String>>;
 /// Every entity type a content server stores, in the upstream order.
 pub const ENTITY_TYPES: &[&str] = &["scene", "profile", "wearable", "store", "emote", "outfits"];
 
-/// The types the content read routes accept in a path (`/entities/{type}`,
-/// `/audit/{type}/..`); outfits live under lambdas and are rejected here.
-pub const DEPLOYABLE_ENTITY_TYPES: &[&str] = &["scene", "profile", "wearable", "store", "emote"];
-
 pub fn parse_query_string(raw: &str) -> QueryParams {
     let mut map: QueryParams = HashMap::new();
     if raw.is_empty() {
@@ -41,6 +37,16 @@ pub fn qs_get_array(params: &QueryParams, key: &str) -> Vec<String> {
     params.get(key).cloned().unwrap_or_default()
 }
 
+/// The content server's `qsGetArray`: a missing key, a bare key or a single
+/// empty value (`?pointer=`) is absent; empty strings inside a repeated list
+/// are kept and match nothing.
+pub fn qs_get_filter_array(params: &QueryParams, key: &str) -> Vec<String> {
+    match params.get(key) {
+        Some(values) if !(values.len() == 1 && values[0].is_empty()) => values.clone(),
+        _ => Vec::new(),
+    }
+}
+
 pub fn qs_get_string(params: &QueryParams, key: &str) -> Option<String> {
     params.get(key).and_then(|v| v.first()).cloned()
 }
@@ -53,22 +59,15 @@ pub fn qs_get_bool(params: &QueryParams, key: &str) -> Option<bool> {
     qs_get_string(params, key).map(|s| s == "true")
 }
 
-/// Case-insensitive, an exact name first and then with one trailing `s`
-/// stripped, so `scenes` is `scene` and `outfits` stays `outfits`.
+/// Trimmed and case-insensitive: each type name, plus `<type>s` for a name
+/// that does not already end in `s` (`scenes` is `scene`; `outfitss` is
+/// nothing), as upstream builds `ENTITY_TYPES_BY_NAME`.
 pub fn parse_entity_type(raw: &str) -> Option<&'static str> {
     let lowered = raw.trim().to_lowercase();
-    let exact = |s: &str| ENTITY_TYPES.iter().copied().find(|t| *t == s);
-    exact(&lowered).or_else(|| lowered.strip_suffix('s').and_then(exact))
-}
-
-/// The `/entities/{type}` and `/audit/{type}` rule: lower-case, strip one
-/// trailing `s`, then the deployable set only.
-pub fn parse_deployable_entity_type(raw: &str) -> Option<&'static str> {
-    let mut s = raw.trim().to_lowercase();
-    if s.ends_with('s') {
-        s.pop();
-    }
-    DEPLOYABLE_ENTITY_TYPES.iter().copied().find(|t| *t == s)
+    ENTITY_TYPES
+        .iter()
+        .copied()
+        .find(|t| *t == lowered || (!t.ends_with('s') && lowered.strip_suffix('s') == Some(*t)))
 }
 
 pub fn to_query_string(filters: &HashMap<String, Vec<String>>) -> String {
@@ -298,10 +297,22 @@ mod tests {
         assert_eq!(parse_entity_type("outfits"), Some("outfits"));
         assert_eq!(parse_entity_type("outfit"), None);
         assert_eq!(parse_entity_type("totallybogus"), None);
-        assert_eq!(parse_deployable_entity_type("scenes"), Some("scene"));
-        assert_eq!(parse_deployable_entity_type("outfits"), None);
-        assert_eq!(parse_deployable_entity_type("outfit"), None);
-        assert_eq!(parse_deployable_entity_type("banana"), None);
+        assert_eq!(parse_entity_type(" Emotes "), Some("emote"));
+        assert_eq!(parse_entity_type("outfitss"), None);
+        assert_eq!(parse_entity_type("sceness"), None);
+        assert_eq!(parse_entity_type("s"), None);
+        assert_eq!(parse_entity_type(""), None);
+    }
+
+    #[test]
+    fn filter_array_treats_a_single_empty_value_as_absent() {
+        let get = |q: &str| qs_get_filter_array(&parse_query_string(q), "pointer");
+        assert!(get("").is_empty());
+        assert!(get("pointer=").is_empty());
+        assert!(get("pointer").is_empty());
+        assert_eq!(get("pointer=a&pointer="), vec!["a", ""]);
+        assert_eq!(get("pointer=&pointer="), vec!["", ""]);
+        assert_eq!(get("pointer=a"), vec!["a"]);
     }
 
     #[test]
