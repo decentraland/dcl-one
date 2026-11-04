@@ -5,7 +5,9 @@
 //! face the lambdas' snapshots name (`communities::profiles::FaceUrls`). A
 //! wallet with no profile, or one whose profile has no name, or no face that
 //! can be served, is the placeholder the old service sent (empty name and
-//! picture, no colour); the RPC never fails on enrichment.
+//! picture, no colour) when no profile source is attached; with one, such a
+//! wallet is left out where upstream's registry drops it
+//! ([`Profiles::requires_profiles`]).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -58,7 +60,7 @@ fn dedup_lowercased(addresses: &[String]) -> Vec<String> {
 /// deployed metadata as `{"v": ...}` (content::queries).
 const PROFILE_SQL: &str = "\
     SELECT ap.pointer AS addr, ap.entity_id, \
-           COALESCE(d.entity_metadata::jsonb #>> '{v,avatars,0,name}', \
+           COALESCE(NULLIF(d.entity_metadata::jsonb #>> '{v,avatars,0,name}', ''), \
                     d.entity_metadata::jsonb #>> '{v,avatars,0,unclaimedName}') AS name, \
            d.entity_metadata::jsonb #>> '{v,avatars,0,avatar,snapshots,face256}' AS face256, \
            (d.entity_metadata::jsonb #>> '{v,avatars,0,hasClaimedName}')::bool AS has_claimed, \
@@ -200,6 +202,61 @@ impl Profiles {
 
     pub async fn friend_profile(&self, address: &str) -> FriendProfile {
         friend_profile(address, self.get_profile(address).await.as_ref())
+    }
+
+    /// Whether a profile source is attached. With one, a wallet without a
+    /// usable profile is left out where upstream's registry drops it (a
+    /// friend, a request, a friendship update, a connectivity update) and
+    /// fails a friendship upsert; without one (a node with no content, the
+    /// tests' pool-less reader) every wallet is the placeholder.
+    pub fn requires_profiles(&self) -> bool {
+        self.pool.is_some()
+    }
+
+    /// The profiles found, and whether a missing one means "no profile": a
+    /// failed read only says the source could not answer, so it leaves
+    /// nobody out (the cached profiles and placeholders, as [`Self::get_profiles`]).
+    pub async fn known_profiles(
+        &self,
+        addresses: &[String],
+    ) -> (HashMap<String, ProfileInfo>, bool) {
+        if !self.requires_profiles() {
+            return (self.get_profiles(addresses).await, false);
+        }
+        match self.get_profiles_result(addresses).await {
+            Ok(map) => (map, true),
+            Err(error) => {
+                tracing::warn!(%error, "profile query failed; keeping every wallet");
+                (self.get_profiles(addresses).await, false)
+            }
+        }
+    }
+
+    /// `address`'s profile, or the placeholder; `None` only when a profile
+    /// source is attached and holds no usable profile for it.
+    pub async fn existing_friend_profile(&self, address: &str) -> Option<FriendProfile> {
+        let (mut map, strict) = self
+            .known_profiles(std::slice::from_ref(&address.to_string()))
+            .await;
+        let info = map.remove(&address.to_lowercase());
+        if info.is_none() && strict {
+            return None;
+        }
+        Some(friend_profile(address, info.as_ref()))
+    }
+
+    /// [`Self::friend_profiles`] without the wallets
+    /// [`Self::existing_friend_profile`] would leave out, in input order
+    /// (upstream `parseProfilesToFriends` over the registry's answer).
+    pub async fn existing_friend_profiles(&self, addresses: &[String]) -> Vec<FriendProfile> {
+        let (map, strict) = self.known_profiles(addresses).await;
+        addresses
+            .iter()
+            .filter_map(|a| {
+                let info = map.get(&a.to_lowercase());
+                (info.is_some() || !strict).then(|| friend_profile(a, info))
+            })
+            .collect()
     }
 
     /// One profile per input address, in input order.
@@ -498,10 +555,8 @@ mod tests {
 
     /// Upstream's `profiles.spec.ts` (`decentraland/social-service-ea` at
     /// `fb3dcb8`, `src/logic/profiles.ts:9`, `:19-21`): the first avatar is the
-    /// profile, and a name falls back to `unclaimedName`. Recorded difference
-    /// (RPC.md, profiles.spec.ts, "The name falls back to unclaimedName"): an
-    /// empty `name` beside an `unclaimedName` is a placeholder here, where
-    /// upstream's `name || unclaimedName` takes the unclaimed one.
+    /// profile, and a name falls back to `unclaimedName`, an empty `name`
+    /// included (`name || unclaimedName`).
     #[tokio::test]
     async fn the_first_avatar_names_the_profile_and_falls_back_to_unclaimed_name() {
         let Some(pool) = crate::db::scratch::pool(2).await else {
@@ -541,11 +596,7 @@ mod tests {
         assert_eq!(list[0].name, "First");
         assert_eq!(list[1].name, "Unclaimed");
         assert!(!list[1].has_claimed_name);
-        assert!(
-            list[2].name.is_empty() && list[2].profile_picture_url.is_empty(),
-            "an empty name is a placeholder: {:?}",
-            list[2]
-        );
+        assert_eq!(list[2].name, "Unclaimed", "an empty name falls back");
         for (addr, entity_id) in addrs.iter().zip(&entities) {
             sqlx::query("DELETE FROM content.active_pointers WHERE pointer = $1")
                 .bind(addr)

@@ -34,7 +34,10 @@ across workers:
 - `bevy_tasks`: the multi-threaded `TaskPool` on the web. Workers join through `run_worker`;
   `Task::split` separates handle from future. `TaskPool::spawn` keeps the single-threaded
   contract (static, non-`Send`, driven by the JS event loop). `AsyncComputeTaskPool::spawn`
-  requires `Send` on the web and runs on the async-compute workers.
+  requires `Send` on the web and runs on the async-compute workers. With WASM atomics,
+  `wasm-bindgen-futures` can re-poll a self-waking task inline. A CPU loop that awaits
+  `yield_now()` can therefore occupy the engine worker for the whole loop. Run CPU-heavy
+  work on an async-compute worker or in the scene worker that owns the input.
 - `bevy_ecs`: parallel iteration and the multi-threaded executor on the web under the feature.
   The render world's Extract and Render schedules stay single-threaded, since WebGPU objects
   are thread-bound.

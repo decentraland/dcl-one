@@ -396,6 +396,11 @@ pub async fn create_request(
             )
             .await
         );
+        // upstream `createCommunityRequest`: the member joined, ONLINE to
+        // the members
+        state
+            .member_status_changed(community_id, &member_address, true)
+            .await;
         // upstream answers (and notifies about) the accepted request under
         // the type just asked for
         notify_request(
@@ -612,6 +617,13 @@ pub async fn update_request_status(
         }
     }
     try_resp!(transition_request(&state.pool, uuid, req_uuid, &member_address, status).await);
+    if status == "accepted" {
+        // upstream `updateRequestStatus`: the member joined, ONLINE to the
+        // members
+        state
+            .member_status_changed(uuid, &member_address, true)
+            .await;
+    }
     notify_request(&state, uuid, req_uuid, &member_address, &kind, status).await;
     StatusCode::NO_CONTENT.into_response()
 }

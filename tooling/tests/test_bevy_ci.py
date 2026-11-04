@@ -73,7 +73,7 @@ class SelectionTest(unittest.TestCase):
 
     def test_dependency_toolchain_and_workflow_changes_select_native_matrix(self):
         for name in ('rendering/bevy-explorer/source/Cargo.lock',
-                     'rendering/bevy-explorer/source/crates/example/Cargo.toml',
+                     'rendering/bevy-explorer/source/Cargo.toml',
                      'rendering/bevy-explorer/source/.cargo/config.toml',
                      'rendering/bevy-explorer/source/rust-toolchain.toml',
                      '.cargo/config.toml', 'rust-toolchain.toml', ci.WORKFLOW,
@@ -84,6 +84,54 @@ class SelectionTest(unittest.TestCase):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')
                 self.assertTrue(ci.select(before, self.commit())['native-matrix'])
+
+    def test_platform_inputs_under_source_select_native_matrix(self):
+        for name in ('build.rs', 'crates/assets/build.rs', 'crates/dcl_component/build_quant.rs',
+                     'local-harness/benchmark/src/main.rs', 'local-harness/web-driver/driver.mjs',
+                     'crates/platform/src/native/deeplink/windows.rs', 'crates/platform/src/native/deeplink/macos.rs',
+                     'deploy/macos/Info.plist'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write('rendering/bevy-explorer/source/' + name, 'changed')
+                self.assertTrue(ci.select(before, self.commit())['native-matrix'])
+
+    def test_platform_neutral_source_and_protos_skip_only_the_native_matrix(self):
+        for name in ('rendering/bevy-explorer/source/src/lib.rs', 'rendering/bevy-explorer/source/assets/image.png',
+                     'rendering/bevy-explorer/source/crates/example/Cargo.toml',
+                     'library/protocol/proto/decentraland/common/vectors.proto'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(name, 'changed')
+                selected = ci.select(before, self.commit())
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
+                                  if selected[lane]}, {*ci.LANES, 'scenes'})
+
+    def test_cargo_lock_selects_native_matrix_only_when_the_locked_packages_change(self):
+        def lock(*packages, dependencies=()):
+            entries = ''.join(f'[[package]]\nname = "{name}"\nversion = "{version}"\n' for name, version in packages)
+            return (f'version = 4\n\n{entries}[[package]]\nname = "dcl"\nversion = "0.1.0"\n'
+                    f'dependencies = {json.dumps(list(dependencies))}\n')
+        name = 'rendering/bevy-explorer/source/Cargo.lock'
+        self.write(name, lock(('tokio', '1.0.0')))
+        before = self.commit()
+        cases = {'a new edge between locked packages': (lock(('tokio', '1.0.0'), dependencies=['tokio']), False),
+                 'a new package': (lock(('tokio', '1.0.0'), ('url', '2.5.0')), True),
+                 'a version bump': (lock(('tokio', '1.1.0')), True),
+                 'an unreadable lockfile': ('not toml [', True)}
+        for case, (content, native) in cases.items():
+            with self.subTest(case=case):
+                self.write(name, content)
+                selected = ci.select(before, self.commit())
+                self.assertEqual(selected['native-matrix'], native)
+                self.assertTrue(all(selected[lane] for lane in (*ci.LANES, 'scenes')))
+
+    def test_main_push_keeps_native_matrix_for_platform_neutral_source(self):
+        self.write('rendering/bevy-explorer/source/src/lib.rs', 'native change')
+        head = self.commit()
+        with patch.object(ci, 'main_baselines', return_value=dict.fromkeys(ci.LANES, self.base)):
+            result = ci.plan('push', self.base, head, 'example/project')
+        self.assertTrue(result['test'])
+        self.assertTrue(result['native-matrix'])
 
     def test_renaming_or_deleting_source_selects_builds(self):
         path = self.root / 'rendering/bevy-explorer/source/src/lib.rs'
@@ -123,7 +171,7 @@ class SelectionTest(unittest.TestCase):
 
     def test_web_change_cannot_hide_a_native_or_shared_input_change(self):
         self.write('rendering/bevy-explorer/source/react-web/src/App.tsx', 'web edit')
-        self.write('rendering/bevy-explorer/source/crates/system_api_types/src/lib.rs', 'protocol edit')
+        self.write('rendering/bevy-explorer/source/crates/system_api_types/build.rs', 'build script edit')
         selected = ci.select(self.base, self.commit())
         self.assertTrue(all(selected[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
 
@@ -145,7 +193,8 @@ class SelectionTest(unittest.TestCase):
                           if selected[lane]}, {'web', 'headless'})
         self.write('rendering/bevy-explorer/source/crates/dcl/src/lib.rs', 'changed Rust')
         selected = ci.select(self.base, self.commit())
-        self.assertTrue(all(selected[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
+        self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
+                          if selected[lane]}, {*ci.LANES, 'scenes'})
 
     def test_deleted_headless_launcher_still_selects_headless(self):
         name = 'rendering/bevy-explorer/source/deploy/headless/launcher/bin/cli.js'
@@ -245,6 +294,7 @@ class SelectionTest(unittest.TestCase):
             ci.WORKFLOW: {*ci.LANES, 'native-matrix'},
             'apps/bevy-explorer/README.md': set(),
             'tooling/tests/test_bevy_linux_deps.py': set(),
+            'tooling/bevy-http2-test.mjs': {'test'},
         }
         for path, expected in cases.items():
             with self.subTest(path=path):
@@ -255,7 +305,7 @@ class SelectionTest(unittest.TestCase):
 
     def test_unknown_inputs_and_shared_protoc_changes_run_all_platforms_and_scenes(self):
         for path in ('apps/bevy-explorer/future-build-input', 'apps/bevy-explorer/install-protoc.py',
-                     'rendering/bevy-explorer/source/assets/image.png', 'tooling/bevy-ci.py'):
+                     'tooling/bevy-ci.py'):
             before = self.git('rev-parse', 'HEAD')
             self.write(path, 'changed')
             result = ci.select(before, self.commit())

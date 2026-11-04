@@ -177,7 +177,7 @@ mod request_tests {
         ipfs.record_scene_batch(2);
         ipfs.record_attachment_batch(4);
         {
-            let mut metrics = ipfs.request_metrics.lock().unwrap();
+            let mut metrics = ipfs.request_metrics.downloads.lock().unwrap();
             metrics.download(0, Duration::from_millis(500), None);
             metrics.download(
                 10 * 1024,
@@ -223,7 +223,7 @@ struct WebState;
 
 fn web_state(mut input: ConsoleCommand<WebState>, ipfs: Res<IpfsResource>, config: Res<AppConfig>) {
     if let Some(Ok(_)) = input.take() {
-        let stats = ipfs.request_metrics();
+        let stats = ipfs.download_stats();
         #[cfg(not(target_arch = "wasm32"))]
         let connect_failed = Some(stats.connect_failed);
         #[cfg(target_arch = "wasm32")]

@@ -4,7 +4,7 @@ use crate::{batch_sizes::BatchSizes, IpfsIo};
 
 /// Cumulative measurements for this content client, including requests before the first read.
 #[derive(Clone, Copy, Default)]
-pub(super) struct RequestMetrics {
+pub(super) struct DownloadStats {
     pub(super) scene_batches: BatchSizes,
     pub(super) attachment_batches: BatchSizes,
     pub(super) bytes: u64,
@@ -20,7 +20,7 @@ pub(super) struct RequestMetrics {
     pub(super) connect_failed: u64,
 }
 
-impl RequestMetrics {
+impl DownloadStats {
     pub(super) fn download(
         &mut self,
         size: usize,
@@ -64,13 +64,14 @@ impl RequestMetrics {
 }
 
 impl IpfsIo {
-    pub(super) fn request_metrics(&self) -> RequestMetrics {
-        *self.request_metrics.lock().unwrap()
+    pub(super) fn download_stats(&self) -> DownloadStats {
+        *self.request_metrics.downloads.lock().unwrap()
     }
 
     /// Definitions returned in one completed scene lookup (pointers or a World's entity URNs).
     pub fn record_scene_batch(&self, size: usize) {
         self.request_metrics
+            .downloads
             .lock()
             .unwrap()
             .scene_batches
@@ -80,6 +81,7 @@ impl IpfsIo {
     /// Definitions returned in one wearable/emote pointer resolution batch.
     pub fn record_attachment_batch(&self, size: usize) {
         self.request_metrics
+            .downloads
             .lock()
             .unwrap()
             .attachment_batches

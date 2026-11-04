@@ -308,6 +308,49 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     .collect();
     let local: Vec<&str> = local_urls.iter().map(String::as_str).collect();
 
+    // ONE EIP-1654 validator (contract-wallet signatures): explore, the
+    // social routes and the social socket share it.
+    let eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>> = config
+        .content
+        .eth_rpc_url()?
+        .map(|url| crate::auth::cached_rpc_validator(url, http_client.raw().clone()));
+
+    // The content validator of the local write path (src/content/validator):
+    // the old catalyrst-validator rules over the ONE pool (the escrow
+    // overlay), store and client, the shared EIP-1654 validator and the
+    // chain access checks over ETH_RPC_URL and RPC_ENDPOINT_POLYGON.
+    let validator_settings = content::validator::Settings::parse(
+        config.validator.ignore_blockchain_access_checks,
+        config.writes.content_writes_enabled,
+        config.validator.additional_decentraland_address.as_deref(),
+        &config.node.eth_network,
+        config.content.eth_rpc_url()?,
+        config.economy.rpc_endpoint_polygon.as_deref(),
+    )
+    .context("content validator configuration")?;
+    // Sync and the read-through validate every entity a peer serves.
+    let judges_peer_entities = sync_settings.is_some() || config.content.read_through_enabled;
+    if judges_peer_entities {
+        validator_settings
+            .require_chain_for_peer_entities()
+            .context("content validator configuration")?;
+    }
+    let content_validator = Arc::new(content::validator::Sources::new(
+        pool.clone(),
+        storage.clone(),
+        http_client.clone(),
+        eip1654.clone(),
+        validator_settings,
+    ));
+    if (config.writes.content_writes_enabled || judges_peer_entities)
+        && !config.validator.ignore_blockchain_access_checks
+    {
+        content_validator
+            .verify_chain_ids()
+            .await
+            .context("deploy access check RPCs")?;
+    }
+
     // READ_THROUGH_ENABLED: a local miss (entities, content files, profiles) is
     // filled from SYNC_SOURCE, verified and stored as a synced deployment; a
     // world not held is mirrored on first read when the worlds mirror is on.
@@ -317,6 +360,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         pool.clone(),
         storage.clone(),
         http_client.raw().clone(),
+        content_validator.clone(),
     )?
     .map(Arc::new);
     if let Some(read_through) = &read_through {
@@ -336,6 +380,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             config.node.public_url.as_deref(),
         ),
         events_admin_token: config.explore.catalyrst_events_admin_token.clone(),
+        events_slack_webhook: config.explore.events_slack_webhook.clone(),
         places_upstream: source(
             config.explore.places_mirror_upstream,
             &config.explore.places_upstream_url,
@@ -377,6 +422,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .events_base_url
             .trim_end_matches('/')
             .to_string(),
+        events_asset_base_url: explore::Settings::events_asset_base_for(&config.node.own_url()),
         realm_name: config
             .node
             .realm_name
@@ -386,12 +432,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .unwrap_or("main")
             .to_string(),
     };
-    // ONE EIP-1654 validator (contract-wallet signatures): explore, the
-    // social routes and the social socket share it.
-    let eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>> = config
-        .content
-        .eth_rpc_url()?
-        .map(|url| crate::auth::cached_rpc_validator(url, http_client.raw().clone()));
     let explore = Arc::new(
         explore::ExploreState::new(pool.clone(), explore_settings, eip1654.clone())
             .with_storage(storage.clone()),
@@ -515,27 +555,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         Some(market.index.clone()),
     ));
     explore.places.set_land_authz(land.clone());
-
-    // The content validator of the local write path (src/content/validator):
-    // the old catalyrst-validator rules over the ONE pool (the escrow
-    // overlay), store and client, the shared EIP-1654 validator, the LAND
-    // index and the marketplace readers above.
-    let content_validator = Arc::new(content::validator::Sources::new(
-        pool.clone(),
-        storage.clone(),
-        http_client.clone(),
-        eip1654.clone(),
-        Some(land.clone()),
-        Some(market.index.clone()),
-        content::validator::Settings::parse(
-            config.validator.ignore_blockchain_access_checks,
-            config.validator.additional_decentraland_address.as_deref(),
-            config.validator.third_party_registry_l2_subgraph_url.as_deref(),
-            config.validator.blocks_l2_subgraph_url.as_deref(),
-            &self_hosts,
-        )
-        .context("THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL / BLOCKS_L2_SUBGRAPH_URL / ADDITIONAL_DECENTRALAND_ADDRESS configuration")?,
-    ));
 
     // The content server's local write path (src/content/{create_entity,
     // unpublish_scene,land_publish}): the write deployer over the ONE pool
@@ -910,6 +929,10 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     social
         .rpc
         .start_topology(&jobs, comms_stage.archipelago.feed.topology.clone());
+    // A room the gatekeeper closes reaches the open voice streams as ENDED.
+    comms_stage
+        .social_directory
+        .set_updates(social.rpc.ctx.pubsub().clone());
     market.attach_profile_images(social.profile_images.clone());
     let subscriptions = Arc::new(shop::subscriptions::State::new(
         pool.clone(),
@@ -1029,6 +1052,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
                 storage.clone(),
                 sync_status,
                 http_client.raw().clone(),
+                content::sync_deployer::SyncValidation::Content(content_validator.clone()),
                 &jobs,
             )
             .await
@@ -1041,15 +1065,31 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
                  development only, never a readiness signal"
             );
             worker::serve_unsynced(&config, &sync_status);
+            worker::spawn_startup_repair(&jobs, pool.clone());
             None
         }
         None => {
             tracing::info!(
                 "SYNC_ENABLED=false: no sync worker; the node reports the sync leader's state from the database, Bootstrapping until one has written it"
             );
+            worker::spawn_startup_repair(&jobs, pool.clone());
             None
         }
     };
+    // With sync off the read-through's undecided rows still need the retry and prune loops.
+    if sync_settings.is_none()
+        && let Some(read_through) = &read_through
+    {
+        worker::start_failed_deployments(
+            &worker::FailedDeploymentSettings::from_config(&config),
+            read_through.sources().to_vec(),
+            pool.clone(),
+            storage.clone(),
+            http_client.raw().clone(),
+            content::sync_deployer::SyncValidation::Content(content_validator.clone()),
+            &jobs,
+        );
+    }
 
     // The operator console (the old catalyrst-live /admin API): SIWE sign-in
     // over ADMIN_ADDRESSES + SESSION_SECRET, the sync controls, the cache
@@ -1692,6 +1732,9 @@ async fn worlds_states(
 struct CommsStage {
     archipelago: crate::comms::archipelago::AppState,
     gatekeeper: crate::comms::gatekeeper::SharedState,
+    /// The gatekeeper's social seam, kept to attach the social RPC's
+    /// fan-out once it exists.
+    social_directory: Arc<social::comms_directory::Directory>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1725,6 +1768,7 @@ async fn comms_states(
         &content.settings.content_public_url,
     );
 
+    let social_directory = Arc::new(social::comms_directory::Directory::new(pool.clone()));
     let gatekeeper = comms::gatekeeper::CommsState::new(
         pool.clone(),
         http_client.clone(),
@@ -1734,7 +1778,7 @@ async fn comms_states(
         policy.clone() as Arc<dyn AccessPolicy>,
         Arc::new(worlds::rooms::SceneResolver::new(pool.clone())),
         presence,
-        Arc::new(social::comms_directory::Directory::new(pool.clone())),
+        social_directory.clone(),
     )
     .with_ban_status(ban_status.clone())
     .with_name_owner_reader(market.clone())
@@ -1766,6 +1810,7 @@ async fn comms_states(
     Ok(CommsStage {
         archipelago,
         gatekeeper,
+        social_directory,
     })
 }
 
@@ -1882,6 +1927,7 @@ fn social_states(
         notifications::Settings {
             admin_token: non_empty(&config.social.catalyrst_notifications_admin_token),
             events_base_url: public_url.clone(),
+            events_asset_base_url: explore.settings.events_asset_base_url.clone(),
             email: notifications::EmailConfig {
                 sendgrid_api_key: non_empty(&config.social.sendgrid_api_key),
                 from_email: non_empty(&config.social.sendgrid_from_email),
@@ -1985,6 +2031,18 @@ fn social_states(
                 .private_voice_chat_expiration_batch_size,
             ws_max_concurrent_connections: config.social.ws_max_concurrent_connections,
             ws_max_payload_bytes: config.social.ws_max_payload_length,
+            ws_max_backpressure_bytes: config.social.ws_max_backpressure,
+            admission: social_rpc::limits::AdmissionLimits {
+                max_per_address: config.social.ws_max_connections_per_address as usize,
+                subscriptions_per_second: config.social.ws_subscriptions_per_second,
+                subscription_burst: config.social.ws_subscription_burst as usize,
+                idle_budget_capacity: config.social.ws_address_budget_capacity as usize,
+            },
+            stream: social_rpc::stream::StreamLimits {
+                max_payload_bytes: config.social.stream_ws_max_payload_length as usize,
+                messages_per_second: config.social.stream_ws_messages_per_second,
+                message_burst: config.social.stream_ws_message_burst as usize,
+            },
             admin_token: non_empty(&config.social.catalyrst_social_rpc_admin_token),
             faces,
             writes_enabled: config.writes.social_writes_enabled,
@@ -1993,6 +2051,10 @@ fn social_states(
         eip1654,
         comms.clone(),
     ));
+    // Membership changes and deletions reach the open RPC streams; a voice
+    // start reads the community's places and thumbnail.
+    communities.set_updates(rpc.ctx.pubsub().clone());
+    rpc.ctx.set_communities(communities.clone());
 
     tracing::info!(
         translate = media.backend_label(),

@@ -67,6 +67,11 @@
       exact = true;
     }
     {
+      path = "/events/assets/event-default.webp";
+      probe = "/events/assets/event-default.webp";
+      exact = true;
+    }
+    {
       path = "/events/api";
       probe = "/events/api/status";
     }
