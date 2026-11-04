@@ -886,6 +886,47 @@ fn a_teleport_made_while_the_handshake_is_in_flight_goes_out_on_acceptance() {
     assert_eq!(*announcement, profile_announcement(7));
 }
 
+/// The handshake's initial state is built when signing starts, from the pose the player has
+/// broadcast by then. A teleport made before that is not held for the acceptance: let out after
+/// it, it would put the player back where it was.
+#[test]
+fn a_teleport_made_before_signing_starts_is_not_sent_on_acceptance() {
+    for state in [Connection::Connecting, Connection::Idle] {
+        let label = format!("{state:?}");
+        let mut harness = Harness::idle();
+        harness.session_mut().state = state;
+        harness.session_mut().last_state = Some(pose());
+
+        harness.teleport_to(standing_in(3));
+        harness.report(PulseStatus::Connected);
+        let initial = harness.signed_handshake(4.5).initial_state;
+        assert_eq!(initial.map(|initial| initial.realm).as_deref(), Some(HOME));
+
+        harness.receive(handshake_response(true));
+        harness.pump_at(5.0);
+        assert_eq!(harness.sent(), [profile_announcement(7)], "{label}");
+    }
+}
+
+/// A teleport held for the acceptance names the realm it was made in, so a realm change drops it.
+/// Out of world at the acceptance, nothing is sent then: the player's placement in the new realm
+/// announces it.
+#[test]
+fn a_realm_change_drops_the_teleport_held_for_the_acceptance() {
+    let mut harness = Harness::player(Connection::AwaitingResponse { timeout_at: 15.0 });
+    harness.session_mut().initial_realm = Some(HOME.to_owned());
+    harness.profile(7);
+    harness.teleport_to(standing_in(3));
+
+    harness.world.insert_resource(realm("away"));
+    harness.follow_realm();
+    harness.leave_world();
+    harness.receive(handshake_response(true));
+    harness.pump_at(5.0);
+
+    assert_eq!(harness.sent(), [profile_announcement(7)]);
+}
+
 /// The handshake carries the loop playing when it was signed, and the server plays it from the
 /// acceptance on. A stop made while the handshake is in flight goes out after the acceptance, or
 /// every observer would see the loop until the player emoted again.

@@ -54,8 +54,13 @@ impl DiscreteEventPacer {
             "only teleports and emotes are paced, not {:?}",
             frame.kind
         );
-        self.waiting.retain(|waiting| waiting.kind != frame.kind);
+        self.drop_waiting(frame.kind);
         self.waiting.push_back(frame);
+    }
+
+    /// Drop the waiting frame of `kind`, if there is one; the others keep their order.
+    pub fn drop_waiting(&mut self, kind: FrameKind) {
+        self.waiting.retain(|waiting| waiting.kind != kind);
     }
 
     /// The waiting frames the bucket allows now, in the order of their latest offer.

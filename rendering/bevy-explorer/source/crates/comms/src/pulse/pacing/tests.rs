@@ -140,6 +140,21 @@ fn waiting_frames_go_out_in_the_order_of_their_latest_offer() {
     assert!(pacer.release(1.0).is_empty());
 }
 
+/// Dropping the teleport that waits takes nothing else back: the emote waiting with it keeps its
+/// place, and goes once the bucket allows.
+#[test]
+fn dropping_the_waiting_teleport_keeps_the_waiting_emote() {
+    let mut pacer = DiscreteEventPacer::default();
+    empty_the_bucket(&mut pacer, 0.0);
+
+    pacer.offer(teleport(1));
+    pacer.offer(emote(2));
+    pacer.drop_waiting(FrameKind::Teleport);
+
+    assert_eq!(numbers(pacer.release(1.0)), [2]);
+    assert!(pacer.release(2.0).is_empty());
+}
+
 #[test]
 fn a_full_bucket_lets_a_teleport_and_an_emote_through_at_once() {
     let mut pacer = DiscreteEventPacer::default();
