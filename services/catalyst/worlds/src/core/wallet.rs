@@ -137,7 +137,7 @@ pub async fn get_wallet_stats(
     let allowance = if state.allowance.is_limited() {
         state
             .allowance
-            .allowance_bytes(&address)
+            .allowance_bytes_if_idle(&address)
             .await
             .inspect_err(|e| {
                 tracing::warn!(wallet = %address.as_str(), error = %e, "wallet stats: allowance unavailable");

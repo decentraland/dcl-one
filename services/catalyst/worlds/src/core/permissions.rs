@@ -83,15 +83,8 @@ pub async fn get_permissions(
         .as_ref()
         .map(|w| w.access.clone())
         .unwrap_or_default();
-    // The live holder; unknown while the authority cannot answer.
-    let owner = state
-        .policy
-        .current_owner(&world)
-        .await
-        .unwrap_or_else(|e| {
-            tracing::warn!(%world, error = %e, "world owner unresolved");
-            None
-        });
+    // The live holder; 503 while the authority cannot answer, as other owner reads.
+    let owner = state.policy.current_owner(&world).await?;
 
     let mut deployment_wallets = Vec::new();
     let mut streaming_wallets = Vec::new();

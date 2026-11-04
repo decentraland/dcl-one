@@ -34,7 +34,11 @@ difference not listed here is a gap, not a decision.
   the wallet's DCL NAME worlds; the stats route reports the same during an
   outage, while the publish and `/limits` answer 503 and the quota pass
   keeps existing blocks. An answered allowance is reused for 60 seconds and
-  a failed lookup for 15 seconds; at most 8 lookups run at once.
+  a failed lookup for 15 seconds. At most 8 publish and `/limits` lookups
+  run at once, and one that waits over 5 seconds for a slot answers 503;
+  the stats route has 2 slots of its own and, when they are busy, reports
+  the per-scene caps instead of waiting. The 12-hourly quota pass evaluates
+  both the stored owner and the live holder of each DCL NAME world.
   A publish credits back only the replaced scenes of a world charged to
   the same owner.
 - **Legacy content keys.** The worlds `/contents/{key}` route also accepts a
@@ -87,9 +91,9 @@ difference not listed here is a gap, not a decision.
   (upstream fails the whole mint), anyone else gets the access setting's
   401/403. The scene host's periodic re-admission keeps connected clients
   while the answer is undetermined. `GET /world/{name}/permissions` reports
-  the live holder (no `owner` while the authority cannot answer), and the
-  comms owner read for stream-key notices is unavailable then; neither
-  falls back to the stored owner.
+  the live holder and, like `/limits`, answers 503 while the authority
+  cannot answer; the comms owner read for stream-key notices is unavailable
+  then too. Neither falls back to the stored owner.
 - **Capacity check fails closed.** When the live occupancy of a world cannot
   be recovered, the comms mint answers 503 instead of counting zero
   participants and admitting the user.

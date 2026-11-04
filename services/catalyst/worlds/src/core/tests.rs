@@ -5456,6 +5456,21 @@ async fn permissions_owner_falls_back_to_the_name_holder() {
 }
 
 #[tokio::test]
+async fn permissions_answer_503_while_the_owner_is_undetermined() {
+    let Some((f, ens)) = fixture_with_ens(1 << 20).await else {
+        return;
+    };
+    ens.set_down(true);
+    let world = ens_world_name();
+    expect(
+        &f.app,
+        Case::new("get", format!("/world/{}/permissions", world.display())),
+        503,
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn worlds_listing_pages_leniently_with_millisecond_timestamps() {
     let Some(f) = fixture().await else { return };
     let (world, owner) = (world_name(), Wallet::random().address);
@@ -6721,6 +6736,61 @@ async fn one_edit_notifies_at_most_the_capped_number_of_addresses() {
         .filter(|a| !notices_of(&f, PERMISSION_GRANTED, a).is_empty())
         .count();
     assert_eq!(notified, super::permissions::MAX_NOTICES_PER_EDIT);
+}
+
+#[tokio::test]
+async fn without_an_allowance_source_a_publish_is_charged_to_nobody() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random().address);
+    f.names.set(&owner, world.label());
+    f.allowance.set(&owner, Some(1));
+    f.allowance
+        .unconfigured
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let limits = f.state.policy.world_limits(&world).await.unwrap();
+    let cap = f
+        .state
+        .scene_cap(&world, &limits, Some(&owner), Some(&["0,0".to_string()]))
+        .await
+        .unwrap();
+    assert_eq!(cap.max, limits.max_size_bytes);
+    assert!(cap.charge.is_none());
+}
+
+/// A NAME's new holder is evaluated by the next pass, before the owner reconcile.
+#[tokio::test]
+async fn the_quota_pass_evaluates_the_live_name_holder() {
+    let Some(f) = fixture().await else { return };
+    let _quota = super::quota::test_support::QUOTA_DB.lock().await;
+    let (world, previous, holder) = (
+        world_name(),
+        Wallet::random().address,
+        Wallet::random().address,
+    );
+    f.names.set(&previous, world.label());
+    sized_scene(&f, &world, &previous, 'p', &["0,0"], 250).await;
+    f.names.forget(&previous);
+    f.names.set(&holder, world.label());
+    f.market.graph.names.clear();
+    f.market.graph.name_owner.clear();
+    f.allowance.set(&holder, Some(100));
+    f.state.quota_pass().await.unwrap();
+    let blocked: Option<String> =
+        sqlx::query_scalar("SELECT wallet FROM worlds.quota_blocks WHERE wallet = $1")
+            .bind(&holder)
+            .fetch_optional(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(blocked.as_deref(), Some(holder.as_str()));
+    assert_eq!(
+        stored_owner(&f.pool, &world).await.as_deref(),
+        Some(previous.as_str())
+    );
+    sqlx::query("DELETE FROM worlds.quota_blocks WHERE wallet = $1")
+        .bind(&holder)
+        .execute(&f.pool)
+        .await
+        .unwrap();
 }
 
 /// Two publishes validated against the same remaining allowance: the

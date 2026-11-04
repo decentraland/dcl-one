@@ -47,6 +47,10 @@ const ALLOWANCE_FAILURE_TTL: Duration = Duration::from_secs(15);
 const ALLOWANCE_CACHE_MAX: usize = 10_000;
 /// Allowance lookups in flight at once, node-wide.
 const ALLOWANCE_MAX_IN_FLIGHT: usize = 8;
+/// How long a publish or `/limits` lookup waits for a free slot.
+const ALLOWANCE_QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Unauthenticated lookups (`/wallet/{w}/stats`) in flight, apart from the above.
+const ALLOWANCE_IDLE_MAX_IN_FLIGHT: usize = 2;
 
 /// The contracts of one network (`@dcl/catalyst-contracts` `l1Contracts` /
 /// `l2Contracts`).
@@ -120,6 +124,7 @@ pub struct ChainHoldings {
     contracts: HoldingsContracts,
     cache: dashmap::DashMap<Address, CachedAllowance>,
     in_flight: tokio::sync::Semaphore,
+    idle_in_flight: tokio::sync::Semaphore,
 }
 
 /// A failed read; a revert is not retried.
@@ -158,6 +163,7 @@ impl ChainHoldings {
             contracts,
             cache: dashmap::DashMap::new(),
             in_flight: tokio::sync::Semaphore::new(ALLOWANCE_MAX_IN_FLIGHT),
+            idle_in_flight: tokio::sync::Semaphore::new(ALLOWANCE_IDLE_MAX_IN_FLIGHT),
         }
     }
 
@@ -314,15 +320,27 @@ impl SpaceAllowance for ChainHoldings {
         if let Some(answer) = self.cached(wallet) {
             return answer;
         }
-        let _permit = self
-            .in_flight
-            .acquire()
+        let _permit = tokio::time::timeout(ALLOWANCE_QUEUE_TIMEOUT, self.in_flight.acquire())
             .await
+            .map_err(|_| "holdings: too many lookups in flight".to_string())?
             .map_err(|_| "holdings closed".to_string())?;
         // A caller queued behind the same wallet's lookup reuses its answer.
         if let Some(answer) = self.cached(wallet) {
             return answer;
         }
+        let answer = self.fetch(wallet).await;
+        self.remember(wallet, answer.clone());
+        answer
+    }
+
+    async fn allowance_bytes_if_idle(&self, wallet: &Address) -> Result<i64, String> {
+        if let Some(answer) = self.cached(wallet) {
+            return answer;
+        }
+        let _permit = self
+            .idle_in_flight
+            .try_acquire()
+            .map_err(|_| "holdings: too many lookups in flight".to_string())?;
         let answer = self.fetch(wallet).await;
         self.remember(wallet, answer.clone());
         answer
@@ -543,6 +561,43 @@ mod tests {
             allowance_bytes(U256::MAX, U256::ZERO, U256::ZERO, U256::MAX),
             i64::MAX
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_lookup_waits_a_bounded_time_for_a_free_slot() {
+        let (holdings, l1, _) = chains().await;
+        let _all = holdings
+            .in_flight
+            .acquire_many(ALLOWANCE_MAX_IN_FLIGHT as u32)
+            .await
+            .unwrap();
+        let err = holdings.allowance_bytes(&wallet()).await.unwrap_err();
+        assert!(err.contains("in flight"), "{err}");
+        assert_eq!(l1.requests(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_idle_lookup_never_queues_and_uses_its_own_slots() {
+        let (holdings, l1, _) = chains().await;
+        let publish_slots = holdings
+            .in_flight
+            .acquire_many(ALLOWANCE_MAX_IN_FLIGHT as u32)
+            .await
+            .unwrap();
+        assert_eq!(holdings.allowance_bytes_if_idle(&wallet()).await, Ok(0));
+        drop(publish_slots);
+        let _idle = holdings
+            .idle_in_flight
+            .acquire_many(ALLOWANCE_IDLE_MAX_IN_FLIGHT as u32)
+            .await
+            .unwrap();
+        let other = Address::parse("0x2222222222222222222222222222222222222222").unwrap();
+        let err = holdings.allowance_bytes_if_idle(&other).await.unwrap_err();
+        assert!(err.contains("in flight"), "{err}");
+        assert_eq!(l1.requests(), 1);
+        // A cached answer needs no slot; publishes keep theirs.
+        assert_eq!(holdings.allowance_bytes_if_idle(&wallet()).await, Ok(0));
+        assert_eq!(holdings.allowance_bytes(&other).await, Ok(0));
     }
 
     #[tokio::test]
