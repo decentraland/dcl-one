@@ -23,8 +23,9 @@ use bevy::{
 
 /// Transcoded dds bytes by asset path string, with when they were stashed, waiting to be written
 /// over the cached ktx2.
-pub(crate) static KTX2_RESULTS: LazyLock<Mutex<HashMap<String, (Instant, Vec<u8>)>>> =
-    LazyLock::new(Default::default);
+type Ktx2Results = HashMap<String, (Instant, Vec<u8>)>;
+
+pub(crate) static KTX2_RESULTS: LazyLock<Mutex<Ktx2Results>> = LazyLock::new(Default::default);
 
 /// Far longer than a stashed transcode waits for its write, which goes ahead of every texture
 /// compression in the processor's queue.
