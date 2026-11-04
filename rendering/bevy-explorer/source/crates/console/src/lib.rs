@@ -7,6 +7,9 @@ use clap::Parser;
 use common::{rpc::RpcResultReceiver, sets::SceneSets};
 use std::sync::Mutex;
 
+mod debug_panel;
+pub use debug_panel::{AddDebugSection, DebugInput, DebugInputKind, DebugSection};
+
 pub trait DoAddConsoleCommand {
     fn add_console_command<T: Command, U>(
         &mut self,
@@ -111,6 +114,8 @@ impl Plugin for ConsolePlugin {
         )
         .add_console_command::<ClearCommand, _>(clear_command)
         .add_console_command::<HelpCommand, _>(help_command)
+        .init_resource::<debug_panel::DebugSections>()
+        .add_console_command::<debug_panel::DebugPanelCommand, _>(debug_panel::debug_panel)
         .add_console_command::<ExitCommand, _>(exit_command)
         .init_resource::<PendingCommands>()
         .add_systems(Update, send_pending);

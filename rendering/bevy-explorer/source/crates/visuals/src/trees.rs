@@ -149,7 +149,7 @@ fn setup(
 }
 
 #[derive(Component)]
-struct Tree {
+pub(super) struct Tree {
     parcel: IVec2,
 }
 
