@@ -585,6 +585,7 @@ mod tests {
             rarity: rarity.into(),
             name: name.into(),
             category: category.into(),
+            item_type: String::new(),
         }
     }
 

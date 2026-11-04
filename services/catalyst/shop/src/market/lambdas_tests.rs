@@ -107,9 +107,9 @@ fn matic_collections(query: &str) -> Value {
         json!({ "o0": [{ "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1") }] })
     } else if query.contains("category: \"wearable\"") {
         json!({ "nfts": [
-            { "id": "a1", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10", "transferredAt": "200",
+            { "id": "a1", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10", "itemType": "wearable_v2", "transferredAt": "200",
               "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } },
-            { "id": "a2", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "11", "transferredAt": "300",
+            { "id": "a2", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "11", "itemType": "wearable_v2", "transferredAt": "300",
               "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } }
         ] })
     } else {
@@ -816,6 +816,51 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     .await;
     assert_eq!(body["totalAmount"], 1);
     assert_eq!(body["elements"][0]["entity"]["thumbnail"], "bafythumb");
+    assert_eq!(body["elements"][0]["entity"]["metadata"]["isSmart"], false);
+    assert!(
+        body["elements"][0].get("amount").is_none(),
+        "amount only with includeAmount: {body}"
+    );
+    // The item-type filters keep the on-chain leg's matching types and drop
+    // the base and third-party legs.
+    for (filter, total) in [
+        ("isSmartWearable=true", 0),
+        ("network=MATIC", 1),
+        ("network=ETHEREUM", 0),
+        ("network=polygon", 4),
+    ] {
+        let (_, body) = get(&state, &format!("/explorer/{OWNER}/wearables?{filter}")).await;
+        assert_eq!(body["totalAmount"], total, "{filter}: {body}");
+    }
+    let tp_collection = "urn:decentraland:matic:collections-thirdparty:tp";
+    for (filter, total) in [
+        (format!("thirdPartyCollectionId={tp_collection}"), 1),
+        (
+            format!(
+                "thirdPartyCollectionId={tp_collection}&thirdPartyCollectionId={tp_collection}"
+            ),
+            1,
+        ),
+        (
+            format!(
+                "thirdPartyCollectionId={tp_collection}:c1&thirdPartyCollectionId={tp_collection}"
+            ),
+            2,
+        ),
+        (
+            "thirdPartyCollectionId=urn:decentraland:matic:collections-thirdparty:other"
+                .to_string(),
+            0,
+        ),
+        ("thirdPartyCollectionId=not-a-urn".to_string(), 0),
+    ] {
+        let (_, body) = get(
+            &state,
+            &format!("/explorer/{OWNER}/wearables?collectionType=third-party&{filter}"),
+        )
+        .await;
+        assert_eq!(body["totalAmount"], total, "{filter}: {body}");
+    }
     let (_, body) = get(&state, &format!("/explorer/{OWNER}/emotes")).await;
     assert_eq!(
         body["totalAmount"], 0,

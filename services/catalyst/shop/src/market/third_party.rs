@@ -966,6 +966,7 @@ async fn owned_via_nft_worker(
     Ok(out)
 }
 
+#[derive(Clone)]
 pub struct TpwElement {
     pub urn: String,
     pub individual_data: Vec<Value>,
