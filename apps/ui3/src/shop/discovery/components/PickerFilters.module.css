@@ -4,8 +4,11 @@
   flex-direction: column;
   gap: 8px;
 }
+/* The menu sits in the flow under the box: each sidebar section clips its overflow for the collapse animation. */
 .picker {
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 .box {
   display: flex;
@@ -36,11 +39,6 @@
   outline: 0;
 }
 .menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  z-index: var(--z-overlay, 60);
   max-height: 280px;
   overflow-y: auto;
   padding: 6px;
