@@ -48,6 +48,9 @@ pub enum ItemRef {
     NotAsked,
     /// A collection URN naming no item that can be asked about: never owned.
     Malformed,
+    /// A well-formed item whose decimal token id no token can have (past
+    /// 2^256): never owned, the chain names no owner for it.
+    NoSuchToken,
     /// A collection item: `ownerOf(token)` on `contract` (`None`: a v1
     /// collection name with no known contract, never owned).
     Token {
@@ -67,7 +70,7 @@ impl ItemRef {
     /// The layer the check reads, `None` when nothing is read.
     pub fn on_l1(&self) -> Option<bool> {
         match self {
-            ItemRef::NotAsked | ItemRef::Malformed => None,
+            ItemRef::NotAsked | ItemRef::Malformed | ItemRef::NoSuchToken => None,
             ItemRef::Token { l1, .. } | ItemRef::ThirdParty { l1, .. } => Some(*l1),
         }
     }
@@ -117,7 +120,7 @@ fn token_ref(l1: bool, contract: Option<Address>, id: &str) -> ItemRef {
             contract,
             token,
         },
-        None => ItemRef::Malformed,
+        None => ItemRef::NoSuchToken,
     }
 }
 
@@ -176,6 +179,7 @@ pub fn item_ref(urn: &str) -> ItemRef {
                     contract,
                     token,
                 },
+                (Some(_), Some(_), None) => ItemRef::NoSuchToken,
                 _ => ItemRef::Malformed,
             }
         }
@@ -326,6 +330,18 @@ mod tests {
             },
             "a contract that is not an address is never owned"
         );
+    }
+
+    #[test]
+    fn a_decimal_token_id_past_2_256_names_no_token() {
+        let huge = "1".repeat(80);
+        for urn in [
+            format!("urn:decentraland:matic:collections-v2:{A}:0:{huge}"),
+            format!("urn:decentraland:ethereum:collections-v1:{A}:hat:{huge}"),
+            format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:mainnet:{A}:{huge}"),
+        ] {
+            assert_eq!(item_ref(&urn), ItemRef::NoSuchToken, "{urn}");
+        }
     }
 
     #[test]
