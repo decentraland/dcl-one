@@ -53,6 +53,7 @@ const INTERNAL_PARAMS = [
   'previousLogin',
   'perm',
   'worldpw',
+  'smartwearables',
   ANALYTICS_SESSION_PARAM,
   AUTH_RETURN_PARAM
 ]

@@ -22,7 +22,7 @@ import {
   type Wearable
 } from './protocol'
 import { applyProfileEdit } from './profileEdit'
-import type { Color3 } from './generated'
+import type { Color3, SmartWearableEntryInfo, SmartWearableState } from './generated'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { DEFAULT_REALM } from '../lib/baseDomain'
 
@@ -395,6 +395,21 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     ch.postMessage({ to: 'page', msg } satisfies Envelope)
   }
 
+  // ?smartwearables=1: the smart wearables the mock engine runs. The jetpack waits for the player's
+  // consent; the pet runs until the player stops it.
+  const smartWearables: SmartWearableEntryInfo[] = [
+    { urn: 'urn:decentraland:matic:collections-v2:0xmock:0', name: 'Jetpack', state: 'awaitingAuthorization', reason: null, sceneHash: null, source: 'equipped' },
+    { urn: 'urn:decentraland:matic:collections-v2:0xmock:1', name: 'Pocket Pet', state: 'running', reason: null, sceneHash: 'bafkmockpet', source: 'equipped' }
+  ]
+  const sendSmartWearables = (): void =>
+    reply({ kind: 'smartWearableState', entries: smartWearables.map((e) => ({ ...e })), currentSceneAllows: true, currentSceneHidesUi: false })
+  const setSmartWearable = (urn: string, state: SmartWearableState): void => {
+    const entry = smartWearables.find((e) => e.urn === urn)
+    if (entry == null) return
+    entry.state = state
+    sendSmartWearables()
+  }
+
   // An in-flight loginNew approval (so loginCancel/logout can abort it).
   let pendingAuth: { id: string; timer: ReturnType<typeof setTimeout> } | null = null
   // Drives the mock pose stream (see spawnPlayer) so the minimap is developable without an engine.
@@ -569,6 +584,14 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     // wrong answer (anything but "open-sesame") re-asks with the reason, as the engine does.
     if (new URLSearchParams(location.search).get('worldpw') === '1') {
       setTimeout(() => reply({ kind: 'worldPasswordRequest', world: 'secret-garden.dcl.eth' }), 3000)
+    }
+    // ?smartwearables=1 → the smart wearables' state, then the jetpack's authorization prompt.
+    if (new URLSearchParams(location.search).get('smartwearables') === '1') {
+      sendSmartWearables()
+      setTimeout(() => {
+        const [jetpack] = smartWearables
+        reply({ kind: 'smartWearableAuthRequest', id: 1, urn: jetpack.urn, name: jetpack.name, permissions: ['USE_FETCH', 'USE_WEB3_API'], reason: 'equip' })
+      }, 3000)
     }
     // ?perm=1 → fire a sample scene permission prompt so the dialog is exercisable in the mock, and
     // a few used permissions so the rail's permissions list has something to review.
@@ -1033,8 +1056,17 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       reply({ kind: 'chat', chat: { sender: '', message: 'Reloading the current scene…', channel: 'Nearby', messageId: '' } })
       return
     }
+    if (msg.kind === 'smartWearableAuthAnswer') {
+      setSmartWearable(smartWearables[0].urn, msg.allow ? 'running' : 'denied')
+      return
+    }
     if (msg.kind === 'consoleCommand') {
       const args = msg.args ?? []
+      if (msg.command === 'smart_wearable' && (args[0] === 'kill' || args[0] === 'restart') && args[1] != null) {
+        setSmartWearable(args[1], args[0] === 'kill' ? 'killed' : 'running')
+        reply({ kind: 'consoleReply', command: msg.command, args, ok: true, output: `${args[0] === 'kill' ? 'killed' : 'restarted'} ${args[1]}` })
+        return
+      }
       const output =
         msg.command === 'help' && args.length === 0
           ? 'Available commands:\n  /help     - List available commands\n  /teleport - set location\n  /crdt_snapshot - (hidden by the HUD)'

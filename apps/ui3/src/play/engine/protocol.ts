@@ -7,7 +7,7 @@
 // Domain types mirror scene/src/bevy-api/interface.ts so the bridge scene can
 // forward SystemApi results verbatim.
 
-import type { Color3, HomeScene, SatelliteView, SceneLoadingUi, WelcomeState } from './generated'
+import type { Color3, HomeScene, SatelliteView, SceneLoadingUi, SmartWearableAuthRequest, SmartWearableStateInfo, WelcomeState } from './generated'
 import type { AvatarLook } from './avatarEquip'
 
 export const BRIDGE_CHANNEL = 'bevy-ui-bridge'
@@ -229,6 +229,7 @@ export type PageToScene =
   | GetGalleryRequest
   | GetGalleryPhotoRequest
   | DeleteGalleryPhotoRequest
+  | SmartWearableAuthAnswerRequest
 
 // ---- scene -> page ---------------------------------------------------------
 
@@ -936,6 +937,28 @@ export interface PermissionUsedMessage {
   scene: string
   realm: string
   allowed: boolean
+}
+
+/** The engine asks whether a smart wearable may run (scene → page, from
+ *  getSmartWearableAuthorizationStream): `reason` says whether the player logged in wearing it or
+ *  just equipped it; `permissions` are its scene.json names (e.g. 'USE_FETCH'). The engine sends
+ *  one at a time and waits for the answer. */
+export interface SmartWearableAuthRequestMessage extends SmartWearableAuthRequest {
+  kind: 'smartWearableAuthRequest'
+}
+
+/** The player's answer to a smart wearable authorization request (page → scene →
+ *  answerSmartWearableAuthorization). */
+export interface SmartWearableAuthAnswerRequest {
+  kind: 'smartWearableAuthAnswer'
+  id: number
+  allow: boolean
+}
+
+/** The smart wearables the engine knows about and whether the scene the player stands in lets them
+ *  run (scene → page). The bridge polls smartWearableState() every second and sends only changes. */
+export interface SmartWearableStateMessage extends SmartWearableStateInfo {
+  kind: 'smartWearableState'
 }
 
 /** The engine needs a password to enter the world the player is travelling to (scene → page).
@@ -1682,6 +1705,8 @@ export type SceneToPage =
   | WorldPasswordRequestMessage
   | WorldPasswordWithdrawnMessage
   | EditorSceneResultMessage
+  | SmartWearableAuthRequestMessage
+  | SmartWearableStateMessage
 
 // ---- envelope --------------------------------------------------------------
 
