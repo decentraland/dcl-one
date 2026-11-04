@@ -1243,7 +1243,12 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         ))
         .nest(
             "/worlds-content-server",
-            comms::gatekeeper::admission::world_mint::router(comms_stage.gatekeeper.clone()),
+            comms::gatekeeper::admission::world_mint::router(comms_stage.gatekeeper.clone()).merge(
+                social::writes::guard(
+                    comms::gatekeeper::webhook_router(comms_stage.gatekeeper.clone()),
+                    config.writes.social_writes_enabled,
+                ),
+            ),
         )
         .nest(
             "/comms-gatekeeper",

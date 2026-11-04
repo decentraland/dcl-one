@@ -886,6 +886,18 @@ pub fn router(state: SharedState) -> Router {
         .with_state(state)
 }
 
+/// `POST /livekit-webhook` alone, with the gatekeeper router's body cap and
+/// guards; `serve` also nests it under `/worlds-content-server`, where WCS
+/// received the same webhook.
+pub fn webhook_router(state: SharedState) -> Router {
+    Router::new()
+        .route("/livekit-webhook", post(webhook::livekit_webhook))
+        .layer(axum::extract::DefaultBodyLimit::max(512 * 1024))
+        .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
+        .layer(axum::middleware::from_fn(cors::cors_middleware))
+        .with_state(state)
+}
+
 /// The Pulse room authority alone (`POST /internal/pulse/room-authority/v1`,
 /// the exact path `PULSE_ROOM_AUTHORITY_URL` names), empty when no service
 /// key is configured; `serve` merges it at the root beside the nested

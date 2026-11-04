@@ -4772,3 +4772,84 @@ async fn available_content_under_the_worlds_prefix_reports_deployed_files() {
         "https://creator.example.org"
     );
 }
+
+async fn served(app: &Router, method: &str, path: &str) -> (StatusCode, Option<String>, Vec<u8>) {
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = response.status();
+    let ty = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .map(|v| v.to_str().unwrap().to_string());
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (status, ty, body.to_vec())
+}
+
+/// WCS answers `/contents` (and `/ipfs`) with a sniffed Content-Type and
+/// also under a thumbnail's legacy SHA-256 hex key.
+#[tokio::test]
+async fn worlds_contents_sniff_and_answer_legacy_sha256_keys() {
+    let Some(f) = fixture().await else { return };
+    let app = served_app(&f).await;
+    let png = bytes::Bytes::from([&PNG_MAGIC[..], Uuid::new_v4().as_bytes()].concat());
+    let png_cid = hash_bytes_v1(&png);
+    f.storage.store(&png_cid, png.clone()).await.unwrap();
+    // sha256("abc"), stored under the raw-leaf CIDv1 a deploy or import gives it.
+    let abc_hex = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+    f.storage
+        .store(&hash_bytes_v1(b"abc"), bytes::Bytes::from_static(b"abc"))
+        .await
+        .unwrap();
+
+    for prefix in ["contents", "ipfs"] {
+        for method in ["GET", "HEAD"] {
+            let path = format!("{NEST}/{prefix}/{png_cid}");
+            let (status, ty, _) = served(&app, method, &path).await;
+            assert_eq!(status, StatusCode::OK, "{method} {path}");
+            assert_eq!(ty.as_deref(), Some("image/png"), "{method} {path}");
+            let path = format!("{NEST}/{prefix}/{abc_hex}");
+            let (status, _, _) = served(&app, method, &path).await;
+            assert_eq!(status, StatusCode::OK, "{method} {path}");
+        }
+    }
+    let (_, _, body) = served(&app, "GET", &format!("{NEST}/contents/{abc_hex}")).await;
+    assert_eq!(body, b"abc");
+    let (status, _, _) = served(
+        &app,
+        "GET",
+        &format!("{NEST}/contents/{}", abc_hex.to_uppercase()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// WCS's status checks answer under the worlds prefix.
+#[tokio::test]
+async fn worlds_health_probes_answer_under_the_prefix() {
+    let Some(f) = fixture().await else { return };
+    let app = served_app(&f).await;
+    let (status, _, body) = served(&app, "GET", &format!("{NEST}/health/live")).await;
+    assert_eq!((status, body.as_slice()), (StatusCode::OK, &b"alive"[..]));
+    for probe in ["ready", "startup"] {
+        let (status, ty, body) = served(&app, "GET", &format!("{NEST}/health/{probe}")).await;
+        assert_eq!(status, StatusCode::OK, "{probe}");
+        assert_eq!(
+            ty.as_deref(),
+            Some("application/health+json; charset=utf-8")
+        );
+        assert_eq!(body, crate::shared::health::PASS.as_bytes());
+    }
+    let (status, _, _) = served(&app, "GET", "/health/live").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

@@ -2162,7 +2162,21 @@ async fn the_livekit_webhook_verifies_always_and_feeds_the_worlds_sink_verified_
         )
         .with_room_event_sink(sink.clone()),
     );
-    let app = super::router(state);
+    let app = super::router(state.clone());
+    // The worlds host's copy (`serve` nests it under `/worlds-content-server`).
+    let worlds_app =
+        axum::Router::new().nest("/worlds-content-server", super::webhook_router(state));
+    let worlds_post = |authorization: Option<String>| {
+        let mut req = Request::post("/worlds-content-server/livekit-webhook")
+            .header("content-type", "application/webhook+json");
+        if let Some(a) = authorization {
+            req = req.header("authorization", a);
+        }
+        let req = req.body(Body::from(body.clone())).unwrap();
+        let app = worlds_app.clone();
+        async move { app.oneshot(req).await.unwrap().status() }
+    };
+    assert_eq!(worlds_post(None).await, StatusCode::UNAUTHORIZED);
 
     assert_eq!(
         post_webhook(&app, None, &body).await,
@@ -2192,6 +2206,10 @@ async fn the_livekit_webhook_verifies_always_and_feeds_the_worlds_sink_verified_
             "world-w.dcl.eth".to_string(),
             "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()
         )]
+    );
+    assert_eq!(
+        worlds_post(Some(webhook_jwt(&body, &key, &secret))).await,
+        StatusCode::OK
     );
 
     let dev = Settings {
