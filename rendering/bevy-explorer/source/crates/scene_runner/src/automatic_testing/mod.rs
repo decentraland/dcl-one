@@ -9,6 +9,7 @@ use bevy::{
     prelude::*,
     render::{
         camera::RenderTarget,
+        extract_resource::ExtractResourcePlugin,
         render_resource::{PipelineCache, TextureFormat},
         view::screenshot::{Screenshot, ScreenshotCaptured},
         Render, RenderApp, RenderSet,
@@ -41,6 +42,7 @@ impl Plugin for AutomaticTestingPlugin {
         let ready = SnapshotRenderReadiness::default();
         app.insert_resource(ready.clone());
         app.init_resource::<SnapshotInProgress>();
+        app.add_plugins(ExtractResourcePlugin::<SnapshotInProgress>::default());
         app.sub_app_mut(RenderApp)
             .insert_resource(ready)
             .add_systems(Render, record_ready_frame.in_set(RenderSet::Cleanup));
@@ -48,10 +50,7 @@ impl Plugin for AutomaticTestingPlugin {
     }
 }
 
-/// Hold native video textures while a requested snapshot waits for render readiness
-/// and GPU readback. The resource exists only when the scene test harness is enabled.
-#[derive(Resource, Default)]
-pub struct SnapshotInProgress(pub bool);
+pub use common::structs::SnapshotInProgress;
 
 // The render thread signals completed frames with no outstanding pipelines.
 // Three such frames account for pipelined rendering and allow UI layout to settle.

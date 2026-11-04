@@ -48,7 +48,6 @@ mv AppIcon.icns "${APP_NAME}.app/Contents/Resources/AppIcon.icns"
 
 echo "Copy assets and binary"
 cp -a ../../assets "${APP_NAME}.app/Contents/MacOS/"
-cp -a ../../libs "${APP_NAME}.app/Contents/"
 cp -a ../../decentra-bevy "${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
 cp -a ../../LICENSE "${APP_NAME}.app/Contents/MacOS/"
 
@@ -65,11 +64,17 @@ if [ -f ../../target/release/decentra-bevy-cef ]; then
 fi
 
 
-for LIBRARY in $APP_NAME.app/Contents/libs/*.dylib; do
+# The video helper and its FFmpeg: spawned as a sibling of the main binary, the libraries
+# resolve from the helper's own directory. Signed before the app seal like the CEF helper.
+echo "Stage the UUAV runtime set"
+python3 ../../../../../tooling/uuav/stage-dist.py macos-universal "${APP_NAME}.app/Contents/MacOS"
+for LIBRARY in "${APP_NAME}.app/Contents/MacOS"/*.dylib; do
     echo "Signing lib $LIBRARY"
     codesign --remove-signature "$LIBRARY"
-    codesign --force --verify --verbose --sign "Developer ID Application: $MACOS_DEVELOPER_ID" "$LIBRARY"
+    codesign --force --verify --options runtime --verbose --sign "Developer ID Application: $MACOS_DEVELOPER_ID" "$LIBRARY"
 done
+echo "Sign the video helper"
+codesign --force --verify --options runtime --verbose --sign "Developer ID Application: $MACOS_DEVELOPER_ID" "${APP_NAME}.app/Contents/MacOS/uuav-helper"
 
 # best-effort: the CEF framework and helper must be signed before the app seal. A notarized CEF
 # app formally wants the helper as its own .app bundle with restricted entitlements; this flat
