@@ -525,6 +525,37 @@ pub async fn referenced_among_on(
     conn: &mut sqlx::PgConnection,
     keys: &[String],
 ) -> Result<HashSet<String>, GcError> {
+    references_written_within(conn, keys, i64::from(i32::MAX)).await
+}
+
+/// The oldest transaction a scan started now might not see: rows it misses were written at or after it.
+async fn scene_fence(pool: &PgPool) -> Result<i64, GcError> {
+    Ok(
+        sqlx::query_scalar("SELECT pg_snapshot_xmin(pg_current_snapshot())::text::bigint")
+            .fetch_one(pool)
+            .await?,
+    )
+}
+
+/// [`referenced_among_on`], reading only world scenes written at or after `fence`.
+async fn referenced_since(
+    conn: &mut sqlx::PgConnection,
+    keys: &[String],
+    fence: i64,
+) -> Result<HashSet<String>, GcError> {
+    // Assigning this transaction an id pins `age()` to it.
+    let current: i64 = sqlx::query_scalar("SELECT pg_current_xact_id()::text::bigint")
+        .fetch_one(&mut *conn)
+        .await?;
+    references_written_within(conn, keys, (current - fence).max(0)).await
+}
+
+/// The keys among `keys` referenced, counting only world scene rows at most `max_age` transactions old.
+async fn references_written_within(
+    conn: &mut sqlx::PgConnection,
+    keys: &[String],
+    max_age: i64,
+) -> Result<HashSet<String>, GcError> {
     let mut found = HashSet::new();
     for source in REFERENCE_SOURCES {
         let (table, column) = split_source(source);
@@ -537,12 +568,13 @@ pub async fn referenced_among_on(
         found.extend(rows);
     }
     let rows: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT e ->> 'hash' FROM (SELECT entity FROM worlds.world_scenes \
-           UNION ALL SELECT entity FROM worlds.retired_world_scenes) s \
+        "SELECT DISTINCT e ->> 'hash' FROM (SELECT entity FROM worlds.world_scenes WHERE age(xmin) <= $2 \
+           UNION ALL SELECT entity FROM worlds.retired_world_scenes WHERE age(xmin) <= $2) s \
          CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(s.entity -> 'content') = 'array' THEN s.entity -> 'content' ELSE '[]'::jsonb END) e \
          WHERE e ->> 'hash' = ANY($1)",
     )
     .bind(keys)
+    .bind(max_age)
     .fetch_all(&mut *conn)
     .await?;
     found.extend(rows);
@@ -625,9 +657,20 @@ async fn unlink_orphans(
     report: &mut GcReport,
 ) -> Result<(), GcError> {
     for batch in orphans.chunks(CHUNK) {
+        // The full scan runs unlocked; the lock re-checks only what was written since.
+        let fence = scene_fence(pool).await?;
+        let unlocked = referenced_among(pool, batch).await?;
+        let survivors: Vec<String> = batch
+            .iter()
+            .filter(|id| !unlocked.contains(*id))
+            .cloned()
+            .collect();
+        if survivors.is_empty() {
+            continue;
+        }
         let mut lock = lock_store_exclusive(pool).await?;
-        let referenced_now = referenced_among_on(&mut lock, batch).await?;
-        for id in batch.iter().filter(|id| !referenced_now.contains(*id)) {
+        let referenced_now = referenced_since(&mut lock, &survivors, fence).await?;
+        for id in survivors.iter().filter(|id| !referenced_now.contains(*id)) {
             // A blob stored again since the walk is young again: keep it.
             let meta = match super::resolve_file_path(storage.root(), id) {
                 Ok(path) => tokio::fs::metadata(path).await.ok(),
@@ -761,6 +804,58 @@ mod tests {
         assert!(try_lock_run(&pool).await.unwrap().is_none());
         run.commit().await.unwrap();
         assert!(try_lock_run(&pool).await.unwrap().is_some());
+    }
+
+    /// Under the lock only scenes written since the fence are read; the full check sees all.
+    #[tokio::test]
+    async fn the_locked_recheck_reads_only_scenes_written_since_the_fence() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let world = format!("gc{}.dcl.eth", uuid::Uuid::new_v4().simple());
+        let (old, new) = (format!("old-{world}"), format!("new-{world}"));
+        sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let insert_scene = |entity_id: &'static str, hash: String| {
+            let (pool, world) = (pool.clone(), world.clone());
+            async move {
+                sqlx::query_scalar::<_, i64>(
+                    "INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) \
+                     VALUES ($1, $2, '[]'::json, $3, '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '{\"0,0\"}', 1) \
+                     RETURNING xmin::text::bigint",
+                )
+                .bind(&world)
+                .bind(entity_id)
+                .bind(json!({ "content": [{ "file": "a", "hash": hash }] }))
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let written = insert_scene("bafyold", old.clone()).await;
+        assert!(scene_fence(&pool).await.unwrap() > 0);
+        let fence = written + 1;
+        insert_scene("bafynew", new.clone()).await;
+        let keys = vec![old.clone(), new.clone()];
+
+        let mut lock = lock_store_exclusive(&pool).await.unwrap();
+        assert_eq!(
+            referenced_since(&mut lock, &keys, fence).await.unwrap(),
+            HashSet::from([new.clone()])
+        );
+        assert_eq!(
+            referenced_among_on(&mut lock, &keys).await.unwrap(),
+            HashSet::from([old, new])
+        );
+        lock.rollback().await.unwrap();
+        sqlx::query("DELETE FROM worlds.world_scenes WHERE world_name = $1")
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     /// A candidate stored again after the walk is young again under the lock and stays.

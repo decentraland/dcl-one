@@ -121,6 +121,10 @@ difference not listed here is a gap, not a decision.
   included. A previous holder the world's access setting no longer admits
   is removed from the world's live rooms, as it is when a new holder's
   publish replaces the stored owner.
+- **Unowned names.** Bare names, and ENS names while `ALLOW_ENS_DOMAINS`
+  is off, have no owner, so in comms nobody gets the owner's implicit
+  scene-admin and streaming rights over them (explicit grants still
+  apply), and their limits route answers 404.
 - **Newer-entity check** compares against the lower of the stored entity's
   timestamp and its row's update time, so a future-dated mirrored or
   imported entity cannot block redeploys.

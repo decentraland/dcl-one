@@ -5614,6 +5614,9 @@ async fn world_limits_report_what_a_publish_is_checked_against() {
         expect(app, limits_case(&world, bad), 400).await;
     }
 
+    let bare = WorldName::parse(world.label()).unwrap();
+    expect(app, limits_case(&bare, ""), 404).await;
+
     let unowned = world_name();
     expect(app, limits_case(&unowned, ""), 404).await;
     // A bare `foo` is not owned by the holder of `foo.dcl.eth`.

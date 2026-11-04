@@ -12,13 +12,17 @@ use crate::auth::{
 
 pub(super) const MAX_ENTITY_FILE_SIZE_BYTES: usize = 5 * 1024 * 1024;
 
-/// File parts one deploy may upload (the old busboy `files` limit).
+/// Content file parts one deploy may upload, beside the entity part.
 pub const MAX_DEPLOY_FILES: usize = 10_000;
 /// No per-file cap below the request's payload cap, as the old service.
 pub const MAX_DEPLOY_FILE_BYTES: usize = super::deploy::MAX_UPLOAD_SIZE_BYTES;
 
 const MIN_PARCEL_COORDINATE: i64 = -150;
 const MAX_PARCEL_COORDINATE: i64 = 150;
+/// Every in-bounds parcel once; a longer pointer list can never be valid.
+pub(super) const MAX_SCENE_POINTERS: usize = ((MAX_PARCEL_COORDINATE - MIN_PARCEL_COORDINATE + 1)
+    * (MAX_PARCEL_COORDINATE - MIN_PARCEL_COORDINATE + 1))
+    as usize;
 
 pub(crate) fn canon_pointer(s: &str) -> String {
     canonicalize_pointer(s)
@@ -148,12 +152,15 @@ fn is_ipfs_hash(s: &str) -> bool {
         || s.strip_prefix("ba").is_some_and(|t| tail_ok(t, 57))
 }
 
+/// `uniqueItems` over string items, scanned from the end as ajv does.
 fn unique_items(items: &[Value]) -> Result<(), String> {
-    for (j, a) in items.iter().enumerate() {
-        if let Some(i) = items[j + 1..].iter().position(|b| b == a) {
+    let mut seen: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::with_capacity(items.len());
+    for (i, item) in items.iter().enumerate().rev() {
+        let Some(s) = item.as_str() else { continue };
+        if let Some(j) = seen.insert(s, i) {
             return Err(format!(
-                "must NOT have duplicate items (items ## {} and {j} are identical)",
-                j + 1 + i
+                "must NOT have duplicate items (items ## {j} and {i} are identical)"
             ));
         }
     }
@@ -175,6 +182,11 @@ pub(super) fn entity_schema_error(entity: &Value) -> Option<String> {
         }
         m["type"].as_str().ok_or("must be string")?;
         let pointers = m["pointers"].as_array().ok_or("must be array")?;
+        if pointers.len() > MAX_SCENE_POINTERS {
+            return Err(format!(
+                "must NOT have more than {MAX_SCENE_POINTERS} items"
+            ));
+        }
         for p in pointers {
             if p.as_str().ok_or("must be string")?.is_empty() {
                 return Err("must NOT have fewer than 1 characters".to_string());
