@@ -520,24 +520,29 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
 
     // The content validator of the local write path (src/content/validator):
     // the old catalyrst-validator rules over the ONE pool (the escrow
-    // overlay), store and client, the shared EIP-1654 validator, the LAND
-    // index and the marketplace readers above.
+    // overlay), store and client, the shared EIP-1654 validator and the
+    // chain access checks over ETH_RPC_URL and RPC_ENDPOINT_POLYGON.
     let content_validator = Arc::new(content::validator::Sources::new(
         pool.clone(),
         storage.clone(),
         http_client.clone(),
         eip1654.clone(),
-        Some(land.clone()),
-        Some(market.index.clone()),
         content::validator::Settings::parse(
             config.validator.ignore_blockchain_access_checks,
+            config.writes.content_writes_enabled,
             config.validator.additional_decentraland_address.as_deref(),
-            config.validator.third_party_registry_l2_subgraph_url.as_deref(),
-            config.validator.blocks_l2_subgraph_url.as_deref(),
-            &self_hosts,
+            &config.node.eth_network,
+            config.content.eth_rpc_url()?,
+            config.economy.rpc_endpoint_polygon.as_deref(),
         )
-        .context("THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL / BLOCKS_L2_SUBGRAPH_URL / ADDITIONAL_DECENTRALAND_ADDRESS configuration")?,
+        .context("content validator configuration")?,
     ));
+    if config.writes.content_writes_enabled && !config.validator.ignore_blockchain_access_checks {
+        content_validator
+            .verify_chain_ids()
+            .await
+            .context("deploy access check RPCs")?;
+    }
 
     // The content server's local write path (src/content/{create_entity,
     // unpublish_scene,land_publish}): the write deployer over the ONE pool

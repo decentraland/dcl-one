@@ -1,17 +1,16 @@
 //! The local write path through the content router, the way `serve` wires
-//! it: the multipart deploy with the content validator attached (the LAND
-//! leg over the `land_authz` index), the durable denylist on deploy and on
-//! the reads, and the signed unpublish; the gates in front of both routes.
+//! it: the multipart deploy with the content validator attached (its access
+//! checks against a chain on the loopback), the durable denylist on deploy
+//! and on the reads, and the signed unpublish (its LAND check over the
+//! `land_authz` index); the gates in front of both routes.
 //!
 //! The scene round trip runs on a database of its own (the LAND index's
-//! cursor row is global, as in the validator's index test), created from
-//! `CATALYST_TEST_DATABASE_URL` and dropped at the end; the profile
-//! contract runs on the process's scratch database against a loopback
-//! collections subgraph. Both skip without the variable.
+//! cursor row is global), created from `CATALYST_TEST_DATABASE_URL` and
+//! dropped at the end; the profile contract runs on the process's scratch
+//! database. Both skip without the variable.
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use alloy::signers::{Signer as _, local::PrivateKeySigner};
 use axum::Router;
@@ -33,6 +32,7 @@ use crate::shared::signed_fetch::{
     AUTH_CHAIN_HEADER_PREFIX, AUTH_METADATA_HEADER, AUTH_TIMESTAMP_HEADER, build_payload_v6,
 };
 use crate::storage::Storage;
+use crate::validator::fake_chain::{self, FakeChain, Query, Reply};
 
 /// Hardhat accounts #0 and #1: the LAND owner and a stranger.
 const OWNER_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
@@ -189,22 +189,26 @@ async fn active_by_pointers(router: &Router, pointers: &[&str]) -> Value {
     json_of(&body)
 }
 
-/// Attaches a deployer over the node's pool and store: the validator with
-/// the given sources, the node's denylist.
+/// Attaches a deployer over the node's pool and store: the validator over
+/// `chain` (none: chain checks undecidable), the unpublish LAND check over
+/// `land`, the node's denylist.
 fn attach(
     state: &SharedState,
     enabled: bool,
     land: Option<Arc<LandAuthzState>>,
-    market: Option<Arc<crate::chain_index::ChainIndex>>,
+    chain: Option<&FakeChain>,
 ) {
     let sources = super::validator::Sources::new(
         state.pool.clone(),
         state.storage.clone(),
         Outbound::for_tests(),
         None,
-        land.clone(),
-        market,
-        super::validator::Settings::default(),
+        super::validator::Settings {
+            eth_network: "mainnet".into(),
+            l1_rpc_url: chain.map(|c| c.url.clone()),
+            l2_rpc_url: chain.map(|c| c.url.clone()),
+            ..Default::default()
+        },
     );
     let deployer =
         WriteDeployer::with_optional_eip1654(state.pool.clone(), state.storage.clone(), None)
@@ -214,11 +218,6 @@ fn attach(
     assert!(state.attach_writes(enabled, Arc::new(deployer)));
 }
 
-/// The gates, in order, on a node whose database is never reached: the
-/// multipart extraction first (the stage-1 fixture's 400), then
-/// `CONTENT_WRITES_ENABLED` (503, `Retry-After`), then the console's
-/// read-only toggle (the old 403), then bootstrapping (the old 503). The
-/// unpublish route has the same two gates.
 #[tokio::test]
 async fn the_write_routes_answer_their_gates_in_order() {
     let node = TestNode::without_db("write-gates").await;
@@ -424,7 +423,7 @@ async fn an_unsynced_copy_takes_the_deploy_types_it_names() {
         }
     }
     let other = Bytes::from_static(b"{}");
-    let (status, _, _) = call(
+    let (status, _, body) = call(
         &node.router(),
         deploy_request(
             "/content/entities",
@@ -435,8 +434,11 @@ async fn an_unsynced_copy_takes_the_deploy_types_it_names() {
     )
     .await;
     assert_eq!(
-        status,
-        StatusCode::SERVICE_UNAVAILABLE,
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"errors": ["The entity file was not part of the uploaded files or has no type."]})
+        ),
         "no entity file, no type: refused"
     );
 }
@@ -672,7 +674,12 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
         crate::land_authz::Settings::for_tests(),
         None,
     ));
-    attach(&state, true, Some(land), None);
+    let chain = fake_chain::serve(fake_chain::land_owners(vec![
+        (address(&owner), x.into(), y.into()),
+        (address(&owner), (x + 1).into(), y.into()),
+    ]))
+    .await;
+    attach(&state, true, Some(land), Some(&chain));
     let router = build_router(state.clone());
 
     let code = Bytes::from_static(b"export function onUpdate() {}");
@@ -745,6 +752,10 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
     assert!(
         errors.to_string().contains("does not have access"),
         "{errors}"
+    );
+    assert!(
+        !deployer.is_rate_limited("scene", &parcel),
+        "a rejected deploy does not hold the pointer"
     );
 
     // The denylist: a listed hash is not served and cannot be deployed
@@ -898,7 +909,14 @@ async fn unpublishing_a_scene_needs_rights_on_every_parcel_and_empties_them() {
         crate::land_authz::Settings::for_tests(),
         None,
     ));
-    attach(&state, true, Some(land), None);
+    // Deploys ask the chain; the unpublish route reads the LAND index.
+    let fake = fake_chain::serve(fake_chain::land_owners(vec![
+        (address(&neighbour), (x + 1).into(), y.into()),
+        (address(&owner), x.into(), y.into()),
+        (address(&owner), (x + 1).into(), y.into()),
+    ]))
+    .await;
+    attach(&state, true, Some(land), Some(&fake));
     let router = build_router(state.clone());
     let deployer = state.deployer().unwrap().clone();
 
@@ -1173,65 +1191,6 @@ async fn an_unpublish_raced_by_another_write_answers_409_or_404() {
     db.drop_now().await;
 }
 
-/// The collections subgraph on the loopback: `owned` is `(owner, item urn,
-/// token id)`; every request is counted.
-async fn serve_collections(owned: Vec<(String, String, String)>, hits: Arc<AtomicUsize>) -> String {
-    use axum::extract::State;
-    type Owned = (Vec<(String, String, String)>, Arc<AtomicUsize>);
-    async fn handle(
-        State(shared): State<Arc<Owned>>,
-        axum::Json(body): axum::Json<Value>,
-    ) -> axum::Json<Value> {
-        let (owned, hits) = &*shared;
-        hits.fetch_add(1, Ordering::SeqCst);
-        let query = body["query"].as_str().unwrap_or_default();
-        let owner = body["variables"]["owner"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        let mine: Vec<(&String, &String)> = owned
-            .iter()
-            .filter(|(o, ..)| *o == owner)
-            .map(|(_, urn, token)| (urn, token))
-            .collect();
-        if query.contains("ownedCopies") {
-            let urns: Vec<&str> = body["variables"]["urns"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter_map(Value::as_str)
-                .collect();
-            let rows: Vec<Value> = mine
-                .iter()
-                .filter(|(urn, _)| urns.contains(&urn.as_str()))
-                .enumerate()
-                .map(|(i, (urn, token))| json!({"id": format!("nft-{i}"), "urn": urn, "tokenId": token}))
-                .collect();
-            return axum::Json(json!({"data": {"nfts": rows}}));
-        }
-        let alias = regex::Regex::new(r#"p(\d+): nfts\(first: 1, where: \{ owner: \$owner, urn_starts_with: ("(?:[^"\\]|\\.)*") \}\)"#).unwrap();
-        let mut data = serde_json::Map::new();
-        for cap in alias.captures_iter(query) {
-            let prefix: String = serde_json::from_str(&cap[2]).unwrap();
-            let hit: Vec<Value> = mine
-                .iter()
-                .filter(|(urn, _)| urn.starts_with(&prefix))
-                .map(|(urn, _)| json!({"urn": urn}))
-                .take(1)
-                .collect();
-            data.insert(format!("p{}", &cap[1]), Value::Array(hit));
-        }
-        axum::Json(json!({"data": data}))
-    }
-    let app = Router::new()
-        .route("/", axum::routing::post(handle))
-        .with_state(Arc::new((owned, hits)));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    format!("http://{addr}/")
-}
-
 fn profile(owner: &str, wearables: &[&str]) -> Value {
     json!({
         "version": "v3",
@@ -1250,12 +1209,14 @@ fn profile(owner: &str, wearables: &[&str]) -> Value {
     })
 }
 
+const PROFILE_CLIENT_IP: &str = "203.0.113.30";
+
 /// The old `profile_batch_no_overlay` contract on the write path: with no
 /// escrow lease anywhere, a worn item counts for the wallet that holds that
 /// token and for no one else (alice holds token 7 of item 1, bob token 9 of
 /// item 2; a profile deployed now names each item with its token id, the
-/// validator's token tier), another token of an item one holds is not
-/// ownership, and a profile wearing only base items asks the subgraph
+/// item's `ownerOf`), another token of an item one holds is not
+/// ownership, and a profile wearing only base items asks the chain
 /// nothing.
 #[tokio::test]
 async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
@@ -1268,24 +1229,25 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
         format!("urn:decentraland:matic:collections-v2:{contract}:2"),
     );
     let (alices, bobs) = (format!("{item1}:7"), format!("{item2}:9"));
-    let hits = Arc::new(AtomicUsize::new(0));
-    let graph = serve_collections(
-        vec![
-            (address(&alice), item1.clone(), "7".to_string()),
-            (address(&bob), item2.clone(), "9".to_string()),
-        ],
-        hits.clone(),
-    )
+    let holders = [
+        (contract.clone(), 7u64, address(&alice)),
+        (contract.clone(), 9, address(&bob)),
+    ];
+    let chain = fake_chain::serve(move |q, _| match q {
+        Query::OwnerOf { contract, token } => Reply::Owner(
+            holders
+                .iter()
+                .find(|(c, t, _)| {
+                    c.parse::<alloy_primitives::Address>().ok() == Some(*contract)
+                        && alloy_primitives::U256::from(*t) == *token
+                })
+                .map_or(alloy_primitives::Address::ZERO, |(_, _, who)| {
+                    who.parse().unwrap()
+                }),
+        ),
+        other => panic!("{other:?}"),
+    })
     .await;
-    let market = Arc::new(crate::chain_index::ChainIndex::new(
-        Outbound::for_tests(),
-        crate::chain_index::IndexSettings {
-            eth_collections_subgraph_url: Some(graph.clone()),
-            matic_collections_subgraph_url: Some(graph),
-            ..crate::chain_index::IndexSettings::for_tests()
-        },
-    ));
-    market.allow_loopback_for_tests();
     let granted: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM shop.usage_grants WHERE grantee_address = ANY($1)",
     )
@@ -1307,7 +1269,7 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
         storage,
     ));
     state.sync.set_state(SyncState::Syncing);
-    attach(&state, true, None, Some(market));
+    attach(&state, true, None, Some(&chain));
     let router = build_router(state.clone());
 
     let deployer = state.deployer().unwrap().clone();
@@ -1319,11 +1281,10 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
             let refs: Vec<&str> = wearables.iter().map(String::as_str).collect();
             let (bytes, id, chain) =
                 signed_entity(&signer, profile(&address(&signer), &refs)).await;
-            let (status, _, body) = call(
-                &router,
-                deploy_request("/content/entities", &id, &chain, &[(&id, &bytes)]),
-            )
-            .await;
+            let mut req = deploy_request("/content/entities", &id, &chain, &[(&id, &bytes)]);
+            req.headers_mut()
+                .insert("x-real-ip", HeaderValue::from_static(PROFILE_CLIENT_IP));
+            let (status, _, body) = call(&router, req).await;
             (status, json_of(&body), id)
         }
     };
@@ -1362,7 +1323,7 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
     let (status, body, bob_id) = deploy(bob.clone(), vec![bobs.clone()]).await;
     assert_eq!(status, StatusCode::OK, "{body}");
 
-    let before = hits.load(Ordering::SeqCst);
+    chain.clear();
     let carol = PrivateKeySigner::random();
     let (status, body, carol_id) = deploy(
         carol.clone(),
@@ -1370,10 +1331,11 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(chain.calls().is_empty(), "base items are never asked about");
     assert_eq!(
-        hits.load(Ordering::SeqCst),
-        before,
-        "base items are never asked about"
+        state.deploy_quota.counted_for(PROFILE_CLIENT_IP),
+        6,
+        "the 400s and 200s all count"
     );
 
     let mut scope: HashMap<String, String> = HashMap::new();
@@ -1405,4 +1367,384 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
     }
     let _ = std::fs::remove_dir_all(&tmp);
     pool.close().await;
+}
+
+/// A deploy form of the given text fields from `ip`, as the gateway stamps it.
+fn form_request(ip: &str, fields: &[(String, String)]) -> Request<Body> {
+    let boundary = "catalyst-admission-boundary";
+    let mut body = String::new();
+    for (name, value) in fields {
+        body.push_str(&format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+        ));
+    }
+    body.push_str(&format!("--{boundary}--\r\n"));
+    Request::post("/content/entities")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .header(header::CONTENT_LENGTH, body.len())
+        .header("x-real-ip", ip)
+        .body(Body::from(body))
+        .unwrap()
+}
+
+/// A form that passes admission and is then refused by the deployer (400).
+fn entity_form() -> Vec<(String, String)> {
+    vec![
+        ("entityId".to_string(), "bafy".to_string()),
+        ("ethAddress".to_string(), "0xabc".to_string()),
+        ("signature".to_string(), "0xsig".to_string()),
+    ]
+}
+
+async fn deploying_node(tag: &str, settings: Settings) -> TestNode {
+    let node = TestNode::without_db_settings(tag, settings).await;
+    attach(&node.state, true, None, None);
+    node.state.sync.set_state(SyncState::Syncing);
+    node
+}
+
+#[tokio::test]
+async fn a_form_over_its_field_limits_is_refused() {
+    let node = deploying_node("field-limits", Settings::for_tests()).await;
+    let router = node.router();
+
+    let mut many = entity_form();
+    many.extend((0..30).map(|i| (format!("extra{i}"), "x".to_string())));
+    let (status, _, body) = call(&router, form_request("203.0.113.1", &many)).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"error": "Too many form fields in the request. The maximum allowed is 32."})
+        )
+    );
+
+    let mut large = entity_form();
+    large.push(("big".to_string(), "x".repeat(32 * 1024 + 1)));
+    let (status, _, body) = call(&router, form_request("203.0.113.1", &large)).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"error": "Field 'big' is too large. The maximum allowed size per field is 32768 bytes."})
+        )
+    );
+
+    let mut fits = entity_form();
+    fits.push(("big".to_string(), "x".repeat(32 * 1024)));
+    let (status, _, body) = call(&router, form_request("203.0.113.1", &fits)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_of(&body),
+        json!({"errors": ["The entity file was not part of the uploaded files."]}),
+        "a form at the limits reaches the deployer"
+    );
+}
+
+#[tokio::test]
+async fn a_client_past_its_daily_quota_is_turned_away() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 2,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("daily-quota", settings).await;
+    let router = node.router();
+    for _ in 0..2 {
+        let (status, _, _) = call(&router, form_request("203.0.113.7", &entity_form())).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "refused deploys still count"
+        );
+    }
+    let (status, headers, body) = call(&router, form_request("203.0.113.7", &entity_form())).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({"error": "Too many requests"})
+        )
+    );
+    let retry: u64 = headers[header::RETRY_AFTER]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(retry > 0 && retry <= 24 * 60 * 60, "{retry}");
+
+    let (status, _, _) = call(&router, form_request("203.0.113.8", &entity_form())).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "another address has its own quota"
+    );
+}
+
+#[tokio::test]
+async fn a_body_past_the_upload_budget_is_shed_with_retry_after() {
+    let capacity = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let settings = Settings {
+        max_in_memory_deployment_bytes: capacity,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("upload-budget", settings).await;
+    let router = node.router();
+
+    let held = node.state.upload_budget.try_reserve(capacity).unwrap();
+    let (status, headers, body) = call(&router, form_request("203.0.113.9", &entity_form())).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"error": super::upload_admission::BUDGET_EXHAUSTED_MESSAGE})
+        )
+    );
+    assert_eq!(headers[header::RETRY_AFTER], "30");
+
+    drop(held);
+    let (status, _, _) = call(&router, form_request("203.0.113.9", &entity_form())).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "admitted once the budget frees"
+    );
+    assert!(
+        node.state.upload_budget.try_reserve(capacity).is_some(),
+        "a finished request returns its reservation"
+    );
+}
+
+#[tokio::test]
+async fn repeated_field_names_count_toward_the_field_limit() {
+    let node = deploying_node("field-repeats", Settings::for_tests()).await;
+    let mut repeated = entity_form();
+    repeated.extend((0..30).map(|_| ("extra".to_string(), "x".to_string())));
+    let (status, _, body) = call(&node.router(), form_request("203.0.113.1", &repeated)).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"error": "Too many form fields in the request. The maximum allowed is 32."})
+        )
+    );
+}
+
+#[tokio::test]
+async fn forms_refused_for_their_field_limits_count_toward_the_quota() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 2,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-parse-failures", settings).await;
+    let router = node.router();
+    let mut large = entity_form();
+    large.push(("big".to_string(), "x".repeat(32 * 1024 + 1)));
+    for _ in 0..2 {
+        let (status, _, _) = call(&router, form_request("203.0.113.10", &large)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    let (status, _, _) = call(&router, form_request("203.0.113.10", &entity_form())).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+/// An unsynced copy taking only scenes: a form with no typed entity file is
+/// 400 and a profile 503, and both count, since the client chose them.
+#[tokio::test]
+async fn an_unsynced_copys_refusals_count_toward_the_quota() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 2,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-copy", settings).await;
+    node.state.sync.set_unsynced_copy(true);
+    node.state
+        .sync
+        .set_copy_deploy_types(vec!["scene".to_string()]);
+    let router = node.router();
+    let (status, _, body) = call(&router, form_request("203.0.113.11", &entity_form())).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"errors": ["The entity file was not part of the uploaded files or has no type."]})
+        )
+    );
+    let file = Bytes::from(
+        json!({"version": "v3", "type": "profile", "pointers": ["0x00000000000000000000000000000000000000aa"],
+               "timestamp": chrono::Utc::now().timestamp_millis(), "content": [], "metadata": {}})
+        .to_string(),
+    );
+    let id = hash_bytes_v1(&file);
+    let profile = || {
+        let mut req = deploy_request("/content/entities", &id, &json!([]), &[(&id, &file)]);
+        req.headers_mut()
+            .insert("x-real-ip", HeaderValue::from_static("203.0.113.11"));
+        req
+    };
+    let (status, _, _) = call(&router, profile()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let (status, _, _) = call(&router, profile()).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+/// A contract-wallet chain this node cannot check (no `ETH_RPC_URL`) is a 503
+/// the client chose: it counts toward the quota.
+#[tokio::test]
+async fn deploys_with_an_unverifiable_signature_count_toward_the_quota() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 2,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-unverifiable", settings).await;
+    let router = node.router();
+    let file = Bytes::from(
+        json!({"version": "v3", "type": "profile", "pointers": ["0x0000000000000000000000000000000000000002"],
+               "timestamp": chrono::Utc::now().timestamp_millis(), "content": [], "metadata": {}})
+        .to_string(),
+    );
+    let id = hash_bytes_v1(&file);
+    let chain = serde_json::to_value(
+        crate::sync_test_support::signed_chain_behind_contract(
+            &id,
+            &(chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339(),
+        )
+        .await,
+    )
+    .unwrap();
+    for _ in 0..2 {
+        node.state.deployer().unwrap().clear_rate_limits();
+        let mut req = deploy_request("/content/entities", &id, &chain, &[(&id, &file)]);
+        req.headers_mut()
+            .insert("x-real-ip", HeaderValue::from_static("203.0.113.13"));
+        let (status, headers, body) = call(&router, req).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body:?}");
+        assert!(json_of(&body)["errors"].is_array(), "{body:?}");
+        assert!(headers.contains_key(header::RETRY_AFTER));
+    }
+    assert_eq!(node.state.deploy_quota.counted_for("203.0.113.13"), 2);
+    let (status, _, _) = call(&router, form_request("203.0.113.13", &entity_form())).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+/// The deployer's 503 for this node's own state (here no LAND rights source)
+/// is given back to the client's quota.
+#[tokio::test]
+async fn deploys_the_node_cannot_decide_are_given_back() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 1,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-refund", settings).await;
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let (file, id, chain) = signed_entity(&signer, scene(&["0,0"], &[])).await;
+    for _ in 0..3 {
+        node.state.deployer().unwrap().clear_rate_limits();
+        let mut req = deploy_request("/content/entities", &id, &chain, &[(&id, &file)]);
+        req.headers_mut()
+            .insert("x-real-ip", HeaderValue::from_static("203.0.113.14"));
+        let (status, headers, body) = call(&router, req).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body:?}");
+        assert!(
+            json_of(&body)["errors"][0]
+                .as_str()
+                .is_some_and(|e| e.starts_with("Error checking parcel access")),
+            "{body:?}"
+        );
+        assert!(headers.contains_key(header::RETRY_AFTER));
+    }
+    assert_eq!(node.state.deploy_quota.counted_for("203.0.113.14"), 0);
+    let (status, _, _) = call(&router, form_request("203.0.113.14", &entity_form())).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "the quota is untouched");
+    let (status, _, _) = call(&router, form_request("203.0.113.14", &entity_form())).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "a 400 is kept");
+}
+
+#[tokio::test]
+async fn a_request_without_a_client_address_skips_the_quota() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 1,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-no-address", settings).await;
+    let router = node.router();
+    for _ in 0..3 {
+        let mut req = form_request("", &entity_form());
+        req.headers_mut().remove("x-real-ip");
+        let (status, _, _) = call(&router, req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
+async fn a_chunked_body_reserves_the_whole_body_cap() {
+    let cap = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let settings = Settings {
+        max_in_memory_deployment_bytes: 2 * cap,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("upload-budget-chunked", settings).await;
+    let router = node.router();
+    let _held = node.state.upload_budget.try_reserve(cap + 1).unwrap();
+
+    let mut chunked = form_request("203.0.113.12", &entity_form());
+    chunked.headers_mut().remove(header::CONTENT_LENGTH);
+    let (status, _, _) = call(&router, chunked).await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the cap does not fit"
+    );
+
+    let (status, _, _) = call(&router, form_request("203.0.113.12", &entity_form())).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a declared small body fits"
+    );
+}
+
+#[tokio::test]
+async fn a_cancelled_request_returns_its_reservation() {
+    let cap = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let settings = Settings {
+        max_in_memory_deployment_bytes: cap,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("upload-budget-cancel", settings).await;
+    let router = node.router();
+
+    let (mut tx, rx) = futures::channel::mpsc::channel::<Result<Bytes, std::io::Error>>(1);
+    let boundary = "catalyst-admission-boundary";
+    tx.try_send(Ok(Bytes::from(format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"entityId\"\r\n\r\nba"
+    ))))
+    .unwrap();
+    let req = Request::post("/content/entities")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .header("x-real-ip", "203.0.113.13")
+        .body(Body::from_stream(rx))
+        .unwrap();
+    let pending = tokio::spawn(router.clone().oneshot(req));
+
+    let budget = &node.state.upload_budget;
+    let mut waited = 0;
+    while budget.try_reserve(1).is_some() {
+        assert!(waited < 500, "the request never reserved");
+        waited += 1;
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    pending.abort();
+    let _ = pending.await;
+    drop(tx);
+    assert!(
+        budget.try_reserve(cap).is_some(),
+        "the aborted request gave its reservation back"
+    );
 }
