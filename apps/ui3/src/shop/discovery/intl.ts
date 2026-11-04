@@ -81,6 +81,7 @@ export const EN_MESSAGES: Readonly<Record<string, string>> = {
   "filter.onSale": "On Sale",
   "filter.notForSale": "Not for Sale",
   "filter.smart": "Smart",
+  "filter.byType": "Filter by type",
   "filter.smartHint": "Smart wearables add interactive, in-world utility.",
   "filter.emotePlayMode": "Play mode",
   "filter.emotePlayOnce": "Play once",

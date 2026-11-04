@@ -97,6 +97,45 @@ describe("the collectibles grid", () => {
     await waitFor(() => expect(screen.getByTestId("where").textContent).not.toContain("smart"));
   });
 
+  it("narrows by type with checkboxes, as decentraland.org's Shop, and puts the Marketplace's filters after its own", async () => {
+    const client = catalogClient();
+    items("/shop/items", { client });
+    await screen.findAllByTestId("card");
+    const smart = screen.getByRole("checkbox", { name: /smart/i });
+    expect(screen.getByRole("button", { name: /filter by type/i })).toBeTruthy();
+    expect(smart).not.toBeChecked();
+    expect(screen.queryByRole("switch", { name: /smart/i })).toBeNull();
+    fireEvent.click(smart);
+    await waitFor(() => expect(lastUrl(client).searchParams.get("isSmart")).toBe("true"));
+    expect(screen.getByRole("checkbox", { name: /smart/i })).toBeChecked();
+    // The hint sits outside the label: reading it never ticks the box.
+    fireEvent.click(screen.getByTestId("smart-hint"));
+    expect(screen.getByRole("checkbox", { name: /smart/i })).toBeChecked();
+
+    const order = (label: RegExp) => {
+      const heading = screen.getAllByRole("button").find((b) => label.test(b.textContent ?? ""));
+      return heading ? Array.from(document.querySelectorAll<HTMLElement>("button")).indexOf(heading) : -1;
+    };
+    expect(order(/filter by type/i)).toBeGreaterThan(order(/^status/i));
+    expect(order(/^creators/i)).toBeGreaterThan(order(/filter by type/i));
+    expect(order(/^collection/i)).toBeGreaterThan(order(/^creators/i));
+  });
+
+  it("starts the Marketplace's filters folded, and opens one already in use", async () => {
+    const head = (name: RegExp) => screen.getAllByRole("button").find((b) => name.test(b.textContent ?? ""))!;
+    const view = items("/shop/items?category=wearable");
+    await screen.findAllByTestId("card");
+    for (const name of [/^Creators/, /^Collection/, /^Body shape/, /^Sale type/]) expect(head(name)).toHaveAttribute("aria-expanded", "false");
+    expect(head(/^Filter by type/)).toHaveAttribute("aria-expanded", "true");
+    view.unmount();
+
+    items(`/shop/items?category=wearable&bodyShape=female&creators=${CREATOR}`);
+    await screen.findAllByTestId("card");
+    expect(head(/^Body shape/)).toHaveAttribute("aria-expanded", "true");
+    expect(head(/^Creators/)).toHaveAttribute("aria-expanded", "true");
+    expect(head(/^Sale type/)).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("Not for Sale reads the catalogue as view cards with no purchase", async () => {
     const client = catalogClient();
     items("/shop/items?status=not_for_sale&priceMin=5", { client });
@@ -116,14 +155,14 @@ describe("the collectibles grid", () => {
     const client = catalogClient();
     items("/shop/items?rarities=rare&bodyShape=female", { client });
     await screen.findAllByTestId("card");
-    expect(screen.getByRole("combobox", { name: "Body shape" })).toHaveValue("female");
+    expect(within(screen.getByRole("radiogroup", { name: "Body shape" })).getByRole("radio", { name: "Female" })).toBeChecked();
     expect(lastUrl(client).searchParams.get("rarity")).toBe("rare");
     expect(lastUrl(client).searchParams.get("wearableGender")).toBe("female");
-    fireEvent.click(screen.getByRole("radio", { name: /^All$/ }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Status" })).getByRole("radio", { name: /^All$/ }));
     await waitFor(() => expect(lastUrl(client).pathname).toBe("/shop-api/v3/catalog/items"));
     expect(lastUrl(client).searchParams.get("rarity")).toBe("rare");
     expect(lastUrl(client).searchParams.get("wearableGender")).toBe("female");
-    fireEvent.change(screen.getByRole("combobox", { name: "Body shape" }), { target: { value: "unisex" } });
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Body shape" })).getByRole("radio", { name: "Unisex" }));
     await waitFor(() => expect(lastUrl(client).searchParams.get("wearableGender")).toBe("unisex"));
     expect(screen.getByTestId("where")).toHaveTextContent("bodyShape=unisex");
   });
@@ -131,9 +170,9 @@ describe("the collectibles grid", () => {
   it("offers the emote attributes only while browsing emotes", async () => {
     items("/shop/items?category=wearable");
     await screen.findAllByTestId("card");
-    expect(screen.queryByRole("combobox", { name: "Play mode" })).toBeNull();
-    expect(screen.queryByRole("switch", { name: "With sound" })).toBeNull();
-    expect(screen.queryByRole("switch", { name: "With props" })).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: "Play mode" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "With sound" })).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "With props" })).toBeNull();
   });
 
   it("sends the emote attributes on both feeds, restores them from the URL, and a chip removes one", async () => {
@@ -142,10 +181,10 @@ describe("the collectibles grid", () => {
     await waitFor(() => expect(lastUrl(client).searchParams.get("emotePlayMode")).toBe("loop"));
     expect(lastUrl(client).pathname).toBe("/shop-api/v3/catalog/unified");
     expect(lastUrl(client).searchParams.get("emoteHasSound")).toBe("true");
-    expect(screen.getByRole("combobox", { name: "Play mode" })).toHaveValue("loop");
-    fireEvent.click(screen.getByRole("switch", { name: "With props" }));
+    expect(within(screen.getByRole("radiogroup", { name: "Play mode" })).getByRole("radio", { name: "Loop" })).toBeChecked();
+    fireEvent.click(screen.getByRole("checkbox", { name: "With props" }));
     await waitFor(() => expect(lastUrl(client).searchParams.get("emoteHasGeometry")).toBe("true"));
-    fireEvent.click(screen.getByRole("radio", { name: /^All$/ }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Status" })).getByRole("radio", { name: /^All$/ }));
     await waitFor(() => expect(lastUrl(client).pathname).toBe("/shop-api/v3/catalog/items"));
     expect(lastUrl(client).searchParams.get("emotePlayMode")).toBe("loop");
     expect(lastUrl(client).searchParams.get("emoteHasSound")).toBe("true");
@@ -158,15 +197,15 @@ describe("the collectibles grid", () => {
     const client = catalogClient();
     items("/shop/items", { client });
     await screen.findAllByTestId("card");
-    fireEvent.change(screen.getByRole("combobox", { name: "Sale type" }), { target: { value: "primary" } });
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Sale type" })).getByRole("radio", { name: "From the creator" }));
     fireEvent.click(screen.getByRole("button", { name: "Sort by" }));
     fireEvent.click(within(screen.getByTestId("sort-select")).getByRole("option", { name: /cheapest/i }));
     await waitFor(() => expect(lastUrl(client).searchParams.get("sortBy")).toBe("cheapest"));
     expect(lastUrl(client).searchParams.get("listingType")).toBe("primary");
-    fireEvent.click(screen.getByRole("radio", { name: /^Not for Sale$/ }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Status" })).getByRole("radio", { name: /^Not for Sale$/ }));
     await waitFor(() => expect(lastUrl(client).pathname).toBe("/shop-api/v3/catalog/items"));
     expect(lastUrl(client).searchParams.has("listingType")).toBe(false);
-    expect(screen.queryByRole("combobox", { name: "Sale type" })).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: "Sale type" })).toBeNull();
   });
 
   it("empty with a query says what was searched", async () => {
@@ -233,7 +272,7 @@ describe("the creators and collection pickers", () => {
     fireEvent.click(second);
     await waitFor(() => expect(feedUrl(client).searchParams.get("creator")).toBe(`${CREATOR},${OTHER}`));
     expect(feedUrl(client).pathname).toBe("/shop-api/v3/catalog/unified");
-    fireEvent.click(screen.getByRole("radio", { name: /^All$/ }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Status" })).getByRole("radio", { name: /^All$/ }));
     await waitFor(() => expect(feedUrl(client).pathname).toBe("/shop-api/v3/catalog/items"));
     expect(feedUrl(client).searchParams.getAll("creator")).toEqual([CREATOR, OTHER]);
     fireEvent.click(screen.getByRole("button", { name: `Remove ${OTHER.slice(0, 6)}…${OTHER.slice(-4)} filter` }));
