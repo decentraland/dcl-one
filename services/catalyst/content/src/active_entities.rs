@@ -1,5 +1,6 @@
 use axum::Json;
 use axum::extract::{Path, RawQuery, Request, State};
+use axum::http::StatusCode;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
@@ -14,17 +15,9 @@ use super::query_params::{
     qs_get_string,
 };
 use super::validation::{
-    ACTIVE_ENTITIES_SELECTOR_MESSAGE, ENTITIES_SELECTOR_MESSAGE, MAX_IDS_OR_POINTERS,
+    BodyRefusal, ENTITIES_SELECTOR_MESSAGE, MAX_IDS_OR_POINTERS, active_entities_body,
     validate_ids_or_pointers,
 };
-
-#[derive(Debug, serde::Deserialize)]
-pub struct ActiveEntitiesRequest {
-    #[serde(default)]
-    pub ids: Option<Vec<String>>,
-    #[serde(default)]
-    pub pointers: Option<Vec<String>>,
-}
 
 pub(crate) fn json_docs_response(docs: &[EntityDoc]) -> Response {
     (
@@ -100,20 +93,21 @@ async fn lookup_masked(
 }
 
 /// POST /entities/active[?fields=content,pointers,metadata]: missing entities are silently
-/// filtered, so an unknown id or pointer is `200 []`, never a 404.
+/// filtered, so an unknown id or pointer is `200 []`, never a 404. The body is
+/// read as JSON whatever its `Content-Type`.
 pub async fn get_active_entities(
     State(state): State<SharedState>,
     RawQuery(query): RawQuery,
-    Json(body): Json<ActiveEntitiesRequest>,
+    body: Bytes,
 ) -> AppResult<Response> {
-    let use_ids = validate_ids_or_pointers(
-        body.ids.as_deref(),
-        body.pointers.as_deref(),
-        MAX_IDS_OR_POINTERS,
-    )
-    .map_err(|e| e.into_app_error(ACTIVE_ENTITIES_SELECTOR_MESSAGE))?;
-    let values = if use_ids { &body.ids } else { &body.pointers };
-    let values = values.as_deref().unwrap_or_default();
+    let (use_ids, values) = match active_entities_body(&body) {
+        Ok(selector) => selector,
+        Err(BodyRefusal::Schema(refusal)) => {
+            return Ok((StatusCode::BAD_REQUEST, Json(refusal)).into_response());
+        }
+        Err(BodyRefusal::Selector(error)) => return Err(error),
+    };
+    let values = values.as_slice();
 
     let response = match requested_fields(&parse_query_string(query.as_deref().unwrap_or(""))) {
         Some(fields) => Json(Value::Array(
