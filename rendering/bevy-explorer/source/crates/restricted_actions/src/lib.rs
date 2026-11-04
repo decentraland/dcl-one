@@ -1,5 +1,6 @@
 pub mod agent_commands;
 pub mod explorer_ui;
+pub mod smart_wearables;
 pub mod teleport;
 
 use std::{path::PathBuf, sync::Arc};
@@ -124,6 +125,7 @@ impl Plugin for RestrictedActionsPlugin {
         app.add_console_command::<SpawnPortableCommand, _>(spawn_portable_command);
         app.add_console_command::<KillPortableCommand, _>(kill_portable_command);
         app.add_plugins(agent_commands::AgentCommandsPlugin);
+        app.add_plugins(smart_wearables::SmartWearablesPlugin);
     }
 }
 

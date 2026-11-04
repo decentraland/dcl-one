@@ -173,6 +173,14 @@ pub enum SystemApi {
         PermissionLevel,
         RpcResultSender<Vec<PermanentPermissionItem>>,
     ),
+    /// Smart wearables asking the player to allow their declared gated permissions.
+    GetSmartWearableAuthorizationStream(RpcStreamSender<SmartWearableAuthRequest>),
+    /// The player's answer to a `SmartWearableAuthRequest`.
+    AnswerSmartWearableAuthorization {
+        id: u32,
+        allow: bool,
+    },
+    SmartWearableState(RpcResultSender<SmartWearableStateInfo>),
     /// Prompts for the password of a world being entered (see `ipfs::world_access`).
     GetWorldAccessStream(RpcStreamSender<WorldAccessEvent>),
     /// Answers the password prompt: the password, or `None` when the player gives up.

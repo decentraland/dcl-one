@@ -13,7 +13,8 @@ use system_bridge::{
     FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
     FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
     PermissionRequestEvent, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
-    SetAvatarData, VoiceMessage, WelcomeState, WorldAccessEvent,
+    SetAvatarData, SmartWearableAuthRequest, SmartWearableStateInfo, VoiceMessage, WelcomeState,
+    WorldAccessEvent,
 };
 
 // list of op declarations
@@ -78,6 +79,10 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_get_world_access_stream(),
             op_read_world_access_stream(),
             op_set_world_password(),
+            op_get_smart_wearable_auth_stream(),
+            op_read_smart_wearable_auth_stream(),
+            op_answer_smart_wearable_auth(),
+            op_smart_wearable_state(),
             op_get_profile_changed_stream(),
             op_read_profile_changed_stream(),
             op_get_scene_loading_ui_stream(),
@@ -786,4 +791,31 @@ pub async fn op_read_block_update_stream(
     #[smi] rid: u32,
 ) -> Result<Option<BlockUpdateData>, anyhow::Error> {
     dcl_js::system_api::op_read_block_update_stream(state, rid).await
+}
+
+#[op2(async)]
+pub async fn op_get_smart_wearable_auth_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_smart_wearable_auth_stream(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_smart_wearable_auth_stream(
+    state: Rc<RefCell<OpState>>,
+    rid: u32,
+) -> Result<Option<SmartWearableAuthRequest>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_read_smart_wearable_auth_stream(state, rid).await
+}
+
+#[op2(fast)]
+pub fn op_answer_smart_wearable_auth(state: Rc<RefCell<OpState>>, id: u32, allow: bool) {
+    dcl_js::system_api::op_answer_smart_wearable_auth(state, id, allow);
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_smart_wearable_state(
+    state: Rc<RefCell<OpState>>,
+) -> Result<SmartWearableStateInfo, anyhow::Error> {
+    dcl_js::system_api::op_smart_wearable_state(state).await
 }

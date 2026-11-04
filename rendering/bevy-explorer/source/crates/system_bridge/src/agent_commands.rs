@@ -194,10 +194,15 @@ fn live_scenes_cmd(
                         .iter()
                         .map(|s| {
                             format!(
-                                "{} [{}{}{}]",
+                                "{} [{}{}{}{}]",
                                 s.title,
                                 s.hash,
                                 if s.is_portable { ", portable" } else { "" },
+                                if s.is_smart_wearable {
+                                    ", smart wearable"
+                                } else {
+                                    ""
+                                },
                                 if s.is_broken { ", broken" } else { "" },
                             )
                         })
