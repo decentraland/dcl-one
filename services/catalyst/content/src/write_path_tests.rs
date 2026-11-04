@@ -222,17 +222,17 @@ fn attach(
 async fn the_write_routes_answer_their_gates_in_order() {
     let node = TestNode::without_db("write-gates").await;
     let router = node.router();
-    let not_multipart = Request::post("/content/entities")
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(r#"{"hello":"world"}"#))
-        .unwrap();
-    let (status, _, body) = call(&router, not_multipart).await;
+    let not_multipart = || {
+        Request::post("/content/entities")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"hello":"world"}"#))
+            .unwrap()
+    };
+    let (status, _, _) = call(&router, not_multipart()).await;
     assert_eq!(
-        (status, &body[..]),
-        (
-            StatusCode::BAD_REQUEST,
-            &b"Invalid `boundary` for `multipart/form-data` request"[..]
-        )
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the gates answer before the body is looked at"
     );
 
     let chain = json!([{"type": "SIGNER", "payload": "0xabc"}]);
@@ -269,42 +269,68 @@ async fn the_write_routes_answer_their_gates_in_order() {
         "an attached but disabled write path is still off"
     );
 
+    // Read-only answers as upstream's `READ_ONLY` node, which has no write
+    // route: the router's not-found, ahead of the switch.
+    disabled.state.set_read_only(true);
+    let (status, _, body) = call(
+        &disabled.router(),
+        deploy_request("/entities", "bafy", &chain, &[]),
+    )
+    .await;
+    assert_eq!((status, &body[..]), (StatusCode::NOT_FOUND, &b"Not found"[..]));
     attach(&node.state, true, None, None);
     node.state.set_read_only(true);
-    let (status, _, body) = call(
+    let unrouted = call(
+        &router,
+        Request::post("/content/no-such-route")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    let (status, headers, body) = call(
         &router,
         deploy_request("/content/entities", "bafy", &chain, &[]),
     )
     .await;
+    assert_eq!((status, &body[..]), (StatusCode::NOT_FOUND, &b"Not found"[..]));
     assert_eq!(
-        (status, &body[..]),
-        (StatusCode::FORBIDDEN, writes::READ_ONLY_MESSAGE.as_bytes())
+        (status, headers[header::CONTENT_TYPE].clone(), body),
+        (unrouted.0, unrouted.1[header::CONTENT_TYPE].clone(), unrouted.2),
+        "the same answer as a path the router does not serve"
     );
     let (status, _, body) = call(
         &router,
         Request::delete("/scenes/0,0").body(Body::empty()).unwrap(),
     )
     .await;
-    assert_eq!(
-        (status, &body[..]),
-        (StatusCode::FORBIDDEN, writes::READ_ONLY_MESSAGE.as_bytes())
-    );
+    assert_eq!((status, &body[..]), (StatusCode::NOT_FOUND, &b"Not found"[..]));
     node.state.set_read_only(false);
 
-    let (status, _, body) = call(
-        &router,
+    for req in [
         deploy_request("/content/entities", "bafy", &chain, &[]),
-    )
-    .await;
+        not_multipart(),
+    ] {
+        let (status, headers, body) = call(&router, req).await;
+        assert_eq!(
+            (status, json_of(&body)),
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                json!({"error": writes::BOOTSTRAPPING_MESSAGE})
+            )
+        );
+        assert_eq!(headers[header::RETRY_AFTER], "60");
+    }
+
+    node.state.sync.set_state(SyncState::Syncing);
+    let (status, headers, body) = call(&router, not_multipart()).await;
     assert_eq!(
         (status, json_of(&body)),
         (
-            StatusCode::SERVICE_UNAVAILABLE,
-            json!({"error": writes::BOOTSTRAPPING_MESSAGE})
+            StatusCode::BAD_REQUEST,
+            json!({"error": "Invalid request: expected a multipart/form-data body"})
         )
     );
-
-    node.state.sync.set_state(SyncState::Syncing);
+    assert_eq!(headers[header::CONTENT_TYPE], "application/json");
     let (status, _, body) = call(
         &router,
         deploy_request("/content/entities", "bafy", &json!([]), &[]),
@@ -766,8 +792,40 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
     let audit = json_of(&audit);
     assert_eq!(audit["localProvenance"]["status"], "active");
     assert_eq!(audit["localProvenance"]["signer"], address(&owner));
+    assert_eq!(
+        audit["localTimestamp"],
+        json!(created),
+        "creationTimestamp is the stored localTimestamp"
+    );
 
+    // A replay answers the stored timestamp before any check: inside the
+    // pointer's rate-limit window, with no files and a chain that would not
+    // verify.
     let deployer = state.deployer().unwrap().clone();
+    assert!(deployer.is_rate_limited("scene", &parcel));
+    for (replay_chain, files) in [
+        (chain.clone(), vec![(entity_id.as_str(), &entity_bytes)]),
+        (json!([{"type": "SIGNER", "payload": "0xabc", "signature": ""}]), vec![]),
+    ] {
+        let (status, _, body) = call(
+            &router,
+            deploy_request("/entities", &entity_id, &replay_chain, &files),
+        )
+        .await;
+        assert_eq!(
+            (status, json_of(&body)),
+            (StatusCode::OK, json!({"creationTimestamp": created}))
+        );
+    }
+    deployer.clear_rate_limits();
+    assert_eq!(
+        deployer
+            .deploy_entity(vec![entity_bytes.clone()], &entity_id, chain.clone(), "LOCAL")
+            .await
+            .ok(),
+        Some(created),
+        "the write itself answers a deployed entity's stored timestamp"
+    );
     deployer.clear_rate_limits();
     let (bytes2, id2, chain2) = signed_entity(&stranger, scene(&[&parcel], &[])).await;
     let (status, headers, body) = call(
@@ -1450,7 +1508,7 @@ async fn a_form_over_its_field_limits_is_refused() {
     assert_eq!(
         (status, json_of(&body)),
         (
-            StatusCode::BAD_REQUEST,
+            StatusCode::PAYLOAD_TOO_LARGE,
             json!({"error": "Too many form fields in the request. The maximum allowed is 32."})
         )
     );
@@ -1461,7 +1519,7 @@ async fn a_form_over_its_field_limits_is_refused() {
     assert_eq!(
         (status, json_of(&body)),
         (
-            StatusCode::BAD_REQUEST,
+            StatusCode::PAYLOAD_TOO_LARGE,
             json!({"error": "Field 'big' is too large. The maximum allowed size per field is 32768 bytes."})
         )
     );
@@ -1550,8 +1608,89 @@ async fn a_body_past_the_upload_budget_is_shed_with_retry_after() {
     );
 }
 
+/// Upstream's multipart limits (`multipart.ts`), each a 413 with its text:
+/// 3000 files, 100 MiB per file (named by the part's file name), and a
+/// declared body past the total plus framing, refused unread.
 #[tokio::test]
-async fn repeated_field_names_count_toward_the_field_limit() {
+async fn a_form_past_upstreams_multipart_limits_is_413() {
+    let node = deploying_node("multipart-limits", Settings::for_tests()).await;
+    let router = node.router();
+    let one = Bytes::from_static(b"x");
+    let names: Vec<String> = (0..=super::create_entity::MAX_DEPLOY_FILES)
+        .map(|i| format!("bafyfile{i}"))
+        .collect();
+    let files: Vec<(&str, &Bytes)> = names.iter().map(|n| (n.as_str(), &one)).collect();
+    let (status, _, body) = call(
+        &router,
+        deploy_request("/content/entities", "bafy", &json!([]), &files),
+    )
+    .await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            json!({"error": "Too many files in the request. The maximum allowed is 3000."})
+        )
+    );
+
+    let big = Bytes::from(vec![0u8; super::create_entity::MAX_DEPLOY_FILE_BYTES + 1]);
+    let (status, _, body) = call(
+        &router,
+        deploy_request("/content/entities", "bafy", &json!([]), &[("big.glb", &big)]),
+    )
+    .await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            json!({"error": "File 'big.glb' is too large. The maximum allowed size per file is 104857600 bytes."})
+        )
+    );
+    drop(big);
+
+    let max_body = super::create_entity::max_deployment_body_bytes(32);
+    let mut declared = form_request("203.0.113.15", &entity_form());
+    declared
+        .headers_mut()
+        .insert(header::CONTENT_LENGTH, HeaderValue::from(max_body + 1));
+    let (status, _, body) = call(&router, declared).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            json!({"error": format!(
+                "The request body is too large. The maximum allowed total upload size is 209715200 bytes plus multipart framing ({max_body} bytes in all)."
+            )})
+        )
+    );
+}
+
+/// A form the parser cannot read answers upstream's fixed 400, never the
+/// parser's own text.
+#[tokio::test]
+async fn a_malformed_form_answers_without_parser_detail() {
+    let node = deploying_node("multipart-malformed", Settings::for_tests()).await;
+    let truncated = Request::post("/content/entities")
+        .header(
+            header::CONTENT_TYPE,
+            "multipart/form-data; boundary=catalyst-admission-boundary",
+        )
+        .body(Body::from(
+            "--catalyst-admission-boundary\r\nContent-Disposition: form-data; name=\"entityId\"\r\n\r\nbafy",
+        ))
+        .unwrap();
+    let (status, _, body) = call(&node.router(), truncated).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"error": "Invalid multipart/form-data request"})
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_repeated_form_name_is_refused() {
     let node = deploying_node("field-repeats", Settings::for_tests()).await;
     let mut repeated = entity_form();
     repeated.extend((0..30).map(|_| ("extra".to_string(), "x".to_string())));
@@ -1560,8 +1699,27 @@ async fn repeated_field_names_count_toward_the_field_limit() {
         (status, json_of(&body)),
         (
             StatusCode::BAD_REQUEST,
-            json!({"error": "Too many form fields in the request. The maximum allowed is 32."})
+            json!({"error": "Duplicate form field 'extra'"})
         )
+    );
+    let file = Bytes::from_static(b"same");
+    let (status, _, body) = call(
+        &node.router(),
+        deploy_request(
+            "/content/entities",
+            "bafy",
+            &json!([]),
+            &[("bafyfile", &file), ("bafyfile", &file)],
+        ),
+    )
+    .await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"error": "Duplicate form field 'bafyfile'"})
+        ),
+        "file parts too"
     );
 }
 
@@ -1577,7 +1735,7 @@ async fn forms_refused_for_their_field_limits_count_toward_the_quota() {
     large.push(("big".to_string(), "x".repeat(32 * 1024 + 1)));
     for _ in 0..2 {
         let (status, _, _) = call(&router, form_request("203.0.113.10", &large)).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
     }
     let (status, _, _) = call(&router, form_request("203.0.113.10", &entity_form())).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);

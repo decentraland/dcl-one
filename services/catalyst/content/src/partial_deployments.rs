@@ -1195,17 +1195,17 @@ async fn stored_files(pool: &PgPool, entity_id: &str) -> sqlx::Result<HashMap<St
     Ok(rows.into_iter().collect())
 }
 
+/// A store failure is logged; the client sees upstream's fixed sentence.
 async fn store_files(storage: &Storage, files: Vec<(String, Bytes)>) -> Result<(), Refusal> {
     let mut writes = stream::iter(files.into_iter().map(|(hash, bytes)| async move {
-        storage
-            .store(&hash, bytes)
-            .await
-            .map_err(|e| format!("failed to store content file {hash}: {e}"))
+        storage.store(&hash, bytes).await.map_err(|e| {
+            tracing::error!(hash, error = %e, "failed to store a partial upload's content file");
+        })
     }))
     .buffer_unordered(STORE_CONCURRENCY);
     while let Some(result) = writes.next().await {
-        result.map_err(|e| Refusal::Unavailable {
-            errors: vec![e],
+        result.map_err(|()| Refusal::Unavailable {
+            errors: vec![super::write_deployer::DEPLOY_ERROR_MESSAGE.to_string()],
             retry_after: INTERNAL_ERROR_RETRY_AFTER_SECS,
         })?;
     }

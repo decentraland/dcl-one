@@ -13,7 +13,8 @@
 //! [`create_entity`], [`unpublish_scene`], [`land_publish`], the
 //! [`write_deployer`] with the [`validator`] attached) answers behind
 //! `CONTENT_WRITES_ENABLED` ([`writes`], default off: 503 with
-//! `Retry-After`) and the console's read-only toggle (403, the old gate).
+//! `Retry-After`) and the console's read-only toggle (404, as upstream's
+//! `READ_ONLY` node, which does not register the route).
 
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
@@ -105,7 +106,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use bytes::Bytes;
 use parking_lot::RwLock;
@@ -470,7 +471,7 @@ pub struct ContentState {
     pub deployments_cache: TtlMap<String, Bytes>,
     /// The console's read-only toggle (process state, off at start as the
     /// old `READ_ONLY` default was): while set, `POST /entities` and
-    /// `DELETE /scenes/{coord}` answer the old 403.
+    /// `DELETE /scenes/{coord}` answer the router's not-found.
     pub read_only: AtomicBool,
     /// The console's accepting-users toggle (process state, on at start):
     /// `/about` reports `acceptingUsers` while the node is healthy and this
@@ -620,11 +621,18 @@ async fn empty_scenes() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({ "scenes": [], "total": 0 }))
 }
 
-async fn not_found() -> impl IntoResponse {
-    (StatusCode::NOT_FOUND, "Not found")
+async fn not_found() -> Response {
+    not_found_response()
 }
 
-fn content_routes() -> Router<SharedState> {
+/// The router's answer for a path it does not serve.
+pub(crate) fn not_found_response() -> Response {
+    (StatusCode::NOT_FOUND, "Not found").into_response()
+}
+
+/// `max_deploy_body` bounds a `POST /entities` body, framing included
+/// ([`create_entity::max_deployment_body_bytes`]).
+fn content_routes(max_deploy_body: usize) -> Router<SharedState> {
     Router::new()
         .route("/challenge", get(status::get_challenge))
         .route("/entities/{type}", get(active_entities::get_entities))
@@ -682,7 +690,7 @@ fn content_routes() -> Router<SharedState> {
         .route(
             "/entities",
             post(create_entity::create_entity)
-                .layer(DefaultBodyLimit::max(create_entity::MAX_DEPLOYMENT_BYTES)),
+                .layer(DefaultBodyLimit::max(max_deploy_body)),
         )
         .route("/scenes/{coord}", delete(unpublish_scene::unpublish_scene))
         .route("/forwarding", get(forward::list_forwards))
@@ -694,6 +702,8 @@ fn content_routes() -> Router<SharedState> {
 /// them (the reverse proxy strips nothing).
 pub fn build_router(state: SharedState) -> Router {
     let request_timeout = state.settings.request_timeout;
+    let max_deploy_body =
+        create_entity::max_deployment_body_bytes(state.settings.max_upload_field_count);
     let mut app = Router::new()
         .route("/about", get(about::get_about))
         .route("/lambdas/explore/realms", get(about::get_explore_realms))
@@ -707,8 +717,8 @@ pub fn build_router(state: SharedState) -> Router {
             "/lambdas/collections/contents/{pointer}/image",
             get(entity_thumbnail::get_entity_image).head(entity_thumbnail::get_entity_image),
         )
-        .merge(content_routes())
-        .nest("/content", content_routes())
+        .merge(content_routes(max_deploy_body))
+        .nest("/content", content_routes(max_deploy_body))
         .fallback(not_found)
         .layer(
             TraceLayer::new_for_http()

@@ -60,6 +60,24 @@ impl DeployFailure {
     }
 }
 
+/// A `local_timestamp` in ms as the history routes report it: their
+/// `date_part('epoch', ..) * 1000`, truncated.
+macro_rules! local_ms_sql {
+    ($column:literal) => {
+        concat!("floor(date_part('epoch', ", $column, ") * 1000)::bigint")
+    };
+}
+
+/// Upstream's answer for a deploy that failed on this node's side; the
+/// cause (a database, store or task error) is logged, never answered.
+pub(crate) const DEPLOY_ERROR_MESSAGE: &str = "There was an error deploying the entity";
+
+/// `Unavailable` with [`DEPLOY_ERROR_MESSAGE`], `cause` logged.
+fn deploy_error(entity_id: &str, cause: &str) -> DeployFailure {
+    tracing::error!(entity_id, cause, "deployment failed on this node");
+    DeployFailure::Unavailable(vec![DEPLOY_ERROR_MESSAGE.to_string()])
+}
+
 impl From<Vec<String>> for DeployFailure {
     fn from(errors: Vec<String>) -> Self {
         DeployFailure::Rejected(errors)
@@ -88,7 +106,10 @@ pub(crate) async fn bounded_upload_hash<T: Send + 'static>(
         hash()
     })
     .await
-    .map_err(|e| format!("upload hashing failed: {e}"))
+    .map_err(|e| {
+        tracing::error!(error = %e, "upload hashing task failed");
+        "Upload hashing failed.".to_string()
+    })
 }
 
 async fn hash_uploads(files: Vec<Bytes>) -> Result<Vec<HashedUpload>, String> {
@@ -455,12 +476,14 @@ impl WriteDeployer {
         &self.storage
     }
 
-    /// The stored `local_timestamp` (ms) of a deployed entity.
+    /// The stored `local_timestamp` (ms) of a deployed entity, as the
+    /// history routes report it.
     pub(crate) async fn deployed_timestamp(&self, entity_id: &str) -> sqlx::Result<Option<i64>> {
-        sqlx::query_scalar(
-            "SELECT (EXTRACT(EPOCH FROM local_timestamp) * 1000)::bigint
-             FROM content.deployments WHERE entity_id = $1",
-        )
+        sqlx::query_scalar(concat!(
+            "SELECT ",
+            local_ms_sql!("local_timestamp"),
+            " FROM content.deployments WHERE entity_id = $1"
+        ))
         .bind(entity_id)
         .fetch_optional(&self.pool)
         .await
@@ -746,7 +769,7 @@ impl WriteDeployer {
         let started = Instant::now();
         let uploads = hash_uploads(files)
             .await
-            .map_err(|e| DeployFailure::Unavailable(vec![e]))?;
+            .map_err(|e| deploy_error(entity_id, &e))?;
         let hash_us = started.elapsed().as_micros() as u64;
         let entity_bytes = uploads
             .iter()
@@ -756,8 +779,11 @@ impl WriteDeployer {
                 vec!["The entity file was not part of the uploaded files.".to_string()]
             })?;
 
-        let mut entity: Entity = serde_json::from_slice(&entity_bytes)
-            .map_err(|e| vec![format!("There was a problem parsing the entity: {e}")])?;
+        // Upstream answers the bare sentence; the parser's text is logged.
+        let mut entity: Entity = serde_json::from_slice(&entity_bytes).map_err(|e| {
+            info!(entity_id, error = %e, "deployment refused: unparsable entity file");
+            vec!["There was a problem parsing the entity".to_string()]
+        })?;
         for pointer in &mut entity.pointers {
             *pointer = pointer.to_lowercase();
         }
@@ -899,6 +925,7 @@ impl WriteDeployer {
 }
 
 struct Persisted {
+    /// The stored `local_timestamp` (ms), as the history routes report it.
     creation_ts: i64,
     /// `false` when the entity was already deployed.
     inserted: bool,
@@ -913,7 +940,15 @@ struct PersistOutcome {
     newer: bool,
     overwrote: i32,
     cleared: i32,
+    /// The statement's `now()`, the `local_timestamp` an insert stores, in
+    /// ms ([`LOCAL_MS_SQL`]); absent from the bare CTE the tests run.
+    #[sqlx(default)]
+    local_ms: i64,
 }
+
+/// The deploy call's `now()`: one statement is one transaction, so it is the
+/// `now()` the function stored as the deployment's `local_timestamp`.
+const LOCAL_MS_SQL: &str = local_ms_sql!("now()");
 
 /// The whole write as one statement off the pointer lock: the newer-entity check and the
 /// overwrite calculation read the locked snapshot, the deployment insert is gated on the former,
@@ -1055,7 +1090,7 @@ pub(crate) fn deploy_function_sql(local_provenance: bool, or_replace: bool) -> S
 
 pub(crate) fn deploy_function_call(name: &str) -> String {
     format!(
-        "SELECT dep_id, newer, overwrote, cleared FROM content.{name}($1, $2, $3, $4, $5::json, $6, $7, $8::json, $9, $10, $11)"
+        "SELECT dep_id, newer, overwrote, cleared, {LOCAL_MS_SQL} AS local_ms FROM content.{name}($1, $2, $3, $4, $5::json, $6, $7, $8::json, $9, $10, $11)"
     )
 }
 
@@ -1069,7 +1104,7 @@ pub(crate) fn forward_call(name: &str) -> String {
               queued AS (INSERT INTO content.forward_outbox (entity_id, target) \
                          SELECT $4, $12 FROM d WHERE d.dep_id IS NOT NULL AND NOT d.newer \
                          ON CONFLICT (entity_id) DO NOTHING) \
-         SELECT dep_id, newer, overwrote, cleared FROM d",
+         SELECT dep_id, newer, overwrote, cleared, local_ms FROM d",
         deploy_function_call(name)
     )
 }
@@ -1083,7 +1118,7 @@ impl WriteDeployer {
         auth_chain: &AuthChain,
         context: &str,
     ) -> Result<Persisted, DeployFailure> {
-        let unavailable = |e: String| DeployFailure::Unavailable(vec![e]);
+        let unavailable = |e: String| deploy_error(&entity.id, &e);
         let started = Instant::now();
         store_deployment_files(
             &self.storage,
@@ -1157,7 +1192,6 @@ impl WriteDeployer {
             .await
             .map_err(|e| unavailable(format!("deployment write failed: {e}")))?;
 
-        let now_ms = chrono::Utc::now().timestamp_millis();
         tracing::debug!(target: "catalyst_perf", phase="persist", entity_id=%entity.id, storage_us, db_us=db_started.elapsed().as_micros() as u64);
 
         if outcome.newer {
@@ -1167,8 +1201,12 @@ impl WriteDeployer {
         }
         let Some(dep_id) = outcome.dep_id else {
             info!(entity_id = %entity.id, "entity already deployed; treating as success");
+            let stored = self
+                .deployed_timestamp(&entity.id)
+                .await
+                .map_err(|e| unavailable(format!("reading the stored deployment: {e}")))?;
             return Ok(Persisted {
-                creation_ts: now_ms,
+                creation_ts: stored.unwrap_or(outcome.local_ms),
                 inserted: false,
             });
         };
@@ -1184,7 +1222,7 @@ impl WriteDeployer {
             forwarder.kick();
         }
         Ok(Persisted {
-            creation_ts: now_ms,
+            creation_ts: outcome.local_ms,
             inserted: true,
         })
     }

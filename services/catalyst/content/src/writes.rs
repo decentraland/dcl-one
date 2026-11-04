@@ -8,16 +8,18 @@
 //! node's database, blobs and credentials to be demonstrated before the
 //! switch is turned on. Off (the default), both routes answer 503 with the
 //! content error envelope and `Retry-After`; every read keeps answering,
-//! `POST /entities/active` included (a read over POST). The gate runs after
-//! the multipart extraction, so a request that is not a deploy at all
-//! still gets its 400 (the stage-1 fixture `create-entity-400-not-multipart`).
+//! `POST /entities/active` included (a read over POST). The gate runs before
+//! the body is read, so a body that is not a form at all gets its 400 only
+//! on a node that takes deploys (the fixture `create-entity-400-not-multipart`).
 //!
 //! On, the switch still waits for the restore stamps (`shared::writes`).
-//! The console's read-only toggle (`ContentState::read_only`, the old
-//! `READ_ONLY`) is the second gate, the old 403, checked after this one.
+//! The console's read-only toggle (`ContentState::read_only`, upstream's
+//! `READ_ONLY`) is checked first: upstream does not register the write route
+//! in that mode, so both routes answer this router's not-found, the answer a
+//! client or forwarder reads as a read-only catalyst.
 
 use axum::http::{StatusCode, header};
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 
 use crate::shared::writes::{Refusal, refusal};
 
@@ -25,11 +27,12 @@ pub const CONTENT_WRITES_ENABLED: &str = "CONTENT_WRITES_ENABLED";
 
 pub const DISABLED_MESSAGE: &str = "content writes are disabled on this node (CONTENT_WRITES_ENABLED=false): a backup restore has to be demonstrated before this node accepts local deployments";
 
-/// The old read-only gate's answer, byte for byte.
-pub const READ_ONLY_MESSAGE: &str = "Content Server is in read-only mode; deployments are disabled";
-
 pub const BOOTSTRAPPING_MESSAGE: &str =
     "Deployments are not allowed while the Catalyst is bootstrapping";
+
+/// How long a client should wait before deploying to a bootstrapping node
+/// (upstream `middlewares.ts`).
+pub const BOOTSTRAPPING_RETRY_AFTER_SECS: &str = "60";
 
 /// How long a client should wait before asking a disabled node again.
 pub const RETRY_AFTER_SECS: &str = "3600";
@@ -53,8 +56,21 @@ pub fn refused_response(refusal: &Refusal) -> Response {
     response
 }
 
+/// The read-only answer: the router's own not-found, as for a route upstream
+/// does not register in `READ_ONLY` mode.
 pub fn read_only_response() -> Response {
-    (StatusCode::FORBIDDEN, READ_ONLY_MESSAGE).into_response()
+    super::not_found_response()
+}
+
+/// The 503 while the node is bootstrapping, with upstream's `Retry-After`.
+pub fn bootstrapping_response() -> Response {
+    let mut response =
+        super::errors::json_error(StatusCode::SERVICE_UNAVAILABLE, BOOTSTRAPPING_MESSAGE);
+    response.headers_mut().insert(
+        header::RETRY_AFTER,
+        header::HeaderValue::from_static(BOOTSTRAPPING_RETRY_AFTER_SECS),
+    );
+    response
 }
 
 /// The switch and the restore stamps alone, for a content write that is
@@ -63,15 +79,12 @@ pub fn refuse_switch(state: &super::ContentState) -> Option<Response> {
     refusal(state.writes_enabled()).map(|refusal| refused_response(&refusal))
 }
 
-/// Both gates, in order: `None` lets the write through.
+/// Both gates, read-only first: `None` lets the write through.
 pub fn refuse(state: &super::ContentState) -> Option<Response> {
-    if let Some(refused) = refuse_switch(state) {
-        return Some(refused);
-    }
     if state.is_read_only() {
         return Some(read_only_response());
     }
-    None
+    refuse_switch(state)
 }
 
 #[cfg(test)]
@@ -94,10 +107,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_read_only_answer_is_the_old_plain_403() {
+    async fn the_read_only_answer_is_the_routers_not_found() {
         let resp = read_only_response();
-        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
-        assert_eq!(&body[..], READ_ONLY_MESSAGE.as_bytes());
+        assert_eq!(&body[..], b"Not found");
+    }
+
+    #[tokio::test]
+    async fn the_bootstrapping_answer_carries_upstreams_retry_after() {
+        let resp = bootstrapping_response();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(resp.headers()[header::RETRY_AFTER], "60");
+        let body = axum::body::to_bytes(resp.into_body(), 4096).await.unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v, serde_json::json!({ "error": BOOTSTRAPPING_MESSAGE }));
     }
 }

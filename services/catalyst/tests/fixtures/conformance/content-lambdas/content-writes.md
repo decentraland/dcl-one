@@ -67,18 +67,19 @@ READ_ONLY mode is a mode of the first row (upstream does not register the route)
 - **Client source:**
   - Upstream: `TRUSTED_CLIENT_IP_HEADER`, read from the right with one trusted proxy, else the socket address. Both are canonicalized (`client-source.ts:17-36`).
   - dcl-one: `x-real-ip`, else the last `x-forwarded-for` entry, else none. With no source the quota is skipped (`services/catalyst/shared/src/client_ip.rs:7-23`, `upload_admission.rs:190-197`). IPv6 is grouped by /64 in both (upstream `CONTENT_GET_RATE_LIMIT_IPV6_PREFIX_LENGTH`=64; dcl-one `upload_admission.rs:85-98`).
-- **dcl-one chain, in order** (`create_entity.rs:304-517`):
-  1. axum `Multipart` extractor: Content-Type check only.
-  2. `writes::refuse`: the `CONTENT_WRITES_ENABLED` switch, then read-only (`writes.rs:67-75`).
-  3. Deployer attached.
-  4. Bootstrapping (`create_entity.rs:317-324`).
-  5. Upload budget on declared length, minimum 16 MiB, capacity max(`MAX_IN_MEMORY_DEPLOYMENT_BYTES`, 200 MiB) (`create_entity.rs:326-337`, `upload_admission.rs:53-75`).
-  6. Daily quota consume, counted at admission, except for a batch declared with `?partial=true`, which section 3 counts once its form is read (`create_entity.rs:338-350`).
-  7. Form read, held in memory: 1000 files, 50 MiB per file, field count/size from settings (default 32 / 32 KiB), body cap 200 MiB (`create_entity.rs:55-60,178-248`, `lib.rs:685`).
+- **dcl-one chain, in order** (`create_entity.rs:377-468,499-624`):
+  1. `writes::refuse`: read-only, then the `CONTENT_WRITES_ENABLED` switch (`writes.rs:83-88`).
+  2. Deployer attached.
+  3. Bootstrapping (`create_entity.rs:390-392`).
+  4. Upload budget on declared length, minimum 16 MiB, capacity max(`MAX_IN_MEMORY_DEPLOYMENT_BYTES`, 200 MiB) (`create_entity.rs:394-405`, `upload_admission.rs:53-75`).
+  5. Not a `multipart/form-data` body (400), or a declared length past the form limits (413); a client that spent its daily quota gets the 429 instead. Neither is counted (`create_entity.rs:410-434`).
+  6. Daily quota consume, counted at admission, except for a batch declared with `?partial=true`, which section 3 counts once its form is read (`create_entity.rs:435-442`).
+  7. Form read, held in memory, with upstream's limits and texts: 3000 files, 100 MiB per file, field count/size from settings (default 32 / 32 KiB), 200 MiB of values in all, no repeated name (`create_entity.rs:62-108,217-316`, `lib.rs:693`).
   8. `entityId`.
-  9. Unsynced-copy type gate.
-  10. Auth chain.
-  11. `WriteDeployer::deploy_entity`.
+  9. Auth chain.
+  10. Replay: an entity already deployed answers its stored timestamp (`create_entity.rs:553-567`).
+  11. Unsynced-copy type gate.
+  12. `WriteDeployer::deploy_entity`.
 - **Gateway in front of dcl-one:** `limit_req zone=deploy` 2 r/s, burst 4, `limit_req_status 429`, `client_max_body_size 200m`, `client_body_timeout 300s` (`infra/gateway/gateway.py:147-149,259-260`).
 
 ### Responses
@@ -97,10 +98,10 @@ Success example (both):
 
 | trigger | status | body shape | headers | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
-| `READ_ONLY=true` | 404 (route not registered; `/entities` matches no route). The default not-found of `@dcl/http-server` (body not in tree). | default | none | `routes.ts:43-45`, `service.ts:63-65` | Read-only toggle (`POST /admin/api/content/read-only`): 403 `text/plain` `Content Server is in read-only mode; deployments are disabled` (`writes.rs:29,56-58`) | DIVERGENT: 403 text instead of 404 |
+| `READ_ONLY=true` | 404 (route not registered; `/entities` matches no route). The default not-found of `@dcl/http-server` (body not in tree). | default | none | `routes.ts:43-45`, `service.ts:63-65` | Read-only toggle (`POST /admin/api/content/read-only`): 404, this router's own not-found (`text/plain` `Not found`), checked before every other gate (`writes.rs:59-63,83-88`, `lib.rs:624-631`) | MATCH on status; the body is each router's own not-found |
 | (no upstream equivalent) writes switch off | n/a | n/a | n/a | n/a | 503 `{"error":"content writes are disabled on this node (CONTENT_WRITES_ENABLED=false): ..."}`, `Retry-After: 3600` (`writes.rs:26,40-54`); restore-stamp variants (`writes.rs:46-54`) | DIVERGENT: a node with writes off does not look like a read-only catalyst (404) |
 | burst limit exceeded | 429 | `{"error":"Too many requests"}` | `Retry-After` (and the component's `RateLimit-*` headers; set not in tree) | `routes.ts:47-51`, `components.ts:545-556` | No app-level limit. Gateway nginx 429 HTML body, no `Retry-After`, at 2 r/s burst 4 (`gateway.py:149,259-260`). | DIVERGENT: limit (200/min vs 2/s), body (HTML vs JSON), header |
-| sync state BOOTSTRAPPING | 503 | `{"error":"Deployments are not allowed while the Catalyst is bootstrapping"}` | `Retry-After: 60` | `middlewares.ts:17,26-35` | Same body via `AppError::ServiceUnavailable` (`create_entity.rs:317-324`, `writes.rs:31-32`, `errors.rs:51,70-72`), no `Retry-After` | DIVERGENT: `Retry-After` missing |
+| sync state BOOTSTRAPPING | 503 | `{"error":"Deployments are not allowed while the Catalyst is bootstrapping"}` | `Retry-After: 60` | `middlewares.ts:17,26-35` | Same body and header (`writes.rs:65-74`, `create_entity.rs:390-392`) | MATCH |
 | unsynced copy, entity type not ready | n/a (upstream gates on BOOTSTRAPPING only) | | | | 503 bootstrapping body after the form is read; 400 `{"errors":["The entity file was not part of the uploaded files or has no type."]}` when the type cannot be read (`create_entity.rs:453-467`) | dcl-one only |
 | daily quota exhausted (pre-body marker, or at consume) | 429 | `{"error":"Too many requests"}` | `Retry-After: <s to window end>` | `deployment-quota.ts:28-34,41-59,120-127`; window 86400 s, max 300 (`logic/deployment-quota/component.ts:6,21-25`) | 429 `{"error":"Too many requests"}`, `Retry-After` (`create_entity.rs:286-292,338-350`, `upload_admission.rs:178-265`) | MATCH on the wire. DIVERGENT on counting: see CW-14. |
 | declared Content-Length does not fit the memory budget | 503 | `{"error":"Server is handling too many uploads, please retry shortly."}` | `Retry-After: 30` | `deployment-memory-admission.ts:21-33`, `upload-budget/errors.ts:3`, `multipart.ts:92` | Same body and header (`create_entity.rs:326-337`, `upload_admission.rs:33-34`, `writes.rs:38`) | MATCH (checked before the quota in dcl-one, after it upstream) |
@@ -111,16 +112,16 @@ Success example (both):
 
 | trigger | status | body | headers | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
-| Content-Type not `multipart/form-data` | 400 | `{"error":"Invalid request: expected a multipart/form-data body"}` | | `multipart.ts:196-202` | axum `Multipart` rejection: 400 `text/plain` `` Invalid `boundary` for `multipart/form-data` request ``, before every gate (`tests/fixtures/content/create-entity-400-not-multipart.json`, `write_path_tests.rs:225-236`) | DIVERGENT: body and content-type. The fixture says "Upstream 500s", which is not what the pinned revision does. |
-| declared Content-Length > 2 GiB + framing | 413 | `{"error":"The request body is too large. The maximum allowed total upload size is 2147483648 bytes plus multipart framing (<n> bytes in all)."}` | | `multipart.ts:133-136,161-166` | Body over 200 MiB: the axum length limit surfaces as a read error and is mapped to 400 `{"error":"Failed to read file data: ..."}` or `"Failed to read multipart field: ..."` (`create_entity.rs:192,211`, `lib.rs:685`). Gateway: nginx 413 HTML over 200m. | DIVERGENT: status 400 vs 413, limit 200 MiB vs 2 GiB, message |
-| received bytes > `MAX_UPLOAD_TOTAL_SIZE` | 413 | `{"error":"The request body is too large. The maximum allowed total upload size is 2147483648 bytes."}` | | `multipart.ts:259-270` | as above | DIVERGENT |
-| more than 3000 files | 413 | `{"error":"Too many files in the request. The maximum allowed is 3000."}` | | `multipart.ts:296-298` | 400 `{"error":"deployment exceeds maximum of 1000 files"}` (`create_entity.rs:55,202-206`) | DIVERGENT: status, limit, message |
-| file > 100 MiB | 413 | `{"error":"File '<filename>' is too large. The maximum allowed size per file is 104857600 bytes."}` | | `multipart.ts:378-386` | 400 `{"error":"file <field name> exceeds 52428800 bytes"}` (`create_entity.rs:56,213-217`) | DIVERGENT: status, limit, message (field name vs filename) |
-| more than 32 fields | 413 | `{"error":"Too many form fields in the request. The maximum allowed is 32."}` | | `multipart.ts:301-307` | 400, same text (`create_entity.rs:223-227`) | DIVERGENT: status only |
-| field > 32 KiB | 413 | `{"error":"Field '<name>' is too large. The maximum allowed size per field is 32768 bytes."}` | | `multipart.ts:314-321` | 400, same text (`create_entity.rs:235-239`) | DIVERGENT: status only |
-| repeated field name | 400 | `{"error":"Duplicate form field '<name>'"}` | | `multipart.ts:223-232` | Accepted. The last value wins and repeats count toward the field limit (`create_entity.rs:222-244`). | DIVERGENT |
+| Content-Type not `multipart/form-data` | 400 | `{"error":"Invalid request: expected a multipart/form-data body"}` | | `multipart.ts:196-202` | Same body, after the read-only, writes, bootstrapping and budget gates and a spent quota's 429, uncounted (`create_entity.rs:410-434`, `tests/fixtures/content/create-entity-400-not-multipart.json`) | MATCH |
+| declared Content-Length > total + framing | 413 | `{"error":"The request body is too large. The maximum allowed total upload size is 2147483648 bytes plus multipart framing (<n> bytes in all)."}` | | `multipart.ts:133-136,161-166` | Same text over dcl-one's 200 MiB total: `... 209715200 bytes plus multipart framing (<n> bytes in all).`, before the body is read; a body that grows past `<n>` gets the same 413 (`create_entity.rs:75-95,413-434`, `lib.rs:693`). Gateway: nginx 413 HTML over 200m. | MATCH except the total (200 MiB, as CW-7 keeps it) |
+| received bytes > `MAX_UPLOAD_TOTAL_SIZE` | 413 | `{"error":"The request body is too large. The maximum allowed total upload size is 2147483648 bytes."}` | | `multipart.ts:259-270` | Same text with 209715200 (`create_entity.rs:235-245`) | MATCH except the total |
+| more than 3000 files | 413 | `{"error":"Too many files in the request. The maximum allowed is 3000."}` | | `multipart.ts:296-298` | same (`create_entity.rs:261-265`) | MATCH |
+| file > 100 MiB | 413 | `{"error":"File '<filename>' is too large. The maximum allowed size per file is 104857600 bytes."}` | | `multipart.ts:378-386` | same, `undefined` for a part without a file name as busboy prints it (`create_entity.rs:269-282`) | MATCH |
+| more than 32 fields | 413 | `{"error":"Too many form fields in the request. The maximum allowed is 32."}` | | `multipart.ts:301-307` | same (`create_entity.rs:288-292`) | MATCH |
+| field > 32 KiB | 413 | `{"error":"Field '<name>' is too large. The maximum allowed size per field is 32768 bytes."}` | | `multipart.ts:314-321` | same (`create_entity.rs:300-304`) | MATCH |
+| repeated field name | 400 | `{"error":"Duplicate form field '<name>'"}` | | `multipart.ts:223-232` | same, for fields and file parts (`create_entity.rs:266-268,307-309`) | MATCH |
 | body still arriving after 5 min | 408 | `{"error":"The upload did not finish within 300 s: received <r> of <d> bytes (<k> KiB/s). Retry on a faster connection or send smaller batches."}` | | `multipart.ts:110-117,437-450` | Optional `TimeoutLayer` 408 with an empty body when `request_timeout_secs` > 0 (`lib.rs:235-238,720-725`). Gateway `client_body_timeout 300s` gives an nginx 408. | DIVERGENT: body |
-| malformed multipart (parser error) | 400 | `{"error":"Invalid multipart/form-data request"}` | | `multipart.ts:455-470` | 400 `{"error":"Failed to read multipart field: <multer error>"}` / `"Failed to read file data: ..."` / `"Failed to read field value: ..."` (`create_entity.rs:189-243`) | DIVERGENT: message (leaks parser detail) |
+| malformed multipart (parser error) | 400 | `{"error":"Invalid multipart/form-data request"}` | | `multipart.ts:455-470` | same; the parser's text is logged (`create_entity.rs:100-108`). A field value that is not UTF-8 is decoded with replacement characters, as busboy does. | MATCH |
 | spool write/folder failure | 503 | `{"error":"The server cannot store uploads right now, please retry shortly."}` | `Retry-After: 30` | `multipart.ts:94,169-176` | n/a (no spool, forms held in memory) | n/a |
 | spool flush did not finish in time | 503 | `{"error":"The upload could not be stored in time, please retry shortly."}` | `Retry-After: 30` | `multipart.ts:476-485` | n/a | n/a |
 
@@ -135,7 +136,7 @@ Success example (both):
 | chain longer than 10 (JSON or indexed) | 400 | `{"error":"Auth chain is too long; the maximum allowed is 10 elements"}` | `:450-452,472-474` | same (`create_entity.rs:78-80,98-100,126-128`; `library/dcl-auth/src/auth_chain.rs:6`) | MATCH |
 | indexed link missing payload/signature/type | 400 | `{"error":"Missing auth chain element at index <i>"}` | `:477-484` | same (`create_entity.rs:116-124`) | MATCH |
 | chain fails `AuthChain.validate` (e.g. `[]`, a link without `type`/`payload`, an unknown `type`) | 400 | `{"error":"Invalid auth chain"}` | `:92-94` | A link without `type`: `{"error":"invalid auth chain format: each link must have a \"type\" field"}`. A link without `payload`: `"... \"payload\" field"` (`create_entity.rs:133-150`). `[]` passes and fails later inside `{errors}`. | DIVERGENT |
-| entity already deployed (any `entityId` present in `deployments`) | 200 | `{"creationTimestamp": <stored localTimestamp>}`, answered before the signature, TTL and rate-limit checks | `:98-109`, `deployment-service/component.ts:453-454,461-468` | No early replay. TTL (20 min), the per-pointer rate limit (3-20 s), validation and the newer-entity check run first. Then `persist` answers `creationTimestamp: now_ms` (`write_deployer.rs:783-812,1163-1175`). | DIVERGENT: a retry within the rate-limit window gets 400 `Entity rate limited`; one after 20 min gets 400 `not recent enough`; one overwritten since gets 400 newer-entity; the timestamp is the current time, not the original |
+| entity already deployed (any `entityId` present in `deployments`) | 200 | `{"creationTimestamp": <stored localTimestamp>}`, answered before the signature, TTL and rate-limit checks | `:98-109`, `deployment-service/component.ts:453-454,461-468` | Same, right after the auth-chain parse (`create_entity.rs:553-567`); a deploy racing it answers the stored timestamp from the write (`write_deployer.rs:1203-1213`). A failed lookup goes on to the deploy. | MATCH |
 
 #### 2d. Deployment validation (`deployment-service/component.ts`, `server-validator.ts`, `@dcl/content-validator`)
 
@@ -168,7 +169,7 @@ All rows below are 400 `{"errors":[...]}` upstream unless the row says otherwise
 | trigger | upstream message | upstream ref | dcl-one | verdict |
 |---|---|---|---|---|
 | no uploaded file hashes to `entityId` | `Failed to find the entity file.` | `component.ts:402-405,427-430` | `The entity file was not part of the uploaded files.` (`write_deployer.rs:750-757`) | DIVERGENT: wording |
-| entity file not JSON / bad type / bad pointers / bad timestamp / bad content | `There was a problem parsing the entity` (`InvalidEntityError` text is logged only) | `component.ts:406-415`, `entities/component.ts:99-156` | `There was a problem parsing the entity: <serde error>` (`write_deployer.rs:759-760`) | DIVERGENT: suffix leaks the serde message |
+| entity file not JSON / bad type / bad pointers / bad timestamp / bad content | `There was a problem parsing the entity` (`InvalidEntityError` text is logged only) | `component.ts:406-415`, `entities/component.ts:99-156` | same; the serde text is logged (`write_deployer.rs:782-786`) | MATCH |
 | entity file `id` field differs from `entityId` | accepted (id is taken from the request) | `entities/component.ts:126-128` | `Entity id does not match the uploaded entity file.` (`write_deployer.rs:765-771`) | DIVERGENT: dcl-one refuses |
 | signature invalid at `entity.timestamp` | `The signature is invalid. <@dcl/crypto message>` | `create-entity-handler.ts:159-170`, `crypto/component.ts:25-32` | `The signature is invalid. <dcl-auth AuthError Display>` from the validator, after the structure, metadata and ADR-45 rules (`validator/rules.rs:299-314`, `library/dcl-auth/src/error.rs:4-38`) | DIVERGENT: tail wording (not pinned upstream) and order |
 | contract-wallet (EIP-1654) link cannot be checked | 400 with the `@dcl/crypto` message | same | 503 `{"errors":["The signature is invalid. EIP-1654 ..."]}`, `Retry-After: 30` (`validator/rules.rs:308-311`, `create_entity.rs:262-278`) | DIVERGENT (intentional) |
@@ -183,10 +184,10 @@ All rows below are 400 `{"errors":[...]}` upstream unless the row says otherwise
 | two uploaded files map to one declared hash with different bytes | n/a | | `two different uploaded files map to the same content hash <h>` (`write_deployer.rs:833-837`) | dcl-one only |
 | content-validator rejections (structure, IPFS hashing, metadata schema, ADR-45, size per pointer, content cross-check, profile/scene/outfits/items rules, access) | `@dcl/content-validator` strings | `component.ts:362-369` | Port in `services/catalyst/content/src/validator/rules.rs`. Spot-checked strings equal to the local clone: `There are repeated pointers in your request.`; `The entity needs to be pointed by one or more pointers.`; `This hash '<h>' is not valid. It should be IPFS v2 format.`; `The deployment is too big. The maximum allowed size per pointer is ..`; `This hash is referenced in the entity but was not uploaded or previously available: <h>`; `This hash was uploaded but is not referenced in the entity: <h>`; `The metadata for this entity type (<t>) is not valid.`; `Type <t> is not supported yet` (`rules.rs:250,257,279,327,367,762-780`, `metadata_schema.rs:45`) | MATCH for the strings checked; the rest is not compared (upstream source not in the pinned tree) |
 | access checker fails (RPC down / timeout) | rejected inside `{errors}` (400) with the validator's `Error checking ...` text | `@dcl/content-validator` | 503 `{"errors":["Error checking ..."]}`, `Retry-After: 30` (`validator/mod.rs:23-27,358-370`, `rules.rs:958`) | DIVERGENT (intentional) |
-| content store unreadable | n/a (throws, then the generic error) | | 503 `This node could not read its own content store, so the deployment could not be validated. Please retry. Cause: <cause>` (`validator/rules.rs:56-61`) | DIVERGENT: leaks the cause |
+| content store unreadable | n/a (throws, then the generic error) | | 503 `This node could not read its own content store, so the deployment could not be validated. Please retry.`; the cause is logged (`validator/rules.rs:56-63`) | DIVERGENT: status and text (dcl-one classifies it as undecidable, CW-17) |
 | scene finalized older than the TTL, current access lost | `The deployer no longer has access to the entity pointers (access is required both when a partial upload starts and when it is finalized).` | `component.ts:384-395` | The publication of a complete upload runs the full validator, access included, so lost access is refused with the validator's access message (`partial_deployments.rs:1509-1530`). Upstream's fallback text, used when its validator returns no message, is never produced. | MATCH except the fallback text (P2) |
 | commit after the partial-upload deadline | `This upload expired before it could be published. Create a new entity with a fresh timestamp.` | `deployment-service/errors.ts:4`, `component.ts:595-597` | Checked before publication: 400 `This upload expired. Create a new entity with a fresh timestamp.` (`partial_deployments.rs:1519-1521`, `partial_deployments.rs:291-293`) | DIVERGENT: wording (P2) |
-| internal error while storing | 400 `{"errors":["There was an error deploying the entity"]}` or `["An internal server error occurred. This will raise an automatic alarm."]` | `component.ts:530-541,598-602` | 503 `{"errors":["deployment write failed: <sqlx error>"]}` / `["failed to store deployment file <h>: <io error>"]` / `["Upload hashing capacity is unavailable."]`, `Retry-After: 30` (`write_deployer.rs:85,139,1155-1158`) | DIVERGENT: status, and internal error text reaches the client |
+| internal error while storing | 400 `{"errors":["There was an error deploying the entity"]}` or `["An internal server error occurred. This will raise an automatic alarm."]` | `component.ts:530-541,598-602` | 503 `{"errors":["There was an error deploying the entity"]}`, `Retry-After: 30`, for a database, store or hashing-task failure; the cause is logged (`write_deployer.rs:71-79`) | DIVERGENT: status only (503 so the client retries, kept as a classification) |
 | content lock busy (GC) | 503 `{"error":"The content lock for entity <id> is still busy, please retry shortly."}`, `Retry-After: 10` | `create-entity-handler.ts:409-418`, `errors.ts:39`, `content-locks/errors.ts:1-7` | n/a (no shared content lock) | n/a |
 | spool read failure (transient errno) | 503 `{"error":"The server cannot store uploads right now, please retry shortly."}`, `Retry-After: 30` | `create-entity-handler.ts:321-335` | n/a | n/a |
 | unexpected exception | 500 `{"error":"Internal Server Error"}` | `middlewares.ts:72-81` | 500 `{"error":"Internal Server Error"}` (`errors.rs:52-58`) | MATCH |
@@ -195,7 +196,7 @@ All rows below are 400 `{"errors":[...]}` upstream unless the row says otherwise
 
 | trigger | status | body | headers | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
-| new deployment committed | 200 | `{"creationTimestamp": number}` = the stored `localTimestamp` (ms), the same value `/deployments` and `/audit` show | `Content-Type: application/json` | `create-entity-handler.ts:337-349`, `component.ts:206-210,604` | `{"creationTimestamp": now_ms}` read from the Rust clock after the commit. The stored `local_timestamp` is PostgreSQL `now()` inside the statement (`create_entity.rs:487-504`, `write_deployer.rs:960,1160,1185-1188`). | DIVERGENT: the value differs from the stored `localTimestamp` by the statement duration |
+| new deployment committed | 200 | `{"creationTimestamp": number}` = the stored `localTimestamp` (ms), the same value `/deployments` and `/audit` show | `Content-Type: application/json` | `create-entity-handler.ts:337-349`, `component.ts:206-210,604` | `{"creationTimestamp": <ms>}`: the deploy call's `now()`, which is the stored `local_timestamp` (one statement, one transaction), truncated to ms as the history routes report it (`write_deployer.rs:63-69,937-952,1094`) | MATCH |
 
 ### Visibility after a successful deploy
 
@@ -238,7 +239,7 @@ All rows below are 400 `{"errors":[...]}` upstream unless the row says otherwise
   - `MAX_PENDING_BYTES` 50 GiB;
   - `MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE` 512 MiB.
   - Upstream refuses to start when `MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE` cannot fit the entity file plus one `MAX_UPLOAD_FILE_SIZE` file (`partial-deployments/component.ts:227`); dcl-one has no such startup check.
-- **Per-file and body caps:** the regular multipart caps apply to every batch in both trees: upstream 100 MiB per file and 2 GiB per body, dcl-one 50 MiB per file and 200 MiB per body (CW-7).
+- **Per-file and body caps:** the regular multipart caps apply to every batch in both trees: 100 MiB per file in both, 2 GiB per body upstream and 200 MiB in dcl-one (CW-7).
 
 ### Responses
 
@@ -261,10 +262,10 @@ Bodies are `{"errors":[...]}` unless the row says otherwise. Every row is read; 
 | upload started by another account / expired / gone | 400 | `This upload was started by another account.` / `This upload expired. Create a new entity with a fresh timestamp.` / `Upload no longer exists; resend its manifest.` | | `:250,490,547` | same (`partial_deployments.rs:291-293,1236-1244,1366-1373`) | MATCH |
 | per-account / per-pointer upload count | 429 | `Too many partial uploads in progress for this account (max 10). Complete an upload or wait for expired uploads to be cleaned up.`; `Too many partial uploads in progress for parcels <p..> (max 4 per parcel). Complete an upload or wait for one to expire.`; `Too many partial uploads in progress for this account on parcels <p..> (max <n> per parcel). Complete an upload or wait for one to expire.` | `Retry-After` | `:122-140,498` | same texts; `Retry-After` counts from the last cleanup run (`partial_deployments.rs:430-458,1255-1262`) | MATCH |
 | byte budgets | 400 / 429 | `This batch is <n> bytes, over the partial upload byte rate limit of <m> bytes per minute. Send it in smaller batches.` (400); `Partial upload byte rate exceeded for this account: ...` (429); `This upload needs <n> bytes of partial upload storage, over the <limit> budget of <m> bytes.` (400); `Partial upload storage budget exceeded for this account: ...` (429); `Partial upload storage on this server is full. Retry later.` (429); `Deployment failed: The deployment is too big.` (400) | `Retry-After` on 429 | `:558-606,583,891` | same texts and statuses (`partial_deployments.rs:1390-1500,1058`) | MATCH |
-| publication failed server-side | 503 | `{"errors":[...]}` | `Retry-After: 5` | `create-entity-handler.ts:266-278`, `partial-deployments/component.ts:60,398` | 503 `{"errors":[...]}`, `Retry-After: 5`; the errors carry the deployer's internal text, e.g. `deployment write failed: <sqlx error>` (`partial_deployments.rs:1562-1565`) | DIVERGENT: internal text (CW-9) |
+| publication failed server-side | 503 | `{"errors":[...]}` | `Retry-After: 5` | `create-entity-handler.ts:266-278`, `partial-deployments/component.ts:60,398` | 503 `{"errors":["There was an error deploying the entity"]}`, `Retry-After: 5`, the cause logged; a staged file the store cannot write answers the same text (`partial_deployments.rs:1198-1213`) | MATCH |
 | another batch holds the entity's lock | 503 | `{"error":"The content lock for entity <id> is still busy, please retry shortly."}` | `Retry-After: 10` | `:279-284`, `content-locks/errors.ts:1-7`, `controllers/errors.ts:39-42` | after waiting up to 30 s: 503 `{"errors":["Another batch of this upload is in progress. Retry shortly."]}`, `Retry-After: 5` (`partial_deployments.rs:100,661-670`) | DIVERGENT: envelope, text and `Retry-After` (P2) |
 | memory budget full | 503 | `{"error":"Server is handling too many uploads, please retry shortly."}` | `Retry-After: 30` | `:279-284` (entity file only) | same body and header, but on the declared length of every batch before its body is read (`create_entity.rs:326-337`) | DIVERGENT: dcl-one sheds whole batches that upstream would spool to disk (P2) |
-| bootstrapping | 503 | `{"error":"Deployments are not allowed while the Catalyst is bootstrapping"}` | `Retry-After: 60` | `middlewares.ts:17,26-35` | same body once the form is read, no `Retry-After` (`create_entity.rs:531-535`) | DIVERGENT: `Retry-After` missing (CW-5) |
+| bootstrapping | 503 | `{"error":"Deployments are not allowed while the Catalyst is bootstrapping"}` | `Retry-After: 60` | `middlewares.ts:17,26-35` | same body and header, once the form is read (`create_entity.rs:638-640`) | MATCH |
 
 **Quota counting.** Both trees count a partial upload against the daily quota once, when its first batch creates it, and count a batch refused with a 400 before it joins an upload; 429s, 503s and replays are not counted (`deployment-quota.ts:111-129`; `create_entity.rs:519-573`). Read, matching.
 
@@ -297,33 +298,20 @@ Bodies are `{"errors":[...]}` unless the row says otherwise. Every row is read; 
      - Another batch holding the entity's lock: 503 `{"errors":["Another batch of this upload is in progress. Retry shortly."]}` with `Retry-After: 5`; upstream answers `{"error":"The content lock for entity <id> is still busy, please retry shortly."}` with `Retry-After: 10` (`content-locks/errors.ts:1-7`, `controllers/errors.ts:39-42`).
      - A complete upload past its deadline answers `This upload expired. Create a new entity with a fresh timestamp.`, where upstream's commit answers `This upload expired before it could be published. Create a new entity with a fresh timestamp.` (`deployment-service/errors.ts:4`).
      - No startup check that `MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE` fits the entity file plus one maximal file (`partial-deployments/component.ts:227`).
-     - The per-file cap is 50 MiB, not 100 MiB, so a single file between the two cannot be sent in any batch (CW-7). The bootstrapping 503 lacks `Retry-After` (CW-5); a publication failure carries internal text (CW-9).
    - Place: `create_entity.rs:326-337` (skip the memory admission for a declared batch once batches can stream), `partial_deployments.rs:661-670`, `partial_deployments.rs:1519-1521`, `partial_deployments.rs:145-170` (`Limits::from_config`).
    - Severity: P2. Deploys that split their files succeed against dcl-one.
 
-2. **CW-2: replay idempotency.**
-   - Gap: dcl-one runs TTL, rate limit, validation and the newer-entity check before noticing that the entity is already deployed. A retried deploy can get 400 `Entity rate limited (...)` within 3-20 s, 400 `not recent enough` after 20 min, or 400 newer-entity once overwritten. When it succeeds it answers `now_ms`.
-   - Expected: look up `entityId` in `content.deployments` right after the auth-chain parse. If found, answer 200 `{"creationTimestamp": <stored local_timestamp ms>}` with no signature, TTL or rate-limit check (`create-entity-handler.ts:98-109`, `component.ts:453-454`).
-   - Place: `create_entity.rs:deploy_form` before `deploy_entity`, or the start of `write_deployer.rs:721`; `WriteDeployer::deployed_timestamp` (`write_deployer.rs:458-467`) already answers this lookup for the partial path (`partial_deployments.rs:610-612`). Also `persist` (`write_deployer.rs:1168-1174`) should return the stored `local_timestamp`.
-   - Severity: P1.
+2. **CW-2: replay idempotency.** Status: MATCH, no work. An entity already deployed answers 200 with its stored timestamp right after the auth-chain parse, before the signature, TTL and rate-limit checks (`create_entity.rs:553-567`); a deploy racing it answers the stored timestamp from the write (`write_deployer.rs:1203-1213`).
 
-3. **CW-3: `creationTimestamp` value.**
-   - Gap: the value comes from the Rust clock after the commit. The stored `local_timestamp` is PostgreSQL `now()`.
-   - Expected: `creationTimestamp` equals the stored `localTimestamp`, as `/deployments` and `/audit` report it (`component.ts:206-210,604`).
-   - Place: make the deploy function return `local_timestamp` (`write_deployer.rs:960` `now()`, `PersistOutcome` at `write_deployer.rs:911-917`, `1031-1059`).
-   - Severity: P1.
+3. **CW-3: `creationTimestamp` value.** Status: MATCH, no work. `creationTimestamp` is the deploy call's `now()`, which is the stored `local_timestamp`, truncated to ms as `/deployments` and `/audit` report it (`write_deployer.rs:63-69,937-952,1094`).
 
 4. **CW-4: read-only mode.**
-   - Gap: the read-only toggle answers 403 `text/plain`. Writes-off answers 503 with `Retry-After: 3600`.
-   - Expected: upstream READ_ONLY does not register `POST /entities`, so the request gets the router's 404 (`routes.ts:43-45`). Clients and forwarders read 404/405 as "read-only catalyst"; dcl-one's own forwarder already does (`forward.rs:19-21`).
-   - Place: `writes.rs:56-75`. Answer 404 with the content not-found shape for read-only, and decide whether writes-off should also look like READ_ONLY.
-   - Severity: P1.
+   - The read-only toggle answers 404 with this router's not-found, before every other gate (`writes.rs:59-63,83-88`), as upstream READ_ONLY, which does not register the route (`routes.ts:43-45`). Other methods on `/entities` still answer 405 in read-only mode, where upstream answers 404.
+   - Remaining gap: writes-off (`CONTENT_WRITES_ENABLED=false`, or held by a restore stamp) answers 503 `{"error":...}` with `Retry-After: 3600`, where a catalyst that takes no deploys answers 404. Making it 404 hides why the node refuses, which the restore-stamp variants name; both answers make dcl-one's forwarder retry (`forward.rs:19-21`).
+   - Place: `writes.rs:47-57`.
+   - Severity: P1 (now a decision: keep the 503 as an intentional dcl-one answer, or answer 404 and keep the reason in `/about` or the logs).
 
-5. **CW-5: bootstrapping `Retry-After`.**
-   - Gap: the 503 has no `Retry-After`.
-   - Expected: `Retry-After: 60` (`middlewares.ts:17,30-34`).
-   - Place: `create_entity.rs:317-324,462-466`. Return a response with the header instead of `AppError::ServiceUnavailable`.
-   - Severity: P1.
+5. **CW-5: bootstrapping `Retry-After`.** Status: MATCH, no work. Every bootstrapping 503 carries `Retry-After: 60` (`writes.rs:65-74`).
 
 6. **CW-6: per-client burst limit.**
    - Gap: no app-level limit. The gateway allows 2 r/s with burst 4 and answers an nginx HTML 429 without `Retry-After`.
@@ -331,34 +319,11 @@ Bodies are `{"errors":[...]}` unless the row says otherwise. Every row is read; 
    - Place: `create_entity.rs` (an in-process limiter beside `DailyQuota` in `upload_admission.rs`) and `infra/gateway/gateway.py:149,259` (loosen or remove `zone=deploy` so it does not cut normal bursts).
    - Severity: P1.
 
-7. **CW-7: multipart limit statuses, values and messages.**
-   - Gap: dcl-one answers 400 with other limits and messages.
-   - Expected, all 413 `{"error":...}` with these limits (`multipart.ts:133-136,259-321,378-386`, `Environment.ts:35-49`):
-     - per file: `File '<filename>' is too large. The maximum allowed size per file is 104857600 bytes.`;
-     - files: `Too many files in the request. The maximum allowed is 3000.`;
-     - fields: `Too many form fields in the request. The maximum allowed is 32.`;
-     - field size: `Field '<name>' is too large. The maximum allowed size per field is 32768 bytes.`;
-     - total: `The request body is too large. The maximum allowed total upload size is <n> bytes.`, with the Content-Length pre-check variant `... plus multipart framing (<m> bytes in all).`
-   - The 200 MiB body cap can stay, since the infrastructure cuts above about 200 MB upstream too (`docs/PARTIAL_UPLOADS.md` Limits). Over the cap the answer should still be 413 JSON.
-   - The same caps bound every partial-upload batch, so a file over 50 MiB cannot be deployed in either mode.
-   - Place: `create_entity.rs:55-60,178-248`, `lib.rs:685`.
-   - Severity: P1.
+7. **CW-7: multipart limit statuses, values and messages.** Status: MATCH, no work. Every form limit answers 413 `{"error":...}` with upstream's text and limits (3000 files, 100 MiB per file, 32 fields of 32 KiB), the total kept at 200 MiB (`create_entity.rs:62-108,217-316`, `lib.rs:693`).
 
-8. **CW-8: non-multipart body.**
-   - Gap: dcl-one answers axum's 400 `text/plain` `` Invalid `boundary` for `multipart/form-data` request ``, before every gate.
-   - Expected: 400 `{"error":"Invalid request: expected a multipart/form-data body"}` (`multipart.ts:196-202`), after the burst, bootstrapping and quota gates.
-   - Place: `create_entity.rs:304-309` (take `Result<Multipart, MultipartRejection>` and map it) and `services/catalyst/tests/fixtures/content/create-entity-400-not-multipart.json`. The fixture's note that upstream answers 500 does not hold at the pinned revision.
-   - Severity: P1.
+8. **CW-8: non-multipart body.** Status: MATCH, no work. A body that is not a form answers 400 `{"error":"Invalid request: expected a multipart/form-data body"}` after the gates, uncounted (`create_entity.rs:410-434`); the fixture `create-entity-400-not-multipart.json` replays it on a node that takes deploys.
 
-9. **CW-9: internal error text in responses.**
-   - Gap: 503 bodies carry `deployment write failed: <sqlx error>`, `failed to store deployment file <h>: <io error>`, `There was a problem parsing the entity: <serde error>`, `Failed to read multipart field: <multer error>` and `... Cause: <cause>`.
-   - Expected: no internal detail.
-     - Upstream answers 400 `{"errors":["There was an error deploying the entity"]}` for a store failure (`component.ts:598-602`).
-     - Upstream answers `There was a problem parsing the entity` for any parse failure (`component.ts:406-415`).
-     - Upstream answers `Invalid multipart/form-data request` for a parser failure (`multipart.ts:469`).
-   - Keep the 503/`Retry-After` classification if wanted, with fixed messages.
-   - Place: `write_deployer.rs:85,139,760,1158`, `create_entity.rs:192,211,233,243`, `validator/rules.rs:56-61`.
-   - Severity: P1.
+9. **CW-9: internal error text in responses.** Status: MATCH, no work. Store, database and hashing failures answer `There was an error deploying the entity` (503 with `Retry-After`, CW-17's classification), a parse failure `There was a problem parsing the entity`, a parser failure `Invalid multipart/form-data request`, the unreadable store its sentence without the cause; each cause is logged (`write_deployer.rs:71-79,781-786`, `create_entity.rs:100-108`, `validator/rules.rs:56-63`, `partial_deployments.rs:1198-1213`).
 
 10. **CW-10: per-source upload admission.**
     - Gap: no limit on concurrent uploads per source.
@@ -409,10 +374,11 @@ Bodies are `{"errors":[...]}` unless the row says otherwise. Every row is read; 
     - Place: `write_deployer.rs:286-299,712-713`, `services/catalyst/config`.
     - Severity: P2.
 
-16. **CW-16: duplicate form fields and upload timeout body.**
-    - Gap: a repeated field name is accepted (last value wins). A slow body gets an empty or nginx 408.
-    - Expected: 400 `{"error":"Duplicate form field '<name>'"}` (`multipart.ts:223-232`). 408 `{"error":"The upload did not finish within 300 s: received <r> of <d> bytes (<k> KiB/s). Retry on a faster connection or send smaller batches."}` (`multipart.ts:110-117`).
-    - Place: `create_entity.rs:178-248`.
+16. **CW-16: upload timeout body.**
+    - A repeated form name answers upstream's 400 `{"error":"Duplicate form field '<name>'"}` (`create_entity.rs:266-268,307-309`).
+    - Gap: a slow body gets an empty or nginx 408.
+    - Expected: 408 `{"error":"The upload did not finish within 300 s: received <r> of <d> bytes (<k> KiB/s). Retry on a faster connection or send smaller batches."}` (`multipart.ts:110-117`).
+    - Place: `create_entity.rs:217-316`.
     - Severity: P2.
 
 17. **CW-17: undecidable deploys answer 503.**

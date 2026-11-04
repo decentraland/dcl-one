@@ -10,16 +10,22 @@
 //! of the hash-named deploy function, `content.local_entities` provenance
 //! included for a local scene.
 //!
-//! Answers: 200 `{creationTimestamp}`; 400 `{errors}` for a refused
-//! deployment and `{error}` for a malformed form; 503 `{errors}` with
+//! Answers: 200 `{creationTimestamp}`, the stored `local_timestamp`; an
+//! entity already deployed answers its stored one before any signature,
+//! TTL or rate-limit check, as upstream's idempotent deploy does. 400
+//! `{errors}` for a refused deployment and `{error}` for a malformed form,
+//! 413 `{error}` for one past a form limit (upstream's multipart limits and
+//! texts, the total capped at [`MAX_DEPLOYMENT_BYTES`]); 503 `{errors}` with
 //! `Retry-After` when this node could not decide (a source unset or down,
-//! the store unreadable); the gates of [`super::writes`] before any of it
-//! (503 disabled, 403 read-only) and the old 503 while the node is
-//! bootstrapping. Before the body is read, a body that does not fit the
-//! in-memory upload budget answers 503 and a client address past its daily
-//! quota 429, both with `Retry-After` ([`super::upload_admission`], per
-//! process). The quota counts every admitted request, a form refused for
-//! its field limits (400) included, and gives back only the ones the
+//! the store unreadable), its cause logged, not answered. The gates of
+//! [`super::writes`] come before any of it (404 read-only, 503 disabled),
+//! then the 503 with `Retry-After: 60` while the node is bootstrapping.
+//! Before the body is read, a body that does not fit the in-memory upload
+//! budget answers 503 and a client address past its daily quota 429, both
+//! with `Retry-After` ([`super::upload_admission`], per process); a body
+//! that is not a form, or declares more than a form can hold, then answers
+//! 400 or 413 uncounted. The quota counts every other admitted request, a
+//! form refused for its limits included, and gives back only the ones the
 //! deployer could not decide for its own state (its 503). A contract-wallet
 //! signature this node cannot check (503) and an unsynced copy refusing the
 //! entity's type (503) still count: the client chose them.
@@ -36,9 +42,10 @@
 //! quota and not resuming its signer's own upload, or from an account over
 //! its byte rate, is turned away (429) before any file is buffered.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use axum::Json;
+use axum::extract::multipart::{MultipartError, MultipartRejection};
 use axum::extract::{Multipart, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -52,15 +59,52 @@ use super::write_deployer::DeployFailure;
 use super::writes;
 use crate::auth::MAX_AUTH_CHAIN_LINKS;
 
-pub const MAX_DEPLOY_FILES: usize = 1000;
-pub const MAX_DEPLOY_FILE_BYTES: usize = 50 * 1024 * 1024;
+/// Upstream's `MAX_UPLOAD_FILE_COUNT` and `MAX_UPLOAD_FILE_SIZE` defaults.
+pub const MAX_DEPLOY_FILES: usize = 3000;
+pub const MAX_DEPLOY_FILE_BYTES: usize = 100 * 1024 * 1024;
 
-/// The request body cap: the proxy's `client_max_body_size 200m` on the
-/// same route, and the old `MAX_DEPLOYMENT_SIZE_BYTES` default.
+/// The bytes of every file and field value a form may carry (upstream's
+/// `MAX_UPLOAD_TOTAL_SIZE`, 2 GiB there): the proxy's `client_max_body_size
+/// 200m` on the same route, and the old `MAX_DEPLOYMENT_SIZE_BYTES` default.
 pub const MAX_DEPLOYMENT_BYTES: usize = 200 * 1024 * 1024;
+
+/// The most framing a part adds (upstream `MULTIPART_PART_FRAMING_BYTES`):
+/// a 16 KiB header block plus a boundary line and CRLFs.
+const MULTIPART_PART_FRAMING_BYTES: usize = 16 * 1024 + 128;
+
+/// The largest body a form within the limits can have, framing included
+/// (upstream `maxMultipartBodySize`); the route's body limit.
+pub fn max_deployment_body_bytes(max_fields: usize) -> usize {
+    MAX_DEPLOYMENT_BYTES + (MAX_DEPLOY_FILES + max_fields + 1) * MULTIPART_PART_FRAMING_BYTES
+}
 
 fn invalid(msg: impl Into<String>) -> AppError {
     AppError::InvalidRequest(msg.into())
+}
+
+fn too_large(msg: impl Into<String>) -> AppError {
+    AppError::PayloadTooLarge(msg.into())
+}
+
+/// Upstream's 413 for a body past [`max_deployment_body_bytes`].
+fn body_too_large(max_fields: usize) -> AppError {
+    too_large(format!(
+        "The request body is too large. The maximum allowed total upload size is {MAX_DEPLOYMENT_BYTES} bytes plus multipart framing ({} bytes in all).",
+        max_deployment_body_bytes(max_fields)
+    ))
+}
+
+/// A body that is not a `multipart/form-data` form.
+const NOT_MULTIPART_MESSAGE: &str = "Invalid request: expected a multipart/form-data body";
+
+/// A read error of the form: past the route's body limit, upstream's 413;
+/// any other parser failure its fixed 400, the parser's text logged.
+fn read_error(e: MultipartError, max_fields: usize) -> AppError {
+    if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        return body_too_large(max_fields);
+    }
+    tracing::debug!(error = %e, "POST /entities: unreadable multipart form");
+    invalid("Invalid multipart/form-data request")
 }
 
 /// The chain as the form spells it: an `authChain` JSON array, or the
@@ -170,11 +214,14 @@ enum Form {
     Refused(Response),
 }
 
-/// Reads the whole form: text fields by name, at most `max_fields` of up to
+/// Reads the whole form with upstream's multipart limits and answers
+/// (`multipart.ts`): text fields by name, at most `max_fields` of up to
 /// `max_field_bytes` each, and file parts in order with their field names,
-/// each under [`MAX_DEPLOY_FILE_BYTES`], at most [`MAX_DEPLOY_FILES`] of them.
-/// `before_files` sees the fields read before the first file part (the
-/// clients send theirs first) and may refuse the form there.
+/// each up to [`MAX_DEPLOY_FILE_BYTES`], at most [`MAX_DEPLOY_FILES`] of
+/// them, all values together up to [`MAX_DEPLOYMENT_BYTES`]; a limit passed
+/// is a 413, a name sent twice a 400. `before_files` sees the fields read
+/// before the first file part (the clients send theirs first) and may
+/// refuse the form there.
 async fn read_form(
     multipart: &mut Multipart,
     max_fields: usize,
@@ -183,13 +230,25 @@ async fn read_form(
 ) -> AppResult<Form> {
     let mut fields: BTreeMap<String, String> = BTreeMap::new();
     let mut files: Vec<(String, Bytes)> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
     let mut field_count = 0usize;
+    let mut total_bytes = 0usize;
     let mut before_files = Some(before_files);
+    let duplicate = |name: &str| invalid(format!("Duplicate form field '{name}'"));
+    let mut count_total = |bytes: usize| {
+        total_bytes = total_bytes.saturating_add(bytes);
+        if total_bytes > MAX_DEPLOYMENT_BYTES {
+            return Err(too_large(format!(
+                "The request body is too large. The maximum allowed total upload size is {MAX_DEPLOYMENT_BYTES} bytes."
+            )));
+        }
+        Ok(())
+    };
 
     while let Some(mut field) = multipart
         .next_field()
         .await
-        .map_err(|e| invalid(format!("Failed to read multipart field: {e}")))?
+        .map_err(|e| read_error(e, max_fields))?
     {
         let name = field.name().unwrap_or("").to_string();
 
@@ -200,28 +259,34 @@ async fn read_form(
                 return Ok(Form::Refused(refused));
             }
             if files.len() >= MAX_DEPLOY_FILES {
-                return Err(invalid(format!(
-                    "deployment exceeds maximum of {MAX_DEPLOY_FILES} files"
+                return Err(too_large(format!(
+                    "Too many files in the request. The maximum allowed is {MAX_DEPLOY_FILES}."
                 )));
             }
+            if !seen.insert(name.clone()) {
+                return Err(duplicate(&name));
+            }
+            // Upstream prints busboy's file name, `undefined` for a part
+            // without one (the Explorer names its parts by hash only).
+            let file_name = field.file_name().unwrap_or("undefined").to_string();
             let mut buf = BytesMut::new();
             while let Some(chunk) = field
                 .chunk()
                 .await
-                .map_err(|e| invalid(format!("Failed to read file data: {e}")))?
+                .map_err(|e| read_error(e, max_fields))?
             {
                 if buf.len().saturating_add(chunk.len()) > MAX_DEPLOY_FILE_BYTES {
-                    return Err(invalid(format!(
-                        "file {name} exceeds {MAX_DEPLOY_FILE_BYTES} bytes"
+                    return Err(too_large(format!(
+                        "File '{file_name}' is too large. The maximum allowed size per file is {MAX_DEPLOY_FILE_BYTES} bytes."
                     )));
                 }
+                count_total(chunk.len())?;
                 buf.extend_from_slice(&chunk);
             }
             files.push((name, buf.freeze()));
         } else {
-            // Repeated names count too.
             if field_count >= max_fields {
-                return Err(invalid(format!(
+                return Err(too_large(format!(
                     "Too many form fields in the request. The maximum allowed is {max_fields}."
                 )));
             }
@@ -230,18 +295,21 @@ async fn read_form(
             while let Some(chunk) = field
                 .chunk()
                 .await
-                .map_err(|e| invalid(format!("Failed to read field value: {e}")))?
+                .map_err(|e| read_error(e, max_fields))?
             {
                 if buf.len().saturating_add(chunk.len()) > max_field_bytes {
-                    return Err(invalid(format!(
+                    return Err(too_large(format!(
                         "Field '{name}' is too large. The maximum allowed size per field is {max_field_bytes} bytes."
                     )));
                 }
                 buf.extend_from_slice(&chunk);
             }
-            let value = String::from_utf8(buf)
-                .map_err(|e| invalid(format!("Failed to read field value: {e}")))?;
-            fields.insert(name, value);
+            if !seen.insert(name.clone()) {
+                return Err(duplicate(&name));
+            }
+            count_total(buf.len())?;
+            // busboy decodes a value as UTF-8 with replacement characters.
+            fields.insert(name, String::from_utf8_lossy(&buf).into_owned());
         }
     }
     Ok(Form::Read(fields, files))
@@ -293,19 +361,24 @@ fn quota_exceeded_response(retry_after_secs: u64) -> Response {
 
 /// The bytes a body can occupy: its declared length, else the body cap.
 fn declared_body_bytes(headers: &HeaderMap) -> u64 {
+    declared_length(headers)
+        .unwrap_or(u64::MAX)
+        .min(MAX_DEPLOYMENT_BYTES as u64)
+}
+
+/// The declared `Content-Length`, if any.
+fn declared_length(headers: &HeaderMap) -> Option<u64> {
     headers
         .get(header::CONTENT_LENGTH)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(u64::MAX)
-        .min(MAX_DEPLOYMENT_BYTES as u64)
 }
 
 pub async fn create_entity(
     State(state): State<SharedState>,
     RawQuery(query): RawQuery,
     headers: HeaderMap,
-    multipart: Multipart,
+    multipart: Result<Multipart, MultipartRejection>,
 ) -> AppResult<Response> {
     let request_started = std::time::Instant::now();
     if let Some(refused) = writes::refuse(&state) {
@@ -314,13 +387,8 @@ pub async fn create_entity(
     let Some(deployer) = state.deployer().cloned() else {
         return Ok(writes::disabled_response());
     };
-    let bootstrapping = || {
-        Err(AppError::ServiceUnavailable(
-            writes::BOOTSTRAPPING_MESSAGE.to_string(),
-        ))
-    };
     if !state.sync.takes_some_deploys() {
-        return bootstrapping();
+        return Ok(writes::bootstrapping_response());
     }
 
     let Some(_reservation) = state
@@ -340,6 +408,30 @@ pub async fn create_entity(
     // ([`partial_deployments`]): a source that spent its quota may still
     // resume its own uploads.
     let declared_partial = partial_deployments::is_declared(query.as_deref());
+    // Upstream's parser refuses these before its quota counts the request,
+    // and after its pre-body check of a spent quota.
+    let max_fields = state.settings.max_upload_field_count;
+    let multipart = match multipart {
+        Err(_) => Err(invalid(NOT_MULTIPART_MESSAGE)),
+        Ok(_)
+            if declared_length(&headers)
+                .is_some_and(|n| n > max_deployment_body_bytes(max_fields) as u64) =>
+        {
+            Err(body_too_large(max_fields))
+        }
+        Ok(multipart) => Ok(multipart),
+    };
+    let multipart = match multipart {
+        Ok(multipart) => multipart,
+        Err(refusal) => {
+            if !declared_partial
+                && let Some(retry_after) = state.deploy_quota.exhausted(&client_ip)
+            {
+                return Ok(quota_exceeded_response(retry_after));
+            }
+            return Err(refusal);
+        }
+    };
     let charge = if declared_partial {
         None
     } else {
@@ -373,6 +465,15 @@ pub async fn create_entity(
             Err(e) => e.into_response(),
         },
     )
+}
+
+/// The 200 of a deployed entity: its stored `local_timestamp` in ms.
+fn created_response(creation_timestamp: i64) -> Response {
+    (
+        StatusCode::OK,
+        Json(json!({ "creationTimestamp": creation_timestamp })),
+    )
+        .into_response()
 }
 
 /// What `deploy_form` needs of the request besides its body.
@@ -449,6 +550,21 @@ async fn deploy_form(
             "The 'partial=true' query parameter requires the 'partial=true' form field",
         ));
     }
+    let auth_chain = auth_chain_of(&fields, &entity_id)?;
+    // Deploys are idempotent: a replay answers the stored timestamp with no
+    // signature, TTL or rate-limit check (its chain may have expired since).
+    // A failed lookup goes on to the deploy, whose write answers a deployed
+    // entity the same way.
+    match deployer.deployed_timestamp(&entity_id).await {
+        Ok(Some(creation_timestamp)) => {
+            tracing::info!(entity_id = %entity_id, "POST /entities - Entity already deployed");
+            return Ok(Answer::Decided(created_response(creation_timestamp)));
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(entity_id = %entity_id, error = %e, "POST /entities - replay lookup failed");
+        }
+    }
     let files: Vec<Bytes> = files.into_iter().map(|(_, bytes)| bytes).collect();
     if !state.sync.takes_deploys() {
         let Some(entity_type) = entity_type_of(&files, &entity_id) else {
@@ -460,12 +576,9 @@ async fn deploy_form(
             )));
         };
         if !state.sync.takes_deploys_of(&entity_type) {
-            return Err(AppError::ServiceUnavailable(
-                writes::BOOTSTRAPPING_MESSAGE.to_string(),
-            ));
+            return Ok(Answer::Decided(writes::bootstrapping_response()));
         }
     }
-    let auth_chain = auth_chain_of(&fields, &entity_id)?;
 
     let user_agent = headers
         .get("user-agent")
@@ -495,13 +608,7 @@ async fn deploy_form(
                 deploy_us = deploy_started.elapsed().as_micros() as u64,
                 elapsed_us = request_started.elapsed().as_micros() as u64
             );
-            Ok(Answer::Decided(
-                (
-                    StatusCode::OK,
-                    Json(json!({ "creationTimestamp": creation_timestamp })),
-                )
-                    .into_response(),
-            ))
+            Ok(Answer::Decided(created_response(creation_timestamp)))
         }
         Err(failure) => {
             tracing::warn!(entity_id = %entity_id, errors = ?failure.errors(), "POST /entities - Deployment failed");
@@ -529,9 +636,7 @@ async fn partial_batch(
     files: Vec<(String, Bytes)>,
 ) -> AppResult<Response> {
     if !state.sync.takes_deploys_of("scene") {
-        return Err(AppError::ServiceUnavailable(
-            writes::BOOTSTRAPPING_MESSAGE.to_string(),
-        ));
+        return Ok(writes::bootstrapping_response());
     }
     // Counted for good: the charge is never refunded.
     let count = || {
