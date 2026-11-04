@@ -179,6 +179,7 @@ fn compress_decoded(img: image::DynamicImage) -> Result<Vec<u8>, ImageProcessErr
 pub(crate) fn transcode_ktx2(bytes: &[u8]) -> Result<Vec<u8>, ImageProcessError> {
     use basisu::{DecodeFlags, TargetFormat, Transcoder};
 
+    check_ktx2_header(bytes)?;
     let texture = Transcoder::new(bytes).map_err(|_| ImageProcessError::CantLoad)?;
     let level = (0..texture.level_count())
         .find(|&level| {
@@ -211,6 +212,68 @@ pub(crate) fn transcode_ktx2(bytes: &[u8]) -> Result<Vec<u8>, ImageProcessError>
 }
 
 const KTX2_MAGIC: &[u8] = b"\xABKTX 20\xBB\r\n\x1A\n";
+
+/// The largest KTX2 width or height taken. Its RGBA fallback is 256 MB, within the 512 MB
+/// `image` allows a PNG.
+const KTX2_MAX_SIZE: u32 = 8192;
+
+/// Checks a KTX2 header against the file before `basisu` reads it: `basisu` sizes buffers from
+/// the declared dimensions and level lengths without checking them against the data, and ktx2
+/// files are scene content. Only a single 2D image within `KTX2_MAX_SIZE` passes, every range
+/// must lie within the file, and no level may declare more than 16 bytes per 4x4 block.
+fn check_ktx2_header(bytes: &[u8]) -> Result<(), ImageProcessError> {
+    let u32_at = |at: usize| -> Option<u32> {
+        Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+    };
+    let u64_at = |at: usize| -> Option<u64> {
+        Some(u64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?))
+    };
+    let within = |offset: u64, length: u64| {
+        offset
+            .checked_add(length)
+            .is_some_and(|end| end <= bytes.len() as u64)
+    };
+
+    let valid = || -> Option<bool> {
+        let (width, height) = (u32_at(20)?, u32_at(24)?);
+        let (depth, layers, faces) = (u32_at(28)?, u32_at(32)?, u32_at(36)?);
+        let levels = u32_at(40)?.max(1);
+        if !bytes.starts_with(KTX2_MAGIC)
+            || !(1..=KTX2_MAX_SIZE).contains(&width)
+            || !(1..=KTX2_MAX_SIZE).contains(&height)
+            // one 2d image: the loader and the gltf repair take a single texture
+            || depth > 1
+            || layers > 1
+            || faces != 1
+            // a full mip chain is the most a valid file declares
+            || levels > u32::BITS - width.max(height).leading_zeros()
+        {
+            return Some(false);
+        }
+        // data format descriptor, key/value data and supercompression global data
+        if !within(u32_at(48)?.into(), u32_at(52)?.into())
+            || !within(u32_at(56)?.into(), u32_at(60)?.into())
+            || !within(u64_at(64)?, u64_at(72)?)
+        {
+            return Some(false);
+        }
+        for level in 0..levels {
+            let at = 80 + 24 * level as usize;
+            let (offset, length, uncompressed) = (u64_at(at)?, u64_at(at + 8)?, u64_at(at + 16)?);
+            let blocks = u64::from((width >> level).max(1).div_ceil(4))
+                * u64::from((height >> level).max(1).div_ceil(4));
+            if !within(offset, length) || uncompressed > blocks * 16 {
+                return Some(false);
+            }
+        }
+        Some(true)
+    };
+
+    match valid() {
+        Some(true) => Ok(()),
+        _ => Err(ImageProcessError::CantLoad),
+    }
+}
 
 fn bc7_dds(
     width: u32,
@@ -322,9 +385,14 @@ fn process_gltf(raw_bytes: &[u8], expect_repair: bool) -> Result<Vec<u8>, GltfPr
     };
 
     // point KHR_texture_basisu textures at their KTX2 image, which the texture pass below
-    // transcodes to BC7, and drop the extension the loader rejects
-    let mut basisu_textures = 0;
-    for texture in &mut root.textures {
+    // transcodes to BC7, and drop the extension the loader rejects. each texture's original
+    // source and extension are kept, to put back if its KTX2 can't be transcoded
+    let basisu_required = root
+        .extensions_required
+        .iter()
+        .any(|e| e == "KHR_texture_basisu");
+    let mut basisu_textures = Vec::new();
+    for (index, texture) in root.textures.iter_mut().enumerate() {
         let Some(extensions) = texture.extensions.as_mut() else {
             continue;
         };
@@ -334,14 +402,14 @@ fn process_gltf(raw_bytes: &[u8], expect_repair: bool) -> Result<Vec<u8>, GltfPr
         let Some(source) = basisu.get("source").and_then(|source| source.as_u64()) else {
             return Err(GltfProcessError::ParseFailed);
         };
+        basisu_textures.push((index, texture.source, basisu));
         texture.source = gltf_json::Index::new(source as u32);
-        basisu_textures += 1;
     }
     root.extensions_used.retain(|e| e != "KHR_texture_basisu");
     root.extensions_required
         .retain(|e| e != "KHR_texture_basisu");
 
-    if expect_repair && draco_views.is_empty() && basisu_textures == 0 {
+    if expect_repair && draco_views.is_empty() && basisu_textures.is_empty() {
         // the gltf failed to load for some reason other than draco compression or basisu
         // textures; there is nothing we can do to fix it
         return Err(GltfProcessError::NothingToRepair);
@@ -395,12 +463,27 @@ fn process_gltf(raw_bytes: &[u8], expect_repair: bool) -> Result<Vec<u8>, GltfPr
     }
 
     // compress & append textures
+    let mut failed_ktx2 = Vec::new();
     for (i, raw_opt) in raw_images.into_iter().enumerate() {
         if let Some(raw_pixels) = raw_opt.as_ref().filter(|raw| raw.starts_with(KTX2_MAGIC)) {
             // the loader can't read KTX2 at all, so these are transcoded whatever their size
-            let bc7_data = transcode_ktx2(raw_pixels)?;
-            root.images[i].mime_type = Some(gltf_json::image::MimeType("image/vnd-ms.dds".into()));
-            append_image(&mut root, &mut new_bin, i, bc7_data);
+            match transcode_ktx2(raw_pixels) {
+                Ok(bc7_data) => {
+                    root.images[i].mime_type =
+                        Some(gltf_json::image::MimeType("image/vnd-ms.dds".into()));
+                    append_image(&mut root, &mut new_bin, i, bc7_data);
+                }
+                // with the extension required there is no fallback to load instead
+                Err(e) if basisu_required => return Err(e.into()),
+                Err(e) => {
+                    warn!("ktx2 image {i} can't be transcoded ({e:?}), keeping its fallback");
+                    failed_ktx2.push(i);
+                    // the original view was zombied above, so carry the bytes over
+                    if root.images[i].buffer_view.is_some() {
+                        append_image(&mut root, &mut new_bin, i, raw_pixels.clone());
+                    }
+                }
+            }
         } else if let Some(raw_pixels) = raw_opt {
             // apply the same worth-compressing gate as engine::check_assets: bc7
             // saves nothing on tiny images, and a 1-pixel dimension would resize
@@ -428,6 +511,25 @@ fn process_gltf(raw_bytes: &[u8], expect_repair: bool) -> Result<Vec<u8>, GltfPr
 
             append_image(&mut root, &mut new_bin, i, new_data);
         }
+    }
+
+    // textures whose KTX2 failed go back to their fallback source, with the extension
+    let mut restored = false;
+    for (index, source, basisu) in basisu_textures {
+        let texture = &mut root.textures[index];
+        if !failed_ktx2.contains(&texture.source.value()) {
+            continue;
+        }
+        texture.source = source;
+        if let Some(extensions) = texture.extensions.as_mut() {
+            extensions
+                .others
+                .insert("KHR_texture_basisu".to_owned(), basisu);
+        }
+        restored = true;
+    }
+    if restored {
+        root.extensions_used.push("KHR_texture_basisu".to_owned());
     }
 
     // Update Buffer Total Size
@@ -682,6 +784,54 @@ mod tests {
         assert_eq!(dds_size(view_bytes(&root, &bin, 0)), (8, 8));
         // the loader accepts it now
         assert!(gltf::Gltf::from_slice(&output).is_ok());
+    }
+
+    #[test]
+    fn ktx2_with_an_oversized_or_inconsistent_header_is_rejected() {
+        let patched = |at: usize, value: &[u8]| {
+            let mut bytes = UASTC_8.to_vec();
+            bytes[at..at + value.len()].copy_from_slice(value);
+            bytes
+        };
+        // 40000x40000: the rgba fallback alone would be 6.4 GB
+        let huge = [&40_000u32.to_le_bytes()[..], &40_000u32.to_le_bytes()].concat();
+        assert!(transcode_ktx2(&patched(20, &huge)).is_err());
+        // level 0 reaching past the end of the file
+        assert!(transcode_ktx2(&patched(88, &u64::MAX.to_le_bytes())).is_err());
+        // level 0 declaring more bytes than an 8x8 image's four blocks hold
+        assert!(transcode_ktx2(&patched(96, &(1u64 << 40).to_le_bytes())).is_err());
+        // more levels than an 8x8 mip chain has
+        assert!(transcode_ktx2(&patched(40, &5u32.to_le_bytes())).is_err());
+        assert!(transcode_ktx2(&UASTC_8[..UASTC_8.len() / 2]).is_err());
+    }
+
+    #[test]
+    fn basisu_texture_with_a_bad_ktx2_keeps_its_fallback() {
+        let bad_ktx2 = [KTX2_MAGIC, &[0; 100]].concat();
+        let json = |required: &str| {
+            format!(
+                r#"{{"asset":{{"version":"2.0"}},
+                    "extensionsUsed":["KHR_texture_basisu"],
+                    "extensionsRequired":[{required}],
+                    "images":[{{"mimeType":"image/png","uri":"data:image/png;base64,{}"}},
+                              {{"mimeType":"image/ktx2","uri":"data:image/ktx2;base64,{}"}}],
+                    "textures":[{{"source":0,"extensions":{{"KHR_texture_basisu":{{"source":1}}}}}}]}}"#,
+                general_purpose::STANDARD.encode(png_bytes(2, 2)),
+                general_purpose::STANDARD.encode(&bad_ktx2),
+            )
+        };
+
+        let output = process_gltf(json("").as_bytes(), false).unwrap();
+        let (root, _) = parse_glb(&output);
+        assert_eq!(root.textures[0].source.value(), 0);
+        let extensions = root.textures[0].extensions.as_ref().unwrap();
+        assert!(extensions.others.contains_key("KHR_texture_basisu"));
+        assert_eq!(root.extensions_used, ["KHR_texture_basisu"]);
+        assert!(gltf::Gltf::from_slice(&output).is_ok());
+
+        // required: nothing to fall back to
+        let required = json(r#""KHR_texture_basisu""#);
+        assert!(process_gltf(required.as_bytes(), true).is_err());
     }
 
     #[test]

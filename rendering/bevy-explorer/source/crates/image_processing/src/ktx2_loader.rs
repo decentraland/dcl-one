@@ -2,10 +2,9 @@
 //! transcoded to BC7 on load, by the same `transcode_ktx2` the gltf repair uses. The dds a
 //! transcode produces is kept in `KTX2_RESULTS` until `engine::check_assets` queues it as a
 //! `ProcessingAssetType::Ktx2Cache` and the processor writes it over the cached ktx2 bytes, so
-//! the next load reads a dds (`DDS ` magic) and skips the transcode. A ktx2 that already holds
-//! BC7 is not written back: the cache would only grow. A transcode whose write never comes (the
-//! image was dropped before it loaded, or it has no cache entry) is evicted after
-//! `RESULT_LIFETIME`.
+//! the next load reads a dds (`DDS ` magic) and skips the transcode. A transcode whose write
+//! never comes (the image was dropped before it loaded, or it has no cache entry) is evicted
+//! after `RESULT_LIFETIME`.
 
 use std::{
     collections::HashMap,
@@ -74,21 +73,13 @@ impl AssetLoader for Ktx2Loader {
             // a previous load's transcode, written over the ktx2 bytes in the cache
             bytes
         } else {
-            // vkFormat, at byte 12 of the header: 145/146 are BC7 already, so whatever
-            // `transcode_ktx2` makes of them is not worth a cache write
-            let bc7 = bytes
-                .get(12..16)
-                .and_then(|f| <[u8; 4]>::try_from(f).ok())
-                .is_some_and(|f| matches!(u32::from_le_bytes(f), 145 | 146));
             let dds = crate::processor::transcode_ktx2(&bytes)
                 .map_err(|e| anyhow::anyhow!("ktx2 transcode failed: {e:?}"))?;
-            if !bc7 {
-                if let Ok(mut results) = KTX2_RESULTS.lock() {
-                    results.insert(
-                        load_context.asset_path().to_string(),
-                        (Instant::now(), dds.clone()),
-                    );
-                }
+            if let Ok(mut results) = KTX2_RESULTS.lock() {
+                results.insert(
+                    load_context.asset_path().to_string(),
+                    (Instant::now(), dds.clone()),
+                );
             }
             dds
         };
