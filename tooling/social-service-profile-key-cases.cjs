@@ -1,10 +1,13 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/source-contracts/profile-keys.json
 // Actual source adapter/cache-key operations. The injected registry response
 // normalizes known profile lookups; this is not a deployed registry capture.
+const { requireNode26, sourceCapture, sha256 } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-profile-key-cases.cjs <upstream-checkout> <output.json>')
 const fs = require('node:fs')
-const path = require('node:path')
-const crypto = require('node:crypto')
-const { load, logs, revision, upstream } = require('./social-service-voice-source-cases.cjs')
+const { load, revision, upstream } = sourceCapture(process.argv[2])
+const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
 const pointer = '0xaabb111111111111111111111111111111111111'
 const upper = '0xAABB111111111111111111111111111111111111'
 const missing = '0xCaFe222222222222222222222222222222222222'
@@ -34,7 +37,7 @@ async function main() {
   }
   const files = ['src/adapters/registry.ts', 'src/logic/profiles.ts', 'src/utils/address.ts']
   fs.writeFileSync(process.argv[3], JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision,
-    sources: files.map(file => ({ path: file, sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(upstream, file))).digest('hex') })) },
+    sources: files.map(file => ({ path: file, sha256: sha256(upstream, file) })) },
     runtime: { node: process.version }, scope: 'Actual source registry with exact requested cache keys and case-sensitive Set deduplication. The profile-fetch dependency is injected with one normalized document per known pointer; no claim about deployed registry case handling or response ordering.', pointer, document, steps }, null, 2) + '\n')
   process.stdout.write(`Captured ${steps.length} mixed-case profile key steps\n`)
 }

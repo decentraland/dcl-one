@@ -1,8 +1,13 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/startup-source-cases.json
 // Executes pinned lifecycle/pubsub/RPC startup with controlled Redis promises.
+const { requireNode26, sourceCapture } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-startup-cases.cjs <upstream-checkout> <output.json>')
 const fs=require('node:fs')
 const path=require('node:path')
-const {req,load,logs,revision,upstream}=require('./social-service-voice-source-cases.cjs')
+const { req, load, revision, upstream } = sourceCapture(process.argv[2])
+const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
 const {Lifecycle}=req('@well-known-components/interfaces')
 const {createRecordConfigComponent}=req('@well-known-components/env-config-provider')
 const {createPubSubComponent}=load('adapters/pubsub.ts')

@@ -1,8 +1,15 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/community-raw-lifecycle-source-cases.json
 // Run: node this-file <clean-social-pin> <output.json>.
 // Cache component rebuilds share a controlled, JSON-serializing Redis facade.
-const fs=require('node:fs'), path=require('node:path'), {createHash}=require('node:crypto')
-const {req,load,logs,caller,target,revision,upstream}=require('./social-service-voice-source-cases.cjs')
+const { requireNode26, sourceCapture, sha256 } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-community-raw-lifecycle-cases.cjs <upstream-checkout> <output.json>')
+const fs=require('node:fs'), path=require('node:path')
+const { req, load, revision, upstream } = sourceCapture(process.argv[2])
+const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
+const caller = '0x1111111111111111111111111111111111111111'
+const target = '0x2222222222222222222222222222222222222222'
 const id='a3333333-b333-4c33-8d33-e33333333333', upper=id.toUpperCase(), guest='0x5555555555555555555555555555555555555555'
 const proto=req('@dcl/protocol/out-js/decentraland/social_service/v2/social_service_v2.gen')
 const mapper=load('controllers/handlers/uws/stream-registry.ts').toCommunityVoiceChatStreamEvent
@@ -19,7 +26,7 @@ async function pollingJobTiming(){
   await job[START_COMPONENT]();const before=runs
   timers[0].callback();await new Promise(setImmediate)
   const after=runs;await job[STOP_COMPONENT]()
-  return{interval_ms:interval,initial_delay_ms:timers[0].delay,after_first_run_delay_ms:timers[1].delay,callback_runs_before_timer:before,callback_runs_after_timer:after,sdk:{name:'@dcl/job-component',version:req('@dcl/job-component/package.json').version,files:['dist/src/component.js','dist/src/runner.js'].map(file=>({file,sha256:createHash('sha256').update(fs.readFileSync(path.join(path.dirname(req.resolve('@dcl/job-component/package.json')),file))).digest('hex')}))}}
+  return{interval_ms:interval,initial_delay_ms:timers[0].delay,after_first_run_delay_ms:timers[1].delay,callback_runs_before_timer:before,callback_runs_after_timer:after,sdk:{name:'@dcl/job-component',version:req('@dcl/job-component/package.json').version,files:['dist/src/component.js','dist/src/runner.js'].map(file=>({file,sha256:sha256(path.dirname(req.resolve('@dcl/job-component/package.json')), file)}))}}
  }finally{Object.assign(global,saved)}
 }
 async function main(){
@@ -80,6 +87,6 @@ async function main(){
   cases.push({scenario,http,keys,reads,published,broadcasts,sns,wire})
  }}finally{Date.now=oldNow}
  const polling_job=await pollingJobTiming()
- fs.writeFileSync(process.argv[3],JSON.stringify({revision,polling_job,sources:['.env.default','src/components.ts','src/logic/community-voice/community-voice.ts','src/logic/community/broadcaster.ts','src/logic/community-voice/community-voice-cache.ts','src/logic/community-voice/community-voice-polling.ts','src/adapters/comms-gatekeeper.ts','src/utils/uuid.ts','src/logic/updates.ts','src/controllers/handlers/rpc/subscribe-to-community-voice-chat-updates.ts','src/controllers/handlers/uws/stream-registry.ts'].map(file=>({repository:'decentraland/social-service-ea',file,sha256:createHash('sha256').update(fs.readFileSync(path.join(upstream,file))).digest('hex')})),scope:'Original community domain/broadcast invocation, cache, poller, privileged adapter identifier guards, update audience handler and both client parsers; deterministic JSON-serializing Redis facade shared across component rebuilds; controlled media HTTP responses and clock with real24h facade expiry. No network Redis/LiveKit used.',cases},null,2)+'\n')
+ fs.writeFileSync(process.argv[3],JSON.stringify({revision,polling_job,sources:['.env.default','src/components.ts','src/logic/community-voice/community-voice.ts','src/logic/community/broadcaster.ts','src/logic/community-voice/community-voice-cache.ts','src/logic/community-voice/community-voice-polling.ts','src/adapters/comms-gatekeeper.ts','src/utils/uuid.ts','src/logic/updates.ts','src/controllers/handlers/rpc/subscribe-to-community-voice-chat-updates.ts','src/controllers/handlers/uws/stream-registry.ts'].map(file=>({repository:'decentraland/social-service-ea',file,sha256:sha256(upstream, file)})),scope:'Original community domain/broadcast invocation, cache, poller, privileged adapter identifier guards, update audience handler and both client parsers; deterministic JSON-serializing Redis facade shared across component rebuilds; controlled media HTTP responses and clock with real24h facade expiry. No network Redis/LiveKit used.',cases},null,2)+'\n')
 }
 main().catch(e=>{console.error(e);process.exitCode=1})

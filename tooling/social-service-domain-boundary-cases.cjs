@@ -1,14 +1,20 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/domain-boundary-source-cases.json
 // Actual pinned domain/DB adapters on PostgreSQL TEMP relations, controlled
 // external providers and barriers. No provider endpoint is contacted.
-const fs = require('node:fs'), crypto = require('node:crypto')
-const { req, load, logs, revision, upstream } = require('./social-service-voice-source-cases.cjs')
+const { requireNode26, sourceCapture, sha256, requireDatabaseUrl } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-domain-boundary-cases.cjs <upstream-checkout> <output.json>')
+const databaseUrl = requireDatabaseUrl(process.env.CATALYST_TEST_DATABASE_URL)
+const fs = require('node:fs')
+const { req, load, revision, upstream } = sourceCapture(process.argv[2])
+const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
 const { createRecordConfigComponent } = req('@well-known-components/env-config-provider')
 const address = n => '0x' + n.toString(16).padStart(40, '0')
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 const turn = () => new Promise(setImmediate)
 async function main() {
- const client = new (req('pg').Client)({ connectionString: process.env.CATALYST_TEST_DATABASE_URL })
+ const client = new (req('pg').Client)({ connectionString: databaseUrl })
  await client.connect()
  try {
   await client.query(`CREATE TEMP TABLE community_members(community_id uuid, member_address text, role text, joined_at timestamp);
@@ -51,7 +57,7 @@ async function main() {
   await db.updateReferralProgress(address(2),'signed_up')
   const signed_up_adapter={sql:statements.at(-1).text,state:(await client.query('SELECT status,tier_granted FROM referral_progress WHERE invited_user=$1',[address(2)])).rows[0]}
   const sources=['src/adapters/communities-db.ts','src/adapters/referral-db.ts','src/logic/referral/referral.ts','src/utils/client-ip.ts','node_modules/@dcl/sns-component/dist/src/component.js']
-  fs.writeFileSync(process.argv[3],JSON.stringify({baseline:{repository:'decentraland/social-service-ea',revision},node:process.version,scope:'Actual pinned adapters and referral component on PostgreSQL TEMP relations. Provider failures and independent Promise.all operations use explicit barriers; SNS/rewards/email/Slack are controlled in-process implementations. Member exclusion captures the source ANY bug; it is not a source claim that ALL is equivalent. Signed-up adapter edge captures unguarded source SQL, not a full concurrent updateProgress proof.',sources:sources.map(path=>({path,sha256:crypto.createHash('sha256').update(fs.readFileSync(upstream+'/'+path)).digest('hex')})),membership,failures,signed_up_adapter},null,2)+'\n')
+  fs.writeFileSync(process.argv[3],JSON.stringify({baseline:{repository:'decentraland/social-service-ea',revision},node:process.version,scope:'Actual pinned adapters and referral component on PostgreSQL TEMP relations. Provider failures and independent Promise.all operations use explicit barriers; SNS/rewards/email/Slack are controlled in-process implementations. Member exclusion captures the source ANY bug; it is not a source claim that ALL is equivalent. Signed-up adapter edge captures unguarded source SQL, not a full concurrent updateProgress proof.',sources:sources.map(path=>({path,sha256:sha256(upstream, path)})),membership,failures,signed_up_adapter},null,2)+'\n')
  } finally { await client.end() }
 }
 main().catch(error=>{console.error(error);process.exitCode=1})

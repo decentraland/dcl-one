@@ -1,13 +1,13 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/profile-cases.json
 // Actual source registry cache semantics and RPC DTO parsers; no network calls.
-const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto')
-const{execFileSync}=require('node:child_process'),{createRequire}=require('node:module')
-const revision='b6b2cefefdf727b2ed47ddb887e77d226a41eea6',upstream=path.resolve(process.argv[2]||''),output=process.argv[3]
-if(!process.argv[2]||!output)throw Error('Usage: node tooling/social-service-profile-cases.cjs <upstream> <output.json>')
-const git=(...args)=>execFileSync('git',['-C',upstream,...args],{encoding:'utf8'}).trim()
-if(git('rev-parse','HEAD')!==revision||git('status','--porcelain','--untracked-files=no'))throw Error('Pinned clean upstream required')
-const from=createRequire(path.join(upstream,'package.json'));from('ts-node').register({transpileOnly:true,project:path.join(upstream,'tsconfig.json')})
-const load=file=>from(path.join(upstream,'src',file)),logs={getLogger:()=>({error(){},warn(){},info(){},debug(){}})}
+const { requireNode26, sourceCapture, sha256 } = require('./social-capture-common.cjs')
+requireNode26()
+const fs=require('node:fs')
+const output = process.argv[3]
+if (!process.argv[2] || !output) throw Error('Usage: node tooling/social-service-profile-cases.cjs <upstream> <output.json>')
+const { upstream, revision, req: from, load } = sourceCapture(process.argv[2])
+const logs={getLogger:()=>({error(){},warn(){},info(){},debug(){}})}
 const proto=from('@dcl/protocol/out-js/decentraland/social_service/v2/social_service_v2.gen')
 const caller='0x9111111111111111111111111111111111111111',owner='0x9222222222222222222222222222222222222222',alias='0x9333333333333333333333333333333333333333',second='0x9444444444444444444444444444444444444444'
 const profile=userId=>({avatars:[{userId,name:'Source profile',hasClaimedName:true,avatar:{snapshots:{face256:'https://images.example.org/raw-face.png'}}}]})
@@ -43,7 +43,7 @@ async function main(){
   }
   cases.push({id,documents,steps})
  }
- fs.writeFileSync(output,JSON.stringify({baseline:{repository:'decentraland/social-service-ea',revision,yarn_lock_sha256:crypto.createHash('sha256').update(fs.readFileSync(path.join(upstream,'yarn.lock'))).digest('hex'),sources:['src/adapters/registry.ts','src/logic/profiles.ts','src/logic/friends/friends.ts','src/logic/friends/blocks.ts','src/logic/friends/friendships.ts','src/logic/community/owners.ts',...['get-friends','get-mutual-friends','get-blocked-users','get-pending-friendship-requests','get-sent-friendship-requests','block-user','unblock-user'].map(name=>`src/controllers/handlers/rpc/${name}.ts`)].map(file=>({path:file,sha256:crypto.createHash('sha256').update(fs.readFileSync(path.join(upstream,file))).digest('hex')}))},runtime:{node:process.version},scope:'Two actual source registry components share the injected Redis cache and alternate A/B/A lookups, plus real RPC handlers/DTO parsers; friendship/block database dependencies are injected. Captures public profile aliases, source single-vs-list cache key behavior, cached+fetched duplicates and positive normal profiles. Does not alter/authenticate wallet identities.',caller,owner,alias,second,cases},null,2)+'\n')
+ fs.writeFileSync(output,JSON.stringify({baseline:{repository:'decentraland/social-service-ea',revision,yarn_lock_sha256:sha256(upstream, 'yarn.lock'),sources:['src/adapters/registry.ts','src/logic/profiles.ts','src/logic/friends/friends.ts','src/logic/friends/blocks.ts','src/logic/friends/friendships.ts','src/logic/community/owners.ts',...['get-friends','get-mutual-friends','get-blocked-users','get-pending-friendship-requests','get-sent-friendship-requests','block-user','unblock-user'].map(name=>`src/controllers/handlers/rpc/${name}.ts`)].map(file=>({path:file,sha256:sha256(upstream, file)}))},runtime:{node:process.version},scope:'Two actual source registry components share the injected Redis cache and alternate A/B/A lookups, plus real RPC handlers/DTO parsers; friendship/block database dependencies are injected. Captures public profile aliases, source single-vs-list cache key behavior, cached+fetched duplicates and positive normal profiles. Does not alter/authenticate wallet identities.',caller,owner,alias,second,cases},null,2)+'\n')
  process.stdout.write(`Captured ${cases.length} profile scenarios\n`)
 }
 main().catch(error=>{console.error(error);process.exitCode=1})

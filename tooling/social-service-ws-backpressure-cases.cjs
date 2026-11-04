@@ -1,10 +1,15 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/ws-backpressure-source-cases.json
 // Executes the pinned config provider, both handler registrations, transport
 // capacity/overflow, and native uWS sends over a temporary Unix socket.
+const { requireNode26, sourceCapture } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-ws-backpressure-cases.cjs <upstream-checkout> <output.json>')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
-const { req, load, logs, revision } = require('./social-service-voice-source-cases.cjs')
+const { req, load, revision } = sourceCapture(process.argv[2])
+const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
 const { createRecordConfigComponent } = req('@well-known-components/env-config-provider')
 const { registerWsHandler } = load('controllers/handlers/uws/ws-handler.ts')
 const { registerStreamWsHandler } = load('controllers/handlers/uws/stream-ws-handler.ts')

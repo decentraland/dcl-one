@@ -1,13 +1,12 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json
 // Actual pinned source metrics component, RPC wrapper and pool; injected service results and wall clock.
-const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto'), { execFileSync } = require('node:child_process'), { createRequire } = require('node:module')
-const root = path.resolve(process.argv[2] || ''), output = process.argv[3]
+const { requireNode26, sourceCapture, sha256 } = require('./social-capture-common.cjs')
+requireNode26()
+const fs = require('node:fs'), path = require('node:path')
+const output = process.argv[3]
 if (!process.argv[2] || !output) throw Error('Usage: node tooling/social-application-metrics-source-cases.cjs <source-root> <output.json>')
-const revision = 'b6b2cefefdf727b2ed47ddb887e77d226a41eea6'
-if (execFileSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() !== revision) throw Error('Wrong source revision')
-if (execFileSync('git', ['-C', root, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' }).trim()) throw Error('Source tracked files must be clean')
-const req = createRequire(path.join(root, 'package.json'))
-req('ts-node').register({ transpileOnly: true, project: path.join(root, 'tsconfig.json'), compilerOptions: { module: 'CommonJS', moduleResolution: 'node' } })
+const { upstream: root, revision, req } = sourceCapture(process.argv[2])
 const { metricDeclarations } = req(path.join(root, 'src/metrics.ts'))
 const { createMetricsComponent } = req('@dcl/metrics')
 const { createRpcServerMetricsWrapper, ServiceType } = req(path.join(root, 'src/adapters/rpc-server/metrics-wrapper.ts'))
@@ -154,9 +153,11 @@ async function main() {
  await instrumentHttpServerWithPromClientRegistry({ server, metrics: apiObserver, config, registry: apiMetrics.registry })
  server.use(apiRouter.middleware()); server.use(apiRouter.allowedMethods())
  await server.start()
- const port = (await getUnderlyingServer(server)).address().port
  const apiCases = []
+ let listener
  try {
+  listener = await getUnderlyingServer(server)
+  const port = listener.address().port
   for (const input of [
    { method: 'GET', path: '/unknown' },
    { method: 'OPTIONS', path: '/unknown' },
@@ -169,12 +170,12 @@ async function main() {
    { method: 'POST', path: '/unknown', body: 'x'.repeat(65) }
   ]) {
    const status = await new Promise((resolve, reject) => {
-    const request = require('node:http').request({ hostname: '127.0.0.1', port, path: input.path, method: input.method, headers: input.body ? { 'content-length': Buffer.byteLength(input.body), 'content-type': 'application/json' } : {} }, response => { response.resume(); response.on('end', () => resolve(response.statusCode)) })
-    request.on('error', reject); request.end(input.body)
+    const request = require('node:http').request({ hostname: '127.0.0.1', port, path: input.path, method: input.method, headers: input.body ? { 'content-length': Buffer.byteLength(input.body), 'content-type': 'application/json' } : {} }, response => { response.resume(); response.on('end', () => resolve(response.statusCode)); response.on('error', reject); response.on('aborted', () => reject(Error('Metrics capture response aborted'))) })
+    request.on('error', reject); request.setTimeout(5000, () => request.destroy(Error('Metrics capture request timed out'))); request.end(input.body)
    })
    apiCases.push({ ...input, status, observations: apiObservations.splice(0) })
   }
- } finally { await server.stop() }
- fs.writeFileSync(output, JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision, yarn_lock_sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(root, 'yarn.lock'))).digest('hex') }, node: process.version, protocol: req('@dcl/protocol/package.json').version, promClient: req('prom-client/package.json').version, scope: 'Actual source registry, pool, RPC metrics wrapper, subscription components and Social API loopback HTTP listener/router; deterministic injected dependencies and a fake wall clock for pool/RPC durations. No providers, database, kernel-buffer or deployment equivalence.', initial, histograms, jsonCases, poolObservations, subscriptionObservations, subscriberObservations, httpObservations, httpRoutes, apiCases, unary, streamObservations }, null, 2) + '\n')
+ } finally { listener?.closeAllConnections(); await server.stop() }
+ fs.writeFileSync(output, JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision, yarn_lock_sha256: sha256(root, 'yarn.lock') }, node: process.version, protocol: req('@dcl/protocol/package.json').version, promClient: req('prom-client/package.json').version, scope: 'Actual source registry, pool, RPC metrics wrapper, subscription components and Social API loopback HTTP listener/router; deterministic injected dependencies and a fake wall clock for pool/RPC durations. No providers, database, kernel-buffer or deployment equivalence.', initial, histograms, jsonCases, poolObservations, subscriptionObservations, subscriberObservations, httpObservations, httpRoutes, apiCases, unary, streamObservations }, null, 2) + '\n')
 }
 main().catch(error => { console.error(error); process.exitCode = 1 })

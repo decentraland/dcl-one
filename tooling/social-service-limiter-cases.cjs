@@ -1,20 +1,17 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/limiter-cases.json
 // Executes upstream's actual Redis adapter and friends component against an
 // isolated Redis over a Unix socket. No listener port or project dependency.
+const { requireNode26, sourceCapture, sha256 } = require('./social-capture-common.cjs')
+requireNode26()
 const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
-const crypto = require('node:crypto')
 const { spawn, execFileSync } = require('node:child_process')
 const Module = require('node:module')
-const upstream = path.resolve(process.argv[2] || '')
 const output = process.argv[3]
-if (!process.argv[2] || !output) throw Error('Usage: node tooling/social-service-limiter-cases.cjs <upstream> <output.json> [redis-server]')
-const revision = 'b6b2cefefdf727b2ed47ddb887e77d226a41eea6'
-if (execFileSync('git', ['-C', upstream, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() !== revision) throw Error('Wrong baseline')
-if (execFileSync('git', ['-C', upstream, 'status', '--porcelain', '--untracked-files=no'], { encoding: 'utf8' }).trim()) throw Error('Modified baseline')
-const requireUpstream = Module.createRequire(path.join(upstream, 'package.json'))
-requireUpstream('ts-node').register({ transpileOnly: true, project: path.join(upstream, 'tsconfig.json') })
+if (!process.argv[2] || !output) throw Error('Usage: node tooling/social-service-limiter-cases.cjs <upstream-checkout> <output.json> [redis-server]')
+const { upstream, revision, req: requireUpstream } = sourceCapture(process.argv[2])
 const redisPackage = requireUpstream('redis')
 const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
@@ -75,7 +72,7 @@ async function main() {
     for (const limit of [0, -1]) await scenario(`actor-limit-${limit}`, { FRIENDSHIP_RATE_LIMIT_PER_ACTOR: limit }, [[0, 'actor', 'target', 0]])
     for (const window of [0, -1]) await scenario(`window-${window}`, { FRIENDSHIP_RATE_LIMIT_WINDOW_SECONDS: window, FRIENDSHIP_RATE_LIMIT_PER_ACTOR: 1, FRIENDSHIP_RATE_LIMIT_PER_PAIR: 1 }, [[0, 'actor', 'target', 0], [1, 'actor', 'target', 0]])
     await scenario('fractional-expire-leaves-persistent-increment', { FRIENDSHIP_RATE_LIMIT_WINDOW_SECONDS: 1.5, FRIENDSHIP_RATE_LIMIT_PER_ACTOR: 1, FRIENDSHIP_RATE_LIMIT_PER_PAIR: 1 }, [[0, 'actor', 'target', 0], [1, 'actor', 'target', 0]])
-    fs.writeFileSync(output, JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision, yarn_lock_sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(upstream, 'yarn.lock'))).digest('hex') }, runtime: { node: process.version, redis: execFileSync(process.argv[4] || 'redis-server', ['--version'], { encoding: 'utf8' }).trim() }, scope: 'Real upstream Redis adapter Lua and friends limiter, real isolated Redis, two independent friends components. Domain writes/publications are injected; elapsed milliseconds are actual waits. These are block-directional cases; symmetric friendship keys have separate local tests.', cases }, null, 2) + '\n')
+    fs.writeFileSync(output, JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision, yarn_lock_sha256: sha256(upstream, 'yarn.lock') }, runtime: { node: process.version, redis: execFileSync(process.argv[4] || 'redis-server', ['--version'], { encoding: 'utf8' }).trim() }, scope: 'Real upstream Redis adapter Lua and friends limiter, real isolated Redis, two independent friends components. Domain writes/publications are injected; elapsed milliseconds are actual waits. These are block-directional cases; symmetric friendship keys have separate local tests.', cases }, null, 2) + '\n')
     process.stdout.write(`Captured ${cases.length} upstream Redis limiter scenarios\n`)
   } finally {
     if (client.isOpen) await adapter.stop()

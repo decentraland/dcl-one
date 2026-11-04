@@ -1,8 +1,12 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/ws-paths-source-cases.json
 // Signs with fresh ephemeral test identities; stores no keys or signatures.
+const { requireNode26, sourceCapture } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-ws-path-cases.cjs <upstream-checkout> <output.json>')
 const fs=require('node:fs')
 const path=require('node:path')
-const {req,load,upstream,revision}=require('./social-service-voice-source-cases.cjs')
+const { req, load, upstream, revision } = sourceCapture(process.argv[2])
 const {createTestIdentity,createAuthHeaders}=req(path.join(upstream,'test/integration/utils/auth.ts'))
 const {verifyWsIdentity,verifyWsAuthChain}=load('utils/ws-session.ts')
 async function main(){

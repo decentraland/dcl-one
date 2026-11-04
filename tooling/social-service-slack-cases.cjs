@@ -1,10 +1,13 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/source-contracts/referral-slack.json
 // Actual source payload builders, Slack component and installed SDK. The axios
 // adapter is in-process; no Slack message or other external request is sent.
+const { requireNode26, sourceCapture, sha256 } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-slack-cases.cjs <upstream-checkout> <output.json>')
 const fs = require('node:fs')
-const path = require('node:path')
-const crypto = require('node:crypto')
-const { req, load, logs, revision, upstream } = require('./social-service-voice-source-cases.cjs')
+const { req, load, revision, upstream } = sourceCapture(process.argv[2])
+const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
 const output = process.argv[3]
 const { WebClient } = req('@slack/web-api')
 const policy = req('@slack/web-api/dist/retry-policies').tenRetriesInAboutThirtyMinutes
@@ -60,7 +63,7 @@ async function main() {
     'node_modules/@dcl/slack-component/dist/src/component.js', 'node_modules/@slack/web-api/dist/WebClient.js',
     'node_modules/@slack/web-api/dist/retry-policies.js', 'node_modules/retry/lib/retry.js']
   fs.writeFileSync(output, JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision,
-    sources: sources.map(file => ({ path: file, sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(upstream, file))).digest('hex') })) },
+    sources: sources.map(file => ({ path: file, sha256: sha256(upstream, file) })) },
     runtime: { node: process.version, slack_sdk: req('@slack/web-api/package.json').version },
     scope: 'Actual source Slack payloads/component/SDK with an in-process axios adapter. Form/auth fields and retry classifications/counts are executed; transport test waits are reduced to <=1ms. Default retry durations are separately captured with deterministic Math.random=0.5. No external Slack calls, deployed success or equality beyond the existing Outbound timeouts/guards is claimed.',
     cases, transport, retry_timeout_ms_at_random_half: retryTimeouts }, null, 2) + '\n')

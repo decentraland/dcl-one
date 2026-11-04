@@ -1,14 +1,18 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/private-lifecycle-source-cases.json
 // Run: node this-file <clean-social-pin> <output.json> <clean-companion-pin>.
 // Original source queries use an owned PostgreSQL database; no media egress.
+const { requireNode26, sourceCapture, sha256, requireDatabaseUrl, GATEKEEPER_REVISION: companionRevision } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-private-lifecycle-cases.cjs <upstream-checkout> <output.json> <companion-checkout>')
+const databaseUrl = requireDatabaseUrl(process.env.CATALYST_TEST_DATABASE_URL)
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm')
-const { execFileSync } = require('node:child_process')
-const { randomUUID, createHash } = require('node:crypto')
-const { req, load, logs, caller, target, revision, upstream } = require('./social-service-voice-source-cases.cjs')
+const { randomUUID } = require('node:crypto')
 const companion = process.argv[4]
-const companionRevision = 'be6a4b97a2189157884503485892ff46d0ac68da'
-const git = (...args) => execFileSync('git', ['-C', companion, ...args], {encoding:'utf8'}).trim()
-if(git('rev-parse','HEAD') !== companionRevision || git('status','--porcelain','--untracked-files=no')) throw Error('Expected clean companion pin')
+const { req, load, revision, upstream } = sourceCapture(process.argv[2], { companions: [{ root: companion, kind: 'gatekeeper' }] })
+const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
+const caller = '0x1111111111111111111111111111111111111111'
+const target = '0x2222222222222222222222222222222222222222'
 const ts = req('typescript'), cache = new Map()
 // Compile original DB/enum/error source. The LiveKit constant dependency is
 // read from its original source; no media transport module is instantiated.
@@ -25,7 +29,7 @@ function original(file) {
  return module.exports
 }
 async function main(){
- const {Pool}=req('pg'), url=new URL(process.env.CATALYST_TEST_DATABASE_URL), name='social_stale_'+process.pid+'_'+randomUUID().replaceAll('-','')
+ const {Pool}=req('pg'), url=new URL(databaseUrl), name='social_stale_'+process.pid+'_'+randomUUID().replaceAll('-','')
  const admin=new Pool({connectionString:url.toString(),max:1});let pg
  try{
   await admin.query('CREATE DATABASE "'+name+'"'); url.pathname='/'+name;pg=new Pool({connectionString:url.toString(),max:2})
@@ -52,7 +56,7 @@ async function main(){
   writerSequences.push({scenario:'pending-then-media-other-role',pending_retained:!!(await voiceDb.getPrivateVoiceChat(pendingId)),media_rows:Number((await pg.query('SELECT count(*) AS n FROM voice_chat_users')).rows[0].n)})
   await companionDb.createVoiceChatRoom('voice-chat-private-media-two',[caller,target])
   writerSequences.push({scenario:'two-media-writers-retain-both-rooms',pending_retained:!!(await voiceDb.getPrivateVoiceChat(pendingId)),media_rows:Number((await pg.query('SELECT count(*) AS n FROM voice_chat_users')).rows[0].n),rooms:(await pg.query('SELECT DISTINCT room_name FROM voice_chat_users ORDER BY room_name')).rows.map(r=>r.room_name)})
-  fs.writeFileSync(process.argv[3],JSON.stringify({social:revision,companion:companionRevision,sources:[...['src/adapters/voice-db.ts','src/logic/voice/voice.ts'].map(file=>({repository:'decentraland/social-service-ea',file,sha256:createHash('sha256').update(fs.readFileSync(path.join(upstream,file))).digest('hex')})),...['src/adapters/db/voice-db.ts','src/adapters/db/types.ts','src/adapters/db/errors.ts','src/adapters/livekit.ts','src/logic/voice/voice.ts','src/components.ts'].map(file=>({repository:'decentraland/comms-gatekeeper',file,sha256:createHash('sha256').update(fs.readFileSync(path.join(companion,file))).digest('hex')}))],scope:'Original Social voice and pending DB + original companion presence and media-write DB on PostgreSQL. Actual initial/interrupted TTL300000; media table retains rows until its minute sweep. No LiveKit transport instantiated; one source constant dependency extracted verbatim.',entries,writerSequences},null,2)+'\n')
+  fs.writeFileSync(process.argv[3],JSON.stringify({social:revision,companion:companionRevision,sources:[...['src/adapters/voice-db.ts','src/logic/voice/voice.ts'].map(file=>({repository:'decentraland/social-service-ea',file,sha256:sha256(upstream, file)})),...['src/adapters/db/voice-db.ts','src/adapters/db/types.ts','src/adapters/db/errors.ts','src/adapters/livekit.ts','src/logic/voice/voice.ts','src/components.ts'].map(file=>({repository:'decentraland/comms-gatekeeper',file,sha256:sha256(companion, file)}))],scope:'Original Social voice and pending DB + original companion presence and media-write DB on PostgreSQL. Actual initial/interrupted TTL300000; media table retains rows until its minute sweep. No LiveKit transport instantiated; one source constant dependency extracted verbatim.',entries,writerSequences},null,2)+'\n')
  }finally{if(pg)await pg.end();await admin.query('DROP DATABASE IF EXISTS "'+name+'" WITH(FORCE)');await admin.end()}
 }
 main().catch(e=>{console.error(e);process.exitCode=1})

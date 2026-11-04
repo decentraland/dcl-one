@@ -1,12 +1,17 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/provider-boundary-source-cases.json
 // Execute pinned provider factories/SDKs with controlled fetch streams and timers.
 // No provider endpoint is contacted. The stream probe covers SDK timer scope;
 // A separate child exercises native Node body inactivity over local HTTP.
+const { requireNode26, sourceCapture, sha256 } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-provider-boundary-cases.cjs <upstream-checkout> <output.json>')
 const fs = require('node:fs')
 const crypto = require('node:crypto')
 const http = require('node:http')
 const { execFileSync } = require('node:child_process')
-const { req, load, logs, revision, upstream } = require('./social-service-voice-source-cases.cjs')
+const { req, load, revision, upstream } = sourceCapture(process.argv[2])
+const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
 const { createRecordConfigComponent } = req('@well-known-components/env-config-provider')
 const { createAIComplianceComponent } = load('adapters/ai-compliance.ts')
 const compliant = { isCompliant: true, issues: { name: [], description: [], image: [] }, confidence: 0.9 }
@@ -132,7 +137,7 @@ async function main() {
     } finally { WebClient.prototype.makeRequest = originalMakeRequest }
 
     const sources = ['src/components.ts', 'src/adapters/ai-compliance.ts', 'node_modules/@dcl/slack-component/dist/src/component.js', 'node_modules/openai/client.js', 'node_modules/openai/internal/parse.js', 'node_modules/@slack/web-api/dist/WebClient.js', 'node_modules/@dcl/analytics-component/dist/src/component.js', 'node_modules/@dcl/fetch-component/dist/src/fetcher.js']
-    fs.writeFileSync(process.argv[3], JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision, sources: sources.map(path => ({ path, sha256: crypto.createHash('sha256').update(fs.readFileSync(upstream + '/' + path)).digest('hex') })) }, runtime: { node: process.version, openai: JSON.parse(fs.readFileSync(upstream + '/node_modules/openai/package.json')).version, slack: req('@slack/web-api/package.json').version, analytics: req('@dcl/analytics-component/package.json').version, fetch: req('@dcl/fetch-component/package.json').version }, scope: 'Actual source provider factory sequence (analytics, AI, Slack) and installed OpenAI SDK; controlled fetch ReadableStream and SDK 600000ms timer. Captures missing/empty bootstrap key, timer clearance at headers, pending body across nominal SDK deadline, and accepted response above 4MiB. Slack installed SDK axios defaults and the analytics configured 60000ms header-abort timer are observed. Native Node body inactivity, headers and stalled TLS connect deadlines are exercised over loopback with the native 499ms fast timer tick controlled; analytics redirect hops execute independently within the SDK timer. Seven actual AI factory metric boundaries use controlled provider responses and cache mocks. Does not establish deployed credentials, full initComponents startup, live provider success, or delayed-DNS/combined connection-and-header timing equivalence.', native_socket_body, native_analytics, bootstrap, provider_initialization_order, active_bootstrap, sdk_body_phase, large_response, slack, analytics, ai_metrics }, null, 2) + '\n')
+    fs.writeFileSync(process.argv[3], JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision, sources: sources.map(path => ({ path, sha256: sha256(upstream, path) })) }, runtime: { node: process.version, openai: JSON.parse(fs.readFileSync(upstream + '/node_modules/openai/package.json')).version, slack: req('@slack/web-api/package.json').version, analytics: req('@dcl/analytics-component/package.json').version, fetch: req('@dcl/fetch-component/package.json').version }, scope: 'Actual source provider factory sequence (analytics, AI, Slack) and installed OpenAI SDK; controlled fetch ReadableStream and SDK 600000ms timer. Captures missing/empty bootstrap key, timer clearance at headers, pending body across nominal SDK deadline, and accepted response above 4MiB. Slack installed SDK axios defaults and the analytics configured 60000ms header-abort timer are observed. Native Node body inactivity, headers and stalled TLS connect deadlines are exercised over loopback with the native 499ms fast timer tick controlled; analytics redirect hops execute independently within the SDK timer. Seven actual AI factory metric boundaries use controlled provider responses and cache mocks. Does not establish deployed credentials, full initComponents startup, live provider success, or delayed-DNS/combined connection-and-header timing equivalence.', native_socket_body, native_analytics, bootstrap, provider_initialization_order, active_bootstrap, sdk_body_phase, large_response, slack, analytics, ai_metrics }, null, 2) + '\n')
   } finally { global.fetch = realFetch; global.setTimeout = realSetTimeout; global.clearTimeout = realClearTimeout }
 }
 async function nativeMain() {
@@ -164,7 +169,7 @@ async function nativeMain() {
   try {
     const component = await createAIComplianceComponent(dependencies('fixture-key'))
     const pending = component.validateCommunityContent({ name: 'Native body fixture' }).then(value => ({ result: value }), error => ({ error: error.message })).then(value => { completed = true; return value })
-    await headers
+    await Promise.race([headers, pending.then(() => { throw Error('Native body request completed before headers') })])
     await turn()
     if (!ticker || !sdkTimer.cleared) throw Error('Expected native fast timer and cleared SDK header timer')
     // Initialize the native fast-timer state, then allow 239.5 seconds of
@@ -224,7 +229,7 @@ async function nativeAnalyticsMain(kind) {
     const { createFetchComponent } = req('@dcl/fetch-component')
     const analytics = await createAnalyticsComponent({ config: createRecordConfigComponent({ ANALYTICS_CONTEXT: 'fixture', ANALYTICS_API_URL: `${kind === 'connect' ? 'https' : 'http'}://127.0.0.1:${server.address().port}/start`, ANALYTICS_API_TOKEN: 'fixture-token', ENV: 'fixture', ANALYTICS_REQUEST_TIMEOUT: '600000' }), logs: { getLogger: () => ({ warn() {}, error: (message, data) => logs.push({ message, data }) }) }, fetcher: createFetchComponent() })
     const pending = analytics.sendEvent('NATIVE_HEADERS_FIXTURE', {}).then(() => { completed = true })
-    await arrived
+    await Promise.race([arrived, pending.then(() => { throw Error('Native analytics request completed before reaching the listener') })])
     await turn()
     if (!ticker || !sdkTimer) throw Error('Expected native fast timer and analytics SDK timer')
     const ticks = count => { for (let n = 0; n < count; n++) ticker.fire() }
@@ -245,7 +250,7 @@ async function nativeAnalyticsMain(kind) {
       after_first_hop = { completed, elapsed_tick_ms: 481 * 499 }
       arrived = entry()
       response.writeHead(307, { location: '/end' }); response.end()
-      await arrived
+      await Promise.race([arrived, pending.then(() => { throw Error('Native analytics request completed before reaching the listener') })])
       await turn()
       ticks(480)
       await turn()
