@@ -99,9 +99,9 @@
   gap: 4px;
   height: 42px;
   padding: 8px;
-  border: 0.5px solid #fcfcfc;
+  border: 0.5px solid #cfcdd4;
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.1);
+  background: rgba(255, 255, 255, 0.1);
 }
 .shop-filters__pricebox:focus-within { border-color: #ff7439; }
 .shop-filters__pricebox input {
@@ -352,7 +352,7 @@
   padding: 4px 8px;
   box-sizing: border-box;
   border: 0;
-  border-radius: 8px;
+  border-radius: 4px;
   background: none;
   font: inherit;
   text-align: left;
@@ -367,7 +367,7 @@
   line-height: 1.57;
   color: #fcfcfc;
 }
-.shop-cats__cat[data-selected] { background: rgba(255, 255, 255, 0.14); }
+.shop-cats__cat[data-selected] { background: rgba(255, 255, 255, 0.3); }
 .shop-cats__cat .shop-ico { color: #fcfcfc; }
 .shop-cats__sub { padding-left: 24px; }
 .shop-cats__sub--leaf { padding-left: 48px; }
