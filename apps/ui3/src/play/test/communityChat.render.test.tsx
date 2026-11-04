@@ -1,0 +1,111 @@
+import { beforeEach, describe, it, expect, vi } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { Chat } from '../features/chat/Chat'
+import type { ChatState, CommunityConversation } from '../features/session/useEngineSession'
+import { pingModeFor, resetPingPrefs } from '../features/chat/ping'
+import { fakeSession } from './harness'
+
+vi.mock('../features/communities/CommunityModal', () => ({ openCommunityModal: vi.fn(() => () => undefined) }))
+import { openCommunityModal } from '../features/communities/CommunityModal'
+
+// DOMAIN: community chat in the chat panel — the rail tab (badge, mention mark, close), the
+// community title bar (online count, members list, the menu with View Community, Notification
+// Ping, Delete chat history and Close conversation), and the input and reactions it keeps.
+const MOJITO = '0x5854cce95d5e25817b41f4c41f06b695a83bc495'
+const community = (over: Partial<CommunityConversation> = {}): CommunityConversation => ({
+  id: 'c1',
+  key: 'community:c1',
+  name: 'Decentraland Foundation',
+  thumbnail: '',
+  role: 'member',
+  unread: 0,
+  mention: false,
+  members: null,
+  online: 0,
+  ...over
+})
+const chatWith = (over: Partial<ChatState>): ChatState => ({ ...fakeSession().chat, open: true, ...over })
+
+describe('community chat panel', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    resetPingPrefs()
+  })
+
+  it('shows a rail tab per community with its unread count and mention mark, selectable and closable', async () => {
+    const chat = chatWith({ communities: [community({ unread: 12, mention: true })], select: vi.fn(), closeCommunity: vi.fn() })
+    render(<Chat chat={chat} />)
+    expect(screen.getByRole('navigation', { name: 'Conversations' })).toBeInTheDocument()
+    const tab = screen.getByRole('button', { name: 'Chat in Decentraland Foundation' })
+    expect(tab).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByText('9+')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: 'Mentions you' })).toBeInTheDocument()
+    await userEvent.click(tab)
+    expect(vi.mocked(chat.select)).toHaveBeenCalledWith('community:c1')
+    await userEvent.click(screen.getByRole('button', { name: 'Close chat in Decentraland Foundation' }))
+    expect(vi.mocked(chat.closeCommunity)).toHaveBeenCalledWith('c1')
+  })
+
+  it('a community channel shows its title bar, the online count opens the members list with roles', async () => {
+    const members = [
+      { address: MOJITO, name: 'Mojito', role: 'moderator' },
+      { address: '0x3333333333333333333333333333333333333333', name: 'Cy', role: 'member' }
+    ]
+    const chat = chatWith({ channel: 'community:c1', communities: [community({ members, online: 2 })] })
+    render(<Chat chat={chat} />)
+    expect(screen.getByTitle('Decentraland Foundation')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /nearby$/ })).toBeNull()
+    expect(screen.getByRole('textbox')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '2 online' }))
+    expect(screen.getByRole('button', { name: 'View Mojito' })).toBeInTheDocument()
+    expect(screen.getByText('Moderator')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'View Cy' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Back' }))
+    expect(screen.queryByRole('button', { name: 'View Cy' })).toBeNull()
+  })
+
+  it('the menu views the community, sets the ping, deletes history or closes the chat', async () => {
+    const chat = chatWith({ channel: 'community:c1', communities: [community()], deleteHistory: vi.fn(), closeCommunity: vi.fn() })
+    render(<Chat chat={chat} />)
+    const options = () => screen.getByRole('button', { name: 'Conversation options' })
+    await userEvent.click(options())
+    await userEvent.click(screen.getByText('View Community'))
+    expect(vi.mocked(openCommunityModal)).toHaveBeenCalledWith('c1', expect.any(Function))
+    await userEvent.click(options())
+    await userEvent.click(screen.getByText('Notification Ping'))
+    const mentions = screen.getByRole('menuitemradio', { name: 'Mentions Only' })
+    expect(screen.getByRole('menuitemradio', { name: 'All Messages' })).toHaveAttribute('aria-checked', 'true')
+    await userEvent.click(mentions)
+    expect(pingModeFor('community:c1')).toBe('mentions')
+    expect(screen.queryByRole('menu')).toBeNull()
+    await userEvent.click(options())
+    await userEvent.click(screen.getByText('Delete chat history'))
+    expect(vi.mocked(chat.deleteHistory)).toHaveBeenCalledWith('community:c1')
+    await userEvent.click(options())
+    await userEvent.click(screen.getByText('Close conversation'))
+    expect(vi.mocked(chat.closeCommunity)).toHaveBeenCalledWith('c1')
+  })
+
+  it('a community line can be reacted to', async () => {
+    const chat = chatWith({
+      channel: 'community:c1',
+      communities: [community()],
+      messages: [{ sender: MOJITO, message: 'hello all', channel: 'community:c1', messageId: `${MOJITO}:1`, id: 1, ts: Date.now() }],
+      react: vi.fn()
+    })
+    render(<Chat chat={chat} />)
+    expect(screen.getByText('hello all')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'React' }))
+    await userEvent.click(screen.getByRole('button', { name: String.fromCodePoint(0x2665, 0xfe0f) }))
+    expect(vi.mocked(chat.react)).toHaveBeenCalledWith(`${MOJITO}:1`, String.fromCodePoint(0x2665, 0xfe0f), false)
+  })
+
+  it('Nearby and DM title bars carry the ping menu too', async () => {
+    render(<Chat chat={chatWith({})} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Conversation options' }))
+    await userEvent.click(screen.getByText('Notification Ping'))
+    await userEvent.click(screen.getByRole('menuitemradio', { name: 'None' }))
+    expect(pingModeFor('Nearby')).toBe('none')
+  })
+})

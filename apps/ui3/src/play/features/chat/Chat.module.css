@@ -128,6 +128,17 @@
   line-height: 16px;
   text-align: center;
 }
+/* A community tab whose unread lines @-mention you. */
+.railMention {
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  width: 10px;
+  height: 10px;
+  border-radius: var(--r-pill);
+  background: var(--brand);
+  box-shadow: 0 0 0 2px var(--panel);
+}
 .railClose {
   position: absolute;
   top: -4px;

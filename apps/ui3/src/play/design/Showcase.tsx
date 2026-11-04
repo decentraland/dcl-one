@@ -10,6 +10,7 @@ import { Pager } from './Pager'
 import { Rail } from './Rail'
 import { HeaderButton } from './HeaderButton'
 import { OptionMenu } from './OptionMenu'
+import { ContextMenu } from './ContextMenu'
 import { HintsButton, KeyCap } from './HintsButton'
 import { useState } from 'react'
 import { ControlButton } from './ControlButton'
@@ -444,6 +445,22 @@ export function Showcase(): React.JSX.Element {
           sections={[
             { label: 'Sort by', options: [{ id: 'newest', label: 'Newest' }, { id: 'oldest', label: 'Oldest' }], value: 'newest', onChange: () => undefined },
             { label: 'View', options: [{ id: 'all', label: 'All Items' }, { id: 'col', label: 'Collectibles only' }], value: 'all', onChange: () => undefined }
+          ]}
+        />
+      </Section>
+
+      <Section title="ContextMenu (items · submenu · exclusive options)">
+        <ContextMenu
+          items={[
+            { label: 'View Community' },
+            { kind: 'submenu', label: 'Notification Ping' },
+            { kind: 'separator' },
+            { kind: 'title', label: 'Notification Ping' },
+            { kind: 'option', label: 'All Messages', checked: true },
+            { kind: 'option', label: 'Mentions Only', checked: false },
+            { kind: 'option', label: 'None', checked: false },
+            { kind: 'separator' },
+            { label: 'Delete chat history', danger: true }
           ]}
         />
       </Section>
