@@ -1,8 +1,9 @@
 //! The social-api answers production gives (`decentraland/social-service-ea`
 //! at `fb3dcb8`; captures `tests/fixtures/conformance/social/social/`): the
-//! CORS layer, the probes under the gateway prefix, the error bodies, the
+//! probes under the gateway prefix, the error bodies, the
 //! member-communities order and the community places merged with their
-//! destinations.
+//! destinations. CORS uses executed b6b2cef source goldens: that source's
+//! preflight contract supersedes the older fb3dcb8 capture.
 
 use axum::http::{HeaderMap, Method};
 
@@ -40,13 +41,42 @@ async fn send(
     (status, headers, body.to_vec())
 }
 
-/// The headers the CORS layer owns; `allow` (the route's methods) and
-/// `content-length` are axum's, added after the layer as before it.
+/// Compare every application header, including unexpected extras. Only the
+/// date and transport framing/hop headers differ between the two HTTP servers.
+fn transport_header(name: &str) -> bool {
+    matches!(
+        name,
+        "date" | "content-length" | "transfer-encoding" | "connection" | "keep-alive"
+    )
+}
+
+pub(super) fn application_headers(
+    headers: &HeaderMap,
+) -> std::collections::BTreeMap<String, String> {
+    headers
+        .iter()
+        .filter(|(name, _)| !transport_header(name.as_str()))
+        .map(|(name, value)| (name.as_str().to_owned(), value.to_str().unwrap().to_owned()))
+        .collect()
+}
+
+pub(super) fn source_application_headers(
+    headers: &Value,
+) -> std::collections::BTreeMap<String, String> {
+    headers
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(name, _)| !transport_header(name))
+        .map(|(name, value)| (name.clone(), value.as_str().unwrap().to_owned()))
+        .collect()
+}
+
 fn names(headers: &HeaderMap) -> Vec<&str> {
     let mut names: Vec<&str> = headers
         .keys()
         .map(|k| k.as_str())
-        .filter(|k| !matches!(*k, "allow" | "content-length"))
+        .filter(|k| !transport_header(k))
         .collect();
     names.sort();
     names
@@ -59,11 +89,6 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
     let Some(rig) = Rig::new(Settings::for_tests()).await else {
         return;
     };
-    for prefix in ["", "/social-api"] {
-        let notes = replayed(&rig.app, prefix, "preflight-communities").await;
-        assert!(notes.is_empty(), "{prefix}: {notes:#?}");
-    }
-
     // every route of the router, the local extensions too, and any requested headers
     let (status, headers, body) = send(
         &rig.app,
@@ -88,19 +113,20 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
             "access-control-allow-origin",
             "access-control-max-age",
             "vary",
-            "x-content-type-options",
         ]
     );
     for (name, value) in [
-        ("access-control-allow-headers", "*"),
+        (
+            "access-control-allow-headers",
+            "x-identity-auth-chain-0, content-type",
+        ),
         (
             "access-control-allow-methods",
-            "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS",
+            "GET,HEAD,OPTIONS,DELETE,POST,PUT,PATCH",
         ),
         ("access-control-allow-origin", "*"),
         ("access-control-max-age", "86400"),
-        ("vary", "accept-encoding"),
-        ("x-content-type-options", "nosniff"),
+        ("vary", "Access-Control-Request-Headers"),
     ] {
         assert_eq!(headers[name], value, "{name}");
     }
@@ -116,6 +142,13 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
     .await;
     assert_eq!(status.as_u16(), fx.response.status);
     for (name, value) in &fx.response.headers {
+        if name == "vary" {
+            assert!(
+                headers.get("vary").is_none(),
+                "the pinned source adds no compression Vary"
+            );
+            continue;
+        }
         let actual = headers[name.as_str()].to_str().unwrap();
         if name == "content-type" {
             assert!(actual.starts_with(value.as_str()), "{name}: {actual}");
@@ -130,7 +163,95 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
     let (_, headers, _) = send(&rig.app, Method::GET, "/v1/communities?limit=1", &[]).await;
     assert!(headers.get("access-control-allow-origin").is_none());
     assert!(headers.get("vary").is_none());
-    assert_eq!(headers["x-content-type-options"], "nosniff");
+    assert!(!headers.contains_key("x-content-type-options"));
+    rig.finish();
+}
+
+#[tokio::test]
+async fn social_api_gateway_cors_and_unknown_paths_match_executed_source() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let fixture: Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/source-contracts/community-cors.json"
+    )))
+    .unwrap();
+    for case in fixture["cases"].as_array().unwrap() {
+        let request_headers: Vec<(&str, &str)> = case["headers"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str().unwrap()))
+            .collect();
+        let method = Method::from_bytes(case["method"].as_str().unwrap().as_bytes()).unwrap();
+        let path = format!("/social-api{}", case["path"].as_str().unwrap());
+        let (status, headers, body) = send(&rig.app, method, &path, &request_headers).await;
+        assert_eq!(
+            status.as_u16(),
+            case["status"].as_u64().unwrap() as u16,
+            "{}",
+            case["name"]
+        );
+        assert_eq!(
+            String::from_utf8(body).unwrap(),
+            case["body"].as_str().unwrap()
+        );
+        assert_eq!(
+            application_headers(&headers),
+            source_application_headers(&case["responseHeaders"]),
+            "{} complete application headers",
+            case["name"]
+        );
+    }
+    let (status, _, body) = send(&rig.app, Method::GET, "/unknown-root-path", &[ORIGIN]).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(body.is_empty());
+    rig.finish();
+}
+
+#[tokio::test]
+async fn social_api_methods_match_the_executed_source_server() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let rpc = Arc::new(crate::rpc::State::new(
+        rig.pool.clone(),
+        crate::rpc::Settings::default(),
+        None,
+        Arc::new(crate::rpc::voice::fake::FakeVoiceRooms::new(
+            rig.pool.clone(),
+        )),
+    ));
+    let app = Router::new().nest(
+        "/social-api",
+        crate::social_api_gateway(router(rig.state.clone()).merge(crate::rpc::http::router(rpc))),
+    );
+    let fixture: Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/source-contracts/community-routing.json"
+    )))
+    .unwrap();
+    for case in fixture["cases"].as_array().unwrap() {
+        let method = Method::from_bytes(case["method"].as_str().unwrap().as_bytes()).unwrap();
+        let path = format!("/social-api{}", case["path"].as_str().unwrap());
+        let (status, headers, body) = send(&app, method.clone(), &path, &[ORIGIN]).await;
+        assert_eq!(
+            status.as_u16(),
+            case["status"].as_u64().unwrap() as u16,
+            "{method} {path}"
+        );
+        assert_eq!(
+            String::from_utf8(body).unwrap(),
+            case["body"].as_str().unwrap(),
+            "{method} {path}"
+        );
+        assert_eq!(
+            application_headers(&headers),
+            source_application_headers(&case["headers"]),
+            "{method} {path} complete application headers"
+        );
+    }
     rig.finish();
 }
 
@@ -512,7 +633,7 @@ fn keys(row: &Value) -> Vec<&str> {
     keys
 }
 
-const BARE: [&str; 3] = ["addedAt", "addedBy", "id"];
+const BARE: [&str; 1] = ["id"];
 
 #[tokio::test]
 async fn a_community_place_is_its_destination_when_the_id_names_one_exactly() {
@@ -532,10 +653,7 @@ async fn a_community_place_is_its_destination_when_the_id_names_one_exactly() {
             .is_some_and(|p| !p.is_empty()),
         "{seeded}"
     );
-    assert!(
-        seeded["addedBy"].is_string() && seeded["addedAt"].is_string(),
-        "{seeded}"
-    );
+    assert!(seeded.get("addedBy").is_none() && seeded.get("addedAt").is_none());
     assert!(
         seeded.get("communityId").is_none() && seeded.get("kind").is_none(),
         "{seeded}"
@@ -546,7 +664,6 @@ async fn a_community_place_is_its_destination_when_the_id_names_one_exactly() {
         .unwrap()
         .keys()
         .map(String::as_str)
-        .chain(["addedAt", "addedBy"])
         .collect();
     expected.sort();
     assert_eq!(keys(seeded), expected);

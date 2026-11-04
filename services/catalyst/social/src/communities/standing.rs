@@ -101,6 +101,16 @@ pub async fn load_standing(
     community_id: CommunityId,
     address: &Address,
 ) -> Result<Standing, AuthorityNotEstablished> {
+    load_standing_from_database(pool, community_id, address)
+        .await
+        .map_err(|error| AuthorityNotEstablished::store_unavailable(STORE, &error))
+}
+
+pub(crate) async fn load_standing_from_database(
+    pool: &PgPool,
+    community_id: CommunityId,
+    address: &Address,
+) -> Result<Standing, sqlx::Error> {
     let row: Option<String> = sqlx::query_scalar(
         "SELECT role FROM social.community_members \
          WHERE community_id = $1 AND member_address = $2 \
@@ -109,8 +119,7 @@ pub async fn load_standing(
     .bind(community_id)
     .bind(address)
     .fetch_optional(pool)
-    .await
-    .map_err(|e| AuthorityNotEstablished::store_unavailable(STORE, &e))?;
+    .await?;
     Ok(Standing::from_row(community_id, address.clone(), row))
 }
 
@@ -122,6 +131,17 @@ pub async fn load_standing_pair(
     first: &Address,
     second: &Address,
 ) -> Result<(Standing, Standing), AuthorityNotEstablished> {
+    load_standing_pair_from_database(pool, community_id, first, second)
+        .await
+        .map_err(|error| AuthorityNotEstablished::store_unavailable(STORE, &error))
+}
+
+pub(crate) async fn load_standing_pair_from_database<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    community_id: CommunityId,
+    first: &Address,
+    second: &Address,
+) -> Result<(Standing, Standing), sqlx::Error> {
     let rows: Vec<(Address, String)> = sqlx::query_as(
         "SELECT member_address, role FROM social.community_members \
          WHERE community_id = $1 AND member_address IN ($2, $3) \
@@ -130,9 +150,8 @@ pub async fn load_standing_pair(
     .bind(community_id)
     .bind(first)
     .bind(second)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| AuthorityNotEstablished::store_unavailable(STORE, &e))?;
+    .fetch_all(executor)
+    .await?;
     let role_of = |wallet: &Address| {
         rows.iter()
             .find(|(a, _)| a == wallet)
@@ -195,6 +214,14 @@ impl ModerationAuthority {
         what: &'static str,
     ) -> Result<Self, AuthorityNotEstablished> {
         let (actor, target) = load_standing_pair(pool, community_id, actor, target).await?;
+        Self::from_standings(actor, target, what)
+    }
+
+    fn from_standings(
+        actor: Standing,
+        target: Standing,
+        what: &'static str,
+    ) -> Result<Self, AuthorityNotEstablished> {
         decide_whether_the_acting_party_outranks_the_target(&actor, &target, what)?;
         Ok(Self { actor, target })
     }
@@ -214,6 +241,13 @@ impl ModerationAuthority {
 pub struct CommunityBanAuthority(ModerationAuthority);
 
 impl CommunityBanAuthority {
+    pub(crate) fn from_standings(
+        actor: Standing,
+        target: Standing,
+    ) -> Result<Self, AuthorityNotEstablished> {
+        ModerationAuthority::from_standings(actor, target, "ban").map(Self)
+    }
+
     pub async fn resolve(
         pool: &PgPool,
         banning: &Address,
@@ -236,6 +270,13 @@ impl CommunityBanAuthority {
 pub struct CommunityUnbanAuthority(ModerationAuthority);
 
 impl CommunityUnbanAuthority {
+    pub(crate) fn from_standings(
+        actor: Standing,
+        target: Standing,
+    ) -> Result<Self, AuthorityNotEstablished> {
+        ModerationAuthority::from_standings(actor, target, "unban").map(Self)
+    }
+
     pub async fn resolve(
         pool: &PgPool,
         unbanning: &Address,

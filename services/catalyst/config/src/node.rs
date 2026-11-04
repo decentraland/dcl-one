@@ -37,6 +37,12 @@ pub struct NodeConfig {
     #[arg(long, env = "HTTP_SERVER_PORT", default_value_t = 5210)]
     pub http_server_port: u16,
 
+    /// Direct backend proxies allowed to supply a single, overwritten X-Real-IP
+    /// for referral quotas. Empty trusts only the socket peer. These are the
+    /// backend proxy networks, not the proxy's own upstream CDN networks.
+    #[arg(long, env = "HTTP_TRUSTED_PROXY_CIDRS", value_delimiter = ',')]
+    pub http_trusted_proxy_cidrs: Vec<ipnet::IpNet>,
+
     /// Operator-local Prometheus scrape listener, separate from the application API.
     #[arg(long, env = "SERVE_METRICS_BIND", default_value = "127.0.0.1:5006")]
     pub serve_metrics_bind: String,
@@ -325,6 +331,45 @@ mod tests {
         ])
         .unwrap();
         assert!(cli.node.serve_unsynced);
+    }
+
+    #[test]
+    fn trusted_backend_proxy_networks_are_explicit_and_validated() {
+        let defaults = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
+        assert!(defaults.node.http_trusted_proxy_cidrs.is_empty());
+        let config = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--http-trusted-proxy-cidrs",
+            "192.0.2.0/24,2001:db8::/32",
+        ])
+        .unwrap();
+        assert_eq!(config.node.http_trusted_proxy_cidrs.len(), 2);
+        assert!(
+            config.node.http_trusted_proxy_cidrs[0]
+                .contains(&"192.0.2.8".parse::<std::net::IpAddr>().unwrap())
+        );
+        assert!(
+            parse(&[
+                "x",
+                "--database-url",
+                "postgres:///catalyst",
+                "--http-trusted-proxy-cidrs",
+                "192.0.2.1/33"
+            ])
+            .is_err()
+        );
+        assert!(
+            parse(&[
+                "x",
+                "--database-url",
+                "postgres:///catalyst",
+                "--http-trusted-proxy-cidrs",
+                "invalid"
+            ])
+            .is_err()
+        );
     }
 
     #[test]

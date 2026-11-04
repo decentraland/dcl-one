@@ -1,7 +1,8 @@
-//! The process's outbound HTTP: one hardened [`reqwest::Client`] built through
-//! [`HttpClientCfg`] and wrapped in the one [`Outbound`] handle `serve` hands
-//! to every reader (peer sync and the RPC validator take its `raw` client,
-//! the mirrors and upstream readers send through the guard), the SSRF guard
+//! The default outbound HTTP handle: a hardened [`reqwest::Client`] built through
+//! [`HttpClientCfg`] and wrapped in the shared [`Outbound`] `serve` hands to
+//! readers (peer sync and the RPC validator take its `raw` client; mirrors and
+//! upstream readers send through the guard). Provider adapters that construct
+//! an Outbound with distinct transport settings own separate HTTP pools. The SSRF guard
 //! ([`is_safe_http_url`] on the string, [`resolve_and_pin`] on the socket),
 //! the retry ladder ([`retry_with_backoff`]) and the capped body reader.
 
@@ -31,7 +32,7 @@ pub struct HttpClientCfg {
     /// Whole-request budget; `None` for readers that stream large bodies
     /// (snapshots) and bound them by `read_timeout` and the body cap instead.
     pub total_timeout: Option<Duration>,
-    pub connect_timeout: Duration,
+    pub connect_timeout: Option<Duration>,
     /// Longest pause between two bytes of a response.
     pub read_timeout: Option<Duration>,
     pub pool_idle_timeout: Duration,
@@ -45,7 +46,7 @@ impl Default for HttpClientCfg {
     fn default() -> Self {
         Self {
             total_timeout: Some(Duration::from_secs(30)),
-            connect_timeout: Duration::from_secs(10),
+            connect_timeout: Some(Duration::from_secs(10)),
             read_timeout: None,
             pool_idle_timeout: Duration::from_secs(90),
             pool_max_idle_per_host: 16,
@@ -64,7 +65,7 @@ impl HttpClientCfg {
     pub fn serve(connections_max_idle: usize) -> Self {
         Self {
             total_timeout: None,
-            connect_timeout: Duration::from_secs(8),
+            connect_timeout: Some(Duration::from_secs(8)),
             read_timeout: Some(Duration::from_secs(25)),
             pool_max_idle_per_host: connections_max_idle,
             max_redirects: Some(2),
@@ -78,7 +79,7 @@ impl HttpClientCfg {
     }
 
     pub fn with_connect_timeout(mut self, timeout: Duration) -> Self {
-        self.connect_timeout = timeout;
+        self.connect_timeout = Some(timeout);
         self
     }
 
@@ -105,12 +106,14 @@ impl HttpClientCfg {
         };
         let mut builder = reqwest::Client::builder()
             .user_agent(self.user_agent.as_deref().unwrap_or(USER_AGENT))
-            .connect_timeout(self.connect_timeout)
             .pool_idle_timeout(self.pool_idle_timeout)
             .pool_max_idle_per_host(self.pool_max_idle_per_host)
             .tcp_nodelay(self.tcp_nodelay)
             .dns_resolver(ReservedNamesResolver::default())
             .redirect(redirect);
+        if let Some(connect) = self.connect_timeout {
+            builder = builder.connect_timeout(connect);
+        }
         if let Some(total) = self.total_timeout {
             builder = builder.timeout(total);
         }
@@ -543,9 +546,9 @@ const PIN_CACHE_MAX: usize = 256;
 /// never dialled. Redirects are re-issued by hand through the same guard
 /// (`max_redirects` hops), never followed blindly.
 ///
-/// `allow_private` is for tests against a loopback stub: it skips the guard
-/// and the pinning and sends through the shared client. Never set from
-/// configuration.
+/// Profiles for trusted provider configuration and tests may skip the guard
+/// and pinning. They use the direct client and manual redirect handling so
+/// the selected host policy applies to the entire redirect chain.
 #[derive(Clone)]
 pub struct Outbound {
     cfg: Arc<HttpClientCfg>,
@@ -632,6 +635,24 @@ impl Outbound {
         })
     }
 
+    /// A fixed provider profile using the same pool settings and host policy.
+    /// The adapter supplies its SDK deadline separately. Construct once and
+    /// retain it: this creates an independent HTTP transport pool.
+    pub fn provider_profile(
+        &self,
+        connect_timeout: Option<Duration>,
+        read_timeout: Option<Duration>,
+    ) -> reqwest::Result<Self> {
+        let mut profile = Self::new(HttpClientCfg {
+            total_timeout: None,
+            connect_timeout,
+            read_timeout,
+            ..(*self.cfg).clone()
+        })?;
+        profile.allow_private = self.allow_private;
+        Ok(profile)
+    }
+
     /// Tests only: `host` resolves to `addr` without DNS, so a loopback stub
     /// can stand in for a public name and the pinning path runs for real.
     #[cfg(test)]
@@ -650,7 +671,16 @@ impl Outbound {
             .allowing_private_hosts()
     }
 
-    /// Tests only: send to private hosts through the shared client, unpinned.
+    /// Use only for a provider endpoint supplied by trusted operator
+    /// configuration, including its redirect targets. This profile permits
+    /// private hosts and ordinary DNS, like provider SDKs. Never use it for a
+    /// URL read from an HTTP request or another untrusted document.
+    pub fn allowing_configured_provider_hosts(mut self) -> Self {
+        self.allow_private = true;
+        self
+    }
+
+    /// Tests only: send to private hosts through the direct client, unpinned.
     pub fn allowing_private_hosts(mut self) -> Self {
         self.allow_private = true;
         self
@@ -671,6 +701,8 @@ impl Outbound {
         GuardedRequest {
             outbound: self.clone(),
             builder: self.shared.request(method, url),
+            max_redirects: None,
+            fetch_redirects: false,
         }
     }
 
@@ -685,19 +717,40 @@ impl Outbound {
     /// Sends `req` through the guard, following up to `max_redirects` hops
     /// with the guard re-run on each. A body that cannot be cloned (a
     /// stream) is sent once and its redirect, if any, returned as is.
-    pub async fn execute(&self, mut req: reqwest::Request) -> Result<reqwest::Response, SendError> {
-        if self.allow_private {
-            return Ok(self.shared.execute(req).await?);
-        }
-        for hop in 0..=self.max_redirects {
-            let client = self.client_for(req.url()).await?;
+    pub async fn execute(&self, req: reqwest::Request) -> Result<reqwest::Response, SendError> {
+        self.execute_with_redirect_limit(req, self.max_redirects, false)
+            .await
+    }
+
+    async fn execute_with_redirect_limit(
+        &self,
+        mut req: reqwest::Request,
+        max_redirects: usize,
+        fetch_redirects: bool,
+    ) -> Result<reqwest::Response, SendError> {
+        for hop in 0..=max_redirects {
+            let client = if self.allow_private {
+                self.direct.clone()
+            } else {
+                self.client_for(req.url()).await?
+            };
             let resp = match req.try_clone() {
                 Some(copy) => client.execute(copy).await?,
                 None => return Ok(client.execute(req).await?),
             };
             let status = resp.status();
-            if !status.is_redirection() || hop == self.max_redirects {
+            if !status.is_redirection()
+                || (fetch_redirects && !matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308))
+            {
                 return Ok(resp);
+            }
+            if hop == max_redirects {
+                return if fetch_redirects && resp.headers().contains_key(reqwest::header::LOCATION)
+                {
+                    Err(SendError::Refused("redirect count exceeded".into()))
+                } else {
+                    Ok(resp)
+                };
             }
             let Some(location) = resp
                 .headers()
@@ -711,7 +764,7 @@ impl Outbound {
             })?;
             let method = req.method().clone();
             match status.as_u16() {
-                303 => {
+                303 if !fetch_redirects || method != reqwest::Method::HEAD => {
                     *req.method_mut() = reqwest::Method::GET;
                     *req.body_mut() = None;
                 }
@@ -719,10 +772,25 @@ impl Outbound {
                     *req.method_mut() = reqwest::Method::GET;
                     *req.body_mut() = None;
                 }
-                301 | 302 | 307 | 308 => {}
+                301 | 302 | 303 | 307 | 308 => {}
                 _ => return Ok(resp),
             }
-            if next.host_str() != req.url().host_str() {
+            if fetch_redirects && req.method() != method {
+                for name in [
+                    "content-encoding",
+                    "content-language",
+                    "content-location",
+                    "content-type",
+                    "content-length",
+                ] {
+                    req.headers_mut().remove(name);
+                }
+            }
+            if if fetch_redirects {
+                next.origin() != req.url().origin()
+            } else {
+                next.host_str() != req.url().host_str()
+            } {
                 let headers = req.headers_mut();
                 headers.remove(reqwest::header::AUTHORIZATION);
                 headers.remove(reqwest::header::COOKIE);
@@ -826,6 +894,8 @@ impl Outbound {
 pub struct GuardedRequest {
     outbound: Outbound,
     builder: reqwest::RequestBuilder,
+    max_redirects: Option<usize>,
+    fetch_redirects: bool,
 }
 
 impl GuardedRequest {
@@ -852,6 +922,21 @@ impl GuardedRequest {
         self.map(|b| b.timeout(timeout))
     }
 
+    /// Restricts this request's manual redirect loop without changing its
+    /// host guard, pinned clients or the defaults of other requests.
+    pub fn max_redirects(mut self, maximum: usize) -> Self {
+        self.max_redirects = Some(maximum.min(self.outbound.max_redirects));
+        self
+    }
+
+    /// Opts this request into Fetch redirect semantics and its own hop limit.
+    /// Every hop retains the existing host guard and shared pinned clients.
+    pub fn following_redirects(mut self, maximum: usize) -> Self {
+        self.max_redirects = Some(maximum);
+        self.fetch_redirects = true;
+        self
+    }
+
     pub fn json<T: serde::Serialize + ?Sized>(self, json: &T) -> Self {
         self.map(|b| b.json(json))
     }
@@ -862,7 +947,13 @@ impl GuardedRequest {
 
     pub async fn send(self) -> Result<reqwest::Response, SendError> {
         let req = self.builder.build()?;
-        self.outbound.execute(req).await
+        self.outbound
+            .execute_with_redirect_limit(
+                req,
+                self.max_redirects.unwrap_or(self.outbound.max_redirects),
+                self.fetch_redirects,
+            )
+            .await
     }
 }
 
@@ -1013,7 +1104,7 @@ mod tests {
             cfg.total_timeout, None,
             "snapshot downloads have no whole-request budget"
         );
-        assert_eq!(cfg.connect_timeout, Duration::from_secs(8));
+        assert_eq!(cfg.connect_timeout, Some(Duration::from_secs(8)));
         assert_eq!(cfg.read_timeout, Some(Duration::from_secs(25)));
         assert_eq!(cfg.pool_max_idle_per_host, 25);
         assert_eq!(cfg.max_redirects, Some(2));
@@ -1236,6 +1327,278 @@ mod tests {
             );
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         addr
+    }
+
+    #[tokio::test]
+    async fn configured_provider_redirects_permit_private_targets_without_changing_the_shared_guard()
+     {
+        use axum::{Router, routing::get};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let location = format!("http://localhost:{}/answer", address.port());
+        let app = Router::new()
+            .route(
+                "/start",
+                get(move || {
+                    let location = location.clone();
+                    async move { (axum::http::StatusCode::FOUND, [("location", location)]) }
+                }),
+            )
+            .route("/answer", get(|| async { "provider answer" }));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let cfg = HttpClientCfg::default().following_redirects(2);
+        let mut profile = Outbound::new(cfg.clone())
+            .unwrap()
+            .allowing_configured_provider_hosts();
+        // Resolve the public fixture name locally without global DNS or hosts.
+        // Both clients retain their production redirect policies.
+        profile.shared = cfg
+            .builder()
+            .resolve("provider.example", address)
+            .build()
+            .unwrap();
+        profile.direct = HttpClientCfg {
+            max_redirects: None,
+            ..cfg
+        }
+        .builder()
+        .resolve("provider.example", address)
+        .build()
+        .unwrap();
+        let answer = profile
+            .get(format!("http://provider.example:{}/start", address.port()))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert_eq!(answer, "provider answer");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_provider_profile_leaves_the_shared_read_deadline_and_guard_intact() {
+        use axum::{Router, routing::get};
+        let (entered, mut entries) = tokio::sync::mpsc::unbounded_channel();
+        let release = Arc::new(tokio::sync::Notify::new());
+        let server_release = release.clone();
+        let app = Router::new().route(
+            "/headers",
+            get(move || {
+                let entered = entered.clone();
+                let release = server_release.clone();
+                async move {
+                    entered.send(()).unwrap();
+                    release.notified().await;
+                    "ok"
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/headers", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let guarded = Outbound::new(HttpClientCfg::serve(7)).unwrap();
+        assert!(matches!(
+            guarded.get(&url).send().await,
+            Err(SendError::Refused(_))
+        ));
+        let profile = guarded
+            .provider_profile(None, None)
+            .unwrap()
+            .allowing_configured_provider_hosts();
+        assert_eq!(profile.cfg.pool_max_idle_per_host, 7);
+        assert!(profile.cfg.connect_timeout.is_none());
+        let provider_url = url.clone();
+        let provider = tokio::spawn(async move { profile.get(provider_url).send().await });
+        let shared = guarded.clone().allowing_private_hosts();
+        let shared_url = url.clone();
+        let reader = tokio::spawn(async move { shared.get(shared_url).send().await });
+        entries.recv().await.unwrap();
+        entries.recv().await.unwrap();
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(26)).await;
+        for _ in 0..128 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            reader.is_finished(),
+            "ordinary readers keep their 25s inactivity deadline"
+        );
+        assert!(
+            !provider.is_finished(),
+            "provider timeout policy belongs to its adapter"
+        );
+        tokio::time::resume();
+        assert!(reader.await.unwrap().unwrap_err().is_timeout());
+        release.notify_waiters();
+        assert!(provider.await.unwrap().unwrap().status().is_success());
+        assert!(
+            matches!(guarded.get(&url).send().await, Err(SendError::Refused(_))),
+            "the shared host policy never changes"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_request_redirect_limit_keeps_other_requests_defaults() {
+        use axum::{Router, routing::get};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let count = hits.clone();
+        let app = Router::new()
+            .route(
+                "/jump",
+                get(|| async { (axum::http::StatusCode::FOUND, [("location", "/answer")]) }),
+            )
+            .route(
+                "/answer",
+                get(move || {
+                    let count = count.clone();
+                    async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        "ok"
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let http = Outbound::new(HttpClientCfg::default().following_redirects(2))
+            .unwrap()
+            .allowing_private_hosts();
+        let url = format!("http://{address}/jump");
+        let response = http.get(&url).max_redirects(0).send().await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            0,
+            "the override must not make a second request"
+        );
+        let response = http.get(&url).send().await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "the next request keeps the configured default"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn opt_in_fetch_redirects_match_the_executed_social_analytics_sdk() {
+        use axum::{Router, extract::Request, response::IntoResponse};
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/library/dcl-http/tests/fixtures/social-analytics-source-cases.json"
+        )))
+        .unwrap();
+        for case in fixture["redirects"].as_array().unwrap() {
+            let requests = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+            let observed = requests.clone();
+            let app = Router::new().fallback(move |request: Request| {
+                let observed = observed.clone(); async move {
+                    let path = request.uri().path().to_string();
+                    let method = request.method().to_string();
+                    let headers = request.headers().clone();
+                    let bytes = axum::body::to_bytes(request.into_body(), 1 << 20).await.unwrap();
+                    let header = |name: &str| headers.get(name).map(|value| value.to_str().unwrap().to_string());
+                    observed.lock().unwrap().push(serde_json::json!({"path":path,"method":method,"content_type":header("content-type"),"content_length":header("content-length"),"token":header("x-token"),"body":String::from_utf8(bytes.to_vec()).unwrap()}));
+                    let parts: Vec<_> = path.split('/').collect();
+                    let status: u16 = parts[2].parse().unwrap();
+                    let remaining: usize = parts[3].parse().unwrap();
+                    if remaining == 0 { return "unused response body".into_response(); }
+                    (axum::http::StatusCode::from_u16(status).unwrap(), [("location", format!("/jump/{status}/{}", remaining-1))]).into_response()
+                }
+            });
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            // Defaults remain two hops; this one request opts into Fetch's 20.
+            let http = Outbound::new(HttpClientCfg::default().following_redirects(2))
+                .unwrap()
+                .allowing_private_hosts();
+            let first = &case["requests"][0];
+            let result = http
+                .post(format!(
+                    "http://{address}{}",
+                    first["path"].as_str().unwrap()
+                ))
+                .header("x-token", "fixture-token")
+                .header("content-type", "application/json")
+                .body(first["body"].as_str().unwrap().to_string())
+                .following_redirects(20)
+                .send()
+                .await;
+            assert_eq!(
+                result.is_err(),
+                !case["logs"].as_array().unwrap().is_empty(),
+                "status={} hops={}",
+                case["status"],
+                case["hops"]
+            );
+            drop(result);
+            assert_eq!(
+                *requests.lock().unwrap(),
+                *case["requests"].as_array().unwrap(),
+                "status={} hops={}",
+                case["status"],
+                case["hops"]
+            );
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn opt_in_fetch_redirects_preserve_source_analytics_headers_across_public_hosts() {
+        use axum::{Router, extract::Request, response::IntoResponse};
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/library/dcl-http/tests/fixtures/social-analytics-source-cases.json"
+        )))
+        .unwrap();
+        let expected = &fixture["cross_host"];
+        let requests = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let observed = requests.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().fallback(move |request: Request| {
+            let observed = observed.clone(); async move {
+                let path = request.uri().path().to_string();
+                let method = request.method().to_string();
+                let headers = request.headers().clone();
+                let bytes = axum::body::to_bytes(request.into_body(), 1 << 20).await.unwrap();
+                let header = |name: &str| headers.get(name).map(|value| value.to_str().unwrap().to_string());
+                observed.lock().unwrap().push(serde_json::json!({"path":path,"method":method,"content_type":header("content-type"),"content_length":header("content-length"),"token":header("x-token"),"body":String::from_utf8(bytes.to_vec()).unwrap()}));
+                if path.ends_with("/1") {
+                    (axum::http::StatusCode::TEMPORARY_REDIRECT, [("location", format!("http://other.example.test:{}/jump/307/0",address.port()))]).into_response()
+                } else { "unused".into_response() }
+            }
+        });
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let http = strict(address);
+        let response = http
+            .post(format!(
+                "http://public.example.test:{}/jump/307/1",
+                address.port()
+            ))
+            .header("x-token", "fixture-token")
+            .header("content-type", "application/json")
+            .body(expected["requests"][0]["body"].as_str().unwrap().to_owned())
+            .following_redirects(20)
+            .send()
+            .await
+            .unwrap();
+        drop(response);
+        assert_eq!(
+            *requests.lock().unwrap(),
+            *expected["requests"].as_array().unwrap()
+        );
+        assert_eq!(
+            http.pinned_hosts(),
+            vec!["other.example.test", "public.example.test"]
+        );
+        server.abort();
     }
 
     fn strict(addr: SocketAddr) -> Outbound {

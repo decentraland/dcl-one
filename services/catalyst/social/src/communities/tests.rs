@@ -27,22 +27,40 @@ use super::http::ADR44_MESSAGE;
 use super::standing::load_standing;
 use super::{Settings, State, router};
 
+mod analytics_parity;
+mod body_limit;
+mod compliance_parity;
+mod dependency_errors;
 mod fixture_shapes;
+mod full_http_parity;
+mod gateway_auth;
+mod membership_concurrency;
 mod mute_body;
+mod owner_parity;
 mod post_create;
 mod post_edit;
+mod ranking_parity;
+mod referral_errors;
+mod referral_lifecycle;
+mod registry_errors;
 mod request_lifecycle;
 mod selected_community;
+mod sns_parity;
 mod social_api_parity;
 mod upstream_rules;
 mod upstream_writes;
+mod voice_parity;
 pub(super) mod world_access;
+mod write_failures;
 
 const ADMIN_TOKEN: &str = "cg-social-admin";
 const FORGED: &str = "/v1/forged/not-a-route";
 /// The active voice-chat list is database-wide: the test that seeds voice
 /// rows and the one that reads the list empty take turns.
 static VOICE_ROWS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static DAPPS_FLAGS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// GRANT/REVOKE update shared PostgreSQL ACL catalog rows across these fixtures.
+static DATABASE_PERMISSIONS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 struct Wallet {
     signer: PrivateKeySigner,
@@ -94,6 +112,7 @@ struct Case {
     path: String,
     headers: Vec<(String, String)>,
     body: Option<(Vec<u8>, String)>,
+    peer: Option<std::net::SocketAddr>,
 }
 
 impl Case {
@@ -103,7 +122,12 @@ impl Case {
             path: path.into(),
             headers: Vec::new(),
             body: None,
+            peer: None,
         }
+    }
+    fn peer(mut self, ip: &str) -> Self {
+        self.peer = Some(std::net::SocketAddr::new(ip.parse().unwrap(), 12345));
+        self
     }
     async fn signed(mut self, w: &Wallet) -> Self {
         let path = self.path.split('?').next().unwrap().to_string();
@@ -115,6 +139,10 @@ impl Case {
     async fn forged(mut self, w: &Wallet) -> Self {
         self.headers
             .extend(signed_headers(w, self.method, FORGED).await);
+        self
+    }
+    fn header(mut self, name: &str, value: &str) -> Self {
+        self.headers.push((name.into(), value.into()));
         self
     }
     fn bearer(mut self, token: &str) -> Self {
@@ -139,6 +167,9 @@ async fn hit(app: &Router, case: Case) -> (StatusCode, Value) {
     let mut builder = Request::builder()
         .method(case.method.to_uppercase().as_str())
         .uri(&case.path);
+    if let Some(peer) = case.peer {
+        builder = builder.extension(axum::extract::ConnectInfo(peer));
+    }
     for (k, v) in &case.headers {
         builder = builder.header(k, v);
     }
@@ -221,9 +252,14 @@ impl Rig {
             &crate::http::Outbound::for_tests(),
             explore(&pool),
         ));
-        let app = Router::new()
-            .merge(router(state.clone()))
-            .nest("/social-api", router(state.clone()));
+        state.set_chain_index(Arc::new(crate::chain_index::ChainIndex::new(
+            crate::http::Outbound::for_tests(),
+            crate::chain_index::IndexSettings::for_tests(),
+        )));
+        let app = Router::new().merge(router(state.clone())).nest(
+            "/social-api",
+            crate::social_api_gateway(router(state.clone())),
+        );
         Some(Self {
             pool,
             app,
@@ -233,6 +269,11 @@ impl Rig {
     }
 
     async fn community(&self, owner: &Wallet, private: bool) -> CommunityId {
+        let has_profile: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM content.deployments WHERE entity_type = 'profile' AND entity_pointers && ARRAY[$1]::text[] AND deleter_deployment IS NULL)")
+            .bind(&owner.address).fetch_one(&self.pool).await.unwrap();
+        if !has_profile {
+            self.profile(owner, "Owner", true).await;
+        }
         let id = CommunityId::new();
         sqlx::query(
             "INSERT INTO social.communities (id, name, description, owner_address, private, active, unlisted) \
@@ -308,22 +349,40 @@ impl Rig {
     /// An active profile entity for the wallet, as peer sync would leave
     /// it: the create route requires a claimed name.
     async fn profile(&self, w: &Wallet, name: &str, claimed: bool) {
+        if claimed {
+            self.name_owner(w, name);
+        }
         let metadata = json!({ "v": { "avatars": [{
-            "name": name, "hasClaimedName": claimed,
+            "userId": w.address.as_str(), "name": name, "hasClaimedName": claimed,
             "avatar": { "snapshots": { "face256": "bafkface" } },
             "nameColor": { "r": 0.5, "g": 0.25, "b": 1.0 }
         }] } });
+        let entity_id = format!("bafkprofile{}", Uuid::new_v4().simple());
         sqlx::query(
             "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, \
                  entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
              VALUES ($1, 'v3', 'profile', $2, $3, timezone('UTC', now()), ARRAY[$1]::text[], timezone('UTC', now()), '[]'::json)",
         )
         .bind(&w.address)
-        .bind(format!("bafkprofile{}", Uuid::new_v4().simple()))
+        .bind(&entity_id)
         .bind(metadata)
         .execute(&self.pool)
         .await
         .unwrap();
+        sqlx::query("INSERT INTO content.active_pointers(pointer,entity_id,entity_type) VALUES($1,$2,'profile') ON CONFLICT(pointer) DO UPDATE SET entity_id=EXCLUDED.entity_id")
+            .bind(&w.address).bind(&entity_id).execute(&self.pool).await.unwrap();
+    }
+
+    fn name_owner(&self, wallet: &Wallet, name: &str) {
+        self.state.chain_index.get().unwrap().graph.names.insert(
+            wallet.address.as_str().to_string(),
+            Arc::new(vec![crate::chain_index::graph::OwnedName {
+                name: name.to_string(),
+                contract_address: "0x0000000000000000000000000000000000000001".to_string(),
+                token_id: "1".to_string(),
+                price: None,
+            }]),
+        );
     }
 
     async fn voice(&self, id: CommunityId, w: &Wallet, status: &str, moderator: bool) {
@@ -386,6 +445,7 @@ impl Rig {
 
 fn admin_settings(moderator: Option<&Wallet>) -> Settings {
     Settings {
+        places_ownership_check: false,
         admin_token: Some(ADMIN_TOKEN.to_string()),
         global_moderators: moderator
             .map(|m| vec![m.address.clone()])
@@ -582,13 +642,21 @@ async fn referral_zero_shape_gate_and_flow() {
     let refer = json!({ "referrer": referrer.address.as_str() });
     let (status, _) = hit(
         app,
-        Case::new("post", path).signed(&invited).await.json(&refer),
+        Case::new("post", path)
+            .peer("192.0.2.1")
+            .signed(&invited)
+            .await
+            .json(&refer),
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (status, _) = hit(
         app,
-        Case::new("post", path).signed(&invited).await.json(&refer),
+        Case::new("post", path)
+            .peer("192.0.2.1")
+            .signed(&invited)
+            .await
+            .json(&refer),
     )
     .await;
     assert_eq!(
@@ -599,6 +667,7 @@ async fn referral_zero_shape_gate_and_flow() {
     let (status, v) = hit(
         app,
         Case::new("post", path)
+            .peer("192.0.2.1")
             .signed(&invited)
             .await
             .json(&json!({ "referrer": other.address.as_str() })),
@@ -611,7 +680,11 @@ async fn referral_zero_shape_gate_and_flow() {
     );
     let (status, v) = hit(
         app,
-        Case::new("post", path).signed(&referrer).await.json(&refer),
+        Case::new("post", path)
+            .peer("192.0.2.1")
+            .signed(&referrer)
+            .await
+            .json(&refer),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -625,6 +698,7 @@ async fn referral_zero_shape_gate_and_flow() {
     let (status, _) = hit(
         app,
         Case::new("post", path)
+            .peer("192.0.2.1")
             .signed(&other)
             .await
             .json(&json!({ "referrer": "not-an-address" })),
@@ -790,8 +864,8 @@ async fn every_route_answers_its_contract() {
                 .find(|c| c["id"] == c1.to_string())
                 .unwrap_or_else(|| panic!("{path}: c1 listed: {v}"));
             assert_eq!(mine["membersCount"], 3);
-            assert_eq!(mine["thumbnailUrl"], rig.state.thumbnail_url(c1));
-            assert_eq!(mine["isLive"], false);
+            assert!(mine.get("thumbnailUrl").is_none());
+            assert!(mine.get("isLive").is_none());
             if signed {
                 assert_eq!(mine["role"], "owner");
                 assert_eq!(mine["visibility"], "all");
@@ -821,7 +895,7 @@ async fn every_route_answers_its_contract() {
     .await;
     assert_eq!(status, StatusCode::OK, "{v}");
     assert_eq!(v["data"]["role"], "owner");
-    assert_eq!(v["data"]["isBanned"], false);
+    assert!(v["data"].get("isBanned").is_none());
     assert_eq!(v["data"]["ownerName"], "Owner");
     let (status, v) = hit(app, Case::new("get", format!("/v1/communities/{c1}"))).await;
     assert_eq!(status, StatusCode::OK, "{v}");
@@ -864,7 +938,16 @@ async fn every_route_answers_its_contract() {
     )
     .await;
     let rows = v["data"]["results"].as_array().unwrap();
-    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.len(), 2, "V1 omits the member without a profile: {v}");
+    assert_eq!(
+        v["data"]["total"], 3,
+        "profile filtering preserves the database total"
+    );
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row["memberAddress"] == m2.address.as_str())
+    );
     assert_eq!(rows[0]["role"], "owner", "owner first: {v}");
     assert_eq!(rows[0]["name"], "Owner");
     assert_eq!(rows[0]["hasClaimedName"], true);
@@ -882,6 +965,11 @@ async fn every_route_answers_its_contract() {
             .await,
     )
     .await;
+    assert_eq!(
+        v["data"]["results"].as_array().unwrap().len(),
+        3,
+        "V2 retains unresolved members"
+    );
     assert!(
         v["data"]["results"][0].get("name").is_none(),
         "v2 members carry no profile fields: {v}"
@@ -960,10 +1048,7 @@ async fn every_route_answers_its_contract() {
     )
     .await;
     assert_eq!(v["data"]["total"], 1, "{v}");
-    assert_eq!(
-        v["data"]["results"][0]["thumbnailUrl"],
-        rig.state.thumbnail_url(c_priv)
-    );
+    assert!(v["data"]["results"][0].get("thumbnailUrl").is_none());
     assert_eq!(v["data"]["results"][0]["ownerName"], "Owner");
     assert!(v["data"]["results"][0].get("_hasThumbnail").is_none());
 
@@ -1094,8 +1179,8 @@ async fn every_route_answers_its_contract() {
     )
     .await;
     assert_eq!(status, StatusCode::CREATED, "{v}");
-    assert_eq!(v["data"]["role"], "owner");
-    assert_eq!(v["data"]["membersCount"], 1);
+    assert!(v["data"].get("role").is_none());
+    assert!(v["data"].get("membersCount").is_none());
     let created = CommunityId::parse(v["data"]["id"].as_str().unwrap()).unwrap();
     assert_eq!(rig.role_of(created, &user).await.as_deref(), Some("owner"));
     let (status, v) = hit(
@@ -1156,7 +1241,7 @@ async fn every_route_answers_its_contract() {
     assert_eq!(v["data"]["privacy"], "private");
     let with_thumb = v["data"]["id"].as_str().unwrap().to_string();
     assert_eq!(
-        v["data"]["thumbnailUrl"],
+        v["data"]["thumbnails"]["raw"],
         rig.state
             .thumbnail_url(CommunityId::parse(&with_thumb).unwrap())
     );
@@ -1531,6 +1616,9 @@ async fn every_route_answers_its_contract() {
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
+    // The later V1 ban-row shape requires a resolved profile. The earlier
+    // member read deliberately exercised this wallet without one.
+    rig.profile(&m2, "MemberTwo", false).await;
     let ban_path = format!("/v1/communities/{c1}/members/{}/bans", m2.address);
     let (status, _) = hit(app, Case::new("post", &ban_path).signed(&user).await).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
@@ -1564,7 +1652,7 @@ async fn every_route_answers_its_contract() {
         v["data"]["results"][0]["memberAddress"],
         m2.address.as_str()
     );
-    assert_eq!(v["data"]["results"][0]["bannedBy"], user.address.as_str());
+    assert!(v["data"]["results"][0].get("bannedBy").is_none());
     let (_, v) = hit(
         app,
         Case::new("get", format!("/v1/communities/{c1}"))
@@ -1572,7 +1660,7 @@ async fn every_route_answers_its_contract() {
             .await,
     )
     .await;
-    assert_eq!(v["data"]["isBanned"], true);
+    assert!(v["data"].get("isBanned").is_none());
     let (status, v) = hit(app, Case::new("post", &ban_path)).await;
     assert_gate_400(status, &v, "ban unsigned");
     let (status, v) = hit(app, Case::new("post", &ban_path).forged(&user).await).await;
@@ -1703,7 +1791,7 @@ async fn every_route_answers_its_contract() {
             .json(&json!({ "content": "as a member" })),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "m2 is banned: {v}");
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "m2 is banned: {v}");
     let post_del = format!("/v1/communities/{c1}/posts/{p1}");
     let (status, v) = hit(app, Case::new("delete", &post_del).signed(&m1).await).await;
     assert_eq!(
@@ -1745,10 +1833,9 @@ async fn every_route_answers_its_contract() {
     let req_priv = format!("/v1/communities/{c_priv}/requests");
     let (status, v) = hit(
         app,
-        Case::new("post", &req_priv)
-            .signed(&req_user)
-            .await
-            .json(&json!({ "type": "request_to_join" })),
+        Case::new("post", &req_priv).signed(&req_user).await.json(
+            &json!({ "type": "request_to_join", "targetedAddress": req_user.address.as_str() }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{v}");
@@ -1756,10 +1843,9 @@ async fn every_route_answers_its_contract() {
     let first_id = v["data"]["id"].clone();
     let (status, v) = hit(
         app,
-        Case::new("post", &req_priv)
-            .signed(&req_user)
-            .await
-            .json(&json!({ "type": "request_to_join" })),
+        Case::new("post", &req_priv).signed(&req_user).await.json(
+            &json!({ "type": "request_to_join", "targetedAddress": req_user.address.as_str() }),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{v}");
@@ -1769,16 +1855,17 @@ async fn every_route_answers_its_contract() {
     );
     let (status, v) = hit(
         app,
-        Case::new("post", &req_priv).json(&json!({ "type": "request_to_join" })),
+        Case::new("post", &req_priv).json(
+            &json!({ "type": "request_to_join", "targetedAddress": req_user.address.as_str() }),
+        ),
     )
     .await;
     assert_gate_400(status, &v, "request unsigned");
     let (status, v) = hit(
         app,
-        Case::new("post", &req_priv)
-            .forged(&req_user)
-            .await
-            .json(&json!({ "type": "request_to_join" })),
+        Case::new("post", &req_priv).forged(&req_user).await.json(
+            &json!({ "type": "request_to_join", "targetedAddress": req_user.address.as_str() }),
+        ),
     )
     .await;
     assert_forged_401(status, &v, "request forged");
@@ -1796,7 +1883,9 @@ async fn every_route_answers_its_contract() {
         Case::new("post", posts.replace("posts", "requests"))
             .signed(&req_user)
             .await
-            .json(&json!({ "type": "request_to_join" })),
+            .json(
+                &json!({ "type": "request_to_join", "targetedAddress": req_user.address.as_str() }),
+            ),
     )
     .await;
     assert_eq!(
@@ -2197,7 +2286,7 @@ async fn a_private_community_is_visible_to_members_pending_invitees_and_the_admi
     assert_eq!(status, StatusCode::OK, "admin bearer bypass");
 
     let (status, _) = hit(app, Case::new("get", &posts)).await;
-    assert_eq!(status, StatusCode::NOT_FOUND, "anonymous posts");
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "anonymous posts");
     let (status, _) = hit(app, Case::new("get", &posts).signed(&stranger).await).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED, "stranger posts");
     let (status, _) = hit(app, Case::new("get", &posts).signed(&member).await).await;
@@ -2295,7 +2384,7 @@ async fn voice_status_derives_from_the_presence_rows() {
     rig.voice(c, &gone, "disconnected", false).await;
 
     let (_, v) = hit(app, Case::new("get", format!("/v1/communities/{c}"))).await;
-    assert_eq!(v["data"]["isLive"], true, "{v}");
+    assert_eq!(v["data"]["voiceChatStatus"]["isActive"], true, "{v}");
     assert_eq!(
         v["data"]["voiceChatStatus"],
         json!({ "isActive": true, "participantCount": 3, "moderatorCount": 1 })
@@ -2313,7 +2402,7 @@ async fn voice_status_derives_from_the_presence_rows() {
         .iter()
         .find(|x| x["id"] == c.to_string())
         .expect("listed as live");
-    assert_eq!(row["isLive"], true);
+    assert_eq!(row["voiceChatStatus"]["isActive"], true);
     assert_eq!(row["voiceChatStatus"]["participantCount"], 3);
     let (_, v) = hit(
         app,
@@ -2337,8 +2426,10 @@ async fn voice_status_derives_from_the_presence_rows() {
 
     sqlx::query("UPDATE social.community_voice_chat_users SET status = 'disconnected' WHERE community_id = $1").bind(c).execute(&rig.pool).await.unwrap();
     let (_, v) = hit(app, Case::new("get", format!("/v1/communities/{c}"))).await;
-    assert_eq!(v["data"]["isLive"], false);
-    assert_eq!(v["data"]["voiceChatStatus"]["participantCount"], 0);
+    assert_eq!(
+        v["data"]["voiceChatStatus"],
+        json!({"isActive":false,"participantCount":0,"moderatorCount":0})
+    );
     rig.clear_world_place(place).await;
     rig.finish();
 }
@@ -2494,3 +2585,8 @@ fn settings_fold_restricted_names_and_validate_moderators() {
         "http://cdn/social/communities/x/raw-thumbnail.png"
     );
 }
+
+mod friendship_parity;
+
+mod member_friendship_fields;
+mod member_request_pages;

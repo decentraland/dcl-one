@@ -193,17 +193,17 @@ fn register_metrics() {
     ops::telemetry::register_metrics();
 }
 
-fn install_metrics(raw: &str) -> anyhow::Result<()> {
+fn install_metrics(raw: &str) -> anyhow::Result<comms::metrics::PrometheusHandle> {
     let bind = comms::metrics::serve_metrics_bind(raw)?;
-    comms::metrics::install_prometheus_exporter(bind)?;
+    let handle = comms::metrics::install_prometheus_exporter(bind)?;
     register_metrics();
     tracing::info!(%bind, "serve /metrics listening");
-    Ok(())
+    Ok(handle)
 }
 
 pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     config.node.init_tracing();
-    install_metrics(&config.node.serve_metrics_bind)?;
+    let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     config.resolve_secret_files()?;
     config.content.eth_rpc_url()?;
@@ -752,6 +752,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .load_withheld()
         .await
         .context("loading camera_reel.withheld_blobs")?;
+    camera_reel.spawn_ranking_job(&jobs);
     tracing::info!(
         builder = %builder.sources_label(),
         camera_reel_api_url = %camera_reel.settings.api_url,
@@ -908,14 +909,14 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         comms_stage.gatekeeper.clone(),
         eip1654,
         &explore,
+        metrics_handle,
     )?;
     social
         .rpc
         .start_topology(&jobs, comms_stage.archipelago.feed.topology.clone());
-    // A room the gatekeeper closes reaches the open voice streams as ENDED.
-    comms_stage
-        .social_directory
-        .set_updates(social.rpc.ctx.pubsub().clone());
+    social
+        .rpc
+        .start_fanout(&jobs, comms_stage.gatekeeper.bus.clone());
     market.attach_profile_images(social.profile_images.clone());
     let subscriptions = Arc::new(shop::subscriptions::State::new(
         pool.clone(),
@@ -935,6 +936,16 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     social
         .communities
         .set_voice_eviction(comms_stage.gatekeeper.clone());
+    social.communities.set_chain_index(market.index.clone());
+    social.communities.load_flags().await?;
+    if let Err(error) = social.communities.refresh_flags(&explorer_api).await {
+        tracing::warn!(%error,"initial DAPPS flags refresh failed; retaining the stored document");
+    }
+    social
+        .communities
+        .spawn_flags_job(&jobs, explorer_api.clone());
+    communities::ranking::spawn_jobs(&social.communities, &jobs);
+    communities::compliance::spawn_job(&social.communities, &jobs);
     // A permission, access-setting or block edit reaches the running rooms
     // at once: the host's sockets and comms' LiveKit participants.
     if let Some(host) = &stage5.scene_host {
@@ -973,6 +984,22 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     comms_stage.gatekeeper.spawn_jobs(&jobs);
     social.media.spawn_jobs(&jobs);
     social.rpc.spawn_jobs(&jobs);
+    if let Some(events) =
+        social::legacy_events::LegacyEvents::new(social::legacy_events::Settings {
+            sqs_endpoint: config.social.legacy_sqs_endpoint.clone(),
+            sqs_queue_url: config.social.legacy_sqs_queue_url.clone(),
+            sns_endpoint: config.social.legacy_sns_endpoint.clone(),
+            sns_arn: config.social.legacy_sns_arn.clone(),
+        })
+        .await?
+    {
+        social.communities.referral.set_publisher(events.clone());
+        events.spawn(
+            &jobs,
+            social.communities.clone(),
+            config.writes.social_writes_enabled,
+        );
+    }
     communities::fed::spawn_job(&social.communities, &jobs);
     // Copies of the upstream public communities; not local authority, so
     // not behind SOCIAL_WRITES_ENABLED (the explore mirrors' rule). A join or
@@ -1265,7 +1292,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let shutdown_jobs = jobs.clone();
     axum::serve(
         listener,
-        axum::ServiceExt::<axum::extract::Request>::into_make_service(app),
+        axum::ServiceExt::<axum::extract::Request>::into_make_service_with_connect_info::<
+            std::net::SocketAddr,
+        >(app),
     )
     .with_graceful_shutdown(async move {
         shutdown_signal().await;
@@ -1698,9 +1727,6 @@ async fn worlds_states(
 struct CommsStage {
     archipelago: crate::comms::archipelago::AppState,
     gatekeeper: crate::comms::gatekeeper::SharedState,
-    /// The gatekeeper's social seam, kept to attach the social RPC's
-    /// fan-out once it exists.
-    social_directory: Arc<social::comms_directory::Directory>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1744,7 +1770,7 @@ async fn comms_states(
         policy.clone() as Arc<dyn AccessPolicy>,
         Arc::new(worlds::rooms::SceneResolver::new(pool.clone())),
         presence,
-        social_directory.clone(),
+        social_directory,
     )
     .with_ban_status(ban_status.clone())
     .with_name_owner_reader(market.clone())
@@ -1776,7 +1802,6 @@ async fn comms_states(
     Ok(CommsStage {
         archipelago,
         gatekeeper,
-        social_directory,
     })
 }
 
@@ -1822,7 +1847,12 @@ fn social_states(
     comms: comms::gatekeeper::SharedState,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     explore: &explore::SharedState,
+    metrics_handle: comms::metrics::PrometheusHandle,
 ) -> anyhow::Result<social::States> {
+    config
+        .social
+        .validate_provider_bootstrap()
+        .map_err(anyhow::Error::msg)?;
     let non_empty = Config::non_empty;
     let public_url = config
         .node
@@ -1862,10 +1892,46 @@ fn social_states(
         pool.clone(),
         storage.clone(),
         communities::Settings {
+            http_max_request_body_bytes: config.social.social_http_max_request_body_bytes,
+            compliance: communities::compliance::Settings {
+                environment: config.social.social_environment.clone().unwrap_or_default(),
+                model: config.social.community_compliance_model.clone(),
+                api_key: config.social.community_compliance_api_key.clone(),
+                base_url: config.social.community_compliance_base_url.clone(),
+                organization: config.social.community_compliance_organization.clone(),
+                project: config.social.community_compliance_project.clone(),
+            },
             admin_token: non_empty(&config.social.communities_admin_token),
             global_moderators: communities::Settings::global_moderators_from(
                 &config.social.communities_global_moderators,
             ),
+            features: communities::features::Settings {
+                base_url: config.social.social_feature_flags_url.clone(),
+                audience: config.social.social_service_base_url.clone(),
+                interval: Duration::from_millis(config.social.social_feature_flags_refresh_ms),
+                timeout: Duration::from_millis(config.social.social_feature_flags_timeout_ms),
+                overrides: [
+                    (
+                        communities::features::AI_COMPLIANCE,
+                        &config.social.social_ai_compliance_override,
+                    ),
+                    (
+                        communities::features::DEV_AI_COMPLIANCE,
+                        &config.social.social_dev_ai_compliance_override,
+                    ),
+                    (
+                        communities::features::GLOBAL_MODERATORS,
+                        &config.social.social_global_moderators_override,
+                    ),
+                    (
+                        communities::features::REFERRAL_REGISTRATION_DISABLED,
+                        &config.social.social_referral_registration_disabled_override,
+                    ),
+                ]
+                .into_iter()
+                .filter_map(|(key, value)| value.clone().map(|value| (key.into(), value)))
+                .collect(),
+            },
             restricted_names: communities::Settings::restricted_names_from(
                 &config.social.restricted_names,
             ),
@@ -1882,11 +1948,79 @@ fn social_states(
             mirror_interval: Duration::from_secs(
                 config.social.communities_mirror_interval_secs.max(1),
             ),
+            referral: communities::referral::Settings {
+                trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
+                max_ip_matches: config.social.referral_max_ip_matches,
+                suspicious_window_ms: config.social.referral_suspicious_window_ms,
+                slack: communities::referral::SlackSettings {
+                    token: config.social.referral_slack_token.clone(),
+                    dashboard: config.social.referral_metabase_dashboard.clone(),
+                    environment: config.social.social_environment.clone().unwrap_or_default(),
+                },
+                denylist_url: (!config.explore.explorer_denylist_source_url.is_empty())
+                    .then(|| config.explore.explorer_denylist_source_url.clone()),
+                min_login_days: config.social.referral_min_login_days,
+                profile_url: config.social.referral_profile_url.clone(),
+                reward_server_url: config.social.referral_reward_server_url.clone(),
+                reward_keys: [
+                    (
+                        5,
+                        &config.social.rewards_api_key_by_referral_invited_users_5,
+                    ),
+                    (
+                        10,
+                        &config.social.rewards_api_key_by_referral_invited_users_10,
+                    ),
+                    (
+                        20,
+                        &config.social.rewards_api_key_by_referral_invited_users_20,
+                    ),
+                    (
+                        25,
+                        &config.social.rewards_api_key_by_referral_invited_users_25,
+                    ),
+                    (
+                        30,
+                        &config.social.rewards_api_key_by_referral_invited_users_30,
+                    ),
+                    (
+                        50,
+                        &config.social.rewards_api_key_by_referral_invited_users_50,
+                    ),
+                    (
+                        60,
+                        &config.social.rewards_api_key_by_referral_invited_users_60,
+                    ),
+                    (
+                        75,
+                        &config.social.rewards_api_key_by_referral_invited_users_75,
+                    ),
+                ]
+                .into_iter()
+                .map(|(tier, key)| (tier, key.clone().unwrap_or_default()))
+                .collect(),
+                ..Default::default()
+            },
         },
         eip1654.clone(),
         http_client,
         explore.clone(),
     ));
+
+    if let Some(analytics) = social::analytics::Analytics::new(
+        http_client,
+        social::analytics::Settings {
+            context: config.social.social_analytics_context.clone(),
+            api_url: config.social.social_analytics_api_url.clone(),
+            api_token: config.social.social_analytics_api_token.clone(),
+            environment: config.social.social_environment.clone(),
+            request_timeout_ms: config.social.social_analytics_request_timeout_ms,
+        },
+    )
+    .map_err(anyhow::Error::msg)?
+    {
+        communities.set_analytics(analytics);
+    }
 
     let notifications = Arc::new(notifications::State::new(
         pool.clone(),
@@ -1926,6 +2060,8 @@ fn social_states(
         eip1654.clone(),
         Some(market.index.clone()),
     ));
+
+    communities.referral.set_mailer(notifications.email.clone());
 
     let badges = Arc::new(badges::State::new(
         pool.clone(),
@@ -1986,18 +2122,42 @@ fn social_states(
         },
     ));
 
+    let ordinary_transport = shared::rpc::ws::OrdinaryQueueConfig {
+        max_queue_size: config.social.ws_transport_max_queue_size,
+        min_queue_size: config.social.ws_transport_min_queue_size,
+        max_queue_size_limit: config.social.ws_transport_max_queue_size_limit,
+        estimated_message_size: config.social.ws_transport_estimated_message_size,
+        retry_delay_ms: config.social.ws_transport_retry_delay_ms,
+        max_retry_attempts: config.social.ws_transport_max_retry_attempts,
+        max_backoff_delay_ms: config.social.ws_transport_max_backoff_delay_ms,
+    };
+    ordinary_transport
+        .capacity(config.social.ws_max_backpressure)
+        .map_err(|error| anyhow::anyhow!(error))?;
     let rpc = Arc::new(social_rpc::State::new(
         pool.clone(),
         social_rpc::Settings {
             auth_window_secs: config.social.social_rpc_auth_window_secs,
+            ws_auth_timeout_ms: config.social.ws_auth_timeout_in_ms,
+            ws_auth_signature_expiration_ms: config.social.ws_auth_signature_expiration_in_ms,
+            ws_idle_timeout_secs: config.social.ws_idle_timeout_in_seconds,
             private_voice_chat_expiration_ms: config.social.private_voice_chat_expiration_ms,
             private_voice_chat_job_interval_ms: config.social.private_voice_chat_job_interval_ms,
             private_voice_chat_expiration_batch_size: config
                 .social
                 .private_voice_chat_expiration_batch_size,
+            community_voice_chat_polling_job_interval_ms: config
+                .social
+                .community_voice_chat_polling_job_interval_ms,
             ws_max_concurrent_connections: config.social.ws_max_concurrent_connections,
             ws_max_payload_bytes: config.social.ws_max_payload_length,
             ws_max_backpressure_bytes: config.social.ws_max_backpressure,
+            ordinary_transport,
+            friendship_limits: social_rpc::limits::FriendshipLimits {
+                window_seconds: config.social.friendship_rate_limit_window_seconds,
+                per_actor: config.social.friendship_rate_limit_per_actor,
+                per_pair: config.social.friendship_rate_limit_per_pair,
+            },
             admission: social_rpc::limits::AdmissionLimits {
                 max_per_address: config.social.ws_max_connections_per_address as usize,
                 subscriptions_per_second: config.social.ws_subscriptions_per_second,
@@ -2010,9 +2170,15 @@ fn social_states(
                 message_burst: config.social.stream_ws_message_burst as usize,
             },
             admin_token: non_empty(&config.social.catalyrst_social_rpc_admin_token),
-            faces,
             writes_enabled: config.writes.social_writes_enabled,
-            commit_hash: config.commit_hash(),
+            commit_hash: config.node.commit_hash.clone(),
+            current_version: config.social.social_rpc_current_version.clone(),
+            metrics_path: config.social.wkc_metrics_public_path.clone(),
+            metrics_bearer_token: config.social.wkc_metrics_bearer_token.clone(),
+            metrics_reset_at_night: config.social.wkc_metrics_reset_at_night.as_deref()
+                == Some("true"),
+            metrics_handle: Some(metrics_handle),
+            profile_source: Some(communities.profiles.registry()),
         },
         eip1654,
         comms.clone(),
