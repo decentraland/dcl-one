@@ -4,8 +4,11 @@
 //! A DCL NAME world's publish may use what is left of its owner's allowance
 //! (`DCL_NAME_STATS_URL/account-holdings/<wallet>` `spaceAllowance`, MiB)
 //! after the owner's other DCL worlds, crediting back only the scenes the
-//! publish replaces, capped per scene. Personal and ENS worlds, and worlds
-//! with a size override, have a fixed cap and stay outside the allowance.
+//! publish replaces, capped per scene; the publish transaction re-checks it
+//! under the wallet's quota lock. A wallet's DCL worlds are the NAMEs it
+//! holds now (the stored owner without a names reader). Personal and ENS
+//! worlds, and worlds with a size override, have a fixed cap and stay
+//! outside the allowance.
 //! A wallet whose worlds outgrow its allowance (a NAME sold, holdings
 //! dropped) is recorded in `worlds.quota_blocks`: warned at once, its worlds
 //! refused on `/about` and comms once [`QUOTA_BLOCK_GRACE`] has passed,
@@ -34,6 +37,8 @@ const STATS_ATTEMPTS: u32 = 3;
 const STATS_BASE_DELAY: Duration = Duration::from_millis(300);
 /// The quota pass runs as often as the old update-owner job.
 pub const QUOTA_PASS_INTERVAL: Duration = Duration::from_secs(12 * 3600);
+/// Failures in a row after which a pass stops asking and keeps every block.
+const QUOTA_PASS_MAX_CONSECUTIVE_FAILURES: usize = 5;
 
 /// SQL over `w` (`worlds.worlds`): a local DCL NAME or ENS world, the ones
 /// its owner's quota block refuses (not personal, not mirrored).
@@ -55,6 +60,11 @@ fn counts_against_allowance(world: &WorldName) -> bool {
 #[async_trait::async_trait]
 pub trait SpaceAllowance: Send + Sync {
     async fn allowance_bytes(&self, wallet: &Address) -> Result<i64, String>;
+
+    /// Whether a source is configured (else every allowance is unlimited).
+    fn is_limited(&self) -> bool {
+        true
+    }
 }
 
 /// No allowance source configured: every wallet may use any space.
@@ -65,18 +75,29 @@ impl SpaceAllowance for Unlimited {
     async fn allowance_bytes(&self, _: &Address) -> Result<i64, String> {
         Ok(i64::MAX)
     }
+
+    fn is_limited(&self) -> bool {
+        false
+    }
 }
 
 /// How long an answered allowance is reused.
 const ALLOWANCE_CACHE_TTL: Duration = Duration::from_secs(60);
+/// How long a failed lookup is answered from memory.
+const ALLOWANCE_FAILURE_TTL: Duration = Duration::from_secs(15);
 const ALLOWANCE_CACHE_MAX: usize = 10_000;
+/// Account-holdings requests in flight at once, node-wide.
+const ALLOWANCE_MAX_IN_FLIGHT: usize = 8;
+
+type CachedAllowance = (std::time::Instant, Result<i64, String>);
 
 /// The account-holdings service; no URL is an unlimited allowance.
 pub struct AccountHoldings {
     http: Outbound,
     url: Option<String>,
     timeout: Duration,
-    cache: dashmap::DashMap<Address, (std::time::Instant, i64)>,
+    cache: dashmap::DashMap<Address, CachedAllowance>,
+    in_flight: tokio::sync::Semaphore,
 }
 
 impl AccountHoldings {
@@ -88,26 +109,52 @@ impl AccountHoldings {
                 .filter(|u| !u.is_empty()),
             timeout,
             cache: dashmap::DashMap::new(),
+            in_flight: tokio::sync::Semaphore::new(ALLOWANCE_MAX_IN_FLIGHT),
         }
     }
 
-    fn cached(&self, wallet: &Address) -> Option<i64> {
-        self.cache
-            .get(wallet)
-            .filter(|e| e.0.elapsed() < ALLOWANCE_CACHE_TTL)
-            .map(|e| e.1)
+    fn fresh(entry: &CachedAllowance) -> bool {
+        let ttl = match entry.1 {
+            Ok(_) => ALLOWANCE_CACHE_TTL,
+            Err(_) => ALLOWANCE_FAILURE_TTL,
+        };
+        entry.0.elapsed() < ttl
     }
 
-    fn remember(&self, wallet: &Address, bytes: i64) {
-        if self.cache.len() >= ALLOWANCE_CACHE_MAX {
-            self.cache
-                .retain(|_, e| e.0.elapsed() < ALLOWANCE_CACHE_TTL);
+    fn cached(&self, wallet: &Address) -> Option<Result<i64, String>> {
+        self.cache
+            .get(wallet)
+            .filter(|e| Self::fresh(e))
+            .map(|e| e.1.clone())
+    }
+
+    /// Full of fresh entries, a new answer is not kept (no wholesale clear).
+    fn remember(&self, wallet: &Address, answer: Result<i64, String>) {
+        if self.cache.len() >= ALLOWANCE_CACHE_MAX && !self.cache.contains_key(wallet) {
+            self.cache.retain(|_, e| Self::fresh(e));
             if self.cache.len() >= ALLOWANCE_CACHE_MAX {
-                self.cache.clear();
+                return;
             }
         }
         self.cache
-            .insert(wallet.clone(), (std::time::Instant::now(), bytes));
+            .insert(wallet.clone(), (std::time::Instant::now(), answer));
+    }
+
+    async fn fetch(&self, wallet: &Address, base: &str) -> Result<i64, String> {
+        let url = format!("{base}/account-holdings/{}", wallet.as_str());
+        let mut attempt = 0;
+        loop {
+            match self.attempt(&url).await {
+                Ok(bytes) => return Ok(bytes),
+                Err(e) if attempt + 1 >= STATS_ATTEMPTS => return Err(e),
+                Err(e) => {
+                    let delay = STATS_BASE_DELAY * 2u32.pow(attempt);
+                    tracing::warn!(error = %e, attempt = attempt + 1, ?delay, "account holdings failed, retrying");
+                    tokio::time::sleep(delay).await;
+                    attempt += 1;
+                }
+            }
+        }
     }
 
     async fn attempt(&self, url: &str) -> Result<i64, String> {
@@ -152,26 +199,25 @@ impl SpaceAllowance for AccountHoldings {
         let Some(base) = &self.url else {
             return Ok(i64::MAX);
         };
-        if let Some(bytes) = self.cached(wallet) {
-            return Ok(bytes);
+        if let Some(answer) = self.cached(wallet) {
+            return answer;
         }
-        let url = format!("{base}/account-holdings/{}", wallet.as_str());
-        let mut attempt = 0;
-        loop {
-            match self.attempt(&url).await {
-                Ok(bytes) => {
-                    self.remember(wallet, bytes);
-                    return Ok(bytes);
-                }
-                Err(e) if attempt + 1 >= STATS_ATTEMPTS => return Err(e),
-                Err(e) => {
-                    let delay = STATS_BASE_DELAY * 2u32.pow(attempt);
-                    tracing::warn!(error = %e, attempt = attempt + 1, ?delay, "account holdings failed, retrying");
-                    tokio::time::sleep(delay).await;
-                    attempt += 1;
-                }
-            }
+        let _permit = self
+            .in_flight
+            .acquire()
+            .await
+            .map_err(|_| "account holdings closed".to_string())?;
+        // A caller queued behind the same wallet's lookup reuses its answer.
+        if let Some(answer) = self.cached(wallet) {
+            return answer;
         }
+        let answer = self.fetch(wallet, base).await;
+        self.remember(wallet, answer.clone());
+        answer
+    }
+
+    fn is_limited(&self) -> bool {
+        self.url.is_some()
     }
 }
 
@@ -184,7 +230,7 @@ pub struct WorldUsage {
     pub size_overridden: bool,
 }
 
-/// The wallet's local worlds (stored owner), split as the old wallet stats.
+/// The wallet's local worlds, split as the old wallet stats.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WalletUsage {
     /// DCL NAME worlds, the ones the allowance covers.
@@ -207,20 +253,25 @@ impl WalletUsage {
     }
 }
 
+/// `wallet`'s local worlds: the DCL worlds in `held` (the NAMEs it holds
+/// now; `None` without a names reader: those stored as its own) and the ENS
+/// worlds stored as its own.
 pub async fn wallet_usage<'e>(
     db: impl sqlx::PgExecutor<'e>,
     wallet: &Address,
+    held: Option<&[String]>,
 ) -> Result<WalletUsage, sqlx::Error> {
     let rows = sqlx::query(
-        "SELECT w.name, COALESCE(sum(s.size), 0)::bigint AS size, \
+        "SELECT w.name, w.owner, COALESCE(sum(s.size), 0)::bigint AS size, \
                 bool_or(o.max_size_bytes IS NOT NULL) AS overridden \
            FROM worlds.worlds w \
            LEFT JOIN worlds.world_scenes s ON s.world_name = w.name AND s.mirror_source IS NULL \
            LEFT JOIN worlds.world_limit_overrides o ON o.world_name = w.name \
-          WHERE w.owner = $1 AND w.mirror_source IS NULL \
-          GROUP BY w.name ORDER BY w.name",
+          WHERE (w.owner = $1 OR w.name = ANY($2::text[])) AND w.mirror_source IS NULL \
+          GROUP BY w.name, w.owner ORDER BY w.name",
     )
     .bind(wallet)
+    .bind(held.unwrap_or_default())
     .fetch_all(db)
     .await?;
     let mut usage = WalletUsage::default();
@@ -229,6 +280,14 @@ pub async fn wallet_usage<'e>(
         let Ok(world) = WorldName::parse(&name) else {
             continue;
         };
+        let stored_mine = r.get::<Option<String>, _>("owner").as_deref() == Some(wallet.as_str());
+        let mine = match held {
+            Some(held) if world.is_dcl_eth() => held.iter().any(|h| h == world.key()),
+            _ => stored_mine,
+        };
+        if !mine {
+            continue;
+        }
         let entry = WorldUsage {
             name,
             size: r.get("size"),
@@ -258,7 +317,67 @@ impl From<sqlx::Error> for CapError {
     }
 }
 
+/// What a publish charged to a wallet's allowance re-checks in its transaction.
+#[derive(Debug, Clone)]
+pub struct QuotaCharge {
+    pub wallet: Address,
+    pub allowance: i64,
+    /// [`wallet_usage`]'s `held`, the published world included.
+    pub held: Option<Vec<String>>,
+    pub scene_cap: i64,
+}
+
+/// A publish's byte cap and, inside the allowance, what it is charged to.
+#[derive(Debug, Clone)]
+pub struct SceneCap {
+    pub max: i64,
+    pub charge: Option<QuotaCharge>,
+}
+
+/// The publish refusal for `size` bytes over a `max` cap.
+pub fn too_big(max: i64, size: i64) -> String {
+    format!(
+        "The deployment is too big. The maximum total size allowed is {max} bytes for scenes. You can upload up to {max} bytes but you tried to upload {size}."
+    )
+}
+
+/// Holds `wallet`'s quota lock until the transaction ends.
+async fn lock_wallet(conn: &mut sqlx::PgConnection, wallet: &Address) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind(format!("worlds.quota:{}", wallet.as_str()))
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// Re-checks `charge` in the publish transaction that stored `size` bytes,
+/// under the wallet's quota lock so concurrent publishes are counted in
+/// turn. `Some(max)`: the publish is over the cap.
+pub async fn recheck_charge(
+    conn: &mut sqlx::PgConnection,
+    charge: &QuotaCharge,
+    size: i64,
+) -> Result<Option<i64>, sqlx::Error> {
+    lock_wallet(&mut *conn, &charge.wallet).await?;
+    let usage = wallet_usage(&mut *conn, &charge.wallet, charge.held.as_deref()).await?;
+    let max = charge
+        .allowance
+        .saturating_sub(usage.charged_space() - size)
+        .clamp(0, charge.scene_cap);
+    Ok((size > max).then_some(max))
+}
+
 impl CoreState {
+    /// The DCL world keys `wallet` holds now; `None` without a names reader.
+    pub async fn held_worlds(&self, wallet: &Address) -> Result<Option<Vec<String>>, String> {
+        let labels = self
+            .policy
+            .held_name_labels(wallet)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(labels.map(|labels| labels.iter().map(|l| format!("{l}.dcl.eth")).collect()))
+    }
+
     /// The byte cap of a publish to `world` (WCS `getMaxAllowedSizeInBytesFor`):
     /// `limits`' fixed size for override, personal and ENS worlds, else the
     /// owner's remaining allowance capped at `limits.max_size_bytes`. `parcels`
@@ -270,8 +389,22 @@ impl CoreState {
         owner: Option<&Address>,
         parcels: Option<&[String]>,
     ) -> Result<i64, CapError> {
+        Ok(self.scene_cap(world, limits, owner, parcels).await?.max)
+    }
+
+    /// [`Self::max_scene_size`] with the charge the publish re-checks.
+    pub async fn scene_cap(
+        &self,
+        world: &WorldName,
+        limits: &WorldLimits,
+        owner: Option<&Address>,
+        parcels: Option<&[String]>,
+    ) -> Result<SceneCap, CapError> {
         if limits.size_overridden || !counts_against_allowance(world) {
-            return Ok(limits.max_size_bytes);
+            return Ok(SceneCap {
+                max: limits.max_size_bytes,
+                charge: None,
+            });
         }
         let owner = match owner {
             Some(owner) => owner.clone(),
@@ -287,30 +420,43 @@ impl CoreState {
             .allowance_bytes(&owner)
             .await
             .map_err(CapError::Unavailable)?;
-        let usage = wallet_usage(&self.pool, &owner).await?;
-        let credited: i64 = match parcels {
-            Some(parcels) => {
-                // Only scenes the owner's usage counts are credited.
+        let mut held = self
+            .held_worlds(&owner)
+            .await
+            .map_err(CapError::Unavailable)?;
+        // `owner` was resolved as this world's holder.
+        if let Some(held) = held.as_mut()
+            && !held.iter().any(|h| h == world.key())
+        {
+            held.push(world.key().to_string());
+        }
+        let usage = wallet_usage(&self.pool, &owner, held.as_deref()).await?;
+        let charged_world = usage.dcl_names.iter().find(|w| w.name == world.key());
+        // Only scenes the owner's usage counts are credited.
+        let credited: i64 = match (parcels, charged_world) {
+            (_, None) => 0,
+            (Some(parcels), Some(_)) => {
                 sqlx::query_scalar(
                     "SELECT COALESCE(sum(s.size), 0)::bigint FROM worlds.world_scenes s \
-                       JOIN worlds.worlds w ON w.name = s.world_name \
-                      WHERE s.world_name = $1 AND s.parcels && $2::text[] \
-                        AND s.mirror_source IS NULL AND w.mirror_source IS NULL AND w.owner = $3",
+                  WHERE s.world_name = $1 AND s.parcels && $2::text[] AND s.mirror_source IS NULL",
                 )
                 .bind(world.key())
                 .bind(parcels)
-                .bind(&owner)
                 .fetch_one(&self.pool)
                 .await?
             }
-            None => usage
-                .dcl_names
-                .iter()
-                .find(|w| w.name == world.key())
-                .map_or(0, |w| w.size),
+            (None, Some(w)) => w.size,
         };
         let remaining = allowance.saturating_sub(usage.charged_space() - credited);
-        Ok(remaining.clamp(0, limits.max_size_bytes))
+        Ok(SceneCap {
+            max: remaining.clamp(0, limits.max_size_bytes),
+            charge: Some(QuotaCharge {
+                wallet: owner,
+                allowance,
+                held,
+                scene_cap: limits.max_size_bytes,
+            }),
+        })
     }
 
     /// Opens a transaction holding `wallet`'s quota lock, so a block and an
@@ -320,10 +466,7 @@ impl CoreState {
         wallet: &Address,
     ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
-            .bind(format!("worlds.quota:{}", wallet.as_str()))
-            .execute(&mut *tx)
-            .await?;
+        lock_wallet(&mut tx, wallet).await?;
         Ok(tx)
     }
 
@@ -335,9 +478,11 @@ impl CoreState {
         now: NaiveDateTime,
     ) -> Result<bool, String> {
         let allowance = self.allowance.allowance_bytes(wallet).await?;
+        let held = self.held_worlds(wallet).await?;
         let write = async {
             let mut tx = self.quota_locked(wallet).await?;
-            if allowance >= wallet_usage(&mut *tx, wallet).await?.charged_space() {
+            let usage = wallet_usage(&mut *tx, wallet, held.as_deref()).await?;
+            if allowance >= usage.charged_space() {
                 return Ok(None);
             }
             let (created_at, updated_at): (NaiveDateTime, NaiveDateTime) = sqlx::query_as(
@@ -378,8 +523,9 @@ impl CoreState {
                 return Ok(false);
             }
             let allowance = self.allowance.allowance_bytes(wallet).await?;
+            let held = self.held_worlds(wallet).await?;
             let mut tx = self.quota_locked(wallet).await.map_err(|e| e.to_string())?;
-            let usage = wallet_usage(&mut *tx, wallet)
+            let usage = wallet_usage(&mut *tx, wallet, held.as_deref())
                 .await
                 .map_err(|e| e.to_string())?;
             if allowance < usage.charged_space() {
@@ -473,14 +619,30 @@ impl CoreState {
         owners.sort();
         owners.dedup();
         let mut failed = Vec::new();
+        let mut consecutive = 0;
         for owner in owners {
-            if let Err(error) = self
+            // A source that keeps failing is not asked about every owner.
+            if consecutive >= QUOTA_PASS_MAX_CONSECUTIVE_FAILURES {
+                failed.push(owner);
+                continue;
+            }
+            match self
                 .block_if_over_quota(&owner, chrono::Utc::now().naive_utc())
                 .await
             {
-                tracing::error!(wallet = %owner.as_str(), %error, "quota pass: wallet not evaluated; its block is kept");
-                failed.push(owner);
+                Ok(_) => consecutive = 0,
+                Err(error) => {
+                    tracing::error!(wallet = %owner.as_str(), %error, "quota pass: wallet not evaluated; its block is kept");
+                    consecutive += 1;
+                    failed.push(owner);
+                }
             }
+        }
+        if consecutive >= QUOTA_PASS_MAX_CONSECUTIVE_FAILURES {
+            tracing::error!(
+                skipped = failed.len(),
+                "quota pass stopped early on repeated failures; blocks kept"
+            );
         }
         self.collect_stale_quota_blocks(started, &failed, chrono::Utc::now().naive_utc())
             .await?;
@@ -568,6 +730,9 @@ mod tests {
 
         let (url, hits) = holdings(3, body).await;
         let source = AccountHoldings::new(Outbound::for_tests(), Some(&url), DEFAULT_STATS_TIMEOUT);
+        assert!(source.allowance_bytes(&wallet()).await.is_err());
+        assert_eq!(hits.load(Ordering::SeqCst), 3);
+        // A failure is answered from memory for a while.
         assert!(source.allowance_bytes(&wallet()).await.is_err());
         assert_eq!(hits.load(Ordering::SeqCst), 3);
 

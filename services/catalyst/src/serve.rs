@@ -820,7 +820,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let personal_worlds = worlds::policy::PersonalWorldsPolicy::new(
         config.worlds.worlds_personal_worlds_max,
         config.worlds.worlds_personal_world_max_size_bytes,
-        worlds::policy::MAX_WORLD_SIZE_BYTES,
+        worlds::policy::MAX_SCENE_SIZE_BYTES,
     )
     .context("WORLDS_PERSONAL_WORLDS_MAX / WORLDS_PERSONAL_WORLD_MAX_SIZE_BYTES")?;
     let land_operators = comms_settings
@@ -858,6 +858,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .with_max_parcels(config.worlds.max_parcels)
             .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024),
     );
+    worlds.attach_policy(policy.clone());
     // A world read-through holds each mirrored scene's signer to this policy and shares the
     // content read-through's download bound.
     if let Some(read_through) = &read_through {

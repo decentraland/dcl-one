@@ -426,6 +426,7 @@ async fn deploy(
             size: 1,
             replacement,
             forward_to: None,
+            quota: None,
         },
     )
     .await
@@ -5395,8 +5396,9 @@ async fn wallet_stats_report_names_space_and_block() {
             "dclNames": [{ "name": held.key(), "size": "1" }],
             "ensNames": [],
             "usedSpace": "1",
-            "maxAllowedSpace": i64::MAX.to_string(),
-        })
+            "maxAllowedSpace": crate::policy::MAX_SCENE_SIZE_BYTES.to_string(),
+        }),
+        "an unlimited allowance reports the per-scene caps of its DCL worlds"
     );
     f.allowance.set(&owner.address, Some(5 * 1024 * 1024));
     let body = expect(&f.app, Case::new("get", &path), 200).await;
@@ -5419,8 +5421,13 @@ async fn wallet_stats_report_names_space_and_block() {
     .unwrap();
     let body = expect(&f.app, Case::new("get", &path), 200).await;
     assert!(body["blockedSince"].as_str().unwrap().ends_with('Z'));
+    // An allowance outage degrades to the same caps.
     f.allowance.set(&owner.address, None);
-    expect(&f.app, Case::new("get", &path), 503).await;
+    let body = expect(&f.app, Case::new("get", &path), 200).await;
+    assert_eq!(
+        body["maxAllowedSpace"],
+        json!(crate::policy::MAX_SCENE_SIZE_BYTES.to_string())
+    );
     assert_eq!(
         expect(&f.app, Case::new("get", "/wallet/0x12/stats"), 400).await,
         json!({ "error": "Bad request", "message": "Invalid request. Missing or invalid wallet in request url param." })
@@ -5638,7 +5645,7 @@ async fn world_limits_report_what_a_publish_is_checked_against() {
 
     assert_eq!(
         expect(app, limits_case(&world, ""), 200).await,
-        json!({ "maxSceneSizeInBytes": crate::policy::MAX_WORLD_SIZE_BYTES.to_string(), "maxParcels": 4 })
+        json!({ "maxSceneSizeInBytes": crate::policy::MAX_SCENE_SIZE_BYTES.to_string(), "maxParcels": 4 })
     );
     expect(app, limits_case(&world, "?parcels=0,0&parcels=1,0"), 200).await;
     for bad in [
@@ -5830,6 +5837,7 @@ async fn a_deploy_reusing_a_blob_the_collector_removed_is_deferred_under_the_sto
                     size: 1,
                     replacement: &Deploy::Owner,
                     forward_to: None,
+                    quota: None,
                 },
             )
             .await
@@ -5935,7 +5943,7 @@ async fn the_publish_cap_is_what_the_owners_allowance_leaves() {
     f.allowance.set(&owner.address, Some(i64::MAX));
     assert_eq!(
         size(expect(app, limits_case(&b, ""), 200).await),
-        crate::policy::MAX_WORLD_SIZE_BYTES.to_string()
+        crate::policy::MAX_SCENE_SIZE_BYTES.to_string()
     );
     // A size override is outside the allowance.
     set_limit_override(&f.pool, &b, None, Some(7)).await;
@@ -5969,9 +5977,11 @@ async fn a_quota_block_warns_restricts_after_two_days_and_restores() {
     let Some(f) = fixture().await else { return };
     let _quota = super::quota::test_support::QUOTA_DB.lock().await;
     let (world, owner) = (world_name(), Wallet::random().address);
+    f.names.set(&owner, world.label());
     sized_scene(&f, &world, &owner, 'q', &["0,0"], 250).await;
     f.allowance.set(&owner, Some(100));
-    let now = chrono::Utc::now().naive_utc();
+    // Postgres keeps microseconds.
+    let now = chrono::SubsecRound::trunc_subsecs(chrono::Utc::now().naive_utc(), 6);
     let t0 = now - chrono::TimeDelta::days(3);
     let hours = |h: i64| t0 + chrono::TimeDelta::hours(h);
     let block_row = || async {
@@ -6022,11 +6032,15 @@ async fn a_quota_block_warns_restricts_after_two_days_and_restores() {
         crate::policy::WorldAdmission::Blocked
     );
     assert!(about_refuses(&f, &world).await);
-    assert!(!store::world_is_valid(&f.pool, &world).await.unwrap());
+    assert!(
+        !store::world_is_valid(&f.pool, &f.state.policy, &world)
+            .await
+            .unwrap()
+    );
 
     assert!(
         f.state
-            .block_if_over_quota(&owner, hours(48))
+            .block_if_over_quota(&owner, hours(49))
             .await
             .unwrap()
     );
@@ -6109,7 +6123,7 @@ async fn a_publish_or_undeploy_that_frees_space_lifts_the_block() {
 }
 
 #[tokio::test]
-async fn the_credit_only_counts_scenes_charged_to_the_owner() {
+async fn the_allowance_follows_the_live_name_holder() {
     let Some(f) = fixture().await else { return };
     let (theirs, mine, owner, previous) = (
         world_name(),
@@ -6117,9 +6131,11 @@ async fn the_credit_only_counts_scenes_charged_to_the_owner() {
         Wallet::random().address,
         Wallet::random().address,
     );
-    // `theirs` is still stored under its previous owner.
+    // `theirs` was sold to `owner` but is still stored under `previous`.
     sized_scene(&f, &theirs, &previous, 't', &["0,0"], 200).await;
     sized_scene(&f, &mine, &owner, 'm', &["0,0"], 100).await;
+    f.names.set(&owner, theirs.label());
+    f.names.set(&owner, mine.label());
     f.allowance.set(&owner, Some(300));
     let limits = f.state.policy.world_limits(&theirs).await.unwrap();
     let parcels = ["0,0".to_string()];
@@ -6134,7 +6150,15 @@ async fn the_credit_only_counts_scenes_charged_to_the_owner() {
         .max_scene_size(&mine, &limits, Some(&owner), Some(&parcels))
         .await
         .unwrap();
-    assert_eq!(cap, 300);
+    assert_eq!(cap, 100);
+    let held = f.state.held_worlds(&previous).await.unwrap();
+    let usage = super::quota::wallet_usage(&f.pool, &previous, held.as_deref())
+        .await
+        .unwrap();
+    assert!(usage.dcl_names.is_empty(), "{usage:?}");
+    let path = format!("/wallet/{}/stats", owner.as_str());
+    let body = expect(&f.app, Case::new("get", &path), 200).await;
+    assert_eq!(body["usedSpace"], json!("300"));
 }
 
 #[tokio::test]
@@ -6170,6 +6194,7 @@ async fn a_quota_block_waits_for_a_concurrent_unblock_and_reevaluates() {
     let Some(f) = fixture().await else { return };
     let _quota = super::quota::test_support::QUOTA_DB.lock().await;
     let (world, owner) = (world_name(), Wallet::random().address);
+    f.names.set(&owner, world.label());
     sized_scene(&f, &world, &owner, 'r', &["0,0"], 250).await;
     f.allowance.set(&owner, Some(100));
 
@@ -6212,7 +6237,8 @@ async fn a_quota_block_spares_the_personal_and_mirrored_worlds() {
     let _quota = super::quota::test_support::QUOTA_DB.lock().await;
     let (named, mirrored, owner) = (world_name(), world_name(), Wallet::random().address);
     let personal = WorldName::parse(&format!("{}.dcl.eth", owner.as_str())).unwrap();
-    let long_ago = chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(3);
+    let long_ago = chrono::SubsecRound::trunc_subsecs(chrono::Utc::now().naive_utc(), 6)
+        - chrono::TimeDelta::days(3);
     sqlx::query(
         "INSERT INTO worlds.quota_blocks (wallet, created_at, updated_at) VALUES ($1, $2, $2)",
     )
@@ -6274,7 +6300,9 @@ async fn the_quota_pass_blocks_owners_over_their_allowance_and_lifts_stale_block
         Wallet::random().address,
     );
     for (owner, tag) in [(&over, 'x'), (&under, 'y'), (&unknown, 'z')] {
-        sized_scene(&f, &world_name(), owner, tag, &["0,0"], 250).await;
+        let world = world_name();
+        f.names.set(owner, world.label());
+        sized_scene(&f, &world, owner, tag, &["0,0"], 250).await;
     }
     f.allowance.set(&over, Some(100));
     f.allowance.set(&under, Some(1000));
@@ -6355,7 +6383,7 @@ async fn permission_edits_notify_each_address_actually_changed() {
         granted.metadata,
         json!({
             "title": "World Permission Granted",
-            "description": format!("You have been granted deployment permission for world {}.", world.key()),
+            "description": "You have been granted deployment permission for a world.",
             "world": world.key(),
             "permissions": ["deployment"],
             "url": "https://builder.example/worlds?tab=dcl",
@@ -6397,11 +6425,21 @@ async fn permission_edits_notify_each_address_actually_changed() {
     let revoked = &notices_of(&f, PERMISSION_REVOKED, &d.address)[0];
     assert_eq!(
         revoked.metadata["description"],
-        format!(
-            "Your streaming permission for world {} has been revoked.",
-            world.key()
-        )
+        "Your streaming permission for a world has been revoked."
     );
+    // Granted again within the hour: the latest notice is the grant.
+    expect(app, Case::new("put", &streamer).signed(&owner).await, 204).await;
+    assert_eq!(count(PERMISSION_GRANTED, &d), 2);
+    let latest = f
+        .social
+        .user_notifications
+        .lock()
+        .unwrap()
+        .iter()
+        .rfind(|n| n.recipient == d.address)
+        .map(|n| n.kind)
+        .unwrap();
+    assert_eq!(latest, PERMISSION_GRANTED);
 
     let parcels_path = format!(
         "/world/{w}/permissions/deployment/address/{}/parcels",
@@ -6658,4 +6696,179 @@ async fn a_new_holder_publishes_then_the_reconcile_finds_nothing_to_change() {
             .iter()
             .any(|r| matches!(r, super::Revocation::Address { world: w, .. } if *w == world))
     );
+}
+
+#[tokio::test]
+async fn one_edit_notifies_at_most_the_capped_number_of_addresses() {
+    use super::notices::PERMISSION_GRANTED;
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random());
+    f.names.set(&owner.address, world.label());
+    let many: Vec<Address> = (0..super::permissions::MAX_NOTICES_PER_EDIT + 5)
+        .map(|_| Wallet::random().address)
+        .collect();
+    let wallets: Vec<&str> = many.iter().map(Address::as_str).collect();
+    let meta = json!({ "type": "allow-list", "wallets": wallets }).to_string();
+    let path = format!("/world/{}/permissions/deployment", world.display());
+    expect(
+        &f.app,
+        Case::new("post", &path).signed_meta(&owner, &meta).await,
+        204,
+    )
+    .await;
+    let notified = many
+        .iter()
+        .filter(|a| !notices_of(&f, PERMISSION_GRANTED, a).is_empty())
+        .count();
+    assert_eq!(notified, super::permissions::MAX_NOTICES_PER_EDIT);
+}
+
+/// Two publishes validated against the same remaining allowance: the
+/// transaction re-check under the wallet lock admits only the first.
+#[tokio::test]
+async fn concurrent_publishes_cannot_overrun_the_allowance_together() {
+    let Some(f) = fixture().await else { return };
+    let (a, b, owner) = (world_name(), world_name(), Wallet::random().address);
+    f.names.set(&owner, a.label());
+    f.names.set(&owner, b.label());
+    f.allowance.set(&owner, Some(150));
+    let limits = f.state.policy.world_limits(&a).await.unwrap();
+    let footprint = ["0,0".to_string()];
+    let mut charges = Vec::new();
+    for world in [&a, &b] {
+        let cap = f
+            .state
+            .scene_cap(world, &limits, Some(&owner), Some(&footprint))
+            .await
+            .unwrap();
+        assert_eq!(cap.max, 150);
+        charges.push(cap.charge.expect("charged to the allowance"));
+    }
+
+    let mut held = f.pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind(format!("worlds.quota:{}", owner.as_str()))
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let mut publishes = Vec::new();
+    for ((world, charge), tag) in [&a, &b].into_iter().zip(charges).zip(['c', 'e']) {
+        let (id, entity) = (cid(tag), scene_at(1, &["0,0"]));
+        f.storage
+            .store(&id, bytes::Bytes::from(entity.to_string()))
+            .await
+            .unwrap();
+        let (pool, storage, world, owner) = (
+            f.pool.clone(),
+            f.storage.clone(),
+            world.clone(),
+            owner.clone(),
+        );
+        publishes.push(tokio::spawn(async move {
+            store::deploy_scene(
+                &pool,
+                &storage,
+                SceneDeployment {
+                    world: &world,
+                    name_owner: Some(&owner),
+                    entity_id: &id,
+                    deployer: &owner,
+                    deployment_auth_chain: &json!([]),
+                    entity: &entity,
+                    parcels: &parcels(&["0,0"]),
+                    size: 100,
+                    replacement: &Deploy::Owner,
+                    forward_to: None,
+                    quota: Some(&charge),
+                },
+            )
+            .await
+        }));
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(
+        publishes.iter().all(|p| !p.is_finished()),
+        "both wait for the lock"
+    );
+    held.commit().await.unwrap();
+
+    let mut refused = Vec::new();
+    for publish in publishes {
+        if let Err(e) = publish.await.unwrap() {
+            refused.push(e);
+        }
+    }
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert_eq!(refused[0].status(), 400);
+    assert!(
+        refused[0]
+            .public_message()
+            .contains("You can upload up to 50 bytes but you tried to upload 100"),
+        "{}",
+        refused[0].public_message()
+    );
+    let held = f.state.held_worlds(&owner).await.unwrap();
+    let usage = super::quota::wallet_usage(&f.pool, &owner, held.as_deref())
+        .await
+        .unwrap();
+    assert_eq!(usage.used_space, 100);
+}
+
+/// A quota block follows the NAME's live holder, not a stale stored owner.
+#[tokio::test]
+async fn a_quota_block_follows_the_live_name_holder() {
+    use crate::comms::interfaces::AccessPolicy;
+    let Some(f) = fixture().await else { return };
+    let _quota = super::quota::test_support::QUOTA_DB.lock().await;
+    let (world, seller, buyer) = (
+        world_name(),
+        Wallet::random().address,
+        Wallet::random().address,
+    );
+    f.names.set(&seller, world.label());
+    sized_scene(&f, &world, &seller, 's', &["0,0"], 1).await;
+    f.names.forget(&seller);
+    f.names.set(&buyer, world.label());
+    f.market.graph.names.clear();
+    f.market.graph.name_owner.clear();
+    let long_ago = chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(3);
+    let block = |wallet: &Address| {
+        sqlx::query(
+            "INSERT INTO worlds.quota_blocks (wallet, created_at, updated_at) VALUES ($1, $2, $2)",
+        )
+        .bind(wallet.as_str().to_string())
+        .bind(long_ago)
+        .execute(&f.pool)
+    };
+    let now = chrono::Utc::now().naive_utc();
+    block(&seller).await.unwrap();
+    assert_eq!(
+        f.state.policy.world_admission(&world, now).await.unwrap(),
+        crate::policy::WorldAdmission::Open(crate::policy::AccessType::Unrestricted),
+        "the seller's block does not follow the sold name"
+    );
+    assert_eq!(
+        f.state.policy.quota_blocked_since(&world).await.unwrap(),
+        None
+    );
+    assert!(
+        store::world_is_valid(&f.pool, &f.state.policy, &world)
+            .await
+            .unwrap()
+    );
+    block(&buyer).await.unwrap();
+    assert_eq!(
+        f.state.policy.world_admission(&world, now).await.unwrap(),
+        crate::policy::WorldAdmission::Blocked
+    );
+    assert!(
+        !store::world_is_valid(&f.pool, &f.state.policy, &world)
+            .await
+            .unwrap()
+    );
+    sqlx::query("DELETE FROM worlds.quota_blocks WHERE wallet = ANY($1::text[])")
+        .bind([seller.as_str(), buyer.as_str()])
+        .execute(&f.pool)
+        .await
+        .unwrap();
 }

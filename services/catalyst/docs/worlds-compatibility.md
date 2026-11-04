@@ -16,12 +16,19 @@ difference not listed here is a gap, not a decision.
 - **Wallet storage allowance.** `GET /wallet/{wallet}/stats`, the publish
   size cap and `GET /world/{name}/limits` count only scenes published here:
   mirrored worlds and scenes are left out. Personal worlds are outside the
-  allowance and are not listed. Without `DCL_NAME_STATS_URL`, the allowance
-  is unlimited and `maxAllowedSpace` is `9223372036854775807`. When the
-  account-holdings service fails after its three attempts, these routes and
-  the publish answer 503. An answered allowance is reused for 60 seconds.
-  A publish credits back only the replaced scenes of a world already
-  charged to the same owner.
+  allowance and are not listed. A wallet's DCL NAME worlds are the NAMEs it
+  holds now (the stored owner only without a names reader). A DCL NAME
+  world's publish is capped at 500 MiB per scene (the upstream
+  `MAX_SCENE_SIZE` default; not configurable here) and by what the owner's
+  allowance leaves; the publish re-checks the allowance in its transaction,
+  so concurrent publishes cannot exceed it together. Without
+  `DCL_NAME_STATS_URL` the allowance is unlimited and `maxAllowedSpace`
+  reports the per-scene caps of the wallet's DCL NAME worlds; the stats
+  route reports the same when the account-holdings service fails, while the
+  publish and `/limits` answer 503. An answered allowance is reused for 60
+  seconds and a failed lookup for 15 seconds; at most 8 lookups run at once.
+  A publish credits back only the replaced scenes of a world charged to
+  the same owner.
 - **Legacy content keys.** The worlds `/contents/{key}` route also accepts a
   64-hex sha256 key and serves the blob whose raw-leaf CIDv1 has that
   digest, which covers files of one chunk (256 KiB) or less. An invalid key
@@ -42,7 +49,8 @@ difference not listed here is a gap, not a decision.
   (`/admin/worlds/{name}/disable`) refuses the world on `/about` and the
   comms mints immediately. A storage-quota block keeps the upstream two-day
   grace and refuses only the owner's local DCL NAME and ENS worlds, not its
-  personal world or mirrored worlds.
+  personal world or mirrored worlds. The block follows the NAME's live
+  holder: a sold world is judged by its new holder's block.
 - **Shared-secret throttle.** Attempts are counted in Postgres per world
   and client source (`X-Real-IP`, IPv6 by /64; the wallet without one) over
   a fixed 60-second window from the first attempt
@@ -141,8 +149,10 @@ difference not listed here is a gap, not a decision.
   email outbox, in the same transaction as the grant edit or quota change,
   instead of being published to SNS. Re-detecting the same quota block keeps
   the first notice unchanged; a new block notifies again even on the same
-  day. A grant or revoke notice for the same world, permission and address
-  is sent once per clock hour.
+  day. Every grant or revoke is its own notice, so the latest notice matches
+  the current grant. One edit notifies at most 50 added and 50 removed
+  addresses. The notice description does not name the world (it is in the
+  `world` field).
 - **Last parcel removed.** Removing a parcel-scoped grant's last parcel
   sends `worlds_permission_revoked`, because the grant is deleted.
 

@@ -454,6 +454,8 @@ struct Validated {
     /// The live NAME holder `worlds.owner` is refreshed to.
     name_owner: Address,
     size: i64,
+    /// The allowance the publish is charged to.
+    charge: Option<super::quota::QuotaCharge>,
 }
 
 async fn validate(
@@ -651,17 +653,15 @@ async fn validate(
         return Err(failed(file_errors.join(", ")));
     }
     let size: i64 = sizes.values().copied().fold(0, i64::saturating_add);
-    let max = state
-        .max_scene_size(&world, &limits, Some(&name_owner), Some(pointers.as_slice()))
+    let cap = state
+        .scene_cap(&world, &limits, Some(&name_owner), Some(pointers.as_slice()))
         .await
         .map_err(|e| {
             tracing::warn!(world = %world, error = ?e, "deploy denied: storage allowance undetermined");
             unavailable("Deployment failed: the storage allowance could not be determined right now")
         })?;
-    if size > max {
-        return Err(failed(format!(
-            "The deployment is too big. The maximum total size allowed is {max} bytes for scenes. You can upload up to {max} bytes but you tried to upload {size}."
-        )));
+    if size > cap.max {
+        return Err(failed(super::quota::too_big(cap.max, size)));
     }
 
     Ok(Validated {
@@ -671,6 +671,7 @@ async fn validate(
         replacement,
         name_owner,
         size,
+        charge: cap.charge,
     })
 }
 
@@ -731,6 +732,7 @@ async fn deploy_entity_inner(
         replacement,
         name_owner,
         size,
+        charge,
     } = match validate(state, &entity, &signer, &entity_id, &uploads, now_ms).await {
         Ok(v) => v,
         Err(refusal) => return refusal.into_response(),
@@ -759,6 +761,7 @@ async fn deploy_entity_inner(
             size,
             replacement: &replacement,
             forward_to: state.forwarder.as_deref().map(|f| f.target()),
+            quota: charge.as_ref(),
         },
     )
     .await;

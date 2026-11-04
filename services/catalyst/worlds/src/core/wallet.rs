@@ -1,7 +1,7 @@
 //! The wallet routes of the worlds content server: `GET /wallet/contribute`
 //! (signed: the worlds the signer holds a deployment or streaming grant in)
-//! and `GET /wallet/{wallet}/stats` (the worlds stored as the wallet's, the
-//! space its DCL NAME worlds use, its storage allowance and its quota block).
+//! and `GET /wallet/{wallet}/stats` (the wallet's worlds, the space its DCL
+//! NAME worlds use, its storage allowance and its quota block).
 
 use axum::Json;
 use axum::extract::{OriginalUri, Path, State};
@@ -128,15 +128,34 @@ pub async fn get_wallet_stats(
                 "Invalid request. Missing or invalid wallet in request url param.",
             )
         })?;
-    let allowance = state
-        .allowance
-        .allowance_bytes(&address)
-        .await
-        .map_err(|e| {
-            tracing::warn!(wallet = %address.as_str(), error = %e, "wallet stats: allowance unavailable");
-            ApiError::service_unavailable("The wallet's storage allowance could not be read right now")
-        })?;
-    let usage = quota::wallet_usage(&state.pool, &address).await?;
+    // A names reader fault falls back to the stored owner.
+    let held = state.held_worlds(&address).await.unwrap_or_else(|e| {
+        tracing::warn!(wallet = %address.as_str(), error = %e, "wallet stats: held names unavailable");
+        None
+    });
+    let usage = quota::wallet_usage(&state.pool, &address, held.as_deref()).await?;
+    let allowance = if state.allowance.is_limited() {
+        state
+            .allowance
+            .allowance_bytes(&address)
+            .await
+            .inspect_err(|e| {
+                tracing::warn!(wallet = %address.as_str(), error = %e, "wallet stats: allowance unavailable");
+            })
+            .ok()
+            .filter(|bytes| *bytes != i64::MAX)
+    } else {
+        None
+    };
+    // Without an allowance: what the per-scene caps of its DCL worlds allow.
+    let max_allowed_space = allowance.unwrap_or_else(|| {
+        usage
+            .dcl_names
+            .iter()
+            .filter_map(|w| crate::comms::world_identity::WorldName::parse(&w.name).ok())
+            .map(|w| state.policy.world_size_cap(&w))
+            .fold(0i64, i64::saturating_add)
+    });
     let sizes = |worlds: Vec<quota::WorldUsage>| -> Vec<WorldSize> {
         worlds
             .into_iter()
@@ -157,7 +176,7 @@ pub async fn get_wallet_stats(
         dcl_names: sizes(usage.dcl_names),
         ens_names: sizes(usage.ens_names),
         used_space: usage.used_space.to_string(),
-        max_allowed_space: allowance.to_string(),
+        max_allowed_space: max_allowed_space.to_string(),
         blocked_since: blocked_since.map(|t| {
             t.and_utc()
                 .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)

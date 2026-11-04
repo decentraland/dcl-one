@@ -273,6 +273,8 @@ pub struct SceneDeployment<'a> {
     /// The upstream this publish is forwarded to (`WORLDS_FORWARD_UPSTREAM_URL`):
     /// its `worlds.forward_outbox` row commits with the scene.
     pub forward_to: Option<&'a str>,
+    /// The storage allowance the publish is charged to, re-checked before commit.
+    pub quota: Option<&'a super::quota::QuotaCharge>,
 }
 
 pub(crate) struct DerivedSceneSettings {
@@ -422,22 +424,25 @@ pub async fn get_world(pool: &PgPool, world: &WorldName) -> Result<Option<WorldR
 
 /// Upstream's `isWorldValid`: the world has scenes and is neither disabled
 /// nor its owner quota-blocked past the grace.
-pub async fn world_is_valid(pool: &PgPool, world: &WorldName) -> Result<bool, ApiError> {
-    let row: Option<(bool, Option<NaiveDateTime>, Option<NaiveDateTime>)> =
-        sqlx::query_as(concat!(
-            "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes s WHERE s.world_name = w.name), \
-                w.blocked_since, q.created_at \
-           FROM worlds.worlds w LEFT JOIN worlds.quota_blocks q ON q.wallet = w.owner AND ",
-            super::quota::quota_blockable_world!(),
-            " WHERE w.name = $1"
-        ))
-        .bind(world.key())
-        .fetch_optional(pool)
-        .await?;
+pub async fn world_is_valid(
+    pool: &PgPool,
+    policy: &crate::policy::Policy,
+    world: &WorldName,
+) -> Result<bool, ApiError> {
+    let row: Option<(bool, Option<NaiveDateTime>)> = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes s WHERE s.world_name = w.name), \
+                w.blocked_since \
+           FROM worlds.worlds w WHERE w.name = $1",
+    )
+    .bind(world.key())
+    .fetch_optional(pool)
+    .await?;
+    let Some((has_scenes, disabled)) = row else {
+        return Ok(false);
+    };
+    let quota = policy.quota_blocked_since(world).await?;
     let now = chrono::Utc::now().naive_utc();
-    Ok(row.is_some_and(|(has_scenes, disabled, quota)| {
-        has_scenes && !crate::comms::access::world_blocked(disabled, quota, now)
-    }))
+    Ok(has_scenes && !crate::comms::access::world_blocked(disabled, quota, now))
 }
 
 pub async fn ensure_world(
@@ -567,6 +572,7 @@ pub async fn deploy_scene(
         size,
         replacement,
         forward_to,
+        quota,
     } = deployment;
     let mut s = scene_settings_from_entity(entity);
     if let Some(hash) = s.thumbnail_hash.take() {
@@ -768,6 +774,15 @@ pub async fn deploy_scene(
         .await?;
     crate::explore::places::scene_identity::retire_orphans(&mut tx, &[world.key().to_string()])
         .await?;
+
+    if let Some(charge) = quota
+        && let Some(max) = super::quota::recheck_charge(&mut tx, charge, size).await?
+    {
+        return Err(ApiError::bad_request(format!(
+            "Deployment failed: {}",
+            super::quota::too_big(max, size)
+        )));
+    }
 
     if let Some(target) = forward_to {
         // A re-publish of the same entity replaces its record: the new id
