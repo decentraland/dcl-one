@@ -276,18 +276,17 @@ pub async fn validate(
 }
 
 /// The write deployer's failure for a refused validation: `Unavailable`
-/// (503) when this node could not decide, `Rejected` (400) otherwise.
+/// (503) when this node could not decide, `Unverifiable` (503) for a
+/// contract-wallet signature not checked here, `Rejected` (400) otherwise.
 pub fn into_deploy_failure(errors: Vec<ValidationError>) -> super::write_deployer::DeployFailure {
     use super::write_deployer::DeployFailure;
     let unavailable = errors.iter().any(ValidationError::is_unavailable);
-    let messages: Vec<String> = errors
-        .into_iter()
-        .map(|e| match e {
-            ValidationError::Rejected(m) | ValidationError::Unavailable(m) => m,
-        })
-        .collect();
+    let unverifiable = errors.iter().any(ValidationError::is_unverifiable);
+    let messages: Vec<String> = errors.iter().map(|e| e.message().to_string()).collect();
     if unavailable {
         DeployFailure::Unavailable(messages)
+    } else if unverifiable {
+        DeployFailure::Unverifiable(messages)
     } else {
         DeployFailure::Rejected(messages)
     }

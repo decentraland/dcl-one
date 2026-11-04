@@ -461,7 +461,7 @@ async fn a_contract_wallet_chain_without_an_rpc_validator_is_unavailable() {
     };
     let verdict = validate(&entity, &files, &ctx).await.unwrap_err();
     assert!(
-        matches!(&verdict[..], [ValidationError::Unavailable(m)] if m.starts_with("The signature is invalid. EIP-1654")),
+        matches!(&verdict[..], [ValidationError::Unverifiable(m)] if m.starts_with("The signature is invalid. EIP-1654")),
         "{verdict:?}"
     );
     let _ = std::fs::remove_dir_all(&tmp);
@@ -1323,6 +1323,8 @@ fn a_refusal_keeps_its_kind_in_the_deploy_failure() {
     );
     let unavailable = into_deploy_failure(vec![ValidationError::Unavailable("store".into())]);
     assert!(matches!(&unavailable, DeployFailure::Unavailable(e) if e == &["store".to_string()]));
+    let unverifiable = into_deploy_failure(vec![ValidationError::Unverifiable("rpc".into())]);
+    assert!(matches!(&unverifiable, DeployFailure::Unverifiable(e) if e == &["rpc".to_string()]));
 }
 
 /// `GET /queries/erc721/...` over the content database: the active entity

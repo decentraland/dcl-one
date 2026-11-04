@@ -156,7 +156,8 @@ pub struct ContentConfig {
     pub max_in_memory_deployment_bytes: u64,
 
     /// `POST /entities` requests one client address (IPv6 by /64) may make per
-    /// 24 hours, counted on admission and given back when the deployer answers 503;
+    /// 24 hours, counted on admission and given back when the deployer answers 503
+    /// for this node's own state (not for an unchecked contract-wallet signature);
     /// 0 turns the quota off. Kept per process: N upstreams admit N times it,
     /// and a restart resets it.
     #[arg(long, env = "POST_ENTITIES_DAILY_QUOTA_MAX", default_value_t = 300)]

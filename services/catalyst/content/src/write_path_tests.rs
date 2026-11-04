@@ -917,6 +917,8 @@ fn profile(owner: &str, wearables: &[&str]) -> Value {
     })
 }
 
+const PROFILE_CLIENT_IP: &str = "203.0.113.30";
+
 /// The old `profile_batch_no_overlay` contract on the write path: with no
 /// escrow lease anywhere, a worn item counts for the wallet that holds that
 /// token and for no one else (alice holds token 7 of item 1, bob token 9 of
@@ -924,8 +926,6 @@ fn profile(owner: &str, wearables: &[&str]) -> Value {
 /// validator's token tier), another token of an item one holds is not
 /// ownership, and a profile wearing only base items asks the subgraph
 /// nothing.
-const PROFILE_CLIENT_IP: &str = "203.0.113.30";
-
 #[tokio::test]
 async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
     require_test_db!(Some(pool) = crate::db::scratch::pool(4).await);
@@ -1301,15 +1301,15 @@ async fn an_unsynced_copys_refusals_count_toward_the_quota() {
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
 }
 
-/// The deployer's 503 (here a contract-wallet chain with no `ETH_RPC_URL`)
-/// is the node's: the quota gets it back.
+/// A contract-wallet chain this node cannot check (no `ETH_RPC_URL`) is a 503
+/// the client chose: it counts toward the quota.
 #[tokio::test]
-async fn deploys_the_deployer_cannot_decide_are_given_back() {
+async fn deploys_with_an_unverifiable_signature_count_toward_the_quota() {
     let settings = Settings {
-        post_entities_daily_quota_max: 1,
+        post_entities_daily_quota_max: 2,
         ..Settings::for_tests()
     };
-    let node = deploying_node("quota-refund", settings).await;
+    let node = deploying_node("quota-unverifiable", settings).await;
     let router = node.router();
     let file = Bytes::from(
         json!({"version": "v3", "type": "profile", "pointers": ["0x0000000000000000000000000000000000000002"],
@@ -1325,7 +1325,7 @@ async fn deploys_the_deployer_cannot_decide_are_given_back() {
         .await,
     )
     .unwrap();
-    for _ in 0..3 {
+    for _ in 0..2 {
         node.state.deployer().unwrap().clear_rate_limits();
         let mut req = deploy_request("/content/entities", &id, &chain, &[(&id, &file)]);
         req.headers_mut()
@@ -1335,10 +1335,42 @@ async fn deploys_the_deployer_cannot_decide_are_given_back() {
         assert!(json_of(&body)["errors"].is_array(), "{body:?}");
         assert!(headers.contains_key(header::RETRY_AFTER));
     }
-    assert_eq!(node.state.deploy_quota.counted_for("203.0.113.13"), 0);
+    assert_eq!(node.state.deploy_quota.counted_for("203.0.113.13"), 2);
     let (status, _, _) = call(&router, form_request("203.0.113.13", &entity_form())).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+/// The deployer's 503 for this node's own state (here no LAND rights source)
+/// is given back to the client's quota.
+#[tokio::test]
+async fn deploys_the_node_cannot_decide_are_given_back() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 1,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-refund", settings).await;
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let (file, id, chain) = signed_entity(&signer, scene(&["0,0"], &[])).await;
+    for _ in 0..3 {
+        node.state.deployer().unwrap().clear_rate_limits();
+        let mut req = deploy_request("/content/entities", &id, &chain, &[(&id, &file)]);
+        req.headers_mut()
+            .insert("x-real-ip", HeaderValue::from_static("203.0.113.14"));
+        let (status, headers, body) = call(&router, req).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body:?}");
+        assert!(
+            json_of(&body)["errors"][0]
+                .as_str()
+                .is_some_and(|e| e.starts_with("Error checking parcel access")),
+            "{body:?}"
+        );
+        assert!(headers.contains_key(header::RETRY_AFTER));
+    }
+    assert_eq!(node.state.deploy_quota.counted_for("203.0.113.14"), 0);
+    let (status, _, _) = call(&router, form_request("203.0.113.14", &entity_form())).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "the quota is untouched");
-    let (status, _, _) = call(&router, form_request("203.0.113.13", &entity_form())).await;
+    let (status, _, _) = call(&router, form_request("203.0.113.14", &entity_form())).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "a 400 is kept");
 }
 

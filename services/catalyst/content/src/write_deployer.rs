@@ -45,12 +45,17 @@ pub enum DeployFailure {
     /// This node could not decide, so the deposit is neither accepted nor at fault; answer 503 so
     /// the caller retries instead of being told their content does not exist.
     Unavailable(Vec<String>),
+    /// A contract-wallet signature this node could not check: 503 like
+    /// `Unavailable`, but it follows from the caller's auth chain.
+    Unverifiable(Vec<String>),
 }
 
 impl DeployFailure {
     pub fn errors(&self) -> &[String] {
         match self {
-            DeployFailure::Rejected(errors) | DeployFailure::Unavailable(errors) => errors,
+            DeployFailure::Rejected(errors)
+            | DeployFailure::Unavailable(errors)
+            | DeployFailure::Unverifiable(errors) => errors,
         }
     }
 }
@@ -448,7 +453,7 @@ impl WriteDeployer {
             let message = format!("The auth chain is invalid: {e}");
             return Err(match e {
                 AuthError::Eip1654ValidationFailed(_) | AuthError::Eip1654NotImplemented => {
-                    DeployFailure::Unavailable(vec![message])
+                    DeployFailure::Unverifiable(vec![message])
                 }
                 _ => DeployFailure::Rejected(vec![message]),
             });
@@ -636,6 +641,14 @@ impl WriteDeployer {
                     "deployment undecidable; this node is damaged"
                 );
                 return Err(DeployFailure::Unavailable(errors));
+            }
+            Err(DeployFailure::Unverifiable(errors)) => {
+                warn!(
+                    entity_id,
+                    ?errors,
+                    "deployment signature could not be checked"
+                );
+                return Err(DeployFailure::Unverifiable(errors));
             }
         }
 

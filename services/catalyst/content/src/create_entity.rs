@@ -20,8 +20,9 @@
 //! quota 429, both with `Retry-After` ([`super::upload_admission`], per
 //! process). The quota counts every admitted request, a form refused for
 //! its field limits (400) included, and gives back only the ones the
-//! deployer could not decide (its 503). An unsynced copy refusing the
-//! entity's type (503) still counts: the client chose the type.
+//! deployer could not decide for its own state (its 503). A contract-wallet
+//! signature this node cannot check (503) and an unsynced copy refusing the
+//! entity's type (503) still count: the client chose them.
 //! The per-second request rate is the gateway's (`limit_req zone=deploy`,
 //! `infra/gateway/gateway.py`); the per-pointer TTLs are the deployer's.
 
@@ -233,10 +234,12 @@ fn entity_type_of(files: &[Bytes], entity_id: &str) -> Option<String> {
 }
 
 pub fn deployment_failure_response(failure: DeployFailure) -> Response {
-    let unavailable = matches!(failure, DeployFailure::Unavailable(_));
+    let unavailable = !matches!(failure, DeployFailure::Rejected(_));
     let (status, errors) = match failure {
         DeployFailure::Rejected(errors) => (StatusCode::BAD_REQUEST, errors),
-        DeployFailure::Unavailable(errors) => (StatusCode::SERVICE_UNAVAILABLE, errors),
+        DeployFailure::Unavailable(errors) | DeployFailure::Unverifiable(errors) => {
+            (StatusCode::SERVICE_UNAVAILABLE, errors)
+        }
     };
     let response = (status, Json(json!({ "errors": errors }))).into_response();
     if unavailable {
@@ -326,7 +329,7 @@ pub async fn create_entity(
 }
 
 /// An admitted deploy's answer: [`Answer::Undecided`] is the deployer's
-/// 503, which the client's quota gets back.
+/// 503 for this node's own state, which the client's quota gets back.
 enum Answer {
     Decided(Response),
     Undecided(Response),
