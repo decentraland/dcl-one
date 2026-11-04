@@ -565,7 +565,7 @@ mod tests {
             .await
             .unwrap()
         });
-        tokio::time::timeout(Duration::from_secs(2), entered.notified())
+        tokio::time::timeout(crate::shared::test_wait::HANG_GUARD, entered.notified())
             .await
             .unwrap();
         // Pause only after the PostgreSQL work has reached the local HTTP
