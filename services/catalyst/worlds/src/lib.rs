@@ -322,7 +322,10 @@ impl WorldsState {
 pub fn router(state: SharedState) -> Router {
     Router::new()
         .route("/world/{world_name}/about", get(about::get_about))
-        .route("/world/{world_name}/scenes", get(scenes::list_scenes))
+        .route(
+            "/world/{world_name}/scenes",
+            get(scenes::list_scenes).post(scenes::post_list_scenes),
+        )
         .route(
             "/world/{world_name}/preview-wearables",
             get(preview_wearables::get_preview_wearables),

@@ -1037,6 +1037,19 @@ pub mod test_support {
                         .collect()
                 })
                 .unwrap_or_default()
+        } else if query.contains("nameOwner(") {
+            let name = body["variables"]["name"]
+                .as_str()
+                .unwrap_or("")
+                .to_lowercase();
+            names
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(_, labels)| labels.iter().any(|l| l.to_lowercase() == name))
+                .map(|(owner, _)| vec![json!({ "id": "0xname", "owner": { "id": owner } })])
+                .unwrap_or_default()
         } else {
             Vec::new()
         };

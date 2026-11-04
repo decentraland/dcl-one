@@ -1875,6 +1875,92 @@
         }
       }
     },
+    "/wallet/contribute": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "get_contributable_domains",
+        "description": "Signed fetch: the worlds the signer holds a deployment or streaming grant in.",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "domains",
+                    "count"
+                  ],
+                  "properties": {
+                    "count": {
+                      "type": "integer"
+                    },
+                    "domains": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "name",
+                          "user_permissions",
+                          "size",
+                          "owner",
+                          "parcelCount"
+                        ],
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "user_permissions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "size": {
+                            "type": "string"
+                          },
+                          "owner": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "parcelCount": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/wallet/{wallet}/connected-world": {
       "get": {
         "tags": [
@@ -1911,6 +1997,114 @@
             }
           },
           "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/wallet/{wallet}/stats": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "get_wallet_stats",
+        "parameters": [
+          {
+            "name": "wallet",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "wallet",
+                    "dclNames",
+                    "ensNames",
+                    "usedSpace",
+                    "maxAllowedSpace"
+                  ],
+                  "properties": {
+                    "wallet": {
+                      "type": "string"
+                    },
+                    "dclNames": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "name",
+                          "size"
+                        ],
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "size": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "ensNames": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "name",
+                          "size"
+                        ],
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "size": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "usedSpace": {
+                      "type": "string"
+                    },
+                    "maxAllowedSpace": {
+                      "type": "string"
+                    },
+                    "blockedSince": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
             "description": "",
             "content": {
               "application/json": {
@@ -2896,6 +3090,78 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "1-100, default 100; an invalid value is the default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "description": "default 0; an invalid value is the default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x1",
+            "in": "query",
+            "required": false,
+            "description": "bounding box: all of x1, x2, y1, y2 or none",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x2",
+            "in": "query",
+            "required": false,
+            "description": "bounding box",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "y1",
+            "in": "query",
+            "required": false,
+            "description": "bounding box",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "y2",
+            "in": "query",
+            "required": false,
+            "description": "bounding box",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "authorized_deployer",
+            "in": "query",
+            "required": false,
+            "description": "address: scenes of worlds it owns or may deploy to",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "entity_id",
+            "in": "query",
+            "required": false,
+            "description": "CIDv1 entity id",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2909,7 +3175,163 @@
               }
             }
           },
-          "404": {
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "scenes"
+        ],
+        "operationId": "post_list_scenes",
+        "parameters": [
+          {
+            "name": "world_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "1-100, default 100; an invalid value is the default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "description": "default 0; an invalid value is the default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x1",
+            "in": "query",
+            "required": false,
+            "description": "bounding box: all of x1, x2, y1, y2 or none",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x2",
+            "in": "query",
+            "required": false,
+            "description": "bounding box",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "y1",
+            "in": "query",
+            "required": false,
+            "description": "bounding box",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "y2",
+            "in": "query",
+            "required": false,
+            "description": "bounding box",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "authorized_deployer",
+            "in": "query",
+            "required": false,
+            "description": "address: scenes of worlds it owns or may deploy to",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "entity_id",
+            "in": "query",
+            "required": false,
+            "description": "CIDv1 entity id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "coordinates"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "coordinates": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 500,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^-?\\d+,-?\\d+$"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SceneListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "415": {
             "description": "",
             "content": {
               "application/json": {
@@ -3561,25 +3983,14 @@
       "ApiErrorBody": {
         "type": "object",
         "required": [
-          "ok",
-          "error",
-          "message"
+          "error"
         ],
         "properties": {
           "error": {
             "type": "string"
           },
-          "federation_adr": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "message": {
             "type": "string"
-          },
-          "ok": {
-            "type": "boolean"
           }
         }
       },
