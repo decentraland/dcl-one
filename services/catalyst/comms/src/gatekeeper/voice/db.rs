@@ -147,6 +147,19 @@ pub enum DeleteRoomError {
 }
 
 #[derive(Debug)]
+pub enum CreatePrivateCallError {
+    /// The room exists for another party pair: its id cannot admit these wallets.
+    PartiesDiffer,
+    Db(sqlx::Error),
+}
+
+impl From<sqlx::Error> for CreatePrivateCallError {
+    fn from(e: sqlx::Error) -> Self {
+        Self::Db(e)
+    }
+}
+
+#[derive(Debug)]
 pub enum CommunityJoinError {
     /// `community_voice_chat_users.community_id` references `communities`:
     /// a room can only exist for a community this database holds.
@@ -413,13 +426,15 @@ impl VoiceDb {
     /// Opens (or re-opens) this media call with both participants atomically.
     /// Issuing credentials does not displace other pending intents or media;
     /// the actual participant join/webhook and expiry paths own that lifecycle.
-    /// The existing return type is retained; no room is displaced here.
+    /// The existing return type is retained; no room is displaced here. An
+    /// existing room of another party pair is refused, in either order of
+    /// the two wallets, so its id never admits unrelated wallets.
     pub async fn create_private_call(
         &self,
         call_id: Uuid,
         caller: &Address,
         callee: &Address,
-    ) -> Result<Vec<Uuid>, sqlx::Error> {
+    ) -> Result<Vec<Uuid>, CreatePrivateCallError> {
         let now = now_utc();
         let mut txn = self.pool.begin().await?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
@@ -442,10 +457,14 @@ impl VoiceDb {
         .fetch_optional(&mut *txn)
         .await?;
         let mut wallets = vec![caller.as_str().to_owned(), callee.as_str().to_owned()];
-        if let Some((a, b)) = old {
-            wallets.extend([a.to_lowercase(), b.to_lowercase()]);
-        }
         wallets.sort();
+        if let Some((a, b)) = old {
+            let mut parties = vec![a.to_lowercase(), b.to_lowercase()];
+            parties.sort();
+            if parties != wallets {
+                return Err(CreatePrivateCallError::PartiesDiffer);
+            }
+        }
         wallets.dedup();
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext('private-voice:' || p)) FROM unnest($1::text[]) AS t(p)")
             .bind(&wallets).execute(&mut *txn).await?;
@@ -997,8 +1016,7 @@ mod tests {
         };
         let db = VoiceDb::new(pool.clone(), VoiceDbConfig::default());
         let wallet = || Address::parse(&format!("0x{}00000000", Uuid::new_v4().simple())).unwrap();
-        let (a, b, c, d, e, f, g, h) = (
-            wallet(),
+        let (a, b, c, d, e, f, h) = (
             wallet(),
             wallet(),
             wallet(),
@@ -1035,8 +1053,8 @@ mod tests {
             .await
             .unwrap();
         let writer = db.clone();
-        let (e1, f1) = (e.clone(), f.clone());
-        let first = tokio::spawn(async move { writer.create_private_call(call, &e1, &f1).await });
+        let (a1, b1) = (a.clone(), b.clone());
+        let first = tokio::spawn(async move { writer.create_private_call(call, &a1, &b1).await });
         let first_pid = waiting_on(&pool, pid).await;
         // Acceptance takes this call's row lock. It must finish while the
         // credential writer waits for a wallet, proving there is no row→wallet
@@ -1051,8 +1069,9 @@ mod tests {
             .unwrap()
         );
         let writer = db.clone();
-        let (g1, h1) = (g.clone(), h.clone());
-        let second = tokio::spawn(async move { writer.create_private_call(call, &g1, &h1).await });
+        let (a1, b1) = (a.clone(), b.clone());
+        // The same pair in the other order is the same room.
+        let second = tokio::spawn(async move { writer.create_private_call(call, &b1, &a1).await });
         waiting_on(&pool, first_pid).await;
         let pending_db = db.clone();
         let (a1, h2) = (a.to_string(), h.to_string());
@@ -1089,12 +1108,21 @@ mod tests {
         );
         let parties: Vec<Address> = sqlx::query_scalar("SELECT address FROM social.private_voice_chat_participants WHERE call_id=$1 ORDER BY address")
             .bind(call).fetch_all(&pool).await.unwrap();
-        let mut expected = vec![a, b, e, f, g, h];
+        let mut expected = vec![a.clone(), b.clone()];
         expected.sort();
-        assert_eq!(
-            parties, expected,
-            "new credentials retain every prior participant"
-        );
+        assert_eq!(parties, expected, "credentials keep the room's party pair");
+        for (x, y) in [(&e, &f), (&a, &e), (&e, &b)] {
+            assert!(
+                matches!(
+                    db.create_private_call(call, x, y).await,
+                    Err(CreatePrivateCallError::PartiesDiffer)
+                ),
+                "another party pair cannot take this room"
+            );
+        }
+        let parties: Vec<Address> = sqlx::query_scalar("SELECT address FROM social.private_voice_chat_participants WHERE call_id=$1 ORDER BY address")
+            .bind(call).fetch_all(&pool).await.unwrap();
+        assert_eq!(parties, expected, "a refused pair adds no participant");
         let unrelated_after: String = sqlx::query_scalar(
             "SELECT to_jsonb(c)::text FROM social.private_voice_chats c WHERE id=$1",
         )
@@ -1112,7 +1140,7 @@ mod tests {
         };
         let db = VoiceDb::new(pool.clone(), VoiceDbConfig::default());
         let wallet = || Address::parse(&format!("0x{}00000000", Uuid::new_v4().simple())).unwrap();
-        let (a, b, e, f) = (wallet(), wallet(), wallet(), wallet());
+        let (a, b) = (wallet(), wallet());
         let call = db
             .seed_pending_private_call(a.as_str(), b.as_str())
             .await
@@ -1129,8 +1157,8 @@ mod tests {
             .await
             .unwrap();
         let writer = db.clone();
-        let (e1, f1) = (e.clone(), f.clone());
-        let media = tokio::spawn(async move { writer.create_private_call(call, &e1, &f1).await });
+        let (a1, b1) = (a.clone(), b.clone());
+        let media = tokio::spawn(async move { writer.create_private_call(call, &b1, &a1).await });
         waiting_on(&pool, pid).await;
         let expired = tokio::time::timeout(
             std::time::Duration::from_secs(10),
@@ -1158,7 +1186,7 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(parties, (e.to_string(), f.to_string()));
+        assert_eq!(parties, (b.to_string(), a.to_string()));
         assert!(
             db.finish_pending_private_call(PendingPrivateCall::Id(call))
                 .await

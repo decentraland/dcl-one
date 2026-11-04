@@ -248,10 +248,19 @@ async fn private_voice_chat_room_credentials(
             return Err(ApiError::not_found("Private voice chat intent not found"));
         }
     } else {
-        state
+        match state
             .voice_db
             .create_private_call(call_id, caller, callee)
-            .await?;
+            .await
+        {
+            Ok(_) => {}
+            Err(db::CreatePrivateCallError::PartiesDiffer) => {
+                return Err(super::errors::conflict(
+                    "Private voice chat room belongs to other participants",
+                ));
+            }
+            Err(db::CreatePrivateCallError::Db(e)) => return Err(e.into()),
+        }
     }
     Ok(out)
 }

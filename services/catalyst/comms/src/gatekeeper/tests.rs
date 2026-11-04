@@ -722,6 +722,31 @@ async fn private_voice_credentials_are_refused_when_a_participant_is_platform_ba
             .unwrap()
             .is_some()
     );
+    let same_pair = voice::get_private_voice_chat_room_credentials(
+        &state,
+        &call_id.to_string(),
+        &[s.moderator.clone(), s.clean.clone()],
+    )
+    .await
+    .expect("the room's own pair, in either order, gets credentials again");
+    assert_eq!(same_pair.len(), 2);
+    let other = Address::parse(&format!("0x{}00000000", Uuid::new_v4().simple())).unwrap();
+    let err = voice::get_private_voice_chat_room_credentials(
+        &state,
+        &call_id.to_string(),
+        &[s.clean.clone(), other.clone()],
+    )
+    .await
+    .expect_err("another party pair cannot take the room");
+    assert_eq!(err.code, 409);
+    let parties: Vec<String> = sqlx::query_scalar(
+        "SELECT address FROM social.private_voice_chat_participants WHERE call_id = $1",
+    )
+    .bind(call_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(!parties.contains(&other.as_str().to_string()));
     let err = voice::get_private_voice_chat_room_credentials(
         &state,
         "not-a-uuid",
