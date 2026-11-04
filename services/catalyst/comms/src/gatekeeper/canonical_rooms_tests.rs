@@ -1275,12 +1275,14 @@ async fn canonical_world_revocation_reaches_a_connected_room_after_redeployment(
     }
 }
 
-/// `can_access` per wallet over a [`StubPolicy`]: `undetermined` errors,
-/// `denied` is refused, everyone else admitted.
+/// `can_access` per wallet over a [`StubPolicy`]: `undetermined` errors
+/// (for its first `undetermined_failures` calls, then is refused), `denied`
+/// is refused, everyone else admitted.
 struct PerWalletPolicy {
     inner: StubPolicy,
     denied: Address,
     undetermined: Address,
+    undetermined_failures: std::sync::Mutex<usize>,
 }
 
 #[async_trait::async_trait]
@@ -1320,9 +1322,17 @@ impl crate::interfaces::AccessPolicy for PerWalletPolicy {
         _device_id: Option<&str>,
         _now: chrono::NaiveDateTime,
     ) -> Result<crate::access::Access, crate::AuthorityNotEstablished> {
-        if *actor == self.denied {
+        let undetermined = *actor == self.undetermined && {
+            let mut left = self.undetermined_failures.lock().unwrap();
+            let fails = *left > 0;
+            if fails && *left != usize::MAX {
+                *left -= 1;
+            }
+            fails
+        };
+        if *actor == self.denied || (*actor == self.undetermined && !undetermined) {
             Ok(crate::access::Access::InvalidSecret)
-        } else if *actor == self.undetermined {
+        } else if undetermined {
             Err(
                 crate::AuthorityNotEstablished::UndeterminedStoreUnavailable {
                     store: "worlds.worlds",
@@ -1406,11 +1416,18 @@ async fn an_access_change_evicts_only_who_lost_access_and_never_the_protected() 
             },
             denied: denied.clone(),
             undetermined: undetermined.clone(),
+            undetermined_failures: usize::MAX.into(),
         });
         let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
-        scene::readmit_world_rooms(&state, &WorldName::parse("mixed.dcl.eth").unwrap())
-            .await
-            .unwrap();
+        let complete =
+            scene::readmit_world_rooms(&state, &WorldName::parse("mixed.dcl.eth").unwrap())
+                .await
+                .unwrap();
+        assert_eq!(
+            complete,
+            admission == AccessType::Unrestricted,
+            "{admission:?}"
+        );
         let removed: Vec<Address> = requests
             .lock()
             .unwrap()
@@ -1500,11 +1517,15 @@ async fn a_failed_scene_lookup_keeps_that_room_and_the_pass_goes_on() {
         },
         denied: denied.clone(),
         undetermined: wallet(4),
+        undetermined_failures: usize::MAX.into(),
     });
     let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
-    scene::readmit_world_rooms(&state, &WorldName::parse("mixed.dcl.eth").unwrap())
-        .await
-        .unwrap();
+    assert!(
+        !scene::readmit_world_rooms(&state, &WorldName::parse("mixed.dcl.eth").unwrap())
+            .await
+            .unwrap(),
+        "an undecided room leaves the pass incomplete"
+    );
     let removed: Vec<(String, String)> = requests
         .lock()
         .unwrap()
@@ -1524,5 +1545,70 @@ async fn a_failed_scene_lookup_keeps_that_room_and_the_pass_goes_on() {
             denied.as_str().to_string()
         )]
     );
+    server.abort();
+}
+
+#[tokio::test]
+async fn an_undetermined_access_decision_is_retried_until_it_evicts() {
+    use crate::access::{AccessType, WorldAdmission};
+    let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
+    let (owner, flaky) = (wallet(1), wallet(4));
+    let requests = Arc::new(std::sync::Mutex::new(
+        Vec::<(String, serde_json::Value)>::new(),
+    ));
+    let capture = requests.clone();
+    let everyone: Vec<serde_json::Value> = [&owner, &flaky]
+        .iter()
+        .map(|a| serde_json::json!({"identity": a.as_str(), "sid": "PA", "metadata": "{}"}))
+        .collect();
+    let fixture = axum::Router::new().route(
+        "/twirp/livekit.RoomService/{method}",
+        axum::routing::post(
+            move |Path(method): Path<String>, Json(body): Json<serde_json::Value>| {
+                let (capture, everyone) = (capture.clone(), everyone.clone());
+                async move {
+                    capture.lock().unwrap().push((method.clone(), body));
+                    match method.as_str() {
+                        "ListRooms" => Json(serde_json::json!({"rooms": [
+                            {"name": "w1:d:mixed.dcl.ethSceneA", "sid": "RM_a", "metadata": "{}"}
+                        ]})),
+                        "ListParticipants" => Json(serde_json::json!({"participants": everyone})),
+                        _ => Json(serde_json::json!({})),
+                    }
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut state = canonical_state();
+    state.livekit.configured = true;
+    state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    state.policy = Arc::new(PerWalletPolicy {
+        inner: StubPolicy {
+            admission: Some(WorldAdmission::Open(AccessType::AllowList)),
+            protected: Ok([owner.clone()].into_iter().collect()),
+            ..Default::default()
+        },
+        denied: wallet(3),
+        undetermined: flaky.clone(),
+        undetermined_failures: 2.into(),
+    });
+    let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let world = WorldName::parse("mixed.dcl.eth").unwrap();
+    let removed = || -> Vec<String> {
+        requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, _)| method == "RemoveParticipant")
+            .map(|(_, body)| body["identity"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    let delay = [std::time::Duration::from_millis(1)];
+    assert!(!scene::readmit_until_settled(&state, &world, &delay).await);
+    assert!(removed().is_empty(), "two undetermined passes evict nobody");
+    assert!(scene::readmit_until_settled(&state, &world, &delay).await);
+    assert_eq!(removed(), vec![flaky.as_str().to_string()]);
     server.abort();
 }
