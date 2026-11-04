@@ -797,3 +797,217 @@ async fn membership_acquisition_budget_also_bounds_pool_checkout() {
     writers.close().await;
     rig.finish();
 }
+
+#[tokio::test]
+async fn interrupted_acquisition_commit_closes_its_backend_before_any_membership_write() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let owner = wallet();
+    for outcome in ["cancel", "timeout", "error"] {
+        let member = wallet();
+        let id = rig.community(&owner, false).await;
+        let options = (*rig.pool.connect_options()).clone();
+        let endpoint = (options.get_host().to_owned(), options.get_port());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let resume = Arc::new(tokio::sync::Notify::new());
+        let release = resume.clone();
+        let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
+        // Read complete protocol frames so the barrier is the acquisition's
+        // COMMIT completion, after the native lock succeeded. The server has
+        // committed, but the client still owns an armed acquisition guard.
+        // The error case replaces only COMMIT's SQL with SELECT 1/0, causing a
+        // real PostgreSQL error at that same await without changing the app.
+        let proxy = tokio::spawn(async move {
+            let mut sessions = tokio::task::JoinSet::new();
+            let (client, _) = listener.accept().await?;
+            let server = tokio::net::TcpStream::connect(endpoint.clone()).await?;
+            sessions.spawn(async move {
+                let (mut client_read, mut client_write) = client.into_split();
+                let (mut server_read, mut server_write) = server.into_split();
+                let frontend = async move {
+                    let length = client_read.read_u32().await?;
+                    let mut startup = vec![0; length as usize - 4];
+                    client_read.read_exact(&mut startup).await?;
+                    server_write.write_u32(length).await?;
+                    server_write.write_all(&startup).await?;
+                    while let Ok(kind) = client_read.read_u8().await {
+                        let length = client_read.read_u32().await?;
+                        let mut body = vec![0; length as usize - 4];
+                        client_read.read_exact(&mut body).await?;
+                        if outcome == "error" && kind == b'P' {
+                            let start = body.iter().position(|byte| *byte == 0).unwrap() + 1;
+                            let end =
+                                start + body[start..].iter().position(|byte| *byte == 0).unwrap();
+                            if &body[start..end] == b"COMMIT" {
+                                body.splice(start..end, b"SELECT 1/0".iter().copied());
+                            }
+                        }
+                        server_write.write_u8(kind).await?;
+                        server_write.write_u32(body.len() as u32 + 4).await?;
+                        server_write.write_all(&body).await?;
+                    }
+                    Ok::<(), std::io::Error>(())
+                };
+                let backend = async move {
+                    let mut seen = Some(seen_tx);
+                    while let Ok(kind) = server_read.read_u8().await {
+                        let length = server_read.read_u32().await?;
+                        let mut body = vec![0; length as usize - 4];
+                        server_read.read_exact(&mut body).await?;
+                        let boundary = if outcome == "error" {
+                            kind == b'E'
+                        } else {
+                            kind == b'C' && body == b"COMMIT\0"
+                        };
+                        if boundary && let Some(seen) = seen.take() {
+                            seen.send(()).ok();
+                            release.notified().await;
+                        }
+                        client_write.write_u8(kind).await?;
+                        client_write.write_u32(length).await?;
+                        client_write.write_all(&body).await?;
+                    }
+                    Ok::<(), std::io::Error>(())
+                };
+                tokio::try_join!(frontend, backend)
+            });
+            // The failed acquisition must close its first session. Permit the
+            // maxpool1 pool to connect a replacement through this same relay.
+            let (mut client, _) = listener.accept().await?;
+            let mut server = tokio::net::TcpStream::connect(endpoint).await?;
+            tokio::io::copy_bidirectional(&mut client, &mut server).await?;
+            sessions.abort_all();
+            Ok::<(), std::io::Error>(())
+        });
+        let writers = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                options
+                    .host("127.0.0.1")
+                    .port(address.port())
+                    .ssl_mode(sqlx::postgres::PgSslMode::Disable),
+            )
+            .await
+            .unwrap();
+        let (before, original_timeout): (i32, String) =
+            sqlx::query_as("SELECT pg_backend_pid(), current_setting('lock_timeout')")
+                .fetch_one(&writers)
+                .await
+                .unwrap();
+        let state = Arc::new(State::new(
+            writers.clone(),
+            rig.state.storage.clone(),
+            Settings::for_tests(),
+            None,
+            &crate::http::Outbound::for_tests(),
+            State::explore_for_tests(&rig.pool),
+        ));
+        let app = router(state);
+        let case = Case::new("post", format!("/v1/communities/{id}/members"))
+            .signed(&member)
+            .await;
+        let request = tokio::spawn(async move { hit(&app, case).await });
+        tokio::time::timeout(std::time::Duration::from_secs(3), seen_rx)
+            .await
+            .expect("the request must reach acquisition COMMIT with its lock already held")
+            .unwrap();
+        let held: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND locktype='advisory' AND granted)",
+        )
+        .bind(before)
+        .fetch_one(&rig.pool)
+        .await
+        .unwrap();
+        assert!(
+            held,
+            "{outcome}: acquisition COMMIT must still own the native lock"
+        );
+        assert_eq!(rig.role_of(id, &member).await, None);
+        if outcome == "cancel" {
+            request.abort();
+            assert!(request.await.unwrap_err().is_cancelled());
+        } else {
+            if outcome == "error" {
+                resume.notify_one();
+            }
+            let (status, body) = tokio::time::timeout(std::time::Duration::from_secs(2), request)
+                .await
+                .expect("acquisition COMMIT must fail within its original budget")
+                .unwrap();
+            assert_eq!(
+                status,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "{outcome}: {body}"
+            );
+            assert_eq!(body.as_object().unwrap().len(), 1, "{body}");
+            assert_eq!(
+                body["message"],
+                if outcome == "error" {
+                    "division by zero"
+                } else {
+                    "pool timed out while waiting for an open connection"
+                },
+                "{outcome}: {body}"
+            );
+        }
+        // For cancellation and timeout, COMMIT's completion remains withheld
+        // while the armed owner closes. Releasing the relay cannot mask a leak.
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                let exists: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1)",
+                )
+                .bind(before)
+                .fetch_one(&rig.pool)
+                .await
+                .unwrap();
+                if !exists {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("an unconfirmed acquisition COMMIT must close its armed backend");
+        let probe = acquire_membership(&rig.pool, id)
+            .await
+            .expect("an independent same-key caller must obtain the released native lock");
+        drop(probe);
+        let (after, restored_timeout): (i32, String) = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            sqlx::query_as("SELECT pg_backend_pid(), current_setting('lock_timeout')")
+                .fetch_one(&writers),
+        )
+        .await
+        .expect("maxpool1 must replace the armed backend and remain healthy")
+        .unwrap();
+        assert_ne!(
+            before, after,
+            "{outcome}: a pooled return must not hide failed cleanup"
+        );
+        assert_eq!(restored_timeout, original_timeout, "{outcome}");
+        let clean: bool =
+            sqlx::query_scalar("SELECT xact_start IS NULL FROM pg_stat_activity WHERE pid=$1")
+                .bind(after)
+                .fetch_one(&rig.pool)
+                .await
+                .unwrap();
+        assert!(
+            clean,
+            "{outcome}: no acquisition transaction may reach the replacement"
+        );
+        assert_eq!(
+            rig.role_of(id, &member).await,
+            None,
+            "{outcome}: protected writes must not run"
+        );
+        resume.notify_one();
+        writers.close().await;
+        proxy.abort();
+    }
+    rig.finish();
+}
