@@ -438,7 +438,7 @@
       "candidate": [
         {
           "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
-          "line": 149,
+          "line": 152,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -875,7 +875,7 @@
         },
         {
           "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
-          "line": 210,
+          "line": 216,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -902,7 +902,7 @@
       "candidate": [
         {
           "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
-          "line": 198,
+          "line": 204,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -1083,14 +1083,14 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/communities/compliance.rs",
-          "line": 466,
+          "line": 480,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": []
         },
         {
           "path": "services/catalyst/social/src/communities/compliance.rs",
-          "line": 485,
+          "line": 499,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -1108,7 +1108,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/communities/compliance.rs",
-          "line": 465,
+          "line": 479,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -1117,7 +1117,7 @@
         },
         {
           "path": "services/catalyst/social/src/communities/compliance.rs",
-          "line": 474,
+          "line": 488,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -1126,7 +1126,7 @@
         },
         {
           "path": "services/catalyst/social/src/communities/compliance.rs",
-          "line": 481,
+          "line": 495,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -1135,7 +1135,7 @@
         },
         {
           "path": "services/catalyst/social/src/communities/compliance.rs",
-          "line": 487,
+          "line": 501,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -1144,7 +1144,7 @@
         },
         {
           "path": "services/catalyst/social/src/communities/compliance.rs",
-          "line": 490,
+          "line": 504,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
