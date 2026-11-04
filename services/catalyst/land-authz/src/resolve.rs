@@ -176,6 +176,32 @@ const SUBJECT_COLUMNS: &str = "pt.owner AS parcel_owner, \
      COALESCE(pt.update_operator, CASE WHEN el.estate_token_id IS NULL THEN NULL ELSE et.update_operator END) AS update_operator, \
      (el.estate_token_id IS NOT NULL) AS belongs_to_estate";
 
+/// Joins `granted`, the position (block, log) of the approval that opened
+/// the current grant of the `account_right` row `ar`: its first approval
+/// after its latest revocation. lamb2 folds the owner's authorization log
+/// into a JS `Map` (`parcel-rights-fetcher.ts`), so `updateManagers` and
+/// `approvedForAll` list operators in that order: a repeated approval keeps
+/// its place, a revoke then approve moves the operator to the end.
+const GRANTED_SINCE: &str = "\
+     LEFT JOIN LATERAL ( \
+         SELECT r.block_number, r.log_index FROM land_authz.authz_event r \
+         WHERE r.token_address = ar.token_address AND r.account = ar.account AND r.operator = ar.operator \
+           AND r.kind = ar.kind AND r.account IS NOT NULL AND r.operator IS NOT NULL AND r.approved IS NOT TRUE \
+         ORDER BY r.block_number DESC, r.log_index DESC LIMIT 1 \
+     ) revoked ON true \
+     LEFT JOIN LATERAL ( \
+         SELECT g.block_number, g.log_index FROM land_authz.authz_event g \
+         WHERE g.token_address = ar.token_address AND g.account = ar.account AND g.operator = ar.operator \
+           AND g.kind = ar.kind AND g.account IS NOT NULL AND g.operator IS NOT NULL AND g.approved \
+           AND (revoked.block_number IS NULL \
+                OR (g.block_number, g.log_index) > (revoked.block_number, revoked.log_index)) \
+         ORDER BY g.block_number, g.log_index LIMIT 1 \
+     ) granted ON true";
+
+/// The grant order [`GRANTED_SINCE`] joins.
+const GRANTED_ORDER: &str =
+    "granted.block_number NULLS LAST, granted.log_index NULLS LAST, ar.operator";
+
 impl Store {
     pub fn new(pool: PgPool, land_registry: &str, estate_registry: &str) -> Self {
         Self {
@@ -222,11 +248,11 @@ impl Store {
         owner: &str,
         kind: &str,
     ) -> Result<Vec<String>, sqlx::Error> {
-        sqlx::query_scalar(
-            "SELECT operator FROM land_authz.account_right \
-             WHERE token_address = $1 AND account = lower($2) AND kind = $3 AND is_approved \
-             ORDER BY operator",
-        )
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT ar.operator FROM land_authz.account_right ar {GRANTED_SINCE} \
+             WHERE ar.token_address = $1 AND ar.account = lower($2) AND ar.kind = $3 AND ar.is_approved \
+             ORDER BY {GRANTED_ORDER}"
+        )))
         .bind(registry)
         .bind(owner)
         .bind(kind)
@@ -256,13 +282,13 @@ impl Store {
                         lower(COALESCE(CASE WHEN el.estate_token_id IS NOT NULL THEN et.owner END, pt.owner, '')) AS account \
              ) s \
              LEFT JOIN LATERAL ( \
-                 SELECT COALESCE(array_agg(ar.operator ORDER BY ar.operator), '{{}}'::text[]) AS operators \
-                 FROM land_authz.account_right ar \
+                 SELECT COALESCE(array_agg(ar.operator ORDER BY {GRANTED_ORDER}), '{{}}'::text[]) AS operators \
+                 FROM land_authz.account_right ar {GRANTED_SINCE} \
                  WHERE ar.token_address = s.registry AND ar.account = s.account AND ar.kind = $5 AND ar.is_approved \
              ) um ON true \
              LEFT JOIN LATERAL ( \
-                 SELECT COALESCE(array_agg(ar.operator ORDER BY ar.operator), '{{}}'::text[]) AS operators \
-                 FROM land_authz.account_right ar \
+                 SELECT COALESCE(array_agg(ar.operator ORDER BY {GRANTED_ORDER}), '{{}}'::text[]) AS operators \
+                 FROM land_authz.account_right ar {GRANTED_SINCE} \
                  WHERE ar.token_address = s.registry AND ar.account = s.account AND ar.kind = $6 AND ar.is_approved \
              ) af ON true"
         )))

@@ -716,6 +716,67 @@ async fn seed_rights(pool: &PgPool) {
         .unwrap();
 }
 
+/// lamb2 folds the owner's authorization log into a JS `Map`
+/// (`parcel-rights-fetcher.ts`): the legs list operators by the approval
+/// that opened their current grant, a repeated approval keeps its place and
+/// a revoke then approve moves the operator to the end.
+#[tokio::test]
+async fn grant_legs_keep_lamb2s_map_order() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let grant = |block, index, kind, operator, approved| {
+        ev(
+            block,
+            index,
+            kind,
+            None,
+            Some(BOB),
+            Some(operator),
+            Some(approved),
+        )
+    };
+    insert(
+        &db.pool,
+        &[
+            ev(
+                10,
+                0,
+                KIND_TRANSFER,
+                Some(TOKEN_37_55),
+                Some(BOB),
+                None,
+                None,
+            ),
+            grant(11, 0, KIND_UPDATE_MANAGER, DANA, true),
+            grant(12, 0, KIND_UPDATE_MANAGER, CARL, true),
+            grant(13, 0, KIND_UPDATE_MANAGER, ALICE, true),
+            grant(14, 0, KIND_UPDATE_MANAGER, DANA, true),
+            grant(15, 0, KIND_UPDATE_MANAGER, CARL, false),
+            grant(16, 0, KIND_UPDATE_MANAGER, CARL, true),
+            grant(17, 0, KIND_APPROVED_FOR_ALL, CARL, true),
+            grant(17, 1, KIND_APPROVED_FOR_ALL, ALICE, true),
+            grant(18, 0, KIND_APPROVED_FOR_ALL, DANA, true),
+            grant(18, 1, KIND_APPROVED_FOR_ALL, DANA, false),
+        ],
+    )
+    .await;
+    fold_all(&db.pool).await;
+    let store = Store::new(db.pool.clone(), LAND, ESTATE);
+    let rights = store.rights(37, 55).await.unwrap().unwrap();
+    assert_eq!(rights.subject.owner, BOB);
+    assert_eq!(rights.operators.update_managers, vec![DANA, ALICE, CARL]);
+    assert_eq!(rights.operators.approved_for_all, vec![CARL, ALICE]);
+    assert_eq!(
+        store
+            .account_grants(LAND, BOB, KIND_UPDATE_MANAGER)
+            .await
+            .unwrap(),
+        vec![DANA, ALICE, CARL]
+    );
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn rights_batch_matches_the_per_leg_reading() {
     let Some(db) = ScratchDb::create().await else {
