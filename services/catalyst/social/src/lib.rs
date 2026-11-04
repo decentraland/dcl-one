@@ -102,6 +102,9 @@ pub fn social_api_gateway_with_limit(router: Router, max_body_bytes: usize) -> R
             max_body_bytes,
             communities::http::social_api_body_limit,
         ))
+        .layer(axum::middleware::map_response(
+            communities::cors::content_type_options,
+        ))
 }
 
 /// The old gateway's location table for the social bundle

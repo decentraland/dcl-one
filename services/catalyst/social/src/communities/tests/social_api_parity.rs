@@ -50,12 +50,23 @@ fn transport_header(name: &str) -> bool {
     )
 }
 
+/// The node adds `X-Content-Type-Options: nosniff` to every Social answer,
+/// which the source does not send: checked here, then left out of the
+/// comparison with the source's headers.
 pub(super) fn application_headers(
     headers: &HeaderMap,
 ) -> std::collections::BTreeMap<String, String> {
+    assert_eq!(
+        headers
+            .get("x-content-type-options")
+            .map(|value| value.as_bytes()),
+        Some(&b"nosniff"[..])
+    );
     headers
         .iter()
-        .filter(|(name, _)| !transport_header(name.as_str()))
+        .filter(|(name, _)| {
+            !transport_header(name.as_str()) && name.as_str() != "x-content-type-options"
+        })
         .map(|(name, value)| (name.as_str().to_owned(), value.to_str().unwrap().to_owned()))
         .collect()
 }
@@ -113,6 +124,7 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
             "access-control-allow-origin",
             "access-control-max-age",
             "vary",
+            "x-content-type-options",
         ]
     );
     for (name, value) in [
@@ -163,7 +175,11 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
     let (_, headers, _) = send(&rig.app, Method::GET, "/v1/communities?limit=1", &[]).await;
     assert!(headers.get("access-control-allow-origin").is_none());
     assert!(headers.get("vary").is_none());
-    assert!(!headers.contains_key("x-content-type-options"));
+    assert_eq!(
+        headers.get("x-content-type-options").unwrap(),
+        "nosniff",
+        "kept from the shared layer, unlike the source"
+    );
     rig.finish();
 }
 

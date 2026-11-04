@@ -4,7 +4,9 @@
 //! credentials. A request without `Origin` gets no CORS headers, as the
 //! captures without one show. The shared `cors_middleware` reflects origins
 //! and allows credentials for the other services; this layer replaces it on
-//! the communities router only.
+//! the communities router only. It keeps that layer's
+//! `X-Content-Type-Options: nosniff`, which the source does not send, so
+//! user uploads such as community thumbnails are never content-sniffed.
 
 use axum::body::Body;
 use axum::extract::Request;
@@ -33,7 +35,7 @@ pub async fn social_api_cors(req: Request, next: Next) -> Response {
                 .headers_mut()
                 .insert(header::CONTENT_LENGTH, HeaderValue::from_static("0"));
         }
-        return response;
+        return nosniff(response);
     }
     let has_origin = req.headers().contains_key(header::ORIGIN);
     let preflight = req.method() == Method::OPTIONS;
@@ -41,7 +43,7 @@ pub async fn social_api_cors(req: Request, next: Next) -> Response {
         .headers()
         .get(header::ACCESS_CONTROL_REQUEST_HEADERS)
         .cloned();
-    let mut resp = if preflight {
+    let resp = if preflight {
         let mut resp = Response::builder()
             .status(StatusCode::NO_CONTENT)
             .body(Body::empty())
@@ -68,6 +70,7 @@ pub async fn social_api_cors(req: Request, next: Next) -> Response {
     } else {
         next.run(req).await
     };
+    let mut resp = nosniff(resp);
     let h = resp.headers_mut();
     if has_origin || preflight {
         h.insert(
@@ -76,4 +79,18 @@ pub async fn social_api_cors(req: Request, next: Next) -> Response {
         );
     }
     resp
+}
+
+/// `X-Content-Type-Options: nosniff` on a Social answer, also for the
+/// gateway's answers that leave before CORS (`axum::middleware::map_response`).
+pub async fn content_type_options(response: Response) -> Response {
+    nosniff(response)
+}
+
+fn nosniff(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    response
 }
