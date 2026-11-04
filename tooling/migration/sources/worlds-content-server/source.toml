@@ -7,13 +7,15 @@ database_env = "WORLDS_CONTENT_SERVER_DATABASE_URL"
 after = ["places"]
 notes = """
 Imports the worlds, their DEPLOYED scenes as local publishes, the grants, the
-access settings and the blocked wallets; binds every imported scene to its
+access settings and the storage-quota blocks (into worlds.quota_blocks, never
+the platform-wide worlds.blocked_wallets); binds every imported scene to its
 Places identity. See MAPPING.md.
 
-Prerequisite, out of scope for a DB import: the entity file (under its
-entity_id) and every content file of each imported scene must be in the blob
-store, byte for byte, before the node serves them. world_scenes.entity is the
-upstream JSONB document, not the signed bytes.
+Prerequisite: `migrate.py blobs worlds-content-server` copies each scene's
+entity file and content files and each world's thumbnail into the blob store
+first; world and world_scene stop on a hash it has not recorded. Per-world
+limits come from upstream's WHITELIST_URL document (`migrate.py
+worlds-limits`), not its database.
 
 Not migrated: UNDEPLOYED world_scenes (replaced history, evicted upstream;
 they only drive deletes here), pending_scenes, pending_scene_files,
@@ -27,7 +29,7 @@ imports, as a local publish does, and retires the identities of scenes so
 removed. world replaces each imported world's `access` grants
 and access communities, and world_permission each grant's parcel scope, with
 the upstream list (one row carries the whole list). Removed
-deployment/streaming grants and unblocked wallets are not detected.
+deployment/streaming grants and lifted quota blocks are not detected.
 """
 
 [[step]]
@@ -109,10 +111,10 @@ columns = [
 ]
 
 [[step]]
-name = "blocked_wallet"
-targets = ["worlds.blocked_wallets"]
-extract = "blocked_wallet.extract.sql"
-load = "blocked_wallet.load.sql"
+name = "quota_block"
+targets = ["worlds.quota_blocks"]
+extract = "quota_block.extract.sql"
+load = "quota_block.load.sql"
 key = ["wallet"]
 watermark = "updated_at"
 columns = [

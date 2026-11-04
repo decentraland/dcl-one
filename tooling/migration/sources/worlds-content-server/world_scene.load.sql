@@ -1,3 +1,26 @@
+-- A DEPLOYED scene names its entity file (entity_id) and content files by
+-- hash; `migrate.py blobs` copies them into the store and records each in
+-- dcl_migration.blob_inventory, or in blob_missing when upstream lost it (the
+-- node serves it as missing, as upstream did). A hash in neither stops the
+-- batch: copy the blobs first.
+DO $missing$ DECLARE n bigint; BEGIN
+  SELECT count(*) INTO n FROM (
+      SELECT s.entity_id AS k FROM stage s WHERE s.deployed
+      UNION
+      SELECT c->>'hash' FROM stage s
+      CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(s.entity->'content') = 'array'
+                                                   THEN s.entity->'content' ELSE '[]'::jsonb END) c
+      WHERE s.deployed
+  ) h
+   WHERE coalesce(h.k, '') <> ''
+     AND NOT EXISTS (SELECT 1 FROM dcl_migration.blob_inventory b
+                      WHERE b.source = 'worlds-content-server' AND b.object_key = h.k)
+     AND NOT EXISTS (SELECT 1 FROM dcl_migration.blob_missing m
+                      WHERE m.source = 'worlds-content-server' AND m.object_key = h.k);
+  IF n > 0 THEN RAISE EXCEPTION
+    'worlds-content-server/world_scene: % entity or content hashes are not in dcl_migration.blob_inventory; copy the blobs first', n;
+  ELSE NULL; END IF; END $missing$;
+
 -- Retire the identities of the scenes this batch deletes (before deleting
 -- them), as the node's deploy/undeploy transaction does. Only those: an
 -- identity the places source bound to a scene a later batch imports stays.

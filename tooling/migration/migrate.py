@@ -10,6 +10,7 @@ import argparse
 import contextlib
 import dataclasses
 import datetime
+import importlib.util
 import json
 import os
 import re
@@ -59,13 +60,22 @@ CREATE TABLE IF NOT EXISTS dcl_migration.checkpoint (
     updated_at timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (source, step)
 );
--- Filled by the blob copy (outside this tool): every upstream object it stored, under the hash
--- the blob store now holds it by. Loads of blob-backed rows join it and refuse missing objects.
+-- Filled by the blob copy (`blobs`, or an external job for sources it does not cover): every
+-- upstream object it stored, under the hash the blob store now holds it by. Loads of blob-backed
+-- rows join it and refuse objects in neither table.
 CREATE TABLE IF NOT EXISTS dcl_migration.blob_inventory (
     source text NOT NULL,
     object_key text NOT NULL,
     hash text NOT NULL,
     size bigint NOT NULL CHECK (size >= 0),
+    PRIMARY KEY (source, object_key)
+);
+-- Objects the blob copy could not store: absent upstream, bytes that do not hash to the key, or a
+-- key that is no content id. The node serves them as missing, as upstream did.
+CREATE TABLE IF NOT EXISTS dcl_migration.blob_missing (
+    source text NOT NULL,
+    object_key text NOT NULL,
+    reason text NOT NULL,
     PRIMARY KEY (source, object_key)
 );
 RESET client_min_messages;
@@ -783,6 +793,215 @@ def cmd_status(args, sources):
     return 0
 
 
+# ── blobs ───────────────────────────────────────────────────────────────────
+
+def load_blobs_module():
+    spec = importlib.util.spec_from_file_location('dcl_migration_blobs', HERE / 'blobs.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# Per source: the upstream object keys its imported rows name (on the source), and the
+# (owner, keys) its imported rows name now (on the target), for --verify.
+BLOB_SETS = {
+    'worlds-content-server': {
+        'source': """
+SELECT DISTINCT k FROM (
+    SELECT entity_id::text AS k FROM world_scenes WHERE status = 'DEPLOYED'
+    UNION ALL
+    SELECT c->>'hash' FROM world_scenes s
+    CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(s.entity::jsonb->'content') = 'array'
+                                                 THEN s.entity::jsonb->'content' ELSE '[]'::jsonb END) c
+    WHERE s.status = 'DEPLOYED'
+    UNION ALL
+    SELECT thumbnail_hash::text FROM worlds WHERE coalesce(thumbnail_hash::text, '') <> ''
+) x WHERE coalesce(k, '') <> '' ORDER BY k""",
+        'target': """
+SELECT ws.world_name || '/' || ws.entity_id, h.k
+FROM worlds.world_scenes ws
+CROSS JOIN LATERAL (
+    SELECT ws.entity_id
+    UNION
+    SELECT c->>'hash' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(ws.entity->'content') = 'array'
+                                                     THEN ws.entity->'content' ELSE '[]'::jsonb END) c
+) h(k)
+WHERE ws.mirror_source IS NULL AND coalesce(h.k, '') <> ''
+UNION ALL
+SELECT name || ' (thumbnail)', thumbnail_hash FROM worlds.worlds
+WHERE mirror_source IS NULL AND coalesce(thumbnail_hash, '') <> ''
+ORDER BY 1, 2""",
+    },
+}
+
+
+def storage_root(args):
+    root = args.to or os.environ.get('STORAGE_ROOT_FOLDER')
+    if not root:
+        raise MigrationError('pass --to STORAGE_ROOT_FOLDER (the node\'s storage root) or set STORAGE_ROOT_FOLDER')
+    return Path(root)
+
+
+def record_blobs(target_url, source, stored, missing):
+    if not stored and not missing:
+        return
+    lines = ['BEGIN;']
+    if stored:
+        values = ',\n'.join(f'({literal(source)}, {literal(k)}, {literal(h)}, {int(n)})' for k, h, n in stored)
+        lines += [f'INSERT INTO dcl_migration.blob_inventory (source, object_key, hash, size) VALUES\n{values}\n'
+                  'ON CONFLICT (source, object_key) DO UPDATE SET hash = EXCLUDED.hash, size = EXCLUDED.size;',
+                  f'DELETE FROM dcl_migration.blob_missing WHERE source = {literal(source)} AND object_key IN '
+                  f'({", ".join(literal(k) for k, _, _ in stored)});']
+    if missing:
+        values = ',\n'.join(f'({literal(source)}, {literal(k)}, {literal(r)})' for k, r in missing)
+        lines.append(f'INSERT INTO dcl_migration.blob_missing (source, object_key, reason) VALUES\n{values}\n'
+                     'ON CONFLICT (source, object_key) DO UPDATE SET reason = EXCLUDED.reason;')
+    lines.append('COMMIT;')
+    psql(target_url, '\n'.join(lines) + '\n')
+
+
+def cmd_blobs(args, sources):
+    if args.source not in BLOB_SETS:
+        raise MigrationError(f'no blob set for {args.source!r}; known: {", ".join(sorted(BLOB_SETS))}')
+    blobs = load_blobs_module()
+    store = blobs.Store(storage_root(args))
+    target_url = database_url(args.target_env)
+    log = lambda line: print(line, flush=True)  # noqa: E731
+    if args.verify:
+        return verify_blobs(args, blobs, store, target_url, log)
+    if bool(args.from_dir) == bool(args.from_s3):
+        raise MigrationError('pass exactly one of --from-dir DIR or --from-s3 BUCKET')
+    try:
+        upstream = blobs.FolderSource(args.from_dir) if args.from_dir else blobs.S3Source(args.from_s3,
+                                                                                         args.s3_prefix)
+    except (OSError, RuntimeError) as e:
+        raise MigrationError(str(e)) from e
+    source_url = database_url(sources[args.source].database_env)
+    keys = [k for k in psql(source_url, BLOB_SETS[args.source]['source'] + ';\n', read_only=True).splitlines() if k]
+    ensure_checkpoint_table(target_url)
+    inventory = dict(line.split('\t', 1) for line in psql(
+        target_url, f'SELECT object_key, hash FROM dcl_migration.blob_inventory WHERE source = {literal(args.source)};\n'
+    ).splitlines() if line)
+    todo = [k for k in keys if not (k in inventory and store.has(inventory[k]))]
+    log(f'{args.source}: {len(keys)} objects named, {len(keys) - len(todo)} already copied;'
+        f' copying {len(todo)} from {upstream.describe()} into {store.contents}')
+    reasons = {'missing': 'absent upstream', 'corrupt': 'bytes do not hash to the key', 'invalid': 'not a content id'}
+    counts = dict.fromkeys(['copied', 'present', *reasons], 0)
+    failures, stored, missing = [], [], []
+    for n, outcome in enumerate(blobs.copy_all(upstream, store, todo, args.workers), 1):
+        counts[outcome.status] += 1
+        if outcome.cid:
+            stored.append((outcome.key, outcome.cid, outcome.size))
+        else:
+            missing.append((outcome.key, reasons[outcome.status]))
+            failures.append(f'  {outcome.key}: {reasons[outcome.status]}')
+        if len(stored) + len(missing) >= 1000:
+            record_blobs(target_url, args.source, stored, missing)
+            stored, missing = [], []
+        if n % 10000 == 0:
+            log(f'  {n}/{len(todo)}')
+    record_blobs(target_url, args.source, stored, missing)
+    log(f'{args.source}: copied {counts["copied"]}, already in the store {counts["present"]},'
+        f' absent upstream {counts["missing"]}, hash mismatch {counts["corrupt"]}, not a content id {counts["invalid"]}')
+    if failures:
+        log('not stored (recorded in dcl_migration.blob_missing; the node serves them as missing):')
+        for line in failures:
+            log(line)
+    return 0
+
+
+def verify_blobs(args, blobs, store, target_url, log):
+    """Lists every imported row whose blobs the store lacks; existence only, the copy hashed them."""
+    out = psql(target_url, BLOB_SETS[args.source]['target'] + ';\n')
+    lacking, checked = {}, {}
+    for line in out.splitlines():
+        if not line:
+            continue
+        owner, key = line.split('\t', 1)
+        if key not in checked:
+            checked[key] = store.has(key)
+        if not checked[key]:
+            lacking.setdefault(owner, []).append(key)
+    for owner, keys in lacking.items():
+        log(f'{owner}: {len(keys)} missing: {", ".join(keys[:5])}{" ..." if len(keys) > 5 else ""}')
+    log(f'{args.source}: {len(checked)} blobs checked in {store.contents}, {len(lacking)} rows with missing blobs')
+    return 1 if lacking else 0
+
+
+# ── worlds limits ───────────────────────────────────────────────────────────
+
+MIB = 1024 * 1024
+
+
+def positive_int(value):
+    """A JSON number upstream would use as a limit; 0, null and non-integers mean "the default"."""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return int(value)
+
+
+def whitelist_rows(whitelist, max_size_mb):
+    """WCS `WHITELIST_URL` entries as worlds.world_limit_overrides rows (limits-manager semantics:
+    a listed world's size cap is `max_size_in_mb || MAX_SIZE`, fixed, and ENS worlds keep
+    ENS_MAX_SIZE; `max_parcels || MAX_PARCELS`)."""
+    if not isinstance(whitelist, dict):
+        raise MigrationError('the whitelist must be a JSON object keyed by world name')
+    rows, unsized = {}, []
+    for raw_name, entry in whitelist.items():
+        name = raw_name.strip().lower()
+        if not name or not isinstance(entry, dict):
+            continue
+        parcels, size_mb = positive_int(entry.get('max_parcels')), positive_int(entry.get('max_size_in_mb'))
+        if name.endswith('.eth') and not name.endswith('.dcl.eth'):
+            size = None
+        elif size_mb:
+            size = size_mb * MIB
+        elif max_size_mb:
+            size = max_size_mb * MIB
+        else:
+            size = None
+            unsized.append(name)
+        if parcels or size:
+            rows[name] = (parcels, size)
+    if unsized:
+        raise MigrationError(f'{len(unsized)} entries have no max_size_in_mb ({", ".join(sorted(unsized)[:5])}...);'
+                             ' pass --max-size-mb with the old service\'s MAX_SIZE')
+    return rows
+
+
+def cmd_worlds_limits(args, sources):
+    try:
+        whitelist = json.loads(Path(args.whitelist).read_text())
+    except (OSError, ValueError) as e:
+        raise MigrationError(f'{args.whitelist}: {e}') from e
+    rows = whitelist_rows(whitelist, args.max_size_mb)
+    target_url = database_url(args.target_env)
+    if not rows:
+        print('no limit overrides in the whitelist')
+        return 0
+    values = ',\n'.join(f'({literal(n)}, {literal(p)}, {literal(s)})' for n, (p, s) in sorted(rows.items()))
+    out = psql(target_url, f"""BEGIN;
+DO $t$ BEGIN
+  IF to_regclass('worlds.world_limit_overrides') IS NULL THEN
+    RAISE EXCEPTION 'worlds.world_limit_overrides is not in this schema';
+  END IF;
+END $t$;
+INSERT INTO worlds.world_limit_overrides (world_name, max_parcels, max_size_bytes)
+SELECT n, p::integer, s::bigint FROM (VALUES
+{values}) v(n, p, s)
+ON CONFLICT (world_name) DO UPDATE SET
+    max_parcels = EXCLUDED.max_parcels,
+    max_size_bytes = EXCLUDED.max_size_bytes,
+    updated_at = timezone('UTC', now());
+{'ROLLBACK' if args.dry_run else 'COMMIT'};
+""")
+    written = next((line for line in out.splitlines() if line.startswith('INSERT')), 'INSERT 0 0').split()[-1]
+    print(f'worlds.world_limit_overrides: {written} rows upserted' + (' (rolled back)' if args.dry_run else ''))
+    return 0
+
+
 def parser():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument('--sources-dir', type=Path, default=SOURCES, help=argparse.SUPPRESS)
@@ -807,6 +1026,20 @@ def parser():
     run.add_argument('--batch-size', type=int, default=5000)
     run.add_argument('--skip-unconfigured', action='store_true',
                      help='skip sources whose database variable is unset')
+    blobs = sub.add_parser('blobs', help="copy a source's blobs into the node's store, or --verify them")
+    blobs.add_argument('source', help=f'one of: {", ".join(sorted(BLOB_SETS))}')
+    blobs.add_argument('--to', help='the node\'s STORAGE_ROOT_FOLDER (default: that variable)')
+    blobs.add_argument('--from-dir', help='upstream storage folder (or a local sync of its bucket)')
+    blobs.add_argument('--from-s3', metavar='BUCKET', help='upstream S3 bucket (needs boto3)')
+    blobs.add_argument('--s3-prefix', default='', help=argparse.SUPPRESS)
+    blobs.add_argument('--workers', type=int, default=8)
+    blobs.add_argument('--verify', action='store_true',
+                       help='list imported rows whose blobs are missing from the store; copies nothing')
+    limits = sub.add_parser('worlds-limits', help='seed worlds.world_limit_overrides from a WCS whitelist JSON')
+    limits.add_argument('whitelist', help='a copy of the document at the old service\'s WHITELIST_URL')
+    limits.add_argument('--max-size-mb', type=int,
+                        help="the old service's MAX_SIZE: the cap of a listed world without max_size_in_mb")
+    limits.add_argument('--dry-run', action='store_true', help='write, then roll back')
     return p
 
 
@@ -815,13 +1048,14 @@ def main(argv=None):
     args = parser().parse_args(argv)
     if args.verbose_errors:
         VERBOSITY = 'default'
-    if getattr(args, 'batch_size', 1) < 1:
-        print('--batch-size must be positive', file=sys.stderr)
+    if getattr(args, 'batch_size', 1) < 1 or getattr(args, 'workers', 1) < 1:
+        print('--batch-size and --workers must be positive', file=sys.stderr)
         return 2
     try:
-        sources = discover(args.sources_dir, getattr(args, 'sources', None) or ['all'])
-        return {'list': cmd_list, 'check': cmd_check, 'run': cmd_run, 'status': cmd_status}[args.command](
-            args, sources)
+        selected = [args.source] if getattr(args, 'source', None) else getattr(args, 'sources', None)
+        sources = discover(args.sources_dir, selected or ['all'])
+        return {'list': cmd_list, 'check': cmd_check, 'run': cmd_run, 'status': cmd_status, 'blobs': cmd_blobs,
+                'worlds-limits': cmd_worlds_limits}[args.command](args, sources)
     except MigrationError as e:
         print(f'error: {e}', file=sys.stderr)
         return 1

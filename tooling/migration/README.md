@@ -10,13 +10,15 @@ would each re-implement them.
 
 It reads from the sources (sessions are read-only) and writes only to the
 target. It needs `psql` (PostgreSQL 15 or later) and Python 3.11 or later,
-nothing else.
+nothing else; `blobs --from-s3` also needs `boto3`.
 
 Out of scope: the Catalyst content servers (`content.*` comes from peer sync),
 transactions-server (its relay history has no chain or contract, which
 `economy.transactions` requires), chain-derived tables the node's indexers
-rebuild, rows the upstream mirrors fill, and copying blobs. Each `MAPPING.md`
-names the tables it leaves to the node.
+rebuild, and rows the upstream mirrors fill. Each `MAPPING.md` names the
+tables it leaves to the node. `blobs` copies the blobs of the sources it knows
+(`worlds-content-server`); the others need an external copy that fills the
+same records.
 
 Known limitations after a cutover: MANA-denominated credits stay spendable
 on-chain until they expire but are in no node balance, and credits from Apple
@@ -26,11 +28,12 @@ in-app purchases cannot be clawed back by a later Apple refund
 ## Before a cutover run
 
 - **Blobs first.** Rows that name stored files (builder item contents, camera
-  reel photos, world scene entities and content files) need those files in the
-  blob store. The blob copy is a separate job; it records every object it
-  stores as `(source, object_key, hash, size)` in
-  `dcl_migration.blob_inventory`, and loads that need a blob stop the batch
-  when it is missing there.
+  reel photos, world scene entities, content files and thumbnails) need those
+  files in the blob store. The blob copy records every object it stores as
+  `(source, object_key, hash, size)` in `dcl_migration.blob_inventory`, and
+  every object it could not store in `dcl_migration.blob_missing`; loads that
+  need a blob stop the batch when it is in neither. `migrate.py blobs <source>`
+  is that copy for the sources it supports (see `blobs` below).
 - **Badge art.** The node embeds the art of its seed badges only; mirror
   upstream's badge art into `BADGES_ASSETS_DIR` so every imported badge's
   images resolve (`sources/badges/MAPPING.md`).
@@ -59,7 +62,20 @@ python3 tooling/migration/migrate.py run all              # every source, in dep
 python3 tooling/migration/migrate.py status               # checkpoints per step
 python3 tooling/migration/migrate.py run places --since 2026-10-01T00:00:00Z
 python3 tooling/migration/migrate.py run places --since last
+python3 tooling/migration/migrate.py blobs worlds-content-server --from-dir DIR --to "$STORAGE_ROOT_FOLDER"
+python3 tooling/migration/migrate.py blobs worlds-content-server --verify --to "$STORAGE_ROOT_FOLDER"
+python3 tooling/migration/migrate.py worlds-limits whitelist.json --max-size-mb 100
 ```
+
+`blobs <source>` reads from the source database which objects its rows name,
+copies each from upstream storage (`--from-dir`, or `--from-s3 BUCKET`) into
+the node's store under `--to` (`<root>/contents/<sha1 shard>/<cid>`, staging
+file then rename), after re-hashing the bytes against their key; it skips
+objects already recorded and stored, so it is re-run before each
+`run --since last`. `--verify` lists the imported rows whose blobs the store
+lacks. `worlds-limits` seeds `worlds.world_limit_overrides` from a copy of
+the old worlds service's whitelist document. Both are described in
+`sources/worlds-content-server/MAPPING.md`.
 
 Options of `run`:
 
@@ -80,6 +96,9 @@ the extract's output columns with the manifest, and with `TARGET_DATABASE_URL`
 set it runs each load against an empty `stage` and rolls back.
 `tooling/tests/test_migration.py` does the latter against a fresh rendering of
 `schemas/`, so a schema change that breaks a mapping fails the tooling tests.
+Its database tests start a throwaway cluster with `initdb`, or use the server
+at `MIGRATION_TEST_SERVER_URL` (a disposable one: they drop and create
+databases there).
 
 Database errors are printed terse, without the failing row; `--verbose-errors`
 (before the command) adds PostgreSQL's DETAIL, which can print row values.
@@ -106,9 +125,10 @@ on every run. Watermarks are compared with the source's clock, and a walk's
 start time is read from the source, so `--since last` does not depend on the
 machine running the tool.
 
-The engine creates the `dcl_migration` schema (`checkpoint`, `blob_inventory`)
-in the target on the first real run. It is outside the catalyst schema, which only checks for missing
-objects; drop it when the migration is over.
+The engine creates the `dcl_migration` schema (`checkpoint`, `blob_inventory`,
+`blob_missing`) in the target on the first real run. It is outside the
+catalyst schema, which only checks for missing objects; drop it when the
+migration is over.
 
 Deletions in a source are not detected: a re-run upserts, it never removes
 rows that disappeared upstream. A load may map an upstream soft-delete or
