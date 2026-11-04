@@ -102,7 +102,10 @@ async fn serve_graph(answer: fn(&str) -> Value) -> String {
 }
 
 fn matic_collections(query: &str) -> Value {
-    if query.contains("category: \"wearable\"") {
+    if query.contains("urn_in") {
+        // The ownership document of the profiles and outfits: the owner holds the hat.
+        json!({ "o0": [{ "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1") }] })
+    } else if query.contains("category: \"wearable\"") {
         json!({ "nfts": [
             { "id": "a1", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10", "transferredAt": "200",
               "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } },
@@ -236,6 +239,17 @@ fn answer_call(to: &str, data: &str) -> String {
     let data = data.trim_start_matches("0x");
     let owner: Address = OWNER.parse().unwrap();
     match &data[..8] {
+        "6352211e" => {
+            let token = IERC721::ownerOfCall::abi_decode(&hex::decode(data).unwrap())
+                .unwrap()
+                .tokenId;
+            let holder = if token == U256::from(2) {
+                owner
+            } else {
+                Address::ZERO
+            };
+            format!("0x{}", hex::encode(holder.abi_encode()))
+        }
         "70a08231" => format!("0x{:064x}", 1),
         "01ffc9a7" => format!("0x{:064x}", 0),
         "949d225d" => format!("0x{:064x}", 1),
@@ -809,6 +823,39 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     assert_eq!(
         body,
         json!({ "data": [{ "name": "TP", "description": "A provider", "urn": "urn:decentraland:matic:collections-thirdparty:tp" }] })
+    );
+
+    // Profiles keep the v1 third-party items unchecked and the linked items
+    // whose NFT the mapping includes and the owner holds, after the others.
+    let hat = format!("urn:decentraland:matic:collections-v2:{COFFEE}:1");
+    let linked = |token: u32| format!("{TP_URN}:matic:{TP_CONTRACT}:{token}");
+    deploy(
+        &db.pool,
+        "bafyprofile",
+        "profile",
+        OWNER,
+        json!({ "avatars": [{ "name": "alice", "avatar": { "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseFemale", "wearables": [
+            linked(2),
+            "urn:decentraland:off-chain:base-avatars:eyes_00",
+            linked(3),
+            TP_URN,
+            hat,
+            linked(9),
+        ], "emotes": [] } }] }),
+        &[],
+    )
+    .await;
+    let (status, body) = get(&state, &format!("/lambdas/profiles/{OWNER}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["avatars"][0]["avatar"]["wearables"],
+        json!([
+            "urn:decentraland:off-chain:base-avatars:eyes_00",
+            hat,
+            TP_URN,
+            linked(2)
+        ]),
+        "token 3 is mapped but not held, token 9 is not mapped: {body}"
     );
 
     let (status, body) = get(&state, &format!("/lambdas/users/{OWNER}/lands")).await;

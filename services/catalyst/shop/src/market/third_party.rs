@@ -27,7 +27,7 @@ use axum::extract::{Path, Request, State};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 
-use crate::content::queries::active_entity_docs_by_prefix;
+use crate::content::queries::{active_entity_docs_by_pointers, active_entity_docs_by_prefix};
 use crate::shared::cache::TtlMap;
 use crate::shared::query_params::{
     MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination, parse_pagination_with,
@@ -1387,6 +1387,202 @@ pub(crate) async fn owned_third_party_urns(
     )
 }
 
+/// A worn third-party URN, as the old lambdas' checker split them: only
+/// items of an L2 collection (`matic`, `amoy`) count.
+#[derive(Debug, PartialEq, Eq)]
+enum WornThirdParty {
+    /// `urn:decentraland:<l2>:collections-thirdparty:<tp>:<collection>:<item>`:
+    /// kept unchecked.
+    V1,
+    /// `...:<item>:<nftChain>:<contract>:<tokenId>`: a linked item, kept when
+    /// its NFT is owned.
+    Linked(LinkedItem),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct LinkedItem {
+    /// The item's own URN (the first seven parts), its entity's `metadata.id`.
+    asset_urn: String,
+    network: String,
+    contract: String,
+    token_id: String,
+    /// The NFT lives on mainnet or sepolia.
+    on_l1: bool,
+}
+
+fn worn_third_party(urn: &str) -> Option<WornThirdParty> {
+    let p: Vec<&str> = urn.split(':').collect();
+    let is = |i: usize, want: &str| p.get(i).is_some_and(|s| s.eq_ignore_ascii_case(want));
+    if !(is(0, "urn") && is(1, "decentraland") && is(3, "collections-thirdparty"))
+        || !(is(2, "matic") || is(2, "amoy"))
+        || p[4..].iter().any(|s| s.is_empty())
+    {
+        return None;
+    }
+    match p.len() {
+        7 => Some(WornThirdParty::V1),
+        10 => {
+            let network = p[7].to_lowercase();
+            let on_l1 = match network.as_str() {
+                "mainnet" | "sepolia" => true,
+                "matic" | "amoy" => false,
+                _ => return None,
+            };
+            Some(WornThirdParty::Linked(LinkedItem {
+                asset_urn: p[..7].join(":"),
+                network,
+                contract: p[8].to_lowercase(),
+                token_id: p[9].to_string(),
+                on_l1,
+            }))
+        }
+        _ => None,
+    }
+}
+
+/// The worn third-party URNs `owner` may keep, in the order the old lambdas
+/// answered them (`tpw-ownership-checker.ts`): the v1 items unchecked, then
+/// the linked items whose NFT is on L1, then those on L2. A linked item is
+/// kept when its entity's mappings include the NFT and the chain confirms it
+/// (`ownerOf` is the owner, or an ERC-1155 `balanceOf` above zero); any
+/// other URN is not a third-party item and is left out. A linked item on a
+/// network with no RPC endpoint is kept unchecked (logged), as a profile is
+/// served unfiltered without its readers. `Err` when an endpoint failed.
+pub async fn sanitize_third_party_urns(
+    state: &MarketplaceState,
+    owner: &str,
+    urns: &[String],
+) -> Result<Vec<String>, String> {
+    let mut v1 = Vec::new();
+    let mut linked: Vec<(&String, LinkedItem)> = Vec::new();
+    for urn in urns {
+        match worn_third_party(urn) {
+            Some(WornThirdParty::V1) => v1.push(urn.clone()),
+            Some(WornThirdParty::Linked(item)) => linked.push((urn, item)),
+            None => {}
+        }
+    }
+    let items: Vec<&LinkedItem> = linked.iter().map(|(_, item)| item).collect();
+    let owned = linked_items_owned(state, owner, &items).await?;
+    let kept = |l1: bool| {
+        linked
+            .iter()
+            .zip(&owned)
+            .filter(move |((_, item), owned)| item.on_l1 == l1 && **owned)
+            .map(|((urn, _), _)| (*urn).clone())
+    };
+    Ok(v1
+        .into_iter()
+        .chain(kept(true))
+        .chain(kept(false))
+        .collect())
+}
+
+/// Per item, whether `owner` holds its NFT (`third-party-item-checker.ts`).
+async fn linked_items_owned(
+    state: &MarketplaceState,
+    owner: &str,
+    items: &[&LinkedItem],
+) -> Result<Vec<bool>, String> {
+    let mut owned = vec![false; items.len()];
+    let Ok(owner) = Address::from_str(owner) else {
+        return Ok(owned);
+    };
+    if items.is_empty() {
+        return Ok(owned);
+    }
+    let mut pointers: Vec<String> = items.iter().map(|i| i.asset_urn.to_lowercase()).collect();
+    pointers.sort();
+    pointers.dedup();
+    let docs = active_entity_docs_by_pointers(&state.pool, &pointers)
+        .await
+        .map_err(|e| format!("third-party item entities: {e}"))?;
+    let mappings: HashMap<String, Value> = docs
+        .iter()
+        .filter_map(|d| d.to_value())
+        .filter_map(|e| {
+            let id = e.pointer("/metadata/id")?.as_str()?.to_string();
+            Some((id, e.pointer("/metadata/mappings")?.clone()))
+        })
+        .collect();
+
+    // The mapped items, grouped by the network their NFT is on.
+    let mut by_network: BTreeMap<&str, Vec<(usize, Address, U256)>> = BTreeMap::new();
+    for (i, item) in items.iter().enumerate() {
+        let mapped = mappings.get(&item.asset_urn).is_some_and(|m| {
+            mappings_includes_nft(m, &item.network, &item.contract, &item.token_id)
+        });
+        let (Ok(contract), Ok(id)) = (
+            Address::from_str(&item.contract),
+            U256::from_str_radix(&item.token_id, 10),
+        ) else {
+            continue;
+        };
+        if mapped {
+            by_network
+                .entry(&item.network)
+                .or_default()
+                .push((i, contract, id));
+        }
+    }
+    for (network, checks) in by_network {
+        let Some(rpc) = rpc_url_for(state, network) else {
+            tracing::warn!(
+                network,
+                "third-party item ownership: no RPC endpoint for this network; keeping the items unchecked"
+            );
+            for (i, _, _) in checks {
+                owned[i] = true;
+            }
+            continue;
+        };
+        let contracts: Vec<Address> = checks
+            .iter()
+            .map(|(_, c, _)| *c)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let probes: Vec<RpcCall> = contracts
+            .iter()
+            .map(|c| supports_call(*c, IFACE_ERC1155))
+            .collect();
+        let answers = eth_call_batch(state, &rpc, &probes).await?;
+        let erc1155: BTreeSet<Address> = contracts
+            .iter()
+            .zip(&answers)
+            .filter(|(_, a)| decode_bool(Some(a)))
+            .map(|(c, _)| *c)
+            .collect();
+        let calls: Vec<RpcCall> = checks
+            .iter()
+            .map(|(_, contract, id)| RpcCall {
+                to: *contract,
+                data: if erc1155.contains(contract) {
+                    IERC1155::balanceOfCall {
+                        account: owner,
+                        id: *id,
+                    }
+                    .abi_encode()
+                    .into()
+                } else {
+                    IERC721::ownerOfCall { tokenId: *id }.abi_encode().into()
+                },
+            })
+            .collect();
+        let answers = eth_call_batch(state, &rpc, &calls).await?;
+        for ((i, contract, _), answer) in checks.iter().zip(answers) {
+            owned[*i] = answer.as_ref().is_some_and(|b| {
+                if erc1155.contains(contract) {
+                    IERC1155::balanceOfCall::abi_decode_returns(b).is_ok_and(|n| !n.is_zero())
+                } else {
+                    IERC721::ownerOfCall::abi_decode_returns(b).is_ok_and(|h| h == owner)
+                }
+            });
+        }
+    }
+    Ok(owned)
+}
+
 /// The old lambdas' `FetcherError` answer: 502 `Cannot fetch elements for
 /// <address>`, the cause logged.
 pub(crate) fn fetch_error(address: &str, cause: &str) -> Response {
@@ -1870,6 +2066,38 @@ mod tests {
         let unreachable =
             owned_via_nft_worker(&state, "http://127.0.0.1:1", "0xowner", &contracts).await;
         assert!(unreachable.is_err(), "a transport failure fails the fetch");
+    }
+
+    #[test]
+    fn worn_third_party_urns_split_as_the_old_checker_did() {
+        assert_eq!(
+            worn_third_party("urn:decentraland:matic:collections-thirdparty:tp:c1:hat"),
+            Some(WornThirdParty::V1)
+        );
+        assert_eq!(
+            worn_third_party(
+                "urn:decentraland:amoy:collections-thirdparty:tp:c1:hat:sepolia:0xAbC:12"
+            ),
+            Some(WornThirdParty::Linked(LinkedItem {
+                asset_urn: "urn:decentraland:amoy:collections-thirdparty:tp:c1:hat".into(),
+                network: "sepolia".into(),
+                contract: "0xabc".into(),
+                token_id: "12".into(),
+                on_l1: true,
+            }))
+        );
+        for other in [
+            // An L1 collection: not checked, so not kept.
+            "urn:decentraland:mainnet:collections-thirdparty:tp:c1:hat",
+            "urn:decentraland:ethereum:collections-thirdparty:tp:c1:hat",
+            // The NFT on a chain outside ContractNetwork.
+            "urn:decentraland:matic:collections-thirdparty:tp:c1:hat:ethereum:0xabc:1",
+            "urn:decentraland:matic:collections-thirdparty:tp:c1",
+            "urn:decentraland:matic:collections-v2:0xabc:1",
+            "urn:decentraland:off-chain:base-avatars:eyes_00",
+        ] {
+            assert_eq!(worn_third_party(other), None, "{other}");
+        }
     }
 
     #[test]

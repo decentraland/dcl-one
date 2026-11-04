@@ -1,7 +1,9 @@
 //! `/lambdas/profiles`: the profile entity comes from `content.deployments`
 //! (peer sync), every wearable and emote it names is checked against the
-//! collections subgraphs and `hasClaimedName` against the marketplace
-//! subgraph. With no reader configured the profile is served unfiltered,
+//! collections subgraphs, its third-party wearables against their mappings
+//! and the chain (`third_party::sanitize_third_party_urns`, appended after
+//! the others as the old lambdas did) and `hasClaimedName` against the
+//! marketplace subgraph. With no reader configured the profile is served unfiltered,
 //! as the old handler did with `squid_pool: None`; a reader that is
 //! configured but unreachable fails the request closed (503) rather than
 //! serving cosmetics nobody proved.
@@ -19,6 +21,7 @@ use serde_json::{Value, json};
 use crate::content::queries::active_entity_docs_by_pointers;
 
 use super::graph::{self, normalize_urn};
+use super::third_party;
 use super::{
     MarketplaceState, SharedState, bad_request, internal_server_error, not_found,
     service_unavailable,
@@ -131,6 +134,41 @@ fn filter_avatars_by_ownership(avatars: &mut [Value], owned: &HashSet<String>) {
                 .collect();
             avatar_obj["emotes"] = Value::Array(validated);
         }
+    }
+}
+
+/// Every non-base wearable the profile's avatars wear, for the third-party check.
+fn worn_wearables(metadata: &Value) -> Vec<String> {
+    metadata
+        .get("avatars")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|a| a.pointer("/avatar/wearables").and_then(Value::as_array))
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|w| !is_base_wearable(w))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Appends the owner's confirmed third-party wearables to every avatar's
+/// validated ones, without repeats (`profiles.ts`: `new Set(validated.concat(thirdParty))`).
+fn append_third_party(avatars: &mut [Value], third_party: &[String]) {
+    for avatar in avatars.iter_mut() {
+        let Some(wearables) = avatar
+            .pointer_mut("/avatar/wearables")
+            .and_then(Value::as_array_mut)
+        else {
+            continue;
+        };
+        let mut seen: HashSet<String> = HashSet::new();
+        let merged: Vec<Value> = std::mem::take(wearables)
+            .into_iter()
+            .chain(third_party.iter().map(|u| Value::String(u.clone())))
+            .filter(|w| w.as_str().is_none_or(|u| seen.insert(u.to_string())))
+            .collect();
+        *wearables = merged;
     }
 }
 
@@ -333,11 +371,14 @@ pub async fn process_profiles_positional(
             })
             .collect();
         if readers {
+            let collections = graph::any_collections_reader(&state.index);
             let mut addresses: Vec<String> = Vec::new();
+            let mut worn: Vec<Vec<String>> = Vec::new();
             let mut requested: HashSet<(String, String)> = HashSet::new();
             for (address, metadata) in prepared.iter().flatten() {
                 if !address.starts_with("default") && !addresses.contains(address) {
                     addresses.push(address.clone());
+                    worn.push(worn_wearables(metadata));
                     requested.extend(
                         collect_ownership_urns(metadata)
                             .into_iter()
@@ -349,11 +390,23 @@ pub async fn process_profiles_positional(
                 let names_futs = addresses
                     .iter()
                     .map(|a| graph::owned_names(&state.index, a));
-                let (owned, names) = tokio::join!(
+                let third_party_futs = addresses.iter().zip(&worn).map(|(a, worn)| async move {
+                    if collections {
+                        third_party::sanitize_third_party_urns(state, a, worn).await
+                    } else {
+                        Ok(Vec::new())
+                    }
+                });
+                let (owned, names, third_party) = tokio::join!(
                     graph::owned_urns(&state.index, &requested),
-                    futures::future::join_all(names_futs)
+                    futures::future::join_all(names_futs),
+                    futures::future::join_all(third_party_futs)
                 );
                 let owned = owned?;
+                let mut third_party_by_address: HashMap<String, Vec<String>> = HashMap::new();
+                for (address, owned) in addresses.iter().zip(third_party) {
+                    third_party_by_address.insert(address.clone(), owned?);
+                }
                 let mut names_by_address: HashMap<String, Vec<String>> = HashMap::new();
                 for (address, names) in addresses.iter().zip(names) {
                     names_by_address.insert(
@@ -366,11 +419,18 @@ pub async fn process_profiles_positional(
                     if address.starts_with("default") {
                         continue;
                     }
-                    if graph::any_collections_reader(&state.index)
+                    if collections
                         && let Some(avatars) =
                             metadata.get_mut("avatars").and_then(Value::as_array_mut)
                     {
                         filter_avatars_by_ownership(avatars, owned.get(address).unwrap_or(&empty));
+                        append_third_party(
+                            avatars,
+                            third_party_by_address
+                                .get(address)
+                                .map(Vec::as_slice)
+                                .unwrap_or(&[]),
+                        );
                     }
                     if state.settings.marketplace_subgraph_url.is_some() {
                         apply_claimed_name(
