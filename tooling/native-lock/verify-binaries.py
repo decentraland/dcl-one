@@ -582,6 +582,36 @@ def is_shippable_name(name: str) -> bool:
     return extension in SHIPPABLE_SUFFIXES or extension == "" or ".so." in name.lower()
 
 
+def shippable_files(repo: str, spec: dict) -> list[str]:
+    """Every shippable file (or .bundle) under the target's runtime dir, repo-relative."""
+    runtime_dir = os.path.join(repo, spec["runtime_dir"])
+    found = []
+    for base, dirs, files in os.walk(runtime_dir):
+        # A .bundle is a directory-shaped binary; report it whole and do not descend.
+        bundles = [d for d in dirs if d.lower().endswith(".bundle")]
+        dirs[:] = [d for d in dirs if d not in bundles]
+        for name in sorted(files + bundles):
+            if is_shippable_name(name):
+                found.append(os.path.relpath(os.path.join(base, name), repo))
+    return found
+
+
+def check_pending_dir_empty(repo: str, target: str, spec: dict) -> list[str]:
+    """A pending target has no hashes, so nothing shippable may sit in its folder.
+
+    Every other check is skipped for a pending target; without this one a
+    binary committed under its runtime dir would ship with no recorded hash
+    and no complaint, which is the gap the lock exists to close.
+    """
+    present = shippable_files(repo, spec)
+    if not present:
+        return []
+    listing = "\n".join(f"    {path}" for path in present)
+    return [f"[{target}] is pending (no hashes recorded) but its runtime dir "
+            f"holds {len(present)} shippable file(s):\n{listing}\n"
+            f"    Relock the target (--update --only {target}) or remove them."]
+
+
 def check_runtime_dir_completeness(repo: str, target: str, spec: dict) -> list[str]:
     """Every shippable binary in the runtime dir must be named by the lock.
 
@@ -1088,6 +1118,7 @@ def main() -> int:
             continue
         if spec.get("pending") and not update_target:
             note(f"{target}: PENDING, nothing committed yet - {spec['pending']}")
+            problems += check_pending_dir_empty(repo, target, spec)
             continue
         problems += check_artifacts(repo, target, spec, update_target)
         problems += check_runtime_dir_completeness(repo, target, spec)

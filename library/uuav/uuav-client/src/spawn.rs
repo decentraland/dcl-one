@@ -58,6 +58,17 @@ pub fn spawn_helper(
     Ok(HelperChild(child))
 }
 
+/// Environment the sandboxed helper inherits on Linux: its own switches,
+/// libva's driver selection and Rust's backtrace toggle. Everything else
+/// (session bus and display addresses, proxies, the user's paths) stays
+/// with the host.
+#[cfg(target_os = "linux")]
+fn inherits_env(key: &std::ffi::OsStr) -> bool {
+    key.to_str().is_some_and(|key| {
+        key.starts_with("UUAV_") || key.starts_with("LIBVA_") || key == "RUST_BACKTRACE"
+    })
+}
+
 #[cfg(target_os = "linux")]
 pub fn spawn_helper(
     handoff: ChildHandoff,
@@ -67,6 +78,12 @@ pub fn spawn_helper(
 ) -> Result<HelperChild> {
     let path = helper_path()?;
     let mut command = std::process::Command::new(&path);
+    command.env_clear();
+    for (key, value) in std::env::vars_os() {
+        if inherits_env(&key) {
+            command.env(key, value);
+        }
+    }
     command
         .arg("--channel")
         .arg(handoff.arg())
@@ -365,15 +382,34 @@ impl std::fmt::Display for HelperExitStatus {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 fn helper_path() -> Result<PathBuf> {
     let mut dir = own_dylib_path()?;
     dir.pop();
     Ok(dir.join(HELPER_FILE))
 }
 
+/// On Linux the client is an rlib inside the host executable, and glibc's
+/// `dladdr` names the main program by `argv[0]` - a bare name under a
+/// PATH launch, which would send `Command` searching PATH for the helper.
+/// `/proc/self/exe` is the one anchor that is always absolute.
+#[cfg(target_os = "linux")]
+fn helper_path() -> Result<PathBuf> {
+    let exe = std::env::current_exe().context("resolve the host executable path")?;
+    anyhow::ensure!(
+        exe.is_absolute(),
+        "host executable path {} is not absolute",
+        exe.display()
+    );
+    let dir = exe
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("host executable {} has no directory", exe.display()))?;
+    Ok(dir.join(HELPER_FILE))
+}
+
 /// Path of the module this code is loaded in (the host executable when
 /// linked statically), resolved from one of its own symbols.
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 fn own_dylib_path() -> Result<PathBuf> {
     use std::ffi::CStr;
     use std::os::raw::c_void;

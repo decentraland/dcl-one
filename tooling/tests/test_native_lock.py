@@ -567,6 +567,17 @@ class PendingTargetTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.root, ignore_errors=True)
 
+    def test_pending_target_with_committed_binaries_fails(self):
+        result = run(self.root)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("native/out/avfake.dll", result.stdout + result.stderr)
+
+    def test_pending_target_with_an_empty_dir_passes(self):
+        for name in ("plugin.bin", "avfake.dll"):
+            os.remove(os.path.join(self.root, "native", "out", name))
+        result = run(self.root)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_report_on_a_pending_target_skips_the_recipe_check(self):
         result = run(self.root, "--report", TARGET)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)

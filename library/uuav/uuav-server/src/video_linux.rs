@@ -254,8 +254,20 @@ fn plane_len(width: u32, height: u32) -> Result<usize> {
         .ok_or_else(|| anyhow!("plane size overflow"))
 }
 
-/// The core's presentation plane pointers + visible size, or `None` while
-/// unavailable.
+// Defined in the core's Linux output module next to the planes it sizes
+// (`video_output_linux.rs`); that module is private to the core crate, so
+// the exported symbol is reached the way a C consumer would.
+unsafe extern "C" {
+    fn uuav_player_get_presented_video_size(
+        player_id: core::PlayerId,
+        out_size: *mut core::VideoSize,
+    ) -> core::ResultFFI;
+}
+
+/// The core's presentation plane pointers + the size they were allocated
+/// for, or `None` while unavailable. The planes follow the decoded frame,
+/// not the stream header (`uuav_player_get_video_size`), and a header
+/// larger than the frame must not size the copy out of them.
 fn query_core_planes(id: PlayerId) -> Option<(*const c_void, *const c_void, u32, u32)> {
     let mut y: *const c_void = std::ptr::null();
     state::consume_result(unsafe { core::uuav_player_get_video_texture(id, 0, &mut y) }).ok()?;
@@ -266,7 +278,7 @@ fn query_core_planes(id: PlayerId) -> Option<(*const c_void, *const c_void, u32,
         width: 0,
         height: 0,
     };
-    state::consume_result(unsafe { core::uuav_player_get_video_size(id, &mut size) }).ok()?;
+    state::consume_result(unsafe { uuav_player_get_presented_video_size(id, &mut size) }).ok()?;
     if y.is_null() || uv.is_null() || size.width == 0 || size.height == 0 {
         return None;
     }

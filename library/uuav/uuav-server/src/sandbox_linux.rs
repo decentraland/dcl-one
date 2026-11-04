@@ -13,10 +13,17 @@
 //! - **seccomp** denies process creation and introspection: `execve`,
 //!   `execveat`, `fork`, `vfork`, `clone` without `CLONE_THREAD`, `ptrace`
 //!   and `process_vm_*` fail with `EPERM`; `clone3` answers `ENOSYS` so
-//!   glibc's thread creation falls back to the inspectable `clone`.
+//!   glibc's thread creation falls back to the inspectable `clone`. New
+//!   `AF_UNIX` sockets are denied too: both IPC channels are inherited
+//!   socketpairs, so the only Unix-domain endpoints a compromised helper
+//!   could still reach are the session bus and the display server, which
+//!   Landlock does not mediate. `AF_NETLINK` stays open because glibc's
+//!   `getaddrinfo` enumerates interfaces over it; name resolution itself
+//!   goes to the stub resolver over UDP, with `nss-resolve` and `nscd`
+//!   reporting unavailable when their sockets are refused.
 //!
-//! This is weaker than the macOS Seatbelt profile: IPC, device and
-//! network access are not enumerated, and on a kernel without Landlock
+//! This is weaker than the macOS Seatbelt profile: device and Internet
+//! access are not enumerated, and on a kernel without Landlock
 //! only the seccomp half applies (reported through the helper's log line
 //! so the host can tell). Fail closed where the mechanism exists: a
 //! kernel that has Landlock but refuses the ruleset ends the helper.
@@ -103,6 +110,18 @@ fn apply_seccomp() -> Result<()> {
     ])
     .map_err(|e| anyhow!("seccomp: clone rule: {e}"))?;
 
+    // AF_UNIX in the domain argument: a new Unix-domain endpoint
+    let unix_domain = SeccompRule::new(vec![
+        SeccompCondition::new(
+            0,
+            SeccompCmpArgLen::Dword,
+            SeccompCmpOp::Eq,
+            libc::AF_UNIX as u64,
+        )
+        .map_err(|e| anyhow!("seccomp: socket domain condition: {e}"))?,
+    ])
+    .map_err(|e| anyhow!("seccomp: socket rule: {e}"))?;
+
     let mut denied: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
     for syscall in [
         libc::SYS_execve,
@@ -119,6 +138,8 @@ fn apply_seccomp() -> Result<()> {
         denied.insert(libc::SYS_vfork, Vec::new());
     }
     denied.insert(libc::SYS_clone, vec![non_thread_clone]);
+    denied.insert(libc::SYS_socket, vec![unix_domain.clone()]);
+    denied.insert(libc::SYS_socketpair, vec![unix_domain]);
 
     let eperm: BpfProgram = SeccompFilter::new(
         denied,

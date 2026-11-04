@@ -90,6 +90,12 @@ impl Drop for Mapping {
     }
 }
 
+/// Largest edge a generation may announce. The helper is the untrusted
+/// side of this channel: its dimensions size the presentation planes the
+/// host allocates inside the render event, so an absurd pair must be
+/// refused as a protocol error rather than reach `vec!`.
+const MAX_DIMENSION: u32 = 16_384;
+
 /// A generation being assembled: mappings arrive over the fd channel,
 /// dimensions over the control channel (`TextureSet`), in either order.
 struct PendingGen {
@@ -299,14 +305,28 @@ fn activate(pending: PendingGen) -> Result<ActiveGen> {
     let (width, height) = pending
         .dims
         .ok_or_else(|| anyhow!("generation has no dims"))?;
+    ensure!(
+        (1..=MAX_DIMENSION).contains(&width) && (1..=MAX_DIMENSION).contains(&height),
+        "helper announced an unpresentable size {width}x{height}"
+    );
+    ensure!(
+        width % 2 == 0 && height % 2 == 0,
+        "helper announced odd NV12 dimensions {width}x{height}"
+    );
+    let y_len = (width as usize)
+        .checked_mul(height as usize)
+        .ok_or_else(|| anyhow!("plane size overflow"))?;
     let generation = pending.generation;
     let [slot0, slot1, slot2] = pending.planes;
     let take = |slot: [Option<Mapping>; PLANES]| -> Result<[Mapping; PLANES]> {
         let [y, uv] = slot;
-        Ok([
-            y.ok_or_else(|| anyhow!("missing Y plane"))?,
-            uv.ok_or_else(|| anyhow!("missing UV plane"))?,
-        ])
+        let y = y.ok_or_else(|| anyhow!("missing Y plane"))?;
+        let uv = uv.ok_or_else(|| anyhow!("missing UV plane"))?;
+        // the mappings must cover the frame the dims describe; a short one
+        // would fail every present, so refuse the generation up front
+        y.bytes(y_len)?;
+        uv.bytes(y_len / 2)?;
+        Ok([y, uv])
     };
     Ok(ActiveGen {
         generation,

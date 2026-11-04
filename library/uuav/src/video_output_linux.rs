@@ -7,22 +7,60 @@
 //! are recreated together on a resolution change with a one-poll retire
 //! grace.
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow, ensure};
 use std::os::raw::c_void;
 
 use crate::hw_device::HwDevice;
 use crate::video_decoder::VideoFrame;
+use crate::{ERR_NO_RUNTIME, INIT_STATE, PlayerId, ResultFFI, VideoSize};
 
 /// Non-owning view of one plane buffer; the pointer is valid until the
-/// generation after next replaces it (see the module docs).
+/// generation after next replaces it (see the module docs). Carries the
+/// dimensions the planes were allocated for: the consumer must size its
+/// reads from these, not from the stream header.
 pub(crate) struct VideoTextureView {
     ptr: *const u8,
+    width: u32,
+    height: u32,
 }
 
 impl VideoTextureView {
     pub(crate) const fn raw_ptr_mut(&self) -> *mut c_void {
         self.ptr.cast_mut().cast::<c_void>()
     }
+}
+
+/// The size of the presentation planes behind `uuav_player_get_video_texture`.
+///
+/// `uuav_player_get_video_size` reports the stream header, fixed at open;
+/// the planes follow the decoded frames, which a hostile header or a
+/// mid-stream resolution switch makes smaller. A consumer reading
+/// header-sized planes would run past them, so on Linux the plane
+/// dimensions are the only ones it may copy by. Exported here, beside the
+/// planes it describes, instead of widening the shared FFI surface.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn uuav_player_get_presented_video_size(
+    player_id: PlayerId,
+    out_size: *mut VideoSize,
+) -> ResultFFI {
+    unsafe { presented_video_size(player_id, out_size) }.into()
+}
+
+unsafe fn presented_video_size(player_id: PlayerId, out_size: *mut VideoSize) -> Result<()> {
+    ensure!(!out_size.is_null(), "out pointer is null");
+    let state = INIT_STATE.load();
+    let runtime = state.as_ref().context(ERR_NO_RUNTIME)?;
+    let view = runtime
+        .player_by_id(player_id)?
+        .video_texture(0)
+        .context("video texture is not available yet")?;
+    unsafe {
+        out_size.write(VideoSize {
+            width: view.width,
+            height: view.height,
+        });
+    }
+    Ok(())
 }
 
 pub(crate) struct VideoOutput {
@@ -64,6 +102,8 @@ impl VideoOutput {
         };
         Some(VideoTextureView {
             ptr: buffer.as_ptr(),
+            width: planes.width,
+            height: planes.height,
         })
     }
 

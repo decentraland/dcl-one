@@ -26,8 +26,9 @@ const MAX_PENDING_BYTES: usize = 16 * 1024 * 1024;
 
 /// Packets retained for a software replay while a hardware decoder has not
 /// produced its first frame. A hardware rejection surfaces on the first
-/// packets (the parameter sets), so a handful suffice; past this the
-/// retention stops and a later hardware failure is a playback error.
+/// packets (the parameter sets), so a handful suffice; a decoder that has
+/// taken this many and shown nothing is replaced by software with the
+/// same packets, since some swallow slice errors instead of reporting them.
 const WARMUP_REPLAY_CAP: usize = 64;
 
 /// The frame the render thread popped but whose time has not come yet.
@@ -138,8 +139,8 @@ pub(super) struct VideoPlayback {
     finished: bool,
     /// References to the packets a hardware decoder was fed before its
     /// first frame: replayed into a software decoder if the hardware path
-    /// fails in that window. `None` once a frame arrived, the cap was hit,
-    /// or the decoder is software already.
+    /// fails in that window, or once the window fills without a frame.
+    /// `None` once a frame arrived or the decoder is software already.
     warmup: Option<Vec<OwnedPacket>>,
     mode: Arc<DecoderModeCell>,
     warnings: ErrorCallback,
@@ -227,7 +228,19 @@ impl VideoPlayback {
                 Decoded::Again => {
                     if let Some(mut packet) = self.pending.pop_front() {
                         self.pending_bytes = self.pending_bytes.saturating_sub(packet.size());
-                        self.retain_for_replay(&packet)?;
+                        if !self.retain_for_replay(&packet)? {
+                            // the replay budget went in and nothing came
+                            // out: a decoder that swallows errors instead
+                            // of reporting them looks like this. Hand the
+                            // budget, and this packet, to software.
+                            self.pending_bytes = self.pending_bytes.saturating_add(packet.size());
+                            self.pending.push_front(packet);
+                            self.fall_back_to_software(&anyhow::anyhow!(
+                                "no frame after {WARMUP_REPLAY_CAP} packets"
+                            ))?;
+                            progress = true;
+                            continue;
+                        }
                         if let Err(e) = self.decoder.send(packet.as_mut_ptr()) {
                             if self.can_fall_back() {
                                 // the packet is in the replay set already
@@ -256,19 +269,19 @@ impl VideoPlayback {
         }
     }
 
-    /// Keeps a reference to a packet fed to a warming-up hardware decoder.
-    fn retain_for_replay(&mut self, packet: &OwnedPacket) -> Result<()> {
+    /// Keeps a reference to a packet about to be fed to a warming-up
+    /// hardware decoder. `false` when the decoder has already taken the
+    /// whole replay budget without producing a frame: the packet was not
+    /// retained, and the caller replaces the decoder instead of feeding it.
+    fn retain_for_replay(&mut self, packet: &OwnedPacket) -> Result<bool> {
         let Some(warmup) = self.warmup.as_mut() else {
-            return Ok(());
+            return Ok(true);
         };
         if warmup.len() >= WARMUP_REPLAY_CAP {
-            // a hardware decoder that produced nothing after this many
-            // packets is not failing on its parameter sets; stop retaining
-            self.warmup = None;
-            return Ok(());
+            return Ok(false);
         }
         warmup.push(OwnedPacket::cloned_from(packet)?);
-        Ok(())
+        Ok(true)
     }
 
     const fn can_fall_back(&self) -> bool {
