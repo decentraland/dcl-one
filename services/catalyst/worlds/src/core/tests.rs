@@ -5590,6 +5590,9 @@ async fn world_limits_report_what_a_publish_is_checked_against() {
         expect(app, limits_case(&world, bad), 400).await;
     }
 
+    let bare = WorldName::parse(world.label()).unwrap();
+    expect(app, limits_case(&bare, ""), 404).await;
+
     let unowned = world_name();
     expect(app, limits_case(&unowned, ""), 404).await;
     set_limit_override(&f.pool, &unowned, None, Some(1234)).await;

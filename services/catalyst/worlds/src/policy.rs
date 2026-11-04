@@ -429,8 +429,11 @@ impl Policy {
         if let Some(owner) = self.personal_worlds.owner_of(world) {
             return Ok(Some(owner));
         }
+        let Some(label) = world.owner_label() else {
+            return Ok(None);
+        };
         if let Some(market) = self.names_reader() {
-            let holder = crate::chain_index::graph::name_owner(market, world.label())
+            let holder = crate::chain_index::graph::name_owner(market, label)
                 .await
                 .map_err(|e| reader_unavailable("marketplace names reader", &e))?;
             return Ok(holder.and_then(|h| Address::parse(&h).ok()));
@@ -548,13 +551,16 @@ impl Policy {
         if let Some(owner) = self.personal_worlds.owner_of(world) {
             return Ok(Some(owner));
         }
+        let Some(label) = world.owner_label() else {
+            return Ok(None);
+        };
         let Some(market) = self.names_reader() else {
             return Err(reader_unavailable(
                 "marketplace names reader",
                 NO_NAME_AUTHORITY_MSG,
             ));
         };
-        match crate::chain_index::graph::name_owner(market, world.label()).await {
+        match crate::chain_index::graph::name_owner(market, label).await {
             Ok(Some(owner)) => Address::parse(&owner)
                 .map(Some)
                 .map_err(|e| reader_unavailable("marketplace names reader", &e.to_string())),
