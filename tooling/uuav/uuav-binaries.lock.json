@@ -253,9 +253,9 @@
         "profile": "release",
         "crate_version": "0.4.0",
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-        "source_digest": "a38000ac2c10dc43f7728f87ee69cd819e83b4e4b6ca85a9c78ba64e5a554fa0",
+        "source_digest": "0c1354d3c20a4a28b92dd1ebab880b4f76907ebba7357b2b00f888e2aaba1d26",
         "source_files": 22,
-        "repo_commit": "e7891bd9649bebc1e12ce6463cf5d309083fbaa4",
+        "repo_commit": "633cb44657d94aaacb282d30ee7577315ba8c70e",
         "toolchain": {
           "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
           "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
@@ -323,7 +323,7 @@
         },
         {
           "path": "library/uuav/dist/windows-x86_64/uuav-helper.exe",
-          "sha256": "2680478e6af2213919066b6136646d7e2a3f778b9ff49c1094bbc98b3ce37dc0",
+          "sha256": "bb8f4b62f6c21174f3cbd6439ab6e45f8de8c282fc27568bb1c4c8fe15421f54",
           "bytes": 1430528,
           "produced_by": "cargo"
         },
@@ -346,9 +346,9 @@
           "-C",
           "link-arg=-Wl,-rpath,$ORIGIN"
         ],
-        "source_digest": "a38000ac2c10dc43f7728f87ee69cd819e83b4e4b6ca85a9c78ba64e5a554fa0",
+        "source_digest": "0c1354d3c20a4a28b92dd1ebab880b4f76907ebba7357b2b00f888e2aaba1d26",
         "source_files": 22,
-        "repo_commit": "3d4ee1d20a7706b15b98dc9785a378b3cde1d163",
+        "repo_commit": "633cb44657d94aaacb282d30ee7577315ba8c70e",
         "toolchain": {
           "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
           "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
@@ -464,8 +464,8 @@
         },
         {
           "path": "library/uuav/dist/linux-x86_64/uuav-helper",
-          "sha256": "31421dd9d4063afed40e602ebad7765cdd9ed41ea0039ead62469f545a7fd264",
-          "bytes": 933584,
+          "sha256": "4c739f9e5c202fc943fcd6649b0f1ba37093fd5fd6caeafb4734f0d93b1897fc",
+          "bytes": 939400,
           "produced_by": "cargo"
         },
         {
