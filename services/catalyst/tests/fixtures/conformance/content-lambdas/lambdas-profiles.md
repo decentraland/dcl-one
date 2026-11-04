@@ -294,7 +294,7 @@ Upstream: the L1 `Catalyst` contract via `@dcl/catalyst-contracts` `getCatalystS
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| success | 200 | `[{"baseUrl":"https://peer.example.org","owner":"0x0000000000000000000000000000000000000001","id":"0x00…01"}]` in contract index order | `catalysts-fetcher.ts:56-59` | `contracts.rs:245-272,354-375` | MATCH on values: the production list has only `https://` hosts without a trailing slash, checksummed owners and `0x` + 64-hex ids (`captures/lambdas-profiles/LP-26-contracts-servers.json`). Key order differs: upstream `baseUrl,owner,id`; dcl-one's `json!` sorts to `baseUrl,id,owner` |
+| success | 200 | `[{"baseUrl":"https://peer.example.org","owner":"0x0000000000000000000000000000000000000001","id":"0x00…01"}]` in contract index order | `catalysts-fetcher.ts:56-59` | `contracts.rs:236-240,245-272,354-375` | MATCH on values: the production list has only `https://` hosts without a trailing slash, checksummed owners and `0x` + 64-hex ids (`captures/lambdas-profiles/LP-26-contracts-servers.json`). Key order differs: upstream `baseUrl,owner,id`; dcl-one's `json!` sorts to `baseUrl,id,owner` |
 | RPC fails, nothing cached / TTL expired | 500 `{"error":"Internal Server Error"}` (the LRU `fetch` rejects) | | `catalysts-fetcher.ts:45-58` | stale value if any, else `200 []`; a failure is not retried for 60 s `contracts.rs:292-345,369-373` | DIVERGENT |
 | no RPC configured | n/a (the provider is hard-wired to `rpc.decentraland.org`, `decentraland/lamb2:src/components.ts:167`) | `200 []` when `ETH_RPC_URL` is unset `contracts.rs:355-358` | DIVERGENT (config) |
 

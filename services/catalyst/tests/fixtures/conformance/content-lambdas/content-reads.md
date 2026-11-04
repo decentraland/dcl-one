@@ -57,11 +57,11 @@ serves the same router at the root and under `/content`
 | 6 | GET | `/contents/:hashId/active-entities` | `/content` | `services/catalyst/content/src/lib.rs:643-646` -> `active_entities.rs:169` | MATCH |
 | 7 | GET | `/available-content` | `/content` | `services/catalyst/content/src/lib.rs:647-650` -> `available_content.rs:14` | DIVERGENT |
 | 8 | GET | `/audit/:type/:entityId` | `/content` | `services/catalyst/content/src/lib.rs:651` -> `audit.rs:13` | DIVERGENT |
-| X1 | any | unknown path (router miss) | `/content` | `services/catalyst/content/src/lib.rs:623-625,712` | DIVERGENT |
+| X1 | any | unknown path (router miss) | `/content` | `services/catalyst/content/src/lib.rs:623-625,712` | MATCH |
 | X2 | wrong method on a known path | any | `/content` | axum `MethodRouter` default | DIVERGENT |
 | X3 | OPTIONS (preflight) and CORS on every response | any | `/content` | `services/catalyst/shared/src/cors.rs:20-70` | DIVERGENT |
 
-Counts: 8 endpoints: MATCH 1, GAP 2, DIVERGENT 5, MISSING 0. Cross-cutting: 3 DIVERGENT.
+Counts: 8 endpoints: MATCH 1, GAP 2, DIVERGENT 5, MISSING 0. Cross-cutting: MATCH 1, DIVERGENT 2.
 
 ---
 
@@ -335,7 +335,7 @@ time this node stored the deployment, so it differs between any two nodes (upstr
 | `Access-Control-Allow-Headers` | reflects `Access-Control-Request-Headers` | reflects it; a fixed list when absent (`cors.rs:17,38-41`) |
 | `Access-Control-Max-Age` | `600` | `86400` (`cors.rs:18`) |
 | `Vary` | `Access-Control-Request-Headers` on preflight (`cors.spec.ts:52-54`) | `Origin` (`cors.rs:46,59`) |
-| extra | none | `X-Content-Type-Options: nosniff` on every response (`cors.rs:81-86`) |
+| extra | none from the application; the public peer's gateway adds `X-Content-Type-Options: nosniff` to every captured response ([`captures/README.md`](captures/README.md), Sanitization) | `X-Content-Type-Options: nosniff` on every response (`cors.rs:81-86`) |
 
 The upstream column is confirmed by capture: the preflight for `POST /content/entities/active` answered
 `204` with `access-control-allow-headers: content-type`, `access-control-allow-methods: GET,HEAD,POST,OPTIONS`,
@@ -354,7 +354,7 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
   routing (`services/catalyst/src/serve.rs:1355`). MATCH.
 - Case: the same router port defaults to `sensitive: false`. Captured: `HEAD /content/Contents/<hash>`
   answers `200` with the file's headers, and `/content/Status` and `/content/Deployments` answer `200`
-  (`captures/content-reads/CR-16-path-case-contents.json`,
+  (`captures/content-reads/CR-16-path-case-contents.json`, `CR-16-path-case-status.json`,
   `captures/content-sync/CS-23-path-case-deployments.json`). axum is case-sensitive (404). DIVERGENT (CR-16).
 - Prefix: upstream production serves only `/content/*`; dcl-one answers the same routes at the root
   and under `/content` (`services/catalyst/content/src/lib.rs:710-711`). A superset.
@@ -486,13 +486,13 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
       `/entities/active` with `type = "active"`).
     - Severity: P2.
 
-13. **CR-13** Unknown-route 404 body.
+13. **CR-13** Unknown-route 404 body. Status: MATCH, no work.
     - Gap: dcl-one `text/plain "Not found"`; upstream body unknown from the pinned tree.
     - Expected: the `@dcl/http-server` default answer.
     - Capture: `404 text/plain; charset=utf-8` `Not found` (`captures/content-reads/CR-13-unknown-route.json`),
       the same status, type and body dcl-one answers. No code change is needed.
     - Place: `services/catalyst/content/src/lib.rs:623-625`.
-    - Severity: P2.
+    - Severity: none (closed).
 
 14. **CR-14** Entity JSON key order.
     - Gap: dcl-one serialises entity objects, `metadata` and `authChain` links with keys in alphabetical
@@ -519,14 +519,16 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
 16. **CR-16** Case-insensitive paths.
     - Gap: axum matches paths case-sensitively.
     - Expected: the upstream router's case-insensitive match. Confirmed by capture: `/content/Contents/<hash>`,
-      `/content/Status` and `/content/Deployments` answer 200 (`captures/content-reads/CR-16-path-case-contents.json`).
+      `/content/Status` and `/content/Deployments` answer 200 (`captures/content-reads/CR-16-path-case-contents.json`, `CR-16-path-case-status.json`,
+      `captures/content-sync/CS-23-path-case-deployments.json`).
     - Place: a path-lowercasing layer for the static segments in `services/catalyst/content/src/lib.rs:695-727`.
     - Severity: P2.
 
 17. **CR-17** POST /entities/active body cap.
     - Gap: 256 KiB, axum text 413.
     - Expected: `MAX_ACTIVE_ENTITIES_BODY_SIZE`, default 10 MiB; above it `413 text/plain; charset=utf-8`
-      `Payload Too Large` (captured: `captures/content-reads/CR-17-body-over-10mib.json`)
+      `Payload Too Large` (captured: `captures/content-reads/CR-17-body-over-10mib.json`; only the over-cap side
+      was sent, so the exact cap is the pinned tree's default, not a measurement)
       (`decentraland/catalyst:src/Environment.ts:79`, `src/controllers/routes.ts:92`).
     - Place: `services/catalyst/content/src/lib.rs:637`.
     - Severity: P2.

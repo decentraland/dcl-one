@@ -17,5 +17,6 @@
     },
     "body": "Payload Too Large",
     "body_is_text": true
-  }
+  },
+  "note": "Only the over-cap side was sent (10 MiB + 512 bytes, once). A body just under 10 MiB was not sent, so the exact cap comes from MAX_ACTIVE_ENTITIES_BODY_SIZE in the pinned tree, not from this capture."
 }

@@ -334,7 +334,7 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
 17. **LL-17: `lands-permissions` `id` and order on the index path.**
     - Gap: `id` is the decimal token id, ordered numerically.
     - Expected: the land-manager subgraph `Parcel.id` in subgraph `id asc` order (`decentraland/lamb2:src/logic/fetch-elements/fetch-permissions.ts:4-21`).
-    - Capture: `id` is the token id as lower-case `0x` hex without leading zeros (`0x1000000000000000000000000000000009` is 16,9; `0x16ffffffffffffffffffffffffffffffed` is 22,-19), and elements come in string order of that id (`captures/lambdas-land/LL-17-lands-permissions.json`, `LL-17-subgraph-parcels-id-order.json`).
+    - Capture: `id` is the token id as lower-case `0x` hex without leading zeros (`0x1000000000000000000000000000000009` is 16,9; `0x16ffffffffffffffffffffffffffffffed` is 22,-19), and elements come in ascending order of that id (`captures/lambdas-land/LL-17-lands-permissions.json`, `LL-17-subgraph-parcels-id-order.json`). Every id in the `lands-permissions` capture has the same length, so it does not tell string order from numeric order; the subgraph sample, where x=16 sorts first, points to string order but does not prove it.
     - Change: emit that hex id and sort by it as a string, in `services/catalyst/land-authz/src/routes.rs:224-233` and `services/catalyst/land-authz/src/resolve.rs:397`.
     - Severity: P1.
 18. **LL-18: Cleared operator legs.** Endpoint: `/operators`.

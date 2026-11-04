@@ -42,7 +42,8 @@ One JSON file per request, at `<area>/<row-id>-<short>.json`, named after the ba
   JSON, or too large to keep, is described in `<...>`.
 - `response`: `status`, the kept `headers` (lower-case names), and `body`, parsed as JSON when it is
   JSON. `body_is_text: true` marks a body kept as text. A body described in `<...>` was elided.
-- `note`: what was cut or replaced, and observations from the same session that are not in the body.
+- `note` (optional): what was cut or replaced, which layer answered when it was not the application, and
+  observations from the same session that are not in the body.
 
 JSON bodies are re-serialized with the key order and value types of the wire bytes. Whitespace is not kept.
 
@@ -53,11 +54,12 @@ JSON bodies are re-serialized with the key order and value types of the wire byt
   contract addresses inside URNs and NFT ids. The zero address is kept. The fakes
   `0x0000000000000000000000000000000000000001` and `0x0000000000000000000000000000000000000002` were the
   values sent in the requests.
-- 64-hex-digit order ids are replaced by fakes from `0x…0100` upward.
+- 64-hex-digit order ids (`orders.id`, `activeOrder.id`) and the Catalyst list ids in `/contracts/servers` are
+  replaced by fakes from `0x…0100` upward. Parcel token ids that encode to 64 hex digits (negative x) are kept.
 - Names (`LL-7-*`) are replaced by `name-NN`, numbered by alphabetical order of the real names. Their
   token ids (label hashes, which reveal the name) are replaced by `1001`..., numbered by string order of
   the real ids. Relative order is therefore kept within those files.
-- Wearable tags, peer hosts in `/contracts/servers`, the denylisted names, profile deployments and scene
+- Wearable tags, the peer hosts listed by `/contracts/servers` (public `*.decentraland.org` hosts elsewhere are kept), the denylisted names, profile deployments and scene
   metadata are replaced or elided; each such file says so in `note`.
 - Kept response headers: `content-type`, `cache-control`, `access-control-*`, `etag`, `retry-after`,
   `ratelimit-*`, `allow`, `vary`, `accept-ranges`, `content-encoding`, and `content-length` when the body
@@ -65,6 +67,9 @@ JSON bodies are re-serialized with the key order and value types of the wire byt
   `strict-transport-security`, and `x-content-type-options: nosniff` (present on every captured response).
 - Content hashes (CIDs), parcel coordinates and token ids derived from them, prices and timestamps are
   public chain or content data and are kept.
+- The fakes keep real addresses out of the text; they are not anonymization. The kept public data
+  (token ids, CIDs, coordinates, timestamps, prices) can be looked up on chain to recover the real
+  address, and the same fake wallet is the subject of `LL-7-*` and `LI-18-*`.
 
 ## Not capturable here
 
