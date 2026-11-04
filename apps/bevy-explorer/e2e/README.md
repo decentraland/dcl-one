@@ -33,10 +33,14 @@ npm run e2e -- --visual                # the Visual suite (build the scenes firs
 npm run e2e -- --filter 'opens the Backpack'            # a name pattern
 ```
 
-The suite serves the web app on loopback (`driver/serve.ts`, the benchmark's headers), starts
-Chrome through the web driver (`rendering/bevy-explorer/source/local-harness/web-driver`), opens
-`/?realm=<realm>&position=<x,y>&baseDomain=<domain>`, signs in with `/login_identity` and the
-worker's account, presses the lobby's `Jump In` if it shows one, and waits for `/world_state`
+The suite serves the web app on loopback (`driver/serve.ts`, with the isolation headers the app's
+own dev server sets per path: the shell plain, the app frame isolated on its own), starts Chrome
+through the web driver (`rendering/bevy-explorer/source/local-harness/web-driver`), opens
+`/?baseDomain=<domain>` (a realm or a position on the url would make the HUD launch the engine only
+once a sign-in is submitted on its start page, and the sign-in here goes through the engine's
+console; the realm and the parcel are reached by console afterwards), signs in with
+`/login_identity` and the worker's account, presses the lobby's `Jump In` if it shows one, and
+waits for `/world_state`
 `inWorld`. One client serves every spec file of a run (`--test-isolation=none`); the Visual suite
 boots a second one on its own realm.
 

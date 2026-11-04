@@ -1,7 +1,8 @@
 // One client per process and realm: the first scenario boots it (serves the web app, starts
-// Chrome through the web driver or attaches to the standalone's loopback console), signs in and
-// waits for the world; every later scenario shares it, as explorer-automation keeps one client
-// for a whole run. `--test-isolation=none` keeps the spec files in one process.
+// Chrome through the web driver or attaches to the standalone's loopback console), signs in,
+// waits for the world and reaches the realm and the parcel; every later scenario shares it, as
+// explorer-automation keeps one client for a whole run. `--test-isolation=none` keeps the spec
+// files in one process.
 import { chromeArgs } from './chrome.ts'
 import type { Console } from './console.ts'
 import { Explorer, type WorldState } from './explorer.ts'
@@ -114,8 +115,11 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
   } else {
     const base = target.webUrl ?? (await serveApp(target)).url
     const page = new URL(base)
-    page.searchParams.set('realm', realm)
-    page.searchParams.set('position', position)
+    // No `realm` or `position` on the url: a destination there makes the HUD launch the engine
+    // only once a sign-in is submitted on its start page (useEngineSession's url destination),
+    // and the sign-in below goes through the engine's console. Without one the engine launches
+    // at once for a visitor with no session, holding the world; `arrive` then reaches the realm
+    // and the parcel by console.
     page.searchParams.set('baseDomain', target.baseDomain)
     url = page.toString()
     console_ = await WebConsole.launch({
@@ -129,6 +133,7 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
   const explorer = new Explorer(console_)
   try {
     await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin)
+    if (target.transport === 'web') await arrive(explorer, realm, position)
   } catch (error) {
     await explorer.close()
     throw error
@@ -167,6 +172,31 @@ export async function signIn(explorer: Explorer, target: Target, mode: SignIn, f
     await explorer.loginGuest()
   }
   return enterWorld(explorer)
+}
+
+/** `x,y` as a parcel. */
+export function parsePosition(position: string): [number, number] {
+  const match = /^\s*(-?\d+)\s*,\s*(-?\d+)\s*$/.exec(position)
+  if (!match) throw new Error(`a position is "x,y", not "${position}"`)
+  return [Number(match[1]), Number(match[2])]
+}
+
+/** Whether two realm names mean the same realm: a url's trailing slash and case aside. */
+export function sameRealm(a: string, b: string): boolean {
+  const norm = (realm: string) => realm.trim().toLowerCase().replace(/\/+$/, '')
+  return norm(a) === norm(b)
+}
+
+/** Reach the realm and the parcel through the console, after the lobby let the player in
+ *  wherever it did: a realm change when the player is in another, then the teleport, unless the
+ *  player already stands in the parcel (a teleport there brings no arrival to wait for). */
+export async function arrive(explorer: Explorer, realm: string, position: string): Promise<WorldState> {
+  const [x, y] = parsePosition(position)
+  let state = await explorer.worldState()
+  if (!sameRealm(state.realm, realm)) state = await explorer.changeRealm(realm)
+  const here = state.position && [Math.floor(state.position[0] / 16), Math.floor(state.position[2] / 16)]
+  if (here && here[0] === x && here[1] === y) return state
+  return explorer.teleport(x, y)
 }
 
 /** Wait for the world, pressing the lobby's `Jump In` when it offers one. */
