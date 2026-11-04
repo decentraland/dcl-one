@@ -22,7 +22,7 @@ use super::http::{
 use super::profiles::enrich_with_profiles;
 use super::standing::load_standing_from_database as load_standing;
 use super::write_support::{
-    Refusal, load_client_standing, map_db, membership_lock, parse_community_id,
+    Refusal, acquire_membership, load_client_standing, map_db, parse_community_id,
 };
 use super::{SharedState, queries, signed_path};
 use crate::notifications::community::Audience;
@@ -422,10 +422,7 @@ pub async fn create_request(
     // cancellation, then recheck the ban under the mutation lock. Moving the
     // pending read after this wait would turn a cancelled opposite request
     // into a fresh invitation instead of refusing the stale acceptance.
-    let connection = try_resp!(map_db(state.pool.acquire().await));
-    let mut guard = try_resp!(map_db(
-        membership_lock(community_id).acquire(connection).await
-    ));
+    let mut guard = try_resp!(map_db(acquire_membership(&state.pool, community_id).await));
     let banned: Option<bool> = try_resp!(map_db(
         sqlx::query_scalar(
             "SELECT active FROM social.community_bans WHERE community_id=$1 AND banned_address=$2"
@@ -681,8 +678,7 @@ pub async fn update_request_status(
     if let Some(e) = auth_err {
         return e;
     }
-    let connection = try_resp!(map_db(state.pool.acquire().await));
-    let mut guard = try_resp!(map_db(membership_lock(uuid).acquire(connection).await));
+    let mut guard = try_resp!(map_db(acquire_membership(&state.pool, uuid).await));
     if status == "accepted" {
         let banned: Option<bool> = try_resp!(map_db(
             sqlx::query_scalar("SELECT active FROM social.community_bans WHERE community_id = $1 AND banned_address = $2")

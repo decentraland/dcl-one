@@ -4,6 +4,12 @@
 //! banned"), and the write authority proven against `community_members`
 //! plus `community_bans`.
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::Duration;
+
 use axum::body::Bytes;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -19,11 +25,65 @@ use super::standing::{Standing, load_standing_from_database, load_standing_pair_
 pub type Refusal = Box<Response>;
 
 /// Community membership mutations serialize across source-defined independent
-/// commits, including bulk acceptance. One native SQLx guard owns one existing
-/// pool connection. Drop it before external awaits: SQLx queues the unlock on
-/// that connection, including when the request is cancelled during pool return.
+/// commits, including bulk acceptance. Keep the key stable across every writer.
 pub(super) fn membership_lock(community: CommunityId) -> sqlx::postgres::PgAdvisoryLock {
     sqlx::postgres::PgAdvisoryLock::new(format!("social-community-membership:{community}"))
+}
+
+/// Own the existing pooled connection while acquisition can still be cancelled.
+/// SQLx's native guard queues an unlock, but returning a cancelled blocked query
+/// to the pool also waits for that query. Close only unsuccessful acquisitions.
+pub(super) struct MembershipConnection {
+    connection: sqlx::pool::PoolConnection<sqlx::Postgres>,
+    acquiring: Arc<AtomicBool>,
+}
+
+impl AsRef<sqlx::PgConnection> for MembershipConnection {
+    fn as_ref(&self) -> &sqlx::PgConnection {
+        &self.connection
+    }
+}
+
+impl AsMut<sqlx::PgConnection> for MembershipConnection {
+    fn as_mut(&mut self) -> &mut sqlx::PgConnection {
+        &mut self.connection
+    }
+}
+
+impl Drop for MembershipConnection {
+    fn drop(&mut self) {
+        if self.acquiring.load(Ordering::Relaxed) {
+            self.connection.close_on_drop();
+        }
+    }
+}
+
+/// Bound checkout and acquisition to one second. The short acquisition-only
+/// transaction scopes PostgreSQL's lock timeout; its COMMIT restores autocommit
+/// before any source-defined independent writes. On every error or cancellation
+/// the armed owner closes the connection, including an unfinished BEGIN/COMMIT.
+/// Successful guards retain SQLx's native queued unlock and same backend reuse.
+pub(super) async fn acquire_membership(
+    pool: &sqlx::PgPool,
+    community: CommunityId,
+) -> sqlx::Result<sqlx::postgres::PgAdvisoryLockGuard<MembershipConnection>> {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        let acquiring = Arc::new(AtomicBool::new(true));
+        let mut connection = MembershipConnection {
+            connection: pool.acquire().await?,
+            acquiring: acquiring.clone(),
+        };
+        sqlx::query("BEGIN").execute(connection.as_mut()).await?;
+        sqlx::query("SET LOCAL lock_timeout = '750ms'")
+            .execute(connection.as_mut())
+            .await?;
+        let mut guard = membership_lock(community).acquire(connection).await?;
+        sqlx::query("COMMIT").execute(&mut *guard).await?;
+        acquiring.store(false, Ordering::Relaxed);
+        Ok(guard)
+    })
+    .await
+    .map_err(|_| sqlx::Error::PoolTimedOut)?
 }
 
 pub fn refuse(code: StatusCode, message: impl Into<String>) -> Refusal {

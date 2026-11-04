@@ -27,7 +27,7 @@ use super::http::{
 use super::profiles::ProfileInfo;
 use super::thumbnail::{detect_image_mime_type, store_thumbnail, validate_thumbnail};
 use super::write_support::{
-    ClientCommunityWriteAuthority, Refusal, load_client_standing, map_db, membership_lock,
+    ClientCommunityWriteAuthority, Refusal, acquire_membership, load_client_standing, map_db,
     parse_community_id, parse_form,
 };
 use super::{SharedState, queries, signed_path, validate};
@@ -969,8 +969,7 @@ pub async fn update_community(
     let accepted_request_ids: Vec<uuid::Uuid> = if becomes_public {
         // The source bulk acceptance owns its transaction. Failure rolls back
         // its membership/request changes, preserving the preceding UPDATE.
-        let connection = try_resp!(map_db(state.pool.acquire().await));
-        let mut guard = try_resp!(map_db(membership_lock(uuid).acquire(connection).await));
+        let mut guard = try_resp!(map_db(acquire_membership(&state.pool, uuid).await));
         let mut tx = try_resp!(map_db(guard.begin().await));
         try_resp!(map_db(sqlx::query(
             "INSERT INTO social.community_members (community_id,member_address,role) \

@@ -30,8 +30,8 @@ use super::standing::{
     load_standing_pair_from_database,
 };
 use super::write_support::{
-    load_client_standing, load_client_standing_pair, map_db, membership_lock, parse_community_id,
-    refusal_response,
+    acquire_membership, load_client_standing, load_client_standing_pair, map_db,
+    parse_community_id, refusal_response,
 };
 use super::{SharedState, queries, signed_path};
 use crate::notifications::community::{Audience, now_ms};
@@ -606,8 +606,7 @@ pub async fn add_member(
         Err(r) => return r,
     };
     let uuid = try_resp!(parse_community_id(&id));
-    let connection = try_resp!(map_db(state.pool.acquire().await));
-    let mut guard = try_resp!(map_db(membership_lock(uuid).acquire(connection).await));
+    let mut guard = try_resp!(map_db(acquire_membership(&state.pool, uuid).await));
     let mut tx = try_resp!(map_db(guard.begin().await));
     try_resp!(map_db(
         sqlx::query("SELECT id FROM social.communities WHERE id = $1 FOR UPDATE")
@@ -920,8 +919,7 @@ async fn transfer_ownership(
         return CommError::bad_request(format!("The user {target} doesn't have any names"))
             .into_response();
     }
-    let connection = try_resp!(map_db(state.pool.acquire().await));
-    let mut guard = try_resp!(map_db(membership_lock(uuid).acquire(connection).await));
+    let mut guard = try_resp!(map_db(acquire_membership(&state.pool, uuid).await));
     let mut tx = try_resp!(map_db(guard.begin().await));
     let old_owner: Address = try_resp!(map_db(
         sqlx::query_scalar("SELECT owner_address FROM social.communities WHERE id = $1 FOR UPDATE")
@@ -1012,8 +1010,7 @@ pub async fn ban_member(
             return CommError::bad_request("Invalid member address".to_string()).into_response();
         }
     };
-    let connection = try_resp!(map_db(state.pool.acquire().await));
-    let mut guard = try_resp!(map_db(membership_lock(uuid).acquire(connection).await));
+    let mut guard = try_resp!(map_db(acquire_membership(&state.pool, uuid).await));
     let (actor_standing, target_standing) = try_resp!(map_db(
         load_standing_pair_from_database(&mut *guard, uuid, &signer, &target).await
     ));
