@@ -51,7 +51,7 @@ The runner ignores ambient database settings; infrastructure tests exercise
 setup failures, test failures and cleanup. A run without a database is not
 release evidence.
 
-Merging these dormant artifacts does not execute SQL or establish deployment
+Merging these release definitions does not execute SQL or establish deployment
 readiness. Before a cutover, provide a compatible artifact, stop every writer,
 poller and administrative write path, verify backup restoration, execute the
 reviewed release, and verify the compatible migrator, schema status and runtime
