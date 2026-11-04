@@ -10,14 +10,16 @@ describe('Generated EngineInfo ProtoBuf', () => {
       frameNumber: 0,
       tickNumber: 0,
       totalRuntime: 0,
-      sceneHidden: false
+      sceneHidden: false,
+      totalRuntimeF64: 0
     })
 
     testComponentSerialization(EngineInfo, {
       frameNumber: 1,
       tickNumber: 1,
       totalRuntime: 1,
-      sceneHidden: true
+      sceneHidden: true,
+      totalRuntimeF64: 1
     })
   })
 })

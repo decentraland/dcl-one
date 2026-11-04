@@ -9,7 +9,7 @@
     "@babel/plugin-transform-modules-commonjs": "^7.28.5",
     "@babel/plugin-transform-react-jsx": "^7.28.5",
     "@babel/preset-typescript": "^7.28.5",
-    "@dcl/protocol": "1.0.0-39771882714.commit-70f2654",
+    "@dcl/protocol": "file:../protocol",
     "@dcl/quickjs-emscripten": "^0.21.0-3680274614.commit-1808aa1",
     "@dcl/ts-proto": "1.153.0",
     "@types/fs-extra": "^9.0.12",
@@ -43,7 +43,11 @@
     "test-exclude": "^7.0.1",
     "glob@10": "^13.0.6"
   },
-  "repository": "decentraland/js-sdk-toolchain.git",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/decentraland/dcl-one.git",
+    "directory": "library/js-sdk-toolchain"
+  },
   "scripts": {
     "postinstall": "make sync-deps"
   }

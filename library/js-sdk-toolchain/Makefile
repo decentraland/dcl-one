@@ -19,7 +19,11 @@ ifeq ($(shell uname),Darwin)
 SED_OPTION=-i ""
 endif
 
-PROTOC = node_modules/.bin/protobuf/bin/protoc
+# Set PROTOC to generate with an installed protoc (the Nix shell's `protoc`, or brew's on a Mac
+# without Rosetta); CI leaves it unset and install-protobuf downloads 3.20.1, so generated code
+# in a PR comes from that version.
+PROTOC_DOWNLOADED = node_modules/.bin/protobuf/bin/protoc
+PROTOC ?= $(PROTOC_DOWNLOADED)
 SCENE_PROTO_FILES := $(wildcard node_modules/@dcl/protocol/proto/decentraland/kernel/apis/*.proto)
 PBS_TS = $(SCENE_PROTO_FILES:node_modules/@dcl/protocol/proto/decentraland/kernel/apis/%.proto=scripts/rpc-api-generation/src/proto/%.gen.ts)
 TSC = node_modules/.bin/tsc
@@ -32,13 +36,14 @@ JEST = node_modules/.bin/jest
 export DEVELOPER_MODE=true
 
 install:
+	$(MAKE) -C ../protocol install
+	npm --prefix ../protocol run build
 	npm i --silent
-	make install-protobuf
-
-update-protocol:
-	npm i --save-exact @dcl/protocol@next
-	cd packages/@dcl/sdk-commands; npm i --save-exact @dcl/protocol@next
-	$(MAKE) sync-deps compile_apis
+ifeq ($(PROTOC),$(PROTOC_DOWNLOADED))
+	test -x "$(PROTOC)" || $(MAKE) install-protobuf
+else
+	@test -x "$(PROTOC)" || { echo "PROTOC=$(PROTOC) is not an executable" >&2; exit 1; }
+endif
 
 lint:
 	npx tsx scripts/lint-packages.ts
@@ -76,7 +81,7 @@ install-protobuf:
 	curl -OL https://github.com/protocolbuffers/protobuf/releases/download/v$(PROTOBUF_VERSION)/$(PROTOBUF_ZIP)
 	unzip -o $(PROTOBUF_ZIP) -d node_modules/.bin/protobuf
 	rm $(PROTOBUF_ZIP)
-	chmod +x $(PROTOC)
+	chmod +x $(PROTOC_DOWNLOADED)
 
 docs: | install build
 	node_modules/.bin/jest --detectOpenHandles --colors --runInBand --runTestsByPath scripts/docs.spec.ts
@@ -93,7 +98,7 @@ build:
 prepare:
 	node_modules/.bin/jest --detectOpenHandles --colors --runInBand --runTestsByPath scripts/prepare.spec.ts
 
-scripts/rpc-api-generation/src/proto/%.gen.ts: node_modules/@dcl/protocol/proto/decentraland/kernel/apis/%.proto node_modules/.bin/protobuf/bin/protoc
+scripts/rpc-api-generation/src/proto/%.gen.ts: node_modules/@dcl/protocol/proto/decentraland/kernel/apis/%.proto $(PROTOC)
 	@${PROTOC}  \
 			--plugin=./node_modules/.bin/protoc-gen-dcl_ts_proto \
 			--dcl_ts_proto_opt=esModuleInterop=true,returnObservable=false,outputServices=generic-definitions \

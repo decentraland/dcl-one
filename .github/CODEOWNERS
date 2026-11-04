@@ -54,6 +54,10 @@
 # protocol
 /library/protocol/ @decentraland/client @decentraland/apis
 
+# sdk
+# UNASSIGNED /library/js-sdk-toolchain/
+# UNASSIGNED /.github/workflows/sdk.yml
+
 # database
 /schemas/ @decentraland/apis
 /services/catalyst/db/ @decentraland/apis

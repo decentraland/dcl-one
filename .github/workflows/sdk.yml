@@ -1,0 +1,105 @@
+name: SDK / CI
+on:
+  push:
+    branches: [main]
+    paths:
+      - library/js-sdk-toolchain/**
+      - library/protocol/**
+      - .github/workflows/sdk.yml
+  pull_request:
+    paths:
+      - library/js-sdk-toolchain/**
+      - library/protocol/**
+      - .github/workflows/sdk.yml
+permissions:
+  contents: read
+concurrency:
+  group: sdk-ci-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  # the SDK's make install downloads protoc 3.20.1 for the runner's arch; nothing publishes
+  CI: true
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: library/js-sdk-toolchain
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.16.0
+          cache: npm
+          cache-dependency-path: |
+            library/js-sdk-toolchain/package-lock.json
+            library/protocol/package-lock.json
+      - name: Install (builds library/protocol's out-ts first)
+        run: make install
+      - name: Lint
+        run: make lint
+      - name: Package manifests agree
+        run: make lint-packages
+  build-test:
+    name: Build, test, pack
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: library/js-sdk-toolchain
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.16.0
+          cache: npm
+          cache-dependency-path: |
+            library/js-sdk-toolchain/package-lock.json
+            library/protocol/package-lock.json
+      - name: Install (builds library/protocol's out-ts first)
+        run: make install
+      - name: Build
+        id: build
+        # a changed API report fails here; the regenerated files are still uploaded below
+        continue-on-error: true
+        run: make build
+      - name: Test
+        run: make test
+        env:
+          # as upstream: the snapshot test rewrites a stale .crdt in place and still fails on it,
+          # so the artifact below carries what to commit
+          UPDATE_SNAPSHOTS: true
+      - name: Upload the regenerated API report and snapshots
+        # what a local `make update-snapshots` would commit, for a reviewer or an author without the toolchain
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sdk-generated-${{ github.sha }}
+          path: |
+            library/js-sdk-toolchain/packages/@dcl/playground-assets/temp/playground-assets.api.md
+            library/js-sdk-toolchain/test/snapshots/**/*.crdt
+            library/js-sdk-toolchain/test/snapshots/**/*.ts
+            !library/js-sdk-toolchain/test/snapshots/**/node_modules/**
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Fail on a build error
+        # also when Test failed first, or a build error hides behind the test failure
+        if: ${{ !cancelled() && steps.build.outcome != 'success' }}
+        run: |
+          echo 'make build failed (see the Build step); its regenerated API report is in the sdk-generated artifact' >&2
+          exit 1
+      - name: Test the CLI
+        run: make test-cli
+      - name: Prepare releasable packages
+        run: make prepare
+        env:
+          # nothing is published from this job, and @dcl/protocol has no version published from here yet:
+          # the packed manifests say so instead of naming a version that is not on npm
+          PROTOCOL_VERSION: 0.0.0-unpublished.${{ github.sha }}
+      - name: Packed manifests name no local dependency
+        run: |
+          rm -rf .packed && mkdir .packed
+          for tgz in packages/@dcl/*/*.tgz; do mkdir -p ".packed/$(basename "$tgz" .tgz)" && tar -xzf "$tgz" -C ".packed/$(basename "$tgz" .tgz)"; done
+          node scripts/check-no-local-packages.cjs .packed
