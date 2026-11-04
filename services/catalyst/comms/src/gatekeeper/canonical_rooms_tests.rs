@@ -1422,3 +1422,107 @@ async fn an_access_change_evicts_only_who_lost_access_and_never_the_protected() 
         server.abort();
     }
 }
+
+/// `Catalogue` whose `SceneB` lookup fails.
+struct FlakySceneB;
+
+#[async_trait::async_trait]
+impl SceneIdentity for FlakySceneB {
+    async fn classify_room(
+        &self,
+        room: &str,
+    ) -> Result<crate::rooms::RoomClassification, ResolveError> {
+        Catalogue.classify_room(room).await
+    }
+    async fn resolve(&self, request: RoomRequest<'_>) -> Result<ResolvedRoom, ResolveError> {
+        Catalogue.resolve(request).await
+    }
+    async fn world_scene(
+        &self,
+        world: &WorldName,
+        scene: &SceneId,
+    ) -> Result<Option<ActiveDeployment>, ResolveError> {
+        if scene.as_str() == "SceneB" {
+            return Err(ResolveError::Db(sqlx::Error::PoolTimedOut));
+        }
+        Catalogue.world_scene(world, scene).await
+    }
+    async fn world_active_scene(
+        &self,
+        world: &WorldName,
+    ) -> Result<Option<ActiveDeployment>, ResolveError> {
+        Catalogue.world_active_scene(world).await
+    }
+}
+
+#[tokio::test]
+async fn a_failed_scene_lookup_keeps_that_room_and_the_pass_goes_on() {
+    use crate::access::{AccessType, WorldAdmission};
+    let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
+    let (owner, denied) = (wallet(1), wallet(3));
+    let requests = Arc::new(std::sync::Mutex::new(
+        Vec::<(String, serde_json::Value)>::new(),
+    ));
+    let capture = requests.clone();
+    let everyone: Vec<serde_json::Value> = [&owner, &denied]
+        .iter()
+        .map(|a| serde_json::json!({"identity": a.as_str(), "sid": "PA", "metadata": "{}"}))
+        .collect();
+    let fixture = axum::Router::new().route(
+        "/twirp/livekit.RoomService/{method}",
+        axum::routing::post(
+            move |Path(method): Path<String>, Json(body): Json<serde_json::Value>| {
+                let (capture, everyone) = (capture.clone(), everyone.clone());
+                async move {
+                    capture.lock().unwrap().push((method.clone(), body));
+                    match method.as_str() {
+                        "ListRooms" => Json(serde_json::json!({"rooms": [
+                            {"name": "w1:d:mixed.dcl.ethSceneA", "sid": "RM_a", "metadata": "{}"},
+                            {"name": "w1:d:mixed.dcl.ethSceneB", "sid": "RM_b", "metadata": "{}"}
+                        ]})),
+                        "ListParticipants" => Json(serde_json::json!({"participants": everyone})),
+                        _ => Json(serde_json::json!({})),
+                    }
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut state = canonical_state();
+    state.scenes = Arc::new(FlakySceneB);
+    state.livekit.configured = true;
+    state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    state.policy = Arc::new(PerWalletPolicy {
+        inner: StubPolicy {
+            admission: Some(WorldAdmission::Open(AccessType::SharedSecret)),
+            protected: Ok([owner.clone()].into_iter().collect()),
+            ..Default::default()
+        },
+        denied: denied.clone(),
+        undetermined: wallet(4),
+    });
+    let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    scene::readmit_world_rooms(&state, &WorldName::parse("mixed.dcl.eth").unwrap())
+        .await
+        .unwrap();
+    let removed: Vec<(String, String)> = requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(method, _)| method == "RemoveParticipant")
+        .map(|(_, body)| {
+            (
+                body["room"].as_str().unwrap().to_string(),
+                body["identity"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        removed,
+        vec![(
+            "w1:d:mixed.dcl.ethSceneA".to_string(),
+            denied.as_str().to_string()
+        )]
+    );
+    server.abort();
+}

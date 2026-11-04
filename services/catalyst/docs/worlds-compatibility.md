@@ -32,22 +32,30 @@ difference not listed here is a gap, not a decision.
   `{error, message}` with the @dcl/http-commons labels (`Bad request`,
   `Not Authorized`, `Not Found`). A 403 carries the message in `error` as
   the upstream handlers' own 403s do, and also in `message`. A 500 is
-  `{"error": "Internal Server Error"}`.
+  `{"error": "Internal Server Error"}`. The world comms mints
+  (`/worlds/{name}/comms`, `/worlds/{name}/scenes/{id}/comms`) carry the
+  reason in `error` for 401, 403, 404, 429 and 503, as upstream, and also in
+  `message`; `/get-comms-adapter` does so for 429 only.
 
 ## Comms
 
 - **World blocks apply at once.** `blocked_since` is set by an operator
   disable, so `/about` and the comms mints refuse the world immediately.
   Upstream's two-day grace belongs to storage-quota blocks.
-- **Shared-secret throttle.** Failed attempts are counted in Postgres per
-  world and client address over a fixed 60-second window from the first
-  failure (`SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE`). If the counter cannot
-  be read the mint answers 503.
+- **Shared-secret throttle.** Attempts are counted in Postgres per world
+  and client source (`X-Real-IP`, IPv6 by /64; the wallet without one) over
+  a fixed 60-second window from the first attempt
+  (`SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE`). Each attempt is reserved before
+  the secret is checked and the count is cleared by a right secret. If the
+  counter cannot be written the mint answers 503.
 - **Kicks on access change.** Owners and holders of any world or live-scene
   grant (deployment or streaming) are never kicked. A switch to an
   allow-list keeps participants already on the new list. A participant
   whose access cannot be decided stays.
 
+- **`/about` health.** `healthy`, `acceptingUsers` and `content.healthy`
+  are false only when this node's content sync has failed; a bootstrapping
+  node or one with sync disabled reports the world healthy.
 - **Realm name.** `WORLDS_REALM_NAME_STRIP_ENS` (default `true`) strips
   `.dcl.eth` from `/about`'s `realmName` for worlds published here, so a
   stock client does not resolve them against Decentraland's registry.
@@ -92,7 +100,10 @@ difference not listed here is a gap, not a decision.
 - **Grantee publishes** resolve the world's NAME holder live. If the names
   authority cannot answer, the publish is refused with 503.
 - **Per-source upload limits** key on the gateway's `X-Real-IP` (IPv6 by
-  /64), not `cf-connecting-ip`.
+  /64), not `cf-connecting-ip`. Deploys and settings uploads share one
+  per-source budget (`MAX_CONCURRENT_UPLOADS_PER_SOURCE`,
+  `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE`, the latter defaulting to one
+  maximum-size upload).
 - **Per-world limits** come from `MAX_PARCELS`, `MAX_FILE_COUNT` and the
   `worlds.world_limit_overrides` table; there is no `WHITELIST_URL`.
 - **Retired scenes.** Replaced and undeployed scenes are kept for

@@ -114,11 +114,30 @@ fn bounding_box(q: &QueryPairs) -> Result<Option<(f64, f64, f64, f64)>, ApiError
     }
 }
 
-/// JS `Number(v)` for the decimal spellings a query carries; `None` for `NaN`.
+/// JS `Number(v)`: decimal, `0x`/`0o`/`0b` integers and `Infinity`; `None` for `NaN`.
 fn js_number(v: &str) -> Option<f64> {
     let t = v.trim();
     if t.is_empty() {
         return Some(0.0);
+    }
+    for (prefix, radix) in [("0x", 16), ("0o", 8), ("0b", 2)] {
+        if let Some(digits) = t
+            .get(..2)
+            .filter(|p| p.eq_ignore_ascii_case(prefix))
+            .map(|_| &t[2..])
+        {
+            if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
+                return None;
+            }
+            return Some(digits.chars().fold(0.0, |n, c| {
+                n * radix as f64 + c.to_digit(radix).unwrap_or(0) as f64
+            }));
+        }
+    }
+    match t {
+        "Infinity" | "+Infinity" => return Some(f64::INFINITY),
+        "-Infinity" => return Some(f64::NEG_INFINITY),
+        _ => {}
     }
     if t.chars()
         .any(|c| c.is_ascii_alphabetic() && c != 'e' && c != 'E')
@@ -212,6 +231,27 @@ mod tests {
         raw.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn query_numbers_follow_js_number() {
+        for (raw, expected) in [
+            ("12", Some(12.0)),
+            (" -3 ", Some(-3.0)),
+            ("1e2", Some(100.0)),
+            ("0x10", Some(16.0)),
+            ("0B101", Some(5.0)),
+            ("0o17", Some(15.0)),
+            ("Infinity", Some(f64::INFINITY)),
+            ("-Infinity", Some(f64::NEG_INFINITY)),
+            ("-0x10", None),
+            ("0x", None),
+            ("0xg", None),
+            ("inf", None),
+            ("abc", None),
+        ] {
+            assert_eq!(js_number(raw), expected, "{raw}");
+        }
     }
 
     #[test]

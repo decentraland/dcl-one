@@ -2,7 +2,8 @@
 //! lobby), `POST /worlds/{name}/scenes/{id}/comms` (a scene deployed in the
 //! world) and `POST /get-comms-adapter/world-{name}` (the lobby by room id),
 //! at the root and under `/worlds-content-server`, answering in the worlds
-//! envelope (`crate::worlds_envelope`). `worlds::core` assigns them to
+//! envelope (`crate::worlds_envelope`) with the reason in `error` where WCS's
+//! comms handlers put it there. `worlds::core` assigns them to
 //! comms, which owns the LiveKit transport: the room is the worlds service's
 //! contract (`rooms`: the lobby `world-<key>`, a scene
 //! `w1:<base36 key length>:<key><scene id>`, resolved by `SceneIdentity`),
@@ -18,11 +19,13 @@
 //! the operator's block list, platform and scene bans.
 
 use axum::extract::{OriginalUri, Path, State};
-use axum::http::{HeaderMap, Uri};
+use axum::http::{HeaderMap, Uri, header::CONTENT_LENGTH};
+use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
 use chrono::NaiveDateTime;
 use serde::Serialize;
+use serde_json::json;
 use sqlx::PgPool;
 
 use crate::access::{Access, AccessType, Ban, WorldAdmission};
@@ -67,27 +70,14 @@ struct SecretAttempts<'a> {
 }
 
 impl SecretAttempts<'_> {
-    async fn is_limited(&self, now: NaiveDateTime) -> Result<bool, sqlx::Error> {
-        let attempts: Option<i32> = sqlx::query_scalar(
-            "SELECT attempts FROM social.world_secret_attempts \
-             WHERE world_name = $1 AND subject = $2 AND window_start > $3",
-        )
-        .bind(self.world)
-        .bind(&self.subject)
-        .bind(window_start_cutoff(now))
-        .fetch_optional(self.pool)
-        .await?;
-        Ok(attempts.is_some_and(|n| n.max(0) as u32 >= self.max))
-    }
-
-    /// Counts a failure; `true` when it went past the limit (WCS: the
-    /// limit-th failure still answers 403, the next request 429).
-    async fn record_failure(&self, now: NaiveDateTime) -> Result<bool, sqlx::Error> {
+    /// Reserves one attempt before the secret is checked; `true` when it went past the limit
+    /// (WCS: the limit-th wrong secret still answers 403, the next request 429).
+    async fn reserve(&self, now: NaiveDateTime) -> Result<bool, sqlx::Error> {
         let attempts: i32 = sqlx::query_scalar(
             "INSERT INTO social.world_secret_attempts AS a (world_name, subject, attempts, window_start) \
              VALUES ($1, $2, 1, $3) \
              ON CONFLICT (world_name, subject) DO UPDATE SET \
-               attempts = CASE WHEN a.window_start <= $4 THEN 1 ELSE a.attempts + 1 END, \
+               attempts = CASE WHEN a.window_start <= $4 THEN 1 ELSE LEAST(a.attempts, 1000000) + 1 END, \
                window_start = CASE WHEN a.window_start <= $4 THEN $3 ELSE a.window_start END \
              RETURNING attempts",
         )
@@ -100,15 +90,18 @@ impl SecretAttempts<'_> {
         Ok(attempts.max(0) as u32 > self.max)
     }
 
-    async fn clear(&self) -> Result<(), sqlx::Error> {
-        sqlx::query(
+    /// Best effort: a failure only leaves the caller's count to expire.
+    async fn clear(&self) {
+        if let Err(error) = sqlx::query(
             "DELETE FROM social.world_secret_attempts WHERE world_name = $1 AND subject = $2",
         )
         .bind(self.world)
         .bind(&self.subject)
         .execute(self.pool)
         .await
-        .map(|_| ())
+        {
+            tracing::warn!(%error, world = self.world, "world comms mint: could not clear the secret attempts");
+        }
     }
 }
 
@@ -156,9 +149,12 @@ async fn world_comms(
     OriginalUri(original): OriginalUri,
     uri: Uri,
     headers: HeaderMap,
-) -> Result<Json<CommsAdapterResponse>, ApiError> {
+) -> Response {
     let path = SignedPath::from_uris(&original, &uri);
-    mint(&state, &world_name, None, &path, &headers, false).await
+    answer(
+        mint(&state, &world_name, None, &path, &headers, false).await,
+        WORLD_ROUTE_REASONS,
+    )
 }
 
 async fn get_comms_adapter(
@@ -167,12 +163,15 @@ async fn get_comms_adapter(
     OriginalUri(original): OriginalUri,
     uri: Uri,
     headers: HeaderMap,
-) -> Result<Json<CommsAdapterResponse>, ApiError> {
+) -> Response {
     let Some(world_name) = room_id.strip_prefix(WORLD_ROOM_PREFIX) else {
-        return Err(ApiError::bad_request("Invalid room id requested."));
+        return ApiError::bad_request("Invalid room id requested.").into_response();
     };
     let path = SignedPath::from_uris(&original, &uri);
-    mint(&state, world_name, None, &path, &headers, true).await
+    answer(
+        mint(&state, world_name, None, &path, &headers, true).await,
+        ADAPTER_ROUTE_REASONS,
+    )
 }
 
 async fn world_scene_comms(
@@ -181,9 +180,34 @@ async fn world_scene_comms(
     OriginalUri(original): OriginalUri,
     uri: Uri,
     headers: HeaderMap,
-) -> Result<Json<CommsAdapterResponse>, ApiError> {
+) -> Response {
     let path = SignedPath::from_uris(&original, &uri);
-    mint(&state, &world_name, Some(&scene_id), &path, &headers, false).await
+    answer(
+        mint(&state, &world_name, Some(&scene_id), &path, &headers, false).await,
+        WORLD_ROUTE_REASONS,
+    )
+}
+
+/// Statuses WCS's `world-comms-handler` answers as `{error: <reason>}`.
+const WORLD_ROUTE_REASONS: &[u16] = &[401, 403, 404, 429, 503];
+/// `comms-adapter-handler` throws http-commons errors except its 429.
+const ADAPTER_ROUTE_REASONS: &[u16] = &[429];
+
+/// The mint's answer: the listed statuses carry the reason in `error` (and in `message`).
+fn answer(result: Result<Json<CommsAdapterResponse>, ApiError>, reasons: &[u16]) -> Response {
+    let error = match result {
+        Ok(json) => return json.into_response(),
+        Err(error) => error,
+    };
+    let reason = (!matches!(error, ApiError::Internal(_)) && reasons.contains(&error.status()))
+        .then(|| error.public_message());
+    let mut response = error.into_response();
+    if let Some(reason) = reason {
+        response.headers_mut().remove(CONTENT_LENGTH);
+        *response.body_mut() =
+            axum::body::Body::from(json!({ "error": reason, "message": reason }).to_string());
+    }
+    response
 }
 
 fn undetermined(e: impl std::fmt::Display) -> ApiError {
@@ -239,20 +263,18 @@ async fn mint(
         .await
         .map_err(undetermined)?;
     let is_shared_secret = admission == WorldAdmission::Open(AccessType::SharedSecret);
-    let subject = headers
-        .get("cf-connecting-ip")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_string)
-        .unwrap_or_else(|| identity.as_str().to_string());
+    let ip = crate::shared::client_ip::client_ip(headers);
+    let subject = if ip.is_empty() {
+        identity.as_str().to_string()
+    } else {
+        crate::shared::client_ip::source_key(&ip)
+    };
     let attempts = SecretAttempts {
         pool: &state.pool,
         world: world.key(),
         subject: subject.to_lowercase(),
         max: state.world_mint.max_secret_attempts,
     };
-    if is_shared_secret && attempts.is_limited(now).await.map_err(undetermined)? {
-        return Err(too_many_attempts());
-    }
 
     match crate::gatekeeper::moderation::admission_ban(
         state.policy.as_ref(),
@@ -304,11 +326,23 @@ async fn mint(
                 scene_id.unwrap_or_default()
             )));
         }
-        // The row vanished since `world_admission`: still an unknown world.
-        Err(ResolveError::UnresolvedRoom(_)) => return Err(invalid_world(world_name)),
+        // The lobby: the row vanished since `world_admission`, still an unknown world.
+        Err(ResolveError::UnresolvedRoom(_)) if scene_id.is_none() => {
+            return Err(invalid_world(world_name));
+        }
+        Err(ResolveError::UnresolvedRoom(_)) => {
+            return Err(ApiError::not_found(format!(
+                "The comms room of scene \"{}\" in world \"{world_name}\" could not be resolved.",
+                scene_id.unwrap_or_default()
+            )));
+        }
         Err(e) => return Err(undetermined(e)),
     };
 
+    // Reserved before the secret is checked, so concurrent wrong secrets cannot all reach bcrypt.
+    if is_shared_secret && attempts.reserve(now).await.map_err(undetermined)? {
+        return Err(too_many_attempts());
+    }
     match state
         .policy
         .can_access(
@@ -322,7 +356,11 @@ async fn mint(
         .await
         .map_err(undetermined)?
     {
-        Access::Allowed(_) => {}
+        Access::Allowed(_) => {
+            if is_shared_secret {
+                attempts.clear().await;
+            }
+        }
         Access::Banned(Ban::Scene) => {
             return Err(ApiError::unauthorized(format!(
                 "You are banned from world \"{world_name}\"."
@@ -334,9 +372,6 @@ async fn mint(
             ));
         }
         Access::InvalidSecret => {
-            if attempts.record_failure(now).await.map_err(undetermined)? {
-                return Err(too_many_attempts());
-            }
             return Err(ApiError::forbidden(format!(
                 "Access denied, invalid secret for world \"{world_name}\"."
             )));
@@ -357,9 +392,6 @@ async fn mint(
         return Err(ApiError::service_unavailable(format!(
             "World \"{world_name}\" has reached its maximum capacity."
         )));
-    }
-    if is_shared_secret {
-        attempts.clear().await.map_err(undetermined)?;
     }
     let token = AccessToken::new(
         &state.livekit.api_key,
@@ -414,5 +446,58 @@ mod policy_boundary_tests {
             .unwrap_err();
         assert_eq!(error.status(), 503);
         assert!(!error.public_message().contains("unavailable"));
+    }
+}
+
+#[cfg(test)]
+mod throttle_tests {
+    use super::*;
+
+    /// Concurrent attempts each reserve atomically: only `max` get past the throttle.
+    #[tokio::test]
+    async fn concurrent_attempts_reserve_one_count_each() {
+        let Some(pool) = crate::db::scratch::pool(12).await else {
+            return;
+        };
+        let world = format!("throttle-{}.dcl.eth", uuid::Uuid::new_v4().simple());
+        let now = chrono::Utc::now().naive_utc();
+        let attempts = SecretAttempts {
+            pool: &pool,
+            world: &world,
+            subject: "203.0.113.7".into(),
+            max: 3,
+        };
+        let limited = futures::future::join_all((0..10).map(|_| attempts.reserve(now))).await;
+        let refused = limited.iter().filter(|r| *r.as_ref().unwrap()).count();
+        assert_eq!(refused, 7);
+        attempts.clear().await;
+        assert!(
+            !attempts.reserve(now).await.unwrap(),
+            "a right secret resets the count"
+        );
+    }
+
+    #[tokio::test]
+    async fn mint_refusals_carry_the_reason_in_error() {
+        let body = |response: Response| async move {
+            let bytes = axum::body::to_bytes(response.into_body(), 1024)
+                .await
+                .unwrap();
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
+        };
+        let response = answer(Err(ApiError::unauthorized("nope")), WORLD_ROUTE_REASONS);
+        assert_eq!(response.status(), axum::http::StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            body(response).await,
+            json!({ "error": "nope", "message": "nope" })
+        );
+        let response = answer(Err(too_many_attempts()), ADAPTER_ROUTE_REASONS);
+        assert_eq!(response.headers()["retry-after"], "60");
+        assert_eq!(
+            body(response).await["error"],
+            "Too many shared-secret attempts. Try again later."
+        );
+        let response = answer(Err(ApiError::unauthorized("nope")), ADAPTER_ROUTE_REASONS);
+        assert_eq!(body(response).await["error"], "Not Authorized");
     }
 }

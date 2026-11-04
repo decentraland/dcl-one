@@ -103,9 +103,9 @@ impl ContentReadiness {
         Self(Some(sync))
     }
 
-    /// WCS: content is healthy only while `Syncing`.
+    /// Unhealthy only when the content sync failed; a bootstrapping node or one with sync off still serves worlds.
     pub fn content_healthy(&self) -> bool {
-        self.0.as_ref().is_none_or(|s| s.state_name() == "Syncing")
+        self.0.as_ref().is_none_or(|s| s.state_name() != "Failed")
     }
 }
 
@@ -795,10 +795,14 @@ mod tests {
             ..super::super::Settings::for_tests("https://worlds.example.org")
         };
         let bootstrapping = local_about(&cfg, None);
-        assert!(!bootstrapping.healthy && !bootstrapping.accepting_users);
-        assert!(!bootstrapping.content.healthy && bootstrapping.lambdas.healthy);
+        assert!(bootstrapping.healthy && bootstrapping.accepting_users);
+        assert!(bootstrapping.content.healthy);
         sync.set_state(crate::content::SyncState::Syncing);
         let syncing = local_about(&cfg, None);
         assert!(syncing.healthy && syncing.accepting_users && syncing.content.healthy);
+        sync.set_state(crate::content::SyncState::Failed);
+        let failed = local_about(&cfg, None);
+        assert!(!failed.healthy && !failed.accepting_users);
+        assert!(!failed.content.healthy && failed.lambdas.healthy);
     }
 }

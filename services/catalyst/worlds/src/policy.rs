@@ -917,12 +917,23 @@ impl Policy {
                 }
             }
             AccessType::SharedSecret => {
-                let hash = row.as_ref().and_then(|r| r.access_secret_hash.as_deref());
-                match (hash, secret) {
-                    (Some(hash), Some(secret)) if bcrypt::verify(secret, hash).unwrap_or(false) => {
-                        Access::Allowed(AccessGrant::SharedSecret)
+                let hash = row.as_ref().and_then(|r| r.access_secret_hash.clone());
+                let verified = match (hash, secret) {
+                    // bcrypt is CPU-bound: keep it off the async workers.
+                    (Some(hash), Some(secret)) => {
+                        let secret = secret.to_string();
+                        tokio::task::spawn_blocking(move || {
+                            bcrypt::verify(secret, &hash).unwrap_or(false)
+                        })
+                        .await
+                        .unwrap_or(false)
                     }
-                    _ => Access::InvalidSecret,
+                    _ => false,
+                };
+                if verified {
+                    Access::Allowed(AccessGrant::SharedSecret)
+                } else {
+                    Access::InvalidSecret
                 }
             }
         })
