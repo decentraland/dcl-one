@@ -1,22 +1,14 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/source-cases.json
 // Executes the pinned upstream handlers with deterministic component inputs.
 // No upstream checkout or package is a build dependency of dcl-one.
+const { requireNode26, sourceCapture, sha256 } = require('./social-capture-common.cjs')
+requireNode26()
 const fs = require('node:fs')
-const path = require('node:path')
-const crypto = require('node:crypto')
-const { execFileSync } = require('node:child_process')
-const { createRequire } = require('node:module')
 
-const baseline = 'b6b2cefefdf727b2ed47ddb887e77d226a41eea6'
-const upstream = path.resolve(process.argv[2] || '')
 const output = process.argv[3]
 if (!process.argv[2] || !output) throw Error('Usage: node tooling/social-service-source-cases.cjs <upstream-checkout> <output.json>')
-const git = (...args) => execFileSync('git', ['-C', upstream, ...args], { encoding: 'utf8' }).trim()
-if (git('rev-parse', 'HEAD') !== baseline) throw Error('Wrong upstream revision')
-if (git('status', '--porcelain', '--untracked-files=no')) throw Error('Upstream tracked files must be clean')
-const requireUpstream = createRequire(path.join(upstream, 'package.json'))
-requireUpstream('ts-node').register({ transpileOnly: true, project: path.join(upstream, 'tsconfig.json') })
-const load = file => requireUpstream(path.join(upstream, 'src', file))
+const { upstream, revision: baseline, req: requireUpstream, load } = sourceCapture(process.argv[2])
 const proto = requireUpstream('@dcl/protocol/out-js/decentraland/social_service/v2/social_service_v2.gen')
 const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
 const caller = '0x1111111111111111111111111111111111111111'
@@ -87,8 +79,8 @@ async function main() {
   for (const [suffix, request] of [['empty', {}], ['privacy', { privateMessagesPrivacy: 99 }], ['blocked-visibility', { blockedUsersMessagesVisibility: 99 }], ['reactions', { showSituationReactions: 99 }]]) {
     await capture(`upsert-social-settings.${suffix}`, 'upsert-social-settings', 'upsertSocialSettingsService', 'UpsertSocialSettingsResponse', request, {}, { settings })
   }
-  const lock = fs.readFileSync(path.join(upstream, 'yarn.lock'))
-  const fixture = { baseline: { repository: 'decentraland/social-service-ea', revision: baseline, yarn_lock_sha256: crypto.createHash('sha256').update(lock).digest('hex') }, runtime: { node: process.version, protocol_package: requireUpstream('@dcl/protocol/package.json').version }, scope: 'Real upstream RPC handlers and friendship/settings components with deterministic injected dependencies; not deployed HTTP, Redis, SNS, or PostgreSQL equivalence.', caller, target, cases }
+
+  const fixture = { baseline: { repository: 'decentraland/social-service-ea', revision: baseline, yarn_lock_sha256: sha256(upstream, 'yarn.lock') }, runtime: { node: process.version, protocol_package: requireUpstream('@dcl/protocol/package.json').version }, scope: 'Real upstream RPC handlers and friendship/settings components with deterministic injected dependencies; not deployed HTTP, Redis, SNS, or PostgreSQL equivalence.', caller, target, cases }
   fs.writeFileSync(output, JSON.stringify(fixture, null, 2) + '\n')
   process.stdout.write(`Captured ${cases.length} upstream cases\n`)
 }

@@ -1,31 +1,24 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json
 // Run the pinned upstream handlers/parsers with injected component states. No sibling
 // checkout is an application/build dependency; this tool only regenerates captures.
+const { requireNode26, sourceCapture, sha256 } = require('./social-capture-common.cjs')
+requireNode26()
 const fs = require('node:fs')
-const path = require('node:path')
-const crypto = require('node:crypto')
-const { execFileSync } = require('node:child_process')
-const { createRequire } = require('node:module')
-const revision = 'b6b2cefefdf727b2ed47ddb887e77d226a41eea6'
-const upstream = path.resolve(process.argv[2] || '')
 const output = process.argv[3]
 if (!process.argv[2] || !output) throw Error('Usage: node tooling/social-service-voice-source-cases.cjs <upstream-checkout> <output.json>')
-const git = (...args) => execFileSync('git', ['-C', upstream, ...args], { encoding: 'utf8' }).trim()
-if (git('rev-parse', 'HEAD') !== revision || git('status', '--porcelain', '--untracked-files=no')) throw Error('Expected clean pinned upstream')
-const req = createRequire(path.join(upstream, 'package.json'))
-req('ts-node').register({ transpileOnly: true, project: path.join(upstream, 'tsconfig.json') })
-const load = file => req(path.join(upstream, 'src', file))
+const { upstream, revision, req, load } = sourceCapture(process.argv[2])
 const proto = req('@dcl/protocol/out-js/decentraland/social_service/v2/social_service_v2.gen')
-const errors = load('logic/community-voice/errors.ts')
 const voiceErrors = load('logic/voice/errors.ts')
 const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
 const caller = '0x1111111111111111111111111111111111111111'
 const target = '0x2222222222222222222222222222222222222222'
 const community = '33333333-3333-4333-8333-333333333333'
 const call = '44444444-4444-4444-8444-444444444444'
+const { createCommunityVoiceFixtures } = require('./social-voice-fixtures.cjs')
+const components = createCommunityVoiceFixtures({ load, logs })
 const cases = []
 const url = address => `wss://livekit.test/voice-chat-private-${call}?for=${address}`
-const communityUrl = `wss://livekit.test/voice-chat-community-${community}?for=${caller}`
 const configurations = [
   ['start-community-voice-chat', 'startCommunityVoiceChatService', 'StartCommunityVoiceChatResponse', 'startCommunityVoiceChat'],
   ['join-community-voice-chat', 'joinCommunityVoiceChatService', 'JoinCommunityVoiceChatResponse', 'joinCommunityVoiceChat'],
@@ -43,43 +36,6 @@ async function capture(config, scenario, request, components, address = caller) 
   const response = await fn(request, { address })
   cases.push({ group: 'rpc', id: `${file}.${scenario}`, method: factory.replace(/Service$/, ''), scenario, caller: address, request, response_type: responseType, response,
     expected_hex: Buffer.from(proto[responseType].encode(response).finish()).toString('hex') })
-}
-async function components(scenario, starting = false) {
-  const failure = () => { throw Error('voice runtime not configured (no LiveKit adapter attached)') }
-  const missing = () => { throw new errors.CommunityVoiceChatResourceNotFoundError(community) }
-  const act = scenario === 'runtime-failure' ? failure : scenario === 'runtime-not-found' ? missing : async () => {}
-  const communitiesDb = {
-    getCommunity: async () => ({ id: community, name: 'Community', privacy: 'public', visibility: 'all', role: 'owner' }),
-    getCommunityMemberRole: async () => scenario === 'forbidden' ? 'none' : 'owner',
-    isMemberBanned: async () => false,
-    getCommunityMemberRoles: async () => ({ [caller]: scenario === 'forbidden' ? 'none' : 'owner', [target]: 'member' }),
-    getBannedMemberAddresses: async () => [], getCommunityPlaces: async () => []
-  }
-  if (scenario === 'database-failure') {
-    for (const method of Object.keys(communitiesDb)) communitiesDb[method] = async () => { throw Error('pool timed out while waiting for an open connection') }
-  }
-  const commsGatekeeper = {
-    getCommunityVoiceChatStatus: scenario === 'runtime-failure' ? failure : async () => ({ isActive: scenario === 'conflict' || !starting }),
-    createCommunityVoiceChatRoom: async () => ({ connectionUrl: communityUrl }),
-    getCommunityVoiceChatCredentials: scenario === 'runtime-not-found' ? missing : async () => ({ connectionUrl: communityUrl }),
-    requestToSpeakInCommunityVoiceChat: act, endCommunityVoiceChatRoom: act, muteSpeakerInCommunityVoiceChat: act,
-    promoteSpeakerInCommunityVoiceChat: act, demoteSpeakerInCommunityVoiceChat: act,
-    kickUserFromCommunityVoiceChat: act, rejectSpeakRequestInCommunityVoiceChat: act
-  }
-  if (scenario === 'noncanonical-community' || scenario === 'invalid-target') {
-    const privileged = await load('adapters/comms-gatekeeper.ts').createCommsGatekeeperComponent({ logs,
-      config: { requireString: async () => 'https://gatekeeper.example' },
-      fetcher: { fetch: async () => { throw Error('identifier guard must run before fetch') } } })
-    Object.assign(commsGatekeeper, privileged)
-  }
-  const communityVoice = await load('logic/community-voice/community-voice.ts').createCommunityVoiceComponent({
-    logs, communitiesDb, commsGatekeeper, pubsub: { publishInChannel: async () => {} }, analytics: { fireEvent() {} },
-    registry: { getProfile: async () => { throw Error('profile unavailable') } }, communityThumbnail: { getThumbnail: async () => null },
-    communityPlaces: {}, placesApi: {}, communityBroadcaster: { broadcast: async () => {} },
-    communityVoiceChatCache: { setCommunityVoiceChat: async () => {}, getCommunityVoiceChat: async () => ({ notificationScope: 'all' }), removeCommunityVoiceChat: async () => {} }
-  })
-  return { communityVoice, communitiesDb, commsGatekeeper }
-
 }
 async function main() {
   const base = { communityId: community, userAddress: target, isRaisingHand: true, muted: true }
@@ -168,9 +124,8 @@ async function main() {
       cases.push({ group: 'stream-missing-profile', id, caller: missingCaller, target: missingTarget, request_hex: Buffer.from(proto.FriendshipUpdate.encode(initial).finish()).toString('hex'), rpc_next_update: parsed, expected_hex: Buffer.from(proto.FriendshipUpdate.encode(parsed).finish()).toString('hex'), json: toJSON(missingUpdate) })
     }
   }
-  fs.writeFileSync(output, JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision, yarn_lock_sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(upstream, 'yarn.lock'))).digest('hex') },
+  fs.writeFileSync(output, JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision, yarn_lock_sha256: sha256(upstream, 'yarn.lock') },
     runtime: { node: process.version, protocol_package: req('@dcl/protocol/package.json').version }, scope: 'Executed real upstream RPC handlers, community voice/moderation components, stream parsers and missing-profile subscription lifecycle with deterministic injected dependencies; private RPC domain outcomes are injected. Not deployed PostgreSQL, Redis or LiveKit equivalence.', caller, target, community, call, cases }, null, 2) + '\n')
   process.stdout.write(`Captured ${cases.length} upstream voice/stream cases\n`)
 }
-module.exports = { req, load, logs, caller, target, community, call, revision, upstream, components }
-if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1 })
+main().catch(error => { console.error(error); process.exitCode = 1 })

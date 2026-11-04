@@ -1,7 +1,9 @@
 // from: shop@2d3bf62:app/src/pages/ItemDetail.tsx (S.Fav / S.FavCount: the title-row heart and the mobile
-//       preview heart), app/src/pages/ItemDetail.styles.ts (Fav, FavCount)
+//       preview heart), app/src/pages/ItemDetail.styles.ts (Fav, FavCount);
+//       marketplace@784c4af4:webapp/src/components/FavoritesCounter/FavoritesCounter.tsx (the heart toggles; the count,
+//       once above zero, opens who saved the item). The pill keeps the Shop's look, holding the two as separate buttons.
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import Icon from "../../discovery/components/Icon";
 import { pdpText } from "../../detail/copy";
@@ -10,6 +12,7 @@ import { useShopWallet } from "../../wallet/context";
 import { fetchCatalogByIds } from "../lib/catalog";
 import { fetchFavoriteStats } from "../lib/favorites";
 import { shopFavorites, useFavorites } from "../store/favorites";
+import SavedBy from "./SavedBy";
 
 export default function FavoriteButton({
   contractAddress,
@@ -27,6 +30,9 @@ export default function FavoriteButton({
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const [delta, setDelta] = useState(0);
+  const [showSavedBy, setShowSavedBy] = useState(false);
+  // Stable, so the open dialog keeps its focus when this button re-renders (useDialogKeys depends on onClose).
+  const closeSavedBy = useCallback(() => setShowSavedBy(false), []);
   const key = `${contractAddress.toLowerCase()}-${itemId}`;
   const saved = !!favorites.items[key];
   useEffect(() => {
@@ -58,24 +64,36 @@ export default function FavoriteButton({
   const syncing = favorites.status === "loading" || favorites.account !== (account?.toLowerCase() ?? null);
   return (
     <span className="shop-fav-wrap" data-placement={placement}>
-      <button
-        type="button"
-        className="shop-fav"
-        data-on={saved || undefined}
-        data-count={count !== undefined ? count : undefined}
-        data-failed={error || undefined}
-        aria-pressed={saved}
-        aria-label={saved ? pdpText("itemDetail.unfavorite", { name }) : pdpText("itemDetail.favorite", { name })}
-        disabled={busy || syncing}
-        onClick={() => void toggle()}
-      >
-        <Icon name={saved ? "heart-solid" : "heart"} size={18} />
-        {count !== undefined ? (
-          <span className="shop-fav__count" title={pdpText("itemDetail.savedCount", { count })} data-testid={placement === "title" ? "fav-count" : "fav-count-preview"}>
+      <span className="shop-fav" data-on={saved || undefined} data-count={count !== undefined ? count : undefined} data-failed={error || undefined} data-busy={busy || syncing || undefined}>
+        <button
+          type="button"
+          className="shop-fav__heart"
+          aria-pressed={saved}
+          aria-label={saved ? pdpText("itemDetail.unfavorite", { name }) : pdpText("itemDetail.favorite", { name })}
+          disabled={busy || syncing}
+          onClick={() => void toggle()}
+        >
+          <Icon name={saved ? "heart-solid" : "heart"} size={18} />
+          {count === 0 ? (
+            <span className="shop-fav__count" title={pdpText("itemDetail.savedCount", { count })} data-testid={placement === "title" ? "fav-count" : "fav-count-preview"}>
+              0
+            </span>
+          ) : null}
+        </button>
+        {count !== undefined && count > 0 ? (
+          <button
+            type="button"
+            className="shop-fav__count"
+            title={pdpText("itemDetail.savedCount", { count })}
+            aria-label={`${pdpText("itemDetail.savedCount", { count })}. ${pdpText("savedBy.open", { name })}`}
+            aria-haspopup="dialog"
+            data-testid={placement === "title" ? "fav-count" : "fav-count-preview"}
+            onClick={() => setShowSavedBy(true)}
+          >
             {count.toLocaleString("en-US")}
-          </span>
+          </button>
         ) : null}
-      </button>
+      </span>
       {error ? (
         <span className="shop-fav__error" role="alert">
           {pdpText("itemDetail.favoriteFailed")}{" "}
@@ -84,6 +102,7 @@ export default function FavoriteButton({
           </button>
         </span>
       ) : null}
+      {showSavedBy ? <SavedBy itemKey={key} name={name} onClose={closeSavedBy} /> : null}
     </span>
   );
 }

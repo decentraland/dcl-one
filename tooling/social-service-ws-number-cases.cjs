@@ -1,11 +1,15 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/ws-numbers-source-cases.json
 // Numeric configuration and timestamp decisions from the pinned source and its
 // installed Node/uWS runtime. No socket listener, signing key or media is used.
+const { requireNode26, sourceCapture } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-ws-number-cases.cjs <upstream-checkout> <output.json>')
 const fs = require('node:fs')
 const path = require('node:path')
 const os = require('node:os')
 const { spawnSync } = require('node:child_process')
-const { req, load, revision } = require('./social-service-voice-source-cases.cjs')
+const { req, load, revision } = sourceCapture(process.argv[2])
 const { createRecordConfigComponent } = req('@well-known-components/env-config-provider')
 const { getWsAuthSettings } = load('utils/ws-session.ts')
 const crypto = req(path.join(path.dirname(req.resolve('@dcl/crypto-middleware')), 'verify.js'))

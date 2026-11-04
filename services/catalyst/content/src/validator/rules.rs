@@ -1,10 +1,12 @@
-//! The rules, in the old order: structure, IPFS hashing, ADR-45, signature,
+//! The rules, in the old order: structure, IPFS hashing, metadata schema, ADR-45, signature,
 //! size, item representations, profile content, item and face thumbnails,
 //! scene content, the content cross-check, outfits, the third-party merkle
 //! proof content, access. The first failing step answers; its strings are
-//! the old ones byte for byte.
+//! the old ones byte for byte, except the reasons after the metadata schema
+//! sentence (see [`super::metadata_schema`]).
 
 use std::collections::{HashMap, HashSet};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use tracing::{debug, warn};
@@ -23,6 +25,11 @@ use super::scene_parcels::validate_scene_parcels_match_pointers;
 use super::spring_bones::validate_spring_bones_metadata;
 use super::types::*;
 use crate::auth::{AuthChain, AuthError};
+
+/// The longest an entity's validation, from the signature step to the end of
+/// its access checks, takes before the deploy is undecided, well under the
+/// usual client and proxy timeouts.
+const ACCESS_DEADLINE: Duration = Duration::from_secs(30);
 
 /// What the rules read from this node: its blob store and the auth-chain
 /// verifier. [`super::Sources`] is the live implementation; the store-fault
@@ -59,10 +66,27 @@ pub struct ContentValidator<'a, E: ExternalCalls, B: BlockchainChecker> {
     /// `IGNORE_BLOCKCHAIN_ACCESS_CHECKS`: only the local pointer-ownership
     /// rule of the access step runs.
     pub ignore_blockchain_access: bool,
+    /// An entity a peer serves: the item thumbnail is not checked and an
+    /// item's equivalent pointers count as one, as the reference does.
+    pub synced: bool,
+    /// The access step already passed for this entity and chain (the
+    /// read-through's check before its content was in): not asked again.
+    pub access_passed: bool,
 }
 
 impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
+    /// From the top of [`Self::validate`] to the end of the access checks: a synced entity's
+    /// whole validation budget, so it has one deadline.
+    fn access_budget(&self) -> Duration {
+        if self.synced {
+            super::synced::SYNCED_DEADLINE
+        } else {
+            ACCESS_DEADLINE
+        }
+    }
+
     pub async fn validate(&self, deployment: &Deployment<'_>) -> ValidationResponse {
+        let deadline = tokio::time::Instant::now() + self.access_budget();
         let result = self.validate_entity_structure(deployment);
         if !result.is_ok() {
             debug!("Validation failed at entity structure");
@@ -72,6 +96,12 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         let result = self.validate_ipfs_hashing(deployment);
         if !result.is_ok() {
             debug!("Validation failed at IPFS hashing");
+            return result;
+        }
+
+        let result = super::metadata_schema::validate_metadata(deployment.entity);
+        if !result.is_ok() {
+            debug!("Validation failed at metadata schema");
             return result;
         }
 
@@ -153,7 +183,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             return result;
         }
 
-        let result = self.validate_access(deployment).await;
+        let result = self.validate_access(deployment, deadline).await;
         if !result.is_ok() {
             debug!("Validation failed at access check");
             return result;
@@ -227,7 +257,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             // A contract-wallet link this node could not ask about (no
             // ETH_RPC_URL, or the RPC failed) is undecided, not invalid.
             Err(e @ (AuthError::Eip1654ValidationFailed(_) | AuthError::Eip1654NotImplemented)) => {
-                ValidationResponse::unavailable(format!("The signature is invalid. {e}"))
+                ValidationResponse::unverifiable(format!("The signature is invalid. {e}"))
             }
             Err(e) => ValidationResponse::fail(format!("The signature is invalid. {e}")),
         }
@@ -339,40 +369,13 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
     }
 
     fn validate_wearable_representations(&self, deployment: &Deployment<'_>) -> ValidationResponse {
-        let entity = &deployment.entity;
-        let metadata = match &entity.metadata {
-            Some(m) => m,
-            None => return ValidationResponse::fail("No wearable metadata found".to_string()),
-        };
-
-        let representations = metadata
-            .get("data")
-            .and_then(|d| d.get("representations"))
-            .and_then(|r| r.as_array());
-
-        if let Some(reps) = representations
-            && !reps.is_empty()
-        {
-            let entity_files: HashSet<&str> =
-                entity.content.iter().map(|c| c.file.as_str()).collect();
-
-            for rep in reps {
-                if let Some(contents) = rep.get("contents").and_then(|c| c.as_array()) {
-                    for content_ref in contents {
-                        if let Some(file_name) = content_ref.as_str()
-                            && !entity_files.contains(file_name)
-                        {
-                            return ValidationResponse::fail(format!(
-                                "Representation content: '{file_name}' is not one \
-                                 of the content files"
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-
-        ValidationResponse::Ok
+        let representations = deployment
+            .entity
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("data"))
+            .and_then(|d| d.get("representations"));
+        validate_representation_contents(deployment.entity, representations, "wearable")
     }
 
     fn validate_emote_representations(&self, deployment: &Deployment<'_>) -> ValidationResponse {
@@ -386,45 +389,25 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             ));
         }
 
-        let metadata = match &entity.metadata {
-            Some(m) => m,
-            None => return ValidationResponse::fail("No emote metadata found".to_string()),
-        };
-
-        let representations = metadata
-            .get("emoteDataADR74")
-            .and_then(|d| d.get("representations"))
-            .and_then(|r| r.as_array());
-
-        if let Some(reps) = representations
-            && !reps.is_empty()
-        {
-            let entity_files: HashSet<&str> =
-                entity.content.iter().map(|c| c.file.as_str()).collect();
-
-            for rep in reps {
-                if let Some(contents) = rep.get("contents").and_then(|c| c.as_array()) {
-                    for content_ref in contents {
-                        if let Some(file_name) = content_ref.as_str()
-                            && !entity_files.contains(file_name)
-                        {
-                            return ValidationResponse::fail(format!(
-                                "Representation content: '{file_name}' is not one \
-                                 of the content files"
-                            ));
-                        }
-                    }
-                }
-            }
+        let data = entity
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("emoteDataADR74"));
+        let result = validate_representation_contents(
+            entity,
+            data.and_then(|d| d.get("representations")),
+            "emote",
+        );
+        if !result.is_ok() {
+            return result;
         }
-
-        ValidationResponse::Ok
+        validate_social_emote(data)
     }
 
     async fn validate_item_thumbnail(&self, deployment: &Deployment<'_>) -> ValidationResponse {
         let entity = &deployment.entity;
 
-        if !matches!(entity.entity_type, EntityType::Wearable | EntityType::Emote) {
+        if self.synced || !matches!(entity.entity_type, EntityType::Wearable | EntityType::Emote) {
             return ValidationResponse::Ok;
         }
         if entity.timestamp < adr_timestamps::ADR_45 {
@@ -836,7 +819,14 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         ValidationResponse::Ok
     }
 
-    async fn validate_access(&self, deployment: &Deployment<'_>) -> ValidationResponse {
+    async fn validate_access(
+        &self,
+        deployment: &Deployment<'_>,
+        deadline: tokio::time::Instant,
+    ) -> ValidationResponse {
+        if self.access_passed {
+            return ValidationResponse::Ok;
+        }
         if self.ignore_blockchain_access {
             let deployer = deployment.deployer();
             let local = super::checker::validate_local_pointer_ownership(deployment, &deployer);
@@ -874,22 +864,106 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             );
         }
 
-        match entity.entity_type {
-            EntityType::Scene => {
-                validate_scene_access(deployment, self.blockchain_checker, &deployer).await
+        let checks = async {
+            match entity.entity_type {
+                EntityType::Scene => {
+                    validate_scene_access(deployment, self.blockchain_checker, &deployer).await
+                }
+                EntityType::Profile => {
+                    validate_profile_access(deployment, self.blockchain_checker, &deployer).await
+                }
+                EntityType::Store => validate_store_access(deployment, &deployer),
+                EntityType::Wearable | EntityType::Emote => {
+                    let single = self
+                        .synced
+                        .then(|| super::collections_v1::single_item_pointer(&entity.pointers))
+                        .flatten();
+                    match single {
+                        Some(pointer) => {
+                            let one = Entity {
+                                pointers: vec![pointer],
+                                ..(*entity).clone()
+                            };
+                            let view = Deployment {
+                                entity: &one,
+                                ..*deployment
+                            };
+                            validate_item_access(&view, self.blockchain_checker, &deployer).await
+                        }
+                        None => {
+                            validate_item_access(deployment, self.blockchain_checker, &deployer)
+                                .await
+                        }
+                    }
+                }
+                EntityType::Outfits => {
+                    validate_outfits_access(deployment, self.blockchain_checker, &deployer).await
+                }
             }
-            EntityType::Profile => {
-                validate_profile_access(deployment, self.blockchain_checker, &deployer).await
-            }
-            EntityType::Store => validate_store_access(deployment, &deployer),
-            EntityType::Wearable | EntityType::Emote => {
-                validate_item_access(deployment, self.blockchain_checker, &deployer).await
-            }
-            EntityType::Outfits => {
-                validate_outfits_access(deployment, self.blockchain_checker, &deployer).await
+        };
+        tokio::time::timeout_at(deadline, checks)
+            .await
+            .unwrap_or_else(|_| {
+                ValidationResponse::unavailable(format!(
+                    "Error checking access: the checks did not finish within {} s",
+                    self.access_budget().as_secs()
+                ))
+            })
+    }
+}
+
+/// Representations must exist and each listed file must be in `content`.
+fn validate_representation_contents(
+    entity: &Entity,
+    representations: Option<&serde_json::Value>,
+    kind: &str,
+) -> ValidationResponse {
+    let reps = match representations.and_then(|r| r.as_array()) {
+        Some(reps) if !reps.is_empty() => reps,
+        _ => return ValidationResponse::fail(format!("No {kind} representations found")),
+    };
+    if entity.content.is_empty() {
+        return ValidationResponse::fail("No content found".to_string());
+    }
+    let entity_files: HashSet<&str> = entity.content.iter().map(|c| c.file.as_str()).collect();
+    for rep in reps {
+        if let Some(contents) = rep.get("contents").and_then(|c| c.as_array()) {
+            for content_ref in contents {
+                if let Some(file_name) = content_ref.as_str()
+                    && !entity_files.contains(file_name)
+                {
+                    return ValidationResponse::fail(format!(
+                        "Representation content: '{file_name}' is not one \
+                         of the content files"
+                    ));
+                }
             }
         }
     }
+    ValidationResponse::Ok
+}
+
+/// ADR-287 after the metadata schema, which already checked the social emote
+/// shape and allows `null`: `startAnimation` and `outcomes` must be set.
+fn validate_social_emote(data: Option<&serde_json::Value>) -> ValidationResponse {
+    let Some(data) = data else {
+        return ValidationResponse::fail("No emote data found".to_string());
+    };
+    if !super::metadata_schema::SOCIAL_EMOTE_PROPS
+        .iter()
+        .any(|p| data.get(p).is_some())
+    {
+        return ValidationResponse::Ok;
+    }
+    if data["startAnimation"].is_null() {
+        return ValidationResponse::fail(
+            "Some properties of StartAnimation are not valid".to_string(),
+        );
+    }
+    if data["outcomes"].is_null() {
+        return ValidationResponse::fail("Outcomes array cannot be empty".to_string());
+    }
+    ValidationResponse::Ok
 }
 
 fn validate_scene_navmap_thumbnail(
@@ -950,6 +1024,94 @@ mod tests {
             file: file.to_string(),
             hash: "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenosa7776".to_string(),
         }]
+    }
+
+    fn failure(result: ValidationResponse) -> Vec<String> {
+        result.errors().map(<[String]>::to_vec).unwrap_or_default()
+    }
+
+    fn item(content: Vec<ContentMapping>) -> Entity {
+        Entity {
+            id: "bafkreiitem".into(),
+            entity_type: EntityType::Wearable,
+            pointers: vec!["urn:decentraland:matic:collections-v2:0xabc:0".into()],
+            timestamp: 1_780_000_000_000,
+            content,
+            version: "v3".into(),
+            metadata: None,
+        }
+    }
+
+    #[test]
+    fn items_without_representations_or_content_are_rejected() {
+        let reps = serde_json::json!([{"contents": ["thumbnail.png"]}]);
+        for kind in ["wearable", "emote"] {
+            for missing in [
+                None,
+                Some(serde_json::json!([])),
+                Some(serde_json::json!({})),
+            ] {
+                assert_eq!(
+                    failure(validate_representation_contents(
+                        &item(scene_content("thumbnail.png")),
+                        missing.as_ref(),
+                        kind
+                    )),
+                    vec![format!("No {kind} representations found")]
+                );
+            }
+            assert_eq!(
+                failure(validate_representation_contents(
+                    &item(vec![]),
+                    Some(&reps),
+                    kind
+                )),
+                vec!["No content found".to_string()]
+            );
+        }
+        assert!(
+            validate_representation_contents(
+                &item(scene_content("thumbnail.png")),
+                Some(&reps),
+                "wearable"
+            )
+            .is_ok()
+        );
+    }
+
+    fn social(outcomes: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "startAnimation": {"loop": true, "Armature": {"animation": "Start"}},
+            "randomizeOutcomes": false,
+            "outcomes": outcomes
+        })
+    }
+
+    fn outcome() -> serde_json::Value {
+        serde_json::json!({"title": "t", "loop": false, "clips": {"Armature": {"animation": "a"}}})
+    }
+
+    #[test]
+    fn social_emotes_need_their_start_animation_and_outcomes_set() {
+        let plain = serde_json::json!({"loop": false});
+        assert!(validate_social_emote(Some(&plain)).is_ok());
+        assert!(validate_social_emote(Some(&social(serde_json::json!([outcome()])))).is_ok());
+        assert_eq!(
+            failure(validate_social_emote(None)),
+            vec!["No emote data found".to_string()]
+        );
+        let mut no_start = social(serde_json::json!([outcome()]));
+        no_start["startAnimation"] = serde_json::Value::Null;
+        assert_eq!(
+            failure(validate_social_emote(Some(&no_start))),
+            vec!["Some properties of StartAnimation are not valid".to_string()]
+        );
+        assert_eq!(
+            failure(validate_social_emote(Some(&social(
+                serde_json::Value::Null
+            )))),
+            vec!["Outcomes array cannot be empty".to_string()]
+        );
     }
 
     #[test]
@@ -1034,6 +1196,207 @@ mod tests {
                 );
             }
             other => panic!("non-embedded thumbnail must be rejected, got {other}"),
+        }
+    }
+
+    mod access_deadline {
+        use super::super::super::checker::BlockchainLayer;
+        use super::super::super::error::{PermissionResult, ValidatorError};
+        use super::*;
+        use crate::auth::{AuthLink, AuthLinkType};
+
+        const OWNER: &str = "0xaaaa000000000000000000000000000000000001";
+
+        /// Answers the signature step after its delay; holds no content.
+        struct Calls(Duration);
+
+        #[async_trait]
+        impl ExternalCalls for Calls {
+            async fn is_content_stored_already(
+                &self,
+                hashes: &[String],
+            ) -> Result<HashMap<String, bool>, String> {
+                Ok(hashes.iter().map(|h| (h.clone(), false)).collect())
+            }
+
+            async fn fetch_content_file_size(&self, _hash: &str) -> Result<Option<usize>, String> {
+                Ok(None)
+            }
+
+            async fn validate_signature(
+                &self,
+                _entity_id: &str,
+                _auth_chain: &AuthChain,
+                _timestamp: Timestamp,
+            ) -> Result<(), AuthError> {
+                tokio::time::sleep(self.0).await;
+                Ok(())
+            }
+        }
+
+        /// Grants every name and item after `0`; with `1` set, the items are
+        /// too many to check.
+        struct SlowChecker(Duration, bool);
+
+        #[async_trait]
+        impl BlockchainChecker for SlowChecker {
+            async fn check_land_access(
+                &self,
+                _eth_address: &str,
+                _parcels: &[(i32, i32)],
+                _timestamp: Timestamp,
+            ) -> Result<Vec<bool>, ValidatorError> {
+                unreachable!()
+            }
+
+            async fn check_names_ownership(
+                &self,
+                _eth_address: &str,
+                _names: &[String],
+                _timestamp: Timestamp,
+            ) -> Result<PermissionResult, ValidatorError> {
+                tokio::time::sleep(self.0).await;
+                Ok(PermissionResult::ok())
+            }
+
+            async fn check_items_ownership(
+                &self,
+                _eth_address: &str,
+                _urns: &[String],
+                _timestamp: Timestamp,
+            ) -> Result<PermissionResult, ValidatorError> {
+                tokio::time::sleep(self.0).await;
+                if self.1 {
+                    return Err(ValidatorError::TooManyItems("201 distinct items".into()));
+                }
+                Ok(PermissionResult::ok())
+            }
+
+            async fn check_collection_access(
+                &self,
+                _eth_address: &str,
+                _contract_address: &str,
+                _item_id: &str,
+                _deployment: &Deployment<'_>,
+                _timestamp: Timestamp,
+                _layer: BlockchainLayer,
+            ) -> Result<bool, ValidatorError> {
+                unreachable!()
+            }
+
+            async fn check_third_party_access(
+                &self,
+                _asset_urn: &str,
+                _entity: &Entity,
+                _deployment: &Deployment<'_>,
+                _timestamp: Timestamp,
+            ) -> Result<bool, ValidatorError> {
+                unreachable!()
+            }
+
+            fn is_address_owned_by_decentraland(&self, _address: &str) -> bool {
+                false
+            }
+        }
+
+        fn profile() -> OwnedDeployment {
+            let mut d = OwnedDeployment::new(Entity {
+                id: "bafkreiprofile".into(),
+                entity_type: EntityType::Profile,
+                pointers: vec![OWNER.to_string()],
+                // No face thumbnail is required in this window.
+                timestamp: adr_timestamps::ADR_290_OPTIONAL + 1000,
+                content: vec![],
+                version: "v3".into(),
+                metadata: Some(serde_json::json!({ "avatars": [{
+                    "name": "alice", "hasClaimedName": true, "description": "",
+                    "ethAddress": OWNER, "version": 1, "tutorialStep": 0,
+                    "avatar": {
+                        "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+                        "eyes": { "color": { "r": 0.1, "g": 0.2, "b": 0.3 } },
+                        "hair": { "color": { "r": 0.1, "g": 0.2, "b": 0.3 } },
+                        "skin": { "color": { "r": 0.1, "g": 0.2, "b": 0.3 } },
+                        "emotes": [],
+                        "wearables": [
+                            "urn:decentraland:matic:collections-v2:0x0002000000000000000000000000000000000001:0:1"
+                        ]
+                    }
+                }]})),
+            });
+            d.auth_chain = vec![AuthLink {
+                link_type: AuthLinkType::SIGNER,
+                payload: OWNER.into(),
+                signature: None,
+            }];
+            d
+        }
+
+        async fn access_with(delay: Duration) -> ValidationResponse {
+            let d = profile();
+            ContentValidator {
+                external_calls: &Calls(Duration::ZERO),
+                blockchain_checker: &SlowChecker(delay, false),
+                ignore_blockchain_access: false,
+                synced: false,
+                access_passed: false,
+            }
+            .validate_access(&d.view(), tokio::time::Instant::now() + ACCESS_DEADLINE)
+            .await
+        }
+
+        fn timed_out(response: &ValidationResponse) -> bool {
+            matches!(response, ValidationResponse::Unavailable { errors }
+                if errors == &["Error checking access: the checks did not finish within 30 s"])
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn the_checks_of_one_entity_share_one_deadline() {
+            assert!(access_with(Duration::from_secs(10)).await.is_ok());
+            // Names and items each within the deadline, together past it.
+            let late = access_with(ACCESS_DEADLINE * 2 / 3).await;
+            assert!(timed_out(&late), "{late:?}");
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn the_deadline_starts_before_the_signature_step() {
+            let d = profile();
+            let validate = |signature: Duration| {
+                let d = &d;
+                async move {
+                    ContentValidator {
+                        external_calls: &Calls(signature),
+                        blockchain_checker: &SlowChecker(ACCESS_DEADLINE / 4, false),
+                        ignore_blockchain_access: false,
+                        synced: false,
+                        access_passed: false,
+                    }
+                    .validate(&d.view())
+                    .await
+                }
+            };
+            let quick = validate(Duration::from_secs(1)).await;
+            assert!(quick.is_ok(), "{quick:?}");
+            let late = validate(ACCESS_DEADLINE * 2 / 3).await;
+            assert!(timed_out(&late), "{late:?}");
+        }
+
+        #[tokio::test]
+        async fn too_many_items_refuse_the_deploy() {
+            let d = profile();
+            let response = ContentValidator {
+                external_calls: &Calls(Duration::ZERO),
+                blockchain_checker: &SlowChecker(Duration::ZERO, true),
+                ignore_blockchain_access: false,
+                synced: false,
+                access_passed: false,
+            }
+            .validate_access(&d.view(), tokio::time::Instant::now() + ACCESS_DEADLINE)
+            .await;
+            assert!(
+                matches!(&response, ValidationResponse::Failed { errors }
+                    if errors == &["Error checking item ownership: too many items to check: 201 distinct items"]),
+                "{response:?}"
+            );
         }
     }
 }

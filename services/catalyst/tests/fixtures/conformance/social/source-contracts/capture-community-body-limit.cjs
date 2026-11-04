@@ -1,8 +1,14 @@
 // Actual pinned server and router; local requests only.
+const { sourceCapture, SOCIAL_REVISION } = require(
+  require("node:path").join(
+    require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
+    "tooling/social-capture-common.cjs",
+  ),
+);
+const capture = sourceCapture(process.argv[2]);
 const fs = require("fs"),
   http = require("http");
-const root = process.argv[2];
-require(root + "/node_modules/ts-node/register/transpile-only");
+const root = capture.upstream;
 const { createUnsafeIdentity } = require(
   root + "/node_modules/@dcl/crypto/dist/crypto.js",
 );
@@ -35,6 +41,8 @@ const { createCommunityFieldsValidatorComponent } = require(
   root + "/src/logic/community/fields-validator.ts",
 );
 (async () => {
+  let server, largerServer;
+  try {
   const boot = [];
   for (const value of [
     undefined,
@@ -114,7 +122,7 @@ const { createCommunityFieldsValidatorComponent } = require(
   };
   const router = await setupHttpRoutes(context);
   const logger = { info() {}, error() {}, warn() {}, debug() {} };
-  const server = await createServerComponent(
+  server = await createServerComponent(
     {
       config: {
         requireNumber: async () => 0,
@@ -252,7 +260,21 @@ const { createCommunityFieldsValidatorComponent } = require(
       }
       if (input.length !== undefined) headers["content-length"] = input.length;
       else headers["transfer-encoding"] = "chunked";
-      const request = http.request(
+      let request, deadline, settled = false;
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        request?.destroy();
+        reject(error);
+      };
+      const complete = value => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        resolve(value);
+      };
+      request = http.request(
         {
           hostname: "127.0.0.1",
           port,
@@ -263,9 +285,11 @@ const { createCommunityFieldsValidatorComponent } = require(
         },
         (res) => {
           const parts = [];
+          res.on("error", fail);
+          res.on("aborted", () => fail(Error("Capture response aborted")));
           res.on("data", (part) => parts.push(part));
           res.on("end", () =>
-            resolve({
+            complete({
               status: res.statusCode,
               body: Buffer.concat(parts).toString(),
               headers: Object.fromEntries(
@@ -278,12 +302,15 @@ const { createCommunityFieldsValidatorComponent } = require(
           );
         },
       );
-      request.on("error", reject);
-      request.end(
-        input.sendBody === false
-          ? undefined
-          : Buffer.alloc(input.length ?? input.chunked, 97),
-      );
+      request.on("error", fail);
+      deadline = setTimeout(() => fail(Error("Capture request deadline exceeded")), 5000);
+      try {
+        request.end(
+          input.sendBody === false
+            ? undefined
+            : Buffer.alloc(input.length ?? input.chunked, 97),
+        );
+      } catch (error) { fail(error); }
     });
     cases.push({
       ...input,
@@ -292,6 +319,7 @@ const { createCommunityFieldsValidatorComponent } = require(
     });
   }
   await server.stop();
+  server = undefined;
   // A larger global cap does not raise the independent native multipart cap
   // or the thumbnail field's byte range. Use parseable multipart, not junk.
   const largerCap = 2 * 1024 * 1024;
@@ -299,7 +327,7 @@ const { createCommunityFieldsValidatorComponent } = require(
     await createCommunityFieldsValidatorComponent({
       config: { getString: async () => undefined },
     });
-  const largerServer = await createServerComponent(
+  largerServer = await createServerComponent(
     {
       config: {
         requireNumber: async () => 0,
@@ -386,7 +414,21 @@ const { createCommunityFieldsValidatorComponent } = require(
       };
       if (spec.chunked) headers["transfer-encoding"] = "chunked";
       else headers["content-length"] = wire.length;
-      const request = http.request(
+      let request, deadline, settled = false;
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        request?.destroy();
+        reject(error);
+      };
+      const complete = value => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        resolve(value);
+      };
+      request = http.request(
         {
           hostname: "127.0.0.1",
           port: largerPort,
@@ -397,9 +439,11 @@ const { createCommunityFieldsValidatorComponent } = require(
         },
         (res) => {
           const chunks = [];
+          res.on("error", fail);
+          res.on("aborted", () => fail(Error("Capture response aborted")));
           res.on("data", (chunk) => chunks.push(chunk));
           res.on("end", () =>
-            resolve({
+            complete({
               status: res.statusCode,
               body: Buffer.concat(chunks).toString(),
               headers: Object.fromEntries(
@@ -412,8 +456,10 @@ const { createCommunityFieldsValidatorComponent } = require(
           );
         },
       );
-      request.on("error", reject);
-      request.end(spec.sendBody === false ? undefined : wire);
+      request.on("error", fail);
+      deadline = setTimeout(() => fail(Error("Capture request deadline exceeded")), 5000);
+      try { request.end(spec.sendBody === false ? undefined : wire); }
+      catch (error) { fail(error); }
     });
     multipartCases.push({
       ...spec,
@@ -423,12 +469,13 @@ const { createCommunityFieldsValidatorComponent } = require(
     });
   }
   await largerServer.stop();
+  largerServer = undefined;
   fs.writeFileSync(
     process.argv[3],
     JSON.stringify(
       {
         source: "decentraland/social-service-ea",
-        revision: "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+        revision: SOCIAL_REVISION,
         node: process.version,
         sources: [
           "src/components.ts",
@@ -467,6 +514,9 @@ const { createCommunityFieldsValidatorComponent } = require(
       2,
     ) + "\n",
   );
+  } finally {
+    try { await largerServer?.stop(); } finally { await server?.stop(); }
+  }
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

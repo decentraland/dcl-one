@@ -59,6 +59,7 @@ pub mod land_publish;
 #[cfg(test)]
 pub(crate) mod sync_test_support;
 pub mod unpublish_scene;
+pub mod upload_admission;
 pub mod writes;
 
 // Peer sync: snapshots, pointer changes, cursors, retries and the orchestrator.
@@ -147,6 +148,13 @@ pub struct Settings {
     /// `CATALYRST_CONTENT_ADMIN_TOKEN`: the bearer of the operator routes
     /// (`/forwarding`); unset refuses them.
     pub admin_token: AdminToken,
+    /// `MAX_UPLOAD_FIELD_COUNT`, `MAX_UPLOAD_FIELD_SIZE`: the non-file fields of a deploy form.
+    pub max_upload_field_count: usize,
+    pub max_upload_field_bytes: usize,
+    /// `MAX_IN_MEMORY_DEPLOYMENT_BYTES`, at least one maximum-size deployment.
+    pub max_in_memory_deployment_bytes: u64,
+    /// `POST_ENTITIES_DAILY_QUOTA_MAX`; 0 is off.
+    pub post_entities_daily_quota_max: u32,
 }
 
 /// An operator bearer whose `Debug` never prints it; empty is unset.
@@ -226,6 +234,10 @@ impl Settings {
                 n => Some(Duration::from_secs(n)),
             },
             admin_token: AdminToken::new(config.writes.catalyrst_content_admin_token.clone()),
+            max_upload_field_count: config.content.max_upload_field_count,
+            max_upload_field_bytes: config.content.max_upload_field_size,
+            max_in_memory_deployment_bytes: config.content.max_in_memory_deployment_bytes,
+            post_entities_daily_quota_max: config.content.post_entities_daily_quota_max,
         }
     }
 
@@ -252,6 +264,10 @@ impl Settings {
             deployments_query_timeout: Duration::from_secs(10),
             request_timeout: None,
             admin_token: AdminToken::default(),
+            max_upload_field_count: 2 + 3 * 10,
+            max_upload_field_bytes: 32 * 1024,
+            max_in_memory_deployment_bytes: 2 * 1024 * 1024 * 1024,
+            post_entities_daily_quota_max: 300,
         }
     }
 }
@@ -465,6 +481,10 @@ pub struct ContentState {
     read_through: OnceLock<Arc<read_through::ReadThrough>>,
     /// Whether the explorer's tile grid is loaded (the minimap draws from it).
     parcel_grid: OnceLock<GridReady>,
+    /// The memory `POST /entities` bodies may hold at once.
+    pub upload_budget: upload_admission::UploadBudget,
+    /// `POST /entities` requests per client address and day.
+    pub deploy_quota: upload_admission::DailyQuota,
 }
 
 /// See [`ContentState::attach_parcel_grid`].
@@ -485,6 +505,13 @@ impl ContentState {
         sync: Arc<SyncStatus>,
     ) -> Self {
         let denylist = storage.denylist().clone();
+        let upload_budget = upload_admission::UploadBudget::new(
+            settings
+                .max_in_memory_deployment_bytes
+                .max(create_entity::MAX_DEPLOYMENT_BYTES as u64),
+        );
+        let deploy_quota =
+            upload_admission::DailyQuota::new(settings.post_entities_daily_quota_max);
         Self {
             pool,
             settings,
@@ -501,6 +528,8 @@ impl ContentState {
             about_comms: OnceLock::new(),
             read_through: OnceLock::new(),
             parcel_grid: OnceLock::new(),
+            upload_budget,
+            deploy_quota,
         }
     }
 

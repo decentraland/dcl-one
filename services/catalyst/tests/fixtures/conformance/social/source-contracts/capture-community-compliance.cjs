@@ -1,10 +1,16 @@
 // Execute with Node26 against the pinned source. Uses the real installed OpenAI SDK with a mock fetch; never contacts a provider.
 // Usage: TS_NODE_COMPILER_OPTIONS='{"module":"CommonJS","moduleResolution":"node"}' node <script> <source-root> <output-directory>
+const { sourceCapture, SOCIAL_REVISION } = require(
+  require("node:path").join(
+    require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
+    "tooling/social-capture-common.cjs",
+  ),
+);
+const capture = sourceCapture(process.argv[2]);
 const fs = require('fs');
 const path = require('path');
-const upstream = process.argv[2];
+const upstream = capture.upstream;
 const out = process.argv[3];
-require(path.join(upstream, 'node_modules/ts-node/register/transpile-only'));
 const logger = { info(){}, error(){}, warn(){}, debug(){} };
 const logs = { getLogger(){ return logger; } };
 const Module=require('module');const original=Module._load;
@@ -16,6 +22,7 @@ class MockOpenAI extends RealOpenAI {constructor(options){super({...options,fetc
  const response=activeCase.status?{error:{message:activeCase.apiError||'provider unavailable'}}:{object:'response',output:activeCase.raw===null?[]:[{type:'message',content:[{type:'output_text',text}]}]};
  providerResponse=response;return new Response(JSON.stringify(response),{status:activeCase.status||200,headers:{'content-type':'application/json','retry-after-ms':'1'}});
 }});}}
+async function main(){try{
 Module._load=function(name,...args){return name==='openai'?MockOpenAI:original.call(this,name,...args);};
 const {createAIComplianceComponent}=require(path.join(upstream,'src/adapters/ai-compliance.ts'));
 const {createCommunityComplianceValidatorComponent}=require(path.join(upstream,'src/logic/community/compliance-validator.ts'));
@@ -43,10 +50,11 @@ const cases=[
 {name:'cached-rejection',request:{name:'Cached rejection'},cached:{...compliant,isCompliant:false,issues:{name:['cached'],description:[],image:[]}},output:compliant},
 {name:'model-key',request:{name:'Other model'},model:'fixture-model',output:compliant}
 ];
-(async()=>{const captured=[];for(const item of cases){activeCase=item;bodies=[];attempts=0;providerResponse=undefined;let cacheKey;let cachedPut;
+const captured=[];for(const item of cases){activeCase=item;bodies=[];attempts=0;providerResponse=undefined;let cacheKey;let cachedPut;
  const ai=await createAIComplianceComponent({config:{getString:async key=>({ENV:item.environment||'prd',OPEN_AI_MODEL:item.model||'gpt-5-nano'})[key],requireString:async()=> 'fixture-key'},logs,featureFlags:{isEnabled:()=>item.dev!==false},metrics:{increment(){},observe(){}},redis:{get:async key=>{cacheKey=key;return item.cached||null;},put:async(key,value)=>{cacheKey=key;cachedPut=value;}}});
  let result;let thrown;try{result={ok:await ai.validateCommunityContent(item.request)};}catch(error){thrown=error;result={error:error.message};}
 const validator=createCommunityComplianceValidatorComponent({logs,featureFlags:{isEnabled:()=>true},aiCompliance:{validateCommunityContent:async()=>{if(thrown)throw thrown;return result.ok;}}});
 const httpResult=await communitiesErrorsHandler({},async()=>{await validator.validateCommunityContent(item.request);return {status:200};});
  captured.push({name:item.name,environment:item.environment||'prd',dev:item.dev!==false,model:item.model||'gpt-5-nano',request:{...item.request,thumbnailBuffer:item.request.thumbnailBuffer?.toString('base64')},providerRequest:bodies[0],providerResponse,providerStatus:item.status||200,network:!!item.network,cached:item.cached,attempts,result,httpResult,cacheKey,cachedPut});
-}fs.writeFileSync(path.join(out,'community-ai-compliance.json'),JSON.stringify({source:'decentraland/social-service-ea',revision:'b6b2cefefdf727b2ed47ddb887e77d226a41eea6',path:'src/adapters/ai-compliance.ts',node:process.version,openai:require(path.join(upstream,'node_modules/openai/package.json')).version,transport:'real installed SDK with mock fetch; no network',cases:captured},null,2)+'\n');})().catch(error=>{console.error(error);process.exitCode=1;});
+}fs.writeFileSync(path.join(out,'community-ai-compliance.json'),JSON.stringify({source:'decentraland/social-service-ea',revision:SOCIAL_REVISION,path:'src/adapters/ai-compliance.ts',node:process.version,openai:require(path.join(upstream,'node_modules/openai/package.json')).version,transport:'real installed SDK with mock fetch; no network',cases:captured},null,2)+'\n');}finally{Module._load=original;}}
+main().catch(error=>{console.error(error);process.exitCode=1;});

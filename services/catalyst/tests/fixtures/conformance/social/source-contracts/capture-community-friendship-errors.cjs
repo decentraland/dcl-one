@@ -1,9 +1,14 @@
 // Node26; actual community handlers/components and friendship-bearing SQL builders.
 // Usage: node <script> <pinned-social-root> <output>. All providers are local.
+const { sourceCapture, SOCIAL_REVISION, sha256 } = require(
+  require("node:path").join(
+    require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
+    "tooling/social-capture-common.cjs",
+  ),
+);
+const capture = sourceCapture(process.argv[2]);
 const fs = require("fs"),
-  crypto = require("crypto"),
-  root = process.argv[2];
-require(root + "/node_modules/ts-node/register/transpile-only");
+  root = capture.upstream;
 const { createCommunitiesDBComponent } = require(
   root + "/src/adapters/communities-db.ts",
 );
@@ -294,16 +299,13 @@ const routes = [
     JSON.stringify(
       {
         source: "https://github.com/decentraland/social-service-ea",
-        revision: "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+        revision: SOCIAL_REVISION,
         runtime: process.version,
         scope:
           "Actual community handlers/components and communities-db friendship-bearing SQL builders. A local pg provider rejects generated queries referencing friendships with a permission Error; it does not execute those SQL statements. Other DB/profile/domain dependencies are local fixtures. Anonymous paths omit the relationship CTE; community request aggregation performs no relationship read.",
         sources: paths.map((path) => ({
           path,
-          sha256: crypto
-            .createHash("sha256")
-            .update(fs.readFileSync(root + "/" + path))
-            .digest("hex"),
+          sha256: sha256(root, path),
         })),
         cases,
       },

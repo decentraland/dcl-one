@@ -1,20 +1,14 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/referral-cases.json
 // Optional development capture: exact upstream TS domain + DB adapter on real
 // PostgreSQL TEMP relations, injected Redis/day cache and external providers.
+const { requireNode26, sourceCapture, sha256, requireDatabaseUrl } = require('./social-capture-common.cjs')
+requireNode26()
+const databaseUrl = requireDatabaseUrl(process.env.CATALYST_TEST_DATABASE_URL)
 const fs = require('node:fs')
-const path = require('node:path')
-const crypto = require('node:crypto')
-const { execFileSync } = require('node:child_process')
-const { createRequire } = require('node:module')
-const baseline = 'b6b2cefefdf727b2ed47ddb887e77d226a41eea6'
-const upstream = path.resolve(process.argv[2] || '')
 const output = process.argv[3]
-if (!process.argv[2] || !output || !process.env.CATALYST_TEST_DATABASE_URL) throw Error('Usage: CATALYST_TEST_DATABASE_URL=<disposable-pg> node tooling/social-service-referral-cases.cjs <upstream> <output.json>')
-const git = (...args) => execFileSync('git', ['-C', upstream, ...args], { encoding: 'utf8' }).trim()
-if (git('rev-parse', 'HEAD') !== baseline || git('status', '--porcelain', '--untracked-files=no')) throw Error('Pinned clean upstream required')
-const from = createRequire(path.join(upstream, 'package.json'))
-from('ts-node').register({ transpileOnly: true, project: path.join(upstream, 'tsconfig.json') })
-const load = file => from(path.join(upstream, 'src', file))
+if (!process.argv[2] || !output) throw Error('Usage: node tooling/social-service-referral-cases.cjs <upstream-checkout> <output.json>')
+const { upstream, revision: baseline, req: from, load } = sourceCapture(process.argv[2])
 const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
 const address = n => `0x${n.toString(16).padStart(40, '0')}`
 const referrer = address(1)
@@ -28,7 +22,7 @@ const config = { requireNumber: async name => configValues[name], requireString:
 let deny = [], effects = [], cache = new Map()
 global.fetch = async () => ({ ok: true, json: async () => ({ users: deny.map(wallet => ({ wallet })) }) })
 async function main() {
- const client = new (from('pg').Client)({ connectionString: process.env.CATALYST_TEST_DATABASE_URL })
+ const client = new (from('pg').Client)({ connectionString: databaseUrl })
  await client.connect()
  try {
   // These TEMP relations follow the pinned source migrations; nothing is
@@ -110,8 +104,8 @@ async function main() {
   const lifecycle=from('@well-known-components/interfaces')
   await processor[lifecycle.START_COMPONENT]();await completed;await processor[lifecycle.STOP_COMPONENT]()
   const version = (await client.query('SHOW server_version')).rows[0].server_version
-  const lock = fs.readFileSync(path.join(upstream,'yarn.lock'))
-  fs.writeFileSync(output, JSON.stringify({baseline:{repository:'decentraland/social-service-ea',revision:baseline,yarn_lock_sha256:crypto.createHash('sha256').update(lock).digest('hex')},runtime:{node:process.version,postgres:version},scope:'Actual upstream referral component and referral-db adapter executed against PostgreSQL TEMP relations. Redis login cache, denylist fetch and outbound SNS/rewards/email/Slack are injected deterministic providers; not deployed ingestion or delivery equivalence. Random UUIDs omitted from snapshots; all other stored source fields retained.',referrer,cases,schemas,queue_cases:queueCases,queue_effects:queueEffects},null,2)+'\n')
+
+  fs.writeFileSync(output, JSON.stringify({baseline:{repository:'decentraland/social-service-ea',revision:baseline,yarn_lock_sha256:sha256(upstream, 'yarn.lock')},runtime:{node:process.version,postgres:version},scope:'Actual upstream referral component and referral-db adapter executed against PostgreSQL TEMP relations. Redis login cache, denylist fetch and outbound SNS/rewards/email/Slack are injected deterministic providers; not deployed ingestion or delivery equivalence. Random UUIDs omitted from snapshots; all other stored source fields retained.',referrer,cases,schemas,queue_cases:queueCases,queue_effects:queueEffects},null,2)+'\n')
   process.stdout.write(`Captured ${cases.length} upstream referral scenarios\n`)
  } finally { await client.end(); global.Date=RealDate; Date.now=originalNow }
 }

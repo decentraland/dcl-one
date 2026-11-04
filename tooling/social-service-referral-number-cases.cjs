@@ -1,8 +1,14 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/source-contracts/referral-numbers.json
 // Actual config provider, referral component/adapter, PG wrapper and HTTP error
 // middleware. PostgreSQL TEMP relations; all outbound providers injected.
-const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto')
-const { req, load, logs, revision, upstream } = require('./social-service-voice-source-cases.cjs')
+const { requireNode26, sourceCapture, sha256, requireDatabaseUrl } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-referral-number-cases.cjs <upstream-checkout> <output.json>')
+const databaseUrl = requireDatabaseUrl(process.env.CATALYST_TEST_DATABASE_URL)
+const fs = require('node:fs')
+const { req, load, revision, upstream } = sourceCapture(process.argv[2])
+const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
 const referrer = '0xa711111111111111111111111111111111111111', invited = n => `0xa8${n.toString(16).padStart(38,'0')}`
 const RealDate = Date
 let clock = RealDate.parse('2026-01-01T12:00:00Z')
@@ -11,9 +17,8 @@ global.fetch = async () => ({ ok: true, json: async () => ({ users: [] }) })
 const defaults = { REFERRAL_MAX_IP_MATCHES:'2', REFERRAL_MIN_LOGIN_DAYS:'3', REFERRAL_FIVE_MINUTES_IN_MS:'300000', PROFILE_URL:'https://profile.example.org', ENV:'dev', REFERRAL_METABASE_DASHBOARD:'https://dashboard.example.org' }
 for (const tier of [5,10,20,25,30,50,60,75]) defaults[`REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_${tier}`] = ''
 async function main() {
-  if (!process.env.CATALYST_TEST_DATABASE_URL) throw Error('Disposable PostgreSQL URL required')
   const makeConfig = values => req('@well-known-components/env-config-provider').createConfigComponent({ ...defaults, ...values })
-  const pg = await load('adapters/pg.ts').createPgComponent({ logs, config:makeConfig({}) }, {pool:{connectionString:process.env.CATALYST_TEST_DATABASE_URL,max:1}})
+  const pg = await load('adapters/pg.ts').createPgComponent({ logs, config:makeConfig({}) }, {pool:{connectionString:databaseUrl,max:1}})
   await pg.start()
   try {
     await pg.query(`CREATE TEMP TABLE referral_progress(id uuid PRIMARY KEY,referrer text NOT NULL,invited_user text NOT NULL UNIQUE,status text NOT NULL,signed_up_at bigint,tier_granted boolean NOT NULL DEFAULT false,tier_granted_at bigint,created_at bigint NOT NULL,updated_at bigint NOT NULL,invited_user_ip text);
@@ -55,7 +60,7 @@ async function main() {
       }
     }
     const files=['src/adapters/pg.ts','src/adapters/referral-db.ts','src/logic/referral/referral.ts','src/controllers/handlers/http/create-referral-handler.ts','node_modules/@well-known-components/env-config-provider/dist/index.js','node_modules/@dcl/http-commons/dist/controllers/handlers/error-handler.js']
-    fs.writeFileSync(process.argv[3],JSON.stringify({baseline:{repository:'decentraland/social-service-ea',revision,sources:files.map(file=>({path:file,sha256:crypto.createHash('sha256').update(fs.readFileSync(path.join(upstream,file))).digest('hex')}))},runtime:{node:process.version},scope:'Actual source numeric config, referral domain, DB adapter, translating PG wrapper and create-handler/error middleware execute against PostgreSQL TEMP relations. Login-day cache and outbound effects are injected. Startup rejection text is recorded, not a claim that Clap formats startup diagnostics identically.',referrer,invited:[invited(1),invited(2),invited(3)],cases},null,2)+'\n')
+    fs.writeFileSync(process.argv[3],JSON.stringify({baseline:{repository:'decentraland/social-service-ea',revision,sources:files.map(file=>({path:file,sha256:sha256(upstream, file)}))},runtime:{node:process.version},scope:'Actual source numeric config, referral domain, DB adapter, translating PG wrapper and create-handler/error middleware execute against PostgreSQL TEMP relations. Login-day cache and outbound effects are injected. Startup rejection text is recorded, not a claim that Clap formats startup diagnostics identically.',referrer,invited:[invited(1),invited(2),invited(3)],cases},null,2)+'\n')
     process.stdout.write(`Captured ${cases.length} source referral numeric configurations\n`)
   } finally { await pg.stop() }
 }

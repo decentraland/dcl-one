@@ -1,14 +1,17 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/source-contracts/referral-privacy-errors.json
 // Optional source execution. Only a PostgreSQL TEMP function is installed;
 // external services are injected and no messages leave the process.
+const { requireNode26, sourceCapture, sha256, requireDatabaseUrl } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-handler-errors.cjs <upstream-checkout> <output.json>')
+const databaseUrl = requireDatabaseUrl(process.env.CATALYST_TEST_DATABASE_URL)
 const fs = require('node:fs')
-const path = require('node:path')
-const crypto = require('node:crypto')
-const { req, load, logs, revision, upstream } = require('./social-service-voice-source-cases.cjs')
+const { req, load, revision, upstream } = sourceCapture(process.argv[2])
+const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
 const output = process.argv[3]
 async function main() {
-  if (!process.env.CATALYST_TEST_DATABASE_URL) throw Error('Disposable PostgreSQL URL required')
-  const client = new (req('pg').Client)({ connectionString: process.env.CATALYST_TEST_DATABASE_URL })
+  const client = new (req('pg').Client)({ connectionString: databaseUrl })
   await client.connect()
   try {
     await client.query("CREATE FUNCTION pg_temp.social_handler_failure() RETURNS text LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'source dependency failure'; END $$")
@@ -36,7 +39,7 @@ async function main() {
     cases.push({ method: 'GET', path: '/v1/users/:address/privacy-settings', response: await privacy.f({}, { getParameter: () => address }) })
     const sources = ['src/controllers/handlers/uws/privacy-handler.ts', 'src/utils/errors.ts', 'src/adapters/pg.ts', ...configurations.map(([, , file]) => `src/controllers/handlers/http/${file}-handler.ts`)]
     fs.writeFileSync(output, JSON.stringify({
-      baseline: { repository: 'decentraland/social-service-ea', revision, sources: sources.map(file => ({ path: file, sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(upstream, file))).digest('hex') })) },
+      baseline: { repository: 'decentraland/social-service-ea', revision, sources: sources.map(file => ({ path: file, sha256: sha256(upstream, file) })) },
       runtime: { node: process.version },
       scope: 'Actual five pinned HTTP/uWS handlers with dependency calls raising a real PostgreSQL server exception through node-pg. Domain dependencies are injected; local replay raises the same server exception through SQLx and the real routes. This does not establish equal messages for unrelated drivers or operating-system failures.',
       cases

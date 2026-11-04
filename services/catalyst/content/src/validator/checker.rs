@@ -11,8 +11,8 @@ use super::error::{PermissionResult, ValidationResponse, ValidatorError};
 use super::types::*;
 
 /// What the access step reads: [`super::Sources`] is the live implementation
-/// (`chain.rs`: the land_authz index and the marketplace readers where the
-/// old one read the squid); the tests stub it.
+/// (`chain.rs`: the Checker contract and the item contracts at the entity
+/// timestamp's block); the tests stub it.
 #[async_trait]
 pub trait BlockchainChecker: Send + Sync {
     async fn check_land_access(
@@ -41,7 +41,7 @@ pub trait BlockchainChecker: Send + Sync {
         eth_address: &str,
         contract_address: &str,
         item_id: &str,
-        entity: &Entity,
+        deployment: &Deployment<'_>,
         timestamp: Timestamp,
         layer: BlockchainLayer,
     ) -> Result<bool, ValidatorError>;
@@ -210,6 +210,9 @@ pub async fn validate_profile_access(
                         ));
                     }
                 }
+                Err(e @ ValidatorError::TooManyItems(_)) => {
+                    return ValidationResponse::fail(format!("Error checking item ownership: {e}"));
+                }
                 Err(e) => {
                     return ValidationResponse::unavailable(format!(
                         "Error checking item ownership: {e}"
@@ -362,6 +365,11 @@ pub async fn validate_outfits_access(
                         ));
                     }
                 }
+                Err(e @ ValidatorError::TooManyItems(_)) => {
+                    return ValidationResponse::fail(format!(
+                        "Error checking wearable ownership: {e}"
+                    ));
+                }
                 Err(e) => {
                     return ValidationResponse::unavailable(format!(
                         "Error checking wearable ownership: {e}"
@@ -410,22 +418,49 @@ pub async fn validate_item_access(
     let entity = &deployment.entity;
     let pointers = &entity.pointers;
 
-    if pointers.len() != 1 {
+    let valid_types: &[ItemAssetType] = if entity.entity_type == EntityType::Emote {
+        EMOTE_ASSET_TYPES
+    } else {
+        WEARABLE_ASSET_TYPES
+    };
+    // Compare against the first key only, so the scan stays linear.
+    let mut first: Option<(String, ItemAssetType)> = None;
+    let mut multiple = false;
+    for pointer in pointers {
+        let Some(asset_type) = item_asset_urn_type(pointer) else {
+            return ValidationResponse::fail(format!(
+                "Item pointers should be a urn, for example \
+                 (urn:decentraland:{{protocol}}:collections-v2:{{contract(0x[a-fA-F0-9]+)}}:{{id}}). \
+                 Invalid pointer: ({pointer})"
+            ));
+        };
+        let key = pointer.to_lowercase();
+        match &first {
+            None => first = Some((key, asset_type)),
+            Some((k, _)) => multiple |= *k != key,
+        }
+    }
+    let Some((_, asset_type)) = first.filter(|_| !multiple) else {
         return ValidationResponse::fail(format!(
-            "Only one pointer is allowed when you create an item. Received: {pointers:?}"
+            "Only one pointer is allowed when you create an item. Received: {}",
+            pointers.join(",")
+        ));
+    };
+    if !valid_types.contains(&asset_type) {
+        let valid: Vec<&str> = valid_types.iter().map(|t| t.as_str()).collect();
+        return ValidationResponse::fail(format!(
+            "For the entity type: {}, the asset with urn type: {} is invalid. \
+             Valid urn types for this entity: {}",
+            entity.entity_type,
+            asset_type.as_str(),
+            valid.join(",")
         ));
     }
 
     let pointer = &pointers[0];
 
-    let urn_type = classify_item_urn(pointer);
-    match urn_type {
-        ItemUrnType::Invalid => ValidationResponse::fail(format!(
-            "Item pointers should be a urn, for example \
-                 (urn:decentraland:{{protocol}}:collections-v2:{{contract(0x[a-fA-F0-9]+)}}:{{id}}). \
-                 Invalid pointer: ({pointer})"
-        )),
-        ItemUrnType::OffChain => {
+    match asset_type {
+        ItemAssetType::OffChain => {
             if !checker.is_address_owned_by_decentraland(deployer_address) {
                 return ValidationResponse::fail(format!(
                     "The provided Eth Address '{deployer_address}' does not have access \
@@ -434,14 +469,14 @@ pub async fn validate_item_access(
             }
             ValidationResponse::Ok
         }
-        ItemUrnType::CollectionV1 | ItemUrnType::CollectionV2 => {
+        ItemAssetType::CollectionV1 | ItemAssetType::CollectionV2 => {
             if let Some((contract, item_id, layer)) = parse_collection_urn(pointer) {
                 let has_access = match checker
                     .check_collection_access(
                         deployer_address,
                         &contract,
                         &item_id,
-                        entity,
+                        deployment,
                         entity.timestamp,
                         layer,
                     )
@@ -472,7 +507,7 @@ pub async fn validate_item_access(
 
             ValidationResponse::fail(format!("Could not parse collection URN: {pointer}"))
         }
-        ItemUrnType::ThirdParty => {
+        ItemAssetType::ThirdParty => {
             let verified = match checker
                 .check_third_party_access(pointer, entity, deployment, entity.timestamp)
                 .await
@@ -495,31 +530,88 @@ pub async fn validate_item_access(
     }
 }
 
+/// The `@dcl/urn-resolver` asset types an item pointer can name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ItemUrnType {
-    Invalid,
+pub enum ItemAssetType {
     OffChain,
     CollectionV1,
     CollectionV2,
     ThirdParty,
 }
 
-pub fn classify_item_urn(urn: &str) -> ItemUrnType {
-    let lower = urn.to_lowercase();
-    if lower.starts_with("urn:decentraland:off-chain:") {
-        ItemUrnType::OffChain
-    } else if lower.contains(":collections-v1:") {
-        ItemUrnType::CollectionV1
-    } else if lower.contains(":collections-v2:") {
-        ItemUrnType::CollectionV2
-    } else if lower.contains(":collections-thirdparty:") {
-        ItemUrnType::ThirdParty
-    } else {
-        ItemUrnType::Invalid
+impl ItemAssetType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::OffChain => "off-chain",
+            Self::CollectionV1 => "blockchain-collection-v1-asset",
+            Self::CollectionV2 => "blockchain-collection-v2-asset",
+            Self::ThirdParty => "blockchain-collection-third-party",
+        }
     }
 }
 
-fn parse_collection_urn(urn: &str) -> Option<(String, String, BlockchainLayer)> {
+const WEARABLE_ASSET_TYPES: &[ItemAssetType] = &[
+    ItemAssetType::OffChain,
+    ItemAssetType::CollectionV1,
+    ItemAssetType::CollectionV2,
+    ItemAssetType::ThirdParty,
+];
+const EMOTE_ASSET_TYPES: &[ItemAssetType] = &[
+    ItemAssetType::OffChain,
+    ItemAssetType::CollectionV2,
+    ItemAssetType::ThirdParty,
+];
+
+/// The networks `@dcl/urn-resolver` accepts in a collection URN.
+const URN_NETWORKS: &[&str] = &[
+    "ethereum", "goerli", "sepolia", "matic", "mumbai", "amoy", "arbitrum",
+];
+/// The networks with a third-party registry.
+const URN_TPR_NETWORKS: &[&str] = &["matic", "mumbai", "amoy"];
+
+fn is_hex_address_like(s: &str) -> bool {
+    s.strip_prefix("0x")
+        .is_some_and(|h| !h.is_empty() && h.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+fn is_decimal(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// The `@dcl/urn-resolver` type of an item pointer when it names an asset
+/// (no token id); `None` for anything else, an item URN included.
+pub fn item_asset_urn_type(urn: &str) -> Option<ItemAssetType> {
+    let lower = urn.to_lowercase();
+    let path = lower.strip_prefix("urn:")?;
+    let path = path.split(['?', '#']).next().unwrap_or_default();
+    let parts: Vec<&str> = path.split(':').collect();
+    if parts.iter().any(|p| p.is_empty()) || parts.first() != Some(&"decentraland") {
+        return None;
+    }
+    match parts.as_slice() {
+        ["decentraland", "off-chain", _, _] => Some(ItemAssetType::OffChain),
+        ["decentraland", network, "collections-v1", collection, _] => {
+            let by_contract = is_hex_address_like(collection) && URN_NETWORKS.contains(network);
+            (by_contract || *network == "ethereum").then_some(ItemAssetType::CollectionV1)
+        }
+        ["decentraland", network, "collections-v2", contract, id] => (URN_NETWORKS
+            .contains(network)
+            && is_hex_address_like(contract)
+            && (is_hex_address_like(id) || is_decimal(id)))
+        .then_some(ItemAssetType::CollectionV2),
+        ["decentraland", network, "collections-thirdparty", _, _, _] => URN_TPR_NETWORKS
+            .contains(network)
+            .then_some(ItemAssetType::ThirdParty),
+        _ => None,
+    }
+}
+
+fn is_off_chain_urn(urn: &str) -> bool {
+    urn.to_lowercase()
+        .starts_with("urn:decentraland:off-chain:")
+}
+
+pub(super) fn parse_collection_urn(urn: &str) -> Option<(String, String, BlockchainLayer)> {
     let lower = urn.to_lowercase();
     let parts: Vec<&str> = lower.split(':').collect();
 
@@ -609,7 +701,7 @@ fn extract_profile_item_urns(metadata: &serde_json::Value, timestamp: Timestamp)
             {
                 for w in wearables {
                     if let Some(urn) = w.as_str()
-                        && classify_item_urn(urn) != ItemUrnType::OffChain
+                        && !is_off_chain_urn(urn)
                         && !is_old_emote(urn)
                     {
                         urns.push(urn.to_string());
@@ -625,7 +717,7 @@ fn extract_profile_item_urns(metadata: &serde_json::Value, timestamp: Timestamp)
             {
                 for emote in emotes {
                     if let Some(urn) = emote.get("urn").and_then(|u| u.as_str())
-                        && classify_item_urn(urn) != ItemUrnType::OffChain
+                        && !is_off_chain_urn(urn)
                         && !is_old_emote(urn)
                     {
                         urns.push(urn.to_string());
@@ -648,7 +740,7 @@ fn extract_outfit_wearable_urns(metadata: &serde_json::Value) -> Vec<String> {
             {
                 for w in wearables {
                     if let Some(urn) = w.as_str()
-                        && classify_item_urn(urn) != ItemUrnType::OffChain
+                        && !is_off_chain_urn(urn)
                         && !is_old_emote(urn)
                     {
                         urns.push(urn.to_string());
@@ -742,28 +834,289 @@ mod tests {
     }
 
     #[test]
-    fn classify_collection_urns() {
-        assert_eq!(
-            classify_item_urn("urn:decentraland:off-chain:base-avatars:f_hat"),
-            ItemUrnType::OffChain
-        );
-        assert_eq!(
-            classify_item_urn(
-                "urn:decentraland:ethereum:collections-v1:community_contest:cw_bell_attendant_hat"
+    fn item_pointers_resolve_to_asset_urn_types() {
+        let cases = [
+            (
+                "urn:decentraland:off-chain:base-avatars:f_hat",
+                Some(ItemAssetType::OffChain),
             ),
-            ItemUrnType::CollectionV1
-        );
-        assert_eq!(
-            classify_item_urn("urn:decentraland:matic:collections-v2:0xabc123:0"),
-            ItemUrnType::CollectionV2
-        );
-        assert_eq!(
-            classify_item_urn(
-                "urn:decentraland:matic:collections-thirdparty:tp-name:collection:item"
+            (
+                "urn:decentraland:ethereum:collections-v1:community_contest:hat",
+                Some(ItemAssetType::CollectionV1),
             ),
-            ItemUrnType::ThirdParty
+            (
+                "urn:decentraland:matic:collections-v1:community_contest:hat",
+                None,
+            ),
+            (
+                "urn:decentraland:sepolia:collections-v1:0xabc123:hat",
+                Some(ItemAssetType::CollectionV1),
+            ),
+            (
+                "urn:decentraland:matic:collections-v2:0xabc123:0",
+                Some(ItemAssetType::CollectionV2),
+            ),
+            (
+                "urn:decentraland:matic:collections-v2:0xabc123:0x1f",
+                Some(ItemAssetType::CollectionV2),
+            ),
+            ("urn:decentraland:matic:collections-v2:0xabc123:0:12", None),
+            ("urn:decentraland:matic:collections-v2:0xabc123:abc", None),
+            ("urn:decentraland:mainnet:collections-v2:0xabc123:0", None),
+            ("urn:decentraland:matic:collections-v2:0xabc123", None),
+            (
+                "urn:decentraland:amoy:collections-thirdparty:tp:col:item",
+                Some(ItemAssetType::ThirdParty),
+            ),
+            (
+                "urn:decentraland:sepolia:collections-thirdparty:tp:col:item",
+                None,
+            ),
+            (
+                "urn:decentraland:amoy:collections-thirdparty:tp:col:item:amoy:0xabc:1",
+                None,
+            ),
+            ("urn:decentraland:amoy:collections-thirdparty:tp:col", None),
+            ("urn:decentraland:sepolia:parcel:0,0", None),
+            ("not-a-urn", None),
+        ];
+        for (urn, expected) in cases {
+            assert_eq!(item_asset_urn_type(urn), expected, "{urn}");
+        }
+    }
+
+    /// Item access without a chain: refuses nothing it is asked when it
+    /// `grants`, and records what it was asked.
+    #[derive(Default)]
+    struct ItemChain {
+        grants: bool,
+        asked: std::sync::Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl BlockchainChecker for ItemChain {
+        async fn check_land_access(
+            &self,
+            _: &str,
+            _: &[(i32, i32)],
+            _: Timestamp,
+        ) -> Result<Vec<bool>, ValidatorError> {
+            unreachable!()
+        }
+        async fn check_names_ownership(
+            &self,
+            _: &str,
+            _: &[String],
+            _: Timestamp,
+        ) -> Result<PermissionResult, ValidatorError> {
+            unreachable!()
+        }
+        async fn check_items_ownership(
+            &self,
+            _: &str,
+            _: &[String],
+            _: Timestamp,
+        ) -> Result<PermissionResult, ValidatorError> {
+            unreachable!()
+        }
+        async fn check_collection_access(
+            &self,
+            _: &str,
+            contract: &str,
+            item: &str,
+            _: &Deployment<'_>,
+            _: Timestamp,
+            layer: BlockchainLayer,
+        ) -> Result<bool, ValidatorError> {
+            assert!(self.grants);
+            let asked = format!("collection {contract} {item} {layer:?}");
+            self.asked.lock().unwrap().push(asked);
+            Ok(true)
+        }
+        async fn check_third_party_access(
+            &self,
+            pointer: &str,
+            _: &Entity,
+            _: &Deployment<'_>,
+            _: Timestamp,
+        ) -> Result<bool, ValidatorError> {
+            assert!(self.grants);
+            let asked = format!("third-party {pointer}");
+            self.asked.lock().unwrap().push(asked);
+            Ok(true)
+        }
+        fn is_address_owned_by_decentraland(&self, _: &str) -> bool {
+            self.grants
+        }
+    }
+
+    async fn item_access_errors(etype: EntityType, pointers: &[&str]) -> Vec<String> {
+        let mut deployment = ownership_deployment(etype, pointers[0]);
+        deployment.entity.pointers = pointers.iter().map(|p| p.to_string()).collect();
+        match validate_item_access(&deployment.view(), &ItemChain::default(), "0xabc").await {
+            ValidationResponse::Failed { errors } => errors,
+            other => panic!("expected a rejection, got {other}"),
+        }
+    }
+
+    /// A pointer of an accepted asset type reaches the access check of its type.
+    #[tokio::test]
+    async fn accepted_item_pointers_reach_their_access_check() {
+        let cases = [
+            (
+                EntityType::Wearable,
+                "urn:decentraland:matic:collections-v2:0xAbC123:0",
+                Some("collection 0xabc123 0 L2"),
+            ),
+            (
+                EntityType::Emote,
+                "urn:decentraland:matic:collections-v2:0xabc123:7",
+                Some("collection 0xabc123 7 L2"),
+            ),
+            (
+                EntityType::Wearable,
+                "urn:decentraland:ethereum:collections-v1:community_contest:hat",
+                Some("collection community_contest hat L1"),
+            ),
+            (
+                EntityType::Emote,
+                "urn:decentraland:amoy:collections-thirdparty:tp:col:item",
+                Some("third-party urn:decentraland:amoy:collections-thirdparty:tp:col:item"),
+            ),
+            (
+                EntityType::Wearable,
+                "urn:decentraland:amoy:collections-thirdparty:tp:col:item",
+                Some("third-party urn:decentraland:amoy:collections-thirdparty:tp:col:item"),
+            ),
+            (
+                EntityType::Emote,
+                "urn:decentraland:off-chain:base-emotes:wave",
+                None,
+            ),
+        ];
+        for (etype, pointer, asked) in cases {
+            let chain = ItemChain {
+                grants: true,
+                ..ItemChain::default()
+            };
+            let deployment = ownership_deployment(etype, pointer);
+            let result = validate_item_access(&deployment.view(), &chain, "0xabc").await;
+            assert!(result.is_ok(), "{etype} {pointer}: {result}");
+            assert_eq!(
+                *chain.asked.lock().unwrap(),
+                asked.into_iter().map(String::from).collect::<Vec<_>>(),
+                "{pointer}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_emote_cannot_point_at_a_collections_v1_asset() {
+        let errors = item_access_errors(
+            EntityType::Emote,
+            &["urn:decentraland:ethereum:collections-v1:community_contest:hat"],
+        )
+        .await;
+        assert_eq!(
+            errors,
+            vec![
+                "For the entity type: emote, the asset with urn type: blockchain-collection-v1-asset \
+                 is invalid. Valid urn types for this entity: \
+                 off-chain,blockchain-collection-v2-asset,blockchain-collection-third-party"
+                    .to_string()
+            ]
         );
-        assert_eq!(classify_item_urn("not-a-urn"), ItemUrnType::Invalid);
+    }
+
+    #[tokio::test]
+    async fn an_item_urn_with_a_token_id_is_not_an_item_pointer() {
+        let pointer = "urn:decentraland:matic:collections-v2:0xabc123:0:12";
+        let errors = item_access_errors(EntityType::Wearable, &[pointer]).await;
+        assert_eq!(
+            errors,
+            vec![format!(
+                "Item pointers should be a urn, for example \
+                 (urn:decentraland:{{protocol}}:collections-v2:{{contract(0x[a-fA-F0-9]+)}}:{{id}}). \
+                 Invalid pointer: ({pointer})"
+            )]
+        );
+    }
+
+    #[tokio::test]
+    async fn two_item_pointers_are_refused_in_the_reference_format() {
+        let errors = item_access_errors(
+            EntityType::Wearable,
+            &[
+                "urn:decentraland:matic:collections-v2:0xabc123:0",
+                "urn:decentraland:matic:collections-v2:0xabc123:1",
+            ],
+        )
+        .await;
+        assert_eq!(
+            errors,
+            vec![
+                "Only one pointer is allowed when you create an item. Received: \
+                 urn:decentraland:matic:collections-v2:0xabc123:0,\
+                 urn:decentraland:matic:collections-v2:0xabc123:1"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn an_invalid_pointer_is_reported_before_the_pointer_count() {
+        let errors = item_access_errors(
+            EntityType::Wearable,
+            &[
+                "urn:decentraland:matic:collections-v2:0xabc123:0",
+                "urn:decentraland:matic:collections-v2:0xabc123:1",
+                "not-an-urn",
+            ],
+        )
+        .await;
+        assert_eq!(
+            errors,
+            vec![
+                "Item pointers should be a urn, for example \
+                 (urn:decentraland:{protocol}:collections-v2:{contract(0x[a-fA-F0-9]+)}:{id}). \
+                 Invalid pointer: (not-an-urn)"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_huge_pointer_list_is_refused_in_linear_time() {
+        let pointers: Vec<String> = (0..200_000)
+            .map(|i| format!("urn:decentraland:off-chain:base-avatars:item_{i}"))
+            .collect();
+        let refs: Vec<&str> = pointers.iter().map(String::as_str).collect();
+        let started = std::time::Instant::now();
+        let errors = item_access_errors(EntityType::Wearable, &refs).await;
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "took {:?}",
+            started.elapsed()
+        );
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].starts_with(
+            "Only one pointer is allowed when you create an item. Received: \
+             urn:decentraland:off-chain:base-avatars:item_0,\
+             urn:decentraland:off-chain:base-avatars:item_1,"
+        ));
+    }
+
+    #[test]
+    fn off_chain_urns_are_recognised_in_any_case() {
+        assert!(is_off_chain_urn(
+            "urn:decentraland:off-chain:base-avatars:f_hat"
+        ));
+        assert!(is_off_chain_urn(
+            "URN:Decentraland:Off-Chain:base-avatars:f_hat"
+        ));
+        assert!(!is_off_chain_urn(
+            "urn:decentraland:matic:collections-v2:0xabc123:0"
+        ));
     }
 
     #[test]

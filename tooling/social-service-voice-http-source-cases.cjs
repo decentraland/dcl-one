@@ -1,8 +1,18 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/voice-http-source-cases.json
 // Actual pinned HTTP controllers, schema validator and both error middlewares;
 // community domain is real with deterministic dependencies, private outcomes injected.
+const { requireNode26, sourceCapture } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-voice-http-source-cases.cjs <upstream-checkout> <output.json>')
 const fs = require('node:fs')
-const { req, load, logs, caller, target, community, revision, components } = require('./social-service-voice-source-cases.cjs')
+const { req, load, revision } = sourceCapture(process.argv[2])
+const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
+const caller = '0x1111111111111111111111111111111111111111'
+const target = '0x2222222222222222222222222222222222222222'
+const community = '33333333-3333-4333-8333-333333333333'
+const { createCommunityVoiceFixtures } = require('./social-voice-fixtures.cjs')
+const components = createCommunityVoiceFixtures({ load, logs })
 const call = 'a4444444-4444-4444-8444-444444444444'
 const schema = load('controllers/handlers/http/schemas.ts')
 const validator = req('@dcl/schema-validator-component').createSchemaValidatorComponent({ ensureJsonContentType: false })

@@ -1,9 +1,14 @@
 // Node26; actual shared registry adapter, community wrappers and HTTP handlers.
 // Usage: node <this> <pinned-source-root> <output>. All providers are local.
+const { sourceCapture, SOCIAL_REVISION, sha256 } = require(
+  require("node:path").join(
+    require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
+    "tooling/social-capture-common.cjs",
+  ),
+);
+const capture = sourceCapture(process.argv[2]);
 const fs = require("fs"),
-  crypto = require("crypto"),
-  root = process.argv[2];
-require(root + "/node_modules/ts-node/register/transpile-only");
+  root = capture.upstream;
 const { createRegistryComponent } = require(root + "/src/adapters/registry.ts");
 const { createCommunityOwnersComponent } = require(
   root + "/src/logic/community/owners.ts",
@@ -225,16 +230,13 @@ const owner = "0x1111111111111111111111111111111111111111",
     JSON.stringify(
       {
         source: "https://github.com/decentraland/social-service-ea",
-        revision: "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+        revision: SOCIAL_REVISION,
         runtime: process.version,
         scope:
           "Actual shared registry adapter, community wrappers and HTTP handlers; local cache/fetch/domain dependencies. Read failures propagate; cache put failures are swallowed. The mGet Error message is chosen to match the target SQL permission fault; the source cache provider is Redis, not SQL.",
         sources: paths.map((path) => ({
           path,
-          sha256: crypto
-            .createHash("sha256")
-            .update(fs.readFileSync(root + "/" + path))
-            .digest("hex"),
+          sha256: sha256(root, path),
         })),
         cases,
       },

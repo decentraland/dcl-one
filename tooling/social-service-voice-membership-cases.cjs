@@ -1,8 +1,13 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/source-contracts/voice-membership.json
 // Actual source update handler and membership generator; their database page
 // provider is injected to fail on the second read. No network calls.
-const fs = require('node:fs'), path = require('node:path'), crypto = require('node:crypto')
-const { req, load, logs, revision, upstream } = require('./social-service-voice-source-cases.cjs')
+const { requireNode26, sourceCapture, sha256 } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-voice-membership-cases.cjs <upstream-checkout> <output.json>')
+const fs = require('node:fs')
+const { req, load, revision, upstream } = sourceCapture(process.argv[2])
+const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
 const proto = req('@dcl/protocol/out-js/decentraland/social_service/v2/social_service_v2.gen')
 const community = '31333333-3333-4333-8333-333333333333'
 const subscribers = Array.from({length:514}, (_, index) => `0x${(index+1).toString(16).padStart(40,'0')}`)
@@ -47,8 +52,8 @@ async function main() {
       emissions:[...groups].sort(([a],[b])=>a.localeCompare(b)).map(([wire_hex,addresses])=>({wire_hex,addresses:addresses.sort()}))})
   }
   const sources=['src/logic/updates.ts','src/logic/community/members.ts']
-  fs.writeFileSync(process.argv[3],JSON.stringify({baseline:{repository:'decentraland/social-service-ea',revision,yarn_lock_sha256:crypto.createHash('sha256').update(fs.readFileSync(path.join(upstream,'yarn.lock'))).digest('hex'),
-    sources:sources.map(file=>({path:file,sha256:crypto.createHash('sha256').update(fs.readFileSync(path.join(upstream,file))).digest('hex')}))},runtime:{node:process.version},
+  fs.writeFileSync(process.argv[3],JSON.stringify({baseline:{repository:'decentraland/social-service-ea',revision,yarn_lock_sha256:sha256(upstream, 'yarn.lock'),
+    sources:sources.map(file=>({path:file,sha256:sha256(upstream, file)}))},runtime:{node:process.version},
     scope:'Actual source update handler plus actual 100-row community membership generator. The database page provider is injected with 514 known members and a selected failure. Captures complete recipient/wire payload groups and emission counts before every source read. No deployed Redis/SQL/NATS equivalence or identical physical page size is claimed.',community,creator,subscribers,cases},null,2)+'\n')
   process.stdout.write(`Captured ${cases.length} membership-boundary source cases for ${subscribers.length-1} eligible subscribers\n`)
 }

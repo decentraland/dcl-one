@@ -1,13 +1,18 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/private-id-source-cases.json
 // Executes the pinned private voice database, domain and RPC components against
 // an owned temporary PostgreSQL database. Media HTTP replies are deterministic.
+const { requireNode26, sourceCapture, requireDatabaseUrl } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-private-id-cases.cjs <upstream-checkout> <output.json>')
+const databaseUrl = requireDatabaseUrl(process.env.CATALYST_TEST_DATABASE_URL)
 const fs = require('node:fs')
-const path = require('node:path')
 const { randomUUID } = require('node:crypto')
-const { req, load, logs, caller, target, revision } = require('./social-service-voice-source-cases.cjs')
+const { req, load, revision } = sourceCapture(process.argv[2])
+const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
+const caller = '0x1111111111111111111111111111111111111111'
+const target = '0x2222222222222222222222222222222222222222'
 const output = process.argv[3]
-const databaseUrl = process.env.CATALYST_TEST_DATABASE_URL
-if (!databaseUrl) throw Error('CATALYST_TEST_DATABASE_URL is required; capture never silently skips')
 const { Pool } = req('pg')
 const proto = req('@dcl/protocol/out-js/decentraland/social_service/v2/social_service_v2.gen')
 const call = 'a4444444-4444-4444-8444-444444444444'

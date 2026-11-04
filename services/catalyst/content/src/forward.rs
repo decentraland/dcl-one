@@ -138,7 +138,7 @@ impl Lane {
 /// `content.forward_outbox` to `<upstream>/content/entities`. The source is
 /// the deployment while nothing overwrote it and its scene was not
 /// unpublished (`DELETE /scenes/{coord}` tombstones the provenance row and
-/// leaves `deleter_deployment` alone).
+/// leaves the scene's own `deleter_deployment` alone).
 pub const CONTENT_LANE: Lane = Lane {
     job: "content-forward",
     table: "content.forward_outbox",

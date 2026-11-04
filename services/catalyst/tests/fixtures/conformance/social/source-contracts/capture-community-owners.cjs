@@ -1,8 +1,14 @@
 // Executes the pinned registry, owner component, community component and HTTP handlers.
 // Usage: TS_NODE_COMPILER_OPTIONS='{"module":"CommonJS","moduleResolution":"node"}' node <script> <social-root> <output-json>
+const { sourceCapture, SOCIAL_REVISION } = require(
+  require("node:path").join(
+    require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
+    "tooling/social-capture-common.cjs",
+  ),
+);
+const capture = sourceCapture(process.argv[2]);
 const fs = require("fs");
-const root = process.argv[2];
-require(root + "/node_modules/ts-node/register/transpile-only");
+const root = capture.upstream;
 const { createRegistryComponent } = require(root + "/src/adapters/registry.ts");
 const { createCommunityOwnersComponent } = require(
   root + "/src/logic/community/owners.ts",
@@ -127,7 +133,7 @@ const logs = {
     JSON.stringify(
       {
         source: "decentraland/social-service-ea",
-        revision: "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+        revision: SOCIAL_REVISION,
         node: process.version,
         owner,
         alias,

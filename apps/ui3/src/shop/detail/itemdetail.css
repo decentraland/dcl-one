@@ -170,6 +170,8 @@
   margin-bottom: 12px;
 }
 
+/* The pill holds the heart button and, from one save up, the count button: each fills its half, so the whole pill
+   stays clickable and the gap and paddings are theirs. At zero the count sits inside the heart, which saves. */
 .shop-pdp .shop-fav {
   flex: none;
   min-width: 40px;
@@ -179,22 +181,52 @@
   border-radius: 50px;
   background: rgba(255, 255, 255, 0.16);
   display: inline-flex;
+  align-items: stretch;
+  justify-content: center;
+  color: var(--pdp-soft);
+  font: inherit;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.shop-pdp .shop-fav__heart,
+.shop-pdp button.shop-fav__count {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  color: var(--pdp-soft);
-  font: inherit;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50px;
+  background: none;
+  font-family: inherit;
   cursor: pointer;
-  transition: color 0.12s ease, background 0.12s ease;
 }
-.shop-pdp .shop-fav[data-count] {
+/* The heart takes the pill's colour (red once saved); the count keeps .shop-fav__count's own size, weight and colour. */
+.shop-pdp .shop-fav__heart {
+  min-width: 40px;
+  color: inherit;
+  font: inherit;
+}
+.shop-pdp .shop-fav[data-count="0"] .shop-fav__heart {
   padding: 0 14px 0 12px;
 }
-.shop-pdp .shop-fav:hover:not(:disabled) {
+.shop-pdp .shop-fav[data-count]:not([data-count="0"]) .shop-fav__heart {
+  min-width: 0;
+  padding: 0 3px 0 12px;
+}
+.shop-pdp button.shop-fav__count {
+  padding: 0 14px 0 3px;
+}
+.shop-pdp .shop-fav:hover:not([data-busy]) {
   background: rgba(255, 255, 255, 0.28);
 }
-.shop-pdp .shop-fav:disabled {
+.shop-pdp .shop-fav__heart:disabled {
   cursor: default;
+}
+.shop-pdp .shop-fav__heart:focus-visible,
+.shop-pdp button.shop-fav__count:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 .shop-pdp .shop-fav[data-on] {
   color: var(--pdp-red);
