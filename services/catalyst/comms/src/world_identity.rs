@@ -104,7 +104,7 @@ impl WorldName {
 
     /// The DCL NAME whose holder owns this world: `Some` only under
     /// `.dcl.eth`, so `foo` is never owned by the holder of `foo.dcl.eth`.
-    /// ENS (`*.eth`) worlds have no owner label (fail closed until resolved).
+    /// ENS worlds ([`Self::is_ens_world`]) are owned through the ENS registry.
     pub fn owner_label(&self) -> Option<&str> {
         self.key
             .strip_suffix(DCL_ETH_SUFFIX)
@@ -113,6 +113,15 @@ impl WorldName {
 
     pub fn is_dcl_eth(&self) -> bool {
         self.key.ends_with(DCL_ETH_SUFFIX)
+    }
+
+    /// An ENS world: a `*.eth` name outside `.dcl.eth` with no empty label.
+    pub fn is_ens_world(&self) -> bool {
+        !self.is_dcl_eth()
+            && self
+                .key
+                .strip_suffix(".eth")
+                .is_some_and(|rest| rest.split('.').all(|label| !label.is_empty()))
     }
 
     /// A DCL NAME's world or a personal world, in the form a worlds content
@@ -544,6 +553,27 @@ mod tests {
         }
         for bad in ["", "   ", "foo bar", "a/b", "x\ny"] {
             assert!(WorldName::parse(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn ens_worlds_are_eth_names_outside_dcl_eth() {
+        for ens in ["vitalik.eth", "Sub.Name.ETH", "dcl.eth", "foo.dcl.eth.eth"] {
+            assert!(WorldName::parse(ens).unwrap().is_ens_world(), "{ens}");
+        }
+        for not_ens in [
+            "foo.dcl.eth",
+            ".eth",
+            "eth",
+            "rt..eth",
+            ".x.eth",
+            "foo",
+            "foo.eth.x",
+        ] {
+            assert!(
+                !WorldName::parse(not_ens).unwrap().is_ens_world(),
+                "{not_ens}"
+            );
         }
     }
 

@@ -25,14 +25,14 @@
 //!
 //! | question | order of evidence | answer |
 //! |---|---|---|
-//! | [`Policy::is_owner`] (world, actor): the owner question of every mutation (publish, permission and settings edits, unpublish, storage clears) | 1. personal world (`<addr>.dcl.eth`, only when the personal-worlds policy is enabled): the label is the owner. 2. the name authority: `owned_names(actor)` contains the label right now (the old deploy's `resolve_name_owner_id` through squid). 3. only without a configured names reader: `worlds.owner` (the old permission routes' degrade). | 1: compare; 2: `Allowed` / refused, a reader fault is undetermined (503 on the routes, 403 fail-closed on a publish); 3: compare, refused when unset |
+//! | [`Policy::is_owner`] (world, actor): the owner question of every mutation (publish, permission and settings edits, unpublish, storage clears) | 1. personal world (`<addr>.dcl.eth`, only when the personal-worlds policy is enabled): the label is the owner. 2. the name authority: `owned_names(actor)` contains the label right now (the old deploy's `resolve_name_owner_id` through squid); an ENS world (`ALLOW_ENS_DOMAINS`): the ENS registry's holder ([`crate::ens`]). 3. only without a configured names reader: `worlds.owner` (the old permission routes' degrade). | 1: compare; 2: `Allowed` / refused, a reader fault is undetermined (503 on the routes, 403 fail-closed on a publish); 3: compare, refused when unset |
 //! | [`Policy::can_deploy`] (world, actor, footprint) | 1. personal world: the actor is its owner and the realm cap admits it (a world already published here is always admitted; otherwise the count of personal worlds published here, mirrored copies excluded, must be below the cap). 2. else the name authority names the actor as the label's holder; **no names reader denies outright** (the old squid-less node denied every non-personal publish). 3. else a `deployment` grant covering the footprint **and** every parcel of every already-deployed scene it overlaps. | 1/2: `Deploy::Owner` (replaces every overlapping scene, and the publish rewrites `worlds.owner` from this answer, so a NAME transfer flips ownership on the new holder's next publish); 3: `Deploy::Scoped(overlapping ids)` (may replace exactly those); a lookup fault is undetermined (the old route rendered it 403 "could not verify", fail-closed) |
 //! | [`Policy::can_stream`] (world, actor, parcels) | the owner, else a `streaming` grant covering the parcels (world-wide when none are given) | `Allowed` / refused |
-//! | [`Policy::can_access`] (world, actor, secret, scene) | 1. `worlds.blocked_wallets` or an in-force `social.user_bans` row (address or recorded device) → banned from the platform. 2. a `social.scene_bans` row for the resolved scene → banned from the world. 3. the cached owner (the personal rule, `worlds.owner`; the authority only for a world never published here, as the old comms read the permissions document's owner) → allowed. 4. the access setting: `unrestricted` → allowed; `allow-list` → the actor holds an `access` grant, else is a member of a listed active community (`social.community_members`, not banned); `shared-secret` → bcrypt-verify the presented secret; `nft-ownership` → refused (the old code never checked ownership). An unknown world is unrestricted with no owner (the old lookup's default). | [`Access`] |
+//! | [`Policy::can_access`] (world, actor, secret, scene) | 1. `worlds.blocked_wallets` or an in-force `social.user_bans` row (address or recorded device) → banned from the platform. 2. a `social.scene_bans` row for the resolved scene → banned from the world. 3. the current holder ([`Policy::current_owner`]: the personal rule, else the name authority by name, memoized briefly; `worlds.owner` only without a reader) → allowed; an authority fault falls through to the access setting and is undetermined only when that refuses. 4. the access setting: `unrestricted` → allowed; `allow-list` → the actor holds an `access` grant, else is a member of a listed active community (`social.community_members`, not banned); `shared-secret` → bcrypt-verify the presented secret; `nft-ownership` → refused (the old code never checked ownership). An unknown world is unrestricted with no owner (the old lookup's default). | [`Access`] |
 //! | [`Policy::is_admin`] (scene, actor) | 1. an active `social.scene_admins` row keyed by the scene id (comms' write). 2. world scene: the world's owner. Genesis scene: LAND ownership at any of its parcels (directly or through the estate) through the marketplace reader. | `Allowed` / refused; a reader fault is undetermined; no reader configured refuses non-admins (the old degrade) |
 //! | [`Policy::may_manage_land_storage`] (parcel, actor): the storage routes' Genesis cell | never a scene admin: the LAND manager document of `parcel` ([`LandOperatorsReader`], the lambdas `/parcels/{x}/{y}/operators` comms reads for its protected set): owner (the estate's owner when the parcel sits in one), operator, updateOperator, an updateManager or an approvedForAll operator (the old world-storage `has_any()` matrix); with no document source, LAND ownership at `parcel` through the marketplace reader. | `Allowed` / refused; a reader fault is undetermined; no source configured refuses |
 //! | [`Policy::is_banned`] (actor, scene, device, now) | worlds `blocked_wallets`, then the comms-owned `BanStatus` answer for platform/device and scene bans | the first [`Ban`] in that order, or none |
-//! | [`Policy::protected_addresses`] (world, parcels) | the stored/personal owner plus every `deployment`/`streaming` grantee whose grant is world-wide or touches one of the parcels | the set (the old extra addresses; the name authority's owner is covered by `is_owner` on the target) |
+//! | [`Policy::protected_addresses`] (world, parcels) | the current holder ([`Policy::current_owner`]) plus every `deployment`/`streaming` grantee whose grant is world-wide or touches one of the parcels | the set (the old extra addresses; the name authority's owner is covered by `is_owner` on the target) |
 //!
 //! Left to the routes: rate limiting of shared-secret attempts, the world
 //! capacity check (presence), the external wallet denylist, the EIP-712
@@ -49,6 +49,7 @@ use sqlx::Row;
 use crate::chain_index::ChainIndex;
 use crate::comms::gatekeeper::moderation::{BanStatus, Moderation};
 use crate::comms::world_identity::{Parcel, ParcelSet, SceneId, WorldName};
+use crate::ens::EnsResolver;
 use crate::http::Outbound;
 use crate::land_authz::{self, LandAuthzState};
 use crate::shared::cache::TtlMap;
@@ -79,6 +80,8 @@ pub struct WorldRow {
 
 /// A scene's size cap (WCS `MAX_SCENE_SIZE`, 500 MiB).
 pub const MAX_WORLD_SIZE_BYTES: i64 = 500 * 1024 * 1024;
+/// `ENS_MAX_SIZE`'s default (36 MiB), as the old service's.
+pub const DEFAULT_ENS_MAX_SIZE_BYTES: i64 = 36 * 1024 * 1024;
 pub const DEFAULT_PERSONAL_WORLD_MAX_SIZE_BYTES: i64 = 50 * 1024 * 1024;
 /// `MAX_PARCELS`' default, as the old service's.
 pub const DEFAULT_MAX_PARCELS: u32 = 4;
@@ -89,7 +92,7 @@ pub const DEFAULT_MAX_PARCELS: u32 = 4;
 pub struct WorldLimits {
     pub max_parcels: u32,
     pub max_size_bytes: i64,
-    /// The size came from an override row (no owner allowance applies).
+    /// The size is fixed: an override row or the ENS cap (no owner allowance applies).
     pub size_overridden: bool,
 }
 
@@ -292,6 +295,10 @@ pub struct Policy {
     land_authz: Option<Arc<LandAuthzState>>,
     /// `MAX_PARCELS`: a scene's parcel cap where no override row says otherwise.
     max_parcels: u32,
+    /// `ALLOW_ENS_DOMAINS`: the ENS owner reader; `None` leaves ENS worlds unowned.
+    ens: Option<Arc<EnsResolver>>,
+    /// `ENS_MAX_SIZE`: an ENS world's size cap.
+    ens_max_size_bytes: i64,
 }
 
 impl Policy {
@@ -321,7 +328,32 @@ impl Policy {
             land_operators: None,
             land_authz: None,
             max_parcels: DEFAULT_MAX_PARCELS,
+            ens: None,
+            ens_max_size_bytes: DEFAULT_ENS_MAX_SIZE_BYTES,
         }
+    }
+
+    /// Turns on ENS worlds with their owner reader and size cap.
+    pub fn with_ens(mut self, ens: Option<Arc<EnsResolver>>, max_size_bytes: i64) -> Self {
+        self.ens = ens;
+        self.ens_max_size_bytes = max_size_bytes;
+        self
+    }
+
+    /// Whether ENS (`*.eth`) worlds are published and owned here.
+    pub fn ens_enabled(&self) -> bool {
+        self.ens.is_some()
+    }
+
+    /// Whether any authority can name an owner of `world`: a `.dcl.eth`
+    /// label, or an ENS name while ENS worlds are enabled.
+    pub(crate) fn ownable(&self, world: &WorldName) -> bool {
+        world.owner_label().is_some() || (world.is_ens_world() && self.ens_enabled())
+    }
+
+    /// Whether `world`'s owner comes from a live authority (else `worlds.owner`).
+    pub(crate) fn has_live_authority(&self, world: &WorldName) -> bool {
+        world.is_ens_world() || self.names_reader().is_some()
     }
 
     pub fn with_max_parcels(mut self, max_parcels: u32) -> Self {
@@ -400,6 +432,9 @@ impl Policy {
 
     /// The size cap a publish to `world` must stay under.
     pub fn world_size_cap(&self, world: &WorldName) -> i64 {
+        if world.is_ens_world() {
+            return self.ens_max_size_bytes;
+        }
         self.personal_worlds
             .size_cap_for(world, MAX_WORLD_SIZE_BYTES)
     }
@@ -418,7 +453,7 @@ impl Policy {
         Ok(WorldLimits {
             max_parcels: parcels.map_or(self.max_parcels, |n| n as u32),
             max_size_bytes: size.unwrap_or_else(|| self.world_size_cap(world)),
-            size_overridden: size.is_some(),
+            size_overridden: size.is_some() || world.is_ens_world(),
         })
     }
 
@@ -429,20 +464,14 @@ impl Policy {
         &self,
         world: &WorldName,
     ) -> Result<Option<Address>, AuthorityNotEstablished> {
-        if let Some(owner) = self.personal_worlds.owner_of(world) {
-            return Ok(Some(owner));
-        }
-        if let Some(market) = self.names_reader() {
-            let holder = crate::chain_index::graph::name_owner(market, world.label())
+        let row = if self.has_live_authority(world) {
+            None
+        } else {
+            self.world(world)
                 .await
-                .map_err(|e| reader_unavailable("marketplace names reader", &e))?;
-            return Ok(holder.and_then(|h| Address::parse(&h).ok()));
-        }
-        let row = self
-            .world(world)
-            .await
-            .map_err(|e| store_unavailable("worlds.worlds", &e))?;
-        Ok(row.and_then(|r| r.owner))
+                .map_err(|e| store_unavailable("worlds.worlds", &e))?
+        };
+        self.current_owner(world, row.as_ref()).await
     }
 
     pub async fn world(&self, world: &WorldName) -> Result<Option<WorldRow>, sqlx::Error> {
@@ -476,7 +505,9 @@ impl Policy {
     /// knows; the old GET /permissions resolved that by name through squid,
     /// a by-name reader v2 does not have).
     pub fn known_owner(&self, world: &WorldName, row: Option<&WorldRow>) -> Option<Address> {
-        world.owner_label()?;
+        if !self.ownable(world) {
+            return None;
+        }
         self.personal_worlds
             .owner_of(world)
             .or_else(|| row.and_then(|r| r.owner.clone()))
@@ -492,7 +523,8 @@ impl Policy {
         if let Some(owner) = self.known_owner(world, row) {
             return Some(owner);
         }
-        if !world.is_dcl_world_name() || self.names_reader().is_none() {
+        let dcl_reader = world.is_dcl_world_name() && self.names_reader().is_some();
+        if !dcl_reader && !world.is_ens_world() {
             return None;
         }
         self.live_name_owner(world).await.unwrap_or_else(|_| {
@@ -523,15 +555,19 @@ impl Policy {
     }
 
     /// The name authority's answer: does `actor` hold `world`'s label now?
-    async fn authority_owns(
-        &self,
-        market: &ChainIndex,
-        world: &WorldName,
-        actor: &Address,
-    ) -> PermissionDecision {
-        // Only `.dcl.eth` names have a NAME holder; ENS resolution would plug in here.
+    async fn authority_owns(&self, world: &WorldName, actor: &Address) -> PermissionDecision {
+        if world.is_ens_world() {
+            return match self.live_name_owner(world).await {
+                Ok(Some(owner)) if owner == *actor => PermissionDecision::Allowed,
+                Ok(_) => PermissionDecision::refused(NOT_OWNER_MSG),
+                Err(e) => PermissionDecision::Refused(e),
+            };
+        }
         let Some(label) = world.owner_label() else {
             return PermissionDecision::refused(NOT_OWNER_MSG);
+        };
+        let Some(market) = self.names_reader() else {
+            return PermissionDecision::refused(NO_NAME_AUTHORITY_MSG);
         };
         match crate::chain_index::graph::owned_names(market, actor.as_str()).await {
             Ok(names) if names.iter().any(|n| n.name.eq_ignore_ascii_case(label)) => {
@@ -545,8 +581,9 @@ impl Policy {
     }
 
     /// The NAME's current holder by the same authority as [`Self::is_owner`]:
-    /// the personal world's address, else the names reader; no reader or a
-    /// reader fault is undetermined, `Ok(None)` when nobody holds it.
+    /// the personal world's address, the ENS registry for an ENS world, else
+    /// the names reader; no reader or a reader fault is undetermined,
+    /// `Ok(None)` when nobody holds it (or no authority can own the name).
     pub async fn live_name_owner(
         &self,
         world: &WorldName,
@@ -554,13 +591,25 @@ impl Policy {
         if let Some(owner) = self.personal_worlds.owner_of(world) {
             return Ok(Some(owner));
         }
+        if world.is_ens_world() {
+            let Some(ens) = self.ens.as_ref() else {
+                return Ok(None);
+            };
+            return ens
+                .owner(world)
+                .await
+                .map_err(|e| reader_unavailable("ENS owner reader", &e));
+        }
+        let Some(label) = world.owner_label() else {
+            return Ok(None);
+        };
         let Some(market) = self.names_reader() else {
             return Err(reader_unavailable(
                 "marketplace names reader",
                 NO_NAME_AUTHORITY_MSG,
             ));
         };
-        match crate::chain_index::graph::name_owner(market, world.label()).await {
+        match crate::chain_index::graph::name_owner(market, label).await {
             Ok(Some(owner)) => Address::parse(&owner)
                 .map(Some)
                 .map_err(|e| reader_unavailable("marketplace names reader", &e.to_string())),
@@ -575,7 +624,7 @@ impl Policy {
     /// configured; with one, a transferred NAME refuses its previous holder
     /// at once (the reader memoizes for `marketplace::graph::OWNED_TTL`).
     pub async fn is_owner(&self, world: &WorldName, actor: &Address) -> PermissionDecision {
-        if world.owner_label().is_none() {
+        if !self.ownable(world) {
             return PermissionDecision::refused(NOT_OWNER_MSG);
         }
         if let Some(owner) = self.personal_worlds.owner_of(world) {
@@ -585,8 +634,8 @@ impl Policy {
                 PermissionDecision::refused(NOT_OWNER_MSG)
             };
         }
-        if let Some(market) = self.names_reader() {
-            return self.authority_owns(market, world, actor).await;
+        if self.has_live_authority(world) {
+            return self.authority_owns(world, actor).await;
         }
         let row = match self.world(world).await {
             Ok(row) => row,
@@ -625,33 +674,51 @@ impl Policy {
                 PermissionDecision::refused(NOT_OWNER_MSG)
             };
         }
-        let Some(market) = self.names_reader() else {
-            return PermissionDecision::refused(NO_NAME_AUTHORITY_MSG);
-        };
-        self.authority_owns(market, world, signer).await
+        if world.is_ens_world() {
+            return PermissionDecision::refused(NOT_OWNER_MSG);
+        }
+        self.authority_owns(world, signer).await
     }
 
-    /// The admission-time owner check: the cached owner ([`Self::known_owner`])
-    /// and the authority only for a world never published here. Every join
-    /// and mint asks this; the authority is not consulted per join.
-    async fn cached_owner_decision(
+    /// The holder admission and the access surfaces treat as owner: the
+    /// personal world's address, else the live authority by name
+    /// ([`Self::live_name_owner`], memoized per name), else, only without a
+    /// names reader, the stored `worlds.owner` of `row`. A stale row never
+    /// decides while an authority is configured.
+    pub async fn current_owner(
+        &self,
+        world: &WorldName,
+        row: Option<&WorldRow>,
+    ) -> Result<Option<Address>, AuthorityNotEstablished> {
+        if let Some(owner) = self.personal_worlds.owner_of(world) {
+            return Ok(Some(owner));
+        }
+        if !self.ownable(world) {
+            return Ok(None);
+        }
+        if self.has_live_authority(world) {
+            return self.live_name_owner(world).await;
+        }
+        Ok(row.and_then(|r| r.owner.clone()))
+    }
+
+    /// The admission-time owner check over [`Self::current_owner`].
+    async fn admission_owner_decision(
         &self,
         world: &WorldName,
         row: Option<&WorldRow>,
         actor: &Address,
     ) -> PermissionDecision {
-        if let Some(owner) = self.known_owner(world, row) {
-            return if owner == *actor {
-                PermissionDecision::Allowed
-            } else {
-                PermissionDecision::refused(NOT_OWNER_MSG)
-            };
+        match self.current_owner(world, row).await {
+            Ok(Some(owner)) if owner == *actor => PermissionDecision::Allowed,
+            Ok(Some(_)) => PermissionDecision::refused(NOT_OWNER_MSG),
+            Ok(None) if self.ownable(world) && !self.has_live_authority(world) => {
+                tracing::warn!(world = %world, "no marketplace names reader; NAME ownership denied (fail-closed)");
+                PermissionDecision::refused(NO_NAME_AUTHORITY_MSG)
+            }
+            Ok(None) => PermissionDecision::refused(NOT_OWNER_MSG),
+            Err(e) => PermissionDecision::Refused(e),
         }
-        let Some(market) = self.names_reader() else {
-            tracing::warn!(world = %world, "no marketplace names reader; NAME ownership denied (fail-closed)");
-            return PermissionDecision::refused(NO_NAME_AUTHORITY_MSG);
-        };
-        self.authority_owns(market, world, actor).await
     }
 
     /// Whether `actor` holds `permission` world-wide (no parcel scoping).
@@ -801,13 +868,13 @@ impl Policy {
                 }),
             };
         }
-        let Some(market) = self.names_reader() else {
+        if !self.has_live_authority(world) {
             tracing::warn!(world = %world, signer = %actor, "deploy denied: no marketplace names reader, cannot resolve NAME ownership (fail-closed)");
             return Err(AuthorityNotEstablished::RefusedLacksAuthority {
                 detail: format!("Not authorized: {NO_NAME_AUTHORITY_MSG} (deploy denied)"),
             });
-        };
-        match self.authority_owns(market, world, actor).await {
+        }
+        match self.authority_owns(world, actor).await {
             PermissionDecision::Allowed => return Ok(Deploy::Owner),
             PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority {
                 ..
@@ -891,15 +958,36 @@ impl Policy {
             .world(world)
             .await
             .map_err(|e| store_unavailable("worlds.worlds", &e))?;
-        match self.cached_owner_decision(world, row.as_ref(), actor).await {
+        // An authority fault denies owner-level entry, never the access setting's.
+        let owner_fault = match self
+            .admission_owner_decision(world, row.as_ref(), actor)
+            .await
+        {
             PermissionDecision::Allowed => return Ok(Access::Allowed(AccessGrant::Owner)),
             PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority {
                 ..
-            }) => {}
-            PermissionDecision::Refused(undetermined) => return Err(undetermined),
+            }) => None,
+            PermissionDecision::Refused(undetermined) => Some(undetermined),
+        };
+        let by_setting = self
+            .setting_access(world, row.as_ref(), actor, secret)
+            .await?;
+        match (by_setting, owner_fault) {
+            (granted @ Access::Allowed(_), _) => Ok(granted),
+            (refused, None) => Ok(refused),
+            (_, Some(undetermined)) => Err(undetermined),
         }
+    }
+
+    /// What the world's access setting alone answers for `actor`.
+    async fn setting_access(
+        &self,
+        world: &WorldName,
+        row: Option<&WorldRow>,
+        actor: &Address,
+        secret: Option<&str>,
+    ) -> Result<Access, AuthorityNotEstablished> {
         let access_type = row
-            .as_ref()
             .map(|r| r.access_type)
             .unwrap_or(AccessType::Unrestricted);
         Ok(match access_type {
@@ -923,7 +1011,7 @@ impl Policy {
                 }
             }
             AccessType::SharedSecret => {
-                let hash = row.as_ref().and_then(|r| r.access_secret_hash.as_deref());
+                let hash = row.and_then(|r| r.access_secret_hash.as_deref());
                 match (hash, secret) {
                     (Some(hash), Some(secret)) if bcrypt::verify(secret, hash).unwrap_or(false) => {
                         Access::Allowed(AccessGrant::SharedSecret)
@@ -1044,7 +1132,7 @@ impl Policy {
     }
 
     /// The addresses a world's other permission surfaces protect from a scene
-    /// ban: the known owner and every deployment/streaming grantee whose
+    /// ban: the current holder ([`Self::current_owner`]) and every deployment/streaming grantee whose
     /// grant is world-wide or touches one of `parcels` (the old
     /// `/permissions/{perm}/parcels` listing plus the document's owner).
     pub async fn protected_addresses(
@@ -1057,8 +1145,13 @@ impl Policy {
             .await
             .map_err(|e| store_unavailable("worlds.worlds", &e))?;
         let mut out = BTreeSet::new();
-        if let Some(owner) = self.known_owner(world, row.as_ref()) {
-            out.insert(owner);
+        match self.current_owner(world, row.as_ref()).await {
+            Ok(owner) => out.extend(owner),
+            // Undetermined protects the stored owner too: no ban or kick on a fault.
+            Err(e) => {
+                tracing::warn!(%world, error = %e, "world owner undetermined; stored owner protected");
+                out.extend(self.known_owner(world, row.as_ref()));
+            }
         }
         let grantees: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT wp.address FROM worlds.world_permissions wp \
@@ -1550,9 +1643,8 @@ mod tests {
     }
 
     /// `worlds.owner` is a cache of the authority's answer, not the authority:
-    /// once the NAME moves, the stored owner loses every mutation while the
-    /// admission path (the old comms reading of the permissions document)
-    /// keeps the cached owner until the new holder's publish rewrites it.
+    /// once the NAME moves, the stored owner loses every mutation, owner-level
+    /// admission and ban protection, and the new holder gains them.
     #[tokio::test]
     async fn a_transferred_name_refuses_its_previous_holder() {
         let Some((p, names, market)) = scratch_with_names().await else {
@@ -1596,15 +1688,210 @@ mod tests {
             Deploy::Owner
         );
         assert!(p.is_owner(&world, &new).await.is_allowed());
+        market.graph.name_owner.clear();
         assert_eq!(
             p.can_access(&world, &old, None, None, None, now())
                 .await
                 .unwrap(),
-            Access::Allowed(AccessGrant::Owner),
-            "the cache until the next owner publish"
+            Access::NotAllowed,
+            "the stale worlds.owner admits nobody"
         );
         assert_eq!(
             p.can_access(&world, &new, None, None, None, now())
+                .await
+                .unwrap(),
+            Access::Allowed(AccessGrant::Owner)
+        );
+        let protected = p
+            .protected_addresses(&world, &parcels(&["0,0"]))
+            .await
+            .unwrap();
+        assert!(protected.contains(&new) && !protected.contains(&old));
+    }
+
+    /// A policy whose names subgraph refuses every connection.
+    async fn scratch_with_names_down() -> Option<Policy> {
+        let pool = crate::db::scratch::pool(4).await?;
+        let settings = crate::chain_index::IndexSettings {
+            marketplace_subgraph_url: Some("http://127.0.0.1:1/subgraph".to_string()),
+            eth_network: "mainnet".to_string(),
+            ..Default::default()
+        };
+        let index = ChainIndex::new(crate::http::Outbound::for_tests(), settings);
+        index.allow_loopback_for_tests();
+        Some(Policy::new(
+            pool,
+            PersonalWorldsPolicy::disabled(),
+            Some(Arc::new(index)),
+        ))
+    }
+
+    /// With the authority down nobody is admitted as owner: the access
+    /// setting still decides, and only its refusal is undetermined.
+    #[tokio::test]
+    async fn an_authority_fault_denies_owner_entry_but_not_the_access_setting() {
+        let Some(p) = scratch_with_names_down().await else {
+            return;
+        };
+        let (open, listed_world, owner, listed) = (world_name(), world_name(), wallet(), wallet());
+        seed_world(&p, &open, Some(&owner), AccessType::Unrestricted, None).await;
+        seed_world(&p, &listed_world, Some(&owner), AccessType::AllowList, None).await;
+        grant(&p, &listed_world, Permission::Access, &listed, &[]).await;
+        assert_eq!(
+            p.can_access(&open, &owner, None, None, None, now())
+                .await
+                .unwrap(),
+            Access::Allowed(AccessGrant::Unrestricted)
+        );
+        assert_eq!(
+            p.can_access(&listed_world, &listed, None, None, None, now())
+                .await
+                .unwrap(),
+            Access::Allowed(AccessGrant::AllowListed)
+        );
+        assert_eq!(
+            p.can_access(&listed_world, &owner, None, None, None, now())
+                .await
+                .unwrap_err()
+                .http_status(),
+            503
+        );
+        assert_eq!(
+            p.is_owner(&listed_world, &owner)
+                .await
+                .into_result()
+                .unwrap_err()
+                .http_status(),
+            503
+        );
+        assert!(
+            p.protected_addresses(&listed_world, &parcels(&["0,0"]))
+                .await
+                .unwrap()
+                .contains(&owner),
+            "no ban or kick of the stored owner on a fault"
+        );
+    }
+
+    async fn scratch_with_ens() -> Option<(Policy, crate::ens::test_support::FakeEns)> {
+        let pool = crate::db::scratch::pool(4).await?;
+        let (resolver, ens) = crate::ens::test_support::resolver().await;
+        Some((
+            Policy::new(pool, PersonalWorldsPolicy::disabled(), None)
+                .with_ens(Some(resolver), 4096),
+            ens,
+        ))
+    }
+
+    fn ens_world() -> WorldName {
+        WorldName::parse(&format!(
+            "e{}.eth",
+            &Uuid::new_v4().simple().to_string()[..10]
+        ))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn an_ens_world_is_owned_by_its_registry_holder() {
+        let Some((p, ens)) = scratch_with_ens().await else {
+            return;
+        };
+        let (world, owner, stranger) = (ens_world(), wallet(), wallet());
+        ens.register(world.key(), &owner);
+        assert!(p.is_owner(&world, &owner).await.is_allowed());
+        assert_eq!(
+            p.is_owner(&world, &stranger)
+                .await
+                .into_result()
+                .unwrap_err()
+                .http_status(),
+            403
+        );
+        assert_eq!(
+            p.can_deploy(&world, &owner, &parcels(&["0,0"]))
+                .await
+                .unwrap(),
+            Deploy::Owner
+        );
+        seed_world(&p, &world, Some(&stranger), AccessType::AllowList, None).await;
+        assert_eq!(
+            p.can_access(&world, &owner, None, None, None, now())
+                .await
+                .unwrap(),
+            Access::Allowed(AccessGrant::Owner)
+        );
+        assert_eq!(
+            p.can_access(&world, &stranger, None, None, None, now())
+                .await
+                .unwrap(),
+            Access::NotAllowed,
+            "the stored owner is not the holder"
+        );
+        assert_eq!(p.limits_owner(&world).await.unwrap(), Some(owner.clone()));
+        let limits = p.world_limits(&world).await.unwrap();
+        assert_eq!(
+            (limits.max_size_bytes, limits.size_overridden),
+            (4096, true)
+        );
+        sqlx::query(
+            "INSERT INTO worlds.world_limit_overrides (world_name, max_size_bytes) VALUES ($1, 99)",
+        )
+        .bind(world.key())
+        .execute(p.pool())
+        .await
+        .unwrap();
+        assert_eq!(p.world_limits(&world).await.unwrap().max_size_bytes, 99);
+        assert_eq!(
+            p.may_have_published(&world, &owner)
+                .await
+                .into_result()
+                .unwrap_err()
+                .http_status(),
+            403,
+            "read-through never fills an ENS world"
+        );
+
+        let wrapped = ens_world();
+        ens.wrap(wrapped.key(), &owner);
+        assert!(p.is_owner(&wrapped, &owner).await.is_allowed());
+
+        let down = ens_world();
+        ens.set_down(true);
+        assert_eq!(
+            p.is_owner(&down, &owner)
+                .await
+                .into_result()
+                .unwrap_err()
+                .http_status(),
+            503
+        );
+        assert!(
+            p.can_deploy(&down, &owner, &parcels(&["0,0"]))
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn without_allow_ens_domains_an_ens_world_has_no_owner() {
+        let Some((p, names, _)) = scratch_with_names().await else {
+            return;
+        };
+        let (world, holder) = (ens_world(), wallet());
+        names.set(&holder, world.key());
+        seed_world(&p, &world, Some(&holder), AccessType::AllowList, None).await;
+        assert!(!p.ens_enabled());
+        assert_eq!(p.live_name_owner(&world).await.unwrap(), None);
+        assert_eq!(
+            p.is_owner(&world, &holder)
+                .await
+                .into_result()
+                .unwrap_err()
+                .http_status(),
+            403
+        );
+        assert_eq!(
+            p.can_access(&world, &holder, None, None, None, now())
                 .await
                 .unwrap(),
             Access::NotAllowed

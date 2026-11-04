@@ -35,14 +35,9 @@ const STATS_BASE_DELAY: Duration = Duration::from_millis(300);
 /// The quota pass runs as often as the old update-owner job.
 pub const QUOTA_PASS_INTERVAL: Duration = Duration::from_secs(12 * 3600);
 
-/// An ENS (`*.eth`, not `.dcl.eth`) world: outside the allowance.
-fn is_ens_world(world: &WorldName) -> bool {
-    !world.is_dcl_world_name()
-}
-
 /// Counted against its owner's allowance: a DCL NAME world, not a personal one.
 fn counts_against_allowance(world: &WorldName) -> bool {
-    !is_ens_world(world) && world.personal_owner().is_none()
+    world.is_dcl_world_name() && world.personal_owner().is_none()
 }
 
 /// A wallet's storage allowance in bytes.
@@ -190,7 +185,7 @@ pub async fn wallet_usage(
             size: r.get("size"),
             size_overridden: r.get::<Option<bool>, _>("overridden").unwrap_or(false),
         };
-        if is_ens_world(&world) {
+        if world.is_ens_world() {
             usage.ens_names.push(entry);
         } else if counts_against_allowance(&world) {
             usage.used_space += entry.size;

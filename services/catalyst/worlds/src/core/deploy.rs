@@ -509,6 +509,12 @@ async fn validate(
         })?;
     let world = match WorldName::parse(world_name) {
         Ok(parsed) if parsed.key().ends_with(DCL_ETH_SUFFIX) => parsed,
+        Ok(parsed) if parsed.is_ens_world() && state.policy.ens_enabled() => parsed,
+        _ if state.policy.ens_enabled() => {
+            return Err(failed(format!(
+                "Only .dcl.eth and .eth world names are supported for publishing (got \"{world_name}\")"
+            )));
+        }
         _ => {
             return Err(failed(format!(
                 "Only .dcl.eth world names are supported for publishing (got \"{world_name}\")"
