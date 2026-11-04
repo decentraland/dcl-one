@@ -1,3 +1,5 @@
+mod control;
+pub(super) mod diagnostics;
 pub(super) mod plugin;
 
 pub use plugin::{ConnectFailed, ServerRoomTerminal};
@@ -27,6 +29,9 @@ pub struct LivekitRoom {
     room_event_receiver: mpsc::UnboundedReceiver<RoomEvent>,
     /// The SDK reported this room disconnected (gave up reconnecting); it is closed already.
     closed: bool,
+    traffic: crate::traffic::PayloadTraffic,
+    /// Keep pending publishes with the SDK connection whose payload they contribute to.
+    publishes: Vec<JoinHandle<RoomResult<usize>>>,
 }
 
 /// Senders whose data reached the room before LiveKit announced them, by identity, with the
@@ -64,10 +69,10 @@ pub struct Connecting;
 impl Connecting {
     pub fn on_add(mut deferred_world: DeferredWorld, hook_context: HookContext) {
         let entity = hook_context.entity;
-        let Some(transport) = deferred_world.entity(entity).get::<LivekitTransport>() else {
+        if !deferred_world.entity(entity).contains::<LivekitTransport>() {
             debug_panic!("Connecting room {entity} did not have LivekitTransport.");
-        };
-        debug!("Room {} connecting.", transport.address);
+        }
+        debug!("Room {entity} connecting.");
 
         deferred_world
             .commands()
