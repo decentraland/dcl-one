@@ -6,6 +6,8 @@ on:
     - cron: '17 * * * *'
   workflow_dispatch:
 permissions: {}
+# Pending close events can coalesce; the hourly sweep also removes late uploads
+# and caches from any close event replaced while another cleanup was running.
 concurrency:
   group: closed-pr-cache
   cancel-in-progress: false
@@ -15,6 +17,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       actions: write
+      pull-requests: read
     steps:
       # This privileged workflow never checks out code or downloads artifacts.
       # Only the trusted base workflow and GitHub's event/API data are used.
