@@ -766,40 +766,56 @@ fn positive(raw: &str) -> Result<f64, String> {
 }
 
 impl SocialConfig {
-    /// Source providers are configured when ENV or provider settings are
-    /// supplied. The posture's empty analytics URL alone is an inactive
-    /// monolith default; it must not require unrelated provider credentials.
+    /// Each source provider is configured by its own settings and then needs
+    /// the strings the source requires for it: analytics its context, URL and
+    /// token; AI compliance its OpenAI key; the referral Slack effect `ENV`
+    /// (source `referral.ts` `requireString('ENV')`). `ENV` alone configures
+    /// nothing, so a node can set it without every provider's credentials,
+    /// and the posture's empty analytics URL alone is an inactive default.
     pub fn validate_provider_bootstrap(&self) -> Result<(), String> {
-        let active = self.social_environment.is_some()
-            || self.social_analytics_context.is_some()
+        let analytics = self.social_analytics_context.is_some()
             || self.social_analytics_api_token.is_some()
             || self.social_analytics_request_timeout_ms.is_some()
             || self
                 .social_analytics_api_url
                 .as_deref()
-                .is_some_and(|value| !value.is_empty())
-            || self.community_compliance_api_key.is_some()
+                .is_some_and(|value| !value.is_empty());
+        let compliance = self.community_compliance_api_key.is_some()
             || self.community_compliance_organization.is_some()
             || self.community_compliance_project.is_some()
             || (!self.community_compliance_model.is_empty()
                 && self.community_compliance_model != "gpt-5-nano")
             || (!self.community_compliance_base_url.is_empty()
-                && self.community_compliance_base_url != "https://api.openai.com/v1")
-            || self.referral_slack_token.is_some();
-        if !active {
-            return Ok(());
-        }
-        // Source components initialize analytics, AI compliance, then Slack.
-        // requireString distinguishes an explicitly empty string from absence.
-        for (value, name) in [
-            (&self.social_analytics_context, "ANALYTICS_CONTEXT"),
-            (&self.social_analytics_api_url, "ANALYTICS_API_URL"),
-            (&self.social_analytics_api_token, "ANALYTICS_API_TOKEN"),
-            (&self.social_environment, "ENV"),
-            (&self.community_compliance_api_key, "OPEN_AI_API_KEY"),
-            (&self.referral_slack_token, "SLACK_BOT_TOKEN"),
-        ] {
-            if value.is_none() {
+                && self.community_compliance_base_url != "https://api.openai.com/v1");
+        let slack = self.referral_slack_token.is_some();
+        // Source components initialize analytics, AI compliance, then the
+        // referral component. requireString distinguishes an explicitly empty
+        // string from absence.
+        let required = [
+            (
+                analytics,
+                &self.social_analytics_context,
+                "ANALYTICS_CONTEXT",
+            ),
+            (
+                analytics,
+                &self.social_analytics_api_url,
+                "ANALYTICS_API_URL",
+            ),
+            (
+                analytics,
+                &self.social_analytics_api_token,
+                "ANALYTICS_API_TOKEN",
+            ),
+            (
+                compliance,
+                &self.community_compliance_api_key,
+                "OPEN_AI_API_KEY",
+            ),
+            (slack, &self.social_environment, "ENV"),
+        ];
+        for (active, value, name) in required {
+            if active && value.is_none() {
                 return Err(format!("Configuration: string {name} is required"));
             }
         }
@@ -879,24 +895,33 @@ mod tests {
                 );
                 continue;
             }
-            let settings = social(
-                &required
-                    .iter()
-                    .filter(|key| Some(**key) != omitted)
-                    .map(|key| {
-                        (
-                            *key,
-                            if omitted == Some("all-empty") {
-                                ""
-                            } else {
-                                "fixture"
-                            },
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-            )
-            .unwrap();
-            let result = settings.validate_provider_bootstrap();
+            let mut pairs = required
+                .iter()
+                .filter(|key| Some(**key) != omitted)
+                .map(|key| {
+                    (
+                        *key,
+                        if omitted == Some("all-empty") {
+                            ""
+                        } else {
+                            "fixture"
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            // Compliance is configured by any of its settings; without its key
+            // a model configures it, and the source's key requirement applies.
+            if omitted == Some("OPEN_AI_API_KEY") {
+                pairs.push(("OPEN_AI_MODEL", "fixture"));
+            }
+            let result = social(&pairs).unwrap().validate_provider_bootstrap();
+            if omitted == Some("SLACK_BOT_TOKEN") {
+                // The token is the referral Slack effect's only setting: without
+                // it the node runs without that effect, where the source
+                // refuses to start. A deliberate difference.
+                result.unwrap();
+                continue;
+            }
             if case["configured"] == true {
                 result.unwrap();
             } else {
@@ -908,27 +933,57 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Each provider is gated on its own settings: `ENV` alone requires no
+    /// credential, and one provider's settings require only its own strings.
+    #[test]
+    fn each_provider_requires_only_its_own_strings() {
+        let check = |pairs: &[(&str, &str)]| social(pairs).unwrap().validate_provider_bootstrap();
+        for env in ["", "prd", "production"] {
+            check(&[("ENV", env)]).unwrap();
+        }
+        check(&[("OPEN_AI_API_KEY", "")]).unwrap();
         assert_eq!(
-            social(&[("ENV", "")])
-                .unwrap()
-                .validate_provider_bootstrap()
-                .unwrap_err(),
-            "Configuration: string ANALYTICS_CONTEXT is required"
+            check(&[("ENV", "prd"), ("OPEN_AI_MODEL", "gpt-5")]).unwrap_err(),
+            "Configuration: string OPEN_AI_API_KEY is required"
         );
         assert_eq!(
-            social(&[("OPEN_AI_API_KEY", "")])
-                .unwrap()
-                .validate_provider_bootstrap()
-                .unwrap_err(),
-            "Configuration: string ANALYTICS_CONTEXT is required"
+            check(&[("SLACK_BOT_TOKEN", "")]).unwrap_err(),
+            "Configuration: string ENV is required"
         );
+        check(&[("SLACK_BOT_TOKEN", ""), ("ENV", "prd")]).unwrap();
         assert_eq!(
-            social(&[("SLACK_BOT_TOKEN", "")])
-                .unwrap()
-                .validate_provider_bootstrap()
-                .unwrap_err(),
+            check(&[("ENV", "prd"), ("ANALYTICS_API_TOKEN", "fixture")]).unwrap_err(),
             "Configuration: string ANALYTICS_CONTEXT is required"
         );
+        check(&[
+            ("ANALYTICS_CONTEXT", "fixture"),
+            ("ANALYTICS_API_URL", "https://analytics.example.org"),
+            ("ANALYTICS_API_TOKEN", "fixture"),
+        ])
+        .unwrap();
+    }
+
+    /// The island posture refuses a Slack token, so `ENV` must not require one:
+    /// an island node with `ENV` set boots.
+    #[test]
+    fn island_posture_with_env_boots_without_third_party_providers() {
+        for posture in [
+            crate::posture::Posture::Island,
+            crate::posture::Posture::Journey,
+        ] {
+            let expanded = crate::posture::expand(posture, &|_| None);
+            let pairs = expanded
+                .iter()
+                .map(|(key, value)| (*key, value.as_str()))
+                .chain([("ENV", "prd")])
+                .collect::<Vec<_>>();
+            social(&pairs)
+                .unwrap()
+                .validate_provider_bootstrap()
+                .unwrap();
+        }
     }
 
     #[test]
