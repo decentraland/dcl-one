@@ -45,8 +45,8 @@ pub mod settings;
 pub mod settings_policy;
 pub mod store;
 pub mod upload_limits;
-pub mod wallet;
 pub mod upload_spool;
+pub mod wallet;
 
 #[cfg(test)]
 mod tests;

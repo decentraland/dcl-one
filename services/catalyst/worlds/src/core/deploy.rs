@@ -416,7 +416,8 @@ impl Uploads {
         let mut order = Vec::new();
         let mut by_hash = HashMap::new();
         for blob in files {
-            if let std::collections::hash_map::Entry::Vacant(slot) = by_hash.entry(blob.hash.clone())
+            if let std::collections::hash_map::Entry::Vacant(slot) =
+                by_hash.entry(blob.hash.clone())
             {
                 order.push(slot.key().clone());
                 slot.insert(blob.clone());

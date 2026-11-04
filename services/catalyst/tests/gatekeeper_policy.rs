@@ -1272,11 +1272,13 @@ mod world_mint {
         }
         // Blocked (operator disable): 404 at once.
         let blocked = world();
-        sqlx::query("INSERT INTO worlds.worlds (name, blocked_since) VALUES ($1, timezone('UTC', now()))")
-            .bind(blocked.key())
-            .execute(&pool)
-            .await
-            .unwrap();
+        sqlx::query(
+            "INSERT INTO worlds.worlds (name, blocked_since) VALUES ($1, timezone('UTC', now()))",
+        )
+        .bind(blocked.key())
+        .execute(&pool)
+        .await
+        .unwrap();
         let blocked_path = format!("/worlds/{}/comms", blocked.display());
         state.presence.complete_empty_fixture();
         let (status, body, _) = post(&app, &visitor, &blocked_path, "{}").await;
