@@ -45,12 +45,17 @@ pub enum DeployFailure {
     /// This node could not decide, so the deposit is neither accepted nor at fault; answer 503 so
     /// the caller retries instead of being told their content does not exist.
     Unavailable(Vec<String>),
+    /// A contract-wallet signature this node could not check: 503 like
+    /// `Unavailable`, but it follows from the caller's auth chain.
+    Unverifiable(Vec<String>),
 }
 
 impl DeployFailure {
     pub fn errors(&self) -> &[String] {
         match self {
-            DeployFailure::Rejected(errors) | DeployFailure::Unavailable(errors) => errors,
+            DeployFailure::Rejected(errors)
+            | DeployFailure::Unavailable(errors)
+            | DeployFailure::Unverifiable(errors) => errors,
         }
     }
 }
@@ -515,7 +520,7 @@ impl WriteDeployer {
     async fn validate(
         &self,
         entity: &Entity,
-        files: &HashMap<String, Vec<u8>>,
+        files: &HashMap<String, Bytes>,
         auth_chain: &AuthChain,
         context: &str,
     ) -> Result<(), DeployFailure> {
@@ -535,7 +540,7 @@ impl WriteDeployer {
             let message = format!("The auth chain is invalid: {e}");
             return Err(match e {
                 AuthError::Eip1654ValidationFailed(_) | AuthError::Eip1654NotImplemented => {
-                    DeployFailure::Unavailable(vec![message])
+                    DeployFailure::Unverifiable(vec![message])
                 }
                 _ => DeployFailure::Rejected(vec![message]),
             });
@@ -681,7 +686,7 @@ impl WriteDeployer {
             .map(|c| c.hash.as_str())
             .chain(std::iter::once(entity.id.as_str()))
             .collect();
-        let mut vfiles: HashMap<String, Vec<u8>> = HashMap::new();
+        let mut vfiles: HashMap<String, Bytes> = HashMap::new();
         for upload in &uploads {
             let key = if declared.contains(upload.v1.as_str()) {
                 &upload.v1
@@ -691,7 +696,7 @@ impl WriteDeployer {
                 &upload.v1
             };
 
-            if let Some(prev) = vfiles.insert(key.clone(), upload.bytes.to_vec())
+            if let Some(prev) = vfiles.insert(key.clone(), upload.bytes.clone())
                 && prev != upload.bytes
             {
                 return Err(vec![format!(
@@ -718,6 +723,14 @@ impl WriteDeployer {
                     "deployment undecidable; this node is damaged"
                 );
                 return Err(DeployFailure::Unavailable(errors));
+            }
+            Err(DeployFailure::Unverifiable(errors)) => {
+                warn!(
+                    entity_id,
+                    ?errors,
+                    "deployment signature could not be checked"
+                );
+                return Err(DeployFailure::Unverifiable(errors));
             }
         }
 

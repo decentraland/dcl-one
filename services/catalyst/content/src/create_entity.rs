@@ -15,9 +15,16 @@
 //! `Retry-After` when this node could not decide (a source unset or down,
 //! the store unreadable); the gates of [`super::writes`] before any of it
 //! (503 disabled, 403 read-only) and the old 503 while the node is
-//! bootstrapping. The per-client request budget is the proxy's
-//! (`limit_req zone=catdeploy` on `= /content/entities`,
-//! `deploy/nix/nginx.nix`); the per-pointer TTLs are the deployer's.
+//! bootstrapping. Before the body is read, a body that does not fit the
+//! in-memory upload budget answers 503 and a client address past its daily
+//! quota 429, both with `Retry-After` ([`super::upload_admission`], per
+//! process). The quota counts every admitted request, a form refused for
+//! its field limits (400) included, and gives back only the ones the
+//! deployer could not decide for its own state (its 503). A contract-wallet
+//! signature this node cannot check (503) and an unsynced copy refusing the
+//! entity's type (503) still count: the client chose them.
+//! The per-second request rate is the gateway's (`limit_req zone=deploy`,
+//! `infra/gateway/gateway.py`); the per-pointer TTLs are the deployer's.
 
 use std::collections::BTreeMap;
 
@@ -146,11 +153,17 @@ fn is_file_part(file_name: Option<&str>, content_type: Option<&str>) -> bool {
         || content_type.is_some_and(|t| !t.trim_start().to_ascii_lowercase().starts_with("text/"))
 }
 
-/// Reads the whole form: text fields by name, file parts in order, each
-/// under [`MAX_DEPLOY_FILE_BYTES`], at most [`MAX_DEPLOY_FILES`] of them.
-async fn read_form(multipart: &mut Multipart) -> AppResult<(BTreeMap<String, String>, Vec<Bytes>)> {
+/// Reads the whole form: text fields by name, at most `max_fields` of up to
+/// `max_field_bytes` each, and file parts in order, each under
+/// [`MAX_DEPLOY_FILE_BYTES`], at most [`MAX_DEPLOY_FILES`] of them.
+async fn read_form(
+    multipart: &mut Multipart,
+    max_fields: usize,
+    max_field_bytes: usize,
+) -> AppResult<(BTreeMap<String, String>, Vec<Bytes>)> {
     let mut fields: BTreeMap<String, String> = BTreeMap::new();
     let mut files: Vec<Bytes> = Vec::new();
+    let mut field_count = 0usize;
 
     while let Some(mut field) = multipart
         .next_field()
@@ -180,9 +193,27 @@ async fn read_form(multipart: &mut Multipart) -> AppResult<(BTreeMap<String, Str
             }
             files.push(buf.freeze());
         } else {
-            let value = field
-                .text()
+            // Repeated names count too.
+            if field_count >= max_fields {
+                return Err(invalid(format!(
+                    "Too many form fields in the request. The maximum allowed is {max_fields}."
+                )));
+            }
+            field_count += 1;
+            let mut buf = Vec::new();
+            while let Some(chunk) = field
+                .chunk()
                 .await
+                .map_err(|e| invalid(format!("Failed to read field value: {e}")))?
+            {
+                if buf.len().saturating_add(chunk.len()) > max_field_bytes {
+                    return Err(invalid(format!(
+                        "Field '{name}' is too large. The maximum allowed size per field is {max_field_bytes} bytes."
+                    )));
+                }
+                buf.extend_from_slice(&chunk);
+            }
+            let value = String::from_utf8(buf)
                 .map_err(|e| invalid(format!("Failed to read field value: {e}")))?;
             fields.insert(name, value);
         }
@@ -203,25 +234,51 @@ fn entity_type_of(files: &[Bytes], entity_id: &str) -> Option<String> {
 }
 
 pub fn deployment_failure_response(failure: DeployFailure) -> Response {
-    let unavailable = matches!(failure, DeployFailure::Unavailable(_));
+    let unavailable = !matches!(failure, DeployFailure::Rejected(_));
     let (status, errors) = match failure {
         DeployFailure::Rejected(errors) => (StatusCode::BAD_REQUEST, errors),
-        DeployFailure::Unavailable(errors) => (StatusCode::SERVICE_UNAVAILABLE, errors),
+        DeployFailure::Unavailable(errors) | DeployFailure::Unverifiable(errors) => {
+            (StatusCode::SERVICE_UNAVAILABLE, errors)
+        }
     };
-    let mut response = (status, Json(json!({ "errors": errors }))).into_response();
+    let response = (status, Json(json!({ "errors": errors }))).into_response();
     if unavailable {
-        response.headers_mut().insert(
-            header::RETRY_AFTER,
+        return with_retry_after(
+            response,
             header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
         );
     }
     response
 }
 
+/// `response` with a `Retry-After` of `value`.
+fn with_retry_after(mut response: Response, value: header::HeaderValue) -> Response {
+    response.headers_mut().insert(header::RETRY_AFTER, value);
+    response
+}
+
+/// 429 with `Retry-After` for a client past its daily quota.
+fn quota_exceeded_response(retry_after_secs: u64) -> Response {
+    with_retry_after(
+        super::errors::json_error(StatusCode::TOO_MANY_REQUESTS, "Too many requests"),
+        header::HeaderValue::from(retry_after_secs),
+    )
+}
+
+/// The bytes a body can occupy: its declared length, else the body cap.
+fn declared_body_bytes(headers: &HeaderMap) -> u64 {
+    headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(u64::MAX)
+        .min(MAX_DEPLOYMENT_BYTES as u64)
+}
+
 pub async fn create_entity(
     State(state): State<SharedState>,
     headers: HeaderMap,
-    mut multipart: Multipart,
+    multipart: Multipart,
 ) -> AppResult<Response> {
     let request_started = std::time::Instant::now();
     if let Some(refused) = writes::refuse(&state) {
@@ -239,15 +296,78 @@ pub async fn create_entity(
         return bootstrapping();
     }
 
-    let (fields, files) = read_form(&mut multipart).await?;
+    let Some(_reservation) = state
+        .upload_budget
+        .try_reserve(declared_body_bytes(&headers))
+    else {
+        return Ok(with_retry_after(
+            super::errors::json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                super::upload_admission::BUDGET_EXHAUSTED_MESSAGE,
+            ),
+            header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
+        ));
+    };
+    let client_ip = crate::shared::client_ip::client_ip(&headers);
+    let charge = match state.deploy_quota.try_consume(&client_ip) {
+        Ok(charge) => charge,
+        Err(retry_after) => return Ok(quota_exceeded_response(retry_after)),
+    };
+
+    Ok(
+        match deploy_form(&state, deployer, &headers, multipart, request_started).await {
+            Ok(Answer::Decided(response)) => response,
+            Ok(Answer::Undecided(response)) => {
+                if let Some(charge) = charge {
+                    charge.refund();
+                }
+                response
+            }
+            Err(e) => e.into_response(),
+        },
+    )
+}
+
+/// An admitted deploy's answer: [`Answer::Undecided`] is the deployer's
+/// 503 for this node's own state, which the client's quota gets back.
+enum Answer {
+    Decided(Response),
+    Undecided(Response),
+}
+
+/// Reads an admitted form and deploys it.
+async fn deploy_form(
+    state: &SharedState,
+    deployer: std::sync::Arc<super::write_deployer::WriteDeployer>,
+    headers: &HeaderMap,
+    mut multipart: Multipart,
+    request_started: std::time::Instant,
+) -> AppResult<Answer> {
+    let settings = &state.settings;
+    let (fields, files) = read_form(
+        &mut multipart,
+        settings.max_upload_field_count,
+        settings.max_upload_field_bytes,
+    )
+    .await?;
     let entity_id = fields
         .get("entityId")
         .ok_or_else(|| invalid("Missing entityId field"))?
         .clone();
-    if !state.sync.takes_deploys()
-        && !entity_type_of(&files, &entity_id).is_some_and(|t| state.sync.takes_deploys_of(&t))
-    {
-        return bootstrapping();
+    if !state.sync.takes_deploys() {
+        let Some(entity_type) = entity_type_of(&files, &entity_id) else {
+            return Ok(Answer::Decided(deployment_failure_response(
+                DeployFailure::Rejected(vec![
+                    "The entity file was not part of the uploaded files or has no type."
+                        .to_string(),
+                ]),
+            )));
+        };
+        if !state.sync.takes_deploys_of(&entity_type) {
+            return Err(AppError::ServiceUnavailable(
+                writes::BOOTSTRAPPING_MESSAGE.to_string(),
+            ));
+        }
     }
     let auth_chain = auth_chain_of(&fields, &entity_id)?;
 
@@ -279,15 +399,23 @@ pub async fn create_entity(
                 deploy_us = deploy_started.elapsed().as_micros() as u64,
                 elapsed_us = request_started.elapsed().as_micros() as u64
             );
-            Ok((
-                StatusCode::OK,
-                Json(json!({ "creationTimestamp": creation_timestamp })),
-            )
-                .into_response())
+            Ok(Answer::Decided(
+                (
+                    StatusCode::OK,
+                    Json(json!({ "creationTimestamp": creation_timestamp })),
+                )
+                    .into_response(),
+            ))
         }
         Err(failure) => {
             tracing::warn!(entity_id = %entity_id, errors = ?failure.errors(), "POST /entities - Deployment failed");
-            Ok(deployment_failure_response(failure))
+            let undecided = matches!(failure, DeployFailure::Unavailable(_));
+            let response = deployment_failure_response(failure);
+            Ok(if undecided {
+                Answer::Undecided(response)
+            } else {
+                Answer::Decided(response)
+            })
         }
     }
 }

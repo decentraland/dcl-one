@@ -218,7 +218,7 @@ mod tests {
         let mut deployment = OwnedDeployment::new(entity);
         deployment
             .files
-            .insert(deployment.entity.id.clone(), raw.to_vec());
+            .insert(deployment.entity.id.clone(), raw.to_vec().into());
         deployment
     }
 

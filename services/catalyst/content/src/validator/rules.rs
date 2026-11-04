@@ -234,7 +234,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             // A contract-wallet link this node could not ask about (no
             // ETH_RPC_URL, or the RPC failed) is undecided, not invalid.
             Err(e @ (AuthError::Eip1654ValidationFailed(_) | AuthError::Eip1654NotImplemented)) => {
-                ValidationResponse::unavailable(format!("The signature is invalid. {e}"))
+                ValidationResponse::unverifiable(format!("The signature is invalid. {e}"))
             }
             Err(e) => ValidationResponse::fail(format!("The signature is invalid. {e}")),
         }
