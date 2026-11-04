@@ -78,6 +78,13 @@ CREATE TABLE IF NOT EXISTS dcl_migration.blob_missing (
     reason text NOT NULL,
     PRIMARY KEY (source, object_key)
 );
+-- The worlds.world_limit_overrides values `worlds-limits` last wrote; a row that no longer
+-- matches them was changed on the node and is left alone.
+CREATE TABLE IF NOT EXISTS dcl_migration.world_limit_seeded (
+    world_name text PRIMARY KEY,
+    max_parcels integer,
+    max_size_bytes bigint
+);
 RESET client_min_messages;
 """
 
@@ -894,9 +901,10 @@ def record_blobs(target_url, source, stored, missing):
 
 
 def record_outcomes(outcomes, record, total, log, batch=RECORD_BATCH):
-    """Records `outcomes` through `record(stored, missing)` every `batch` and at the end, also when
-    the copy stops part-way. A `failed` read is reported, never recorded, so the next run retries
-    it. Returns (counts, report lines)."""
+    """Records stored objects through `record(stored, [])` every `batch` and at the end, also when
+    the copy stops part-way. Objects not stored are returned, for the caller to record once the
+    run is known sound; a `failed` read is reported, never returned, so the next run retries it.
+    Returns (counts, report lines, [(key, reason)] not stored)."""
     counts = dict.fromkeys(['copied', 'present', 'missing', 'corrupt', 'invalid', 'failed'], 0)
     report, stored, missing = [], [], []
     try:
@@ -908,14 +916,19 @@ def record_outcomes(outcomes, record, total, log, batch=RECORD_BATCH):
                 if outcome.status != 'failed':
                     missing.append((outcome.key, outcome.reason))
                 report.append(f'  {outcome.key!r}: {outcome.reason}')
-            if len(stored) + len(missing) >= batch:
-                record(stored, missing)
-                stored, missing = [], []
+            if len(stored) >= batch:
+                record(stored, [])
+                stored = []
             if n % 10000 == 0:
                 log(f'  {n}/{total}')
     finally:
-        record(stored, missing)
-    return counts, report
+        record(stored, [])
+    return counts, report, missing
+
+
+def record_missing(record, missing, batch=RECORD_BATCH):
+    for i in range(0, len(missing), batch):
+        record([], missing[i:i + batch])
 
 
 def cmd_blobs(args, sources):
@@ -937,27 +950,54 @@ def cmd_blobs(args, sources):
     source_url = database_url(sources[args.source].database_env)
     keys = [k for (k,) in hex_rows(psql(source_url, BLOB_SETS[args.source]['source'] + ';\n', read_only=True), 1)]
     ensure_checkpoint_table(target_url)
-    inventory = dict(hex_rows(psql(
-        target_url, "SELECT encode(convert_to(object_key, 'UTF8'), 'hex'), encode(convert_to(hash, 'UTF8'), 'hex')"
-                    f' FROM dcl_migration.blob_inventory WHERE source = {literal(args.source)};\n'), 2))
-    todo = [k for k in keys if not (k in inventory and store.has(inventory[k]))]
+    inventory = {k: (h, int(n)) for k, h, n in hex_rows(psql(
+        target_url, "SELECT encode(convert_to(object_key, 'UTF8'), 'hex'), encode(convert_to(hash, 'UTF8'), 'hex'),"
+                    " encode(convert_to(size::text, 'UTF8'), 'hex')"
+                    f' FROM dcl_migration.blob_inventory WHERE source = {literal(args.source)};\n'), 3)}
+    # A recorded object counts only while the store holds a file of its recorded size.
+    todo = [k for k in keys if not (k in inventory and store.has(*inventory[k]))]
     log(f'{args.source}: {len(keys)} objects named, {len(keys) - len(todo)} already copied;'
         f' copying {len(todo)} from {upstream.describe()} into {store.contents}')
+    record = lambda stored, missing: record_blobs(target_url, args.source, stored, missing)  # noqa: E731
     try:
-        counts, report = record_outcomes(
-            blobs.copy_all(upstream, store, todo, args.workers),
-            lambda stored, missing: record_blobs(target_url, args.source, stored, missing), len(todo), log)
+        probe_source(blobs, upstream, todo, args.allow_missing, log)
+        counts, report, missing = record_outcomes(blobs.copy_all(upstream, store, todo, args.workers),
+                                                  record, len(todo), log)
     except blobs.SourceError as e:
         raise MigrationError(f'upstream storage: {e}') from e
     log(f'{args.source}: copied {counts["copied"]}, already in the store {counts["present"]},'
         f' absent or unreadable upstream {counts["missing"]}, hash mismatch {counts["corrupt"]},'
         f' not a content id {counts["invalid"]}, read failed {counts["failed"]}')
+    if counts['missing'] > args.max_missing / 100 * len(todo) and not args.allow_missing:
+        for line in report[:20]:
+            log(line)
+        log(f'{args.source}: {counts["missing"]} of {len(todo)} objects absent or unreadable upstream, over'
+            f' --max-missing {args.max_missing:g}%; none recorded missing. Check the source and credentials,'
+            ' or pass --allow-missing to record them')
+        return 1
+    record_missing(record, missing)
     if report:
         log('not stored (recorded in dcl_migration.blob_missing, which the node serves as missing,'
             ' except read failures, which the next run retries):')
         for line in report:
             log(line)
     return 1 if counts['failed'] else 0
+
+
+def probe_source(blobs, upstream, keys, allow_missing, log):
+    """Fails before copying when no sampled key reads: a wrong folder or bucket, or credentials
+    that cannot read it, would otherwise record every object missing."""
+    result = blobs.probe(upstream, keys)
+    if result.readable or not result.unreadable:
+        return
+    reasons = sorted(set(result.unreadable.values()))
+    if not allow_missing:
+        raise MigrationError(f'none of {len(result.unreadable)} sampled objects reads from {upstream.describe()}'
+                             f' ({"; ".join(reasons[:3])}); check the source and credentials, or pass'
+                             ' --allow-missing to record them missing')
+    log(f'warning: none of {len(result.unreadable)} sampled objects reads from {upstream.describe()};'
+        ' --allow-missing records them missing')
+    upstream.readable = True
 
 
 def recorded_missing(source, target_url):
@@ -987,18 +1027,19 @@ def verify_blobs(source, store, target_url, log, skip=frozenset()):
 
 MIB = 1024 * 1024
 DIGITS = re.compile(r'\s*[0-9]+\s*')
+INT_MAX, BIGINT_MAX = 2 ** 31 - 1, 2 ** 63 - 1
 
 
-def positive_int(value):
+def positive_int(value, ceiling=None):
     """A limit as upstream's JS reads it (`x || default`, then BigInt(x)): a positive integer number
-    or integer string; 0, null and anything else mean "the default"."""
+    or integer string; 0, null and anything else mean "the default". Capped at `ceiling`."""
     if isinstance(value, str) and DIGITS.fullmatch(value):
         value = int(value)
     if isinstance(value, float) and value.is_integer():
         value = int(value)
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         return None
-    return int(value)
+    return min(int(value), ceiling) if ceiling else int(value)
 
 
 def whitelist_rows(whitelist, max_size_mb, warn=lambda line: print(line, file=sys.stderr)):
@@ -1015,7 +1056,9 @@ def whitelist_rows(whitelist, max_size_mb, warn=lambda line: print(line, file=sy
             continue
         if not isinstance(entry, dict):
             continue
-        parcels, size_mb = positive_int(entry.get('max_parcels')), positive_int(entry.get('max_size_in_mb'))
+        # Capped to the columns' range; a larger cap was unlimited in practice.
+        parcels = positive_int(entry.get('max_parcels'), INT_MAX)
+        size_mb = positive_int(entry.get('max_size_in_mb'), BIGINT_MAX // MIB)
         if name.endswith('.eth') and not name.endswith('.dcl.eth'):
             size = None
         elif size_mb:
@@ -1044,23 +1087,45 @@ def cmd_worlds_limits(args, sources):
         print('no limit overrides in the whitelist')
         return 0
     values = ',\n'.join(f'({literal(n)}, {literal(p)}, {literal(s)})' for n, (p, s) in sorted(rows.items()))
+    ensure_checkpoint_table(target_url)
     out = psql(target_url, f"""BEGIN;
 DO $t$ BEGIN
   IF to_regclass('worlds.world_limit_overrides') IS NULL THEN
     RAISE EXCEPTION 'worlds.world_limit_overrides is not in this schema';
   END IF;
 END $t$;
-INSERT INTO worlds.world_limit_overrides (world_name, max_parcels, max_size_bytes)
-SELECT n, p::integer, s::bigint FROM (VALUES
-{values}) v(n, p, s)
-ON CONFLICT (world_name) DO UPDATE SET
-    max_parcels = EXCLUDED.max_parcels,
-    max_size_bytes = EXCLUDED.max_size_bytes,
-    updated_at = timezone('UTC', now());
+CREATE TEMP TABLE wl ON COMMIT DROP AS
+SELECT n, p::integer AS p, s::bigint AS s FROM (VALUES
+{values}) v(n, p, s);
+CREATE TEMP TABLE written (n text PRIMARY KEY) ON COMMIT DROP;
+-- Only rows this command wrote and nobody changed since; any other existing row is the node's.
+WITH u AS (
+    UPDATE worlds.world_limit_overrides o SET max_parcels = wl.p, max_size_bytes = wl.s,
+        updated_at = timezone('UTC', now())
+    FROM wl JOIN dcl_migration.world_limit_seeded m ON m.world_name = wl.n
+    WHERE o.world_name = wl.n
+      AND (o.max_parcels, o.max_size_bytes) IS NOT DISTINCT FROM (m.max_parcels, m.max_size_bytes)
+    RETURNING o.world_name)
+INSERT INTO written SELECT world_name FROM u;
+WITH i AS (
+    INSERT INTO worlds.world_limit_overrides (world_name, max_parcels, max_size_bytes)
+    SELECT n, p, s FROM wl ON CONFLICT (world_name) DO NOTHING RETURNING world_name)
+INSERT INTO written SELECT world_name FROM i;
+INSERT INTO dcl_migration.world_limit_seeded (world_name, max_parcels, max_size_bytes)
+SELECT n, p, s FROM wl JOIN written USING (n)
+ON CONFLICT (world_name) DO UPDATE SET max_parcels = EXCLUDED.max_parcels, max_size_bytes = EXCLUDED.max_size_bytes;
+SELECT '@@written', count(*) FROM written;
+SELECT '@@kept', wl.n FROM wl JOIN worlds.world_limit_overrides o ON o.world_name = wl.n
+WHERE wl.n NOT IN (SELECT n FROM written)
+  AND (o.max_parcels, o.max_size_bytes) IS DISTINCT FROM (wl.p, wl.s) ORDER BY 2;
 {'ROLLBACK' if args.dry_run else 'COMMIT'};
 """)
-    written = next((line for line in out.splitlines() if line.startswith('INSERT')), 'INSERT 0 0').split()[-1]
-    print(f'worlds.world_limit_overrides: {written} rows upserted' + (' (rolled back)' if args.dry_run else ''))
+    marks = [line.split('\t') for line in out.splitlines() if line.startswith('@@')]
+    written = next(v for k, v in marks if k == '@@written')
+    kept = [v for k, v in marks if k == '@@kept']
+    print(f'worlds.world_limit_overrides: {written} rows written' + (' (rolled back)' if args.dry_run else ''))
+    if kept:
+        print(f'kept {len(kept)} rows set on the node that differ from the whitelist: {", ".join(kept)}')
     return 0
 
 
@@ -1071,7 +1136,9 @@ def cmd_worlds_unban_quota_blocks(args, sources):
 
     The tool records no per-wallet provenance, so a row counts as that step's when upstream
     `blocked` still holds its wallet with the same created_at (the step copied it verbatim; a ban
-    made on the node carries its own). Runs only where that step's checkpoint exists, and drops it."""
+    made on the node carries its own) and the row was last written before that step's last walk
+    started (a later ban on the node bumps updated_at). Runs only where that step's checkpoint
+    exists, and drops it."""
     source = sources['worlds-content-server']
     target_url = database_url(args.target_env)
     old = psql(target_url, "SELECT to_regclass('dcl_migration.checkpoint') IS NOT NULL AND EXISTS ("
@@ -1091,20 +1158,31 @@ def cmd_worlds_unban_quota_blocks(args, sources):
 BEGIN;
 CREATE TEMP TABLE upstream_blocked (wallet text, created_at timestamptz, updated_at timestamptz) ON COMMIT DROP;
 \\copy upstream_blocked FROM pstdin WITH (FORMAT csv)
+CREATE TEMP TABLE walk ON COMMIT DROP AS
+SELECT walk_started_at AT TIME ZONE 'UTC' AS started FROM dcl_migration.checkpoint
+WHERE source = 'worlds-content-server' AND step = 'blocked_wallet';
 WITH d AS (
-    DELETE FROM worlds.blocked_wallets b USING upstream_blocked u
-    WHERE b.wallet = u.wallet AND b.created_at = u.created_at AT TIME ZONE 'UTC'
+    DELETE FROM worlds.blocked_wallets b USING upstream_blocked u, walk w
+    WHERE b.wallet = u.wallet AND b.created_at = u.created_at AT TIME ZONE 'UTC' AND b.updated_at <= w.started
     RETURNING 1)
 SELECT '@@deleted', count(*) FROM d;
-SELECT '@@kept', count(*) FROM worlds.blocked_wallets b JOIN upstream_blocked u ON u.wallet = b.wallet;
+SELECT '@@rebanned', b.wallet FROM worlds.blocked_wallets b JOIN upstream_blocked u ON u.wallet = b.wallet
+WHERE b.created_at = u.created_at AT TIME ZONE 'UTC' ORDER BY 2;
+SELECT '@@kept', count(*) FROM worlds.blocked_wallets b JOIN upstream_blocked u ON u.wallet = b.wallet
+WHERE b.created_at <> u.created_at AT TIME ZONE 'UTC';
 DELETE FROM dcl_migration.checkpoint WHERE source = 'worlds-content-server' AND step = 'blocked_wallet';
 {'ROLLBACK' if args.dry_run else 'COMMIT'};
 """)
         with data.open('rb') as fh:
             out = psql(target_url, None, stdin=fh, extra=['-f', str(script)])
-    counts = dict(line.split('\t') for line in out.splitlines() if line.startswith('@@'))
+    marks = [line.split('\t') for line in out.splitlines() if line.startswith('@@')]
+    counts = {k: v for k, v in marks if k != '@@rebanned'}
+    rebanned = [v for k, v in marks if k == '@@rebanned']
     print(f'worlds.blocked_wallets: deleted {counts["@@deleted"]} quota blocks loaded as bans'
           + (' (rolled back)' if args.dry_run else ''))
+    if rebanned:
+        print(f'kept {len(rebanned)} rows written on the node after the former step ran (a ban made there):'
+              f' {", ".join(rebanned)}')
     if counts['@@kept'] != '0':
         print(f'kept {counts["@@kept"]} rows whose wallet is blocked upstream but whose created_at differs'
               ' (a ban made on the node); review them by hand')
@@ -1147,6 +1225,11 @@ def parser():
     blobs.add_argument('--from-s3', metavar='BUCKET', help='upstream S3 bucket (needs boto3)')
     blobs.add_argument('--s3-prefix', default='', help=argparse.SUPPRESS)
     blobs.add_argument('--workers', type=int, default=8)
+    blobs.add_argument('--allow-missing', action='store_true',
+                       help='record objects absent or unreadable upstream as missing however many there are')
+    blobs.add_argument('--max-missing', type=float, default=1.0, metavar='PERCENT',
+                       help='fail, recording none missing, when more of the copied keys are absent or'
+                            ' unreadable upstream (default 1)')
     blobs.add_argument('--verify', action='store_true',
                        help='list imported rows whose blobs are missing from the store; copies nothing')
     limits = sub.add_parser('worlds-limits', help='seed worlds.world_limit_overrides from a WCS whitelist JSON')

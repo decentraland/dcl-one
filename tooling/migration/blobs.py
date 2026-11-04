@@ -28,6 +28,11 @@ SHA256_HEX = re.compile(r'[0-9a-f]{64}')
 # Upstream reads retried per key; a key still failing is reported, not recorded, and retried next run.
 READ_ATTEMPTS = 3
 RETRY_DELAY = 0.5
+# Keys the preflight probe reads before a copy.
+PROBE_KEYS = 16
+# S3 answers worth retrying per key (throttling, server errors).
+S3_RETRYABLE = {'SlowDown', 'InternalError', 'ServiceUnavailable', 'RequestTimeout', 'Throttling',
+                'ThrottlingException', 'RequestTimeTooSkewed'}
 B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
 _seq = itertools.count()
 
@@ -192,8 +197,13 @@ class SourceError(Exception):
     """An upstream failure that retrying one key does not fix (credentials, bucket, region)."""
 
 
+class Denied(SourceError):
+    """S3 refused one key before the probe showed the bucket readable."""
+
+
 class ReadError(Exception):
     """Reading one object failed part-way (timeout, truncated stream); worth a retry."""
+
 
 def shard(name):
     return hashlib.sha1(name.encode()).hexdigest()[:4]
@@ -234,6 +244,8 @@ class S3Source:
             client = boto3.client('s3')
         self.client = client
         self.bucket, self.prefix = bucket, prefix
+        # Set once a probed key reads: a 403 then means the key is absent (no s3:ListBucket).
+        self.readable = False
 
     def open(self, key):
         try:
@@ -246,8 +258,12 @@ class S3Source:
             status = response.get('ResponseMetadata', {}).get('HTTPStatusCode')
             if code in ('NoSuchKey', 'NotFound', '404') or status == 404:
                 raise Missing('absent upstream') from e
+            if code in S3_RETRYABLE or (isinstance(status, int) and status >= 500):
+                raise ReadError(f'{code or status}: {e}') from e
             # Without s3:ListBucket a missing key answers 403 as well.
             if code in ('AccessDenied', 'Forbidden', '403') or status == 403:
+                if not self.readable:
+                    raise Denied(f's3://{self.bucket}/{self.prefix}{key}: access denied') from e
                 raise Missing('access denied (absent upstream, or unreadable with these credentials)') from e
             raise SourceError(f's3://{self.bucket}/{self.prefix}{key}: {code or status}: {e}') from e
         body = obj['Body']
@@ -268,8 +284,25 @@ class Store:
     def path(self, cid):
         return self.contents / shard(cid) / cid
 
-    def has(self, cid):
-        return is_canonical_cid(cid) and self.path(cid).is_file()
+    def has(self, cid, size=None):
+        if not is_canonical_cid(cid):
+            return False
+        try:
+            stat = self.path(cid).stat()
+        except FileNotFoundError:
+            return False
+        return stat.st_size == size if size is not None else self.path(cid).is_file()
+
+    def intact(self, cid):
+        """The stored file's size when its bytes hash to `cid`, else None."""
+        hasher = Hasher(unixfs_v0=cid.startswith('Qm'))
+        try:
+            with self.path(cid).open('rb') as fh:
+                while chunk := fh.read(READ_SIZE):
+                    hasher.update(chunk)
+        except (FileNotFoundError, IsADirectoryError):
+            return None
+        return hasher.size if hasher.matches(cid) == cid else None
 
     def staging(self, key):
         """A new staging file (path, open binary file), never an existing file or a symlink."""
@@ -279,9 +312,9 @@ class Store:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
         return path, os.fdopen(fd, 'wb')
 
-    def commit(self, staged, cid):
+    def commit(self, staged, cid, replace=False):
         final = self.path(cid)
-        if final.exists():
+        if final.exists() and not replace:
             staged.unlink()
             return
         final.parent.mkdir(parents=True, exist_ok=True)
@@ -338,8 +371,12 @@ def copy_one(source, store, key):
     """Copies upstream object `key` (a CID, or a sha256 hex thumbnail) and verifies its bytes."""
     if not (is_canonical_cid(key) or SHA256_HEX.fullmatch(key)):
         return Outcome(key, 'invalid', reason=REASONS['invalid'])
+    replace = False
     if is_canonical_cid(key) and store.has(key):
-        return Outcome(key, 'present', key, store.path(key).stat().st_size)
+        size = store.intact(key)
+        if size is not None:
+            return Outcome(key, 'present', key, size)
+        replace = True  # a truncated or foreign file under this name
     for attempt in range(READ_ATTEMPTS):
         try:
             staged, hasher = _read_into(source, store, key)
@@ -355,11 +392,36 @@ def copy_one(source, store, key):
         if cid is None:
             staged.unlink()
             return Outcome(key, 'corrupt', reason=REASONS['corrupt'])
-        store.commit(staged, cid)
+        store.commit(staged, cid, replace=replace and cid == key)
         return Outcome(key, 'copied', cid, hasher.size)
     except BaseException:
         staged.unlink(missing_ok=True)
         raise
+
+
+@dataclasses.dataclass
+class Probe:
+    readable: int
+    unreadable: dict  # key -> reason
+
+
+def probe(source, keys, n=PROBE_KEYS):
+    """Opens up to `n` keys spread over `keys`: a wrong folder or credentials make every one unreadable.
+    Marks an S3 source readable when one opens."""
+    keys = [k for k in keys if is_canonical_cid(k) or SHA256_HEX.fullmatch(k)]
+    sample = keys if len(keys) <= n else [keys[i * len(keys) // n] for i in range(n)]
+    result = Probe(0, {})
+    for key in sample:
+        try:
+            stream = source.open(key)
+        except (Missing, Denied, ReadError) as e:
+            result.unreadable[key] = str(e)
+            continue
+        stream.close()
+        result.readable += 1
+    if result.readable:
+        source.readable = True
+    return result
 
 
 def copy_all(source, store, keys, workers, window=None):

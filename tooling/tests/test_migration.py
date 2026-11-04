@@ -256,6 +256,35 @@ class BlobCopy(unittest.TestCase):
         self.upstream.mkdir()
         self.assertEqual(self.copy(cid).status, 'present')
 
+    def test_when_the_stored_file_is_truncated_it_should_copy_it_again(self):
+        data = pattern(CHUNK + 10)
+        cid = blobs.hash_bytes_v1(data)
+        self.put(cid, data)
+        self.store.path(cid).parent.mkdir(parents=True)
+        self.store.path(cid).write_bytes(data[:100])
+        outcome = self.copy(cid)
+        self.assertEqual((outcome.status, outcome.size), ('copied', len(data)))
+        self.assertEqual(self.store.path(cid).read_bytes(), data)
+
+    def test_when_the_stored_file_has_its_recorded_size_it_should_count_as_held(self):
+        cid = blobs.hash_bytes_v1(b'abc')
+        self.put(cid, b'abc')
+        self.copy(cid)
+        self.assertTrue(self.store.has(cid, 3))
+        self.assertFalse(self.store.has(cid, 4))
+
+    def test_when_probing_a_wrong_folder_it_should_find_nothing_readable(self):
+        self.upstream.mkdir()
+        keys = [blobs.hash_bytes_v1(str(i).encode()) for i in range(40)]
+        result = blobs.probe(blobs.FolderSource(self.upstream), keys + ['not a key'])
+        self.assertEqual((result.readable, len(result.unreadable)), (0, blobs.PROBE_KEYS))
+
+    def test_when_probing_a_folder_holding_some_keys_it_should_count_them(self):
+        keys = [blobs.hash_bytes_v1(str(i).encode()) for i in range(4)]
+        self.put(keys[2], b'2')
+        result = blobs.probe(blobs.FolderSource(self.upstream), keys)
+        self.assertEqual((result.readable, len(result.unreadable)), (1, 3))
+
     def test_when_upstream_is_flat_or_gzipped_it_should_find_the_bytes(self):
         flat, packed = b'flat file', b'packed file'
         self.put(blobs.hash_bytes_v1(flat), flat, sharded=False)
@@ -412,12 +441,49 @@ class S3Copy(unittest.TestCase):
         outcome = self.copy(blobs.hash_bytes_v1(b'gone'))
         self.assertEqual((outcome.status, outcome.reason), ('missing', 'absent upstream'))
 
-    def test_when_access_is_denied_it_should_record_it_missing_with_the_reason(self):
+    def test_when_access_is_denied_after_the_bucket_read_it_should_record_it_missing_with_the_reason(self):
         key = blobs.hash_bytes_v1(b'hidden')
         self.client.errors['prefix/' + key] = [FakeClientError('AccessDenied', 403)]
+        self.source.readable = True
         outcome = self.copy(key)
         self.assertEqual(outcome.status, 'missing')
         self.assertIn('access denied', outcome.reason)
+
+    def test_when_access_is_denied_before_any_key_read_it_should_stop_the_copy(self):
+        key = blobs.hash_bytes_v1(b'hidden')
+        self.client.errors['prefix/' + key] = [FakeClientError('AccessDenied', 403)]
+        with self.assertRaises(blobs.Denied):
+            self.copy(key)
+
+    def test_when_every_probed_key_is_denied_it_should_leave_the_source_unreadable(self):
+        keys = [blobs.hash_bytes_v1(str(i).encode()) for i in range(3)]
+        for k in keys:
+            self.client.errors['prefix/' + k] = [FakeClientError('AccessDenied', 403)]
+        result = blobs.probe(self.source, keys)
+        self.assertEqual((result.readable, len(result.unreadable), self.source.readable), (0, 3, False))
+
+    def test_when_a_probed_key_reads_it_should_mark_the_source_readable(self):
+        data = b'present'
+        key = blobs.hash_bytes_v1(data)
+        self.client.objects['prefix/' + key] = (data, None, False)
+        result = blobs.probe(self.source, [key, blobs.hash_bytes_v1(b'gone')])
+        self.assertEqual((result.readable, self.source.readable), (1, True))
+
+    def test_when_s3_throttles_or_fails_once_it_should_retry_and_store_the_object(self):
+        for error in (FakeClientError('SlowDown', 503), FakeClientError('InternalError', 500),
+                      FakeClientError('Unrecognized', 502)):
+            data = repr(error.response).encode()
+            key = blobs.hash_bytes_v1(data)
+            self.client.objects['prefix/' + key] = (data, None, False)
+            self.client.errors['prefix/' + key] = [error]
+            self.assertEqual(self.copy(key).status, 'copied', error)
+
+    def test_when_s3_keeps_failing_with_5xx_it_should_report_the_key_failed(self):
+        key = blobs.hash_bytes_v1(b'x')
+        self.client.errors['prefix/' + key] = [FakeClientError('ServiceUnavailable', 503)] * 3
+        outcome = self.copy(key)
+        self.assertEqual(outcome.status, 'failed')
+        self.assertIn('ServiceUnavailable', outcome.reason)
 
     def test_when_another_s3_error_occurs_it_should_stop_the_copy(self):
         key = blobs.hash_bytes_v1(b'x')
@@ -449,12 +515,14 @@ class RecordOutcomes(unittest.TestCase):
                     blobs.Outcome(f'k{i}', 'missing', reason='absent upstream') for i in range(2500)]
         outcomes.append(blobs.Outcome('flaky', 'failed', reason='read failed 3 times'))
         flushed = []
-        counts, report = migrate.record_outcomes(iter(outcomes), lambda s, m: flushed.append((len(s), len(m))),
-                                                 len(outcomes), lambda line: None)
-        self.assertEqual([s + m for s, m in flushed], [1000, 1000, 500])
-        self.assertEqual(sum(m for _, m in flushed), 834)
+        counts, report, missing = migrate.record_outcomes(
+            iter(outcomes), lambda s, m: flushed.append((len(s), len(m))), len(outcomes), lambda line: None)
+        self.assertEqual(flushed, [(1000, 0), (666, 0)])
+        self.assertEqual(len(missing), 834)
         self.assertEqual(counts['failed'], 1)
         self.assertIn("  'flaky': read failed 3 times", report)
+        migrate.record_missing(lambda s, m: flushed.append((len(s), len(m))), missing)
+        self.assertEqual(flushed[2:], [(0, 834)])
 
     def test_when_the_copy_stops_part_way_it_should_record_what_it_finished(self):
         def outcomes():
@@ -491,6 +559,10 @@ class WhitelistRows(unittest.TestCase):
                                       warn=warnings.append)
         self.assertEqual(rows, {'big.dcl.eth': (10, 20 * 1024 * 1024)})
         self.assertEqual(len(warnings), 2)
+
+    def test_when_a_limit_exceeds_the_column_range_it_should_cap_it(self):
+        rows = migrate.whitelist_rows({'a.dcl.eth': {'max_parcels': 2 ** 40, 'max_size_in_mb': str(2 ** 60)}}, None)
+        self.assertEqual(rows, {'a.dcl.eth': (2 ** 31 - 1, (2 ** 63 - 1) // (1024 * 1024) * 1024 * 1024)})
 
     def test_when_limits_are_integer_strings_it_should_read_them_as_upstream_does(self):
         rows = migrate.whitelist_rows({'a.dcl.eth': {'max_parcels': '12', 'max_size_in_mb': '30'},
@@ -743,8 +815,13 @@ class AgainstPostgres(unittest.TestCase):
         self.assertEqual(code, 1)
         copy = ('blobs', 'worlds-content-server', '--from-dir', str(upstream), '--to', str(node))
         code, out = self.migrate(*copy, sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 1, out)
+        self.assertIn('2 of 8 objects absent or unreadable upstream, over --max-missing 1%', out)
+        self.assertEqual(self.count(tgt, 'dcl_migration.blob_missing'), 0)
+        copy += ('--allow-missing',)
+        code, out = self.migrate(*copy, sources_dir=migrate.SOURCES)
         self.assertEqual(code, 0, out)
-        self.assertIn('copied 5, already in the store 0, absent or unreadable upstream 2, hash mismatch 0,'
+        self.assertIn('copied 0, already in the store 0, absent or unreadable upstream 2, hash mismatch 0,'
                       ' not a content id 1', out)
         code, out = self.migrate(*copy, sources_dir=migrate.SOURCES)
         self.assertIn('8 objects named, 5 already copied', out)
@@ -772,6 +849,27 @@ class AgainstPostgres(unittest.TestCase):
         code, out = self.migrate(*steps, sources_dir=migrate.SOURCES)
         self.assertEqual(code, 1, out)
         self.assertIn(f'beta.dcl.eth/{scenes["beta.dcl.eth"]}: 1 missing: {picture}', out)
+
+    def test_when_the_blob_source_is_wrong_it_should_fail_and_record_nothing(self):
+        src, tgt = self.wcs()
+        empty, node = self.tmp / 'wcs-wrong', self.tmp / 'node-wrong'
+        empty.mkdir()
+        self.addCleanup(shutil.rmtree, empty, True)
+        self.addCleanup(shutil.rmtree, node, True)
+        thumbs = [blobs.hash_bytes_v1(str(i).encode()) for i in range(3)]
+        self.sql(src, 'INSERT INTO worlds (name, owner, thumbnail_hash, created_at, updated_at) VALUES '
+                      + ', '.join(f"('w{i}.dcl.eth', '0x{'1' * 40}', '{t}', now(), now())" for i, t in enumerate(thumbs))
+                      + ';\n')
+        copy = ('blobs', 'worlds-content-server', '--from-dir', str(empty), '--to', str(node))
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code, out = self.migrate(*copy, sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 1, out)
+        self.assertIn('none of 3 sampled objects reads', err.getvalue())
+        self.assertEqual(self.count(tgt, 'dcl_migration.blob_missing'), 0)
+        code, out = self.migrate(*copy, '--allow-missing', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.count(tgt, 'dcl_migration.blob_missing'), 3)
 
     def test_when_a_places_world_image_names_a_copied_thumbnail_it_should_name_its_cid(self):
         tgt = self.catalyst_db('places_images')
@@ -819,6 +917,24 @@ class AgainstPostgres(unittest.TestCase):
                          [node_ban, other])
         self.assertEqual(self.count(tgt, 'dcl_migration.checkpoint'), 0)
 
+    def test_when_a_wallet_was_banned_again_on_the_node_it_should_keep_the_ban(self):
+        src, tgt = self.wcs()
+        imported, rebanned = f'0x{"a" * 40}', f'0x{"d" * 40}'
+        self.sql(src, f"INSERT INTO blocked VALUES ('{imported}', '2026-01-01', '2026-01-02'), "
+                      f"('{rebanned}', '2026-01-01', '2026-01-02');\n")
+        migrate.ensure_checkpoint_table(self.url(tgt))
+        # The admin ban upsert keeps created_at and bumps updated_at.
+        self.sql(tgt, f"INSERT INTO worlds.blocked_wallets VALUES ('{imported}', '2026-01-01', '2026-01-02'), "
+                      f"('{rebanned}', '2026-01-01', '2026-06-01');\n"
+                      "INSERT INTO dcl_migration.checkpoint (source, step, walk_started_at) "
+                      "VALUES ('worlds-content-server', 'blocked_wallet', '2026-03-01T00:00:00Z');\n")
+        code, out = self.migrate('worlds-unban-quota-blocks', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertIn('deleted 1 quota blocks', out)
+        self.assertIn(f'kept 1 rows written on the node after the former step ran (a ban made there): {rebanned}',
+                      out)
+        self.assertEqual(self.sql(tgt, 'SELECT wallet FROM worlds.blocked_wallets;\n').split(), [rebanned])
+
     def test_when_importing_quota_blocks_it_should_not_ban_the_wallet(self):
         src, tgt = self.wcs()
         self.sql(src, f"INSERT INTO blocked VALUES ('0x{'AB' * 20}', now(), now());\n")
@@ -831,6 +947,21 @@ class AgainstPostgres(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(self.sql(tgt, 'SELECT wallet FROM worlds.quota_blocks;\n').strip(), f'0x{"ab" * 20}')
         self.assertEqual(self.count(tgt, 'worlds.blocked_wallets'), 0)
+
+    def test_when_the_node_already_holds_a_quota_block_it_should_keep_its_start(self):
+        src, tgt = self.wcs()
+        node_first, upstream_first = f'0x{"a" * 40}', f'0x{"b" * 40}'
+        self.sql(src, f"INSERT INTO blocked VALUES ('{node_first}', '2026-05-01', '2026-05-01'), "
+                      f"('{upstream_first}', '2026-01-01', '2026-01-01');\n")
+        self.sql(tgt, 'CREATE TABLE worlds.quota_blocks (wallet text PRIMARY KEY, created_at timestamp NOT NULL, '
+                      'updated_at timestamp NOT NULL);\n'
+                      f"INSERT INTO worlds.quota_blocks VALUES ('{node_first}', '2026-03-01', '2026-06-01'), "
+                      f"('{upstream_first}', '2026-03-01', '2026-03-01');\n")
+        code, out = self.migrate('run', 'worlds-content-server', '--step', 'quota_block', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        rows = self.sql(tgt, 'SELECT wallet, created_at, updated_at FROM worlds.quota_blocks ORDER BY 1;\n')
+        self.assertEqual(rows.splitlines(), [f'{node_first}\t2026-03-01 00:00:00\t2026-06-01 00:00:00',
+                                             f'{upstream_first}\t2026-01-01 00:00:00\t2026-03-01 00:00:00'])
 
     def test_when_seeding_limits_it_should_upsert_the_whitelist(self):
         _, tgt = self.wcs()
@@ -846,6 +977,29 @@ class AgainstPostgres(unittest.TestCase):
         self.assertEqual(code, 0, out)
         rows = self.sql(tgt, 'SELECT world_name, max_parcels, max_size_bytes FROM worlds.world_limit_overrides;\n')
         self.assertEqual(rows.strip(), f'big.dcl.eth\t50\t{200 * 1024 * 1024}')
+
+    def test_when_seeding_limits_again_it_should_keep_overrides_set_on_the_node(self):
+        _, tgt = self.wcs()
+        self.sql(tgt, 'CREATE TABLE worlds.world_limit_overrides (world_name text PRIMARY KEY, max_parcels integer, '
+                      'max_size_bytes bigint, created_at timestamp NOT NULL DEFAULT now(), '
+                      'updated_at timestamp NOT NULL DEFAULT now());\n'
+                      "INSERT INTO worlds.world_limit_overrides VALUES ('node.dcl.eth', 7, 7, now(), now());\n")
+        whitelist = self.tmp / 'whitelist-again.json'
+        entries = {'seeded.dcl.eth': {'max_parcels': 50, 'max_size_in_mb': 1},
+                   'edited.dcl.eth': {'max_parcels': 50, 'max_size_in_mb': 1},
+                   'node.dcl.eth': {'max_parcels': 50, 'max_size_in_mb': 1}}
+        whitelist.write_text(json.dumps(entries))
+        code, out = self.migrate('worlds-limits', str(whitelist), sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertIn('2 rows written', out)
+        self.assertIn('kept 1 rows set on the node that differ from the whitelist: node.dcl.eth', out)
+        self.sql(tgt, "UPDATE worlds.world_limit_overrides SET max_parcels = 9 WHERE world_name = 'edited.dcl.eth';\n")
+        whitelist.write_text(json.dumps({n: {**e, 'max_parcels': 60} for n, e in entries.items()}))
+        code, out = self.migrate('worlds-limits', str(whitelist), sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertIn('1 rows written', out)
+        rows = self.sql(tgt, 'SELECT world_name, max_parcels FROM worlds.world_limit_overrides ORDER BY 1;\n')
+        self.assertEqual(rows.splitlines(), ['edited.dcl.eth\t9', 'node.dcl.eth\t7', 'seeded.dcl.eth\t60'])
 
 
 import unittest.mock  # noqa: E402

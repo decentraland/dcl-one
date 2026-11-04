@@ -12,9 +12,10 @@ DO $quota$ DECLARE n bigint; BEGIN
     INSERT INTO worlds.quota_blocks (wallet, created_at, updated_at)
     SELECT s.wallet, s.created_at AT TIME ZONE 'UTC', s.updated_at AT TIME ZONE 'UTC'
     FROM stage s
+    -- A block the node already holds keeps its start (the grace window runs from it).
     ON CONFLICT (wallet) DO UPDATE SET
-        created_at = EXCLUDED.created_at,
-        updated_at = EXCLUDED.updated_at;
+        created_at = LEAST(quota_blocks.created_at, EXCLUDED.created_at),
+        updated_at = GREATEST(quota_blocks.updated_at, EXCLUDED.updated_at);
     GET DIAGNOSTICS n = ROW_COUNT;
     RAISE NOTICE 'worlds-content-server/quota_block: upserted % quota blocks', n;
   END IF;

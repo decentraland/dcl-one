@@ -25,8 +25,11 @@ python3 tooling/migration/migrate.py worlds-unban-quota-blocks
 It runs only when that step's checkpoint exists, and drops the checkpoint in
 the same transaction. The tool keeps no per-wallet provenance, so it deletes
 the `blocked_wallets` rows whose wallet upstream `blocked` holds with the same
-`created_at` (the step copied it verbatim; a node ban has its own). It reports
-the rows it kept for a blocked wallet with another `created_at`. Risk: a
+`created_at` (the step copied it verbatim; a node ban has its own) and whose
+`updated_at` is no later than the start of that step's last walk (banning a
+wallet again on the node keeps `created_at` and bumps `updated_at`). It lists
+the rows it kept for either reason. A ban made on the node before the old
+step ran had both timestamps overwritten by it and is deleted. Risk: a
 wallet whose upstream block was lifted after the old step ran is not in
 `blocked` any more and stays banned; review `worlds.blocked_wallets` by hand.
 
@@ -40,7 +43,8 @@ scene in the blob copy's records; see Blobs.
 updated_at timestamp NOT NULL)` and `worlds.world_limit_overrides` come with
 the worlds storage-quota schema. On a schema without `worlds.quota_blocks`,
 `quota_block` stops at the first non-empty batch rather than dropping the
-blocks; `worlds-limits` refuses to run without `worlds.world_limit_overrides`.
+blocks. A block the node already holds keeps the earlier `created_at` (its
+grace window does not restart) and the later `updated_at`; `worlds-limits` refuses to run without `worlds.world_limit_overrides`.
 
 ## Blobs
 
@@ -73,11 +77,18 @@ thumbnail names, and fails (exit 1, listing them) when one is missing: run
 - Upstream is a `STORAGE_FOLDER` (`<dir>/<sha1 shard>/<id>`, or flat with
   `disablePrefixHash`; a gzip-only `<id>.gzip` is inflated) or a `BUCKET`
   (key = id; `--from-s3` needs `boto3`, otherwise `aws s3 sync` the bucket and
-  pass the copy as `--from-dir`). A 404 or a 403 (a missing key reads as 403
-  without `s3:ListBucket`) is recorded as missing with its reason. A read that
-  fails part-way (timeout, truncated stream) is retried three times with
-  backoff; a key still failing is listed, not recorded, and the copy exits 1 so
-  the next run retries it. Any other S3 error stops the copy.
+  pass the copy as `--from-dir`). A 404 is recorded as missing. A 403 is
+  recorded as missing (a missing key reads as 403 without `s3:ListBucket`)
+  once a probed key has read; before that it stops the copy. A read that
+  fails part-way (timeout, truncated stream), S3 throttling (`SlowDown`) or a
+  5xx is retried three times with backoff; a key still failing is listed, not
+  recorded, and the copy exits 1 so the next run retries it. Any other S3
+  error stops the copy.
+- Before copying, up to 16 keys spread over the work list are opened. When
+  none reads (a wrong `--from-dir` or bucket, or credentials that cannot read
+  it) the copy stops. When more than `--max-missing` percent (default 1) of
+  the copied keys are absent or unreadable upstream, the copy exits 1 and
+  records none of them missing. `--allow-missing` skips both checks.
 - At most `--workers` × 4 keys are in flight at a time.
 - Every object is re-hashed before it is stored: a CIDv1 against
   `hash_bytes_v1` (raw leaf up to 256 KiB, the chunked dag-pb tree above), a
@@ -97,8 +108,10 @@ thumbnail names, and fails (exit 1, listing them) when one is missing: run
   recorded in `dcl_migration.blob_missing`; the node then serves it as
   missing, as upstream did. A thumbnail recorded there is imported as no
   thumbnail.
-- Idempotent: objects already recorded and present in the store are skipped,
-  so the copy runs again before each `run --since last`.
+- Idempotent: objects already recorded and present in the store with their
+  recorded size are skipped, so the copy runs again before each
+  `run --since last`. A file the store already holds for an unrecorded key is
+  re-hashed, and copied again when its bytes do not match.
 - `--verify` lists each imported local scene (and world thumbnail) whose
   blobs are not in the store. It checks existence; the copy checked content.
 - Places: upstream Places stored an uploaded world thumbnail as the image URL
@@ -126,7 +139,11 @@ both); 0 or anything else means the default. `max_parcels` maps as is; `max_size
 upstream's fixed `MAX_SIZE` cap instead of its owner's allowance, so it gets
 `--max-size-mb` × 1 MiB. ENS worlds (`.eth`, not `.dcl.eth`) keep the node's
 ENS cap, as upstream ignored their listed size. `allow_sdk6` is not carried
-over. Rows are upserted; a world removed from the document keeps its row.
+over. A world without a row gets one. An existing row is updated only while
+it still holds the values this command last wrote
+(`dcl_migration.world_limit_seeded`); a row set or changed on the node is kept
+and listed. A world removed from the document keeps its row. Limits beyond
+the columns' range are capped (`max_parcels` at 2^31-1).
 
 ## Not imported
 
