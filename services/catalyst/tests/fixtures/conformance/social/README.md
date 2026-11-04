@@ -60,8 +60,9 @@ Compare the result with the catalogued fixture before replacing anything.
 Review source pin, runtime, provider controls and fixture differences together;
 a changed fixture also requires an explicitly reviewed catalog digest update.
 Request-failure paths stop local listeners in `finally`, so failed captures
-exit with an error. No live provider acceptance follows from a controlled
-source capture.
+exit with an error. Manual HTTP requests reject interrupted responses and
+enforce a five-second deadline across headers and body. No live provider
+acceptance follows from a controlled source capture.
 
 The analytics capture under `library/dcl-http/tests/fixtures/` records installed
 analytics/fetch SDK transport behavior, including redirect and header semantics.
