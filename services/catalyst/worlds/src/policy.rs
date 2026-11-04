@@ -406,6 +406,7 @@ impl Policy {
     /// knows; the old GET /permissions resolved that by name through squid,
     /// a by-name reader v2 does not have).
     pub fn known_owner(&self, world: &WorldName, row: Option<&WorldRow>) -> Option<Address> {
+        world.owner_label()?;
         self.personal_worlds
             .owner_of(world)
             .or_else(|| row.and_then(|r| r.owner.clone()))
@@ -425,12 +426,12 @@ impl Policy {
         world: &WorldName,
         actor: &Address,
     ) -> PermissionDecision {
+        // Only `.dcl.eth` names have a NAME holder; ENS resolution would plug in here.
+        let Some(label) = world.owner_label() else {
+            return PermissionDecision::refused(NOT_OWNER_MSG);
+        };
         match crate::chain_index::graph::owned_names(market, actor.as_str()).await {
-            Ok(names)
-                if names
-                    .iter()
-                    .any(|n| n.name.eq_ignore_ascii_case(world.label())) =>
-            {
+            Ok(names) if names.iter().any(|n| n.name.eq_ignore_ascii_case(label)) => {
                 PermissionDecision::Allowed
             }
             Ok(_) => PermissionDecision::refused(NOT_OWNER_MSG),
@@ -446,6 +447,9 @@ impl Policy {
     /// configured; with one, a transferred NAME refuses its previous holder
     /// at once (the reader memoizes for `marketplace::graph::OWNED_TTL`).
     pub async fn is_owner(&self, world: &WorldName, actor: &Address) -> PermissionDecision {
+        if world.owner_label().is_none() {
+            return PermissionDecision::refused(NOT_OWNER_MSG);
+        }
         if let Some(owner) = self.personal_worlds.owner_of(world) {
             return if owner == *actor {
                 PermissionDecision::Allowed
@@ -1302,6 +1306,44 @@ mod tests {
                 .http_status(),
             403
         );
+    }
+
+    #[tokio::test]
+    async fn a_name_without_the_dcl_eth_suffix_has_no_owner() {
+        let Some((p, names, _)) = scratch_with_names().await else {
+            return;
+        };
+        let holder = wallet();
+        let label = format!("n{}", &Uuid::new_v4().simple().to_string()[..10]);
+        names.set(&holder, &label);
+        for bare in [label.clone(), format!("{label}.eth")] {
+            let world = WorldName::parse(&bare).unwrap();
+            seed_world(&p, &world, Some(&holder), AccessType::AllowList, None).await;
+            assert_eq!(
+                p.is_owner(&world, &holder)
+                    .await
+                    .into_result()
+                    .unwrap_err()
+                    .http_status(),
+                403,
+                "{bare}"
+            );
+            assert!(
+                p.can_deploy(&world, &holder, &parcels(&["0,0"]))
+                    .await
+                    .is_err(),
+                "{bare}"
+            );
+            assert_eq!(
+                p.can_access(&world, &holder, None, None, None, now())
+                    .await
+                    .unwrap(),
+                Access::NotAllowed,
+                "{bare}: the stored owner is no owner"
+            );
+        }
+        let dcl = WorldName::parse(&format!("{label}.dcl.eth")).unwrap();
+        assert!(p.is_owner(&dcl, &holder).await.is_allowed());
     }
 
     /// `worlds.owner` is a cache of the authority's answer, not the authority:
