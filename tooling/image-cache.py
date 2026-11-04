@@ -21,7 +21,7 @@ def cache_plan(arch, event, ref, derivations):
         raise ValueError('Unsupported image architecture')
     pr = re.fullmatch(r'refs/pull/([1-9][0-9]*)/merge', ref)
     scope = f'pr-{pr[1]}' if event == 'pull_request' and pr else 'main'
-    save = ref == 'refs/heads/main' or (event == 'pull_request' and pr is not None)
+    save = (event == 'push' and ref == 'refs/heads/main') or (event == 'pull_request' and pr is not None)
     result = {'save': str(save).lower()}
     for group, packages in PACKAGES.items():
         inputs = [(package, derivations[package]) for package in packages]

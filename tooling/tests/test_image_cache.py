@@ -35,6 +35,7 @@ class CachePlanTest(unittest.TestCase):
 
     def test_tags_and_other_branches_only_read_main(self):
         for event, ref in [('push', 'refs/tags/v1'), ('workflow_dispatch', 'refs/heads/feature'),
+                           ('workflow_dispatch', 'refs/heads/main'), ('pull_request_target', 'refs/heads/main'),
                            ('pull_request', 'refs/heads/feature')]:
             with self.subTest(event=event, ref=ref):
                 plan = self.plan(event, ref)
