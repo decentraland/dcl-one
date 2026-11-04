@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use common::util::ReportErr;
+use dcl_component::proto_components::sdk::components::VideoState;
 use ipfs::IpfsResource;
 use media::{AVCommand, VideoData};
 
@@ -8,7 +9,6 @@ use crate::{AVPlayer, AVSinks};
 use {
     crate::audio_sink::AudioSink,
     common::structs::AudioDecoderError,
-    dcl_component::proto_components::sdk::components::VideoState,
     kira::sound::streaming::StreamingSoundData,
     media::{ffmpeg_worker, AudioHandle},
 };
@@ -19,6 +19,7 @@ pub struct VideoSink {
     pub image: Handle<Image>,
     pub current_time: f64,
     pub last_reported_time: f64,
+    pub last_state: Option<VideoState>,
     pub length: Option<f64>,
     /// The image changed size and the materials on it must rebind.
     pub resized: bool,
@@ -36,6 +37,7 @@ impl VideoSink {
             image,
             current_time: -1.0,
             last_reported_time: -1.0,
+            last_state: None,
             length: None,
             resized: false,
         }

@@ -69,6 +69,45 @@ fn an_explicit_variable_or_its_file_wins_even_empty() {
 }
 
 #[test]
+fn a_mirror_reads_the_subgraphs_lamb2_defaults_to() {
+    let mirror = expanded(Posture::Mirror, &[]);
+    assert_eq!(
+        (
+            mirror["MARKETPLACE_SUBGRAPH_URL"].as_str(),
+            mirror["LAND_SUBGRAPH_URL"].as_str()
+        ),
+        (
+            "https://subgraph.decentraland.org/marketplace",
+            "https://subgraph.decentraland.org/land-manager"
+        )
+    );
+    for posture in [Posture::Island, Posture::Journey] {
+        assert_eq!(expanded(posture, &[])["LAND_SUBGRAPH_URL"], "");
+    }
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert_eq!(
+        c.market_upstreams.land_subgraph_url.as_deref(),
+        Some("https://subgraph.decentraland.org/land-manager")
+    );
+}
+
+#[test]
+fn a_mirror_reads_third_party_holdings_from_the_nft_worker() {
+    assert_eq!(
+        expanded(Posture::Mirror, &[])["NFT_WORKER_BASE_URL"],
+        "https://nfts.decentraland.org"
+    );
+    for posture in [Posture::Island, Posture::Journey] {
+        assert_eq!(expanded(posture, &[])["NFT_WORKER_BASE_URL"], "");
+    }
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert_eq!(
+        c.market_upstreams.nft_worker_base_url.as_deref(),
+        Some("https://nfts.decentraland.org")
+    );
+}
+
+#[test]
 fn read_through_copies_a_miss_on_a_mirror_only() {
     assert_eq!(
         expanded(Posture::Mirror, &[])["READ_THROUGH_ENABLED"],

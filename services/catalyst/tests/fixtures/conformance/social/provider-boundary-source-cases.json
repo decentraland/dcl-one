@@ -1,0 +1,392 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+    "sources": [
+      {
+        "path": "src/components.ts",
+        "sha256": "9878788adb18eeff8b80ac24f392b945239533fe5e88550d1334123002c60e68"
+      },
+      {
+        "path": "src/adapters/ai-compliance.ts",
+        "sha256": "4cc453b7bd2c38eeb4edd1b6d4d3e72c654d17145c0055daf3455523f62abd23"
+      },
+      {
+        "path": "node_modules/@dcl/slack-component/dist/src/component.js",
+        "sha256": "525409bef2723681249a4bc4b9a843079da873d20c821de04f1bc79f7468228a"
+      },
+      {
+        "path": "node_modules/openai/client.js",
+        "sha256": "2c351d78976b9e13abe411e1e11f1a321bc8aee10a20290b8575b8f73c810cdc"
+      },
+      {
+        "path": "node_modules/openai/internal/parse.js",
+        "sha256": "faed9357e3b618ccfec71ce522dc3aed69aab285917dd42d7097f58e16b3aeb7"
+      },
+      {
+        "path": "node_modules/@slack/web-api/dist/WebClient.js",
+        "sha256": "3c4375a0a220918da2460571ea7223b11a387428a05b1813a3cad21a0133c8a2"
+      },
+      {
+        "path": "node_modules/@dcl/analytics-component/dist/src/component.js",
+        "sha256": "d3f7866961d2648690001bb95bf900c3fd32aed142c5da6154e09135a75191ec"
+      },
+      {
+        "path": "node_modules/@dcl/fetch-component/dist/src/fetcher.js",
+        "sha256": "f9b67ea4ed53fcc789654570f2ae891df21bd764b02901f8f885154d2ec91e69"
+      }
+    ]
+  },
+  "runtime": {
+    "node": "v26.12.0",
+    "openai": "5.23.2",
+    "slack": "6.13.0",
+    "analytics": "1.0.5",
+    "fetch": "1.1.1"
+  },
+  "scope": "Actual source provider factory sequence (analytics, AI, Slack) and installed OpenAI SDK; controlled fetch ReadableStream and SDK 600000ms timer. Captures missing/empty bootstrap key, timer clearance at headers, pending body across nominal SDK deadline, and accepted response above 4MiB. Slack installed SDK axios defaults and the analytics configured 60000ms header-abort timer are observed. Native Node body inactivity, headers and stalled TLS connect deadlines are exercised over loopback with the native 499ms fast timer tick controlled; analytics redirect hops execute independently within the SDK timer. Seven actual AI factory metric boundaries use controlled provider responses and cache mocks. Does not establish deployed credentials, full initComponents startup, live provider success, or delayed-DNS/combined connection-and-header timing equivalence.",
+  "native_socket_body": {
+    "transport": "Actual source AI component and OpenAI SDK over native Node fetch to a loopback HTTP server; native 499ms fast timer ticks are invoked under controlled time",
+    "node": "v26.12.0",
+    "undici": "8.11.2",
+    "native_bundle_sha256": "b12f55252b2f26413e8df444cf8d823fcf0417b9a54703c0be380a07cc184a3a",
+    "tick_ms": 499,
+    "before_progress": {
+      "completed": false,
+      "elapsed_tick_ms": 240019
+    },
+    "after_progress": {
+      "completed": false,
+      "elapsed_tick_ms": 479539
+    },
+    "after_sdk_deadline": {
+      "completed": false,
+      "elapsed_tick_ms": 719059
+    },
+    "at_inactivity_timeout": {
+      "elapsed_tick_ms": 780436,
+      "error": "Unexpected error during compliance validation: terminated"
+    },
+    "sdk_header_timer_cleared": true,
+    "requests": 1
+  },
+  "native_analytics": {
+    "headers": {
+      "node": "v26.12.0",
+      "undici": "8.11.2",
+      "sdk_timer_ms": 600000,
+      "native_budget_ms": 300000,
+      "tick_ms": 499,
+      "before_deadline": {
+        "completed": false,
+        "elapsed_tick_ms": 299899
+      },
+      "completed": true,
+      "logs": [
+        {
+          "message": "Error sending event to Analytics NATIVE_HEADERS_FIXTURE",
+          "data": {
+            "error": "fetch failed"
+          }
+        }
+      ],
+      "requests": [
+        "/start"
+      ],
+      "stalled_tls_connections": 0
+    },
+    "redirect-chain": {
+      "node": "v26.12.0",
+      "undici": "8.11.2",
+      "sdk_timer_ms": 600000,
+      "native_budget_ms": 300000,
+      "tick_ms": 499,
+      "after_first_hop": {
+        "completed": false,
+        "elapsed_tick_ms": 240019
+      },
+      "after_second_hop": {
+        "completed": false,
+        "elapsed_tick_ms": 479539
+      },
+      "completed": true,
+      "logs": [],
+      "requests": [
+        "/start",
+        "/end"
+      ],
+      "stalled_tls_connections": 0
+    },
+    "connect": {
+      "node": "v26.12.0",
+      "undici": "8.11.2",
+      "sdk_timer_ms": 600000,
+      "native_budget_ms": 10000,
+      "tick_ms": 499,
+      "before_deadline": {
+        "completed": false,
+        "elapsed_tick_ms": 9980
+      },
+      "completed": true,
+      "logs": [
+        {
+          "message": "Error sending event to Analytics NATIVE_HEADERS_FIXTURE",
+          "data": {
+            "error": "fetch failed"
+          }
+        }
+      ],
+      "requests": [],
+      "stalled_tls_connections": 1
+    }
+  },
+  "bootstrap": [
+    {
+      "key": "absent",
+      "configured": false,
+      "error": "Configuration: string OPEN_AI_API_KEY is required"
+    },
+    {
+      "key": "empty",
+      "configured": true
+    },
+    {
+      "key": "fixture",
+      "configured": true
+    }
+  ],
+  "provider_initialization_order": [
+    {
+      "statement": "const analytics = await createAnalyticsComponent",
+      "offset": 7563
+    },
+    {
+      "statement": "const aiCompliance = await createAIComplianceComponent",
+      "offset": 11281
+    },
+    {
+      "statement": "const slackToken = await config.requireString('SLACK_BOT_TOKEN')",
+      "offset": 14605
+    }
+  ],
+  "active_bootstrap": [
+    {
+      "omitted": null,
+      "configured": true
+    },
+    {
+      "omitted": "ANALYTICS_CONTEXT",
+      "configured": false,
+      "error": "Configuration: string ANALYTICS_CONTEXT is required"
+    },
+    {
+      "omitted": "ANALYTICS_API_URL",
+      "configured": false,
+      "error": "Configuration: string ANALYTICS_API_URL is required"
+    },
+    {
+      "omitted": "ANALYTICS_API_TOKEN",
+      "configured": false,
+      "error": "Configuration: string ANALYTICS_API_TOKEN is required"
+    },
+    {
+      "omitted": "ENV",
+      "configured": false,
+      "error": "Configuration: string ENV is required"
+    },
+    {
+      "omitted": "OPEN_AI_API_KEY",
+      "configured": false,
+      "error": "Configuration: string OPEN_AI_API_KEY is required"
+    },
+    {
+      "omitted": "SLACK_BOT_TOKEN",
+      "configured": false,
+      "error": "Configuration: string SLACK_BOT_TOKEN is required"
+    },
+    {
+      "omitted": "all-empty",
+      "configured": true
+    },
+    {
+      "omitted": "all-missing",
+      "configured": false,
+      "error": "Configuration: string ANALYTICS_CONTEXT is required"
+    }
+  ],
+  "sdk_body_phase": {
+    "before": {
+      "completed": false,
+      "signal_aborted": false,
+      "timer_ms": 600000,
+      "timer_cleared": true
+    },
+    "after": {
+      "completed": false,
+      "signal_aborted": false
+    },
+    "result": {
+      "isCompliant": true,
+      "issues": {
+        "name": [],
+        "description": [],
+        "image": []
+      },
+      "confidence": 0.9
+    },
+    "requests": 1
+  },
+  "large_response": {
+    "bytes": 4194512,
+    "padding_bytes": 4194305,
+    "result": {
+      "isCompliant": true,
+      "issues": {
+        "name": [],
+        "description": [],
+        "image": []
+      },
+      "confidence": 0.9
+    },
+    "requests": 1
+  },
+  "slack": {
+    "axios_timeout_ms": 0,
+    "max_redirects": 0,
+    "empty_token": {
+      "requests": 1,
+      "authorization": null,
+      "result": "ok"
+    }
+  },
+  "analytics": {
+    "configured_header_timer_ms": 60000,
+    "before_timer": {
+      "completed": false
+    },
+    "after_timer": {
+      "completed": true,
+      "logs": [
+        {
+          "message": "Error sending event to Analytics SLOW_HEADERS_FIXTURE",
+          "data": {
+            "error": "Request aborted (timed out)"
+          }
+        }
+      ]
+    }
+  },
+  "ai_metrics": [
+    {
+      "scenario": "live-compliant",
+      "events": [
+        {
+          "operation": "observe",
+          "name": "ai_compliance_validation_duration_seconds",
+          "labels": {}
+        },
+        {
+          "operation": "increment",
+          "name": "ai_compliance_validation_total",
+          "labels": {
+            "result": "compliant"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "live-non-compliant",
+      "events": [
+        {
+          "operation": "observe",
+          "name": "ai_compliance_validation_duration_seconds",
+          "labels": {}
+        },
+        {
+          "operation": "increment",
+          "name": "ai_compliance_validation_total",
+          "labels": {
+            "result": "non-compliant"
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "cached-compliant",
+      "events": [
+        {
+          "operation": "increment",
+          "name": "ai_compliance_validation_total",
+          "labels": {
+            "result": "compliant_cached"
+          }
+        },
+        {
+          "operation": "observe",
+          "name": "ai_compliance_validation_duration_seconds",
+          "labels": {}
+        }
+      ]
+    },
+    {
+      "scenario": "cached-non-compliant",
+      "events": [
+        {
+          "operation": "increment",
+          "name": "ai_compliance_validation_total",
+          "labels": {
+            "result": "non-compliant_cached"
+          }
+        },
+        {
+          "operation": "observe",
+          "name": "ai_compliance_validation_duration_seconds",
+          "labels": {}
+        }
+      ]
+    },
+    {
+      "scenario": "provider-invalid",
+      "events": [
+        {
+          "operation": "increment",
+          "name": "ai_compliance_validation_total",
+          "labels": {
+            "result": "failed"
+          }
+        }
+      ],
+      "error": "Invalid response structure from OpenAI API"
+    },
+    {
+      "scenario": "cache-read-failure",
+      "events": [],
+      "error": "fixture cache read failure"
+    },
+    {
+      "scenario": "cache-write-failure",
+      "events": [
+        {
+          "operation": "observe",
+          "name": "ai_compliance_validation_duration_seconds",
+          "labels": {}
+        },
+        {
+          "operation": "increment",
+          "name": "ai_compliance_validation_total",
+          "labels": {
+            "result": "compliant"
+          }
+        },
+        {
+          "operation": "increment",
+          "name": "ai_compliance_validation_total",
+          "labels": {
+            "result": "failed"
+          }
+        }
+      ],
+      "error": "Unexpected error during compliance validation: fixture cache write failure"
+    }
+  ]
+}

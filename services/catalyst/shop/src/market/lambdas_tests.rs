@@ -975,9 +975,10 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
 /// Before the indexes and the items mirror exist, the routes the old lambdas
 /// answered from the subgraphs answer from them here: the catalogue's on-chain
 /// leg from the collections subgraphs, the name holder and the owner's lands
-/// from the marketplace subgraph, the parcel operators and the update
-/// operator's parcels from the land-manager subgraph; without
-/// `LAND_SUBGRAPH_URL` the two land routes keep the index envelope.
+/// from the marketplace subgraph, the parcel operators, the permission flags
+/// and the update operator's parcels from the land-manager subgraph; without
+/// `LAND_SUBGRAPH_URL` the two land routes keep the index envelope and the
+/// flags route answers lamb2's 500.
 #[tokio::test]
 async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
     let Some(db) = ScratchDb::create().await else {
@@ -1119,13 +1120,49 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
         json!([{ "id": "2", "x": "3", "y": "4", "owner": OWNER, "updateOperator": UPDATE_OP }])
     );
     let (_, body) = get_via(
-        land,
+        land.clone(),
         "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/lands-permissions",
     )
     .await;
     assert_eq!(
         body,
         json!({ "elements": [], "totalAmount": 0, "pageNum": 1, "pageSize": 100 })
+    );
+    // The flags route reads the same operators and answers booleans, as
+    // lamb2's getParcelPermissions compares them.
+    for (who, expected) in [
+        (
+            OWNER,
+            json!({ "owner": true, "operator": false, "updateOperator": false, "updateManager": false, "approvedForAll": false }),
+        ),
+        (
+            MANAGER,
+            json!({ "owner": false, "operator": false, "updateOperator": false, "updateManager": true, "approvedForAll": false }),
+        ),
+        (
+            UPDATE_OP,
+            json!({ "owner": false, "operator": false, "updateOperator": false, "updateManager": false, "approvedForAll": false }),
+        ),
+    ] {
+        let (status, body) = get_via(
+            land.clone(),
+            &format!("/lambdas/users/{who}/parcels/0/0/permissions"),
+        )
+        .await;
+        assert_eq!((status, body), (StatusCode::OK, expected), "{who}");
+    }
+    let (status, body) = get_via(
+        land.clone(),
+        &format!("/lambdas/users/{OWNER}/parcels/160/100/permissions"),
+    )
+    .await;
+    assert_eq!(
+        (status, body["message"].as_str()),
+        (
+            StatusCode::NOT_FOUND,
+            Some("Parcel or estate rights not found for x: 160, y: 100")
+        ),
+        "an exception-block parcel reaches the subgraph"
     );
 
     let without_land = Arc::new(MarketplaceState::new(
@@ -1156,6 +1193,19 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
             "{uri}: {body}"
         );
     }
+    let (status, body) = get_via(
+        land.clone(),
+        &format!("/lambdas/users/{OWNER}/parcels/0/0/permissions"),
+    )
+    .await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": "Internal Server Error" })
+        ),
+        "neither source: lamb2's bare 500"
+    );
 
     db.drop().await;
 }

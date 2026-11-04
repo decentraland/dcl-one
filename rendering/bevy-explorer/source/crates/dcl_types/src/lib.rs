@@ -265,6 +265,7 @@ pub struct SceneResourceCounters {
     pub crdt_store_bytes: u64,
     pub crdt_entities: u64,
     pub crdt_components: u64,
+    /// Outstanding native Fetch calls, including permission and slot waits.
     pub fetch_in_flight: u64,
     pub fetch_duration_us: u64,
     pub fetch_status_2xx: u64,

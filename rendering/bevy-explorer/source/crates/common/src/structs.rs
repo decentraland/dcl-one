@@ -1810,6 +1810,8 @@ pub struct CurrentRealm {
     pub config: ServerConfiguration,
     pub comms: Option<CommsConfig>,
     pub public_url: String,
+    /// The parcel the realm (a world) spawns players on, from its manifest; none for a city
+    pub spawn_parcel: Option<IVec2>,
 }
 
 impl CurrentRealm {

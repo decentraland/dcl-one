@@ -1,0 +1,786 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+  },
+  "runtime": {
+    "node": "v26.12.0",
+    "uws_source_commit": "fbdac03ee398031f304ddeb6764358d2eaa6fe29"
+  },
+  "scope": "Actual env provider/getWsAuthSettings/Node timer buckets, native uWS idle admission, crypto middleware timestamp+expiry functions. Native idle seconds follow binding integer conversion; cryptographic signatures and wall-clock timeout scheduling are not exercised by this capture.",
+  "now": 1800000000555,
+  "auth": [
+    {
+      "raw": null,
+      "number": 300000,
+      "signature": 300000,
+      "timer_bucket_ms": 300000
+    },
+    {
+      "raw": "7",
+      "number": 7,
+      "signature": 7,
+      "timer_bucket_ms": 7
+    },
+    {
+      "raw": "1.9tail",
+      "number": 1.9,
+      "signature": 1.9,
+      "timer_bucket_ms": 1
+    },
+    {
+      "raw": "0",
+      "number": 0,
+      "signature": 0,
+      "timer_bucket_ms": 1
+    },
+    {
+      "raw": "-1",
+      "number": -1,
+      "signature": -1,
+      "timer_bucket_ms": 1
+    },
+    {
+      "raw": "Infinity",
+      "number": "Infinity",
+      "signature": "Infinity",
+      "timer_bucket_ms": 1
+    },
+    {
+      "raw": "-Infinity",
+      "number": "-Infinity",
+      "signature": "-Infinity",
+      "timer_bucket_ms": 1
+    },
+    {
+      "raw": "2147483647",
+      "number": 2147483647,
+      "signature": 2147483647,
+      "timer_bucket_ms": 2147483647
+    },
+    {
+      "raw": "2147483648",
+      "number": 2147483648,
+      "signature": 2147483648,
+      "timer_bucket_ms": 1
+    },
+    {
+      "raw": "300000ms",
+      "number": 300000,
+      "signature": 300000,
+      "timer_bucket_ms": 300000
+    },
+    {
+      "raw": "0x10",
+      "number": 0,
+      "signature": 0,
+      "timer_bucket_ms": 1
+    },
+    {
+      "raw": "NaN",
+      "error": "Configuration: config \"WS_AUTH_TIMEOUT_IN_MS\" should be a number, got string (NaN) instead"
+    },
+    {
+      "raw": "",
+      "error": "Configuration: config \"WS_AUTH_TIMEOUT_IN_MS\" should be a number, got string () instead"
+    }
+  ],
+  "idle": [
+    {
+      "raw": "0",
+      "number": 0,
+      "native_allowed": true,
+      "native_seconds": 0
+    },
+    {
+      "raw": "0.5",
+      "number": 0.5,
+      "native_allowed": true,
+      "native_seconds": 0
+    },
+    {
+      "raw": "1",
+      "number": 1,
+      "native_allowed": false,
+      "native_seconds": 1
+    },
+    {
+      "raw": "7",
+      "number": 7,
+      "native_allowed": false,
+      "native_seconds": 7
+    },
+    {
+      "raw": "8",
+      "number": 8,
+      "native_allowed": true,
+      "native_seconds": 8
+    },
+    {
+      "raw": "8.9tail",
+      "number": 8.9,
+      "native_allowed": true,
+      "native_seconds": 8
+    },
+    {
+      "raw": "300",
+      "number": 300,
+      "native_allowed": true,
+      "native_seconds": 300
+    },
+    {
+      "raw": "960.9",
+      "number": 960.9,
+      "native_allowed": true,
+      "native_seconds": 960
+    },
+    {
+      "raw": "961",
+      "number": 961,
+      "native_allowed": false,
+      "native_seconds": 961
+    },
+    {
+      "raw": "65536",
+      "number": 65536,
+      "native_allowed": true,
+      "native_seconds": 0
+    },
+    {
+      "raw": "65544",
+      "number": 65544,
+      "native_allowed": true,
+      "native_seconds": 8
+    },
+    {
+      "raw": "4294967304",
+      "number": 4294967304,
+      "native_allowed": true,
+      "native_seconds": 8
+    },
+    {
+      "raw": "-65528",
+      "number": -65528,
+      "native_allowed": true,
+      "native_seconds": 8
+    },
+    {
+      "raw": "-1",
+      "number": -1,
+      "native_allowed": false,
+      "native_seconds": 65535
+    },
+    {
+      "raw": "Infinity",
+      "number": "Infinity",
+      "native_allowed": true,
+      "native_seconds": 0
+    },
+    {
+      "raw": "NaN",
+      "error": "Configuration: config \"WS_IDLE_TIMEOUT_IN_SECONDS\" should be a number, got string (NaN) instead"
+    }
+  ],
+  "timestamps": [
+    {
+      "raw": null,
+      "window": 0,
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 0, timestamp expiration: 0, local timestamp: 1800000000555"
+    },
+    {
+      "raw": null,
+      "window": 0.5,
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 0, timestamp expiration: 0.5, local timestamp: 1800000000555"
+    },
+    {
+      "raw": null,
+      "window": 1.5,
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 0, timestamp expiration: 1.5, local timestamp: 1800000000555"
+    },
+    {
+      "raw": null,
+      "window": "Infinity",
+      "accepted": true,
+      "parsed": 0
+    },
+    {
+      "raw": null,
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 0, timestamp expiration: -Infinity, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "",
+      "window": 0,
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 0, timestamp expiration: 0, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "",
+      "window": 0.5,
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 0, timestamp expiration: 0.5, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "",
+      "window": 1.5,
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 0, timestamp expiration: 1.5, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "",
+      "window": "Infinity",
+      "accepted": true,
+      "parsed": 0
+    },
+    {
+      "raw": "",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 0, timestamp expiration: -Infinity, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "1800000000555",
+      "window": 0,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "1800000000555",
+      "window": 0.5,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "1800000000555",
+      "window": 1.5,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "1800000000555",
+      "window": "Infinity",
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "1800000000555",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 1800000000555, timestamp expiration: -Infinity, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "1800000000555.25",
+      "window": 0,
+      "accepted": false,
+      "error": "Signature timestamp is too far in the future: signature timestamp: 1800000000555.25, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "1800000000555.25",
+      "window": 0.5,
+      "accepted": true,
+      "parsed": 1800000000555.25
+    },
+    {
+      "raw": "1800000000555.25",
+      "window": 1.5,
+      "accepted": true,
+      "parsed": 1800000000555.25
+    },
+    {
+      "raw": "1800000000555.25",
+      "window": "Infinity",
+      "accepted": true,
+      "parsed": 1800000000555.25
+    },
+    {
+      "raw": "1800000000555.25",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 1800000000555.25, timestamp expiration: -Infinity, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "1800000000555e0",
+      "window": 0,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "1800000000555e0",
+      "window": 0.5,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "1800000000555e0",
+      "window": 1.5,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "1800000000555e0",
+      "window": "Infinity",
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "1800000000555e0",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 1800000000555, timestamp expiration: -Infinity, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0x1a3185c522b",
+      "window": 0,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "0x1a3185c522b",
+      "window": 0.5,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "0x1a3185c522b",
+      "window": 1.5,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "0x1a3185c522b",
+      "window": "Infinity",
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "0x1a3185c522b",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 1800000000555, timestamp expiration: -Infinity, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0o32143027051053",
+      "window": 0,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "0o32143027051053",
+      "window": 0.5,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "0o32143027051053",
+      "window": 1.5,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "0o32143027051053",
+      "window": "Infinity",
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "0o32143027051053",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 1800000000555, timestamp expiration: -Infinity, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0b11010001100011000010111000101001000101011",
+      "window": 0,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "0b11010001100011000010111000101001000101011",
+      "window": 0.5,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "0b11010001100011000010111000101001000101011",
+      "window": 1.5,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "0b11010001100011000010111000101001000101011",
+      "window": "Infinity",
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": "0b11010001100011000010111000101001000101011",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 1800000000555, timestamp expiration: -Infinity, local timestamp: 1800000000555"
+    },
+    {
+      "raw": " ﻿1800000000555 ",
+      "window": 0,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": " ﻿1800000000555 ",
+      "window": 0.5,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": " ﻿1800000000555 ",
+      "window": 1.5,
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": " ﻿1800000000555 ",
+      "window": "Infinity",
+      "accepted": true,
+      "parsed": 1800000000555
+    },
+    {
+      "raw": " ﻿1800000000555 ",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 1800000000555, timestamp expiration: -Infinity, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0",
+      "window": 0,
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 0, timestamp expiration: 0, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0",
+      "window": 0.5,
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 0, timestamp expiration: 0.5, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0",
+      "window": 1.5,
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 0, timestamp expiration: 1.5, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0",
+      "window": "Infinity",
+      "accepted": true,
+      "parsed": 0
+    },
+    {
+      "raw": "0",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 0, timestamp expiration: -Infinity, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "NaN",
+      "window": 0,
+      "accepted": false,
+      "error": "Invalid chain timestamp: NaN"
+    },
+    {
+      "raw": "NaN",
+      "window": 0.5,
+      "accepted": false,
+      "error": "Invalid chain timestamp: NaN"
+    },
+    {
+      "raw": "NaN",
+      "window": 1.5,
+      "accepted": false,
+      "error": "Invalid chain timestamp: NaN"
+    },
+    {
+      "raw": "NaN",
+      "window": "Infinity",
+      "accepted": false,
+      "error": "Invalid chain timestamp: NaN"
+    },
+    {
+      "raw": "NaN",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Invalid chain timestamp: NaN"
+    },
+    {
+      "raw": "Infinity",
+      "window": 0,
+      "accepted": false,
+      "error": "Invalid chain timestamp: Infinity"
+    },
+    {
+      "raw": "Infinity",
+      "window": 0.5,
+      "accepted": false,
+      "error": "Invalid chain timestamp: Infinity"
+    },
+    {
+      "raw": "Infinity",
+      "window": 1.5,
+      "accepted": false,
+      "error": "Invalid chain timestamp: Infinity"
+    },
+    {
+      "raw": "Infinity",
+      "window": "Infinity",
+      "accepted": false,
+      "error": "Invalid chain timestamp: Infinity"
+    },
+    {
+      "raw": "Infinity",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Invalid chain timestamp: Infinity"
+    },
+    {
+      "raw": "1_000",
+      "window": 0,
+      "accepted": false,
+      "error": "Invalid chain timestamp: 1_000"
+    },
+    {
+      "raw": "1_000",
+      "window": 0.5,
+      "accepted": false,
+      "error": "Invalid chain timestamp: 1_000"
+    },
+    {
+      "raw": "1_000",
+      "window": 1.5,
+      "accepted": false,
+      "error": "Invalid chain timestamp: 1_000"
+    },
+    {
+      "raw": "1_000",
+      "window": "Infinity",
+      "accepted": false,
+      "error": "Invalid chain timestamp: 1_000"
+    },
+    {
+      "raw": "1_000",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Invalid chain timestamp: 1_000"
+    },
+    {
+      "raw": "0x",
+      "window": 0,
+      "accepted": false,
+      "error": "Invalid chain timestamp: 0x"
+    },
+    {
+      "raw": "0x",
+      "window": 0.5,
+      "accepted": false,
+      "error": "Invalid chain timestamp: 0x"
+    },
+    {
+      "raw": "0x",
+      "window": 1.5,
+      "accepted": false,
+      "error": "Invalid chain timestamp: 0x"
+    },
+    {
+      "raw": "0x",
+      "window": "Infinity",
+      "accepted": false,
+      "error": "Invalid chain timestamp: 0x"
+    },
+    {
+      "raw": "0x",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Invalid chain timestamp: 0x"
+    },
+    {
+      "raw": "+0x10",
+      "window": 0,
+      "accepted": false,
+      "error": "Invalid chain timestamp: +0x10"
+    },
+    {
+      "raw": "+0x10",
+      "window": 0.5,
+      "accepted": false,
+      "error": "Invalid chain timestamp: +0x10"
+    },
+    {
+      "raw": "+0x10",
+      "window": 1.5,
+      "accepted": false,
+      "error": "Invalid chain timestamp: +0x10"
+    },
+    {
+      "raw": "+0x10",
+      "window": "Infinity",
+      "accepted": false,
+      "error": "Invalid chain timestamp: +0x10"
+    },
+    {
+      "raw": "+0x10",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Invalid chain timestamp: +0x10"
+    },
+    {
+      "raw": "1e999",
+      "window": 0,
+      "accepted": false,
+      "error": "Invalid chain timestamp: 1e999"
+    },
+    {
+      "raw": "1e999",
+      "window": 0.5,
+      "accepted": false,
+      "error": "Invalid chain timestamp: 1e999"
+    },
+    {
+      "raw": "1e999",
+      "window": 1.5,
+      "accepted": false,
+      "error": "Invalid chain timestamp: 1e999"
+    },
+    {
+      "raw": "1e999",
+      "window": "Infinity",
+      "accepted": false,
+      "error": "Invalid chain timestamp: 1e999"
+    },
+    {
+      "raw": "1e999",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Invalid chain timestamp: 1e999"
+    },
+    {
+      "raw": "0x20000000000003",
+      "window": 0,
+      "accepted": false,
+      "error": "Signature timestamp is too far in the future: signature timestamp: 9007199254740996, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0x20000000000003",
+      "window": 0.5,
+      "accepted": false,
+      "error": "Signature timestamp is too far in the future: signature timestamp: 9007199254740996, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0x20000000000003",
+      "window": 1.5,
+      "accepted": false,
+      "error": "Signature timestamp is too far in the future: signature timestamp: 9007199254740996, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0x20000000000003",
+      "window": "Infinity",
+      "accepted": true,
+      "parsed": 9007199254740996
+    },
+    {
+      "raw": "0x20000000000003",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 9007199254740996, timestamp expiration: -Infinity, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0x100000000000007",
+      "window": 0,
+      "accepted": false,
+      "error": "Signature timestamp is too far in the future: signature timestamp: 72057594037927940, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0x100000000000007",
+      "window": 0.5,
+      "accepted": false,
+      "error": "Signature timestamp is too far in the future: signature timestamp: 72057594037927940, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0x100000000000007",
+      "window": 1.5,
+      "accepted": false,
+      "error": "Signature timestamp is too far in the future: signature timestamp: 72057594037927940, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0x100000000000007",
+      "window": "Infinity",
+      "accepted": true,
+      "parsed": 72057594037927940
+    },
+    {
+      "raw": "0x100000000000007",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 72057594037927940, timestamp expiration: -Infinity, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0b1000000000000000000000000000000000000000000000000000011",
+      "window": 0,
+      "accepted": false,
+      "error": "Signature timestamp is too far in the future: signature timestamp: 18014398509481988, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0b1000000000000000000000000000000000000000000000000000011",
+      "window": 0.5,
+      "accepted": false,
+      "error": "Signature timestamp is too far in the future: signature timestamp: 18014398509481988, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0b1000000000000000000000000000000000000000000000000000011",
+      "window": 1.5,
+      "accepted": false,
+      "error": "Signature timestamp is too far in the future: signature timestamp: 18014398509481988, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0b1000000000000000000000000000000000000000000000000000011",
+      "window": "Infinity",
+      "accepted": true,
+      "parsed": 18014398509481988
+    },
+    {
+      "raw": "0b1000000000000000000000000000000000000000000000000000011",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 18014398509481988, timestamp expiration: -Infinity, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0o1000000000000000003",
+      "window": 0,
+      "accepted": false,
+      "error": "Signature timestamp is too far in the future: signature timestamp: 18014398509481988, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0o1000000000000000003",
+      "window": 0.5,
+      "accepted": false,
+      "error": "Signature timestamp is too far in the future: signature timestamp: 18014398509481988, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0o1000000000000000003",
+      "window": 1.5,
+      "accepted": false,
+      "error": "Signature timestamp is too far in the future: signature timestamp: 18014398509481988, local timestamp: 1800000000555"
+    },
+    {
+      "raw": "0o1000000000000000003",
+      "window": "Infinity",
+      "accepted": true,
+      "parsed": 18014398509481988
+    },
+    {
+      "raw": "0o1000000000000000003",
+      "window": "-Infinity",
+      "accepted": false,
+      "error": "Expired signature: signature timestamp: 18014398509481988, timestamp expiration: -Infinity, local timestamp: 1800000000555"
+    }
+  ]
+}
