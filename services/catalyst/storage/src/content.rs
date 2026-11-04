@@ -15,6 +15,14 @@ use super::{
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
+/// `store_file` calls that copied because the hard link failed.
+static COPY_FALLBACKS: AtomicU64 = AtomicU64::new(0);
+
+/// How many `store_file` calls copied instead of linking since the process started.
+pub fn store_file_copy_fallbacks() -> u64 {
+    COPY_FALLBACKS.load(Ordering::Relaxed)
+}
+
 /// Read surface contract: `Ok(None)` means provably absent, `Err` a storage fault -- a fault reported
 /// as absence makes a broken node advertise itself as empty to peers.
 ///
@@ -117,7 +125,11 @@ impl Storage {
         let src = src.to_path_buf();
         tokio::task::spawn_blocking(move || -> std::io::Result<()> {
             let mut staging = super::StagingGuard::new(staging_target.clone());
-            if std::fs::hard_link(&src, &staging_target).is_err() {
+            if let Err(error) = std::fs::hard_link(&src, &staging_target) {
+                if COPY_FALLBACKS.fetch_add(1, Ordering::Relaxed) == 0 {
+                    warn!(%error, src = %src.display(), "store_file: hard link failed, copying instead (is the upload spool on another filesystem?)");
+                }
+                metrics::counter!("storage_store_file_copy_fallbacks").increment(1);
                 std::fs::copy(&src, &staging_target)?;
             }
             std::fs::File::open(&staging_target)?.sync_all()?;

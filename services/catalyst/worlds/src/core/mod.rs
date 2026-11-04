@@ -81,9 +81,9 @@ pub use upload_limits::UploadLimits;
 /// Rows per multi-row access-log INSERT; the drain takes whatever is queued up to this.
 const ACCESS_LOG_BATCH: usize = 256;
 
-/// `WORLDS_OWNER_RECONCILE_INTERVAL_SECS`' default.
+/// `WORLDS_OWNER_RECONCILE_INTERVAL_SECS`' default: 12 h, as the upstream's job.
 pub const DEFAULT_OWNER_RECONCILE_INTERVAL: std::time::Duration =
-    std::time::Duration::from_secs(3600);
+    std::time::Duration::from_secs(12 * 3600);
 /// WCS `SCENE_EVICTION_TTL_MS` default: 7 days.
 pub const DEFAULT_SCENE_EVICTION_TTL: std::time::Duration =
     std::time::Duration::from_secs(7 * 24 * 3600);

@@ -988,9 +988,12 @@ pub(crate) async fn readmit_world_rooms(
         Err(error) => return Err(format!("access setting undetermined: {error}")),
     }
     let rooms = live_world_rooms(state, world).await?;
-    let protected = readmit_protected(state, world, &rooms).await?;
+    let (protected, undecided) = readmit_protected(state, world, &rooms).await?;
     let client = state.room_service();
     for room in rooms {
+        if undecided.contains(&room) {
+            continue;
+        }
         for identity in client.list_participant_identities(&room).await {
             let Ok(address) = Address::parse(&identity) else {
                 continue;
@@ -1020,11 +1023,12 @@ pub(crate) async fn readmit_world_rooms(
 
 /// The wallets an access change never evicts: the owner and the grantees
 /// world-wide or over any live scene of `world` (its active scene included).
+/// A room whose scene lookup fails is returned as undecided: its participants stay.
 async fn readmit_protected(
     state: &CommsState,
     world: &WorldName,
     rooms: &[String],
-) -> Result<BTreeSet<Address>, String> {
+) -> Result<(BTreeSet<Address>, BTreeSet<String>), String> {
     let mut parcels = ParcelSet::new();
     if let Some(active) = state
         .scenes
@@ -1034,22 +1038,26 @@ async fn readmit_protected(
     {
         parcels.extend(active.parcels.iter().copied());
     }
+    let mut undecided = BTreeSet::new();
     for room in rooms {
-        if let Some((_, scene)) = crate::rooms::decode_world_scene_room(room)
-            && let Some(deployment) = state
-                .scenes
-                .world_scene(world, &scene)
-                .await
-                .map_err(|e| e.to_string())?
-        {
-            parcels.extend(deployment.parcels.iter().copied());
+        let Some((_, scene)) = crate::rooms::decode_world_scene_room(room) else {
+            continue;
+        };
+        match state.scenes.world_scene(world, &scene).await {
+            Ok(Some(deployment)) => parcels.extend(deployment.parcels.iter().copied()),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(%error, room = %room, %world, "scene lookup failed; the room's participants are kept");
+                undecided.insert(room.clone());
+            }
         }
     }
-    state
+    let protected = state
         .policy
         .protected_addresses(world, &parcels)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok((protected, undecided))
 }
 
 #[cfg(test)]

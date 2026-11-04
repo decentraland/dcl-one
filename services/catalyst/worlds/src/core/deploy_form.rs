@@ -9,7 +9,10 @@ use axum::extract::Multipart;
 use axum::response::{IntoResponse, Response};
 use bytes::BytesMut;
 
-use super::deploy::{MAX_UPLOAD_SIZE_BYTES, err_one};
+use super::deploy::{
+    FILE_TOO_LARGE_MESSAGE, MAX_UPLOAD_SIZE_BYTES, TOO_MANY_FILES_MESSAGE, err_one,
+    payload_too_large,
+};
 use super::deploy_validate::{MAX_DEPLOY_FILE_BYTES, MAX_DEPLOY_FILES};
 use super::metrics::{ENTITIES_ROUTE, upload_rejected};
 use super::upload_limits;
@@ -47,7 +50,7 @@ fn account_deploy_bytes(
         Err(upload_limits::PayloadAccountError::PayloadTooLarge) => {
             upload_rejected(ENTITIES_ROUTE, "payload_size");
             Err(Box::new(
-                err_one(upload_limits::PAYLOAD_TOO_LARGE_MESSAGE).into_response(),
+                payload_too_large(upload_limits::PAYLOAD_TOO_LARGE_MESSAGE).into_response(),
             ))
         }
         Err(upload_limits::PayloadAccountError::BudgetExhausted) => {
@@ -95,14 +98,14 @@ pub(super) async fn read_deploy_form(
         part_count += 1;
         if part_count > upload_limits::MAX_MULTIPART_PARTS {
             return Err(Box::new(
-                err_one(upload_limits::TOO_MANY_PARTS_MESSAGE).into_response(),
+                payload_too_large(upload_limits::TOO_MANY_PARTS_MESSAGE).into_response(),
             ));
         }
 
         if field.file_name().is_some() {
             if files.len() >= MAX_DEPLOY_FILES {
                 return Err(Box::new(
-                    err_one(super::deploy::TOO_MANY_FILES_MESSAGE).into_response(),
+                    payload_too_large(TOO_MANY_FILES_MESSAGE).into_response(),
                 ));
             }
             if !files_lease.try_resize(files.len() as u64 + 1, max_in_flight_files) {
@@ -135,8 +138,7 @@ pub(super) async fn read_deploy_form(
                     Ok(Some(chunk)) => {
                         if part.len().saturating_add(chunk.len()) > MAX_DEPLOY_FILE_BYTES {
                             return Err(Box::new(
-                                err_one("An uploaded file exceeds the maximum allowed size.")
-                                    .into_response(),
+                                payload_too_large(FILE_TOO_LARGE_MESSAGE).into_response(),
                             ));
                         }
                         account_deploy_bytes(
@@ -160,7 +162,7 @@ pub(super) async fn read_deploy_form(
             field_count += 1;
             if field_count > upload_limits::MAX_MULTIPART_FIELDS {
                 return Err(Box::new(
-                    err_one(upload_limits::TOO_MANY_FIELDS_MESSAGE).into_response(),
+                    payload_too_large(upload_limits::TOO_MANY_FIELDS_MESSAGE).into_response(),
                 ));
             }
             let mut buf = BytesMut::new();
@@ -171,7 +173,8 @@ pub(super) async fn read_deploy_form(
                             > upload_limits::MAX_MULTIPART_FIELD_VALUE_BYTES
                         {
                             return Err(Box::new(
-                                err_one(upload_limits::PAYLOAD_TOO_LARGE_MESSAGE).into_response(),
+                                payload_too_large(upload_limits::PAYLOAD_TOO_LARGE_MESSAGE)
+                                    .into_response(),
                             ));
                         }
                         account_deploy_bytes(

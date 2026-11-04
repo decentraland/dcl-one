@@ -713,7 +713,10 @@ async fn stage_batch(
                 return Ok(success(state, created, &world, &parcels));
             }
             // A file found stored when the upload began may have been collected since: ask for it again.
-            if resp.status() == StatusCode::BAD_REQUEST {
+            if matches!(
+                resp.status(),
+                StatusCode::BAD_REQUEST | StatusCode::SERVICE_UNAVAILABLE
+            ) {
                 let missing = vanished(state, entity_id, &content).await?;
                 if !missing.is_empty() {
                     return Ok(

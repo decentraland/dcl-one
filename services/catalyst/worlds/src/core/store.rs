@@ -423,15 +423,17 @@ pub async fn get_world(pool: &PgPool, world: &WorldName) -> Result<Option<WorldR
 /// Upstream's `isWorldValid`: the world has scenes and is neither disabled
 /// nor its owner quota-blocked past the grace.
 pub async fn world_is_valid(pool: &PgPool, world: &WorldName) -> Result<bool, ApiError> {
-    let row: Option<(bool, Option<NaiveDateTime>, Option<NaiveDateTime>)> = sqlx::query_as(
-        "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes s WHERE s.world_name = w.name), \
+    let row: Option<(bool, Option<NaiveDateTime>, Option<NaiveDateTime>)> =
+        sqlx::query_as(concat!(
+            "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes s WHERE s.world_name = w.name), \
                 w.blocked_since, q.created_at \
-           FROM worlds.worlds w LEFT JOIN worlds.quota_blocks q ON q.wallet = w.owner \
-          WHERE w.name = $1",
-    )
-    .bind(world.key())
-    .fetch_optional(pool)
-    .await?;
+           FROM worlds.worlds w LEFT JOIN worlds.quota_blocks q ON q.wallet = w.owner AND ",
+            super::quota::quota_blockable_world!(),
+            " WHERE w.name = $1"
+        ))
+        .bind(world.key())
+        .fetch_optional(pool)
+        .await?;
     let now = chrono::Utc::now().naive_utc();
     Ok(row.is_some_and(|(has_scenes, disabled, quota)| {
         has_scenes && !crate::comms::access::world_blocked(disabled, quota, now)
@@ -540,20 +542,32 @@ async fn missing_stored_file(
         .iter()
         .find(|(_, hash)| !present.get(hash).copied().unwrap_or(false))
         .map(|(file, hash)| {
-            ApiError::bad_request(format!(
-                "The file {file} ({hash}) was not uploaded or its hash does not match its content"
+            // Validation saw every key, so a missing one was collected meanwhile: retryable.
+            ApiError::service_unavailable(format!(
+                "The file {file} ({hash}) was removed from storage while the deployment was in progress, please retry"
             ))
         }))
 }
 
+/// Persists one scene deploy; `Ok(Some(previous))` when it replaced the
+/// world's stored owner with a different one.
 pub async fn deploy_scene(
     pool: &PgPool,
     storage: &Storage,
     deployment: SceneDeployment<'_>,
-) -> Result<(), ApiError> {
+) -> Result<Option<Address>, ApiError> {
     deploy_scene_with(pool, storage, deployment, None)
         .await
-        .map(|_| ())
+        .map(|d| d.previous_owner)
+}
+
+/// What a committed publish reports.
+#[derive(Debug)]
+pub struct Deployed {
+    /// The scene row's creation time (ms).
+    pub created_at_ms: i64,
+    /// The world's stored owner this publish replaced with a different one.
+    pub previous_owner: Option<Address>,
 }
 
 /// The partial upload a publish completes: its pending row must still be live (database clock)
@@ -569,14 +583,14 @@ pub struct PartialCompletion<'a> {
 pub const PARTIAL_UPLOAD_EXPIRED: &str =
     "This upload expired. Create a new entity with a fresh timestamp.";
 
-/// [`deploy_scene`] that answers the scene row's creation time (ms) and, with `completion`,
-/// consumes the entity's partial upload; any other publish drops the entity's staging state.
+/// [`deploy_scene`] that answers [`Deployed`] and, with `completion`, consumes
+/// the entity's partial upload; any other publish drops the entity's staging state.
 pub async fn deploy_scene_with(
     pool: &PgPool,
     storage: &Storage,
     deployment: SceneDeployment<'_>,
     completion: Option<&PartialCompletion<'_>>,
-) -> Result<i64, ApiError> {
+) -> Result<Deployed, ApiError> {
     let SceneDeployment {
         world,
         name_owner,
@@ -603,7 +617,8 @@ pub async fn deploy_scene_with(
         return Err(error);
     }
 
-    let (is_insert, disabled): (bool, bool) = sqlx::query_as(
+    // The RETURNING subquery reads the statement's snapshot: the owner before this write.
+    let (is_insert, disabled, previous_owner): (bool, bool, Option<String>) = sqlx::query_as(
         r#"INSERT INTO worlds.worlds AS w (
                name, owner, blocked_since, spawn_coordinates,
                title, description, content_rating, skybox_time, categories,
@@ -616,7 +631,8 @@ pub async fn deploy_scene_with(
              mirror_source = NULL,
              spawn_coordinates = COALESCE(w.spawn_coordinates, EXCLUDED.spawn_coordinates),
              updated_at = timezone('UTC', now())
-           RETURNING (xmax = 0), blocked_since IS NOT NULL"#,
+           RETURNING (xmax = 0), blocked_since IS NOT NULL,
+                     (SELECT p.owner FROM worlds.worlds p WHERE p.name = $1)"#,
     )
     .bind(world.key())
     .bind(name_owner)
@@ -837,7 +853,12 @@ pub async fn deploy_scene_with(
     }
 
     tx.commit().await?;
-    Ok(created_ms)
+    Ok(Deployed {
+        created_at_ms: created_ms,
+        previous_owner: previous_owner
+            .and_then(|p| Address::parse(&p).ok())
+            .filter(|p| name_owner.is_some_and(|owner| owner != p)),
+    })
 }
 
 /// Whether a scene of `world` overlapping `parcels` is newer than this entity: a stored
@@ -1805,16 +1826,18 @@ fn ilike_contains(term: &str) -> String {
 /// component; without it the search is full-text plus ILIKE only.
 async fn trigram_available(pool: &PgPool) -> bool {
     static AVAILABLE: tokio::sync::OnceCell<bool> = tokio::sync::OnceCell::const_new();
-    *AVAILABLE
-        .get_or_init(|| async {
+    // A failed lookup is not cached: the next search asks again.
+    AVAILABLE
+        .get_or_try_init(|| async {
             sqlx::query_scalar::<_, bool>(
                 "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')",
             )
             .fetch_one(pool)
             .await
-            .unwrap_or(false)
         })
         .await
+        .copied()
+        .unwrap_or(false)
 }
 
 /// `GET /worlds`. The search is WCS's: a full-text match over name, title and
@@ -1833,6 +1856,7 @@ pub async fn list_worlds_public(
     } else {
         ""
     };
+    let blockable = super::quota::quota_blockable_world!();
     let base_from = format!(
         r#"
         FROM worlds.worlds w
@@ -1847,7 +1871,7 @@ pub async fn list_worlds_public(
             FROM worlds.world_scenes ws, unnest(ws.parcels) AS p
             GROUP BY ws.world_name
         ) ss ON ss.world_name = w.name
-        LEFT JOIN worlds.quota_blocks b ON w.owner = b.wallet
+        LEFT JOIN worlds.quota_blocks b ON w.owner = b.wallet AND {blockable}
         WHERE ($1::text IS NULL
                 OR w.owner = $1
                 OR EXISTS (SELECT 1 FROM worlds.world_permissions wp

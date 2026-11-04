@@ -19,7 +19,9 @@ difference not listed here is a gap, not a decision.
   allowance and are not listed. Without `DCL_NAME_STATS_URL`, the allowance
   is unlimited and `maxAllowedSpace` is `9223372036854775807`. When the
   account-holdings service fails after its three attempts, these routes and
-  the publish answer 503.
+  the publish answer 503. An answered allowance is reused for 60 seconds.
+  A publish credits back only the replaced scenes of a world already
+  charged to the same owner.
 - **Legacy content keys.** The worlds `/contents/{key}` route also accepts a
   64-hex sha256 key and serves the blob whose raw-leaf CIDv1 has that
   digest, which covers files of one chunk (256 KiB) or less. An invalid key
@@ -29,32 +31,43 @@ difference not listed here is a gap, not a decision.
   `{error, message}` with the @dcl/http-commons labels (`Bad request`,
   `Not Authorized`, `Not Found`). A 403 carries the message in `error` as
   the upstream handlers' own 403s do, and also in `message`. A 500 is
-  `{"error": "Internal Server Error"}`.
+  `{"error": "Internal Server Error"}`. The world comms mints
+  (`/worlds/{name}/comms`, `/worlds/{name}/scenes/{id}/comms`) carry the
+  reason in `error` for 401, 403, 404, 429 and 503, as upstream, and also in
+  `message`; `/get-comms-adapter` does so for 429 only.
 
 ## Comms
 
 - **Operator disables apply at once.** An operator disable
   (`/admin/worlds/{name}/disable`) refuses the world on `/about` and the
   comms mints immediately. A storage-quota block keeps the upstream two-day
-  grace.
-- **Shared-secret throttle.** Failed attempts are counted in Postgres per
-  world and client address over a fixed 60-second window from the first
-  failure (`SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE`). If the counter cannot
-  be read the mint answers 503.
+  grace and refuses only the owner's local DCL NAME and ENS worlds, not its
+  personal world or mirrored worlds.
+- **Shared-secret throttle.** Attempts are counted in Postgres per world
+  and client source (`X-Real-IP`, IPv6 by /64; the wallet without one) over
+  a fixed 60-second window from the first attempt
+  (`SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE`). Each attempt is reserved before
+  the secret is checked and the count is cleared by a right secret. If the
+  counter cannot be written the mint answers 503.
 - **Kicks on access change.** Owners and holders of any world or live-scene
   grant (deployment or streaming) are never kicked. A switch to an
   allow-list keeps participants already on the new list. A participant
   whose access cannot be decided stays.
 
+- **`/about` health.** `healthy`, `acceptingUsers` and `content.healthy`
+  are false only when this node's content sync has failed; a bootstrapping
+  node or one with sync disabled reports the world healthy.
 - **Realm name.** `WORLDS_REALM_NAME_STRIP_ENS` (default `true`) strips
   `.dcl.eth` from `/about`'s `realmName` for worlds published here, so a
   stock client does not resolve them against Decentraland's registry.
   Mirrored worlds keep the suffix.
 - **Owner admission.** The owner is the name authority's current holder,
   memoized for 30 seconds per DCL NAME (60 seconds per ENS name; upstream
-  one minute). When the authority cannot answer, nobody is admitted as
-  owner and the world's access setting still decides; only a refusal by
-  that setting answers 503 (upstream fails the whole mint).
+  one minute). It is asked only when the world's access setting refuses,
+  admission waits on it for at most 3 seconds, and its answer (a fault
+  included) is shared for 5 seconds. When the authority cannot answer,
+  nobody is admitted as owner; that refusal answers 503 (upstream fails
+  the whole mint).
 - **Capacity check fails closed.** When the live occupancy of a world cannot
   be recovered, the comms mint answers 503 instead of counting zero
   participants and admitting the user.
@@ -87,13 +100,16 @@ difference not listed here is a gap, not a decision.
 - **Thumbnails** are hashed as CIDv1.
 - **ENS names.** With `ALLOW_ENS_DOMAINS=true` the holder is read over
   `ETH_RPC_URL` (required then; the process refuses to start without it).
-  Only names whose labels are lowercase ASCII letters, digits, `-` and `_`
-  resolve; any other ENS name has no owner here (no ENSIP-15
-  normalization).
+  Only names whose labels the upstream's UTS46 normalization leaves
+  unchanged resolve: lowercase ASCII letters, digits and inner `-`, with no
+  `--` at the third and fourth characters. Upstream decodes `xn--` labels
+  and resolves other Unicode names; here those have no owner.
 - **Owner reconcile.** `worlds.owner` is rewritten from the name authority
-  every `WORLDS_OWNER_RECONCILE_INTERVAL_SECS` (default one hour; upstream
-  every 12 hours), ENS worlds included. A previous holder the world's
-  access setting no longer admits is removed from the world's live rooms.
+  every `WORLDS_OWNER_RECONCILE_INTERVAL_SECS` (default 12 hours, as
+  upstream) for worlds with a locally published scene, ENS worlds
+  included. A previous holder the world's access setting no longer admits
+  is removed from the world's live rooms, as it is when a new holder's
+  publish replaces the stored owner.
 - **Newer-entity check** compares against the lower of the stored entity's
   timestamp and its row's update time, so a future-dated mirrored or
   imported entity cannot block redeploys.
@@ -102,11 +118,15 @@ difference not listed here is a gap, not a decision.
 - **Grantee publishes** resolve the world's NAME holder live. If the names
   authority cannot answer, the publish is refused with 503.
 - **Per-source upload limits** key on the gateway's `X-Real-IP` (IPv6 by
-  /64), not `cf-connecting-ip`.
+  /64), not `cf-connecting-ip`. Deploys and settings uploads share one
+  per-source budget (`MAX_CONCURRENT_UPLOADS_PER_SOURCE`,
+  `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE`, the latter defaulting to one
+  maximum-size upload).
 - **Per-world limits** come from `MAX_PARCELS`, `MAX_FILE_COUNT` and the
   `worlds.world_limit_overrides` table; there is no `WHITELIST_URL`. Only a
   row with a size takes the world out of its owner's storage allowance; a
-  row that sets parcels alone leaves the allowance in force.
+  row that sets parcels alone leaves the allowance in force. As upstream, an
+  ENS world's size cap is `ENS_MAX_SIZE` whatever its override row says.
 - **Retired scenes.** Replaced and undeployed scenes are kept for
   `SCENE_EVICTION_TTL_MS` and removed by an hourly sweep. Scenes a mirror
   pass retires are deleted at once.
@@ -148,7 +168,9 @@ difference not listed here is a gap, not a decision.
 - **Delivery.** World notices are written to the catalyst's own inbox and
   email outbox, in the same transaction as the grant edit or quota change,
   instead of being published to SNS. Re-detecting the same quota block keeps
-  the first notice unchanged.
+  the first notice unchanged; a new block notifies again even on the same
+  day. A grant or revoke notice for the same world, permission and address
+  is sent once per clock hour.
 - **Last parcel removed.** Removing a parcel-scoped grant's last parcel
   sends `worlds_permission_revoked`, because the grant is deleted.
 

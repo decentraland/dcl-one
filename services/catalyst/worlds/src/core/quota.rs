@@ -35,6 +35,17 @@ const STATS_BASE_DELAY: Duration = Duration::from_millis(300);
 /// The quota pass runs as often as the old update-owner job.
 pub const QUOTA_PASS_INTERVAL: Duration = Duration::from_secs(12 * 3600);
 
+/// SQL over `w` (`worlds.worlds`): a local DCL NAME or ENS world, the ones
+/// its owner's quota block refuses (not personal, not mirrored).
+macro_rules! quota_blockable_world {
+    () => {
+        "(w.mirror_source IS NULL AND w.name !~ '^0x[0-9a-f]{40}\\.dcl\\.eth$' \
+          AND (w.name ~ '^[a-z0-9]{1,64}\\.dcl\\.eth$' \
+               OR (w.name !~ '\\.dcl\\.eth$' AND w.name ~ '^([^.]+\\.)+eth$')))"
+    };
+}
+pub(crate) use quota_blockable_world;
+
 /// Counted against its owner's allowance: a DCL NAME world, not a personal one.
 fn counts_against_allowance(world: &WorldName) -> bool {
     world.is_dcl_world_name() && world.personal_owner().is_none()
@@ -56,11 +67,16 @@ impl SpaceAllowance for Unlimited {
     }
 }
 
+/// How long an answered allowance is reused.
+const ALLOWANCE_CACHE_TTL: Duration = Duration::from_secs(60);
+const ALLOWANCE_CACHE_MAX: usize = 10_000;
+
 /// The account-holdings service; no URL is an unlimited allowance.
 pub struct AccountHoldings {
     http: Outbound,
     url: Option<String>,
     timeout: Duration,
+    cache: dashmap::DashMap<Address, (std::time::Instant, i64)>,
 }
 
 impl AccountHoldings {
@@ -71,7 +87,27 @@ impl AccountHoldings {
                 .map(|u| u.trim().trim_end_matches('/').to_string())
                 .filter(|u| !u.is_empty()),
             timeout,
+            cache: dashmap::DashMap::new(),
         }
+    }
+
+    fn cached(&self, wallet: &Address) -> Option<i64> {
+        self.cache
+            .get(wallet)
+            .filter(|e| e.0.elapsed() < ALLOWANCE_CACHE_TTL)
+            .map(|e| e.1)
+    }
+
+    fn remember(&self, wallet: &Address, bytes: i64) {
+        if self.cache.len() >= ALLOWANCE_CACHE_MAX {
+            self.cache
+                .retain(|_, e| e.0.elapsed() < ALLOWANCE_CACHE_TTL);
+            if self.cache.len() >= ALLOWANCE_CACHE_MAX {
+                self.cache.clear();
+            }
+        }
+        self.cache
+            .insert(wallet.clone(), (std::time::Instant::now(), bytes));
     }
 
     async fn attempt(&self, url: &str) -> Result<i64, String> {
@@ -94,12 +130,19 @@ impl AccountHoldings {
             .map_err(|e| format!("account holdings bad body: {e}"))?;
         let mib = body
             .pointer("/data/spaceAllowance")
-            .and_then(|v| {
-                v.as_i64()
-                    .or_else(|| v.as_f64().filter(|f| f.fract() == 0.0).map(|f| f as i64))
-            })
+            .and_then(allowance_mib)
             .ok_or("account holdings answered no integer data.spaceAllowance")?;
         Ok(mib.saturating_mul(MIB))
+    }
+}
+
+/// `spaceAllowance` as a JSON integer or an integer string (a serialized BigInt).
+fn allowance_mib(v: &Value) -> Option<i64> {
+    match v {
+        Value::String(s) => s.trim().parse::<i64>().ok(),
+        _ => v
+            .as_i64()
+            .or_else(|| v.as_f64().filter(|f| f.fract() == 0.0).map(|f| f as i64)),
     }
 }
 
@@ -109,11 +152,17 @@ impl SpaceAllowance for AccountHoldings {
         let Some(base) = &self.url else {
             return Ok(i64::MAX);
         };
+        if let Some(bytes) = self.cached(wallet) {
+            return Ok(bytes);
+        }
         let url = format!("{base}/account-holdings/{}", wallet.as_str());
         let mut attempt = 0;
         loop {
             match self.attempt(&url).await {
-                Ok(bytes) => return Ok(bytes),
+                Ok(bytes) => {
+                    self.remember(wallet, bytes);
+                    return Ok(bytes);
+                }
                 Err(e) if attempt + 1 >= STATS_ATTEMPTS => return Err(e),
                 Err(e) => {
                     let delay = STATS_BASE_DELAY * 2u32.pow(attempt);
@@ -158,8 +207,8 @@ impl WalletUsage {
     }
 }
 
-pub async fn wallet_usage(
-    pool: &sqlx::PgPool,
+pub async fn wallet_usage<'e>(
+    db: impl sqlx::PgExecutor<'e>,
     wallet: &Address,
 ) -> Result<WalletUsage, sqlx::Error> {
     let rows = sqlx::query(
@@ -172,7 +221,7 @@ pub async fn wallet_usage(
           GROUP BY w.name ORDER BY w.name",
     )
     .bind(wallet)
-    .fetch_all(pool)
+    .fetch_all(db)
     .await?;
     let mut usage = WalletUsage::default();
     for r in rows {
@@ -241,12 +290,16 @@ impl CoreState {
         let usage = wallet_usage(&self.pool, &owner).await?;
         let credited: i64 = match parcels {
             Some(parcels) => {
+                // Only scenes the owner's usage counts are credited.
                 sqlx::query_scalar(
-                    "SELECT COALESCE(sum(size), 0)::bigint FROM worlds.world_scenes \
-                  WHERE world_name = $1 AND parcels && $2::text[] AND mirror_source IS NULL",
+                    "SELECT COALESCE(sum(s.size), 0)::bigint FROM worlds.world_scenes s \
+                       JOIN worlds.worlds w ON w.name = s.world_name \
+                      WHERE s.world_name = $1 AND s.parcels && $2::text[] \
+                        AND s.mirror_source IS NULL AND w.mirror_source IS NULL AND w.owner = $3",
                 )
                 .bind(world.key())
                 .bind(parcels)
+                .bind(&owner)
                 .fetch_one(&self.pool)
                 .await?
             }
@@ -256,16 +309,22 @@ impl CoreState {
                 .find(|w| w.name == world.key())
                 .map_or(0, |w| w.size),
         };
-        let remaining = allowance.saturating_sub(usage.used_space - credited);
+        let remaining = allowance.saturating_sub(usage.charged_space() - credited);
         Ok(remaining.clamp(0, limits.max_size_bytes))
     }
 
-    async fn is_over_quota(&self, wallet: &Address) -> Result<bool, String> {
-        let allowance = self.allowance.allowance_bytes(wallet).await?;
-        let usage = wallet_usage(&self.pool, wallet)
-            .await
-            .map_err(|e| e.to_string())?;
-        Ok(allowance < usage.charged_space())
+    /// Opens a transaction holding `wallet`'s quota lock, so a block and an
+    /// unblock never interleave between evaluation and write.
+    async fn quota_locked(
+        &self,
+        wallet: &Address,
+    ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(format!("worlds.quota:{}", wallet.as_str()))
+            .execute(&mut *tx)
+            .await?;
+        Ok(tx)
     }
 
     /// Records (or refreshes) `wallet`'s block when it is over its allowance
@@ -275,11 +334,12 @@ impl CoreState {
         wallet: &Address,
         now: NaiveDateTime,
     ) -> Result<bool, String> {
-        if !self.is_over_quota(wallet).await? {
-            return Ok(false);
-        }
+        let allowance = self.allowance.allowance_bytes(wallet).await?;
         let write = async {
-            let mut tx = self.pool.begin().await?;
+            let mut tx = self.quota_locked(wallet).await?;
+            if allowance >= wallet_usage(&mut *tx, wallet).await?.charged_space() {
+                return Ok(None);
+            }
             let (created_at, updated_at): (NaiveDateTime, NaiveDateTime) = sqlx::query_as(
                 "INSERT INTO worlds.quota_blocks (wallet, created_at, updated_at) VALUES ($1, $2, $2) \
                  ON CONFLICT (wallet) DO UPDATE SET updated_at = EXCLUDED.updated_at \
@@ -294,9 +354,11 @@ impl CoreState {
                 .send(&mut tx, std::slice::from_ref(&notice))
                 .await?;
             tx.commit().await?;
-            Ok::<_, sqlx::Error>(created_at)
+            Ok::<_, sqlx::Error>(Some(created_at))
         };
-        let created_at = write.await.map_err(|e| e.to_string())?;
+        let Some(created_at) = write.await.map_err(|e| e.to_string())? else {
+            return Ok(false);
+        };
         tracing::info!(wallet = %wallet.as_str(), %created_at, "wallet over its storage allowance: quota block recorded");
         Ok(true)
     }
@@ -312,10 +374,17 @@ impl CoreState {
                     .fetch_optional(&self.pool)
                     .await
                     .map_err(|e| e.to_string())?;
-            if blocked.is_none() || self.is_over_quota(wallet).await? {
+            if blocked.is_none() {
                 return Ok(false);
             }
-            let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+            let allowance = self.allowance.allowance_bytes(wallet).await?;
+            let mut tx = self.quota_locked(wallet).await.map_err(|e| e.to_string())?;
+            let usage = wallet_usage(&mut *tx, wallet)
+                .await
+                .map_err(|e| e.to_string())?;
+            if allowance < usage.charged_space() {
+                return Ok(false);
+            }
             let removed: Option<NaiveDateTime> = sqlx::query_scalar(
                 "DELETE FROM worlds.quota_blocks WHERE wallet = $1 RETURNING created_at",
             )
@@ -508,5 +577,16 @@ mod tests {
 
         let unset = AccountHoldings::new(Outbound::for_tests(), None, DEFAULT_STATS_TIMEOUT);
         assert_eq!(unset.allowance_bytes(&wallet()).await, Ok(i64::MAX));
+    }
+
+    #[tokio::test]
+    async fn a_string_allowance_is_read_and_an_answer_is_reused() {
+        let body = serde_json::json!({ "data": { "spaceAllowance": "7" } });
+        let (url, hits) = holdings(0, body).await;
+        let source = AccountHoldings::new(Outbound::for_tests(), Some(&url), DEFAULT_STATS_TIMEOUT);
+        assert_eq!(source.allowance_bytes(&wallet()).await, Ok(7 * MIB));
+        assert_eq!(source.allowance_bytes(&wallet()).await, Ok(7 * MIB));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_eq!(allowance_mib(&serde_json::json!("1.5")), None);
     }
 }

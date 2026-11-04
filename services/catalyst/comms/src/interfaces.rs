@@ -41,8 +41,9 @@ pub trait AccessPolicy: Send + Sync {
             None => WorldAdmission::Unknown,
         })
     }
-    /// The stored owner of a known world row, not a fresh chain ownership verdict.
-    /// An unknown world or unset owner is `None`; failed reads remain unavailable.
+    /// The world's current holder (the name authority's briefly memoized answer),
+    /// the stored owner when that authority cannot answer. `None` when nobody
+    /// is known; a failed row read remains unavailable.
     async fn world_owner(
         &self,
         world: &WorldName,

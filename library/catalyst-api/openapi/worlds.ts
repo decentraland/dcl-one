@@ -531,6 +531,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/wallet/{wallet}/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_wallet_stats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/wallet/contribute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Signed fetch: the worlds the signer holds a deployment or streaming grant in. */
+        get: operations["get_contributable_domains"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/world/{world_name}/about": {
         parameters: {
             query?: never;
@@ -711,7 +744,7 @@ export interface paths {
         };
         get: operations["list_scenes"];
         put?: never;
-        post?: never;
+        post: operations["post_list_scenes"];
         delete?: never;
         options?: never;
         head?: never;
@@ -846,9 +879,7 @@ export interface components {
         };
         ApiErrorBody: {
             error: string;
-            federation_adr?: string | null;
-            message: string;
-            ok: boolean;
+            message?: string;
         };
         AvailableContentEntry: {
             available: boolean;
@@ -1203,10 +1234,10 @@ export interface components {
             scenes: components["schemas"]["IndexSceneSummary"][];
         };
         WorldLimitsResponse: {
-            /** @description A decimal string, as the old service's bigint. */
-            maxSceneSizeInBytes: string;
             /** Format: int32 */
             maxParcels: number;
+            /** @description A decimal string, as the old service's bigint. */
+            maxSceneSizeInBytes: string;
         };
         /**
          * @description One world's instantaneous occupancy.
@@ -1734,6 +1765,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description A run is already in progress, or deployments kept the content lock busy; retry after Retry-After seconds */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -2404,6 +2436,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            /** @description A run is already in progress, or deployments kept the content lock busy; retry after Retry-After seconds */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -2474,6 +2507,14 @@ export interface operations {
                 };
             };
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2705,6 +2746,101 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_wallet_stats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wallet: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: date-time */
+                        blockedSince?: string;
+                        dclNames: {
+                            name: string;
+                            size: string;
+                        }[];
+                        ensNames: {
+                            name: string;
+                            size: string;
+                        }[];
+                        maxAllowedSpace: string;
+                        usedSpace: string;
+                        wallet: string;
+                    };
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_contributable_domains: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        count: number;
+                        domains: {
+                            name: string;
+                            owner: string | null;
+                            parcelCount: number;
+                            size: string;
+                            user_permissions: string[];
+                        }[];
+                    };
+                };
+            };
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3447,7 +3583,24 @@ export interface operations {
     };
     list_scenes: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description address: scenes of worlds it owns or may deploy to */
+                authorized_deployer?: string;
+                /** @description CIDv1 entity id */
+                entity_id?: string;
+                /** @description 1-100, default 100; an invalid value is the default */
+                limit?: string;
+                /** @description default 0; an invalid value is the default */
+                offset?: string;
+                /** @description bounding box: all of x1, x2, y1, y2 or none */
+                x1?: string;
+                /** @description bounding box */
+                x2?: string;
+                /** @description bounding box */
+                y1?: string;
+                /** @description bounding box */
+                y2?: string;
+            };
             header?: never;
             path: {
                 world_name: string;
@@ -3464,7 +3617,75 @@ export interface operations {
                     "application/json": components["schemas"]["SceneListResponse"];
                 };
             };
-            404: {
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    post_list_scenes: {
+        parameters: {
+            query?: {
+                /** @description address: scenes of worlds it owns or may deploy to */
+                authorized_deployer?: string;
+                /** @description CIDv1 entity id */
+                entity_id?: string;
+                /** @description 1-100, default 100; an invalid value is the default */
+                limit?: string;
+                /** @description default 0; an invalid value is the default */
+                offset?: string;
+                /** @description bounding box: all of x1, x2, y1, y2 or none */
+                x1?: string;
+                /** @description bounding box */
+                x2?: string;
+                /** @description bounding box */
+                y1?: string;
+                /** @description bounding box */
+                y2?: string;
+            };
+            header?: never;
+            path: {
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    coordinates: string[];
+                };
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SceneListResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            415: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3749,6 +3970,14 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
         };
     };
     world_scene_comms: {
@@ -3812,6 +4041,14 @@ export interface operations {
                 };
             };
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

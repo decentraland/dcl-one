@@ -429,6 +429,7 @@ async fn deploy(
         },
     )
     .await
+    .map(drop)
 }
 
 async fn entity_ids(f: &Fixture, world: &WorldName) -> Vec<String> {
@@ -5651,6 +5652,9 @@ async fn world_limits_report_what_a_publish_is_checked_against() {
 
     let unowned = world_name();
     expect(app, limits_case(&unowned, ""), 404).await;
+    // A bare `foo` is not owned by the holder of `foo.dcl.eth`.
+    let bare = WorldName::parse(world.owner_label().unwrap()).unwrap();
+    expect(app, limits_case(&bare, ""), 404).await;
     set_limit_override(&f.pool, &unowned, None, Some(1234)).await;
     assert_eq!(
         expect(app, limits_case(&unowned, ""), 200).await,
@@ -5777,7 +5781,7 @@ async fn a_source_past_its_concurrent_uploads_gets_429() {
 }
 
 #[tokio::test]
-async fn a_deploy_reusing_a_blob_the_collector_removed_is_refused_under_the_store_lock() {
+async fn a_deploy_reusing_a_blob_the_collector_removed_is_deferred_under_the_store_lock() {
     let Some(f) = fixture().await else { return };
     let world = world_name();
     let owner = Wallet::random();
@@ -5837,9 +5841,9 @@ async fn a_deploy_reusing_a_blob_the_collector_removed_is_refused_under_the_stor
     batch.commit().await.unwrap();
 
     let err = publish.await.unwrap().expect_err("the blob is gone");
-    assert!(err.is_bad_request(), "{err:?}");
+    assert_eq!(err.status(), 503, "retryable, not a client error: {err:?}");
     assert!(
-        err.public_message().contains(&reused),
+        err.public_message().contains(&reused) && err.public_message().contains("retry"),
         "{}",
         err.public_message()
     );
@@ -5952,10 +5956,11 @@ async fn the_publish_cap_is_what_the_owners_allowance_leaves() {
             .contains("storage allowance"),
         "{body}"
     );
-    f.allowance.set(&owner.address, Some(150 + 10));
+    // `b`'s override is outside the allowance: only the 1,0 scene stays charged.
+    f.allowance.set(&owner.address, Some(50 + 10));
     let message = "Deployment failed: The deployment is too big. The maximum total size allowed is 10 bytes for scenes. You can upload up to 10 bytes but you tried to upload 12.";
     refused(app, &owner, entity.clone(), &[file], message).await;
-    f.allowance.set(&owner.address, Some(150 + 12));
+    f.allowance.set(&owner.address, Some(50 + 12));
     post_entity(app, &signed_deployment(&owner, &entity, &[file]).await, 200).await;
 }
 
@@ -6083,17 +6088,180 @@ async fn a_publish_or_undeploy_that_frees_space_lifts_the_block() {
         200,
     )
     .await;
-    let left: Option<String> =
-        sqlx::query_scalar("SELECT wallet FROM worlds.quota_blocks WHERE wallet = $1")
+    // The recheck runs off the request.
+    let mut left: Option<String> = Some(String::new());
+    for _ in 0..100 {
+        left = sqlx::query_scalar("SELECT wallet FROM worlds.quota_blocks WHERE wallet = $1")
             .bind(&owner.address)
             .fetch_optional(&f.pool)
             .await
             .unwrap();
+        if left.is_none() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
     assert_eq!(left, None);
     assert_eq!(
         notices_of(&f, super::notices::ACCESS_RESTORED, &owner.address).len(),
         1
     );
+}
+
+#[tokio::test]
+async fn the_credit_only_counts_scenes_charged_to_the_owner() {
+    let Some(f) = fixture().await else { return };
+    let (theirs, mine, owner, previous) = (
+        world_name(),
+        world_name(),
+        Wallet::random().address,
+        Wallet::random().address,
+    );
+    // `theirs` is still stored under its previous owner.
+    sized_scene(&f, &theirs, &previous, 't', &["0,0"], 200).await;
+    sized_scene(&f, &mine, &owner, 'm', &["0,0"], 100).await;
+    f.allowance.set(&owner, Some(300));
+    let limits = f.state.policy.world_limits(&theirs).await.unwrap();
+    let parcels = ["0,0".to_string()];
+    let cap = f
+        .state
+        .max_scene_size(&theirs, &limits, Some(&owner), Some(&parcels))
+        .await
+        .unwrap();
+    assert_eq!(cap, 200);
+    let cap = f
+        .state
+        .max_scene_size(&mine, &limits, Some(&owner), Some(&parcels))
+        .await
+        .unwrap();
+    assert_eq!(cap, 300);
+}
+
+#[tokio::test]
+async fn a_size_override_world_leaves_the_allowance_to_the_other_names() {
+    let Some(f) = fixture().await else { return };
+    let _quota = super::quota::test_support::QUOTA_DB.lock().await;
+    let (big, other, owner) = (world_name(), world_name(), Wallet::random());
+    f.names.set(&owner.address, big.label());
+    f.names.set(&owner.address, other.label());
+    sized_scene(&f, &big, &owner.address, 'o', &["0,0"], 1000).await;
+    set_limit_override(&f.pool, &big, None, Some(10_000)).await;
+    f.allowance.set(&owner.address, Some(500));
+    let size = |body: Value| body["maxSceneSizeInBytes"].as_str().unwrap().to_string();
+    assert_eq!(
+        size(expect(&f.app, limits_case(&other, ""), 200).await),
+        "500"
+    );
+    assert_eq!(
+        size(expect(&f.app, limits_case(&big, ""), 200).await),
+        "10000"
+    );
+    let now = chrono::Utc::now().naive_utc();
+    assert!(
+        !f.state
+            .block_if_over_quota(&owner.address, now)
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn a_quota_block_waits_for_a_concurrent_unblock_and_reevaluates() {
+    let Some(f) = fixture().await else { return };
+    let _quota = super::quota::test_support::QUOTA_DB.lock().await;
+    let (world, owner) = (world_name(), Wallet::random().address);
+    sized_scene(&f, &world, &owner, 'r', &["0,0"], 250).await;
+    f.allowance.set(&owner, Some(100));
+
+    // An undeploy holds the wallet's quota lock while it frees the space.
+    let mut held = f.pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+        .bind(format!("worlds.quota:{}", owner.as_str()))
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let (state, wallet) = (f.state.clone(), owner.clone());
+    let pass = tokio::spawn(async move {
+        state
+            .block_if_over_quota(&wallet, chrono::Utc::now().naive_utc())
+            .await
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(!pass.is_finished(), "the block waits for the lock");
+    sqlx::query("DELETE FROM worlds.world_scenes WHERE world_name = $1")
+        .bind(world.key())
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    held.commit().await.unwrap();
+
+    assert!(!pass.await.unwrap().unwrap());
+    let block: Option<String> =
+        sqlx::query_scalar("SELECT wallet FROM worlds.quota_blocks WHERE wallet = $1")
+            .bind(&owner)
+            .fetch_optional(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(block, None);
+    assert!(notices_of(&f, super::notices::MISSING_RESOURCES, &owner).is_empty());
+}
+
+#[tokio::test]
+async fn a_quota_block_spares_the_personal_and_mirrored_worlds() {
+    let Some(f) = fixture().await else { return };
+    let _quota = super::quota::test_support::QUOTA_DB.lock().await;
+    let (named, mirrored, owner) = (world_name(), world_name(), Wallet::random().address);
+    let personal = WorldName::parse(&format!("{}.dcl.eth", owner.as_str())).unwrap();
+    let long_ago = chrono::Utc::now().naive_utc() - chrono::TimeDelta::days(3);
+    sqlx::query(
+        "INSERT INTO worlds.quota_blocks (wallet, created_at, updated_at) VALUES ($1, $2, $2)",
+    )
+    .bind(&owner)
+    .bind(long_ago)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    for (world, mirror) in [
+        (&named, None),
+        (&personal, None),
+        (&mirrored, Some("https://upstream.example")),
+    ] {
+        sqlx::query("INSERT INTO worlds.worlds (name, owner, mirror_source) VALUES ($1, $2, $3)")
+            .bind(world.key())
+            .bind(&owner)
+            .bind(mirror)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+    }
+    let since = |world: &WorldName| {
+        let (pool, state, world) = (f.pool.clone(), f.state.clone(), world.clone());
+        async move {
+            let row = state.policy.world(&world).await.unwrap().unwrap();
+            let about = crate::queries::world_about(&pool, world.key())
+                .await
+                .unwrap();
+            assert_eq!(
+                about.world.unwrap().quota_blocked_since,
+                row.quota_blocked_since
+            );
+            row.quota_blocked_since
+        }
+    };
+    assert_eq!(since(&named).await, Some(long_ago));
+    assert_eq!(since(&personal).await, None);
+    assert_eq!(since(&mirrored).await, None);
+
+    sqlx::query("DELETE FROM worlds.worlds WHERE name = ANY($1::text[])")
+        .bind([named.key(), personal.key(), mirrored.key()])
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM worlds.quota_blocks WHERE wallet = $1")
+        .bind(&owner)
+        .execute(&f.pool)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -6191,6 +6359,7 @@ async fn permission_edits_notify_each_address_actually_changed() {
             "world": world.key(),
             "permissions": ["deployment"],
             "url": "https://builder.example/worlds?tab=dcl",
+            "address": a.address.as_str(),
         })
     );
     set_deployers(vec![b.display(), c.display()]).await;
@@ -6317,12 +6486,25 @@ async fn the_owner_reconcile_follows_a_name_transfer() {
 
     let unresolved = ens_world_name();
     let ens_owner = Wallet::random();
+    deploy(
+        &f,
+        &unresolved,
+        &ens_owner.address,
+        "bafyensreconcile",
+        &bare_scene("0,0", &["0,0"]),
+        &["0,0"],
+        &Deploy::Owner,
+    )
+    .await
+    .unwrap();
+    let sceneless = world_name();
     sqlx::query("INSERT INTO worlds.worlds (name, owner) VALUES ($1, $2)")
-        .bind(unresolved.key())
-        .bind(ens_owner.address.as_str())
+        .bind(sceneless.key())
+        .bind(old.address.as_str())
         .execute(&f.pool)
         .await
         .unwrap();
+    f.names.set(&new.address, sceneless.label());
     ens.set_down(true);
 
     let report = super::owners::reconcile_owners(&f.state).await.unwrap();
@@ -6335,6 +6517,18 @@ async fn the_owner_reconcile_follows_a_name_transfer() {
         stored_owner(&f.pool, &unresolved).await.as_deref(),
         Some(ens_owner.address.as_str()),
         "an unresolved name keeps its stored owner"
+    );
+    assert_eq!(
+        stored_owner(&f.pool, &sceneless).await.as_deref(),
+        Some(old.address.as_str()),
+        "a world without a local scene is not asked about"
+    );
+    assert!(
+        f.market
+            .graph
+            .name_owner
+            .get_fresh(&sceneless.owner_label().unwrap().to_string())
+            .is_none()
     );
     assert!(recorded.take().contains(&super::Revocation::Address {
         world: world.clone(),
@@ -6379,6 +6573,15 @@ async fn an_ens_world_publishes_for_its_holder_under_the_ens_cap() {
     let message = "Deployment failed: The deployment is too big. The maximum total size allowed is 10 bytes for scenes. You can upload up to 10 bytes but you tried to upload 12.";
     refused(app, &owner, entity.clone(), &[file], message).await;
     set_limit_override(&f.pool, &world, None, Some(1000)).await;
+    refused(app, &owner, entity.clone(), &[file], message).await;
+    assert_eq!(
+        expect(app, limits_case(&world, ""), 200).await,
+        json!({ "maxSceneSizeInBytes": "10", "maxParcels": 4 }),
+        "ENS_MAX_SIZE wins over an override, as upstream"
+    );
+    let file: &[u8] = b"tiny";
+    let content = json!([{ "file": "a.bin", "hash": hash_bytes_v1(file) }]);
+    let entity = publish_entity(&world, &["0,0"], content);
     post_entity(app, &signed_deployment(&owner, &entity, &[file]).await, 200).await;
     assert_eq!(
         stored_owner(&f.pool, &world).await.as_deref(),
@@ -6401,6 +6604,60 @@ async fn an_ens_world_publishes_for_its_holder_under_the_ens_cap() {
         other.display()
     );
     refused(&off.app, &owner, entity, &[], &message).await;
+}
+
+/// A new holder's publish rewrites `worlds.owner` and re-decides the previous
+/// holder at once; the reconcile that follows finds nothing left to change.
+#[tokio::test]
+async fn a_new_holder_publishes_then_the_reconcile_finds_nothing_to_change() {
+    let Some(f) = fixture().await else { return };
+    let recorded = Arc::new(RecordedRevocations::default());
+    f.state.add_revocation_sink(recorded.clone());
+    let world = world_name();
+    let (old, new) = (Wallet::random(), Wallet::random());
+    f.names.set(&old.address, world.label());
+    post_entity(
+        &f.app,
+        &deployment(&old, &world, "Before", "0,0", &["0,0"]).await,
+        200,
+    )
+    .await;
+    sqlx::query("UPDATE worlds.worlds SET access_type = 'allow-list' WHERE name = $1")
+        .bind(world.key())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert!(recorded.take().is_empty());
+
+    f.names.forget(&old.address);
+    f.names.set(&new.address, world.label());
+    f.market.graph.names.clear();
+    post_entity(
+        &f.app,
+        &deployment(&new, &world, "After", "0,0", &["0,0"]).await,
+        200,
+    )
+    .await;
+    assert_eq!(
+        stored_owner(&f.pool, &world).await.as_deref(),
+        Some(new.address.as_str())
+    );
+    assert!(
+        recorded.take().contains(&super::Revocation::Address {
+            world: world.clone(),
+            address: old.address.clone(),
+        }),
+        "the previous holder is re-decided on the publish"
+    );
+
+    let report = super::owners::reconcile_owners(&f.state).await.unwrap();
+    assert_eq!(report.updated, 0, "{report:?}");
+    assert!(
+        !recorded
+            .take()
+            .iter()
+            .any(|r| matches!(r, super::Revocation::Address { world: w, .. } if *w == world))
+    );
 }
 
 mod partial_uploads;

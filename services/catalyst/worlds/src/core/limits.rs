@@ -68,8 +68,20 @@ pub async fn get_world_limits(
         )));
     }
     let limits = state.policy.world_limits(&world).await?;
+    // Only an override's size needs no owner.
+    let owner = if limits.size_overridden {
+        None
+    } else {
+        let Some(owner) = state.policy.limits_owner(&world).await? else {
+            return Err(ApiError::not_found(format!(
+                "Could not determine owner for world {}",
+                world.key()
+            )));
+        };
+        Some(owner)
+    };
     let max_size = state
-        .max_scene_size(&world, &limits, None, parcels.as_deref())
+        .max_scene_size(&world, &limits, owner.as_ref(), parcels.as_deref())
         .await
         .map_err(|e| match e {
             CapError::OwnerNotFound => ApiError::not_found(format!(

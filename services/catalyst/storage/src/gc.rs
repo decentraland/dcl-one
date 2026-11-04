@@ -9,12 +9,15 @@
 //! blob and committing the row that names it) are checked in chunks
 //! against every [`REFERENCE_SOURCES`] column (`= ANY`, index-served on the
 //! large tables) and the JSON documents that embed keys (the world scenes'
-//! and pending partial uploads' content lists, the asset-pack catalogue) plus the global scenes the
-//! configuration names, so memory holds a chunk, never the corpus. A scene
+//! and pending partial uploads' content lists, the asset-pack catalogue)
+//! plus the global scenes the configuration names, so memory holds a chunk,
+//! never the corpus. A scene
 //! whose content list cannot be read exactly aborts the run, a candidate
-//! is re-checked right before it is unlinked, under the exclusive store
-//! lock a publish reusing a stored blob takes shared, an empty reference set with candidates is refused unless
-//! asked for, and the dry run reports without deleting.
+//! is re-checked (references and age) right before it is unlinked, under
+//! the exclusive store lock that a world scene deploy takes shared (other
+//! domains rely on the age floor alone), an empty reference set with
+//! candidates is refused unless asked for, and the dry run reports without
+//! deleting.
 //!
 //! `catalog_is_complete` (the test below) walks the schema: every column
 //! whose name says hash, cid, entity id, thumbnail or image must be listed
@@ -41,9 +44,9 @@ pub const GC_RUN_LOCK_KEY: i64 = 0x5354_4f52_455f_5255;
 /// How long an unlink batch waits for in-flight publishes before deferring.
 pub const STORE_LOCK_TIMEOUT: &str = "30s";
 
-/// Taken in a publish transaction before it checks that the keys it names exist: an unlink batch
-/// re-checks references and unlinks under the exclusive lock, so either the publish sees the file
-/// gone or the batch sees the committed reference.
+/// Taken by a world scene deploy before it checks that the keys it names exist: an unlink batch
+/// re-checks references and unlinks under the exclusive lock, so either the deploy sees the file
+/// gone or the batch sees the committed reference. Other domains do not take it.
 pub async fn lock_store_shared(conn: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
     sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
         .bind(STORE_LOCK_KEY)
@@ -57,8 +60,10 @@ pub async fn lock_store_exclusive(
     pool: &PgPool,
 ) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, GcError> {
     let mut tx = pool.begin().await?;
+    // The batch unlinks files with the transaction idle: exempt it from the pool's idle timeout.
     sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SET LOCAL lock_timeout = '{STORE_LOCK_TIMEOUT}'"
+        "SELECT set_config('lock_timeout', '{STORE_LOCK_TIMEOUT}', true), \
+         set_config('idle_in_transaction_session_timeout', '0', true)"
     )))
     .execute(&mut *tx)
     .await?;
@@ -80,6 +85,10 @@ pub async fn try_lock_run(
     pool: &PgPool,
 ) -> Result<Option<sqlx::Transaction<'static, sqlx::Postgres>>, GcError> {
     let mut tx = pool.begin().await?;
+    // Held idle for the whole walk: exempt it from the pool's idle timeout.
+    sqlx::query("SET LOCAL idle_in_transaction_session_timeout = 0")
+        .execute(&mut *tx)
+        .await?;
     let held: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
         .bind(GC_RUN_LOCK_KEY)
         .fetch_one(&mut *tx)
@@ -344,6 +353,8 @@ pub struct GcReport {
     pub failed: usize,
     /// Aged files kept because a domain names them.
     pub references: usize,
+    /// Candidates kept because they were stored again during the run.
+    pub refreshed: usize,
     pub min_age_seconds: u64,
 }
 
@@ -682,30 +693,55 @@ pub async fn collect(
         return Err(GcError::EmptyReferenceSet);
     }
     if !options.dry_run {
-        for batch in orphans.chunks(CHUNK) {
-            let mut lock = lock_store_exclusive(pool).await?;
-            let referenced_now = referenced_among_on(&mut lock, pins, batch).await?;
-            for id in batch.iter().filter(|id| !referenced_now.contains(*id)) {
-                let size = match super::resolve_file_path(storage.root(), id) {
-                    Ok(path) => tokio::fs::metadata(path).await.map_or(0, |m| m.len()),
-                    Err(_) => 0,
-                };
-                match storage.delete_strict(id).await {
-                    Ok(()) => {
-                        report.removed += 1;
-                        report.removed_bytes += size;
-                    }
-                    Err(e) => {
-                        report.failed += 1;
-                        tracing::warn!(key = %id, error = %e, "blob store collector: could not remove an unreferenced file");
-                    }
-                }
-            }
-            lock.commit().await?;
-        }
+        unlink_orphans(pool, storage, pins, &orphans, options.min_age, &mut report).await?;
     }
     tracing::info!(?report, "blob store collection finished");
     Ok(report)
+}
+
+/// Unlinks each candidate still unreferenced and still aged, under the exclusive store lock.
+async fn unlink_orphans(
+    pool: &PgPool,
+    storage: &Storage,
+    pins: Pins<'_>,
+    orphans: &[String],
+    min_age: Duration,
+    report: &mut GcReport,
+) -> Result<(), GcError> {
+    for batch in orphans.chunks(CHUNK) {
+        let mut lock = lock_store_exclusive(pool).await?;
+        let referenced_now = referenced_among_on(&mut lock, pins, batch).await?;
+        for id in batch.iter().filter(|id| !referenced_now.contains(*id)) {
+            // A blob stored again since the walk is young again: keep it.
+            let meta = match super::resolve_file_path(storage.root(), id) {
+                Ok(path) => tokio::fs::metadata(path).await.ok(),
+                Err(_) => None,
+            };
+            let Some(meta) = meta else { continue };
+            if !meta
+                .modified()
+                .ok()
+                .and_then(|m| SystemTime::now().duration_since(m).ok())
+                .is_some_and(|age| age >= min_age)
+            {
+                report.refreshed += 1;
+                continue;
+            }
+            let size = meta.len();
+            match storage.delete_strict(id).await {
+                Ok(()) => {
+                    report.removed += 1;
+                    report.removed_bytes += size;
+                }
+                Err(e) => {
+                    report.failed += 1;
+                    tracing::warn!(key = %id, error = %e, "blob store collector: could not remove an unreferenced file");
+                }
+            }
+        }
+        lock.commit().await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -812,6 +848,43 @@ mod tests {
         assert!(try_lock_run(&pool).await.unwrap().is_none());
         run.commit().await.unwrap();
         assert!(try_lock_run(&pool).await.unwrap().is_some());
+    }
+
+    /// A candidate stored again after the walk is young again under the lock and stays.
+    #[tokio::test]
+    async fn a_candidate_stored_again_since_the_walk_stays() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let dir =
+            std::env::temp_dir().join(format!("catalyst-gc-{}", uuid::Uuid::new_v4().simple()));
+        let storage = Storage::from_config(&dir).await.unwrap();
+        let mut keys = Vec::new();
+        for bytes in [&b"aged orphan"[..], b"stored again"] {
+            let key = crate::auth::hash::hash_bytes_v1(bytes);
+            storage
+                .store(&key, Bytes::from(bytes.to_vec()))
+                .await
+                .unwrap();
+            keys.push(key);
+        }
+        let aged = storage.file_path(&keys[0]).await.unwrap().unwrap();
+        std::fs::File::open(aged)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new()
+                    .set_modified(SystemTime::now() - Duration::from_secs(7200)),
+            )
+            .unwrap();
+        let mut report = GcReport::default();
+        let pins = Pins::new(&storage, &[]);
+        unlink_orphans(&pool, &storage, pins, &keys, MIN_ORPHAN_AGE, &mut report)
+            .await
+            .unwrap();
+        assert_eq!((report.removed, report.refreshed), (1, 1));
+        assert!(!storage.exist(&keys[0]).await.unwrap());
+        assert!(storage.exist(&keys[1]).await.unwrap());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// On a database of its own: an aged unreferenced file goes, a
