@@ -1,6 +1,5 @@
 //! Exercise the dormant v3 release against genuine v2 layouts and receipts.
-//! Production apply/migrate/bootstrap remain version 2 in this package.
-use catalyst_db::{MIGRATIONS_SQL, SCHEMA_SQL, schema_migrate};
+//! Current v3 apply/migrate/bootstrap execution is checked in social_voice_upgrade.
 use sha2::{Digest, Sha256};
 use sqlx::{
     PgPool,
@@ -227,56 +226,6 @@ async fn notification_facts(pool: &PgPool, source: Source) -> String {
     }
     sqlx::query_scalar("SELECT coalesce(jsonb_agg(jsonb_build_array(id::text,id,voice_notification_scope,voice_notification_generation,voice_notification_expires_at) ORDER BY id),'[]'::jsonb)::text FROM social.communities WHERE voice_notification_generation IS NOT NULL").fetch_one(pool).await.unwrap()
 }
-async fn assert_old_binary_refuses_v3(pool: &PgPool) {
-    assert_eq!(catalyst_db::SCHEMA_VERSION, 2);
-    assert!(matches!(
-        catalyst_db::bootstrap(pool).await,
-        Err(catalyst_db::BootstrapError::Mismatch { version: 3, .. })
-    ));
-    assert!(matches!(
-        schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL).await,
-        Err(schema_migrate::MigrateError::Incompatible { version: 3, .. })
-    ));
-}
-
-#[tokio::test]
-async fn dormant_release_leaves_fresh_v2_bootstrap_and_migration_enrollment_unchanged() {
-    assert_eq!(catalyst_db::SCHEMA_VERSION, 2);
-    assert!(!SCHEMA_SQL.contains("CREATE TABLE social.community_voice_notifications"));
-    assert!(!SCHEMA_SQL.contains("CREATE INDEX private_voice_chats_caller_idx"));
-    assert!(
-        !schema_migrate::parse_steps(MIGRATIONS_SQL)
-            .iter()
-            .any(|step| step.name == STEP)
-    );
-    let Some(db) = Database::empty().await else {
-        return;
-    };
-    catalyst_db::apply_schema(&db.pool).await.unwrap();
-    assert_eq!(
-        sqlx::query_scalar::<_, i32>("SELECT version FROM meta.schema WHERE id=1")
-            .fetch_one(&db.pool)
-            .await
-            .unwrap(),
-        2
-    );
-    catalyst_db::bootstrap(&db.pool).await.unwrap();
-    assert!(
-        schema_migrate::migrate(&db.pool, SCHEMA_SQL, MIGRATIONS_SQL)
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    let target: bool = sqlx::query_scalar(
-        "SELECT to_regclass('social.community_voice_notifications') IS NOT NULL",
-    )
-    .fetch_one(&db.pool)
-    .await
-    .unwrap();
-    assert!(!target);
-    db.close().await;
-}
-
 #[tokio::test]
 async fn both_genuine_v2_routes_roll_back_at_every_boundary_then_preserve_rows_and_real_ledger() {
     let release = release_v3();
@@ -354,7 +303,6 @@ async fn both_genuine_v2_routes_roll_back_at_every_boundary_then_preserve_rows_a
                 release_result(pool, &release).await.is_err(),
                 "release refuses execution at3"
             );
-            assert_old_binary_refuses_v3(pool).await;
             assert_eq!(preserved_facts(pool).await, facts);
             assert_eq!(
                 sqlx::query_as::<_, Receipt>(LEDGER)

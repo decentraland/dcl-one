@@ -4,6 +4,12 @@
 //! banned"), and the write authority proven against `community_members`
 //! plus `community_bans`.
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::Duration;
+
 use axum::body::Bytes;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -14,9 +20,71 @@ use crate::{
 
 use super::State;
 use super::http::{err_json, status_and_message_for_refusal};
-use super::standing::{Standing, load_standing, load_standing_pair};
+use super::standing::{Standing, load_standing_from_database, load_standing_pair_from_database};
 
 pub type Refusal = Box<Response>;
+
+/// Community membership mutations serialize across source-defined independent
+/// commits, including bulk acceptance. Keep the key stable across every writer.
+pub(super) fn membership_lock(community: CommunityId) -> sqlx::postgres::PgAdvisoryLock {
+    sqlx::postgres::PgAdvisoryLock::new(format!("social-community-membership:{community}"))
+}
+
+/// Own the existing pooled connection while acquisition can still be cancelled.
+/// SQLx's native guard queues an unlock, but returning a cancelled blocked query
+/// to the pool also waits for that query. Close only unsuccessful acquisitions.
+pub(super) struct MembershipConnection {
+    connection: sqlx::pool::PoolConnection<sqlx::Postgres>,
+    acquiring: Arc<AtomicBool>,
+}
+
+impl AsRef<sqlx::PgConnection> for MembershipConnection {
+    fn as_ref(&self) -> &sqlx::PgConnection {
+        &self.connection
+    }
+}
+
+impl AsMut<sqlx::PgConnection> for MembershipConnection {
+    fn as_mut(&mut self) -> &mut sqlx::PgConnection {
+        &mut self.connection
+    }
+}
+
+impl Drop for MembershipConnection {
+    fn drop(&mut self) {
+        if self.acquiring.load(Ordering::Relaxed) {
+            self.connection.close_on_drop();
+        }
+    }
+}
+
+/// Bound checkout and acquisition to one second. The short acquisition-only
+/// transaction scopes PostgreSQL's lock timeout; its COMMIT restores autocommit
+/// before any source-defined independent writes. On every error or cancellation
+/// the armed owner closes the connection, including an unfinished BEGIN/COMMIT.
+/// Successful guards retain SQLx's native queued unlock and same backend reuse.
+pub(super) async fn acquire_membership(
+    pool: &sqlx::PgPool,
+    community: CommunityId,
+) -> sqlx::Result<sqlx::postgres::PgAdvisoryLockGuard<MembershipConnection>> {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        let acquiring = Arc::new(AtomicBool::new(true));
+        let mut connection = MembershipConnection {
+            connection: pool.acquire().await?,
+            acquiring: acquiring.clone(),
+        };
+        sqlx::query("BEGIN").execute(connection.as_mut()).await?;
+        sqlx::query("SET LOCAL lock_timeout = '750ms'")
+            .execute(connection.as_mut())
+            .await?;
+        let mut guard = membership_lock(community).acquire(connection).await?;
+        sqlx::query("COMMIT").execute(&mut *guard).await?;
+        acquiring.store(false, Ordering::Relaxed);
+        Ok(guard)
+    })
+    .await
+    .map_err(|_| sqlx::Error::PoolTimedOut)?
+}
 
 pub fn refuse(code: StatusCode, message: impl Into<String>) -> Refusal {
     Box::new(err_json(code, message))
@@ -33,7 +101,7 @@ pub fn parse_community_id(s: &str) -> Result<CommunityId, Refusal> {
 pub fn map_db<T>(r: Result<T, sqlx::Error>) -> Result<T, Refusal> {
     r.map_err(|e| {
         tracing::error!(error = %e, "communities client-write database error");
-        refuse(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        Box::new(super::http::database_error(e).into_response())
     })
 }
 
@@ -53,6 +121,67 @@ pub fn boundary(headers: &HeaderMap) -> Option<String> {
     multer::parse_boundary(ct).ok()
 }
 
+/// The upstream native FormData parser also accepts URL-encoded forms.
+/// Multipart file fields and text fields occupy separate maps: only a file
+/// named `thumbnail` supplies image bytes.
+pub async fn parse_form(headers: &HeaderMap, body: Bytes) -> Result<MultipartFields, Refusal> {
+    if body.len() > 1024 * 1024
+        || headers
+            .get(header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            .is_some_and(|length| length > 1024 * 1024)
+    {
+        return Err(Box::new(
+            super::http::CommError::bad_request("Request body too large").into_response(),
+        ));
+    }
+    if headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| {
+            ct.split(';').next().is_some_and(|mime| {
+                mime.trim()
+                    .eq_ignore_ascii_case("application/x-www-form-urlencoded")
+            })
+        })
+    {
+        let mut out = MultipartFields {
+            name: None,
+            description: None,
+            privacy: None,
+            visibility: None,
+            place_ids: None,
+            thumbnail: None,
+        };
+        for (name, value) in url::form_urlencoded::parse(&body) {
+            match name.as_ref() {
+                "name" => out.name = Some(value.into_owned()),
+                "description" => out.description = Some(value.into_owned()),
+                "privacy" => out.privacy = Some(value.into_owned()),
+                "visibility" => out.visibility = Some(value.into_owned()),
+                "placeIds" if !value.is_empty() => {
+                    out.place_ids = Some(serde_json::from_str(&value).map_err(|_| {
+                        refuse(
+                            StatusCode::BAD_REQUEST,
+                            "placeIds must be a valid JSON array",
+                        )
+                    })?)
+                }
+                "placeIds" => out.place_ids = None,
+                _ => {}
+            }
+        }
+        return Ok(out);
+    }
+    let boundary = boundary(headers).ok_or_else(|| {
+        Box::new(
+            super::http::CommError::bad_request("Invalid multipart/form-data body").into_response(),
+        )
+    })?;
+    parse_multipart(boundary, body).await
+}
+
 /// The fields are handed on as sent (no case folding): `Private` is refused
 /// by the enum parse, not quietly accepted.
 pub async fn parse_multipart(boundary: String, body: Bytes) -> Result<MultipartFields, Refusal> {
@@ -70,22 +199,23 @@ pub async fn parse_multipart(boundary: String, body: Bytes) -> Result<MultipartF
         let field = match mp.next_field().await {
             Ok(Some(f)) => f,
             Ok(None) => break,
-            Err(e) => {
-                return Err(refuse(
-                    StatusCode::BAD_REQUEST,
-                    format!("invalid multipart: {e}"),
+            Err(_) => {
+                return Err(Box::new(
+                    super::http::CommError::bad_request("Invalid multipart/form-data body")
+                        .into_response(),
                 ));
             }
         };
         let fname = field.name().unwrap_or("").to_string();
+        let file = field.file_name().is_some();
+        if (fname == "thumbnail") != file {
+            let _ = field.bytes().await;
+            continue;
+        }
         match fname.as_str() {
             "thumbnail" => {
                 let data = field.bytes().await.unwrap_or_default();
-                out.thumbnail = if data.is_empty() {
-                    None
-                } else {
-                    Some(data.to_vec())
-                };
+                out.thumbnail = Some(data.to_vec());
             }
             "name" => out.name = Some(field.text().await.unwrap_or_default()),
             "description" => out.description = Some(field.text().await.unwrap_or_default()),
@@ -93,7 +223,9 @@ pub async fn parse_multipart(boundary: String, body: Bytes) -> Result<MultipartF
             "visibility" => out.visibility = Some(field.text().await.unwrap_or_default()),
             "placeIds" => {
                 let raw = field.text().await.unwrap_or_default();
-                if !raw.is_empty() {
+                if raw.is_empty() {
+                    out.place_ids = None;
+                } else {
                     out.place_ids =
                         Some(serde_json::from_str::<Vec<String>>(&raw).map_err(|_| {
                             refuse(
@@ -130,14 +262,7 @@ pub async fn load_client_standing(
     community_id: CommunityId,
     wallet: &Address,
 ) -> Result<Standing, Refusal> {
-    load_standing(&state.pool, community_id, wallet)
-        .await
-        .map_err(|refusal| {
-            refusal_response(&refusal, StatusCode::FORBIDDEN, || {
-                "Forbidden: authority could not be established".to_string()
-            })
-            .into()
-        })
+    map_db(load_standing_from_database(&state.pool, community_id, wallet).await)
 }
 
 pub async fn load_client_standing_pair(
@@ -146,14 +271,7 @@ pub async fn load_client_standing_pair(
     first: &Address,
     second: &Address,
 ) -> Result<(Standing, Standing), Refusal> {
-    load_standing_pair(&state.pool, community_id, first, second)
-        .await
-        .map_err(|refusal| {
-            refusal_response(&refusal, StatusCode::FORBIDDEN, || {
-                "Forbidden: authority could not be established".to_string()
-            })
-            .into()
-        })
+    map_db(load_standing_pair_from_database(&state.pool, community_id, first, second).await)
 }
 
 /// A SQL fault is a 500 rather than "not banned", so an outage denies the
@@ -163,14 +281,7 @@ pub async fn is_banned(
     community_id: CommunityId,
     wallet: &Address,
 ) -> Result<bool, Refusal> {
-    let banned: Option<bool> = map_db(
-        sqlx::query_scalar("SELECT active FROM social.community_bans WHERE community_id = $1 AND banned_address = $2")
-            .bind(community_id)
-            .bind(wallet)
-            .fetch_optional(&state.pool)
-            .await,
-    )?;
-    Ok(banned.unwrap_or(false))
+    map_db(super::queries::banned(&state.pool, community_id, wallet).await)
 }
 
 /// Proven against `community_members` plus `community_bans`.
@@ -178,34 +289,6 @@ pub async fn is_banned(
 pub struct ClientCommunityWriteAuthority(());
 
 impl ClientCommunityWriteAuthority {
-    /// `community_bans` pre-check first, then the tier test; both refuse
-    /// with a 403.
-    pub async fn resolve_requiring_at_least(
-        state: &State,
-        community_id: CommunityId,
-        signer: &Address,
-        minimum: CommunityStanding,
-    ) -> Result<Self, Refusal> {
-        if is_banned(state, community_id, signer).await? {
-            return Err(refuse(
-                StatusCode::FORBIDDEN,
-                "Forbidden: banned from this community",
-            ));
-        }
-        let standing = load_client_standing(state, community_id, signer).await?;
-        if !standing.is_at_least(minimum) {
-            return Err(refuse(
-                StatusCode::FORBIDDEN,
-                format!(
-                    "Forbidden: signer role {} below required {}",
-                    standing.tier().as_wire_text(),
-                    minimum.as_wire_text()
-                ),
-            ));
-        }
-        Ok(Self(()))
-    }
-
     /// `community_bans` pre-check refuses with a 403; a missing capability
     /// with a 401.
     pub async fn resolve_requiring_capability(
@@ -215,18 +298,18 @@ impl ClientCommunityWriteAuthority {
         capability: CommunityPermission,
         action: &str,
     ) -> Result<Self, Refusal> {
-        if is_banned(state, community_id, signer).await? {
-            return Err(refuse(
-                StatusCode::FORBIDDEN,
-                "Forbidden: banned from this community",
+        if !map_db(super::queries::community_exists(&state.pool, community_id, false).await)? {
+            return Err(Box::new(
+                super::http::CommError::not_found(format!("Community not found: {community_id}"))
+                    .into_response(),
             ));
         }
         let standing = load_client_standing(state, community_id, signer).await?;
         if !standing.has(capability) {
-            return Err(refuse(
+            return Err(Box::new(super::http::handler_error(
                 StatusCode::UNAUTHORIZED,
                 format!("The user {} doesn't have permission to {}", signer, action),
-            ));
+            )));
         }
         Ok(Self(()))
     }
@@ -243,7 +326,7 @@ pub async fn validate_like_unlike_access(
         .await
         .map_err(|e| {
             tracing::error!(error = %e, %community_id, "community privacy lookup failed");
-            refuse(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+            Box::new(super::http::database_error(e).into_response())
         })?;
     let standing = load_client_standing(state, community_id, signer).await?;
     if private && standing.tier() == CommunityStanding::NotAMember {
@@ -291,9 +374,10 @@ mod tests {
             fields.place_ids,
             Some(vec!["a".to_string(), "b".to_string()])
         );
-        assert!(
-            fields.thumbnail.is_none(),
-            "an empty thumbnail part is no thumbnail"
+        assert_eq!(
+            fields.thumbnail,
+            Some(Vec::new()),
+            "an empty file is validated as an undersized thumbnail"
         );
         // upstream `fields-validator.ts`: anything but a JSON array of
         // strings is refused; an empty field is no change, `[]` clears

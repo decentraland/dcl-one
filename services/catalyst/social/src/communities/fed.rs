@@ -51,7 +51,7 @@ use super::http::err_json;
 use super::standing::{
     CommunityBanAuthority, CommunityUnbanAuthority, load_standing, load_standing_pair,
 };
-use super::write_support::{ClientCommunityWriteAuthority, is_banned, refusal_response};
+use super::write_support::refusal_response;
 use super::{SharedState, State as CommunitiesState, validate};
 use crate::comms::limits::{RateLimitDecision, RateLimiter};
 use crate::fed::{FedError, Signed, TypedMessage};
@@ -293,21 +293,69 @@ impl FedRoute {
     }
 }
 
+pub(super) fn requires_gateway_signer(method: &Method, path: &str) -> bool {
+    FedRoute::of(method, path).is_some()
+        || (method == Method::POST
+            && matches!(
+                path.split('/').collect::<Vec<_>>().as_slice(),
+                ["", "v1", "communities", _, "requests"]
+            ))
+}
+
+/// Internal provenance for a response selected by the native envelope classifier.
+/// The source HTTP metrics view must not count native federation operations.
+#[derive(Clone)]
+pub(crate) struct NativeEnvelopeResponse;
+
 /// The old write handlers' first step: an envelope body takes the federated
 /// branch, anything else the client handler, untouched.
 pub async fn envelopes(State(state): State<SharedState>, request: Request, next: Next) -> Response {
     let Some(route) = FedRoute::of(request.method(), request.uri().path()) else {
         return next.run(request).await;
     };
-    let (parts, body) = request.into_parts();
-    let bytes = match axum::body::to_bytes(body, BODY_LIMIT).await {
-        Ok(b) => b,
-        Err(_) => return (StatusCode::PAYLOAD_TOO_LARGE, "length limit exceeded").into_response(),
+    // Form writes cannot contain a JSON federation envelope. Hand their
+    // bounded body directly to the native FormData-compatible handler.
+    if request
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|value| {
+            value.starts_with("multipart/form-data")
+                || value.starts_with("application/x-www-form-urlencoded")
+        })
+    {
+        return next.run(request).await;
+    }
+    let gateway = super::http::is_social_api(&request);
+    let (parts, bytes) = if gateway {
+        // ADR-44 has already run at gateway ingress. Client JSON must not
+        // inherit the historical envelope's 512KiB limit during sniffing.
+        let form = matches!(route, FedRoute::Create)
+            || matches!(route, FedRoute::Update(_)) && request.method() == Method::PUT;
+        match super::http::DeferredBody::classify(request, form).await {
+            Ok(value) => value,
+            Err(error) => return error.into_response(),
+        }
+    } else {
+        // Preserve native/root federation's buffer → ADR-44 → typed verify.
+        let (parts, body) = request.into_parts();
+        let bytes = match axum::body::to_bytes(body, BODY_LIMIT).await {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                return (StatusCode::PAYLOAD_TOO_LARGE, "length limit exceeded").into_response();
+            }
+        };
+        (parts, bytes)
     };
     if !crate::fed::is_envelope(&serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null)) {
         return next
             .run(Request::from_parts(parts, Body::from(bytes)))
             .await;
+    }
+    if gateway && bytes.len() > BODY_LIMIT {
+        let mut response = (StatusCode::PAYLOAD_TOO_LARGE, "length limit exceeded").into_response();
+        response.extensions_mut().insert(NativeEnvelopeResponse);
+        return response;
     }
     let method = parts.method.as_str().to_ascii_lowercase();
     let request_path = parts
@@ -322,8 +370,9 @@ pub async fn envelopes(State(state): State<SharedState>, request: Request, next:
         method: &method,
         path: &path,
         body: &bytes,
+        caller: super::auth::Caller::from_extensions(&parts.extensions),
     };
-    match route {
+    let mut response = match route {
         FedRoute::Create => create(&ctx).await,
         FedRoute::Update(id) => update(&ctx, &id).await,
         FedRoute::Delete(id) => delete(&ctx, &id).await,
@@ -339,7 +388,9 @@ pub async fn envelopes(State(state): State<SharedState>, request: Request, next:
         FedRoute::Like(id, post) => like(&ctx, &id, &post, true).await,
         FedRoute::Unlike(id, post) => like(&ctx, &id, &post, false).await,
         FedRoute::RequestStatus(id, request) => request_status(&ctx, &id, &request).await,
-    }
+    };
+    response.extensions_mut().insert(NativeEnvelopeResponse);
+    response
 }
 
 struct Ctx<'a> {
@@ -348,6 +399,7 @@ struct Ctx<'a> {
     method: &'a str,
     path: &'a SignedPath,
     body: &'a Bytes,
+    caller: super::auth::Caller,
 }
 
 /// The communities module boxes a refusal (`write_support::Refusal`).
@@ -395,8 +447,8 @@ async fn preflight<T: TypedMessage + DeserializeOwned>(
     ctx: &Ctx<'_>,
 ) -> Reply<(Signed<T>, Address)> {
     let signer = ctx
-        .state
-        .require_signer(ctx.headers, ctx.method, ctx.path)
+        .caller
+        .require_signer(ctx.state, ctx.headers, ctx.method, ctx.path)
         .await
         .map_err(|e| Box::new(e.into_response()))?;
     let signed: Signed<T> = serde_json::from_slice(ctx.body)
@@ -457,11 +509,20 @@ async fn require_permission(
     permission: CommunityPermission,
     action: &str,
 ) -> Reply<()> {
-    ClientCommunityWriteAuthority::resolve_requiring_capability(
-        state, community, signer, permission, action,
-    )
-    .await
-    .map(|_| ())
+    if !authority_database(super::queries::community_exists(&state.pool, community, false).await)? {
+        return Err(Box::new(
+            super::http::CommError::not_found(format!("Community not found: {community}"))
+                .into_response(),
+        ));
+    }
+    let standing = authority_standing(state, community, signer).await?;
+    if !standing.has(permission) {
+        return Err(Box::new(super::http::handler_error(
+            StatusCode::UNAUTHORIZED,
+            format!("The user {signer} doesn't have permission to {action}"),
+        )));
+    }
+    Ok(())
 }
 
 async fn require_at_least(
@@ -470,9 +531,58 @@ async fn require_at_least(
     signer: &Address,
     minimum: CommunityStanding,
 ) -> Reply<()> {
-    ClientCommunityWriteAuthority::resolve_requiring_at_least(state, community, signer, minimum)
+    if is_banned(state, community, signer).await? {
+        return Err(Box::new(super::http::err_json(
+            StatusCode::FORBIDDEN,
+            "Forbidden: banned from this community",
+        )));
+    }
+    let standing = authority_standing(state, community, signer).await?;
+    if !standing.is_at_least(minimum) {
+        return Err(Box::new(super::http::err_json(
+            StatusCode::FORBIDDEN,
+            format!(
+                "Forbidden: signer role {} below required {}",
+                standing.tier().as_wire_text(),
+                minimum.as_wire_text()
+            ),
+        )));
+    }
+    Ok(())
+}
+
+// Federation retains its historical authority-failure envelopes. HTTP handlers
+// catch database failures as {message}; the SQL facts and standing stay shared.
+fn authority_database<T>(result: sqlx::Result<T>) -> Reply<T> {
+    result.map_err(|error| {
+        tracing::error!(%error, "communities federation authority database error");
+        Box::new(super::http::err_json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "database error",
+        ))
+    })
+}
+
+async fn authority_standing(
+    state: &CommunitiesState,
+    community: CommunityId,
+    signer: &Address,
+) -> Reply<super::standing::Standing> {
+    load_standing(&state.pool, community, signer)
         .await
-        .map(|_| ())
+        .map_err(|refusal| {
+            Box::new(refusal_response(&refusal, StatusCode::FORBIDDEN, || {
+                "Forbidden: authority could not be established".into()
+            }))
+        })
+}
+
+async fn is_banned(
+    state: &CommunitiesState,
+    community: CommunityId,
+    signer: &Address,
+) -> Reply<bool> {
+    authority_database(super::queries::banned(&state.pool, community, signer).await)
 }
 
 #[derive(Default)]
@@ -557,7 +667,10 @@ async fn create(ctx: &Ctx<'_>) -> Response {
             return bad(e);
         }
     }
-    if let Some(false) = ctx.state.profiles.has_owned_name(signer.as_str()).await {
+    if !match ctx.state.has_owned_name(&signer).await {
+        Ok(owns) => owns,
+        Err(error) => return error.into_response(),
+    } {
         return err_json(
             StatusCode::UNAUTHORIZED,
             format!("The user {signer} doesn't have any names"),
@@ -1734,6 +1847,19 @@ mod tests {
 
     const ADMIN: &str = "fed-admin";
 
+    #[tokio::test]
+    async fn authority_database_failure_keeps_the_federation_error_envelope() {
+        let response = *authority_database::<()>(Err(sqlx::Error::PoolClosed)).unwrap_err();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap(),
+            json!({"error":"database error","message":"database error"})
+        );
+    }
+
     fn now() -> i64 {
         chrono::Utc::now().timestamp()
     }
@@ -1801,7 +1927,20 @@ mod tests {
         sign(w, domains::communities(), message, at)
     }
 
-    async fn claimed_name(pool: &PgPool, w: &PrivateKeySigner) {
+    async fn claimed_name(pool: &PgPool, state: &CommunitiesState, w: &PrivateKeySigner) {
+        state.set_chain_index(std::sync::Arc::new(crate::chain_index::ChainIndex::new(
+            crate::http::Outbound::for_tests(),
+            crate::chain_index::IndexSettings::for_tests(),
+        )));
+        state.chain_index.get().unwrap().graph.names.insert(
+            address(w),
+            std::sync::Arc::new(vec![crate::chain_index::graph::OwnedName {
+                name: "Named".to_string(),
+                contract_address: "0x0000000000000000000000000000000000000001".to_string(),
+                token_id: "1".to_string(),
+                price: None,
+            }]),
+        );
         let metadata = json!({ "v": { "avatars": [{ "name": "fed", "hasClaimedName": true, "avatar": { "snapshots": { "face256": "bafkface" } } }] } });
         sqlx::query(
             "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
@@ -1813,6 +1952,86 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn gateway_keeps_typed_envelope_verification_and_native_size_precedence() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let dir =
+            std::env::temp_dir().join(format!("catalyst-gateway-federation-{}", Uuid::new_v4()));
+        let storage =
+            std::sync::Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let state = std::sync::Arc::new(CommunitiesState::new(
+            pool.clone(),
+            storage,
+            super::super::Settings::for_tests(),
+            None,
+            &crate::http::Outbound::for_tests(),
+            CommunitiesState::explore_for_tests(&pool),
+        ));
+        let native = super::super::router(state.clone());
+        let app = Router::new().merge(native.clone()).nest(
+            "/social-api",
+            crate::social_api_gateway_with_limit(native, 2 * 1024 * 1024),
+        );
+        let owner = PrivateKeySigner::random();
+        claimed_name(&pool, &state, &owner).await;
+        for prefix in ["", "/social-api"] {
+            let path = format!("{prefix}/v1/communities");
+            let envelope = env(
+                &owner,
+                CommunityCreate {
+                    name: format!("Boundary {}", &Uuid::new_v4().simple().to_string()[..8]),
+                    description: "d".into(),
+                    private: false,
+                    unlisted: false,
+                    flags: vec![],
+                },
+            );
+            let (status, body) = send(&app, &owner, "POST", &path, &envelope).await;
+            assert_eq!(status, StatusCode::OK, "{prefix}: {body}");
+            assert_eq!(body["ok"], true);
+            let mut invalid = envelope.clone();
+            invalid.signature = "0x00".into();
+            let (status, body) = send(&app, &owner, "POST", &path, &invalid).await;
+            assert_eq!(
+                status,
+                StatusCode::UNAUTHORIZED,
+                "typed signature still verified: {body}"
+            );
+            let mut large = serde_json::to_vec(&envelope).unwrap();
+            large.resize(BODY_LIMIT + 1, b' ');
+            let headers = signed_headers_by(
+                &owner,
+                "post",
+                &path,
+                "{}",
+                true,
+                &chrono::Utc::now().timestamp_millis().to_string(),
+            )
+            .await;
+            let (status, body) =
+                call(&app, "POST", &path, headers, Body::from(large.clone())).await;
+            assert_eq!(
+                status,
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "confirmed envelope keeps legacy cap: {body}"
+            );
+            let (status, body) =
+                call(&app, "POST", &path, HeaderMap::new(), Body::from(large)).await;
+            assert_eq!(
+                status,
+                if prefix.is_empty() {
+                    StatusCode::PAYLOAD_TOO_LARGE
+                } else {
+                    StatusCode::BAD_REQUEST
+                },
+                "native buffers before auth; gateway authenticates first: {body}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     async fn role_of(pool: &PgPool, community: Uuid, w: &PrivateKeySigner) -> Option<String> {
@@ -1858,7 +2077,7 @@ mod tests {
         state.set_voice_eviction(recorded.clone());
         let app = Router::new().merge(super::super::router(state.clone()));
         let (owner, member) = (PrivateKeySigner::random(), PrivateKeySigner::random());
-        claimed_name(&pool, &owner).await;
+        claimed_name(&pool, &state, &owner).await;
         for private in [true, false] {
             let name = format!("voice {}", &Uuid::new_v4().simple().to_string()[..8]);
             let (status, body) = send(
@@ -1941,7 +2160,7 @@ mod tests {
             PrivateKeySigner::random(),
             PrivateKeySigner::random(),
         );
-        claimed_name(&pool, &owner).await;
+        claimed_name(&pool, &state, &owner).await;
         let create = async || {
             let name = format!("exits {}", &Uuid::new_v4().simple().to_string()[..8]);
             let create = CommunityCreate {
@@ -2131,6 +2350,7 @@ mod tests {
             std::sync::Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
         let settings = super::super::Settings {
             admin_token: Some(ADMIN.into()),
+            places_ownership_check: false,
             ..super::super::Settings::for_tests()
         };
         let state = std::sync::Arc::new(CommunitiesState::new(
@@ -2149,7 +2369,7 @@ mod tests {
             PrivateKeySigner::random(),
             PrivateKeySigner::random(),
         );
-        claimed_name(&pool, &owner).await;
+        claimed_name(&pool, &state, &owner).await;
         let (_, before) = call(
             &app,
             "GET",

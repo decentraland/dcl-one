@@ -4,22 +4,25 @@
 //! pending type auto-accepts, the same type answers the existing row, a
 //! lost race re-reads the row instead of failing.
 
+use crate::rpc::http::Kind;
 use axum::Json;
-use axum::body::Bytes;
 use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::json;
+use sqlx::Connection as _;
 use uuid::Uuid;
 
 use crate::{Address, CommunityId, CommunityPermission};
 
-use super::http::{CommError, Paginated, err_json, get_first, get_pagination_params};
+use super::http::{
+    CommError, Paginated, get_first, get_pagination_params, handler_error as err_json,
+};
 use super::profiles::enrich_with_profiles;
-use super::standing::load_standing;
+use super::standing::load_standing_from_database as load_standing;
 use super::write_support::{
-    Refusal, load_client_standing, map_db, parse_community_id, refusal_response, refuse,
+    Refusal, acquire_membership, load_client_standing, map_db, parse_community_id,
 };
 use super::{SharedState, queries, signed_path};
 use crate::notifications::community::Audience;
@@ -57,8 +60,6 @@ async fn community_requests_page(
     ),
     CommError,
 > {
-    let id = CommunityId::parse(id_str)
-        .map_err(|_| CommError::not_found(format!("Community not found: {id_str}")))?;
     let signer = state
         .require_signer(
             headers,
@@ -69,7 +70,12 @@ async fn community_requests_page(
             ),
         )
         .await?;
-    let standing = load_standing(&state.pool, id, &signer).await?;
+    let id = CommunityId::parse(id_str)
+        .map_err(|_| CommError::bad_request(super::http::INVALID_IDENTIFIER))?;
+
+    let standing = load_standing(&state.pool, id, &signer)
+        .await
+        .map_err(super::http::database_error)?;
     if !standing.has(CommunityPermission::ViewRequests) {
         return Err(CommError::not_authorized(format!(
             "The user {signer} doesn't have permission to view requests"
@@ -78,10 +84,16 @@ async fn community_requests_page(
     let pagination = get_pagination_params(pairs);
     let type_filter = parse_type(get_first(pairs, "type").as_deref());
     let (rows, total) =
-        queries::list_requests_by_community(&state.pool, id, type_filter, &pagination).await?;
+        queries::list_requests_by_community(&state.pool, id, type_filter, &pagination)
+            .await
+            .map_err(super::http::database_error)?;
     let json_rows = rows
         .into_iter()
-        .map(|r| serde_json::to_value(r).unwrap_or(serde_json::Value::Null))
+        .map(|r| {
+            let mut row = serde_json::to_value(r).unwrap_or(serde_json::Value::Null);
+            row["friendshipStatus"] = json!(super::friendship::friendship_status::NONE);
+            row
+        })
         .collect();
     Ok((json_rows, total, pagination, signer))
 }
@@ -93,9 +105,11 @@ pub async fn get_community_requests(
     Path(id_str): Path<String>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<serde_json::Value>, CommError> {
-    let (mut rows, total, pagination, _) =
+    let (mut rows, total, pagination, _signer) =
         community_requests_page(&state, &headers, &original, &id_str, "v1", &pairs).await?;
-    enrich_with_profiles(&state.profiles, &mut rows, "memberAddress").await;
+    enrich_with_profiles(&state.profiles, &mut rows, "memberAddress")
+        .await
+        .map_err(super::http::database_error)?;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))
@@ -108,9 +122,8 @@ pub async fn get_community_requests_v2(
     Path(id_str): Path<String>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<serde_json::Value>, CommError> {
-    let (mut rows, total, pagination, signer) =
+    let (rows, total, pagination, _signer) =
         community_requests_page(&state, &headers, &original, &id_str, "v2", &pairs).await?;
-    super::members::enrich_with_friendship_status(&state, Some(&signer), &mut rows).await;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))
@@ -138,25 +151,15 @@ async fn member_requests_page(
     }
     let pagination = get_pagination_params(pairs);
     let type_filter = parse_type(get_first(pairs, "type").as_deref());
-    let (mut rows, total) =
-        queries::list_requests_by_member(&state.pool, &signer, type_filter, &pagination).await?;
-    for row in rows.iter_mut() {
-        if let Some(map) = row.as_object_mut() {
-            let community_id = map
-                .get("communityId")
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-                .unwrap_or_default();
-            map.remove("_hasThumbnail");
-            map.insert(
-                "thumbnailUrl".to_string(),
-                serde_json::Value::String(super::thumbnail_url(
-                    &state.settings.cdn_url,
-                    &community_id,
-                )),
-            );
-        }
-    }
+    let (rows, total) = queries::list_requests_by_member(
+        &state.pool,
+        &signer,
+        type_filter,
+        &pagination,
+        state.voice_presence_config(),
+    )
+    .await
+    .map_err(super::http::database_error)?;
     Ok((rows, total, pagination))
 }
 
@@ -177,19 +180,34 @@ pub async fn get_member_requests(
                 .map(str::to_string)
         })
         .collect();
-    let owner_names = state.profiles.get_owner_names(&owner_addrs).await;
-    for row in rows.iter_mut() {
-        if let Some(map) = row.as_object_mut() {
-            let owner = map
-                .get("ownerAddress")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_lowercase())
-                .unwrap_or_default();
-            map.insert(
-                "ownerName".to_string(),
-                serde_json::Value::String(owner_names.get(&owner).cloned().unwrap_or_default()),
-            );
+    let owner_names = state
+        .profiles
+        .get_owner_names(&owner_addrs)
+        .await
+        .map_err(super::http::database_error)?;
+    let addresses: Vec<String> = rows
+        .iter()
+        .flat_map(|row| row["friends"].as_array().into_iter().flatten())
+        .filter_map(|address| address.as_str().map(str::to_string))
+        .collect();
+    let profiles = state
+        .profiles
+        .try_get_profiles(&addresses)
+        .await
+        .map_err(super::http::database_error)?;
+    for row in &mut rows {
+        if let Some(name) = row["ownerAddress"]
+            .as_str()
+            .and_then(|owner| owner_names.get(&owner.to_lowercase()))
+        {
+            row["ownerName"] = json!(name);
         }
+        let friends: Vec<serde_json::Value> = row["friends"].as_array().into_iter().flatten().filter_map(|address| {
+            let address = address.as_str()?;
+            let info = profiles.get(address)?;
+            Some(json!({ "address": address, "name": info.name, "hasClaimedName": info.has_claimed_name, "profilePictureUrl": info.profile_picture_url }))
+        }).collect();
+        row["friends"] = json!(friends);
     }
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
@@ -229,7 +247,9 @@ pub async fn get_invites(
     if inviter == invitee {
         return Err(CommError::bad_request("Users cannot invite themselves"));
     }
-    let invites = queries::list_invites(&state.pool, &inviter, &invitee).await?;
+    let invites = queries::list_invites(&state.pool, &inviter, &invitee)
+        .await
+        .map_err(super::http::database_error)?;
     Ok(Json(json!({ "data": invites })))
 }
 
@@ -269,14 +289,15 @@ fn is_unique_violation(e: &sqlx::Error) -> bool {
 
 pub async fn create_request(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
-    body: Bytes,
+    body: super::http::DeferredBody,
 ) -> Response {
-    let community_id = try_resp!(parse_community_id(&id));
-    let signer = match state
+    let signer = match caller
         .require_signer(
+            &state,
             &headers,
             "post",
             &signed_path(&original, format!("/v1/communities/{id}/requests")),
@@ -286,6 +307,22 @@ pub async fn create_request(
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };
+    let body = match body.schema().await {
+        Ok(body) => body,
+        Err(error) => return error.into_response(),
+    };
+    if let Err(error) = crate::rpc::http::body(
+        &body,
+        &[
+            ("targetedAddress", Kind::Address),
+            ("type", Kind::OneOf(&["invite", "request_to_join"])),
+        ],
+        &["targetedAddress", "type"],
+        0,
+    ) {
+        return error.into_response();
+    }
+    let community_id = try_resp!(parse_community_id(&id));
     let req: CreateRequestBody = match serde_json::from_slice(&body) {
         Ok(r) => r,
         Err(e) => return err_json(StatusCode::BAD_REQUEST, format!("invalid body: {e}")),
@@ -319,14 +356,7 @@ pub async fn create_request(
     };
 
     if kind == "invite" {
-        let caller = match load_standing(&state.pool, community_id, &signer).await {
-            Ok(s) => s,
-            Err(refusal) => {
-                return refusal_response(&refusal, StatusCode::FORBIDDEN, || {
-                    "Forbidden: authority could not be established".to_string()
-                });
-            }
-        };
+        let caller = try_resp!(load_client_standing(&state, community_id, &signer).await);
         if !caller.has(CommunityPermission::InviteUsers) {
             return err_json(
                 StatusCode::UNAUTHORIZED,
@@ -334,16 +364,24 @@ pub async fn create_request(
             );
         }
     } else if member_address != signer {
-        return err_json(
+        return (
             StatusCode::BAD_REQUEST,
-            "User trying to impersonate another user",
-        );
+            Json(super::http::error_body(
+                "Bad Request",
+                "User trying to impersonate another user",
+            )),
+        )
+            .into_response();
     }
     if !private && kind == "request_to_join" {
-        return err_json(
+        return (
             StatusCode::BAD_REQUEST,
-            "Public communities do not accept requests to join",
-        );
+            Json(super::http::error_body(
+                "Bad Request",
+                "Public communities do not accept requests to join",
+            )),
+        )
+            .into_response();
     }
 
     let banned: Option<bool> = try_resp!(map_db(
@@ -380,6 +418,26 @@ pub async fn create_request(
         .fetch_all(&state.pool)
         .await
     ));
+    // Retain the source's observed request identity across a concurrent
+    // cancellation, then recheck the ban under the mutation lock. Moving the
+    // pending read after this wait would turn a cancelled opposite request
+    // into a fresh invitation instead of refusing the stale acceptance.
+    let mut guard = try_resp!(map_db(acquire_membership(&state.pool, community_id).await));
+    let banned: Option<bool> = try_resp!(map_db(
+        sqlx::query_scalar(
+            "SELECT active FROM social.community_bans WHERE community_id=$1 AND banned_address=$2"
+        )
+        .bind(community_id)
+        .bind(&member_address)
+        .fetch_optional(&mut *guard)
+        .await
+    ));
+    if banned.unwrap_or(false) {
+        return err_json(
+            StatusCode::UNAUTHORIZED,
+            format!("The user {member_address} is banned from the community {id}"),
+        );
+    }
     if let Some((rid, _)) = pending.iter().find(|(_, t)| t == kind) {
         return request_json(*rid, community_id, &member_address, kind, "pending");
     }
@@ -388,13 +446,18 @@ pub async fn create_request(
         // accepted only if a competing decision has not already closed it.
         try_resp!(
             transition_request(
-                &state.pool,
+                &mut *guard,
                 community_id,
                 *opp_id,
                 &member_address,
                 "accepted"
             )
             .await
+        );
+        drop(guard);
+        state.fire_analytics(
+            "JOIN_COMMUNITY",
+            json!({"community_id":id,"user_id":member_address.as_str(),"request_id":opp_id}),
         );
         // upstream `createCommunityRequest`: the member joined, ONLINE to
         // the members
@@ -424,10 +487,11 @@ pub async fn create_request(
     .bind(community_id)
     .bind(&member_address)
     .bind(kind)
-    .execute(&state.pool)
+    .execute(&mut *guard)
     .await;
     match inserted {
         Ok(_) => {
+            drop(guard);
             notify_request(
                 &state,
                 community_id,
@@ -449,7 +513,7 @@ pub async fn create_request(
                 )
                 .bind(community_id)
                 .bind(&member_address)
-                .fetch_optional(&state.pool)
+                .fetch_optional(&mut *guard)
                 .await
             ));
             match existing {
@@ -472,10 +536,7 @@ pub async fn create_request(
         }
         Err(e) => {
             tracing::error!(error = %e, "failed to create community request");
-            err_json(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to create request",
-            )
+            super::http::database_error(e).into_response()
         }
     }
 }
@@ -491,17 +552,15 @@ pub struct RequestStatusBody {
 /// row in the same transaction, refused for a banned wallet.
 pub async fn update_request_status(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, request_id)): Path<(String, String)>,
-    body: Bytes,
+    body: super::http::DeferredBody,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
-    let Ok(req_uuid) = Uuid::parse_str(&request_id) else {
-        return err_json(StatusCode::BAD_REQUEST, "invalid request id");
-    };
-    let signer = match state
+    let signer = match caller
         .require_signer(
+            &state,
             &headers,
             "patch",
             &signed_path(
@@ -514,11 +573,29 @@ pub async fn update_request_status(
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };
+    let body = match body.schema().await {
+        Ok(body) => body,
+        Err(error) => return error.into_response(),
+    };
+    if let Err(error) = crate::rpc::http::body(
+        &body,
+        &[(
+            "intention",
+            Kind::OneOf(&["accepted", "rejected", "cancelled"]),
+        )],
+        &["intention"],
+        0,
+    ) {
+        return error.into_response();
+    }
+    let Ok(req_uuid) = Uuid::parse_str(&request_id) else {
+        return CommError::bad_request(super::http::INVALID_IDENTIFIER).into_response();
+    };
     let parsed: RequestStatusBody = match serde_json::from_slice(&body) {
         Ok(b) => b,
         Err(e) => return err_json(StatusCode::BAD_REQUEST, format!("invalid body: {e}")),
     };
-    let status = match parsed.intention.to_lowercase().as_str() {
+    let status = match parsed.intention.as_str() {
         "accepted" => "accepted",
         "rejected" => "rejected",
         "cancelled" => "cancelled",
@@ -529,15 +606,15 @@ pub async fn update_request_status(
             );
         }
     };
-    let row: Option<(Address, String)> = try_resp!(map_db(
-        sqlx::query_as("SELECT member_address, type FROM social.community_requests WHERE id = $1 AND community_id = $2")
+    let row: Option<(CommunityId, Address, String)> = try_resp!(map_db(
+        sqlx::query_as("SELECT community_id, member_address, type FROM social.community_requests WHERE id = $1 AND status = 'pending'")
             .bind(req_uuid)
-            .bind(uuid)
             .fetch_optional(&state.pool)
             .await
     ));
-    let Some((member_address, kind)) = row else {
-        return err_json(StatusCode::NOT_FOUND, "Request not found");
+    let Some((uuid, member_address, kind)) = row else {
+        return CommError::not_found(format!("Community request not found: {request_id}"))
+            .into_response();
     };
     let self_caller = member_address == signer;
     let manager_check = || async {
@@ -601,12 +678,13 @@ pub async fn update_request_status(
     if let Some(e) = auth_err {
         return e;
     }
+    let mut guard = try_resp!(map_db(acquire_membership(&state.pool, uuid).await));
     if status == "accepted" {
         let banned: Option<bool> = try_resp!(map_db(
             sqlx::query_scalar("SELECT active FROM social.community_bans WHERE community_id = $1 AND banned_address = $2")
                 .bind(uuid)
                 .bind(&member_address)
-                .fetch_optional(&state.pool)
+                .fetch_optional(&mut *guard)
                 .await
         ));
         if banned.unwrap_or(false) {
@@ -616,7 +694,17 @@ pub async fn update_request_status(
             );
         }
     }
-    try_resp!(transition_request(&state.pool, uuid, req_uuid, &member_address, status).await);
+    try_resp!(transition_request(&mut *guard, uuid, req_uuid, &member_address, status).await);
+    drop(guard);
+    if status == "rejected" || status == "cancelled" {
+        let event = if status == "rejected" {
+            "REJECT_COMMUNITY_REQUEST"
+        } else {
+            "CANCEL_COMMUNITY_REQUEST"
+        };
+        state.fire_analytics(event,json!({"request_id":request_id,"community_id":uuid.as_uuid(),"type":kind,"member_address":member_address.as_str(),"caller_address":signer.as_str()}));
+    }
+
     if status == "accepted" {
         // upstream `updateRequestStatus`: the member joined, ONLINE to the
         // members
@@ -685,42 +773,34 @@ async fn notify_request(
     }
 }
 
-/// A request has one terminal decision. Only the transaction that closes a
-/// pending row may insert membership; retries acknowledge without restoring
-/// access after a subsequent leave. UPDATE serializes competing decisions on
-/// this row, including the opposite-type auto-accept path above.
+/// Decide a pending request once, consuming it as upstream does. The delete
+/// serializes competing decisions; acceptance removes every request for the
+/// pair in the same transaction as its membership insert.
 async fn transition_request(
-    pool: &sqlx::PgPool,
+    connection: &mut sqlx::PgConnection,
     community: CommunityId,
     request: Uuid,
     member: &Address,
     status: &str,
 ) -> Result<(), Refusal> {
-    let mut tx = map_db(pool.begin().await)?;
+    let mut tx = map_db(connection.begin().await)?;
+    map_db(
+        sqlx::query("SELECT id FROM social.communities WHERE id = $1 FOR UPDATE")
+            .bind(community)
+            .execute(&mut *tx)
+            .await,
+    )?;
     let changed = map_db(
-        sqlx::query("UPDATE social.community_requests SET status = $2, updated_at = timezone('UTC', now()) WHERE id = $1 AND community_id = $3 AND status = 'pending'")
+        sqlx::query("DELETE FROM social.community_requests WHERE id = $1 AND community_id = $2 AND status = 'pending'")
             .bind(request)
-            .bind(status)
             .bind(community)
             .execute(&mut *tx)
             .await,
     )?.rows_affected();
     if changed == 0 {
-        // A new READ COMMITTED statement sees the concurrent winner's commit.
-        let current: Option<String> = map_db(
-            sqlx::query_scalar(
-                "SELECT status FROM social.community_requests WHERE id = $1 AND community_id = $2",
-            )
-            .bind(request)
-            .bind(community)
-            .fetch_optional(&mut *tx)
-            .await,
-        )?;
-        return match current.as_deref() {
-            Some(current) if current == status => Ok(()),
-            Some(_) => Err(refuse(StatusCode::CONFLICT, "Request already decided")),
-            None => Err(refuse(StatusCode::NOT_FOUND, "Request not found")),
-        };
+        return Err(Box::new(
+            CommError::not_found(format!("Community request not found: {request}")).into_response(),
+        ));
     }
     if status == "accepted" {
         map_db(
@@ -732,6 +812,10 @@ async fn transition_request(
             .bind(member)
             .execute(&mut *tx)
             .await,
+        )?;
+        map_db(
+            sqlx::query("DELETE FROM social.community_requests WHERE community_id = $1 AND member_address = $2")
+                .bind(community).bind(member).execute(&mut *tx).await,
         )?;
     }
     map_db(tx.commit().await)

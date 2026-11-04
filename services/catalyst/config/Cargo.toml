@@ -6,6 +6,7 @@ description = "Process configuration: the environment the node reads at startup 
 publish = false
 
 [dependencies]
+ipnet.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
 clap.workspace = true
@@ -17,3 +18,4 @@ ts = []
 test-support = []
 
 [dev-dependencies]
+serde_json.workspace = true
