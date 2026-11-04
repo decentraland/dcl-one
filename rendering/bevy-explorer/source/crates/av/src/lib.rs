@@ -2,9 +2,9 @@
 pub mod test;
 
 // util
-#[cfg(feature = "ffmpeg")]
+#[cfg(feature = "uuav")]
 pub mod audio_sink;
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 pub mod video_stream;
 
 // audio source (non-streaming audio)
@@ -18,7 +18,7 @@ pub mod audio_source_native;
 pub mod audio_source_wasm;
 
 // video
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 pub mod video_player;
 
 #[cfg(feature = "av_player_debug")]
@@ -26,14 +26,14 @@ pub mod av_player_debug;
 
 use std::{borrow::Borrow, cmp::Ordering, collections::BTreeSet, marker::PhantomData, ops::Deref};
 
-#[cfg(feature = "ffmpeg")]
+#[cfg(feature = "uuav")]
 use crate::audio_sink::AudioSink;
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 use crate::video_stream::VideoSink;
 use audio_source::AudioSourcePlugin;
 #[cfg(not(feature = "html"))]
 use audio_source_native::AudioSourcePluginImpl;
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 use bevy::ecs::component::Mutable;
 use bevy::{diagnostic::FrameCount, math::FloatOrd, prelude::*};
 use common::{
@@ -51,7 +51,7 @@ use livestream_manager::{
     states::Transmitter, ActiveReceiver, ReceiverImage, ReceiverVolume, TransmissionStopped,
     TransmissionUpdated,
 };
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 use media::AVCommand;
 use scene_runner::{
     renderer_context::RendererSceneContext,
@@ -59,11 +59,11 @@ use scene_runner::{
     ContainerEntity, ContainingScene,
 };
 
-#[cfg(all(not(test), feature = "ffmpeg"))]
+#[cfg(all(not(test), feature = "uuav"))]
 use crate::audio_sink::AudioSinkPlugin;
 #[cfg(feature = "html")]
 use crate::audio_source_wasm::AudioSourcePluginImpl;
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 use crate::video_player::VideoPlayerPlugin;
 
 const LIVEKIT_VIDEO_STREAM: &str = "livekit-video://current-stream";
@@ -90,11 +90,11 @@ pub trait AVPlayerConfig {
     fn r#loop(&self) -> bool;
 }
 
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 pub trait AVPlayerSinks: Component<Mutability = Mutable> {
-    #[cfg(feature = "ffmpeg")]
+    #[cfg(feature = "uuav")]
     fn audio_sink(&self) -> Option<&AudioSink>;
-    #[cfg(feature = "ffmpeg")]
+    #[cfg(feature = "uuav")]
     fn audio_sink_mut(&mut self) -> Option<&mut AudioSink>;
     fn video_sink(&self) -> Option<&VideoSink>;
     fn video_sink_mut(&mut self) -> Option<&mut VideoSink>;
@@ -102,10 +102,10 @@ pub trait AVPlayerSinks: Component<Mutability = Mutable> {
 
 /// The av backend's ends of a player; the sinks share one command channel. Audio is mixed in
 /// kira on native and by the page element on the web, which has no audio sink.
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 #[derive(Component)]
 pub struct AVSinks<T: AVPlayer> {
-    #[cfg(feature = "ffmpeg")]
+    #[cfg(feature = "uuav")]
     pub audio: Option<AudioSink>,
     pub video: Option<VideoSink>,
     pub command_sender: tokio::sync::mpsc::UnboundedSender<AVCommand>,
@@ -115,14 +115,14 @@ pub struct AVSinks<T: AVPlayer> {
     pub _phantom: PhantomData<T>,
 }
 
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 impl<T: AVPlayer> AVPlayerSinks for AVSinks<T> {
-    #[cfg(feature = "ffmpeg")]
+    #[cfg(feature = "uuav")]
     fn audio_sink(&self) -> Option<&AudioSink> {
         self.audio.as_ref()
     }
 
-    #[cfg(feature = "ffmpeg")]
+    #[cfg(feature = "uuav")]
     fn audio_sink_mut(&mut self) -> Option<&mut AudioSink> {
         self.audio.as_mut()
     }
@@ -383,9 +383,9 @@ pub struct AVPlayerPlugin;
 
 impl Plugin for AVPlayerPlugin {
     fn build(&self, app: &mut App) {
-        #[cfg(any(feature = "ffmpeg", feature = "html"))]
+        #[cfg(any(feature = "uuav", feature = "html"))]
         app.add_plugins(VideoPlayerPlugin);
-        #[cfg(all(not(test), feature = "ffmpeg"))]
+        #[cfg(all(not(test), feature = "uuav"))]
         app.add_plugins(AudioSinkPlugin);
         app.add_plugins(AudioSourcePlugin);
         app.add_plugins(AudioSourcePluginImpl);
@@ -512,7 +512,7 @@ fn av_player_on_remove<T: AVPlayer>(
         ShouldBePlaying<T>,
         Stream,
     )>();
-    #[cfg(feature = "ffmpeg")]
+    #[cfg(feature = "uuav")]
     commands.entity(entity).try_remove::<AVSinks<T>>();
 
     let Ok(container_entity) = av_players.get(entity) else {

@@ -229,7 +229,7 @@ fn player_config_added<T: AVPlayer>(
     };
 
     let AVSinks {
-        #[cfg(feature = "ffmpeg")]
+        #[cfg(feature = "uuav")]
             audio: _,
         video: _,
         command_sender,
@@ -265,7 +265,7 @@ fn update_av_volume<T: AVPlayer>(
 
     for (scene, config, mut sinks) in av_players.iter_mut() {
         let AVSinks {
-            #[cfg(feature = "ffmpeg")]
+            #[cfg(feature = "uuav")]
                 audio: _,
             video: _,
             command_sender,
@@ -367,7 +367,7 @@ fn play_videos(
 
     for (mut video_player_sinks, container, mut output) in q.iter_mut() {
         let AVSinks {
-            #[cfg(feature = "ffmpeg")]
+            #[cfg(feature = "uuav")]
                 audio: _,
             video: Some(video),
             command_sender: _,
@@ -421,16 +421,7 @@ fn play_videos(
             // no pixels: the render world copied the frame into the gpu image itself
             if let Some(pixels) = frame.data() {
                 let image = images.get_mut(&video.image).unwrap();
-
-                match &mut image.data {
-                    Some(data) => {
-                        data.copy_from_slice(pixels);
-                        image.transfer_priority = RenderAssetTransferPriority::Priority(-2);
-                    }
-                    None => {
-                        image.data = Some(pixels.to_owned());
-                    }
-                }
+                image.data = Some(pixels.to_owned());
             }
             if video.resized {
                 video.resized = false;
@@ -497,7 +488,7 @@ mod snapshot_tests {
         let (commands, _commands_rx) = tokio::sync::mpsc::unbounded_channel();
         app.world_mut().spawn((
             AVSinks::<VideoPlayer> {
-                #[cfg(feature = "ffmpeg")]
+                #[cfg(feature = "uuav")]
                 audio: None,
                 video: Some(crate::video_stream::VideoSink {
                     source: "fixture.mp4".to_owned(),
