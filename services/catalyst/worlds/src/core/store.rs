@@ -478,6 +478,23 @@ pub async fn permission_records(
         .collect())
 }
 
+/// `$delete` (a `DELETE FROM worlds.world_scenes ...`) moving the rows it
+/// removes into `worlds.retired_world_scenes` (a re-retired id restarts its TTL).
+macro_rules! retiring {
+    ($delete:literal) => {
+        concat!(
+            "WITH gone AS (",
+            $delete,
+            " RETURNING world_name, entity_id, entity, parcels, mirror_source) \
+             INSERT INTO worlds.retired_world_scenes (world_name, entity_id, entity, parcels, mirror_source) \
+             SELECT world_name, entity_id, entity, parcels, mirror_source FROM gone \
+             ON CONFLICT (world_name, entity_id) DO UPDATE SET entity = EXCLUDED.entity, \
+               parcels = EXCLUDED.parcels, mirror_source = EXCLUDED.mirror_source, \
+               retired_at = timezone('UTC', now())"
+        )
+    };
+}
+
 /// One transaction: upsert the world (owner from a proven `Deploy::Owner`,
 /// an operator disable kept, settings refreshed from the entity when the
 /// scene ends up the sole occupant), refuse (400) when an overlapping scene
@@ -624,9 +641,9 @@ pub async fn deploy_scene(
 
     match replacement {
         Deploy::Owner => {
-            sqlx::query(
-                "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[]",
-            )
+            sqlx::query(retiring!(
+                "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[]"
+            ))
             .bind(world.key())
             .bind(&parcels)
             .execute(&mut *tx)
@@ -634,7 +651,7 @@ pub async fn deploy_scene(
         }
         Deploy::Scoped(ids) => {
             let ids: Vec<&str> = ids.iter().map(SceneId::as_str).collect();
-            sqlx::query("DELETE FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[] AND entity_id = ANY($3::text[])")
+            sqlx::query(retiring!("DELETE FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[] AND entity_id = ANY($3::text[])"))
                 .bind(world.key())
                 .bind(&parcels)
                 .bind(&ids)
@@ -657,9 +674,9 @@ pub async fn deploy_scene(
 
     // The mirror never refreshes a world with a local scene, so a mirrored
     // scene left beside this one would stay stale for good.
-    sqlx::query(
-        "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND mirror_source IS NOT NULL",
-    )
+    sqlx::query(retiring!(
+        "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND mirror_source IS NOT NULL"
+    ))
     .bind(world.key())
     .execute(&mut *tx)
     .await?;
@@ -688,6 +705,12 @@ pub async fn deploy_scene(
     .bind(size)
     .execute(&mut *tx)
     .await?;
+    // Active again: a (world, entity) is active or retired, never both.
+    sqlx::query("DELETE FROM worlds.retired_world_scenes WHERE world_name = $1 AND entity_id = $2")
+        .bind(world.key())
+        .bind(entity_id)
+        .execute(&mut *tx)
+        .await?;
     // The scene's storage identity, and the retired ones' (replaced, mirrored).
     crate::explore::places::scene_identity::assign(&mut tx, world.key(), entity_id, &parcels)
         .await?;
@@ -760,8 +783,87 @@ async fn delete_scenes_locked(
         .rows_affected();
     crate::explore::places::scene_identity::retire_orphans(&mut tx, &[world.key().to_string()])
         .await?;
+    recompute_spawn(&mut tx, world).await?;
     tx.commit().await?;
     Ok(affected)
+}
+
+/// The spawn after scenes left the world (WCS `undeployScene`/`undeployWorld`):
+/// kept while inside the remaining scenes' bounding rectangle, else its
+/// centre (floored); NULL once no scene remains. Bumps the settings version
+/// when it changes. Runs under the world row lock.
+async fn recompute_spawn(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    world: &WorldName,
+) -> Result<(), ApiError> {
+    let Some(row) = sqlx::query(
+        r#"SELECT w.spawn_coordinates, br.min_x, br.max_x, br.min_y, br.max_y
+           FROM worlds.worlds w
+           LEFT JOIN LATERAL (
+             SELECT min(split_part(p, ',', 1)::int) AS min_x,
+                    max(split_part(p, ',', 1)::int) AS max_x,
+                    min(split_part(p, ',', 2)::int) AS min_y,
+                    max(split_part(p, ',', 2)::int) AS max_y
+             FROM worlds.world_scenes ws, unnest(ws.parcels) AS p
+             WHERE ws.world_name = w.name
+           ) br ON true
+           WHERE w.name = $1"#,
+    )
+    .bind(world.key())
+    .fetch_optional(&mut **tx)
+    .await?
+    else {
+        return Ok(());
+    };
+    let current: Option<String> = row.get("spawn_coordinates");
+    let col = |c: &str| row.get::<Option<i32>, _>(c);
+    let rect = (|| Some((col("min_x")?, col("max_x")?, col("min_y")?, col("max_y")?)))();
+    let next = spawn_within(current.as_deref(), rect);
+    if next != current {
+        sqlx::query(
+            "UPDATE worlds.worlds SET spawn_coordinates = $2, settings_version = settings_version + 1, \
+             updated_at = timezone('UTC', now()) WHERE name = $1",
+        )
+        .bind(world.key())
+        .bind(&next)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+/// `rect` is `(min_x, max_x, min_y, max_y)`; see [`recompute_spawn`].
+fn spawn_within(current: Option<&str>, rect: Option<(i32, i32, i32, i32)>) -> Option<String> {
+    let (min_x, max_x, min_y, max_y) = rect?;
+    let current = current?;
+    let inside = Parcel::parse(current)
+        .map(|p| (min_x..=max_x).contains(&p.x) && (min_y..=max_y).contains(&p.y))
+        .unwrap_or(false);
+    if inside {
+        return Some(current.to_string());
+    }
+    let mid = |a: i32, b: i32| (i64::from(a) + i64::from(b)).div_euclid(2);
+    Some(format!("{},{}", mid(min_x, max_x), mid(min_y, max_y)))
+}
+
+/// Deletes the retired scenes older than `ttl` (`SCENE_EVICTION_TTL_MS`);
+/// their content becomes collectable. Returns the rows evicted.
+pub async fn evict_retired_scenes(
+    pool: &PgPool,
+    ttl: std::time::Duration,
+) -> Result<u64, ApiError> {
+    let ttl = chrono::Duration::from_std(ttl).unwrap_or(chrono::Duration::MAX);
+    let cutoff = chrono::Utc::now()
+        .naive_utc()
+        .checked_sub_signed(ttl)
+        .unwrap_or(NaiveDateTime::MIN);
+    Ok(
+        sqlx::query("DELETE FROM worlds.retired_world_scenes WHERE retired_at < $1")
+            .bind(cutoff)
+            .execute(pool)
+            .await?
+            .rows_affected(),
+    )
 }
 
 /// Undeploy every scene standing on `parcel`. `authorized` scopes the delete
@@ -782,7 +884,7 @@ pub async fn undeploy_scene(
             delete_scenes_locked(
                 pool,
                 world,
-                "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND $2 = ANY(parcels) AND entity_id = ANY($3::text[])",
+                retiring!("DELETE FROM worlds.world_scenes WHERE world_name = $1 AND $2 = ANY(parcels) AND entity_id = ANY($3::text[])"),
                 move |q| q.bind(key).bind(parcel).bind(ids),
             )
             .await
@@ -791,7 +893,9 @@ pub async fn undeploy_scene(
             delete_scenes_locked(
                 pool,
                 world,
-                "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND $2 = ANY(parcels)",
+                retiring!(
+                    "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND $2 = ANY(parcels)"
+                ),
                 move |q| q.bind(key).bind(parcel),
             )
             .await
@@ -804,7 +908,7 @@ pub async fn undeploy_world(pool: &PgPool, world: &WorldName) -> Result<u64, Api
     delete_scenes_locked(
         pool,
         world,
-        "DELETE FROM worlds.world_scenes WHERE world_name = $1",
+        retiring!("DELETE FROM worlds.world_scenes WHERE world_name = $1"),
         move |q| q.bind(key),
     )
     .await
@@ -1529,12 +1633,55 @@ pub async fn world_manifest(
     }))
 }
 
+/// `term` as an ILIKE substring pattern with its wildcards and the escape
+/// character taken literally.
+fn ilike_contains(term: &str) -> String {
+    let mut out = String::with_capacity(term.len() + 2);
+    out.push('%');
+    for c in term.chars() {
+        if matches!(c, '\\' | '%' | '_') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('%');
+    out
+}
+
+/// Whether `pg_trgm` is installed, asked once per process like WCS's search
+/// component; without it the search is full-text plus ILIKE only.
+async fn trigram_available(pool: &PgPool) -> bool {
+    static AVAILABLE: tokio::sync::OnceCell<bool> = tokio::sync::OnceCell::const_new();
+    *AVAILABLE
+        .get_or_init(|| async {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')",
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap_or(false)
+        })
+        .await
+}
+
+/// `GET /worlds`. The search is WCS's: a full-text match over name, title and
+/// description, OR an escaped ILIKE substring of any of them, OR (when
+/// `pg_trgm` is installed) trigram similarity above 0.3. No index: the OR'd
+/// predicate scans the worlds table (~1.7k rows) either way.
 pub async fn list_worlds_public(
     pool: &PgPool,
     filters: &WorldsListFilters,
     options: &WorldsListOptions,
 ) -> Result<(Vec<WorldInfoRow>, i64), ApiError> {
-    let base_from = r#"
+    let similarity = if filters.search.is_some() && trigram_available(pool).await {
+        "OR similarity(w.name, $3) > 0.3
+                OR similarity(COALESCE(w.title, ''), $3) > 0.3
+                OR similarity(COALESCE(w.description, ''), $3) > 0.3"
+    } else {
+        ""
+    };
+    let base_from = format!(
+        r#"
         FROM worlds.worlds w
         LEFT JOIN (
             SELECT ws.world_name,
@@ -1554,10 +1701,14 @@ pub async fn list_worlds_public(
                             WHERE wp.world_name = w.name AND wp.address = $1 AND wp.permission = 'deployment'))
           AND ($2::bool IS NULL OR (COALESCE(ss.deployed_scenes, 0) > 0) = $2)
           AND ($3::text IS NULL
-                OR w.name ILIKE '%' || $3 || '%'
-                OR w.title ILIKE '%' || $3 || '%'
-                OR w.description ILIKE '%' || $3 || '%')
-    "#;
+                OR to_tsvector('english', w.name || ' ' || COALESCE(w.title, '') || ' ' || COALESCE(w.description, ''))
+                   @@ plainto_tsquery('english', $3)
+                OR w.name ILIKE $4
+                OR w.title ILIKE $4
+                OR w.description ILIKE $4
+                {similarity})
+    "#
+    );
     let dir = match options.order_direction {
         OrderDirection::Desc => "DESC",
         OrderDirection::Asc => "ASC",
@@ -1577,16 +1728,18 @@ pub async fn list_worlds_public(
                   count(*) OVER () AS total
            {base_from}
            {order_clause}
-           LIMIT $4 OFFSET $5"#
+           LIMIT $5 OFFSET $6"#
     );
     let deployer = filters
         .authorized_deployer
         .as_deref()
         .map(str::to_lowercase);
+    let pattern = filters.search.as_deref().map(ilike_contains);
     let rows = sqlx::query(sqlx::AssertSqlSafe(main_sql))
         .bind(&deployer)
         .bind(filters.has_deployed_scenes)
         .bind(&filters.search)
+        .bind(&pattern)
         .bind(options.limit)
         .bind(options.offset)
         .fetch_all(pool)
@@ -1600,6 +1753,7 @@ pub async fn list_worlds_public(
             .bind(&deployer)
             .bind(filters.has_deployed_scenes)
             .bind(&filters.search)
+            .bind(&pattern)
             .fetch_one(pool)
             .await?
         }
@@ -1868,7 +2022,7 @@ fn collect_content_hashes(
     Ok(())
 }
 
-/// Every blob key `worlds.*` references: each scene entity id and its content
+/// Every blob key `worlds.*` references: each scene entity id (retired ones until evicted) and its content
 /// hashes, and each world's thumbnail. A row this cannot read exactly aborts
 /// the whole set (a caller deletes everything the set does not name), read in
 /// one repeatable-read snapshot. The auth chain lives in the row, so there is
@@ -1878,7 +2032,11 @@ pub async fn active_content_keys(pool: &PgPool) -> Result<HashSet<String>, ApiEr
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         .execute(&mut *tx)
         .await?;
-    let scenes = sqlx::query("SELECT entity_id, jsonb_typeof(entity) AS entity_type, entity -> 'content' AS content FROM worlds.world_scenes")
+    // Retired scenes stay referenced until evicted.
+    let scenes = sqlx::query(
+        "SELECT entity_id, jsonb_typeof(entity) AS entity_type, entity -> 'content' AS content FROM worlds.world_scenes \
+         UNION ALL SELECT entity_id, jsonb_typeof(entity), entity -> 'content' FROM worlds.retired_world_scenes",
+    )
         .fetch_all(&mut *tx)
         .await?;
     let mut keys: HashSet<String> = HashSet::with_capacity(scenes.len() * 4);

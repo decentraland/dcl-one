@@ -1578,7 +1578,10 @@ async fn worlds_states(
                         .deployment_processing_timeout_ms,
                 },
             )
-            .map(|s| s.with_global_scenes_urn(config.worlds_content.global_scenes_urn.as_deref()))
+            .map(|s| {
+                s.with_global_scenes_urn(config.worlds_content.global_scenes_urn.as_deref())
+                    .with_scene_eviction_ttl_ms(config.worlds.scene_eviction_ttl_ms)
+            })
             .context(
                 "MAX_IN_FLIGHT_UPLOAD_* / MAX_CONCURRENT_UPLOADS / *_TIMEOUT_MS configuration",
             )?,

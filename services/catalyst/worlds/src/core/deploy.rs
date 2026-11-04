@@ -491,10 +491,26 @@ async fn deploy_entity_inner(
             return internal("Failed to persist deployment");
         }
     }
+    // Every publish refreshes worlds.owner to the live NAME holder.
     let name_owner = match &replacement {
-        Deploy::Owner => Some(&signer),
-        Deploy::Scoped(_) => None,
+        Deploy::Owner => signer.clone(),
+        Deploy::Scoped(_) => match state.policy.live_name_owner(&world).await {
+            Ok(Some(owner)) => owner,
+            Ok(None) => {
+                return err_one(format!(
+                    "Cannot deploy scene \"{entity_id}\" to world \"{}\": owner address could not be resolved.",
+                    world.display()
+                ));
+            }
+            Err(e) => {
+                tracing::warn!(world = %world, error = %e, "deploy denied: NAME owner undetermined");
+                return unavailable(
+                    "Deployment failed: the world's owner could not be resolved right now",
+                );
+            }
+        },
     };
+    let name_owner = Some(&name_owner);
 
     let mut blobs_to_store: Vec<(String, Bytes)> = vec![(entity_id.clone(), entity_bytes.clone())];
     if let Some(Value::Array(items)) = entity.get("content") {

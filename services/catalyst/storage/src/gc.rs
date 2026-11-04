@@ -49,6 +49,7 @@ pub const REFERENCE_SOURCES: &[&str] = &[
     "worlds.worlds.thumbnail_hash",
     "worlds.federation_worlds.thumbnail_hash",
     "worlds.world_scenes.entity_id",
+    "worlds.retired_world_scenes.entity_id",
     "social.community_thumbnails.thumbnail_hash",
     "social.community_contents.cid",
     "social.player_report_evidence.content_hash",
@@ -223,7 +224,11 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
 /// JSON documents that embed store keys, read by [`reference_set`] beside
 /// the plain sources: the world scene entities' `content[].hash` and the
 /// asset-pack catalogue's thumbnails and asset contents.
-pub const JSON_SOURCES: &[&str] = &["worlds.world_scenes.entity", "builder.asset_catalog.packs"];
+pub const JSON_SOURCES: &[&str] = &[
+    "worlds.world_scenes.entity",
+    "worlds.retired_world_scenes.entity",
+    "builder.asset_catalog.packs",
+];
 
 /// The age floor: at least an hour, and at least the widest store-then-row
 /// gap (a multipart upload plus its processing).
@@ -370,7 +375,8 @@ fn split_source(source: &str) -> (&str, &str) {
 /// exactly (a caller deletes what the references do not name).
 async fn check_json_sources(pool: &PgPool) -> Result<(), GcError> {
     let bad: Option<String> = sqlx::query_scalar(
-        "SELECT entity_id FROM worlds.world_scenes s \
+        "SELECT entity_id FROM (SELECT entity_id, entity FROM worlds.world_scenes \
+           UNION ALL SELECT entity_id, entity FROM worlds.retired_world_scenes) s \
          WHERE jsonb_typeof(s.entity) <> 'object' \
             OR jsonb_typeof(s.entity -> 'content') NOT IN ('array', 'null') \
             OR (jsonb_typeof(s.entity -> 'content') = 'array' AND EXISTS ( \
@@ -439,7 +445,8 @@ async fn any_reference(pool: &PgPool) -> Result<bool, GcError> {
 }
 
 /// The keys among `keys` some domain names: one `= ANY` probe per source
-/// (index-served on the large tables) and the world scenes' content lists.
+/// (index-served on the large tables) and the world scenes' content lists,
+/// retired ones included until evicted.
 pub async fn referenced_among(pool: &PgPool, keys: &[String]) -> Result<HashSet<String>, GcError> {
     let mut found = HashSet::new();
     for source in REFERENCE_SOURCES {
@@ -453,7 +460,8 @@ pub async fn referenced_among(pool: &PgPool, keys: &[String]) -> Result<HashSet<
         found.extend(rows);
     }
     let rows: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT e ->> 'hash' FROM worlds.world_scenes s \
+        "SELECT DISTINCT e ->> 'hash' FROM (SELECT entity FROM worlds.world_scenes \
+           UNION ALL SELECT entity FROM worlds.retired_world_scenes) s \
          CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(s.entity -> 'content') = 'array' THEN s.entity -> 'content' ELSE '[]'::jsonb END) e \
          WHERE e ->> 'hash' = ANY($1)",
     )
@@ -668,6 +676,7 @@ mod tests {
         let orphan = put(b"orphan".to_vec()).await;
         let poster = put(b"poster".to_vec()).await;
         let scene_file = put(b"scene file".to_vec()).await;
+        let retired_file = put(b"retired scene file".to_vec()).await;
         let global_file = put(b"global file".to_vec()).await;
         let fresh = put(b"fresh".to_vec()).await;
         let global = put(json!({ "content": [{ "file": "a", "hash": global_file }] })
@@ -675,7 +684,14 @@ mod tests {
             .into_bytes())
         .await;
         let two_hours_ago = SystemTime::now() - Duration::from_secs(7200);
-        for key in [&orphan, &poster, &scene_file, &global, &global_file] {
+        for key in [
+            &orphan,
+            &poster,
+            &scene_file,
+            &retired_file,
+            &global,
+            &global_file,
+        ] {
             let path = storage.file_path(key).await.unwrap().unwrap();
             std::fs::File::open(path)
                 .unwrap()
@@ -713,9 +729,18 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        // A replaced scene's content stays referenced until it is evicted.
+        sqlx::query(
+            "INSERT INTO worlds.retired_world_scenes (world_name, entity_id, entity, parcels) \
+             VALUES ('gc.dcl.eth', 'bafkreiretired', $1, '{\"0,0\"}')",
+        )
+        .bind(json!({ "content": [{ "file": "a.glb", "hash": retired_file }] }))
+        .execute(&pool)
+        .await
+        .unwrap();
 
         let dry = collect(&pool, &storage, &globals, options).await.unwrap();
-        assert_eq!((dry.scanned, dry.candidates, dry.removed), (6, 1, 0));
+        assert_eq!((dry.scanned, dry.candidates, dry.removed), (7, 1, 0));
         assert!(
             storage.exist(&orphan).await.unwrap(),
             "the dry run deletes nothing"
@@ -733,7 +758,14 @@ mod tests {
         .unwrap();
         assert_eq!((wet.candidates, wet.removed, wet.failed), (1, 1, 0));
         assert!(!storage.exist(&orphan).await.unwrap());
-        for key in [&poster, &scene_file, &global, &global_file, &fresh] {
+        for key in [
+            &poster,
+            &scene_file,
+            &retired_file,
+            &global,
+            &global_file,
+            &fresh,
+        ] {
             assert!(storage.exist(key).await.unwrap(), "{key} stays");
         }
         pool.close().await;

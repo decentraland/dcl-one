@@ -135,7 +135,7 @@ pub struct Caches {
     /// The sorted coordinate list of a place -> its parcels and their owners.
     land: TtlMap<Vec<(i32, i32)>, Arc<Vec<LandParcel>>>,
     /// lowercased DCL name -> its holder.
-    name_owner: TtlMap<String, Arc<Option<String>>>,
+    pub name_owner: TtlMap<String, Arc<Option<String>>>,
     /// `owner` -> the parcels and estates the owner holds, newest transfer first.
     lands: TtlMap<String, Arc<Vec<OwnedLand>>>,
 }
@@ -1019,7 +1019,25 @@ pub mod test_support {
         axum::Json(body): axum::Json<Value>,
     ) -> axum::response::Response {
         let query = body["query"].as_str().unwrap_or("");
-        let nfts: Vec<Value> = if query.contains("names(") {
+        let nfts: Vec<Value> = if query.contains("nameOwner(") {
+            let name = body["variables"]["name"]
+                .as_str()
+                .unwrap_or("")
+                .to_lowercase();
+            let registry = names.0.lock().unwrap();
+            let mut owners: Vec<&String> = registry
+                .iter()
+                .filter(|(_, labels)| labels.iter().any(|l| l.eq_ignore_ascii_case(&name)))
+                .map(|(owner, _)| owner)
+                .collect();
+            owners.sort();
+            owners
+                .first()
+                .map(|owner| {
+                    vec![json!({ "id": format!("0xname-{name}"), "owner": { "id": owner } })]
+                })
+                .unwrap_or_default()
+        } else if query.contains("names(") {
             let owner = body["variables"]["owner"]
                 .as_str()
                 .unwrap_or("")

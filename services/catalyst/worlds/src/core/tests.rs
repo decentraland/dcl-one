@@ -417,8 +417,6 @@ async fn acl_deployer_cannot_take_over_an_existing_world_owner() {
     )
     .await;
 
-    f.names.forget(&name_owner.address);
-
     let d = deployment(&acl_deployer, &world, "ACL World", "0,0", &["0,0", "0,1"]).await;
     post_entity(&f.app, &d, 200).await;
     assert_eq!(
@@ -479,6 +477,59 @@ async fn first_deploy_seeds_the_resolved_name_owner() {
         )
     );
     assert!(deployed_entity_ids(&f.pool, &other).await.is_empty());
+}
+
+/// A grantee's publish refreshes `worlds.owner` to the live NAME holder, and
+/// is refused when nobody holds the NAME.
+#[tokio::test]
+async fn a_grantee_publish_refreshes_the_owner_to_the_live_name_holder() {
+    let Some(f) = fixture().await else { return };
+    let world = world_name();
+    let (old, new, grantee) = (Wallet::random(), Wallet::random(), Wallet::random());
+    f.names.set(&old.address, world.label());
+    post_entity(
+        &f.app,
+        &deployment(&old, &world, "Before", "0,0", &["0,0"]).await,
+        200,
+    )
+    .await;
+    let path = format!("/world/{}/permissions/deployment", world.display());
+    let meta = json!({ "type": "allow-list", "wallets": [grantee.display()] }).to_string();
+    expect(
+        &f.app,
+        Case::new("post", &path).signed_meta(&old, &meta).await,
+        204,
+    )
+    .await;
+
+    f.names.forget(&old.address);
+    f.market.graph.name_owner.clear();
+    let body = post_entity(
+        &f.app,
+        &deployment(&grantee, &world, "Orphan", "0,0", &["0,0"]).await,
+        400,
+    )
+    .await;
+    assert!(
+        body["errors"][0]
+            .as_str()
+            .unwrap()
+            .ends_with("owner address could not be resolved."),
+        "{body}"
+    );
+
+    f.names.set(&new.address, world.label());
+    f.market.graph.name_owner.clear();
+    post_entity(
+        &f.app,
+        &deployment(&grantee, &world, "Grantee", "0,0", &["0,0"]).await,
+        200,
+    )
+    .await;
+    assert_eq!(
+        stored_owner(&f.pool, &world).await.as_deref(),
+        Some(new.address.as_str())
+    );
 }
 
 /// A NAME transfer: the previous holder loses the publish and every owner
@@ -1508,6 +1559,240 @@ async fn undeploy_scene_removes_only_the_authorized_identities() {
         1
     );
     assert!(entity_ids(&f, &world).await.is_empty());
+}
+
+async fn stored_spawn(f: &Fixture, world: &WorldName) -> Option<String> {
+    sqlx::query_scalar("SELECT spawn_coordinates FROM worlds.worlds WHERE name = $1")
+        .bind(world.key())
+        .fetch_one(&f.pool)
+        .await
+        .unwrap()
+}
+
+async fn set_spawn(f: &Fixture, world: &WorldName, spawn: &str) {
+    sqlx::query("UPDATE worlds.worlds SET spawn_coordinates = $2 WHERE name = $1")
+        .bind(world.key())
+        .bind(spawn)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+}
+
+/// WCS `undeployScene`/`undeployWorld`: a spawn left outside the remaining
+/// scenes' rectangle moves to its floored centre; none left clears it.
+#[tokio::test]
+async fn undeploys_recentre_or_clear_the_spawn() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random().address);
+    for (id, parcels) in [
+        ("bafyspawna", &["0,0", "1,0"][..]),
+        ("bafyspawnb", &["-3,-1", "-2,-1"][..]),
+        ("bafyspawnc", &["5,5"][..]),
+    ] {
+        deploy(
+            &f,
+            &world,
+            &owner,
+            id,
+            &scene_at(1000, parcels),
+            parcels,
+            &Deploy::Owner,
+        )
+        .await
+        .unwrap();
+    }
+    set_spawn(&f, &world, "-2,-1").await;
+    let version = |f: &Fixture| {
+        let pool = f.pool.clone();
+        let key = world.key().to_string();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT settings_version FROM worlds.worlds WHERE name = $1",
+            )
+            .bind(key)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let before = version(&f).await;
+    store::undeploy_scene(&f.pool, &world, Parcel::parse("5,5").unwrap(), None)
+        .await
+        .unwrap();
+    assert_eq!(stored_spawn(&f, &world).await.as_deref(), Some("-2,-1"));
+    assert_eq!(
+        version(&f).await,
+        before,
+        "an unchanged spawn bumps nothing"
+    );
+
+    store::undeploy_scene(&f.pool, &world, Parcel::parse("0,0").unwrap(), None)
+        .await
+        .unwrap();
+    assert_eq!(stored_spawn(&f, &world).await.as_deref(), Some("-2,-1"));
+    set_spawn(&f, &world, "0,0").await;
+    deploy(
+        &f,
+        &world,
+        &owner,
+        "bafyspawnd",
+        &scene_at(1000, &["9,9"]),
+        &["9,9"],
+        &Deploy::Owner,
+    )
+    .await
+    .unwrap();
+    store::undeploy_scene(&f.pool, &world, Parcel::parse("9,9").unwrap(), None)
+        .await
+        .unwrap();
+    assert_eq!(
+        stored_spawn(&f, &world).await.as_deref(),
+        Some("-3,-1"),
+        "outside -3..-2 x -1: the centre, floored"
+    );
+    assert_eq!(version(&f).await, before + 1);
+
+    store::undeploy_world(&f.pool, &world).await.unwrap();
+    assert_eq!(stored_spawn(&f, &world).await, None);
+}
+
+async fn retired_ids(f: &Fixture, world: &WorldName) -> Vec<String> {
+    sqlx::query_scalar(
+        "SELECT entity_id FROM worlds.retired_world_scenes WHERE world_name = $1 ORDER BY entity_id",
+    )
+    .bind(world.key())
+    .fetch_all(&f.pool)
+    .await
+    .unwrap()
+}
+
+/// Replaced and undeployed scenes are retired, not deleted: their content
+/// stays referenced and their scene comms resolve (no storage scope) until
+/// the eviction removes them; active readers never see them.
+#[tokio::test]
+async fn replaced_and_undeployed_scenes_are_retained_until_evicted() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random().address);
+    deploy(
+        &f,
+        &world,
+        &owner,
+        "bafyretold",
+        &scene_at(1000, &["0,0"]),
+        &["0,0"],
+        &Deploy::Owner,
+    )
+    .await
+    .unwrap();
+    deploy(
+        &f,
+        &world,
+        &owner,
+        "bafyretnew",
+        &scene_at(2000, &["0,0"]),
+        &["0,0"],
+        &Deploy::Owner,
+    )
+    .await
+    .unwrap();
+    assert_eq!(deployed_entity_ids(&f.pool, &world).await, ["bafyretnew"]);
+    assert_eq!(retired_ids(&f, &world).await, ["bafyretold"]);
+    let old = SceneId::parse("bafyretold").unwrap();
+    let resolved = rooms::world_scene(&f.pool, &world, &old)
+        .await
+        .unwrap()
+        .expect("a just-replaced scene still resolves");
+    assert!(resolved.namespace.is_none(), "no storage scope");
+    assert!(
+        store::active_content_keys(&f.pool)
+            .await
+            .unwrap()
+            .contains("bafyretold")
+    );
+
+    store::undeploy_world(&f.pool, &world).await.unwrap();
+    assert_eq!(retired_ids(&f, &world).await, ["bafyretnew", "bafyretold"]);
+    // A re-publish of a retired entity makes it active only.
+    deploy(
+        &f,
+        &world,
+        &owner,
+        "bafyretnew",
+        &scene_at(2000, &["0,0"]),
+        &["0,0"],
+        &Deploy::Owner,
+    )
+    .await
+    .unwrap();
+    assert_eq!(retired_ids(&f, &world).await, ["bafyretold"]);
+
+    let week = std::time::Duration::from_secs(7 * 24 * 3600);
+    store::evict_retired_scenes(&f.pool, week).await.unwrap();
+    assert_eq!(retired_ids(&f, &world).await, ["bafyretold"]);
+    sqlx::query(
+        "UPDATE worlds.retired_world_scenes SET retired_at = retired_at - interval '8 days' WHERE world_name = $1",
+    )
+    .bind(world.key())
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    assert!(store::evict_retired_scenes(&f.pool, week).await.unwrap() >= 1);
+    assert!(retired_ids(&f, &world).await.is_empty());
+    assert!(
+        rooms::world_scene(&f.pool, &world, &old)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+/// `GET /worlds` search: full-text (stemmed), escaped ILIKE wildcards.
+#[tokio::test]
+async fn the_worlds_search_matches_full_text_and_escapes_wildcards() {
+    let Some(f) = fixture().await else { return };
+    let owner = Wallet::random().address;
+    let (plain, percent) = (world_name(), world_name());
+    for (world, id, title) in [
+        (&plain, "bafysearcha", "Moonlight festival"),
+        (&percent, "bafysearchb", "Sale 100% off"),
+    ] {
+        let mut scene = scene_at(1000, &["0,0"]);
+        scene["metadata"]["display"] = json!({ "title": title });
+        deploy(&f, world, &owner, id, &scene, &["0,0"], &Deploy::Owner)
+            .await
+            .unwrap();
+    }
+    let search = |term: &str| {
+        let filters = WorldsListFilters {
+            authorized_deployer: Some(owner.as_str().to_string()),
+            search: Some(term.to_string()),
+            has_deployed_scenes: None,
+        };
+        let pool = f.pool.clone();
+        async move {
+            let options = WorldsListOptions {
+                limit: 50,
+                offset: 0,
+                order_by: WorldsOrderBy::Name,
+                order_direction: OrderDirection::Asc,
+            };
+            store::list_worlds_public(&pool, &filters, &options)
+                .await
+                .unwrap()
+                .0
+                .into_iter()
+                .map(|w| w.name)
+                .collect::<Vec<_>>()
+        }
+    };
+    assert_eq!(
+        search("festivals").await,
+        [plain.key()],
+        "stemmed full-text"
+    );
+    assert_eq!(search("%").await, [percent.key()], "a literal %");
+    assert_eq!(search("0_%").await, Vec::<String>::new(), "a literal _");
+    assert_eq!(search("100%").await, [percent.key()]);
 }
 
 /// `(identity, parcels, active)` of a world's storage identities, oldest first.
@@ -3076,9 +3361,20 @@ async fn active_content_keys_names_every_referenced_blob_and_fails_closed_on_an_
         assert!(keys.contains(expected), "missing active key {expected}");
     }
     for replaced in ["bafyoldscene", "bafyoldthumb"] {
+        assert!(keys.contains(replaced), "retired scene dropped: {replaced}");
+    }
+    sqlx::query("DELETE FROM worlds.retired_world_scenes WHERE world_name = $1")
+        .bind(world.key())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let keys = store::active_content_keys(&f.pool)
+        .await
+        .expect("active keys");
+    for replaced in ["bafyoldscene", "bafyoldthumb"] {
         assert!(
             !keys.contains(replaced),
-            "replaced scene still active: {replaced}"
+            "evicted scene still referenced: {replaced}"
         );
     }
 

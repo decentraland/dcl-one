@@ -124,6 +124,11 @@ pub struct WorldsConfig {
     #[arg(long, env = "MAX_IN_FLIGHT_UPLOAD_FILES", default_value_t = 40_000)]
     pub max_in_flight_upload_files: u64,
 
+    /// How long a replaced or undeployed world scene stays resolvable for
+    /// scene comms and its content stays out of the blob collector (7 days).
+    #[arg(long, env = "SCENE_EVICTION_TTL_MS", default_value_t = 604_800_000)]
+    pub scene_eviction_ttl_ms: u64,
+
     #[arg(long, env = "MULTIPART_UPLOAD_TIMEOUT_MS", default_value_t = 300_000)]
     pub multipart_upload_timeout_ms: u64,
 
