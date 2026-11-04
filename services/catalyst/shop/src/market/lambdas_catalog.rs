@@ -466,8 +466,15 @@ async fn fetch_item_urns(
         sql.push_str(&format!(" AND lower(i.urn) = ANY(${i})"));
     }
     if let Some(t) = &filters.text_search {
+        // lamb2's `searchText_contains` on the subgraph item
+        // (decentraland/lamb2:src/logic/fetch-elements/fetch-items-by-filters.ts:116-119):
+        // a case-sensitive substring of the mirrored `searchText`, the
+        // lowercased name for a row the mirror has not refilled since the
+        // column was added.
         let i = push(&mut binds, Bind::Text(format!("%{}%", escape_like(t))));
-        sql.push_str(&format!(" AND i.name ILIKE ${i} ESCAPE '\\'"));
+        sql.push_str(&format!(
+            " AND COALESCE(i.search_text, lower(i.name)) LIKE ${i} ESCAPE '\\'"
+        ));
     }
     let ext = &filters.extended;
     if !ext.categories.is_empty() {
@@ -850,16 +857,22 @@ async fn definitions_for(
         .collect()
 }
 
+/// `pagination` echoes the request's `lastId` (lowercased, left out when
+/// absent), as decentraland/lamb2:src/controllers/handlers/wearables-catalog-handler.ts:68-72.
 fn catalog_response(
     items_key: &str,
     items: Vec<Value>,
     filters: &CatalogFilters,
     limit: i64,
+    last_id: Option<&str>,
     next_last_id: Option<String>,
     id_param_name: &str,
 ) -> Response {
     let mut pagination = Map::new();
     pagination.insert("limit".into(), json!(limit));
+    if let Some(last_id) = last_id {
+        pagination.insert("lastId".into(), json!(last_id));
+    }
     if let Some(nl) = next_last_id {
         let next = format!("?{}", build_next_query(filters, limit, &nl, id_param_name));
         pagination.insert("next".into(), json!(next));
@@ -949,6 +962,7 @@ async fn catalog_wearables_with_base(state: &MarketplaceState, query: CatalogQue
         items,
         filters,
         limit,
+        query.last_id.as_deref(),
         next_last_id,
         "wearableId",
     )
@@ -1002,6 +1016,7 @@ async fn catalog(
         items,
         &query.filters,
         query.limit,
+        query.last_id.as_deref(),
         next_last_id,
         id_param_name,
     )
