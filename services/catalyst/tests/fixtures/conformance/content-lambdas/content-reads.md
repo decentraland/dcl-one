@@ -50,8 +50,8 @@ serves the same router at the root and under `/content`
 | 1 | GET (and implicit HEAD) | `/entities/:type` | `/content` | `services/catalyst/content/src/lib.rs:630` -> `active_entities.rs:123` | DIVERGENT |
 | 2 | GET | `/entities/active/collections/:collectionUrn` | `/content` | `services/catalyst/content/src/lib.rs:631-634` -> `active_entities.rs:252` | DIVERGENT |
 | 3 | POST | `/entities/active` | `/content` | `services/catalyst/content/src/lib.rs:635-638` -> `active_entities.rs:98` | DIVERGENT |
-| 4 | GET | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:639-642` -> `get_content.rs:90` | GAP |
-| 5 | HEAD | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:641` -> `get_content.rs:90` | GAP |
+| 4 | GET | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:639-642` -> `get_content.rs:90` | DIVERGENT |
+| 5 | HEAD | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:641` -> `get_content.rs:90` | DIVERGENT |
 | 6 | GET | `/contents/:hashId/active-entities` | `/content` | `services/catalyst/content/src/lib.rs:643-646` -> `active_entities.rs:169` | MATCH |
 | 7 | GET | `/available-content` | `/content` | `services/catalyst/content/src/lib.rs:647-650` -> `available_content.rs:14` | MATCH |
 | 8 | GET | `/audit/:type/:entityId` | `/content` | `services/catalyst/content/src/lib.rs:651` -> `audit.rs:13` | MATCH |
@@ -59,7 +59,7 @@ serves the same router at the root and under `/content`
 | X2 | wrong method on a known path | any | `/content` | axum `MethodRouter` default | DIVERGENT |
 | X3 | OPTIONS (preflight) and CORS on every response | any | `/content` | `services/catalyst/shared/src/cors.rs:20-70` | DIVERGENT |
 
-Counts: 8 endpoints: MATCH 3, GAP 2, DIVERGENT 3, MISSING 0. Cross-cutting: 3 DIVERGENT.
+Counts: 8 endpoints: MATCH 3, GAP 0, DIVERGENT 5, MISSING 0. Cross-cutting: 3 DIVERGENT.
 
 ---
 
@@ -215,18 +215,19 @@ pointer of the same entity answered from the DB can return that entity twice
   `TRUSTED_SYNC_PEER_IPS` bypass all three (`decentraland/catalyst:src/controllers/routes.ts:101-114`,
   `content-get-rate-limit.ts:86-121`, `sync-peer-exemption.ts:12-25`, `client-source.ts:17-26`,
   `src/Environment.ts:106-125`, `src/components.ts:545-595`). GET and HEAD share the buckets.
-- Rate limit (dcl-one): none in the app. This tree's gateway limits by client IP (`$binary_remote_addr`
-  after `real_ip`): `/content/*` takes `limit_req zone=content burst=1000 nodelay` at 100 r/s, and every
-  other path, including the root-mounted `/contents/*`, the server-wide `zone=read` at 30 r/s with burst 60
-  (`infra/gateway/gateway.py:166,257-260,292`). There is no hourly or daily quota and no exemption. Over the
-  limit nginx answers 429 (`limit_req_status 429`) with its own HTML page and no `Retry-After`.
+- Rate limit (dcl-one): the same three buckets, defaults, environment variables and exemption in the app
+  (`services/catalyst/content/src/content_get_limit.rs`, a route layer on GET and HEAD). The client is the
+  rightmost entry of `TRUSTED_CLIENT_IP_HEADER` when set, else the gateway-stamped address (`X-Real-IP`,
+  else the last `X-Forwarded-For` entry), else the socket. Counters are per process, as upstream's
+  in-memory store. The gateway's own limits (`zone=content`, `zone=read`, `infra/gateway/gateway.py`) stay
+  in front, with the addresses of `GATEWAY_TRUSTED_SYNC_PEER_IPS` uncounted.
 
 **Responses**
 
 | trigger | status | body | headers | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
-| over burst/hourly/daily budget | 429 | `{"error":"Too many requests"}` | `Retry-After`, `RateLimit-*` (added by the limiter) | `components.ts:554`, `content-get-rate-limit.ts:99-118` | app: none. Gateway: 100 r/s burst 1000 under `/content/`, 30 r/s burst 60 at the root, nginx HTML 429 without `Retry-After` (`infra/gateway/gateway.py:166,257-260,292`) | DIVERGENT: other budgets (no hourly or daily quota), other body and headers |
-| client IP in `TRUSTED_SYNC_PEER_IPS` | never limited | | | `sync-peer-exemption.ts:17-24` | none: the gateway limit applies to sync peers too | MISSING |
+| over burst/hourly/daily budget | 429 | `{"error":"Too many requests"}` | `Retry-After`, `RateLimit-*` (added by the limiter) | `components.ts:554`, `content-get-rate-limit.ts:99-118` | `content_get_limit.rs`: the same buckets, body, `Retry-After` and `RateLimit-Limit`/`-Remaining`/`-Reset`. The gateway's per-second limits still answer nginx's HTML 429 above 100 r/s (`/content/`) or 30 r/s (root) | MATCH on the app's budgets and body; the `RateLimit-*` values follow a reading of `@dcl/rate-limiter-component`, which is not vendored (needs a capture); the gateway can answer first above its per-second rates |
+| client IP in `TRUSTED_SYNC_PEER_IPS` | never limited | | | `sync-peer-exemption.ts:17-24` | `content_get_limit.rs` skips listed peers; the gateway leaves `GATEWAY_TRUSTED_SYNC_PEER_IPS` uncounted in `zone=content` and `zone=read` | MATCH |
 | hash fails validation | 404 | `{"error":"No content found with hash <hash>"}` | json | `get-content-handler.ts:15-17` | `get_content.rs:97-99` | MATCH (fixture `tests/fixtures/content/contents-404-garbage-hash.json`) |
 | hash denylisted | 404 | same | | `get-content-handler.ts:22-24` | `get_content.rs:97-99` | MATCH |
 | `If-None-Match` matches `"<hash>"` or is `*` (checked before storage) | 304 | none | `ETag: "<hash>"`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Access-Control-Expose-Headers: ETag` | `get-content-handler.ts:34-35`, `utils.ts:88-113` | `get_content.rs:101-105`, `formatters.rs:9-33` | MATCH |
@@ -365,29 +366,24 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
    - Severity: P2.
 
 3. **CR-3** GET/HEAD /contents/:hashId: add the content-get rate limit.
-   - Gap: no limit in the app. The gateway applies `limit_req` per client IP to every path: 100 r/s with burst
-     1000 under `/content/`, 30 r/s with burst 60 at the root (`infra/gateway/gateway.py:166,257-260,292`).
-     It has no hourly or daily quota, and its 429 is nginx's HTML page without `Retry-After` or `RateLimit-*`.
-   - Expected: per client IP (IPv6 per /64), burst 1000/60 s, then hourly 3000, then daily 20000, each a
+   - Upstream: per client IP (IPv6 per /64), burst 1000/60 s, then hourly 3000, then daily 20000, each a
      separate bucket, burst first; 429 `{"error":"Too many requests"}` with `Retry-After` and `RateLimit-*`;
-     client IP from `TRUSTED_CLIENT_IP_HEADER` (rightmost) else the socket; every knob an env var with the
-     upstream name (`decentraland/catalyst:src/controllers/content-get-rate-limit.ts:86-121`,
+     every knob an env var (`decentraland/catalyst:src/controllers/content-get-rate-limit.ts:86-121`,
      `src/Environment.ts:106-125`).
-   - Place: a layer on the two routes at `services/catalyst/content/src/lib.rs:639-642`; client IP via
-     `services/catalyst/shared/src/client_ip.rs`.
-   - Severity: P1.
+   - dcl-one: `services/catalyst/content/src/content_get_limit.rs` with the same names and defaults
+     (`config/src/content.rs`; zero limits and prefixes outside 1-128 fail at startup, as upstream).
+   - Gap: the `RateLimit-*` values on a passing request and on a 429 follow a reading of
+     `@dcl/rate-limiter-component` (not vendored); confirm with a capture. Counters are per process.
+   - Severity: P2.
 
-4. **CR-4** GET/HEAD /contents/:hashId: trusted sync peer bypass.
-   - Gap: no bypass exists, and the gateway already throttles a syncing peer: `zone=content` (100 r/s, burst
-     1000 per IP) on `/content/contents/:hashId` and the `/content/*` sync routes, `zone=read` (30 r/s, burst 60)
-     on the root mounts (`infra/gateway/gateway.py:166,257-258,292`). Upstream never limits a peer listed in
-     `TRUSTED_SYNC_PEER_IPS`, and limits no sync route.
-   - Expected: canonical IPs listed in `TRUSTED_SYNC_PEER_IPS` (comma list; invalid entries dropped with a
+4. **CR-4** GET/HEAD /contents/:hashId: trusted sync peer bypass. Status: MATCH, no work.
+   - Upstream: canonical IPs listed in `TRUSTED_SYNC_PEER_IPS` (comma list; invalid entries dropped with a
      warning) skip all three buckets (`decentraland/catalyst:src/controllers/sync-peer-exemption.ts:12-25`,
      `src/components.ts:580-595`).
-   - Place: same layer as CR-3, plus a gateway exemption for the same IPs (a `geo` map that blanks the
-     `limit_req_zone` key) in `infra/gateway/gateway.py:257-258`.
-   - Severity: P1.
+   - dcl-one: the same in `content_get_limit.rs`; the gateway gives the addresses of
+     `GATEWAY_TRUSTED_SYNC_PEER_IPS` an empty `limit_req` key in `zone=content` and `zone=read`
+     (`infra/gateway/gateway.py`).
+   - Severity: none (closed).
 
 5. **CR-5** GET /entities/:type and GET /audit/:type/:entityId: accept `outfits`. Status: MATCH, no work.
    - Upstream: an exact lookup of the trimmed, lower-cased value in the type names plus `<type>s` for names

@@ -434,7 +434,7 @@ Field by field:
 
 | trigger | status | body | headers | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
-| Snapshots exist | 200 | Array of `SnapshotMetadata`; example below. | `content-type: application/json` | `get-snapshots-handler.ts:18-21` | `snapshots.rs:77-85` | DIVERGENT: `generationTimestamp` 0 for a window the deleter repair marked (CS-12) |
+| Snapshots exist | 200 | Array of `SnapshotMetadata`; example below. | `content-type: application/json` | `get-snapshots-handler.ts:18-21` | `snapshots.rs:77-85` | MATCH |
 | Upstream: no completed scheduled generation since process start. dcl-one: `content.snapshots` empty. | 503 | `{"error":"New Snapshots not yet created"}` | Upstream sends no `Retry-After`; dcl-one neither. | `get-snapshots-handler.ts:11-16` | `snapshots.rs:80-83` | MATCH (body). The triggers differ, see below. |
 | Unexpected error | 500 | `{"error":"Internal Server Error"}` | | | | MATCH |
 
@@ -489,9 +489,9 @@ no snapshot in either tree:
 
 - Upstream: `Date.now()` taken before the stream opens (`logic/snapshots/component.ts:39`).
 - dcl-one:
-  - the start of the oldest open transaction, capped at `now()` (`snapshot_gen.rs:597-610`);
-  - **or 0** (epoch) when a deleter repair committed while the window was being read
-    (`snapshot_gen.rs:660-665`). A peer reads that value as "generated at 1970".
+  - the start of the oldest open transaction, capped at `now()` (`snapshot_gen.rs`, `read_horizon_ms`);
+  - a deleter repair that superseded rows of a window sets `outdated` on its row and leaves this value
+    as it was; the next pass regenerates the window.
 
 **`hash`**:
 
@@ -849,16 +849,14 @@ catalyst list and its `/about` is healthy.
       pinned in `content/src/tests.rs` (`snapshot_routes_over_the_database`).
     - Severity: none (closed).
 
-12. **CS-12 · `/snapshots` · `generationTimestamp` 0.**
-    - Gap: a window the deleter repair marked is listed with `generationTimestamp: 0` until the generator's
-      next tick regenerates it. Rows without a hash are no longer listed.
-    - Expected: upstream lists only stored snapshots, each with the real generation time
+12. **CS-12 · `/snapshots` · `generationTimestamp` 0 and empty `hash`.** Status: MATCH, no work.
+    - Upstream: lists only stored snapshots, each with the real generation time
       (`decentraland/catalyst:src/logic/snapshots/component.ts:39,126-133`).
-    - Where: `services/catalyst/content/src/snapshot_gen.rs` (`generate_window`, `snapshot_is_outdated`,
-      `any_marked_window`) and `content/src/sync/repository.rs` (the repair's `outdated` CTE). Keep the
-      generation time and record the mark in an additive `content.snapshots.outdated boolean NOT NULL
-      DEFAULT false` column (schema step), instead of writing the epoch over it.
-    - Severity: P1.
+    - dcl-one: rows without a hash are left out; the deleter repair marks a window with
+      `content.snapshots.outdated` (step `0025_content_snapshots_outdated`) and keeps its generation time
+      (`services/catalyst/content/src/snapshot_gen.rs`, `content/src/sync/repository.rs`), pinned in
+      `tests/snapshot_generation.rs`.
+    - Severity: none (closed).
 
 13. **CS-13 · snapshot file bytes.**
     - Gap: `authChain` keys are sorted, `entityTimestamp` is an integer, and ties are broken by
