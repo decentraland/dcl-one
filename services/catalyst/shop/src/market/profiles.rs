@@ -1,14 +1,16 @@
 //! `/lambdas/profiles`: the profile entity comes from `content.deployments`
 //! (peer sync), every wearable and emote it names is checked against the
-//! collections subgraphs, its third-party wearables against their mappings
-//! and the chain (`third_party::sanitize_third_party_urns`, appended after
-//! the others as the old lambdas did) and `hasClaimedName` against the
-//! marketplace subgraph. With no reader configured the profile is served unfiltered,
-//! as the old handler did with `squid_pool: None`; a reader that is
-//! configured but unreachable fails the request closed (503) rather than
-//! serving cosmetics nobody proved. The one exception is a linked
-//! third-party item whose chain read failed: only that profile's linked
-//! items are left out.
+//! collections subgraphs (token ids included, re-emitted `<urn>:<tokenId>`
+//! as `ENSURE_ERC_721` does), its third-party wearables against their
+//! mappings and the chain (`third_party::sanitize_third_party_urns`,
+//! appended after the others as the old lambdas did) and `hasClaimedName`
+//! against the marketplace subgraph. The answer is decentraland/lamb2's
+//! `{ timestamp, avatars }`, the timestamp the entity's. With no collections
+//! subgraph the items are served as deployed (a node with no ownership
+//! source, such as an island); a reader that is configured but unreachable
+//! fails the request closed (503) rather than serving cosmetics nobody
+//! proved. The one exception is a linked third-party item whose chain read
+//! failed: only that profile's linked items are left out.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -24,10 +26,7 @@ use crate::content::queries::active_entity_docs_by_pointers;
 
 use super::graph::{self, normalize_urn};
 use super::third_party;
-use super::{
-    MarketplaceState, SharedState, bad_request, internal_server_error, not_found,
-    service_unavailable,
-};
+use super::{MarketplaceState, SharedState, bad_request, internal_server_error, not_found};
 
 /// Bounds staleness for changes that arrive on chain rather than through a
 /// deployment (a wearable or name bought, sold or transferred).
@@ -40,6 +39,9 @@ const THIRD_PARTY_CONCURRENCY: usize = 8;
 const MISSING_PROFILE_IDS_MSG: &str =
     "No profile ids were specified. Expected ids:string[] in body";
 
+/// The token ids an address holds of each on-chain URN it was asked about.
+type OwnedTokens = HashMap<String, Vec<String>>;
+
 fn is_base_wearable(urn: &str) -> bool {
     urn.contains("base-avatars")
 }
@@ -50,6 +52,11 @@ pub fn is_base_emote(urn: &str) -> bool {
     parts.len() == 5
         && parts[1] == "decentraland"
         && matches!(parts[3], "base-emotes" | "base-scene-emotes")
+}
+
+/// Pointers `default*` hold the curated default looks: they own nothing.
+fn is_default_pointer(address: &str) -> bool {
+    address.starts_with("default")
 }
 
 /// `splitUrnAndTokenId`: a seven-part non-third-party URN ends in its token id.
@@ -98,47 +105,75 @@ fn collect_ownership_urns(metadata: &Value) -> Vec<String> {
     to_check
 }
 
-fn filter_avatars_by_ownership(avatars: &mut [Value], owned: &HashSet<String>) {
+/// An owned item as `profiles.ts` re-emits it: `<owned urn>:<the named token
+/// id, or the first one held>`; `None` when the URN is not held or the named
+/// token is not among the held ones.
+fn owned_item(item: &str, owned: &OwnedTokens) -> Option<String> {
+    let (urn, token_id) = split_urn_and_token_id(item);
+    let urn = normalize_urn(urn);
+    let held = owned.get(&urn)?;
+    let token = match token_id {
+        Some(t) => Some(held.iter().find(|h| *h == t)?),
+        None => held.first(),
+    };
+    Some(match token {
+        Some(token) => format!("{urn}:{token}"),
+        None => urn,
+    })
+}
+
+/// Keeps the base items and the owned ones (`owned: None`, no collections
+/// reader: every item as deployed). An owned emote becomes exactly
+/// `{ urn, slot }`. `emotes` is always present, `[]` when not deployed.
+fn filter_avatars_by_ownership(avatars: &mut [Value], owned: Option<&OwnedTokens>) {
     for avatar_val in avatars.iter_mut() {
-        let Some(avatar_obj) = avatar_val.get_mut("avatar") else {
+        let Some(avatar_obj) = avatar_val.get_mut("avatar").and_then(Value::as_object_mut) else {
             continue;
         };
-        if let Some(wearables) = avatar_obj
-            .get("wearables")
-            .and_then(|w| w.as_array())
-            .cloned()
+        if let Some(owned) = owned
+            && let Some(wearables) = avatar_obj.get("wearables").and_then(Value::as_array)
         {
             let validated: Vec<Value> = wearables
-                .into_iter()
-                .filter(|w| {
-                    let Some(wearable) = w.as_str() else {
-                        return false;
-                    };
+                .iter()
+                .filter_map(Value::as_str)
+                .filter_map(|wearable| {
                     if is_base_wearable(wearable) {
-                        return true;
+                        Some(wearable.to_string())
+                    } else {
+                        owned_item(wearable, owned)
                     }
-                    let (urn, _) = split_urn_and_token_id(wearable);
-                    owned.contains(&normalize_urn(urn))
                 })
+                .map(Value::String)
                 .collect();
-            avatar_obj["wearables"] = Value::Array(validated);
+            avatar_obj.insert("wearables".to_string(), Value::Array(validated));
         }
-        if let Some(emotes) = avatar_obj.get("emotes").and_then(|e| e.as_array()).cloned() {
-            let validated: Vec<Value> = emotes
+        let emotes = avatar_obj
+            .get("emotes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let validated: Vec<Value> = match owned {
+            None => emotes,
+            Some(owned) => emotes
                 .into_iter()
-                .filter(|e| {
-                    let Some(emote_urn) = e.get("urn").and_then(|u| u.as_str()) else {
-                        return true;
+                .filter_map(|emote| {
+                    let Some(emote_urn) = emote.get("urn").and_then(Value::as_str) else {
+                        return Some(emote);
                     };
                     if !emote_urn.contains(':') || is_base_emote(emote_urn) {
-                        return true;
+                        return Some(emote);
                     }
-                    let (urn, _) = split_urn_and_token_id(emote_urn);
-                    owned.contains(&normalize_urn(urn))
+                    let urn = owned_item(emote_urn, owned)?;
+                    let mut kept = serde_json::Map::new();
+                    kept.insert("urn".to_string(), Value::String(urn));
+                    if let Some(slot) = emote.get("slot") {
+                        kept.insert("slot".to_string(), slot.clone());
+                    }
+                    Some(Value::Object(kept))
                 })
-                .collect();
-            avatar_obj["emotes"] = Value::Array(validated);
-        }
+                .collect(),
+        };
+        avatar_obj.insert("emotes".to_string(), Value::Array(validated));
     }
 }
 
@@ -193,77 +228,49 @@ pub fn apply_claimed_name(metadata: &mut Value, owned_names: &[String]) {
     }
 }
 
-/// With `PROFILE_CDN_BASE_URL` the snapshots point at the CDN's
-/// `entities/<id>/{face,body}.png`; without it the face and body point at this
-/// node's `profile-images/entities/<id>/{face,body}.png`, uploaded or not:
-/// sync and the read-through never copy a profile's snapshot files, so their
-/// `contents/<hash>` would 404, while `/profile-images` serves the uploaded
-/// file when this node holds it and renders or fetches the image otherwise.
-/// Any other snapshot hash becomes this node's `contents/<hash>` URL (the
-/// reference lambdas' behaviour).
+/// `face256` and `body` always point at `<base>entities/<id>/{face,body}.png`
+/// and every other snapshot key is left as deployed, as `profiles.ts`
+/// `addBaseUrlToSnapshots` does; a missing snapshots object is created. The
+/// base is `PROFILE_CDN_BASE_URL` (lamb2's default is
+/// `https://profile-images.decentraland.org`, so parity with it needs that
+/// value) or, unset, this node's `profile-images`: sync and the read-through
+/// never copy a profile's snapshot files, so their `contents/<hash>` would
+/// 404, while `/profile-images` serves the uploaded file when this node holds
+/// it and renders or fetches the image otherwise.
 pub fn rewrite_snapshot_urls(
     entity_id: &str,
     metadata: &mut Value,
     cdn_base: Option<&str>,
-    content_public_url: &str,
     profile_images_public_url: &str,
 ) {
     let Some(avatars) = metadata.get_mut("avatars").and_then(|v| v.as_array_mut()) else {
         return;
     };
-    let with_slash = |base: &str| {
-        if base.ends_with('/') {
-            base.to_string()
-        } else {
-            format!("{base}/")
-        }
+    let base = cdn_base.unwrap_or(profile_images_public_url);
+    let base = if base.ends_with('/') {
+        base.to_string()
+    } else {
+        format!("{base}/")
     };
     for avatar_val in avatars.iter_mut() {
         let Some(avatar_obj) = avatar_val.get_mut("avatar").and_then(|a| a.as_object_mut()) else {
             continue;
         };
-        match cdn_base {
-            Some(cdn) => {
-                let base = with_slash(cdn);
-                avatar_obj.insert(
-                    "snapshots".to_string(),
-                    json!({
-                        "face256": format!("{base}entities/{entity_id}/face.png"),
-                        "body": format!("{base}entities/{entity_id}/body.png"),
-                    }),
+        if !avatar_obj.get("snapshots").is_some_and(Value::is_object) {
+            avatar_obj.insert(
+                "snapshots".to_string(),
+                json!({ "face256": "", "body": "" }),
+            );
+        }
+        if let Some(snapshots) = avatar_obj
+            .get_mut("snapshots")
+            .and_then(|s| s.as_object_mut())
+        {
+            for (key, file) in [("body", "body.png"), ("face256", "face.png")] {
+                snapshots.insert(
+                    key.to_string(),
+                    Value::String(format!("{base}entities/{entity_id}/{file}")),
                 );
-            }
-            None => {
-                let base = with_slash(content_public_url);
-                let rendered = with_slash(profile_images_public_url);
-                if !avatar_obj.get("snapshots").is_some_and(Value::is_object) {
-                    avatar_obj.insert("snapshots".to_string(), json!({}));
-                }
-                if let Some(snapshots) = avatar_obj
-                    .get_mut("snapshots")
-                    .and_then(|s| s.as_object_mut())
-                {
-                    for value in snapshots.values_mut() {
-                        if let Some(hash) = value
-                            .as_str()
-                            .filter(|h| !h.is_empty() && !h.contains("://"))
-                        {
-                            *value = Value::String(format!("{base}contents/{hash}"));
-                        }
-                    }
-                    for (key, file) in [("face256", "face.png"), ("body", "body.png")] {
-                        let url = snapshots
-                            .get(key)
-                            .and_then(Value::as_str)
-                            .is_some_and(|v| v.contains("://") && !v.starts_with(&base));
-                        if !url {
-                            snapshots.insert(
-                                key.to_string(),
-                                Value::String(format!("{rendered}entities/{entity_id}/{file}")),
-                            );
-                        }
-                    }
-                }
             }
         }
     }
@@ -309,17 +316,6 @@ pub fn sanitize_links(metadata: &mut Value) {
     }
 }
 
-pub fn ensure_profile_shape(entity: &Value, metadata: &mut Value) {
-    if metadata.get("timestamp").is_none()
-        && let Some(ts) = entity.get("timestamp")
-    {
-        metadata["timestamp"] = ts.clone();
-    }
-    if metadata.get("avatars").is_none() {
-        metadata["avatars"] = Value::Array(vec![]);
-    }
-}
-
 fn apply_pointer_identity(metadata: &mut Value, eth_address: &str) {
     if let Some(avatars) = metadata.get_mut("avatars").and_then(|v| v.as_array_mut()) {
         for avatar in avatars.iter_mut().filter(|a| a.is_object()) {
@@ -338,15 +334,34 @@ pub fn entity_eth_address(entity: &Value) -> Option<String> {
         .map(|s| s.to_lowercase())
 }
 
+/// The deployed metadata of a profile entity, links and snapshots fixed and
+/// its avatars carrying the pointer's identity; `None` without metadata.
+fn prepare_profile(state: &MarketplaceState, entity: &Value) -> Option<(String, Value)> {
+    let mut metadata = entity.get("metadata").filter(|m| !m.is_null())?.clone();
+    let eid = entity.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    let address = entity_eth_address(entity).unwrap_or_default();
+    sanitize_links(&mut metadata);
+    rewrite_snapshot_urls(
+        eid,
+        &mut metadata,
+        state.settings.profile_cdn_base_url.as_deref(),
+        &state.settings.profile_images_public_url,
+    );
+    if !address.is_empty() && !is_default_pointer(&address) {
+        apply_pointer_identity(&mut metadata, &address);
+    }
+    Some((address, metadata))
+}
+
 /// One slot per entity (`None` without metadata): the pure passes, then one
-/// ownership batch and one names batch per chunk of 128 when a reader is
-/// configured. `Err` is a reader failure.
+/// ownership batch and one names batch per chunk of 128. Each profile is
+/// `{ timestamp, avatars }` (`profiles.ts`), the entity's timestamp. `Err`
+/// is a reader failure.
 pub async fn process_profiles_positional(
     state: &MarketplaceState,
     entities: &[Value],
 ) -> Result<Vec<Option<Value>>, String> {
-    let readers = graph::any_collections_reader(&state.index)
-        || state.settings.marketplace_subgraph_url.is_some();
+    let collections = graph::any_collections_reader(&state.index);
     state.warm_faces(
         entities
             .iter()
@@ -356,125 +371,129 @@ pub async fn process_profiles_positional(
     for chunk in entities.chunks(128) {
         let mut prepared: Vec<Option<(String, Value)>> = chunk
             .iter()
-            .map(|entity| {
-                let mut metadata = entity.get("metadata")?.clone();
-                let eid = entity.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                let address = entity_eth_address(entity).unwrap_or_default();
-                ensure_profile_shape(entity, &mut metadata);
-                sanitize_links(&mut metadata);
-                rewrite_snapshot_urls(
-                    eid,
-                    &mut metadata,
-                    state.settings.profile_cdn_base_url.as_deref(),
-                    &state.settings.content_public_url,
-                    &state.settings.profile_images_public_url,
-                );
-                if !address.is_empty() && !address.starts_with("default") {
-                    apply_pointer_identity(&mut metadata, &address);
-                }
-                Some((address, metadata))
-            })
+            .map(|entity| prepare_profile(state, entity))
             .collect();
-        if readers {
-            let collections = graph::any_collections_reader(&state.index);
-            let mut addresses: Vec<String> = Vec::new();
-            let mut worn: Vec<Vec<String>> = Vec::new();
-            let mut requested: HashSet<(String, String)> = HashSet::new();
-            for (address, metadata) in prepared.iter().flatten() {
-                if !address.starts_with("default") && !addresses.contains(address) {
-                    addresses.push(address.clone());
-                    worn.push(worn_wearables(metadata));
-                    requested.extend(
-                        collect_ownership_urns(metadata)
-                            .into_iter()
-                            .map(|urn| (address.clone(), urn)),
-                    );
-                }
-            }
-            if !addresses.is_empty() {
-                let names_futs = addresses
-                    .iter()
-                    .map(|a| graph::owned_names(&state.index, a));
-                // A profile whose linked items could not be checked keeps
-                // its v1 items only; the others in the batch are unaffected.
-                let third_party_futs = addresses.iter().zip(&worn).map(|(a, worn)| async move {
-                    let kept = if collections {
-                        third_party::sanitize_third_party_urns(state, a, worn)
-                            .await
-                            .unwrap_or_else(|e| {
-                                tracing::warn!(error = %e, address = %a, "profiles: third-party items could not be checked; keeping the v1 items only");
-                                third_party::v1_third_party_urns(worn)
-                            })
-                    } else {
-                        Vec::new()
-                    };
-                    (a.clone(), kept)
-                });
-                // Collected first: a stream over the closure itself is not
-                // `Send` for every lifetime the router asks of it.
-                let third_party_futs: Vec<_> = third_party_futs.collect();
-                use futures::stream::StreamExt;
-                let (owned, names, third_party_by_address) = tokio::join!(
-                    graph::owned_urns(&state.index, &requested),
-                    futures::future::join_all(names_futs),
-                    futures::stream::iter(third_party_futs)
-                        .buffer_unordered(THIRD_PARTY_CONCURRENCY)
-                        .collect::<HashMap<String, Vec<String>>>()
+        let mut addresses: Vec<String> = Vec::new();
+        let mut worn: Vec<Vec<String>> = Vec::new();
+        let mut requested: HashSet<(String, String)> = HashSet::new();
+        for (address, metadata) in prepared.iter().flatten() {
+            if !is_default_pointer(address) && !addresses.contains(address) {
+                addresses.push(address.clone());
+                worn.push(worn_wearables(metadata));
+                requested.extend(
+                    collect_ownership_urns(metadata)
+                        .into_iter()
+                        .map(|urn| (address.clone(), urn)),
                 );
-                let owned = owned?;
-                let mut names_by_address: HashMap<String, Vec<String>> = HashMap::new();
-                for (address, names) in addresses.iter().zip(names) {
-                    names_by_address.insert(
-                        address.clone(),
-                        names?.iter().map(|n| n.name.clone()).collect(),
-                    );
-                }
-                let empty = HashSet::new();
-                for (address, metadata) in prepared.iter_mut().flatten() {
-                    if address.starts_with("default") {
-                        continue;
-                    }
-                    if collections
-                        && let Some(avatars) =
-                            metadata.get_mut("avatars").and_then(Value::as_array_mut)
-                    {
-                        filter_avatars_by_ownership(avatars, owned.get(address).unwrap_or(&empty));
-                        append_third_party(
-                            avatars,
-                            third_party_by_address
-                                .get(address)
-                                .map(Vec::as_slice)
-                                .unwrap_or(&[]),
-                        );
-                    }
-                    if state.settings.marketplace_subgraph_url.is_some() {
-                        apply_claimed_name(
-                            metadata,
-                            names_by_address
-                                .get(address)
-                                .map(Vec::as_slice)
-                                .unwrap_or(&[]),
-                        );
-                    }
-                }
             }
         }
-        profiles.extend(
-            prepared
-                .into_iter()
-                .map(|p| p.map(|(_, metadata)| metadata)),
-        );
+        let mut owned: HashMap<String, OwnedTokens> = HashMap::new();
+        let mut names_by_address: HashMap<String, Vec<String>> = HashMap::new();
+        let mut third_party_by_address: HashMap<String, Vec<String>> = HashMap::new();
+        if !addresses.is_empty() {
+            // `owned_names` answers empty without a marketplace subgraph.
+            let names_futs = addresses
+                .iter()
+                .map(|a| graph::owned_names(&state.index, a));
+            // A profile whose linked items could not be checked keeps
+            // its v1 items only; the others in the batch are unaffected.
+            let third_party_futs = addresses.iter().zip(&worn).map(|(a, worn)| async move {
+                let kept = if collections {
+                    third_party::sanitize_third_party_urns(state, a, worn)
+                        .await
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(error = %e, address = %a, "profiles: third-party items could not be checked; keeping the v1 items only");
+                            third_party::v1_third_party_urns(worn)
+                        })
+                } else {
+                    Vec::new()
+                };
+                (a.clone(), kept)
+            });
+            // Collected first: a stream over the closure itself is not
+            // `Send` for every lifetime the router asks of it.
+            let third_party_futs: Vec<_> = third_party_futs.collect();
+            use futures::stream::StreamExt;
+            let (owned_res, names, third_party) = tokio::join!(
+                async {
+                    if collections && !requested.is_empty() {
+                        graph::owned_tokens(&state.index, &requested).await
+                    } else {
+                        Ok(HashMap::new())
+                    }
+                },
+                futures::future::join_all(names_futs),
+                futures::stream::iter(third_party_futs)
+                    .buffer_unordered(THIRD_PARTY_CONCURRENCY)
+                    .collect::<HashMap<String, Vec<String>>>()
+            );
+            owned = owned_res?;
+            for (address, names) in addresses.iter().zip(names) {
+                names_by_address.insert(
+                    address.clone(),
+                    names?.iter().map(|n| n.name.clone()).collect(),
+                );
+            }
+            third_party_by_address = third_party;
+        }
+        let nothing = OwnedTokens::new();
+        for (address, metadata) in prepared.iter_mut().flatten() {
+            let default = is_default_pointer(address);
+            let owned = if default {
+                Some(&nothing)
+            } else if collections {
+                Some(owned.get(address.as_str()).unwrap_or(&nothing))
+            } else {
+                None
+            };
+            if let Some(avatars) = metadata.get_mut("avatars").and_then(Value::as_array_mut) {
+                filter_avatars_by_ownership(avatars, owned);
+                if collections && !default {
+                    append_third_party(
+                        avatars,
+                        third_party_by_address
+                            .get(address.as_str())
+                            .map(Vec::as_slice)
+                            .unwrap_or(&[]),
+                    );
+                }
+            }
+            // A default profile claims no name (lamb2: nothing owned).
+            let names = names_by_address
+                .get(address.as_str())
+                .filter(|_| !default)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            apply_claimed_name(metadata, names);
+        }
+        profiles.extend(chunk.iter().zip(prepared).map(|(entity, p)| {
+            p.map(|(_, mut metadata)| {
+                json!({
+                    "timestamp": entity.get("timestamp").cloned().unwrap_or(Value::Null),
+                    "avatars": metadata
+                        .get_mut("avatars")
+                        .filter(|a| a.is_array())
+                        .map(Value::take)
+                        .unwrap_or_else(|| json!([])),
+                })
+            })
+        }));
     }
     Ok(profiles)
 }
 
-async fn active_entities(state: &MarketplaceState, pointers: &[String]) -> Result<Vec<Value>, ()> {
+/// The active entities on `pointers`, through the read-through when one is
+/// configured (the node's full view, as the lambdas' content client sees it).
+pub(super) async fn active_entities(
+    state: &MarketplaceState,
+    pointers: &[String],
+) -> Result<Vec<Value>, ()> {
     let docs = match &state.read_through {
         Some(read_through) => read_through.active_docs(false, pointers).await,
         None => active_entity_docs_by_pointers(&state.pool, pointers).await,
     }
     .map_err(|e| {
-        tracing::error!(error = %e, "profiles: active entities query failed");
+        tracing::error!(error = %e, "lambdas: active entities query failed");
     })?;
     Ok(docs.iter().filter_map(|d| d.to_value()).collect())
 }
@@ -515,9 +534,14 @@ impl Failure {
     fn into_response(self) -> Response {
         match self {
             Failure::Db => internal_server_error(),
+            // lamb2's retryable 503 envelope (`ServiceOverloadedError`).
             Failure::Reader(e) => {
                 tracing::warn!(error = %e, "profiles: ownership reader failed");
-                service_unavailable("ownership readers unavailable")
+                super::lambdas_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Service overloaded, retry shortly",
+                    "ownership readers unavailable",
+                )
             }
         }
     }
@@ -563,51 +587,10 @@ async fn profiles_via_cache(
         .collect())
 }
 
-fn is_default_profile_id(id: &str) -> bool {
-    let id = id.to_ascii_lowercase();
-    id == "default"
-        || id
-            .strip_prefix("default")
-            .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
-}
-
-fn synthetic_default_profile(id: &str) -> Value {
-    json!({
-        "avatars": [{
-            "userId": id,
-            "name": id,
-            "hasClaimedName": false,
-            "ethAddress": id,
-            "version": 0,
-            "tutorialStep": 0,
-            "avatar": {
-                "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
-                "wearables": [
-                    "urn:decentraland:off-chain:base-avatars:eyebrows_00",
-                    "urn:decentraland:off-chain:base-avatars:mouth_00",
-                    "urn:decentraland:off-chain:base-avatars:casual_hair_01",
-                    "urn:decentraland:off-chain:base-avatars:green_hoodie",
-                    "urn:decentraland:off-chain:base-avatars:brown_pants",
-                    "urn:decentraland:off-chain:base-avatars:sneakers"
-                ],
-                "emotes": [],
-                "snapshots": { "face256": "", "body": "" },
-                "eyes": { "color": { "r": 0.37, "g": 0.22, "b": 0.19 } },
-                "hair": { "color": { "r": 0.6, "g": 0.46, "b": 0.27 } },
-                "skin": { "color": { "r": 0.94, "g": 0.76, "b": 0.6 } }
-            }
-        }],
-        "timestamp": 0
-    })
-}
-
 async fn fetch_profile_for_id(
     state: &MarketplaceState,
     id: &str,
 ) -> Result<Option<Value>, Failure> {
-    if is_default_profile_id(id) {
-        return Ok(Some(synthetic_default_profile(id)));
-    }
     let key = id.to_lowercase();
     let cached = state
         .profile_cache
@@ -662,6 +645,42 @@ fn early_profiles_response(check: ProfileIdsCheck) -> Option<Response> {
     }
 }
 
+/// `If-Modified-Since` read as `Date.parse` reads the forms clients send:
+/// the HTTP date (RFC 7231 / 2822) and ISO 8601 (`toISOString()`; a date
+/// alone, or a date-time without an offset, is UTC). `0` is ignored, as
+/// lamb2 ignores a falsy timestamp.
+fn parse_if_modified_since(value: &str) -> Option<i64> {
+    let value = value.trim();
+    let ms = chrono::DateTime::parse_from_rfc2822(value)
+        .or_else(|_| chrono::DateTime::parse_from_rfc3339(value))
+        .map(|dt| dt.timestamp_millis())
+        .ok()
+        .or_else(|| {
+            ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%dT%H:%M"]
+                .iter()
+                .find_map(|f| chrono::NaiveDateTime::parse_from_str(value, f).ok())
+                .or_else(|| {
+                    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                        .ok()
+                        .and_then(|d| d.and_hms_opt(0, 0, 0))
+                })
+                .map(|dt| dt.and_utc().timestamp_millis())
+        })?;
+    (ms != 0).then_some(ms)
+}
+
+/// lamb2's 304 test: every entity found, rounded down to the second (the
+/// header's precision), is at or before the header's time; vacuously true
+/// when none is found.
+fn not_modified_since(entities: &[Value], threshold: i64) -> bool {
+    entities.iter().all(|entity| {
+        entity
+            .get("timestamp")
+            .and_then(|t| t.as_i64().or_else(|| t.as_f64().map(|f| f as i64)))
+            .is_some_and(|ts| ts.div_euclid(1000) * 1000 <= threshold)
+    })
+}
+
 pub async fn profiles(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -681,11 +700,7 @@ pub async fn profiles(
     let modified_since: Option<i64> = headers
         .get("if-modified-since")
         .and_then(|v| v.to_str().ok())
-        .and_then(|s| {
-            chrono::DateTime::parse_from_rfc2822(s)
-                .ok()
-                .map(|dt| dt.timestamp_millis())
-        });
+        .and_then(parse_if_modified_since);
 
     let pointers: Vec<String> = ids.iter().map(|id| id.to_lowercase()).collect();
 
@@ -701,17 +716,10 @@ pub async fn profiles(
         Err(()) => return internal_server_error(),
     };
 
-    if let Some(threshold) = modified_since {
-        let all_stale = entities.iter().all(|entity| {
-            entity
-                .get("timestamp")
-                .and_then(|t| t.as_f64())
-                .map(|ts| (ts as i64) <= threshold)
-                .unwrap_or(false)
-        });
-        if all_stale && !entities.is_empty() {
-            return StatusCode::NOT_MODIFIED.into_response();
-        }
+    if let Some(threshold) = modified_since
+        && not_modified_since(&entities, threshold)
+    {
+        return StatusCode::NOT_MODIFIED.into_response();
     }
 
     match process_and_cache_profiles(&state, &pointers, &entities).await {
@@ -808,11 +816,25 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        // The outfits read the same view (lamb2's content client).
+        let with = Arc::new(with);
+        let resp = super::super::lambdas_catalog::outfits(State(with), Path(address.clone())).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
         let _ = std::fs::remove_dir_all(tmp);
     }
 
-    fn owned_set(urns: &[&str]) -> HashSet<String> {
-        urns.iter().map(|s| s.to_string()).collect()
+    /// Each URN held with the given token ids.
+    fn owned(held: &[(&str, &[&str])]) -> OwnedTokens {
+        held.iter()
+            .map(|(urn, tokens)| {
+                (
+                    urn.to_string(),
+                    tokens.iter().map(|t| t.to_string()).collect(),
+                )
+            })
+            .collect()
     }
 
     #[test]
@@ -845,62 +867,76 @@ mod tests {
         }
     }
 
+    /// `profiles.ts` with `ENSURE_ERC_721`: a named token must be held; the
+    /// owned item comes back `<urn>:<token>`, the first held when none is named.
     #[test]
-    fn ownership_filter_keeps_base_keeps_owned_drops_unowned() {
-        let owned = owned_set(&["urn:decentraland:matic:collections-v2:0xowned:0"]);
+    fn ownership_filter_checks_the_token_and_appends_it() {
+        let held = owned(&[(
+            "urn:decentraland:matic:collections-v2:0xowned:0",
+            &["7", "99"],
+        )]);
         let mut avatars = vec![json!({
             "avatar": {
                 "wearables": [
                     "urn:decentraland:off-chain:base-avatars:eyebrows_00",
                     "urn:decentraland:matic:collections-v2:0xowned:0",
                     "urn:decentraland:matic:collections-v2:0xowned:0:99",
+                    "urn:decentraland:matic:collections-v2:0xowned:0:5",
                     "urn:decentraland:matic:collections-v2:0xnope:0"
                 ]
             }
         })];
-        filter_avatars_by_ownership(&mut avatars, &owned);
-        let ws: Vec<&str> = avatars[0]["avatar"]["wearables"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str().unwrap())
-            .collect();
+        filter_avatars_by_ownership(&mut avatars, Some(&held));
         assert_eq!(
-            ws.len(),
-            3,
-            "unowned must be stripped, base+owned kept: {ws:?}"
+            avatars[0]["avatar"]["wearables"],
+            json!([
+                "urn:decentraland:off-chain:base-avatars:eyebrows_00",
+                "urn:decentraland:matic:collections-v2:0xowned:0:7",
+                "urn:decentraland:matic:collections-v2:0xowned:0:99",
+            ]),
+            "token 5 is not held, 0xnope not owned"
         );
-        assert!(
-            ws.iter().all(|w| !w.contains("0xnope")),
-            "unowned leaked: {ws:?}"
+        assert_eq!(
+            avatars[0]["avatar"]["emotes"],
+            json!([]),
+            "emotes is always present"
         );
-        assert!(ws.contains(&"urn:decentraland:off-chain:base-avatars:eyebrows_00"));
     }
 
     #[test]
-    fn ownership_filter_handles_emotes_and_mainnet_normalization() {
-        let owned = owned_set(&["urn:decentraland:ethereum:collections-v1:0xc:dance"]);
+    fn ownership_filter_reemits_owned_emotes_as_urn_and_slot() {
+        let held = owned(&[("urn:decentraland:ethereum:collections-v1:0xc:dance", &["3"])]);
         let mut avatars = vec![json!({
             "avatar": {
                 "emotes": [
                     {"slot": 0, "urn": "handsair"},
-                    {"slot": 1, "urn": "urn:decentraland:off-chain:base-emotes:wave"},
-                    {"slot": 2, "urn": "urn:decentraland:mainnet:collections-v1:0xc:dance"},
+                    {"slot": 1, "urn": "urn:decentraland:off-chain:base-emotes:wave", "extra": 1},
+                    {"slot": 2, "urn": "urn:decentraland:mainnet:collections-v1:0xc:dance", "extra": 1},
                     {"slot": 3, "urn": "urn:decentraland:matic:collections-v2:0xx:1"}
                 ]
             }
         })];
-        filter_avatars_by_ownership(&mut avatars, &owned);
-        let es = avatars[0]["avatar"]["emotes"].as_array().unwrap();
-        let urns: Vec<&str> = es.iter().map(|e| e["urn"].as_str().unwrap()).collect();
-        assert_eq!(es.len(), 3, "unowned emote must be stripped: {urns:?}");
-        assert!(
-            urns.iter().all(|u| !u.contains("0xx")),
-            "unowned emote leaked: {urns:?}"
+        filter_avatars_by_ownership(&mut avatars, Some(&held));
+        assert_eq!(
+            avatars[0]["avatar"]["emotes"],
+            json!([
+                {"slot": 0, "urn": "handsair"},
+                {"slot": 1, "urn": "urn:decentraland:off-chain:base-emotes:wave", "extra": 1},
+                {"slot": 2, "urn": "urn:decentraland:ethereum:collections-v1:0xc:dance:3"},
+            ])
         );
-        assert!(
-            urns.contains(&"handsair")
-                && urns.contains(&"urn:decentraland:off-chain:base-emotes:wave")
+    }
+
+    /// No collections reader: the items stay as deployed, `emotes` still present.
+    #[test]
+    fn without_a_reader_items_stay_as_deployed() {
+        let mut avatars = vec![
+            json!({ "avatar": { "wearables": ["urn:decentraland:matic:collections-v2:0xa:1"] } }),
+        ];
+        filter_avatars_by_ownership(&mut avatars, None);
+        assert_eq!(
+            avatars[0]["avatar"],
+            json!({ "wearables": ["urn:decentraland:matic:collections-v2:0xa:1"], "emotes": [] })
         );
     }
 
@@ -934,92 +970,48 @@ mod tests {
         assert_eq!(metadata["avatars"][2]["hasClaimedName"], false);
     }
 
+    /// `addBaseUrlToSnapshots`: face and body always rewritten, every other
+    /// key left as deployed, a missing object created.
     #[test]
     fn snapshots_point_at_the_cdn_or_at_our_profile_images() {
-        let mut m = json!({ "avatars": [{ "avatar": { "snapshots": { "face256": "bafyface", "body": "bafybody" } } }] });
+        let mut m = json!({ "avatars": [{ "avatar": { "snapshots": { "face256": "bafyface", "body": "https://x/already.png", "face128": "bafy128" } } }] });
         rewrite_snapshot_urls(
             "Qm1",
             &mut m,
             Some("https://cdn.example"),
-            "http://localhost/content/",
             "http://localhost/profile-images/",
         );
         assert_eq!(
-            m["avatars"][0]["avatar"]["snapshots"]["face256"],
-            "https://cdn.example/entities/Qm1/face.png"
-        );
-        assert_eq!(
-            m["avatars"][0]["avatar"]["snapshots"]["body"],
-            "https://cdn.example/entities/Qm1/body.png"
-        );
-
-        let mut m = json!({ "avatars": [{ "avatar": { "snapshots": { "face256": "bafyface", "body": "https://x/already.png" } } }] });
-        rewrite_snapshot_urls(
-            "Qm1",
-            &mut m,
-            None,
-            "http://localhost/content",
-            "http://localhost/profile-images",
-        );
-        assert_eq!(
-            m["avatars"][0]["avatar"]["snapshots"]["face256"],
-            "http://localhost/profile-images/entities/Qm1/face.png",
-            "an uploaded snapshot is served by /profile-images, which holds or derives it"
-        );
-        assert_eq!(
-            m["avatars"][0]["avatar"]["snapshots"]["body"], "https://x/already.png",
-            "a full URL is left alone"
+            m["avatars"][0]["avatar"]["snapshots"],
+            json!({
+                "face256": "https://cdn.example/entities/Qm1/face.png",
+                "body": "https://cdn.example/entities/Qm1/body.png",
+                "face128": "bafy128",
+            })
         );
 
-        let mut m =
-            json!({ "avatars": [{ "avatar": { "snapshots": { "face128": "bafyface128" } } }] });
-        rewrite_snapshot_urls(
-            "Qm1",
-            &mut m,
-            None,
-            "http://localhost/content",
-            "http://localhost/profile-images",
-        );
+        let mut m = json!({ "avatars": [{ "avatar": { "snapshots": { "face256": "bafyface", "body": "https://x/already.png", "face128": "bafy128" } } }] });
+        rewrite_snapshot_urls("Qm1", &mut m, None, "http://localhost/profile-images");
         assert_eq!(
-            m["avatars"][0]["avatar"]["snapshots"]["face128"],
-            "http://localhost/content/contents/bafyface128"
+            m["avatars"][0]["avatar"]["snapshots"],
+            json!({
+                "face256": "http://localhost/profile-images/entities/Qm1/face.png",
+                "body": "http://localhost/profile-images/entities/Qm1/body.png",
+                "face128": "bafy128",
+            })
         );
     }
 
     #[test]
     fn snapshots_a_profile_never_uploaded_point_at_our_renders() {
         let mut m = json!({ "avatars": [{ "avatar": { "bodyShape": "urn:x" } }] });
-        rewrite_snapshot_urls(
-            "Qm1",
-            &mut m,
-            None,
-            "http://localhost/content/",
-            "http://localhost/profile-images/",
-        );
+        rewrite_snapshot_urls("Qm1", &mut m, None, "http://localhost/profile-images/");
         assert_eq!(
-            m["avatars"][0]["avatar"]["snapshots"]["face256"],
-            "http://localhost/profile-images/entities/Qm1/face.png"
-        );
-        assert_eq!(
-            m["avatars"][0]["avatar"]["snapshots"]["body"],
-            "http://localhost/profile-images/entities/Qm1/body.png"
-        );
-
-        let mut m = json!({ "avatars": [{ "avatar": { "snapshots": { "face256": "bafyface", "body": "" } } }] });
-        rewrite_snapshot_urls(
-            "Qm1",
-            &mut m,
-            None,
-            "http://localhost/content/",
-            "http://localhost/profile-images/",
-        );
-        assert_eq!(
-            m["avatars"][0]["avatar"]["snapshots"]["face256"],
-            "http://localhost/profile-images/entities/Qm1/face.png"
-        );
-        assert_eq!(
-            m["avatars"][0]["avatar"]["snapshots"]["body"],
-            "http://localhost/profile-images/entities/Qm1/body.png"
+            m["avatars"][0]["avatar"]["snapshots"],
+            json!({
+                "face256": "http://localhost/profile-images/entities/Qm1/face.png",
+                "body": "http://localhost/profile-images/entities/Qm1/body.png",
+            })
         );
     }
 
@@ -1080,14 +1072,33 @@ mod tests {
     }
 
     #[test]
-    fn default_profile_ids() {
-        assert!(is_default_profile_id("default"));
-        assert!(is_default_profile_id("Default12"));
-        assert!(!is_default_profile_id("default_x"));
-        assert!(!is_default_profile_id("0xabc"));
+    fn if_modified_since_reads_http_and_iso_dates() {
+        let ms = 1_700_000_000_000;
+        for value in [
+            "Tue, 14 Nov 2023 22:13:20 GMT",
+            "2023-11-14T22:13:20.000Z",
+            "2023-11-14T22:13:20Z",
+            "2023-11-14T22:13:20",
+        ] {
+            assert_eq!(parse_if_modified_since(value), Some(ms), "{value}");
+        }
         assert_eq!(
-            synthetic_default_profile("default3")["avatars"][0]["userId"],
-            "default3"
+            parse_if_modified_since("2023-11-14"),
+            Some(1_699_920_000_000)
         );
+        assert_eq!(
+            parse_if_modified_since("Thu, 01 Jan 1970 00:00:00 GMT"),
+            None
+        );
+        assert_eq!(parse_if_modified_since("yesterday"), None);
+    }
+
+    /// lamb2 rounds each timestamp down to the second; no entity is not modified.
+    #[test]
+    fn not_modified_rounds_to_the_second_and_holds_for_no_entity() {
+        let entities = vec![json!({ "timestamp": 1_700_000_000_999i64 })];
+        assert!(not_modified_since(&entities, 1_700_000_000_000));
+        assert!(!not_modified_since(&entities, 1_699_999_999_999));
+        assert!(not_modified_since(&[], 1));
     }
 }
