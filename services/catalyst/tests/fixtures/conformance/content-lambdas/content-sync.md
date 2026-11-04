@@ -8,7 +8,7 @@ Pinned revisions:
 
 - Upstream content server: `decentraland/catalyst` @ `a416565db1e705cff9523540a2578af642598a29` (2026-10-21).
 - Upstream lambdas: `decentraland/lamb2` @ `02a37f5d88fb895339c20e84c2470be68cdf3f57` (2026-10-21). It serves no route in this area.
-- dcl-one: `dcl-one-conformance` @ `0229ef9e` (origin/main), Rust workspace `services/catalyst`.
+- dcl-one: `dcl-one-conformance` @ `f2f04942` (origin/main, 2026-11-04), Rust workspace `services/catalyst`.
 
 Everything below is from reading the code. Nothing was built, run or captured, and no line is
 "verified". Where an upstream behaviour depends on a package that is not in the clone
@@ -77,8 +77,13 @@ Common notes:
   `/Deployments` both return the fallback 404. Upstream's router is the `@dcl/http-server`
   koa-router derivative, and its `strict`/`sensitive` defaults were not read; see backlog CS-23.
 - **Rate limits.** Upstream rate-limits only `GET`/`HEAD /contents/:hashId` and `POST /entities`
-  (`decentraland/catalyst:src/controllers/routes.ts:101-114`). No endpoint in this area has a rate
-  limit or a 429 branch in either tree.
+  (`decentraland/catalyst:src/controllers/routes.ts:101-114`), so no endpoint in this area has a
+  rate limit upstream. dcl-one's app has none either, but this tree's gateway limits every path by
+  client IP: `/content/*` with `limit_req zone=content` (100 r/s, burst 1000, `nodelay`) and the root
+  mounts with the server-wide `zone=read` (30 r/s, burst 60), answering nginx's HTML 429
+  (`infra/gateway/gateway.py:166,257-260,292`). A peer or client that reads `/content/deployments`,
+  `/content/pointer-changes` or `/content/snapshots` faster than that gets a 429 that upstream never
+  sends; there is no exemption for sync peers (CR-4 in `content-reads.md`).
 - **Bootstrapping 503.** Upstream's `preventExecutionIfBoostrapping` guards only `POST /entities`
   (`decentraland/catalyst:src/controllers/routes.ts:62`), so no endpoint in this area returns the
   bootstrapping 503.
@@ -117,9 +122,9 @@ Query parsing uses `qs.parse(..., {parseArrays:true, parameterLimit:2000, arrayL
 
 | param | upstream | dcl-one |
 |---|---|---|
-| `entityType` (repeatable; `entityType[0]=` and `entityType[]=` also accepted) | `qsGetArray`: a missing or empty value gives `[]`, and non-string elements are dropped (`query-params/component.ts:21-31`). `parseEntityType` trims and lowercases, then accepts the exact type or the type plus `s`, except for `outfits` (`types.ts:212-221`). Types: `scene`, `profile`, `wearable`, `store`, `emote`, `outfits`. | `qs_get_array` keeps empty strings (`shared/src/query_params.rs:34-36`), so `?entityType=` gives `[""]` and a **400**. `parse_entity_type` also strips one trailing `s`, so it accepts `outfitss` (`shared/src/query_params.rs:50-54`). |
-| `entityId` (repeatable) | Case-sensitive `entity_id = ANY(...)`. Empty values are dropped. | Case-sensitive. **Empty value kept**: `?entityId=` filters on `''` and returns nothing. |
-| `pointer` (repeatable) | Lowercased, then `entity_pointers && $pointers` (`deployments-repository/component.ts:118-121`). Empty values are dropped. | Lowercased (`deployments.rs:132-135`). **Empty value kept**: `?pointer=` filters on `''` and returns nothing. |
+| `entityType` (repeatable; `entityType[0]=` and `entityType[]=` also accepted) | `qsGetArray`: a missing key or a single empty value gives `[]`; an empty element inside a multi-value list is kept; non-string elements are dropped (`query-params/component.ts:21-31`). So `?entityType=` adds no filter, and `?entityType=scene&entityType=` is a 400 (`parseEntityType('')` is undefined). `parseEntityType` trims and lowercases, then accepts the exact type or the type plus `s`, except for `outfits` (`types.ts:212-221`). Types: `scene`, `profile`, `wearable`, `store`, `emote`, `outfits`. | `qs_get_array` keeps every value, a single empty one included (`shared/src/query_params.rs:40-42`), so `?entityType=` gives `[""]` and a **400**. `parse_entity_type` also strips one trailing `s`, so it accepts `outfitss` (`shared/src/query_params.rs:56-62`). |
+| `entityId` (repeatable) | Case-sensitive `entity_id = ANY(...)`. A single empty value (`?entityId=`) is absent, so no filter; an empty element in a list (`entityId=a&entityId=`) is kept. | Case-sensitive. **A single empty value is kept**: `?entityId=` filters on `''` and returns nothing. A list matches upstream. |
+| `pointer` (repeatable) | Lowercased, then `entity_pointers && $pointers` (`deployments-repository/component.ts:118-121`). A single empty value (`?pointer=`) is absent, so no filter; an empty element in a list is kept. | Lowercased (`deployments.rs:132-135`). **A single empty value is kept**: `?pointer=` filters on `''` and returns nothing. A list matches upstream. |
 | `deployedBy` | **Not read by the handler.** `DeploymentFilters.deployedBy` exists in `deployment-types.ts:7`, but the handler never fills it. | Read, lowercased, and filtered with `LOWER(deployer_address) = ANY(...)` (`deployments.rs:137-140`, `queries.rs:540-543`). Also echoed in `filters.deployedBy` and in `next`. |
 | `onlyCurrentlyPointed` | `qsGetBoolean`: `undefined` when missing or empty; otherwise `=== 'true'`. When true, adds `deleter_deployment IS NULL`. | `qs_get_bool`: an empty value gives `Some(false)`, which is echoed as `"onlyCurrentlyPointed": false` where upstream omits the key. |
 | `from`, `to` | `parseInt(v, 10)`, so `10abc` → 10 and `1.5` → 1. A falsy value (0) adds no bound (`deployments-repository/component.ts:156-188`). | `str::parse::<i64>`, so `10abc` and `1.5` are ignored. `0` adds a `>= 0` bound, which returns the same rows. |
@@ -135,7 +140,7 @@ Query parsing uses `qs.parse(..., {parseArrays:true, parameterLimit:2000, arrayL
 - The cap is 1000 values per filter for `entityId`, `pointer` and `entityType`. Both trees return
   the same message.
 - `deployedBy` has no cap in dcl-one.
-- `qs` has a parameter limit of 2000; dcl-one keeps the first 2000 pairs (`shared/src/query_params.rs:19`).
+- `qs` has a parameter limit of 2000; dcl-one keeps the first 2000 pairs (`shared/src/query_params.rs:9,25`).
 
 **Validation order**
 
@@ -145,7 +150,7 @@ Query parsing uses `qs.parse(..., {parseArrays:true, parameterLimit:2000, arrayL
 
 **Auth and rate limits**
 
-- No auth. No rate limit.
+- No auth. No rate limit in the app; the gateway limit above applies.
 - Upstream runs the query through `sequentialExecutor` (`get-deployments-handler.ts:125-128`).
 - dcl-one memoizes the body for 5 s, keyed by the sorted query string, clears the memo on commit,
   and applies a server-side timeout (`deployments.rs:37-85`).
@@ -236,7 +241,7 @@ dcl-one `wire_types.rs:20-37`, `queries.rs:571-596`):
     from, to, fields (if not the default array instance), sortingField, sortingOrder, lastId, limit (raw request value, if truthy)`.
   - The timestamp written to `from` (ASC) or `to` (DESC) is the last row's `localTimestamp` or
     `entityTimestamp`, depending on the sort field.
-- dcl-one (`deployments.rs:230-303`, `shared/src/query_params.rs:64-82`):
+- dcl-one (`deployments.rs:230-303`, `shared/src/query_params.rs:74-92`):
   - The same pairs, plus `deployedBy`.
   - **Keys are sorted alphabetically.**
   - `fields` is left out when the set equals the default, even when the client passed it explicitly.
@@ -609,7 +614,7 @@ reads of `/challenge` treats dcl-one as two different processes.
     (`logic/deployments/component.ts:368`);
   - dcl-one lowercases (`queries.rs:187`).
 - Headers read: `If-None-Match` and `Range`.
-- No auth. No rate limit.
+- No auth. No rate limit in the app; the gateway limit above applies.
 - Upstream reads no query parameter.
 - dcl-one's thumbnail route reads `?width=` (`entity_thumbnail.rs:38-45,98-104`). The image route
   does not.
@@ -773,10 +778,12 @@ catalyst list and its `/about` is healthy.
    - Severity: P0 (moderated content stays visible through history).
 
 2. **CS-02 · `/deployments` · empty filter values filter on `''`.**
-   - Gap: `?pointer=` or `?entityId=` returns no rows. Upstream ignores the empty value
+   - Gap: `?pointer=` or `?entityId=` returns no rows. Upstream treats a single empty value as absent
      (`decentraland/catalyst:src/logic/query-params/component.ts:21-31`).
-   - Expected: `qs_get_array` drops empty strings, including the bare key `pointer`.
-   - Where: `services/catalyst/shared/src/query_params.rs:34-36`. This is shared, so check the other
+   - Expected: `qs_get_array` returns `[]` when the key is missing or holds exactly one empty value (the bare
+     key `pointer` included), and keeps empty strings inside a multi-value list, as `qsGetArray` does. CR-9
+     relies on the same rule.
+   - Where: `services/catalyst/shared/src/query_params.rs:40-42`. This is shared, so check the other
      callers.
    - Severity: P1.
 
@@ -797,7 +804,8 @@ catalyst list and its `/about` is healthy.
 
 5. **CS-05 · `/deployments` and `/pointer-changes` · `?entityType=` gives a 400.**
    - Gap: an empty value is treated as an unknown type. Upstream returns 200 with no type filter.
-   - Expected: drop empty values before `parse_entity_type`, as in CS-02.
+   - Expected: treat a single empty value as absent before `parse_entity_type`, as in CS-02; an empty element
+     inside a list stays a 400.
    - Where: `services/catalyst/content/src/deployments.rs:122-128`, `services/catalyst/content/src/pointer_changes.rs:46-52`.
    - Severity: P2.
 
@@ -821,7 +829,7 @@ catalyst list and its `/about` is healthy.
      `onlyCurrentlyPointed` gives `false` instead of absent. `fields` items are trimmed; upstream
      does not trim them.
    - Expected: upstream `qsGetNumber` and `qsGetBoolean` (`decentraland/catalyst:src/logic/query-params/component.ts:32-39`).
-   - Where: `services/catalyst/shared/src/query_params.rs:42-48`, `services/catalyst/content/src/deployments.rs:158-165`.
+   - Where: `services/catalyst/shared/src/query_params.rs:48-54`, `services/catalyst/content/src/deployments.rs:158-165`.
    - Severity: P2.
 
 9. **CS-09 · `/pointer-changes` · `next` drops `includeAuthChain=true`.**

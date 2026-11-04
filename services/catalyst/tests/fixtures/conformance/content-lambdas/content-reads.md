@@ -6,7 +6,8 @@ cross-cutting HTTP behaviour of the upstream router (404, 405, CORS, trailing sl
 ## Pinned revisions
 
 - Upstream content server: `decentraland/catalyst` @ `a416565db1e705cff9523540a2578af642598a29` (2026-10-21).
-- dcl-one: `dcl-one-conformance` @ `0229ef9e` (origin/main), Rust workspace `services/catalyst`.
+- dcl-one: `dcl-one-conformance` @ `f2f04942` (origin/main, 2026-11-04), Rust workspace `services/catalyst`.
+- This tree's gateway, for the rate limits in front of the content routes: `infra/gateway/gateway.py`.
 
 All verdicts below are from reading code (static). Nothing was built, run or captured; no item is
 "verified". Library behaviour that is not in the pinned upstream tree (`@dcl/http-server`,
@@ -213,13 +214,18 @@ pointer of the same entity answered from the DB can return that entity twice
   `TRUSTED_SYNC_PEER_IPS` bypass all three (`decentraland/catalyst:src/controllers/routes.ts:101-114`,
   `content-get-rate-limit.ts:86-121`, `sync-peer-exemption.ts:12-25`, `client-source.ts:17-26`,
   `src/Environment.ts:106-125`, `src/components.ts:545-595`). GET and HEAD share the buckets.
+- Rate limit (dcl-one): none in the app. This tree's gateway limits by client IP (`$binary_remote_addr`
+  after `real_ip`): `/content/*` takes `limit_req zone=content burst=1000 nodelay` at 100 r/s, and every
+  other path, including the root-mounted `/contents/*`, the server-wide `zone=read` at 30 r/s with burst 60
+  (`infra/gateway/gateway.py:166,257-260,292`). There is no hourly or daily quota and no exemption. Over the
+  limit nginx answers 429 (`limit_req_status 429`) with its own HTML page and no `Retry-After`.
 
 **Responses**
 
 | trigger | status | body | headers | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
-| over burst/hourly/daily budget | 429 | `{"error":"Too many requests"}` | `Retry-After`, `RateLimit-*` (added by the limiter) | `components.ts:554`, `content-get-rate-limit.ts:99-118` | none | MISSING |
-| client IP in `TRUSTED_SYNC_PEER_IPS` | never limited | | | `sync-peer-exemption.ts:17-24` | none | MISSING |
+| over burst/hourly/daily budget | 429 | `{"error":"Too many requests"}` | `Retry-After`, `RateLimit-*` (added by the limiter) | `components.ts:554`, `content-get-rate-limit.ts:99-118` | app: none. Gateway: 100 r/s burst 1000 under `/content/`, 30 r/s burst 60 at the root, nginx HTML 429 without `Retry-After` (`infra/gateway/gateway.py:166,257-260,292`) | DIVERGENT: other budgets (no hourly or daily quota), other body and headers |
+| client IP in `TRUSTED_SYNC_PEER_IPS` | never limited | | | `sync-peer-exemption.ts:17-24` | none: the gateway limit applies to sync peers too | MISSING |
 | hash fails validation | 404 | `{"error":"No content found with hash <hash>"}` | json | `get-content-handler.ts:15-17` | `get_content.rs:97-99` | MATCH (fixture `tests/fixtures/content/contents-404-garbage-hash.json`) |
 | hash denylisted | 404 | same | | `get-content-handler.ts:22-24` | `get_content.rs:97-99` | MATCH |
 | `If-None-Match` matches `"<hash>"` or is `*` (checked before storage) | 304 | none | `ETag: "<hash>"`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Access-Control-Expose-Headers: ETag` | `get-content-handler.ts:34-35`, `utils.ts:88-113` | `get_content.rs:101-105`, `formatters.rs:9-33` | MATCH |
@@ -359,7 +365,9 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
    - Severity: P1.
 
 3. **CR-3** GET/HEAD /contents/:hashId: add the content-get rate limit.
-   - Gap: no limit.
+   - Gap: no limit in the app. The gateway applies `limit_req` per client IP to every path: 100 r/s with burst
+     1000 under `/content/`, 30 r/s with burst 60 at the root (`infra/gateway/gateway.py:166,257-260,292`).
+     It has no hourly or daily quota, and its 429 is nginx's HTML page without `Retry-After` or `RateLimit-*`.
    - Expected: per client IP (IPv6 per /64), burst 1000/60 s, then hourly 3000, then daily 20000, each a
      separate bucket, burst first; 429 `{"error":"Too many requests"}` with `Retry-After` and `RateLimit-*`;
      client IP from `TRUSTED_CLIENT_IP_HEADER` (rightmost) else the socket; every knob an env var with the
@@ -370,11 +378,15 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
    - Severity: P1.
 
 4. **CR-4** GET/HEAD /contents/:hashId: trusted sync peer bypass.
-   - Gap: none exists (and CR-3 would throttle peers).
+   - Gap: no bypass exists, and the gateway already throttles a syncing peer: `zone=content` (100 r/s, burst
+     1000 per IP) on `/content/contents/:hashId` and the `/content/*` sync routes, `zone=read` (30 r/s, burst 60)
+     on the root mounts (`infra/gateway/gateway.py:166,257-258,292`). Upstream never limits a peer listed in
+     `TRUSTED_SYNC_PEER_IPS`, and limits no sync route.
    - Expected: canonical IPs listed in `TRUSTED_SYNC_PEER_IPS` (comma list; invalid entries dropped with a
      warning) skip all three buckets (`decentraland/catalyst:src/controllers/sync-peer-exemption.ts:12-25`,
      `src/components.ts:580-595`).
-   - Place: same layer as CR-3.
+   - Place: same layer as CR-3, plus a gateway exemption for the same IPs (a `geo` map that blanks the
+     `limit_req_zone` key) in `infra/gateway/gateway.py:257-258`.
    - Severity: P1.
 
 5. **CR-5** GET /entities/:type and GET /audit/:type/:entityId: accept `outfits`.
@@ -382,7 +394,10 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
    - Expected: `outfits` accepted, `outfit` and `outfitss` rejected; `scene|profile|wearable|store|emote`
      with or without one `s` (`decentraland/catalyst:src/types.ts:212-221`,
      `test/integration/controller/entity-type-parsing.spec.ts:19-56`).
-   - Place: `services/catalyst/shared/src/query_params.rs:18,66-72` (use `parse_entity_type`, `query_params.rs:58-62`);
+   - Place: `services/catalyst/shared/src/query_params.rs:18,66-72`. Look the raw value up in a table of the exact
+     type names plus `<type>s` for each type that does not end in `s`, as upstream builds `ENTITY_TYPES_BY_NAME`.
+     `parse_entity_type` (`query_params.rs:58-62`) is not that table: it strips one trailing `s` from any value, so
+     it accepts `outfitss`; fix it the same way, since `/deployments` and `/pointer-changes` use it;
      `content/src/active_entities.rs:136`, `content/src/audit.rs:17`; replace fixtures
      `tests/fixtures/content/entities-400-outfits-rejected.json`, `audit-400-outfits-plural-rejected.json`.
    - Severity: P1.
@@ -410,10 +425,11 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
    - Severity: P2.
 
 9. **CR-9** GET /entities/:type: `fields` and empty elements.
-   - Gap: `fields=` masks everything; `pointer=a&pointer=` (or `id=`) answers 400.
-   - Expected: an empty `fields` means no mask (`get-entities-handler.ts:61`); empty strings inside a
-     multi-value list are kept and simply match nothing; only an all-absent list is the 400
-     (`decentraland/catalyst:src/logic/query-params/component.ts:21-31`).
+   - Gap: `fields=` masks everything; `pointer=a&pointer=` (or `id=a&id=`) answers 400.
+   - Expected: an empty `fields` means no mask (`get-entities-handler.ts:61`). `qsGetArray` treats only a
+     missing key or a single empty value (`?pointer=`) as absent; empty strings inside a multi-value list are
+     kept and simply match nothing. The 400 comes only when both `id` and `pointer` are absent in that sense,
+     or both are present (`decentraland/catalyst:src/logic/query-params/component.ts:21-31`).
    - Place: `services/catalyst/content/src/active_entities.rs:71-77,142-153`.
    - Severity: P2.
 

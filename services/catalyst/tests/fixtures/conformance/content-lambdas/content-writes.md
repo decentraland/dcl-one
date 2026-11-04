@@ -5,7 +5,7 @@ Area: content server write path. ID prefix `CW-`.
 Pinned revisions:
 
 - Upstream content server: `decentraland/catalyst` @ `a416565db1e705cff9523540a2578af642598a29` (2026-10-21).
-- dcl-one: `dcl-one-conformance` @ `0229ef9e` (origin/main, 2026-11-04). Paths below are relative to the repo root.
+- dcl-one: `dcl-one-conformance` @ `f2f04942` (origin/main, 2026-11-04). Paths below are relative to the repo root.
 - `@dcl/content-validator` (`^8.1.0` in `package.json`) and `@dcl/crypto`, `@dcl/http-server` and `@dcl/rate-limiter-component` are npm dependencies. Their sources are not in the pinned tree. Validator strings were spot-checked against a local `decentraland/content-validator` clone @ `b1893d37` (2025-11-04). That clone is older than `^8.1.0`: it has no `createStagingValidator`. Every comparison here is static reading ("read"). Nothing was run.
 
 Files read (upstream):
@@ -203,7 +203,7 @@ All rows below are 400 `{"errors":[...]}` upstream unless the row says otherwise
   - Commits deployment, content files, active pointers and overwrites in one statement (`write_deployer.rs:794-946`).
   - `POST /entities/active` and the collection listing read `state.pool` directly, with no in-process entity cache (`active_entities.rs:63-92`). The entity is visible on the next request on every instance. Verdict: MATCH.
   - `deployments_cache` (5 s TTL, `lib.rs:119`) is cleared only on the instance that took the deploy (`create_entity.rs:393`). Other instances can serve `/deployments`, `/pointer-changes` and `/snapshots` up to 5 s stale. That belongs to the read area.
-- Both send `Cache-Control: max-age=10` on `/entities/active` reads (`ENTITIES_CACHE_CONTROL_MAX_AGE`), so a CDN may serve up to 10 s stale in both.
+- Upstream sends `Cache-Control: public, max-age=<ENTITIES_CACHE_CONTROL_MAX_AGE>` (default 10) only on `GET /entities/:type`; `POST /entities/active` carries no cache header (`decentraland/catalyst:src/controllers/handlers/active-entities-handler.ts:36-37`). dcl-one sends `public, max-age=10` on both (`services/catalyst/content/src/active_entities.rs:125`; CR-8 in `content-reads.md`). Shared caches do not store POST responses, so in both trees only the GET read can be served up to 10 s stale.
 
 ### Data dependency
 
