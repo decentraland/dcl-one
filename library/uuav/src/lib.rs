@@ -434,7 +434,7 @@ pub const extern "C" fn uuav_abi_version() -> *const c_char {
 /// `av_log_set_callback`/`av_log_format_line2`. The bindings alias it per
 /// target: a plain `char*` on `x86_64-pc-windows-gnu` and
 /// `aarch64-apple-darwin`, a struct by value on `aarch64-unknown-linux-gnu`
-/// - the alias itself works there - but the SysV x86_64 ABI spells it as a
+/// (the alias itself works there), but the SysV x86_64 ABI spells it as a
 /// one-element array that decays to a pointer in parameter position, so the
 /// alias cannot be used verbatim and the pointer is named instead.
 #[cfg(all(target_arch = "x86_64", not(target_os = "windows")))]
