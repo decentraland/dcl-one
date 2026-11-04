@@ -13,6 +13,7 @@ import BrowseLayout from "../components/BrowseLayout";
 import FilterBar, { RARITIES, type FilterChip } from "../components/FilterBar";
 import Filters, { type FilterStatus } from "../components/Filters";
 import IndexNotice from "../components/IndexNotice";
+import { useCollectionName, useCreatorNames } from "../components/PickerFilters";
 import LoadMore from "../components/LoadMore";
 import SkeletonCards from "../components/SkeletonCards";
 import { indexUnavailable, type IndexFreshness } from "../freshness";
@@ -52,10 +53,12 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
   const filterDefaults = useMemo(() => itemsFilterDefaults(q, dealsRequested), [dealsRequested, q]);
   const [filterState, setFilters] = useUrlFilters(filterDefaults);
   const { subCategory, rarities, priceMin, priceMax, smart } = filterState;
-  const { defaultStatus, deals, category, status, isUnified, min, max, bodyShape, listingType, wearableGenders, sortOptions, sortOption, key, fetchPage } = itemsGrid(filterState, q, { contracts, hideNames, lockStatus });
+  const { defaultStatus, deals, category, status, isUnified, min, max, bodyShape, listingType, wearableGenders, creators, collection, sortOptions, sortOption, key, fetchPage } = itemsGrid(filterState, q, { contracts, hideNames, lockStatus });
   const emoteFilters = emoteFilterBindings(category, filterState, setFilters);
   useScrollTopOnChange(`${category}:${subCategory ?? ""}`);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const creatorNames = useCreatorNames(creators);
+  const collectionName = useCollectionName(collection);
 
   const grid = useInfiniteShopQuery<CatalogItem, { freshness: IndexFreshness | null }>(key, (skip, signal) => fetchPage(skip, { signal }));
 
@@ -72,6 +75,8 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
   for (const r of RARITIES) if (rarities.includes(r)) chips.push({ key: `rarity-${r}`, label: rarityLabel(r), onRemove: () => toggleRarity(r) });
   if (wearableGenders) chips.push({ key: "bodyShape", label: t(`itemDetail.gender${bodyShape[0]!.toUpperCase()}${bodyShape.slice(1)}`), onRemove: () => setFilters({ bodyShape: "all" }) });
   if (isUnified && listingType) chips.push({ key: "listingType", label: t(`filter.${listingType}`), onRemove: () => setFilters({ listingType: "all" }) });
+  for (const a of creators) chips.push({ key: `creator-${a}`, label: creatorNames[a]!, onRemove: () => setFilters({ creators: creators.filter((x) => x !== a) }) });
+  if (collection) chips.push({ key: "collection", label: collectionName!, onRemove: () => setFilters({ collection: "" }) });
   if (smart) chips.push({ key: "smart", label: t("filter.smart"), onRemove: () => setFilters({ smart: false }) });
   chips.push(...emoteFilters.chips);
   if (deals) chips.push({ key: "deals", label: t("filter.deals"), onRemove: () => setFilters({ deals: false, sort: defaultSortFor(!!q, false) }) });
@@ -114,6 +119,12 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
             hideNames={hideNames}
             smart={smart}
             onSmart={(v) => setFilters({ smart: v })}
+            creators={creators}
+            onCreators={contracts ? undefined : (v) => setFilters({ creators: v })}
+            collection={collection}
+            onCollection={contracts ? undefined : (v) => setFilters({ collection: v ?? "" })}
+            // The collections route's on-sale flag means "the creator still sells it"; resales in the grid need every collection.
+            collectionOnSale={isUnified && (!flags.secondarySales || listingType === "primary")}
             {...emoteFilters.props}
             deals={deals}
             onDeals={flags.creatorSales ? (v) => setFilters({ deals: v, sort: defaultSortFor(!!q, v) }) : undefined}
