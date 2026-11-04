@@ -29,13 +29,13 @@ without origin loopback duplication, through awaited publisher admission and the
 synchronous target callback. The community test uses PostgreSQL membership reads,
 a pool of eight connections, and 100 interleaved messages on a control subject.
 
-A local run on 2026-11-03 with the former 256-entry serial community queue delivered
-331 of 1,000 updates; the 100 control messages arrived in 16.145 ms. With the current
-1,000-entry queue and four concurrent deliveries, all 1,000 updates arrived; the
-control messages arrived in 24.757 ms. This is one small warm-cache burst fixture,
+A local run on 2026-11-03 with the 1,000-entry community queue and four concurrent
+deliveries delivered all 1,000 updates; the 100 control messages arrived in
+24.757 ms. A 256-entry serial queue in the same fixture delivered 331 of 1,000
+updates, with controls in 16.145 ms. This is one small warm-cache burst fixture,
 not a sustained throughput, multi-community fairness or maximum-payload benchmark.
 SQL concurrency is capped by the configured pool size; ingress beyond the queue
-bound can still drop transient events and increments the delivery-drop counter.
+bound can drop transient events and increments the delivery-drop counter.
 
 The targeted burst harness records readiness, submission, broker observer counts
 and both subscription queue lengths. In a 2026-11-03 full Social run it reached
@@ -43,11 +43,9 @@ readiness in 5.007 seconds, finished submission at 5.021 seconds and observed
 all 1,000 frames at both broker links and both queues by 5.027 seconds. The same
 run delivered all community updates and its 100 controls in 28.482 milliseconds.
 A process snapshot near the run's start contained one Cargo process and no Rust
-compiler process; it is not a continuous system-load measurement. An earlier
-complete-suite targeted-burst timeout had no stage counts; its focused rerun
-passed. The cause of that timeout remains unestablished. The harness retains its
-10-second delivery deadline and exact count, ordering and duplicate assertions;
-that deadline is not a protocol latency guarantee.
+compiler process; it is not a continuous system-load measurement. The harness
+has a 10-second delivery deadline and exact count, ordering and duplicate
+assertions; that deadline is not a protocol latency guarantee.
 
 ## Ordinary Social RPC writer
 
@@ -70,7 +68,7 @@ over loopback with a warm statement cache and concurrent builds, one 2026-11-03
 run measured p50 133 microseconds, p95 848 microseconds and maximum 5,001
 microseconds. These timings include pool acquisition and the query round trip.
 The sample adds no application-table reads or row locks. Hardware details, p99,
-sustained throughput and production-load latency were not recorded. The RPC now
+sustained throughput and production-load latency were not recorded. The RPC
 performs this extra query; the measurement does not claim source performance parity.
 
 ## Community ranking and compliance cache
@@ -89,13 +87,13 @@ from a developer machine during a concurrent build, with uncontrolled cache stat
 | Same empty page, index scans disabled | 0 of 100,000 | 30.039 ms |
 | Pending-photo page, partial index | 50 of 100,000 | 0.166 ms |
 | Photo receipt and counter fanout | 100 communities | 11.098 ms |
-| Former ended local occurrence scan | capped at 100 of 100,000 | 538.459 ms |
+| Unbounded ended local occurrence scan | capped at 100 of 100,000 | 538.459 ms |
 | Fresh compliance result by primary key | 1 of 100,000 | 0.057 ms |
 | Expired compliance deletion | capped at 1,000 of 100,000 | 85.488 ms |
 
 The partial index avoids a full photo-history scan when no repair is due. Cache
 reads use the primary key; bounded expiry selection uses the expiry index.
-Ranking aggregates still depend on membership data. The current event collector
+Ranking aggregates depend on membership data. The event collector
 bounds source reads and recurrence expansion as measured below. Repeated latency
 percentiles, production distributions,
 concurrent writer throughput, cold-cache performance, hardware characterization,
@@ -110,18 +108,18 @@ positions each. Three warm `EXPLAIN (ANALYZE, BUFFERS, WAL)` executions measured
 
 | Work | Execution times |
 | --- | --- |
-| Former full scan, ordinary history | 1,084.812 / 1,006.240 / 1,131.275 ms |
-| Current 100-key page, ordinary history | 0.342 / 0.353 / 0.374 ms |
-| Current ordinary occurrence window | 0.881 / 0.479 / 1.055 ms |
-| Former full scan, history plus long schedules | 2,874.111 / 1,851.613 / 2,495.208 ms |
-| Current 100-key page, long schedules | 3.243 / 3.316 / 3.241 ms |
-| Current 10,000-position window, long schedules | 89.958 / 59.554 / 179.075 ms |
+| Whole-catalogue scan, ordinary history | 1,084.812 / 1,006.240 / 1,131.275 ms |
+| 100-key page, ordinary history | 0.342 / 0.353 / 0.374 ms |
+| Ordinary occurrence window | 0.881 / 0.479 / 1.055 ms |
+| Whole-catalogue scan, history plus long schedules | 2,874.111 / 1,851.613 / 2,495.208 ms |
+| 100-key page, long schedules | 3.243 / 3.316 / 3.241 ms |
+| 10,000-position window, long schedules | 89.958 / 59.554 / 179.075 ms |
 
 These compare bounded page work with whole-catalogue work, rather than claiming
 that one page completes the catalogue. Materializing the bounded schedules and
 parsed occurrence rows avoids repeated JSON extraction within the page. Receipt
 checks use the existing primary key and attendance counts run only for new
-candidates. No schema or index changed. A 100-receipt/counter batch took 17.623 ms
+candidates. It needs no schema or index. A 100-receipt/counter batch took 17.623 ms
 of SQL execution and 114.364 ms wall time, writing 79,611 WAL bytes. Cache state,
 concurrent builds and per-query timings do not establish production throughput;
 full-cycle latency also depends on the three-second pass budget, the 1,024-page
@@ -138,7 +136,7 @@ bound. The page timings above exclude these transaction and driver round trips.
 
 A disposable PostgreSQL 18.6 fixture at `6b155ec89` contained 100,000 pending
 photos across 200 owners and used the actual storage adapter with an absent valid
-content hash. This measurement was not rerun with the row-timeout correction.
+content hash. This sample excludes the one-second row budget measured below.
 The two age cohorts read 200,000 keys through 2,002 bounded pages and performed
 100,000 storage probes. At 32 pages per pass with one shared three-second budget,
 the complete dual sweep took 63 passes and 30.155 seconds of active work: median
@@ -150,18 +148,18 @@ Cold retries add an hour after completion of their sweep; the ten-minute age
 split and retry policy are candidates rather than an accepted freshness target.
 
 The pending index returned 100 keys in 0.136 ms at the start and 0.126 ms midway,
-with eight and nine shared buffer hits. No new index was added. A separate 1,000
+with eight and nine shared buffer hits. It uses no additional index. A separate 1,000
 actual publication run measured median 1.671 ms and p95 7.968 ms per transaction;
 markers, receipts and counter increments each totaled 1,000. These warm local
 samples exclude production storage/network latency, sustained incoming writes,
 cold caches and deployment interruption. They show bounded work and its backlog
 cost; they do not establish production throughput or a 60-second repair bound.
 
-The current one-second row-budget regression at `3039330c1` used an actual held
+The one-second row-budget regression at `3039330c1` used an actual held
 PostgreSQL row lock. A healthy later photo published in 1,029.286 ms while the
 blocked row remained pending and its lock remained held. PostgreSQL activity
 confirmed the blocked UPDATE had ended before unlock. The shared pass deadline
-also retained its tail with a shorter 500 ms budget. The repair-only SQL timeout's
+also kept its tail with a shorter 500 ms budget. The repair-only SQL timeout's
 extra setup cost and physically stalled storage were not measured separately.
 
 ## Shared social registry profile cache
@@ -185,8 +183,8 @@ cold-cache costs and the existing source-cache cutover remain unmeasured.
 
 ## Referral recent-invitation read
 
-A 2026-11-03 PostgreSQL 18.6 TEMP fixture held 100,000 referral rows with the current
-`(referrer,status)` index. The new post-insert query orders one referrer's history
+A 2026-11-03 PostgreSQL 18.6 TEMP fixture held 100,000 referral rows with the
+`(referrer,status)` index. The post-insert query orders one referrer's history
 by creation time and returns at most two rows. Single local
 `EXPLAIN (ANALYZE, BUFFERS)` samples used a bitmap index/heap scan and top-N heapsort:
 90 matching rows took 0.086 ms; a skewed referrer with 10,000 matching rows took
@@ -254,13 +252,13 @@ under a role whose default isolation is REPEATABLE READ.
 ## Community voice read separation
 
 A 2026-11-03 PostgreSQL 18.6 TEMP fixture held 100,000 synthetic voice-presence
-rows across 10,000 communities with the current `(community_id,address)` primary
+rows across 10,000 communities with the `(community_id,address)` primary
 key. Single local `EXPLAIN (ANALYZE, BUFFERS)` samples during a concurrent build
-measured the former all-community status aggregation at 21.030 ms (100,000 rows
+measured an all-community status aggregation at 21.030 ms (100,000 rows
 scanned), the existing comms bulk query for 50 community IDs at 0.999 ms (500 rows
 through bitmap primary-key/heap scans), and the all-active-room query at
-17.344 ms (100,000 rows scanned). Ordinary community pages now use the bulk
-query after core SQL; active filters still require the all-room query.
+17.344 ms (100,000 rows scanned). Ordinary community pages use the bulk
+query after core SQL; active filters require the all-room query.
 
 These are individual query observations on a temporary relation with matching
 columns and key, not production latency or a sustained-throughput measurement.
@@ -283,8 +281,8 @@ with ten children per selected community. Five samples per operation used
 | Insert 10,000 notification rows | 39.582 ms | 48.747 ms |
 | Insert 10,000 ranking receipts | 47.042 ms | 86.380 ms |
 
-The child deletion plans changed from sequential scans discarding 99,990 rows
-to bitmap scans selecting ten rows. Each index occupied 2,072,576 bytes.
+Without the indexes, child deletion used sequential scans discarding 99,990
+rows; with them, bitmap scans selecting ten rows. Each index occupied 2,072,576 bytes.
 The insertion medians increased by 23.2% and 83.6%, respectively. These warm,
 synthetic samples establish the tradeoff for this fixture; they do not establish
 production latency, sustained throughput or a service-level bound.
@@ -300,6 +298,25 @@ signatures, Rust/SQLx prepare costs and external awaits. They establish no
 production capacity or service-level bound.
 
 
+## Referral lifecycle step on shipped main
+
+On 2026-11-04, a disposable PostgreSQL 18.6 database held a shipped-main-shaped
+`social.referral_progress` with 1,000,000 rows (205 MB with its primary key),
+a quarter of them `tier_granted`. Step `0021_social_referral_lifecycle` ran in one
+transaction under `psql` timing on a developer machine during a concurrent build:
+
+| Statement | Execution time |
+| --- | ---: |
+| Add `id` with `gen_random_uuid()` default (table rewrite) | 3,214.949 ms |
+| Add the five other columns (constant defaults or nullable) | 0.867 ms total |
+| Mark 250,000 granted rows | 5,436.449 ms |
+| Build the unique `id` index | 494.525 ms |
+| Step `0023` nullable `reward_tier` | 0.181 ms |
+
+The table held 301 MB afterwards. The rewrite and index build hold ACCESS
+EXCLUSIVE on the table; the cutover already stops every writer. One warm sample
+scales with row count and storage; it does not establish production duration.
+
 ## Referral canonical IP quota comparison
 
 On 2026-11-04, PostgreSQL 18.6 TEMP data held 100,000 four-column referral
@@ -313,8 +330,8 @@ guarded inet equality including mapped IPv4 aliases. Median execution times:
 | 1,000 rows | 0.053 ms | 0.183 ms | 16 |
 | 10,000 rows | 0.520 ms | 1.819 ms | 135 |
 
-The index access paths and buffer counts stayed the same; canonical historical
-comparison adds conversion work within the selected prefix. This synthetic
+Both comparisons use the same index access path and buffer counts; canonical
+historical comparison adds conversion work within the selected prefix. This synthetic
 probe does not measure full attribution writes, transaction contention,
 providers, cold data, production distributions or a service-level bound.
 No index or historical-row rewrite is inferred from these observations.
@@ -324,5 +341,5 @@ HTTP method labels cover nine standard methods in each source transport casing
 labels use a finite standard/source allowlist plus `other`. Per-protocol open
 counts update under the existing socket-map mutex without scanning that map.
 These are bounded label/state invariants, not measured throughput improvements.
-The earlier community coordination benchmark excludes the new bounded SQLx
-acquisition setup and must not be treated as its performance measurement.
+The community coordination benchmark above excludes the bounded SQLx
+acquisition setup and does not measure it.

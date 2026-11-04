@@ -143,7 +143,7 @@
       "id": "api_http:DELETE:/v1/blocks/:address",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Validated idempotent unblock; no fake friendship rewrite or event on a retry. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
+      "result": "Validated idempotent unblock; no fake friendship rewrite or event on a retry. Shared SQL counters reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/http.rs",
@@ -182,7 +182,7 @@
       "id": "api_http:DELETE:/v1/communities/:id",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Dynamic moderator variants now use the shared DAPPS document and source SDK parsing; disabled variants no longer authorize a moderator. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Dynamic moderator variants use the shared DAPPS document and source SDK parsing; disabled variants do not authorize a moderator. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -250,7 +250,7 @@
       "id": "api_http:DELETE:/v1/communities/:id/members/:memberAddress",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. Community analytics match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -313,7 +313,7 @@
       "id": "api_http:DELETE:/v1/communities/:id/members/:memberAddress/bans",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -356,7 +356,7 @@
       "id": "api_http:DELETE:/v1/communities/:id/places/:placeId",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/places.rs",
@@ -399,7 +399,7 @@
       "id": "api_http:DELETE:/v1/communities/:id/posts/:postId",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/posts.rs",
@@ -442,7 +442,7 @@
       "id": "api_http:DELETE:/v1/communities/:id/posts/:postId/like",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/posts.rs",
@@ -485,7 +485,7 @@
       "id": "api_http:DELETE:/v1/community-voice-chats/:communityId",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Exact raw UUID spelling now keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Exact raw UUID spelling keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -547,13 +547,13 @@
         }
       ],
       "gaps": [],
-      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:DELETE:/v1/community-voice-chats/:communityId/participants/:address",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 5 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 5 executed-source HTTP cases replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -581,13 +581,13 @@
         }
       ],
       "gaps": [],
-      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:DELETE:/v1/community-voice-chats/:communityId/speak-requests/:address",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 5 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 5 executed-source HTTP cases replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -615,13 +615,13 @@
         }
       ],
       "gaps": [],
-      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:DELETE:/v1/community-voice-chats/:communityId/speakers/:address",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 5 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 5 executed-source HTTP cases replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -649,13 +649,13 @@
         }
       ],
       "gaps": [],
-      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:DELETE:/v1/friends/:address",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Validated signed delete applies the friendship state machine; refusal status mapped by domain errors. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
+      "result": "Validated signed delete applies the friendship state machine; refusal status mapped by domain errors. Shared SQL counters reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/http.rs",
@@ -718,7 +718,7 @@
       "id": "api_http:DELETE:/v1/private-voice-chats/:callId",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 9 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 9 executed-source HTTP cases replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -751,7 +751,7 @@
         }
       ],
       "gaps": [],
-      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:GET:/v1/blocking-status",
@@ -786,7 +786,7 @@
       "id": "api_http:GET:/v1/communities",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -869,7 +869,7 @@
       "id": "api_http:GET:/v1/communities/:address/managed",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -903,7 +903,7 @@
       "id": "api_http:GET:/v1/communities/:id",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Single-owner resolution now uses the shared strict registry API: historical alias names retain authenticated/stored ownerAddress; missing/invalid profiles return source 500{message} and failed creates write no community. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Single-owner resolution uses the shared strict registry API: historical alias names retain authenticated/stored ownerAddress; missing/invalid profiles return source 500{message} and failed creates write no community. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -962,7 +962,7 @@
       "id": "api_http:GET:/v1/communities/:id/bans",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks. V1 omits unresolved profile rows without changing totals or pagination; V2 retains those raw-address rows. Signed V1 members/bans retain lastFriendshipAction and actingUser as source strings or explicit nulls; V2 and anonymous member pages omit those raw fields. Existing relationship facts and SQL are reused.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks. V1 omits unresolved profile rows without changing totals or pagination; V2 retains those raw-address rows. Signed V1 members/bans retain lastFriendshipAction and actingUser as source strings or explicit nulls; V2 and anonymous member pages omit those raw fields. Existing relationship facts and SQL are reused.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -1016,7 +1016,7 @@
       "id": "api_http:GET:/v1/communities/:id/members",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks. V1 omits unresolved profile rows without changing totals or pagination; V2 retains those raw-address rows. Signed V1 members/bans retain lastFriendshipAction and actingUser as source strings or explicit nulls; V2 and anonymous member pages omit those raw fields. Existing relationship facts and SQL are reused.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks. V1 omits unresolved profile rows without changing totals or pagination; V2 retains those raw-address rows. Signed V1 members/bans retain lastFriendshipAction and actingUser as source strings or explicit nulls; V2 and anonymous member pages omit those raw fields. Existing relationship facts and SQL are reused.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -1070,7 +1070,7 @@
       "id": "api_http:GET:/v1/communities/:id/places",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/places.rs",
@@ -1104,7 +1104,7 @@
       "id": "api_http:GET:/v1/communities/:id/posts",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/posts.rs",
@@ -1143,7 +1143,7 @@
       "id": "api_http:GET:/v1/communities/:id/requests",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Community-request rows retain friendshipStatus NONE without reading friendship facts, including accepted-friend controls. V1 omits unresolved profile rows without changing totals or pagination; V2 retains those raw-address rows.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Community-request rows retain friendshipStatus NONE without reading friendship facts, including accepted-friend controls. V1 omits unresolved profile rows without changing totals or pagination; V2 retains those raw-address rows.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -1196,7 +1196,7 @@
       "id": "api_http:GET:/v1/community-voice-chats/active",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. Community status/count queries use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -1234,13 +1234,13 @@
         }
       ],
       "gaps": [],
-      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:GET:/v1/members/:address/communities",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -1274,7 +1274,7 @@
       "id": "api_http:GET:/v1/members/:address/invites",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -1312,7 +1312,7 @@
       "id": "api_http:GET:/v1/members/:address/requests",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Raw pending page/count precede community summaries; empty raw pages skip community and relationship reads, while nonempty raw pages retain relationship errors even if all summaries are filtered. Mapping preserves saved raw request order, totals and pagination.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Raw pending page/count precede community summaries; empty raw pages skip community and relationship reads, while nonempty raw pages retain relationship errors even if all summaries are filtered. Mapping preserves saved raw request order, totals and pagination.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -1375,7 +1375,7 @@
       "id": "api_http:GET:/v1/moderation/communities",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Dynamic moderator variants now use the shared DAPPS document and source SDK parsing; disabled variants no longer authorize a moderator. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Dynamic moderator variants use the shared DAPPS document and source SDK parsing; disabled variants do not authorize a moderator. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/admin.rs",
@@ -1467,7 +1467,7 @@
       "id": "api_http:GET:/v1/private-voice-chats/incoming",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -1495,13 +1495,13 @@
         }
       ],
       "gaps": [],
-      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:GET:/v1/referral-progress",
       "owner": "friends-settings-blocks-referrals",
       "status": "reviewed",
-      "result": "Source-reviewed accepted/viewed counts and reward snapshots; GET marks the current count viewed through the existing write gate. Unexpected referral SQL failures now preserve the source message-only 500 boundary; five actual Node/PostgreSQL handler cases replay through corresponding real SQLx HTTP routes, including privacy.",
+      "result": "Source-reviewed accepted/viewed counts and reward snapshots; GET marks the current count viewed through the existing write gate. Unexpected referral SQL failures preserve the source message-only 500 boundary; five actual Node/PostgreSQL handler cases replay through corresponding real SQLx HTTP routes, including privacy.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/referral.rs",
@@ -1633,7 +1633,7 @@
       "id": "api_http:GET:/v2/communities",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -1711,7 +1711,7 @@
       "id": "api_http:GET:/v2/communities/:id",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -1760,7 +1760,7 @@
       "id": "api_http:GET:/v2/communities/:id/bans",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks. Signed V1 members/bans retain lastFriendshipAction and actingUser as source strings or explicit nulls; V2 and anonymous member pages omit those raw fields. Existing relationship facts and SQL are reused.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks. Signed V1 members/bans retain lastFriendshipAction and actingUser as source strings or explicit nulls; V2 and anonymous member pages omit those raw fields. Existing relationship facts and SQL are reused.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -1804,7 +1804,7 @@
       "id": "api_http:GET:/v2/communities/:id/members",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks. Signed V1 members/bans retain lastFriendshipAction and actingUser as source strings or explicit nulls; V2 and anonymous member pages omit those raw fields. Existing relationship facts and SQL are reused.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks. Signed V1 members/bans retain lastFriendshipAction and actingUser as source strings or explicit nulls; V2 and anonymous member pages omit those raw fields. Existing relationship facts and SQL are reused.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -1848,7 +1848,7 @@
       "id": "api_http:GET:/v2/communities/:id/posts",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/posts.rs",
@@ -1882,7 +1882,7 @@
       "id": "api_http:GET:/v2/communities/:id/requests",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community-request rows retain friendshipStatus NONE without reading friendship facts, including accepted-friend controls.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. Community-request rows retain friendshipStatus NONE without reading friendship facts, including accepted-friend controls.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -1983,7 +1983,7 @@
       "id": "api_http:GET:/v2/members/:address/requests",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Raw pending page/count precede community summaries; empty raw pages skip community and relationship reads, while nonempty raw pages retain relationship errors even if all summaries are filtered. Mapping preserves saved raw request order, totals and pagination.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. Raw pending page/count precede community summaries; empty raw pages skip community and relationship reads, while nonempty raw pages retain relationship errors even if all summaries are filtered. Mapping preserves saved raw request order, totals and pagination.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -2070,7 +2070,7 @@
       "id": "api_http:PATCH:/v1/communities/:id",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Dynamic moderator variants now use the shared DAPPS document and source SDK parsing; disabled variants no longer authorize a moderator. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Dynamic moderator variants use the shared DAPPS document and source SDK parsing; disabled variants do not authorize a moderator. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -2123,7 +2123,7 @@
       "id": "api_http:PATCH:/v1/communities/:id/members/:address",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -2181,7 +2181,7 @@
       "id": "api_http:PATCH:/v1/communities/:id/requests/:requestId",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. Community analytics match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -2248,7 +2248,7 @@
       "id": "api_http:PATCH:/v1/community-voice-chats/:communityId/speakers/:address",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 6 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 6 executed-source HTTP cases replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -2281,13 +2281,13 @@
         }
       ],
       "gaps": [],
-      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:PATCH:/v1/friendship-requests/:address",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Accepted/rejected/cancelled intentions invoke same state machine and mapped refusals. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Configured legacy SNS publication now emits source social-service friendship events, keyed by action UUID; its detached three-attempt retry refreshes event time with 300ms pauses and does not roll back the action on failure.",
+      "result": "Accepted/rejected/cancelled intentions invoke same state machine and mapped refusals. Shared SQL counters reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Configured legacy SNS publication emits source social-service friendship events, keyed by action UUID; its detached three-attempt retry refreshes event time with 300ms pauses and does not roll back the action on failure.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/http.rs",
@@ -2331,7 +2331,7 @@
       "id": "api_http:PATCH:/v1/private-voice-chats/:callId",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 20 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 20 executed-source HTTP cases replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -2369,13 +2369,13 @@
         }
       ],
       "gaps": [],
-      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:PATCH:/v1/referral-progress",
       "owner": "friends-settings-blocks-referrals",
       "status": "reviewed",
-      "result": "Source-reviewed pending-only signup and denylist order; preserves signed_up_at and the original fetched-status/unconditional-write sequence. Unexpected referral SQL failures now preserve the source message-only 500 boundary; five actual Node/PostgreSQL handler cases replay through corresponding real SQLx HTTP routes, including privacy.",
+      "result": "Source-reviewed pending-only signup and denylist order; preserves signed_up_at and the original fetched-status/unconditional-write sequence. Unexpected referral SQL failures preserve the source message-only 500 boundary; five actual Node/PostgreSQL handler cases replay through corresponding real SQLx HTTP routes, including privacy.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/referral.rs",
@@ -2449,7 +2449,7 @@
       "id": "api_http:POST:/v1/blocks",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Schema and signed-fetch validation; atomically blocks/deactivates existing friendship, emits friendship event only when one exists. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
+      "result": "Schema and signed-fetch validation; atomically blocks/deactivates existing friendship, emits friendship event only when one exists. Shared SQL counters reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/http.rs",
@@ -2488,7 +2488,7 @@
       "id": "api_http:POST:/v1/communities",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Configured AI compliance now reproduces 20 executed-source SDK/validator cases, including provider payloads, strict schema, positive/negative two-hour cache, retries, feature/environment gates and unchanged-text suppression. Slow valid provider responses survive the ordinary 25-second reader limit. Single-owner resolution now uses the shared strict registry API: historical alias names retain authenticated/stored ownerAddress; missing/invalid profiles return source 500{message} and failed creates write no community. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Source-paired provider probes now cover missing/empty active-bootstrap strings, responses above4MiB, the600s headers-only SDK timer, progressing bodies beyond that timer and300s native body inactivity; seven AI metric boundaries include cache-read and cache-write failure.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Configured AI compliance reproduces 20 executed-source SDK/validator cases, including provider payloads, strict schema, positive/negative two-hour cache, retries, feature/environment gates and unchanged-text suppression. Slow valid provider responses survive the ordinary 25-second reader limit. Single-owner resolution uses the shared strict registry API: historical alias names retain authenticated/stored ownerAddress; missing/invalid profiles return source 500{message} and failed creates write no community. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. Source-paired provider probes cover missing/empty active-bootstrap strings, responses above4MiB, the600s headers-only SDK timer, progressing bodies beyond that timer and300s native body inactivity; seven AI metric boundaries include cache-read and cache-write failure.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -2590,7 +2590,7 @@
       "id": "api_http:POST:/v1/communities/:id/members",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately. Membership acquisition deliberately has a one-second absolute budget, including pool checkout and temporary COMMIT, with a 750ms server lock timeout. Interrupted acquisitions close their connection; successful joins retain autocommit on the same shared connection. This bounds contention and differs from unlimited source waits.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. Community analytics match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately. Membership acquisition deliberately has a one-second absolute budget, including pool checkout and temporary COMMIT, with a 750ms server lock timeout. Interrupted acquisitions close their connection; successful joins retain autocommit on the same shared connection. This bounds contention and differs from unlimited source waits.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -2648,7 +2648,7 @@
       "id": "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; nine real-source PostgreSQL trigger scenarios pair the separate BAN/update commit phases and late-failure effects.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. Community analytics match seven source event kinds in 17 normal/no-op scenarios; nine real-source PostgreSQL trigger scenarios pair the separate BAN/update commit phases and late-failure effects.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -2716,7 +2716,7 @@
       "id": "api_http:POST:/v1/communities/:id/places",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/places.rs",
@@ -2759,7 +2759,7 @@
       "id": "api_http:POST:/v1/communities/:id/posts",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Source-reviewed post insertion, strict single author resolution and background notification order. Regular/alias authors retain source DTO fields; missing/invalid author profiles return message-only 500 after persistence and emit no event. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Source-reviewed post insertion, strict single author resolution and background notification order. Regular/alias authors retain source DTO fields; missing/invalid author profiles return message-only 500 after persistence and emit no event. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/posts.rs",
@@ -2822,7 +2822,7 @@
       "id": "api_http:POST:/v1/communities/:id/posts/:postId/like",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/posts.rs",
@@ -2865,7 +2865,7 @@
       "id": "api_http:POST:/v1/communities/:id/requests",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. Community analytics match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -2932,7 +2932,7 @@
       "id": "api_http:POST:/v1/community-voice-chats",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Exact raw UUID spelling now keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Exact raw UUID spelling keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -3009,13 +3009,13 @@
         }
       ],
       "gaps": [],
-      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:POST:/v1/community-voice-chats/:communityId/participants",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -3048,13 +3048,13 @@
         }
       ],
       "gaps": [],
-      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:POST:/v1/community-voice-chats/:communityId/speak-requests",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -3082,13 +3082,13 @@
         }
       ],
       "gaps": [],
-      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:POST:/v1/friendship-requests",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Schema/signed-fetch gates, request/state/rate/block checks; response identifies friendship, event identifies action. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Configured legacy SNS publication now emits source social-service friendship events, keyed by action UUID; its detached three-attempt retry refreshes event time with 300ms pauses and does not roll back the action on failure.",
+      "result": "Schema/signed-fetch gates, request/state/rate/block checks; response identifies friendship, event identifies action. Shared SQL counters reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Configured legacy SNS publication emits source social-service friendship events, keyed by action UUID; its detached three-attempt retry refreshes event time with 300ms pauses and does not roll back the action on failure.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/http.rs",
@@ -3132,7 +3132,7 @@
       "id": "api_http:POST:/v1/members/:address/communities",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -3194,7 +3194,7 @@
       "id": "api_http:POST:/v1/private-voice-chats",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Six actual Social/companion PostgreSQL lifecycle cases and two media-writer sequences now pair retained media with new pending calls. Ordered normalized-wallet locks and explicit READ COMMITTED preserve one pending intent across roles without deleting historical media.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Six actual Social/companion PostgreSQL lifecycle cases and two media-writer sequences pair retained media with new pending calls. Ordered normalized-wallet locks and explicit READ COMMITTED preserve one pending intent across roles without deleting historical media.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -3251,13 +3251,13 @@
         }
       ],
       "gaps": [],
-      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:POST:/v1/referral-email",
       "owner": "friends-settings-blocks-referrals",
       "status": "reviewed",
-      "result": "Source-reviewed AJV email format plus the distinct domain Email.validate pattern,100-invite threshold,24-hour limit,normalization and best-effort marketing mail after commit. Unexpected referral SQL failures now preserve the source message-only 500 boundary; five actual Node/PostgreSQL handler cases replay through corresponding real SQLx HTTP routes, including privacy.",
+      "result": "Source-reviewed AJV email format plus the distinct domain Email.validate pattern,100-invite threshold,24-hour limit,normalization and best-effort marketing mail after commit. Unexpected referral SQL failures preserve the source message-only 500 boundary; five actual Node/PostgreSQL handler cases replay through corresponding real SQLx HTTP routes, including privacy.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/referral.rs",
@@ -3302,7 +3302,7 @@
       "id": "api_http:POST:/v1/referral-progress",
       "owner": "friends-settings-blocks-referrals",
       "status": "known_gap",
-      "result": "Source-reviewed schema/auth and first-wins retries, direct/one-hop denylist and persisted rejected-IP responses; registration kill flag uses the shared DAPPS snapshot. Unexpected referral SQL failures now preserve the source message-only 500 boundary; five actual Node/PostgreSQL handler cases replay through corresponding real SQLx HTTP routes, including privacy. Configured Slack sends timing/IP alerts after insertion and 100-invite alerts after grant/notification, awaiting and swallowing Slack failures; same-referrer retries emit no duplicate alerts. MAX_IP/MIN_LOGIN use source parseFloat configuration; node-pg bigint rejection and fractional, zero and infinite login-day comparisons replay sixteen executed source configurations. Slack retains source payloads and empty-token serialization; its shared Outbound transport deliberately limits each complete effect to ten seconds, three attempts and a two-second Retry-After cap, including permit wait and shared pause. The source timeout0/unbounded retry timing is not equivalent. Awaited insertion/grant boundaries remain source-compatible. Referral quota identity now comes from the real TCP peer; only an explicitly trusted backend proxy may supply one valid overwritten X-Real-IP. Historical valid inet aliases share a quota, including mapped IPv4; stored history is retained.",
+      "result": "Source-reviewed schema/auth and first-wins retries, direct/one-hop denylist and persisted rejected-IP responses; registration kill flag uses the shared DAPPS snapshot. Unexpected referral SQL failures preserve the source message-only 500 boundary; five actual Node/PostgreSQL handler cases replay through corresponding real SQLx HTTP routes, including privacy. Configured Slack sends timing/IP alerts after insertion and 100-invite alerts after grant/notification, awaiting and swallowing Slack failures; same-referrer retries emit no duplicate alerts. MAX_IP/MIN_LOGIN use source parseFloat configuration; node-pg bigint rejection and fractional, zero and infinite login-day comparisons replay sixteen executed source configurations. Slack retains source payloads and empty-token serialization; its shared Outbound transport deliberately limits each complete effect to ten seconds, three attempts and a two-second Retry-After cap, including permit wait and shared pause. The source timeout0/unbounded retry timing is not equivalent. Awaited insertion/grant boundaries remain source-compatible. Referral quota identity comes from the real TCP peer; only an explicitly trusted backend proxy may supply one valid overwritten X-Real-IP. Historical valid inet aliases share a quota, including mapped IPv4; stored history is retained.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/referral.rs",
@@ -3391,7 +3391,7 @@
         }
       ],
       "gaps": [
-        "Intentional ingress hardening: untrusted CF-Connecting-IP, X-Forwarded-For and X-Real-IP no longer select the quota bucket. Direct headerless sockets use their real peer. Trusted backend proxies must be provisioned with HTTP_TRUSTED_PROXY_CIDRS and overwrite X-Real-IP; this differs from source header priority.",
+        "Intentional ingress hardening: untrusted CF-Connecting-IP, X-Forwarded-For and X-Real-IP do not select the quota bucket. Direct headerless sockets use their real peer. Trusted backend proxies must be provisioned with HTTP_TRUSTED_PROXY_CIDRS and overwrite X-Real-IP; this differs from source header priority.",
         "Intentional provider hardening: Slack uses a ten-second absolute whole-effect budget, at most three attempts and Retry-After capped at two seconds, differing from the captured source timeout0 and eleven-attempt exhaustion. Committed attribution/grant and ordered swallowed-error boundaries are retained."
       ],
       "remaining_verification": "Real Slack/AWS credentials, subscriptions, cutover state and delivery remain unverified. SDK cases use controlled local providers; exhausted concurrent rate-limit ordering and full lifecycle email replay remain outstanding. Backend proxy trust provisioning and live client-IP distribution must be verified before cutover; exact source equivalence is not claimed."
@@ -3400,7 +3400,7 @@
       "id": "api_http:PUT:/v1/communities/:id",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Configured AI compliance now reproduces 20 executed-source SDK/validator cases, including provider payloads, strict schema, positive/negative two-hour cache, retries, feature/environment gates and unchanged-text suppression. Slow valid provider responses survive the ordinary 25-second reader limit. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; nine real-source PostgreSQL trigger scenarios pair the separate BAN/update commit phases and late-failure effects. Source-paired provider probes now cover missing/empty active-bootstrap strings, responses above4MiB, the600s headers-only SDK timer, progressing bodies beyond that timer and300s native body inactivity; seven AI metric boundaries include cache-read and cache-write failure.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Configured AI compliance reproduces 20 executed-source SDK/validator cases, including provider payloads, strict schema, positive/negative two-hour cache, retries, feature/environment gates and unchanged-text suppression. Slow valid provider responses survive the ordinary 25-second reader limit. Thirty-seven community handlers replay the executed-source unexpected SQL message-only 500 boundary. Community analytics match seven source event kinds in 17 normal/no-op scenarios; nine real-source PostgreSQL trigger scenarios pair the separate BAN/update commit phases and late-failure effects. Source-paired provider probes cover missing/empty active-bootstrap strings, responses above4MiB, the600s headers-only SDK timer, progressing bodies beyond that timer and300s native body inactivity; seven AI metric boundaries include cache-read and cache-write failure.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -3517,7 +3517,7 @@
       "id": "api_http:PUT:/v1/community-voice-chats/:communityId/speakers/:address",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 5 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 5 executed-source HTTP cases replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -3545,13 +3545,13 @@
         }
       ],
       "gaps": [],
-      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "json_stream:SUBSCRIBE:block_updates",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
@@ -3596,7 +3596,7 @@
       "id": "json_stream:SUBSCRIBE:community_member_connectivity_updates",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
@@ -3641,7 +3641,7 @@
       "id": "json_stream:SUBSCRIBE:community_voice_chat_updates",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates. Exact raw UUID spelling now keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates. Exact raw UUID spelling keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
@@ -3715,7 +3715,7 @@
       "id": "json_stream:SUBSCRIBE:friend_connectivity_updates",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
@@ -3760,7 +3760,7 @@
       "id": "json_stream:SUBSCRIBE:friendship_updates",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
@@ -3805,7 +3805,7 @@
       "id": "json_stream:SUBSCRIBE:private_voice_chat_updates",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
@@ -3850,7 +3850,7 @@
       "id": "rpc_stream:RPC:subscribeToBlockUpdates",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
@@ -3905,7 +3905,7 @@
       "id": "rpc_stream:RPC:subscribeToCommunityMemberConnectivityUpdates",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
@@ -3960,7 +3960,7 @@
       "id": "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates. Exact raw UUID spelling now keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates. Exact raw UUID spelling keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
@@ -4044,7 +4044,7 @@
       "id": "rpc_stream:RPC:subscribeToFriendConnectivityUpdates",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates. Initial and live profiles above 16 KiB now retain content under a guarded byte budget, with authorization keyed by the authenticated actor separately from historical public profile identity.",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates. Initial and live profiles above 16 KiB retain content under a guarded byte budget, with authorization keyed by the authenticated actor separately from historical public profile identity.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
@@ -4114,7 +4114,7 @@
       "id": "rpc_stream:RPC:subscribeToFriendshipUpdates",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
@@ -4169,7 +4169,7 @@
       "id": "rpc_stream:RPC:subscribeToPrivateVoiceChatUpdates",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
@@ -4224,7 +4224,7 @@
       "id": "rpc_unary:RPC:acceptPrivateVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards. Nine voice analytics kinds have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -4278,7 +4278,7 @@
       "id": "rpc_unary:RPC:blockUser",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Validates raw target/self, records block and existing friendship action atomically; only existing friendships emit friendship updates; write response retains profile fallback. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Public historical profile aliases now retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
+      "result": "Validates raw target/self, records block and existing friendship action atomically; only existing friendships emit friendship updates; write response retains profile fallback. Shared SQL counters reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Public historical profile aliases retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/blocks.rs",
@@ -4386,7 +4386,7 @@
       "id": "rpc_unary:RPC:endCommunityVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Exact raw UUID spelling now keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
+      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Exact raw UUID spelling keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -4459,7 +4459,7 @@
       "id": "rpc_unary:RPC:endPrivateVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards. Nine voice analytics kinds have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -4508,7 +4508,7 @@
       "id": "rpc_unary:RPC:getBlockedUsers",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Returns only resolved profiles, retains full blocked total and original block time, bounds pages, and returns empty page on read failure. Public historical profile aliases now retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
+      "result": "Returns only resolved profiles, retains full blocked total and original block time, bounds pages, and returns empty page on read failure. Public historical profile aliases retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/blocks.rs",
@@ -4606,7 +4606,7 @@
       "id": "rpc_unary:RPC:getFriends",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Filters unresolved profiles; reads active unblocked friends newest first; normalization bounds and source missing-profile response compared. Public historical profile aliases now retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
+      "result": "Filters unresolved profiles; reads active unblocked friends newest first; normalization bounds and source missing-profile response compared. Public historical profile aliases retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/friends.rs",
@@ -4748,7 +4748,7 @@
       "id": "rpc_unary:RPC:getMutualFriends",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Validates normalized target, reads shared active unblocked friends in address order, and filters unresolved profiles; errors answer an empty page. Public historical profile aliases now retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
+      "result": "Validates normalized target, reads shared active unblocked friends in address order, and filters unresolved profiles; errors answer an empty page. Public historical profile aliases retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/friends.rs",
@@ -4807,7 +4807,7 @@
       "id": "rpc_unary:RPC:getPendingFriendshipRequests",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Received request rows identify the request action UUID and counterparty; missing profiles omitted while full total is retained. Public historical profile aliases now retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
+      "result": "Received request rows identify the request action UUID and counterparty; missing profiles omitted while full total is retained. Public historical profile aliases retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/domain.rs",
@@ -4905,7 +4905,7 @@
       "id": "rpc_unary:RPC:getSentFriendshipRequests",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Sent request rows identify the request action UUID and counterparty; missing profiles omitted while full total is retained. Public historical profile aliases now retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
+      "result": "Sent request rows identify the request action UUID and counterparty; missing profiles omitted while full total is retained. Public historical profile aliases retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/domain.rs",
@@ -5003,7 +5003,7 @@
       "id": "rpc_unary:RPC:joinCommunityVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -5086,7 +5086,7 @@
       "id": "rpc_unary:RPC:muteSpeakerFromCommunityVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 8 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Compared pinned source handler/domain branches; 8 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -5169,7 +5169,7 @@
       "id": "rpc_unary:RPC:rejectPrivateVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards. Nine voice analytics kinds have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -5296,7 +5296,7 @@
       "id": "rpc_unary:RPC:startCommunityVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Exact raw UUID spelling now keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
+      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Exact raw UUID spelling keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -5384,7 +5384,7 @@
       "id": "rpc_unary:RPC:startPrivateVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Six actual Social/companion PostgreSQL lifecycle cases and two media-writer sequences now pair retained media with new pending calls. Ordered normalized-wallet locks and explicit READ COMMITTED preserve one pending intent across roles without deleting historical media.",
+      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Six actual Social/companion PostgreSQL lifecycle cases and two media-writer sequences pair retained media with new pending calls. Ordered normalized-wallet locks and explicit READ COMMITTED preserve one pending intent across roles without deleting historical media.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -5452,7 +5452,7 @@
       "id": "rpc_unary:RPC:unblockUser",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Validates raw target/self; actual block removal and friendship delete action commit atomically; retry without block has no action/event; write response retains profile fallback. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Public historical profile aliases now retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
+      "result": "Validates raw target/self; actual block removal and friendship delete action commit atomically; retry without block has no action/event; write response retains profile fallback. Shared SQL counters reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Public historical profile aliases retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/blocks.rs",
@@ -5521,7 +5521,7 @@
       "id": "rpc_unary:RPC:upsertFriendship",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Validates action/address/self/message/rate/state; atomically writes action, keeps friendship creation time, uses action UUID for updates, and can return a profile error after commit. Request stream omits unresolved sender profiles. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Configured legacy SNS publication now emits source social-service friendship events, keyed by action UUID; its detached three-attempt retry refreshes event time with 300ms pauses and does not roll back the action on failure.",
+      "result": "Validates action/address/self/message/rate/state; atomically writes action, keeps friendship creation time, uses action UUID for updates, and can return a profile error after commit. Request stream omits unresolved sender profiles. Shared SQL counters reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Configured legacy SNS publication emits source social-service friendship events, keyed by action UUID; its detached three-attempt retry refreshes event time with 300ms pauses and does not roll back the action on failure.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/friends.rs",
@@ -5672,7 +5672,7 @@
       "id": "uws_http:GET:/metrics",
       "owner": "inventory-auxiliary",
       "status": "known_gap",
-      "result": "GET uses source WKC_METRICS_PUBLIC_PATH, empty/default path fallback and optional case-sensitive Bearer gate. Literal-space token parsing accepts the source extra-token case and rejects lowercase/double-space variants before rendering. The route has no CORS and reads a44-family filtered view of the existing process recorder; no new listener/recorder. The emitted message-size distribution now exports the source histogram TYPE, finite buckets, labels, cumulative counts and sum, paired with84 actual source-component observations and the real candidate exporter. Application registration now preserves all44 HELP/TYPE declarations, exactly16 initial scalar zeros and28 metadata-only families. All nine histogram vectors and bounded HTTP/RPC/socket/subscriber event boundaries have actual-source comparisons; ordinary and guarded accepted frames share one observer without admission double-counting.",
+      "result": "GET uses source WKC_METRICS_PUBLIC_PATH, empty/default path fallback and optional case-sensitive Bearer gate. Literal-space token parsing accepts the source extra-token case and rejects lowercase/double-space variants before rendering. The route has no CORS and reads a44-family filtered view of the existing process recorder; no new listener/recorder. The emitted message-size distribution exports the source histogram TYPE, finite buckets, labels, cumulative counts and sum, paired with84 actual source-component observations and the real candidate exporter. Application registration preserves all44 HELP/TYPE declarations, exactly16 initial scalar zeros and28 metadata-only families. All nine histogram vectors and bounded HTTP/RPC/socket/subscriber event boundaries have actual-source comparisons; ordinary and guarded accepted frames share one observer without admission double-counting.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
@@ -7906,7 +7906,7 @@
         "api_http:PATCH:/v1/friendship-requests/:address"
       ],
       "status": "unverified",
-      "description": "Configured friendship and all twelve community SNS producers preserve source raw fields, keys and recipient policies through the existing official SDK publisher. Source/local stub tests cover 100-recipient pages/messages, ten-message requests, failure isolation, opt-out independence and HTTP background versus voice-awaited execution. Existing deployed topic subscriptions, downstream consumers, retry timing and migration/cutover delivery remain unverified. Candidate SNS scheduling now permits at most eight in-flight ten-entry requests per publish_batch invocation; source dispatches chunks without that concurrency bound. Result order, complete awaiting and failed-chunk isolation have real SDK/HTTP regressions."
+      "description": "Configured friendship and all twelve community SNS producers preserve source raw fields, keys and recipient policies through the existing official SDK publisher. Source/local stub tests cover 100-recipient pages/messages, ten-message requests, failure isolation, opt-out independence and HTTP background versus voice-awaited execution. Existing deployed topic subscriptions, downstream consumers, retry timing and migration/cutover delivery remain unverified. Candidate SNS scheduling permits at most eight in-flight ten-entry requests per publish_batch invocation; source dispatches chunks without that concurrency bound. Result order, complete awaiting and failed-chunk isolation have real SDK/HTTP regressions."
     },
     {
       "id": "cross-replica-social-events",
@@ -7930,7 +7930,7 @@
     {
       "id": "community-started-audience-lifetime",
       "status": "unverified",
-      "description": "Audience scope/generation/24-hour refreshed expiry now persist in shared SQL. Restart, expiry, generation-CAS and retained immutable event snapshots pass local tests. Existing room state, external media continuity and deployed cutover remain unverified.",
+      "description": "Audience scope/generation/24-hour refreshed expiry persist in shared SQL. Restart, expiry, generation-CAS and retained immutable event snapshots pass local tests. Existing room state, external media continuity and deployed cutover remain unverified.",
       "operations": [
         "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
         "rpc_unary:RPC:demoteSpeakerInCommunityVoiceChat",
@@ -7947,7 +7947,7 @@
     {
       "id": "referral-lifecycle",
       "status": "unverified",
-      "description": "Attribution/IP rejection, signup, UTC login days, guarded grants, artwork, email, handler-specific SQL errors and configured Slack effects have source-paired/local regressions. Slack keeps source payloads and empty-token serialization but deliberately bounds each effect to ten seconds, three attempts and a two-second Retry-After cap. Referral identity uses the TCP peer or explicitly trusted backend proxy X-Real-IP, and canonical historical inet aliases share a quota; these are intentional source differences. Sixteen executed numeric configurations cover source parser values, bigint rejection/overflow and login-day comparisons. Live providers, concurrent rate-limit ordering and stateful deployed cutover remain unverified. Referrer/IP quotas and milestone counts are serialized in SQL; tier-image and tier-notification work retain independent fail-fast completion. Actual source partial-failure receipts and local concurrent PostgreSQL cases are compared; simultaneous decision ordering is strengthened beyond source.",
+      "description": "Attribution/IP rejection, signup, UTC login days, guarded grants, artwork, email, handler-specific SQL errors and configured Slack effects have source-paired/local regressions. Slack keeps source payloads and empty-token serialization but deliberately bounds each effect to ten seconds, three attempts and a two-second Retry-After cap. Referral identity uses the TCP peer or explicitly trusted backend proxy X-Real-IP, and canonical historical inet aliases share a quota; these are intentional source differences. Sixteen executed numeric configurations cover source parser values, bigint rejection/overflow and login-day comparisons. Live providers, concurrent rate-limit ordering and stateful deployed cutover remain unverified. Referrer/IP quotas and milestone counts are serialized in SQL; tier-image and tier-notification work retain independent fail-fast completion. Actual source partial-failure receipts and local concurrent PostgreSQL cases are compared; simultaneous decision ordering is strengthened beyond source. A grant that reaches a reward tier keeps that tier in referral_progress.reward_tier until the reward request, its notification and its image succeed; the next finalize of the same invited user (a redelivered login) retries the reward alone, and an unset tier campaign key leaves it pending instead of posting an empty campaign_key. The source commits the grant, never retries a failed reward and requires every key at boot; this retry is an intentional difference with no client-visible change. Referral deny checks read the node's in-memory explorer denylist (mirror plus local overlay) instead of fetching the list on each write.",
       "operations": [
         "api_http:GET:/v1/referral-progress",
         "api_http:PATCH:/v1/referral-progress",
@@ -7958,7 +7958,7 @@
     {
       "id": "community-ranking-and-configured-moderation",
       "status": "unverified",
-      "description": "Dynamic moderators, ranking producers and configured AI compliance have source/local regressions. Provider probes cover active-bootstrap missing/empty strings, bodies above4MiB, headers-only600s timer, native10s connect/300s inactivity and AI metric outcomes. Delayed DNS, composed network phases and deployed credentials remain unverified. Existing lifetime ranking counters and watermarks have not been imported, so historical ranking equality is unverified. Local event collection now bounds source keys and recurrence windows under one pass budget; pending-photo repair cycles bounded recent/cold cohorts and isolates slow/error rows. SQL and100k synthetic backlog measurements do not establish deployed freshness. Retry scheduling is an explicit target policy; physical filesystem stalls are not executed.",
+      "description": "Dynamic moderators, ranking producers and configured AI compliance have source/local regressions. Provider probes cover active-bootstrap missing/empty strings, bodies above4MiB, headers-only600s timer, native10s connect/300s inactivity and AI metric outcomes. Delayed DNS, composed network phases and deployed credentials remain unverified. Existing lifetime ranking counters and watermarks have not been imported, so historical ranking equality is unverified. Local event collection bounds source keys and recurrence windows under one pass budget; pending-photo repair cycles bounded recent/cold cohorts and isolates slow/error rows. SQL and100k synthetic backlog measurements do not establish deployed freshness. Retry scheduling is an explicit target policy; physical filesystem stalls are not executed.",
       "operations": [
         "api_http:DELETE:/v1/communities/:id",
         "api_http:GET:/v1/communities",
@@ -7972,7 +7972,7 @@
     {
       "id": "shared-fixed-window-friendship-limit",
       "status": "unverified",
-      "description": "The implemented SQL limiter now matches eight executed source/Redis scenarios plus concurrent replica, fixed-expiry and configuration regressions. Existing Redis counter state has not been imported or drained during a nonempty cutover; a fresh SQL counter resets the active window.",
+      "description": "The implemented SQL limiter matches eight executed source/Redis scenarios plus concurrent replica, fixed-expiry and configuration regressions. Existing Redis counter state has not been imported or drained during a nonempty cutover; a fresh SQL counter resets the active window.",
       "operations": [
         "rpc_unary:RPC:upsertFriendship"
       ]
@@ -8071,7 +8071,7 @@
         "api_http:PUT:/v1/communities/:id",
         "api_http:PUT:/v1/community-voice-chats/:communityId/speakers/:address"
       ],
-      "description": "Configured HTTP_MAX_REQUEST_BODY_BYTES uses source prefix parsing and integer 1..16MiB admission. Declared oversize rejects before routing/auth; deferred reads preserve schema400 versus raw/multipart500 and independent multipart1MiB/thumbnail1..500KiB limits. Eighteen boot and 44 HTTP body cases replay through real drain/Normalize. Gateway-only authentication now precedes mirror SQL and federation classification; client JSON uses its configured cap. Twelve additional actual-source server cases independently regenerate exactly, with eight healthy candidate exchanges and separate denied-role auth/SQL controls. Native aliases retain 1MiB fallback and buffer512KiB-before-auth federation contracts; confirmed gateway envelopes retain typed verification and512KiB cap after classification. Known differences remain: signed body-ignoring joins answer immediately in source but classification needs complete JSON, oversized incomplete envelopes can reject later, and unread fast chunked overflow uses different connection-close timing. Raw framing, longer transport lifetime and concurrent resource use remain unverified."
+      "description": "Configured HTTP_MAX_REQUEST_BODY_BYTES uses source prefix parsing and integer 1..16MiB admission. Declared oversize rejects before routing/auth; deferred reads preserve schema400 versus raw/multipart500 and independent multipart1MiB/thumbnail1..500KiB limits. Eighteen boot and 44 HTTP body cases replay through real drain/Normalize. Gateway-only authentication precedes mirror SQL and federation classification; client JSON uses its configured cap. Twelve additional actual-source server cases independently regenerate exactly, with eight healthy candidate exchanges and separate denied-role auth/SQL controls. Native aliases retain 1MiB fallback and buffer512KiB-before-auth federation contracts; confirmed gateway envelopes retain typed verification and512KiB cap after classification. Known differences remain: signed body-ignoring joins answer immediately in source but classification needs complete JSON, oversized incomplete envelopes can reject later, and unread fast chunked overflow uses different connection-close timing. Raw framing, longer transport lifetime and concurrent resource use remain unverified."
     },
     {
       "id": "shared-social-profile-cache",
@@ -8131,7 +8131,7 @@
         "api_http:POST:/v1/members/:address/communities",
         "api_http:PUT:/v1/communities/:id"
       ],
-      "description": "All 37 community handlers now preserve source message-only 500 for unexpected core SQL errors. Independently recaptured actual Node handlers receive a real node-pg exception through injected domain dependencies; candidate requests exercise restricted-role PostgreSQL faults and paired standing failures. Author community suite passes 184 cases, including unchanged federation error envelopes. Registry-read/provider/voice failure phases remain separate requirements; arbitrary driver error wording and deployed outages are not proven equivalent."
+      "description": "All 37 community handlers preserve source message-only 500 for unexpected core SQL errors. Independently recaptured actual Node handlers receive a real node-pg exception through injected domain dependencies; candidate requests exercise restricted-role PostgreSQL faults and paired standing failures. Author community suite passes 184 cases, including unchanged federation error envelopes. Registry-read/provider/voice failure phases remain separate requirements; arbitrary driver error wording and deployed outages are not proven equivalent. Community AI compliance runs within a 60-second whole-effect bound (the source SDK allows three 600-second attempts); signed federation create/update envelopes take the same content check as the REST routes. Social answers also carry X-Content-Type-Options: nosniff, which the source does not send."
     },
     {
       "id": "rpc-ordinary-transport-backpressure",
@@ -8172,7 +8172,7 @@
         "rpc_unary:RPC:upsertSocialSettings",
         "websocket:UPGRADE:/"
       ],
-      "description": "The existing Social opt-in writer now bounds ordinary pending frames with the source adaptive count, retry/backoff/drain policy and accepted-once semantics. Fifteen supported-policy source traces replay; two additional cases document candidate startup rejection for maxBackpressure0 and computed nonfinite queue capacity where the source can admit unbounded buffering. WS_MAX_BACKPRESSURE still uses a strict unsigned parser rather than native numeric-prefix/fraction/wrap conversion. Application writer admission/flush is measured separately from native uWS kernel behavior; deployed performance equivalence is unverified. Twenty executed source backpressure-number cases now separate raw f64 queue capacity from native unsigned32 truncation/wrap. Prefix, fraction and representable wrap inputs are implemented; native-zero and nonfinite-capacity configurations remain unsupported and unaccepted, and kernel/performance equivalence remains unverified."
+      "description": "The existing Social opt-in writer bounds ordinary pending frames with the source adaptive count, retry/backoff/drain policy and accepted-once semantics. Fifteen supported-policy source traces replay; two additional cases document candidate startup rejection for maxBackpressure0 and computed nonfinite queue capacity where the source can admit unbounded buffering. WS_MAX_BACKPRESSURE uses a strict unsigned parser rather than native numeric-prefix/fraction/wrap conversion. Application writer admission/flush is measured separately from native uWS kernel behavior; deployed performance equivalence is unverified. Twenty executed source backpressure-number cases separate raw f64 queue capacity from native unsigned32 truncation/wrap. Prefix, fraction and representable wrap inputs are implemented; native-zero and nonfinite-capacity configurations remain unsupported and unaccepted, and kernel/performance equivalence remains unverified. A guarded frame holding the writer's admission turn is contention, not backpressure: ordinary frames behind it wait without spending retry attempts. The shared RPC server loop never awaits socket send admission; ServerReady, port, module and stream-open replies are spawned like unary responses."
     },
     {
       "id": "community-voice-status-failure-degradation",
@@ -8185,7 +8185,7 @@
         "api_http:GET:/v2/communities/:id",
         "api_http:GET:/v2/members/:address/requests"
       ],
-      "description": "Core community SQL and voice reads now use separate queries on the same pool/config through existing VoiceDb methods. Companion voice SQL failures yield idle/empty, while core failures retain500; active filters return empty before core reads if their voice result is empty or failed. Twenty-nine actual-source component/handler/adapter cases cover companion SQL stages, core errors and direct-provider500; candidate regression pairs18 requests plus three dual-fault controls. Source errors are injected; target faults are real PostgreSQL permissions. Package community193/all-targets/module checks pass. Direct-provider transport, concurrent snapshots and deployed cutover remain unverified. Ordinary voice reads are bounded by returned page IDs; all-active scans remain global."
+      "description": "Core community SQL and voice reads use separate queries on the same pool/config through existing VoiceDb methods. Companion voice SQL failures yield idle/empty, while core failures retain500; active filters return empty before core reads if their voice result is empty or failed. Twenty-nine actual-source component/handler/adapter cases cover companion SQL stages, core errors and direct-provider500; candidate regression pairs18 requests plus three dual-fault controls. Source errors are injected; target faults are real PostgreSQL permissions. Package community193/all-targets/module checks pass. Direct-provider transport, concurrent snapshots and deployed cutover remain unverified. Ordinary voice reads are bounded by returned page IDs; all-active scans remain global."
     },
     {
       "id": "social-client-artifact-cutover",
@@ -8233,7 +8233,7 @@
         "websocket:UPGRADE:/",
         "websocket:UPGRADE:/v1/stream"
       ],
-      "description": "Signed Social paths now match 81 source verifier decisions and real socket replays. The Bevy client preserves its connection URL while signing /; a native cryptographic unit covers standalone, mounted and query URLs. Deployed web artifacts must contain that update before strict server cutover. Cached/running clients, full Explorer, wasm and rendered /play behavior have not been exercised. Exact legacy mounted signing aliases are accepted alongside canonical source paths. Signed socket regressions cover old/new spellings and reject arbitrary proxy/header aliases; deployed cached artifacts and admitted client versions still need runtime comparison."
+      "description": "Signed Social paths match 81 source verifier decisions and real socket replays. The Bevy client preserves its connection URL while signing /; a native cryptographic unit covers standalone, mounted and query URLs. Deployed web artifacts must contain that update before strict server cutover. Cached/running clients, full Explorer, wasm and rendered /play behavior have not been exercised. Exact legacy mounted signing aliases are accepted alongside canonical source paths. Signed socket regressions cover old/new spellings and reject arbitrary proxy/header aliases; deployed cached artifacts and admitted client versions still need runtime comparison."
     },
     {
       "id": "social-initial-subscription-readiness",
@@ -8294,7 +8294,7 @@
         "api_http:POST:/v1/community-voice-chats",
         "api_http:DELETE:/v1/community-voice-chats/:communityId"
       ],
-      "description": "Pinned logic/updates.ts gathers every membership page before delivery. Candidate now snapshots eligible subscribers, completes all bounded 256-address probes before emitting, aborts all member-scoped delivery on any failed page and clears all isMember annotations on a failed public STARTED; public ENDED skips membership reads. Six independently recaptured actual-source cases and the owned-SQL second-page failure regression pass, including 513 eligible recipients and zero partial emissions. All seven fanout tests pass, including actual NATS. Fresh independent static review confirms the whole-audience fix; deployed failure behavior and final aggregate review remain unverified."
+      "description": "Pinned logic/updates.ts gathers every membership page before delivery. Candidate snapshots eligible subscribers, completes all bounded 256-address probes before emitting, aborts all member-scoped delivery on any failed page and clears all isMember annotations on a failed public STARTED; public ENDED skips membership reads. Six independently recaptured actual-source cases and the owned-SQL second-page failure regression pass, including 513 eligible recipients and zero partial emissions. All seven fanout tests pass, including actual NATS. Fresh independent static review confirms the whole-audience fix; deployed failure behavior and final aggregate review remain unverified."
     },
     {
       "id": "configured-social-analytics-effects",
@@ -8322,7 +8322,7 @@
         "api_http:POST:/v1/communities/:id/requests",
         "api_http:PATCH:/v1/communities/:id/requests/:requestId"
       ],
-      "description": "All 16 source analytics event kinds are connected at the 17 voice/community producer sites through the shared concrete adapter. Source captures cover 35 voice scenarios and 19 community scenarios; candidate regressions pair all 35 voice and 17 normal/no-op community scenarios, with nine separately paired PostgreSQL trigger cases for partial-write boundaries. Source SDK configuration, response cancellation, cross-host redirects and whole-chain deadlines are independently recaptured. Analytics now retains its own provider profile; actual native-source probes pair10s connect,300s per-hop headers and the configured SDK deadline across redirects. Operator-configured provider destinations and x-token forwarding follow source behavior. Delayed DNS and combined clock phases remain unverified. The generic unconfigured monolith intentionally remains usable; active Social configuration validates source required strings before serving. Deployed routing/provider behavior and transient-event cutover remain unverified. The six entry-wrapper cases preserve raw RPC recipient and HTTP private-call identifier spellings independently from normalized SQL/authorization/recipient keys."
+      "description": "All 16 source analytics event kinds are connected at the 17 voice/community producer sites through the shared concrete adapter. Source captures cover 35 voice scenarios and 19 community scenarios; candidate regressions pair all 35 voice and 17 normal/no-op community scenarios, with nine separately paired PostgreSQL trigger cases for partial-write boundaries. Source SDK configuration, response cancellation, cross-host redirects and whole-chain deadlines are independently recaptured. Analytics retains its own provider profile; actual native-source probes pair10s connect,300s per-hop headers and the configured SDK deadline across redirects. Operator-configured provider destinations and x-token forwarding follow source behavior. Delayed DNS and combined clock phases remain unverified. The generic unconfigured monolith intentionally remains usable; each configured provider validates its own source required strings before serving (analytics its context, URL and token; AI compliance its OpenAI key; referral Slack ENV); ENV alone configures no provider. Deployed routing/provider behavior and transient-event cutover remain unverified. The six entry-wrapper cases preserve raw RPC recipient and HTTP private-call identifier spellings independently from normalized SQL/authorization/recipient keys."
     },
     {
       "id": "private-call-pending-expiry-start-order",
@@ -8331,7 +8331,7 @@
         "rpc_unary:RPC:startPrivateVoiceChat",
         "api_http:POST:/v1/private-voice-chats"
       ],
-      "description": "Pending calls now keep both parties busy until the expiry sweep deletes them; starting a call never reclaims expired pending rows or emits their EXPIRED event. All 35 voice analytics/source scenarios are now paired, including the expired-start case. Voice package 56 tests and comms voice-database seven tests pass. Production sweep timing and existing-state cutover remain unverified."
+      "description": "Pending calls keep both parties busy until the expiry sweep deletes them; starting a call never reclaims expired pending rows or emits their EXPIRED event. All 35 voice analytics/source scenarios are paired, including the expired-start case. Voice package 56 tests and comms voice-database seven tests pass. Production sweep timing and existing-state cutover remain unverified."
     },
     {
       "id": "private-call-disconnect-accepted-media",
@@ -8340,7 +8340,7 @@
         "websocket:UPGRADE:/",
         "websocket:UPGRADE:/v1/stream"
       ],
-      "description": "Social disconnect now finishes only pending calls. An accepted row, its two participants and media room remain until explicit media end; the owned-PostgreSQL regression and source domain captures match. Package voice 56 tests pass. Live clients and media-room cutover remain unverified."
+      "description": "Social disconnect finishes only pending calls. An accepted row, its two participants and media room remain until explicit media end; the owned-PostgreSQL regression and source domain captures match. Package voice 56 tests pass. Live clients and media-room cutover remain unverified."
     },
     {
       "id": "community-registry-read-failure-propagation",
@@ -8353,7 +8353,7 @@
         "api_http:GET:/v1/members/:address/requests",
         "api_http:GET:/v1/communities/:id/posts"
       ],
-      "description": "The six V1 profile-enriched reads now propagate existing registry batch read errors while cache writes remain best effort and V2 controls do not fetch profiles. Eighteen actual-source cases independently regenerate exactly; all18 target PostgreSQL permission-fault/control exchanges and the existing normal profile-source regression pass at root. Package community192, all-targets and module checks pass. Missing-profile row semantics, other dependency failures, deployed cache state and cutover remain separate verification."
+      "description": "The six V1 profile-enriched reads propagate existing registry batch read errors while cache writes remain best effort and V2 controls do not fetch profiles. Eighteen actual-source cases independently regenerate exactly; all18 target PostgreSQL permission-fault/control exchanges and the existing normal profile-source regression pass at root. Package community192, all-targets and module checks pass. Missing-profile row semantics, other dependency failures, deployed cache state and cutover remain separate verification."
     },
     {
       "id": "private-call-stale-media-coexistence",
@@ -8362,7 +8362,7 @@
         "rpc_unary:RPC:startPrivateVoiceChat",
         "api_http:POST:/v1/private-voice-chats"
       ],
-      "description": "Actual Social/companion PostgreSQL components and the candidate now permit a new pending call when retained media presence is initial-expired, interrupted-expired or disconnected. Six lifecycle cases and two media-writer sequences are independently recaptured exactly. Candidate credentials retain older pending/media rows; actual join and explicit end own cleanup by call identity. Explicit READ COMMITTED and ordered normalized-wallet locks preserve one pending across roles under a REPEATABLE READ role default. The explicit schema-version-3 release procedure preserves data and gates older binaries; package voice55, Comms private15, database7 and owned schema-upgrade5 tests pass. Aggregate validation, production migration, live media and cutover remain separate evidence requirements."
+      "description": "Actual Social/companion PostgreSQL components and the candidate permit a new pending call when retained media presence is initial-expired, interrupted-expired or disconnected. Six lifecycle cases and two media-writer sequences are independently recaptured exactly. Candidate credentials retain older pending/media rows; actual join and explicit end own cleanup by call identity. Explicit READ COMMITTED and ordered normalized-wallet locks preserve one pending across roles under a REPEATABLE READ role default. The explicit schema-version-3 release procedure preserves data and gates older binaries; package voice55, Comms private15, database7 and owned schema-upgrade5 tests pass. Aggregate validation, production migration, live media and cutover remain separate evidence requirements."
     },
     {
       "id": "community-client-write-failure-phases",
@@ -8371,7 +8371,7 @@
         "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
         "api_http:PUT:/v1/communities/:id"
       ],
-      "description": "Client BAN and update now preserve the source commit phases on the existing pool: completed membership/unlike/analytics stages survive a later ban/request failure, while community updates precede separate places and atomic bulk acceptance. Nine actual-source PostgreSQL trigger captures independently match exactly; package community186 tests pass. Native federation and atomic join retain their separate contracts. Production crash/retry/concurrency and nonempty cutover remain unverified. Community-scoped native advisory guards now coordinate joins, all acceptance paths, BAN and ownership SQL transfer while retaining separate source commit stages. Cancellation/error and queued owner/BAN cases pass local PostgreSQL barriers; this strengthens concurrency coordination beyond source. Acquisition now has an absolute one-second budget including pool checkout and a 750ms local server lock timeout; an interrupted connection is closed until temporary transaction completion is confirmed. SQLx 0.9 native acquire was already cancellation-safe. This bounds retention and differs from unlimited source waits; existing separate commit phases remain. The real PostgreSQL COMMIT-response barrier now exercises caller cancellation, helper deadline and real SQL-error cleanup: backend disappearance precedes relay release, independent same-key acquisition and a clean maxpool1 replacement succeed, and protected join writes never run. This direct-join proof does not execute every other handler at that wire boundary."
+      "description": "Client BAN and update preserve the source commit phases on the existing pool: completed membership/unlike/analytics stages survive a later ban/request failure, while community updates precede separate places and atomic bulk acceptance. Nine actual-source PostgreSQL trigger captures independently match exactly; package community186 tests pass. Native federation and atomic join retain their separate contracts. Production crash/retry/concurrency and nonempty cutover remain unverified. Community-scoped native advisory guards coordinate joins, all acceptance paths, BAN and ownership SQL transfer while retaining separate source commit stages. Cancellation/error and queued owner/BAN cases pass local PostgreSQL barriers; this strengthens concurrency coordination beyond source. Acquisition has an absolute one-second budget including pool checkout and a 750ms local server lock timeout; an interrupted connection is closed until temporary transaction completion is confirmed. SQLx 0.9 native acquire was already cancellation-safe. This bounds retention and differs from unlimited source waits; existing separate commit phases remain. The real PostgreSQL COMMIT-response barrier exercises caller cancellation, helper deadline and real SQL-error cleanup: backend disappearance precedes relay release, independent same-key acquisition and a clean maxpool1 replacement succeed, and protected join writes never run. This direct-join proof does not execute every other handler at that wire boundary."
     },
     {
       "id": "community-voice-raw-cache-aliases",
@@ -8384,7 +8384,7 @@
         "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
         "json_stream:SUBSCRIBE:community_voice_chat_updates"
       ],
-      "description": "One authoritative case-sensitive raw-key relation now preserves independent alias scopes, generation CAS and exact expirations; canonical UUID remains media/membership identity. Four independently regenerated source lifecycles and four PostgreSQL-backed regressions cover raw RPC/JSON/SNS identity, restarts, expiry, stale-generation interleavings and bounded polling; actual Comms presence checks active aliases. The composed schema3 release shares canonical table/index DDL and accepts shipped main-v2 without0020 or genuinely prepared v2 with its unchanged real receipt. It atomically transfers/verifies/retires legacy facts when present, creates replacement indexes before stamp3 and never fabricates a retired receipt. Owned-database tests cover both genuine origins, refusal, connection-loss rollback/retry, executor/indexes/bootstrap, all five retired objects and immutable ledgers. Original raw aliases cannot be recovered from older UUID-only facts; production Redis import/drain, room continuity and cutover/rollback are unverified. No architecture or deployment acceptance is inferred."
+      "description": "One authoritative case-sensitive raw-key relation preserves independent alias scopes, generation CAS and exact expirations; canonical UUID remains media/membership identity. Four independently regenerated source lifecycles and four PostgreSQL-backed regressions cover raw RPC/JSON/SNS identity, restarts, expiry, stale-generation interleavings and bounded polling; actual Comms presence checks active aliases. The composed schema3 release shares canonical table/index DDL and accepts shipped main-v2 without0020 or genuinely prepared v2 with its unchanged real receipt. It atomically transfers/verifies/retires legacy facts when present, creates replacement indexes before stamp3 and never fabricates a retired receipt. Owned-database tests cover both genuine origins, refusal, connection-loss rollback/retry, executor/indexes/bootstrap, all five retired objects and immutable ledgers. Original raw aliases cannot be recovered from older UUID-only facts; production Redis import/drain, room continuity and cutover/rollback are unverified. No architecture or deployment acceptance is inferred."
     },
     {
       "id": "community-recipient-pagination-and-exclusions",

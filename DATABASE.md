@@ -506,7 +506,18 @@ columns have already lost raw identifier spelling: their backfill uses `id::text
 and cannot reconstruct historical aliases.
 
 Run the current `schema migrate` for the remaining additive layout, and verify a
-clean schema status before traffic resumes. From version 3 onward, the exact
+clean schema status before traffic resumes. On shipped main version 2, step
+`0021_social_referral_lifecycle` adds `referral_progress.id` with a volatile
+default: PostgreSQL rewrites the table and builds its unique index under ACCESS
+EXCLUSIVE and mints one id per existing row (see METRICS.md for a measured size).
+Its other columns take constant defaults or are nullable, and step
+`0023_social_referral_pending_reward` adds a nullable column without a rewrite.
+Both run inside the writer-stopped sequence above. The owned upgrade test
+`populated_main_v2_referrals_survive_the_upgrade_with_minted_ids` checks a
+populated shipped-main table keeps every value, gains unique ids and marks its
+granted rows. A database prepared at the captured version 2 also holds
+`referral_progress_ip_idx`, which the bootstrap does not define and no query uses;
+schema status does not report it. From version 3 onward, the exact
 immutable historical 0020 is retired: apply/migrate never execute it or invent a
 receipt. Status/bootstrap verify any genuine receipt and reject the five known
 retired columns, constraint and index if present. A failed release transaction
@@ -797,14 +808,20 @@ valid overwritten X-Real-IP. New facts use canonical addresses; the count uses
 guarded inet equality over historical text, including mapped IPv4 aliases.
 Malformed historical values remain stored and do not abort the count. The
 existing referrer-leading index bounds the prefix; alias conversion is still
-per matching row and has a measured CPU cost (see METRICS.md). No new table,
-index or historical rewrite is introduced. Finalizing
+per matching row and has a measured CPU cost (see METRICS.md). No index on the
+stored IP text serves this inet comparison, so the schema defines none. Finalizing
 a referral serializes its referrer and counts the milestone before committing
-the grant. External Slack, SNS and reward requests occur after commit. A failed
-notification or reward request retains the committed tier as the pinned source
-does; no automatic retry receipt or outbox is added. Tier image persistence and
-its notification start independently, so either may finish after the other has
-already failed. SNS publishing admits at most eight ten-entry requests per
+the grant. A grant that reaches a reward tier records it in the nullable
+`referral_progress.reward_tier` in the same transaction. External Slack, SNS and
+reward requests occur after commit. A failed notification or reward request
+retains the committed tier as the pinned source does, and a pending
+`reward_tier` is the retry receipt: the next finalize of the same invited user,
+such as a redelivered login, re-runs only the reward request, its notification
+and its image, and clears `reward_tier` once all three succeed. A missing tier
+campaign key leaves the reward pending without a request. The reward request is
+at-least-once: a retry after a lost response can repeat it. The image is stored
+once per referrer and tier. Tier image persistence and its notification start
+independently, so either may finish after the other has already failed. SNS publishing admits at most eight ten-entry requests per
 invocation; it awaits every admitted delivery and retains input result order.
 
 Community SNS recipient pages order role, join time and member address. This
@@ -815,11 +832,14 @@ producers each supply a single excluded address.
 
 Community membership mutations use one PostgreSQL session advisory guard per
 community on the shared pool. BAN, direct join, request acceptance, bulk public
-acceptance and the SQL phase of ownership transfer serialize under that guard.
+acceptance, the SQL phase of ownership transfer and every federation role action
+(join, leave, role, ban, unban) serialize under that guard. A federation action
+that grants membership re-checks the active ban inside its guarded transaction,
+so a ban committed after its pre-check refuses it.
 BAN retains separate committed kick, unlike, analytics, ban and request-removal
 phases. Ownership NAME validation precedes its guard; external notification,
 voice and provider awaits follow release. SQLx 0.9 native acquire already owns
-its cancellation cleanup. Acquisition now has one absolute one-second budget
+its cancellation cleanup. Acquisition has one absolute one-second budget
 covering pool checkout, temporary BEGIN, SET LOCAL, native acquire and COMMIT.
 The local server lock timeout is 750ms; the connection is marked close-on-drop
 until COMMIT is confirmed, then disarmed synchronously. This bounds waiting
