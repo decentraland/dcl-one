@@ -358,7 +358,8 @@ pub struct Stage5 {
 /// /entities/active` and `DELETE /entities/{name}`, which are the content
 /// server's at the root) and the federation routes. The
 /// `/worlds-content-server` nest carries the stage-4 reads, the worlds
-/// status, `GET /contents/{hash}` and `GET /available-content` from the ONE
+/// status, the `/health/*` probes, `GET /contents/{hash}` (sniffed, legacy
+/// SHA-256 keys accepted) and `GET /available-content` from the ONE
 /// blob store and the full product surface. The core, storage and federation routers sit behind
 /// [`writes::guard`] with the process's `WORLDS_WRITES_ENABLED`.
 pub fn app_router(
@@ -374,8 +375,8 @@ pub fn app_router(
         )
         .route(
             "/contents/{hashId}",
-            get(crate::content::get_content::get_content)
-                .head(crate::content::get_content::get_content)
+            get(crate::content::get_content::get_world_content)
+                .head(crate::content::get_content::get_world_content)
                 .with_state(blobs.clone()),
         )
         // The deploy clients' pre-upload check, over the same blob store.
@@ -388,13 +389,18 @@ pub fn app_router(
         )
         .route(
             "/ipfs/{hashId}",
-            get(crate::content::get_content::get_content)
-                .head(crate::content::get_content::get_content)
+            get(crate::content::get_content::get_world_content)
+                .head(crate::content::get_content::get_world_content)
                 .with_state(blobs),
         )
         .route(
             "/openapi.json",
             get(|| async { crate::shared::openapi::document(crate::shared::openapi::WORLDS) }),
+        )
+        // WCS's status checks, under its prefix only (the root `/health/*` are the node's).
+        .merge(
+            crate::shared::health::status_checks_router()
+                .layer(axum::middleware::from_fn(cors::cors_middleware)),
         )
         .merge(guard(core::router(s.core.clone())));
     let mut app = Router::new()

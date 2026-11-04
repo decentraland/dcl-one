@@ -14,6 +14,7 @@ pub mod client_ip;
 pub mod cors;
 pub mod drain;
 pub mod errors;
+pub mod health;
 pub mod http_util;
 pub mod identity;
 pub mod livekit;
