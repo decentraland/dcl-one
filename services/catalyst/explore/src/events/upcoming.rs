@@ -102,6 +102,11 @@ pub(super) async fn run_once(
     base: &str,
     now: NaiveDateTime,
 ) -> anyhow::Result<u64> {
+    // Keep the supplied wall clock testable while advancing it through SQL
+    // waits and earlier webhook calls in this batch.
+    let started = tokio::time::Instant::now();
+    let current_time =
+        || chrono::Duration::from_std(started.elapsed()).map(|elapsed| now + elapsed);
     match tokio::time::timeout(Duration::from_secs(1), cleanup(pool, now)).await {
         Ok(Ok(_)) => {}
         Ok(Err(error)) => tracing::warn!(%error, "upcoming hook cleanup deferred"),
@@ -127,7 +132,7 @@ pub(super) async fn run_once(
              UPDATE explore.event_upcoming_hooks h SET claim=$2,attempts=attempts+1,next_attempt_at=$1+interval '1 minute' \
              FROM due WHERE h.event_id=due.event_id AND h.occurrence_start=due.occurrence_start \
              RETURNING h.event_id,h.occurrence_start")
-            .bind(now).bind(claim).fetch_optional(&mut *tx).await?;
+            .bind(current_time()?).bind(claim).fetch_optional(&mut *tx).await?;
         let Some((event_id, start)) = row else {
             break;
         };
@@ -144,12 +149,13 @@ pub(super) async fn run_once(
         let current: Option<(String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
             .bind(&event_id)
             .bind(start)
-            .bind(now)
+            .bind(current_time()?)
             .fetch_optional(&mut *tx)
             .await?;
         tx.commit().await?;
-        let eligible = current.as_ref().is_some_and(|(_, count)| *count > 0);
-        let success = if let Some((name, count)) = current.filter(|(_, count)| *count > 0) {
+        let expired = start <= current_time()?;
+        let eligible = !expired && current.as_ref().is_some_and(|(_, count)| *count > 0);
+        let success = if eligible && let Some((name, count)) = current {
             client
                 .post(endpoint)
                 .timeout(Duration::from_secs(5))
@@ -161,11 +167,11 @@ pub(super) async fn run_once(
             false
         };
         let mut tx = timed_transaction(pool).await?;
-        if eligible {
+        if eligible || expired {
             // Only delivery marks completion. Exhausted or expired unfinished
             // rows remain observable until retention removes them.
             sqlx::query("UPDATE explore.event_upcoming_hooks SET completed_at=CASE WHEN $4 THEN $5 ELSE NULL END,next_attempt_at=$5+(30 * (1 << attempts)) * interval '1 second',claim=NULL WHERE event_id=$1 AND occurrence_start=$2 AND claim=$3")
-                .bind(&event_id).bind(start).bind(claim).bind(success).bind(now).execute(&mut *tx).await?;
+                .bind(&event_id).bind(start).bind(claim).bind(success).bind(current_time()?).execute(&mut *tx).await?;
         } else {
             // A temporary loss of approval or RSVPs is not delivery. A future
             // scan can capture this key again if it becomes eligible in time.
@@ -505,6 +511,91 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_slow_webhook_does_not_dispatch_a_later_occurrence_after_it_starts() {
+        let _guard = TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let now = clock("2059-01-01T12:00:00Z");
+        let first = seed(&pool, now, 40, true, true).await;
+        let expires = seed(&pool, now, 1, true, true).await;
+        let start = now + chrono::Duration::seconds(1);
+        sqlx::query("UPDATE explore.event SET start_at=$2,finish_at=$2+interval '1 hour',raw=$3 WHERE id=$1")
+            .bind(&expires).bind(start).bind(json!({"start_at":start.and_utc().to_rfc3339(),"recurrent_dates":[]}))
+            .execute(&pool).await.unwrap();
+        assert_eq!(scan(&pool, now).await.unwrap(), 2);
+        // Claim order is deliberate: the slow request must precede the
+        // occurrence that will expire while its response is held.
+        sqlx::query("UPDATE explore.event_upcoming_hooks SET next_attempt_at=$2-interval '1 second' WHERE event_id=$1")
+            .bind(&first).bind(now).execute(&pool).await.unwrap();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (request_entered, request_release, request_calls) =
+            (entered.clone(), release.clone(), calls.clone());
+        let app = axum::Router::new().route(
+            "/hook",
+            axum::routing::post(move || {
+                let (entered, release, calls) = (
+                    request_entered.clone(),
+                    request_release.clone(),
+                    request_calls.clone(),
+                );
+                async move {
+                    if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                        entered.notify_one();
+                        release.notified().await;
+                    }
+                    axum::http::StatusCode::OK
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/hook", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let worker_pool = pool.clone();
+        let worker = tokio::spawn(async move {
+            run_once(
+                &worker_pool,
+                &crate::http::Outbound::for_tests(),
+                Some(&endpoint),
+                "https://example.org",
+                now,
+            )
+            .await
+            .unwrap()
+        });
+        tokio::time::timeout(Duration::from_secs(2), entered.notified())
+            .await
+            .unwrap();
+        // Pause only after the PostgreSQL work has reached the local HTTP
+        // fixture, then resume before any further database I/O.
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(2)).await;
+        tokio::time::resume();
+        release.notify_one();
+        assert_eq!(worker.await.unwrap(), 1);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "the expired occurrence is never dispatched"
+        );
+        let state: (i32, Option<NaiveDateTime>) = sqlx::query_as(
+            "SELECT attempts,completed_at FROM explore.event_upcoming_hooks WHERE event_id=$1",
+        )
+        .bind(&expires)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            state,
+            (0, None),
+            "expired unclaimed work remains observable as a dead letter"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn temporarily_ineligible_occurrences_recover_without_resending_delivered_summaries() {
         let _guard = TEST_LOCK.lock().await;
         let Some(pool) = crate::db::scratch::pool(4).await else {
@@ -655,6 +746,9 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
+            // Each item settles against its own advancing clock. Move beyond
+            // the tick's small per-item offset so both failures are due.
+            at += chrono::Duration::seconds(1);
         }
         assert_eq!(
             calls.load(Ordering::SeqCst),
