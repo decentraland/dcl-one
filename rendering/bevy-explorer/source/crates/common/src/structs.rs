@@ -1192,7 +1192,73 @@ pub struct SceneMeta {
     pub spawn_points: Option<Vec<SpawnPoint>>,
     pub skybox_config: Option<SkyboxConfig>,
     pub authoritative_multiplayer: Option<bool>,
+    /// `true` for a scene meant to run as a portable experience (a smart wearable's scene.json).
+    pub is_portable_experience: Option<bool>,
+    /// The permissions a portable experience declares (`USE_FETCH`, `USE_WEB3_API`, ...). Only
+    /// enforced for smart wearables: see [`smart_wearable_permission`].
+    pub required_permissions: Option<Vec<String>>,
+    /// `featureToggles`: a host scene's switches, of which `portableExperiences` is read
+    /// ([`PortableExperiencesToggle`]).
+    pub feature_toggles: Option<std::collections::HashMap<String, String>>,
 }
+
+impl SceneMeta {
+    /// What this scene says about portable experiences while the player stands in it.
+    pub fn portable_experiences_toggle(&self) -> PortableExperiencesToggle {
+        self.feature_toggles
+            .as_ref()
+            .and_then(|toggles| toggles.get("portableExperiences"))
+            .map(|value| value.parse().unwrap_or_default())
+            .unwrap_or_default()
+    }
+}
+
+/// A host scene's `featureToggles.portableExperiences`: whether smart wearables and other
+/// portable experiences run (and show their UI) while the player is inside the scene. Anything
+/// but `disabled` lets them run, as the stock explorer does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum PortableExperiencesToggle {
+    #[default]
+    Enabled,
+    Disabled,
+    HideUi,
+}
+
+impl std::str::FromStr for PortableExperiencesToggle {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "enabled" => Ok(Self::Enabled),
+            "disabled" => Ok(Self::Disabled),
+            "hideui" => Ok(Self::HideUi),
+            _ => Err(()),
+        }
+    }
+}
+
+/// The permission a smart wearable's `requiredPermissions` entry names, for the four the stock
+/// explorer gates (`RestrictedJsApiPermissionsProvider`). The avatar-related names
+/// (`ALLOW_TO_TRIGGER_AVATAR_EMOTE`, `ALLOW_TO_MOVE_PLAYER_INSIDE_SCENE`) and the legacy
+/// `ALLOW_MEDIA_HOSTNAMES` are not gated by any explorer, so they map to nothing.
+pub fn smart_wearable_permission(declared: &str) -> Option<PermissionType> {
+    match declared.trim() {
+        "USE_WEB3_API" => Some(PermissionType::Web3),
+        "USE_FETCH" => Some(PermissionType::Fetch),
+        "USE_WEBSOCKET" => Some(PermissionType::Websocket),
+        "OPEN_EXTERNAL_LINK" => Some(PermissionType::OpenUrl),
+        _ => None,
+    }
+}
+
+/// The permission types a smart wearable must declare to use: for these, an undeclared request
+/// is refused without asking.
+pub const SMART_WEARABLE_GATED_PERMISSIONS: [PermissionType; 4] = [
+    PermissionType::Web3,
+    PermissionType::Fetch,
+    PermissionType::Websocket,
+    PermissionType::OpenUrl,
+];
 
 pub trait PermissionStrings {
     fn active(&self) -> &str;

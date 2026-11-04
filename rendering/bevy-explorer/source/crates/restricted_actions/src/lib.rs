@@ -785,12 +785,7 @@ fn lookup_local_realm(
 
     Ok((
         hash,
-        PortableSource {
-            pid: file_urn,
-            parent_scene,
-            ens: None,
-            super_user,
-        },
+        PortableSource::new(file_urn, parent_scene, None, super_user),
     ))
 }
 
@@ -859,12 +854,7 @@ pub async fn lookup_portable(
 
     Ok((
         hash,
-        PortableSource {
-            pid: hacked_urn,
-            parent_scene,
-            ens: None,
-            super_user,
-        },
+        PortableSource::new(hacked_urn, parent_scene, None, super_user),
     ))
 }
 
@@ -948,12 +938,7 @@ fn spawn_portable(
                 if current_portables.get(&hash).is_none() {
                     new_portables.insert(
                         hash.clone(),
-                        PortableSource {
-                            pid: hacked_urn,
-                            parent_scene: Some(parent_hash),
-                            ens: None,
-                            super_user: false,
-                        },
+                        PortableSource::new(hacked_urn, Some(parent_hash), None, false),
                     );
                 }
                 pending_responses.insert(hash, Some(response.clone()));

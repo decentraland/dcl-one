@@ -48,6 +48,7 @@ fn spawned_hashes(world: &World) -> Vec<String> {
         .map(|ev| match &ev.location {
             SceneIpfsLocation::Hash(hash) => hash.clone(),
             SceneIpfsLocation::Urn(urn) => urn.clone(),
+            SceneIpfsLocation::Asset(_) => "asset".to_owned(),
         })
         .collect()
 }

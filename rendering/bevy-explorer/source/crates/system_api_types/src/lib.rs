@@ -74,6 +74,8 @@ pub struct LiveSceneInfo {
     pub title: String,
     pub parcels: Vec<Vector2>,
     pub is_portable: bool,
+    /// A portable backing an equipped or previewed smart wearable.
+    pub is_smart_wearable: bool,
     pub is_broken: bool,
     pub is_blocked: bool,
     pub is_super: bool,

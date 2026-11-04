@@ -288,12 +288,41 @@ impl ContentMap {
         self.0.insert(Self::key(&file), hash);
         self
     }
+
+    /// The map as a scene packed under `prefix` sees it: every `{prefix}{file}` entry becomes
+    /// `{file}` and wins over an unprefixed entry of the same name; unprefixed entries are kept;
+    /// entries under another prefix (the other body shape of a smart wearable) are dropped.
+    pub fn strip_prefix(&self, prefix: &str, other_prefixes: &[&str]) -> Self {
+        let prefix = prefix.to_lowercase();
+        let mut map = HashMap::<String, String>::default();
+        for (file, hash) in self.0.iter() {
+            if file.starts_with(&prefix) {
+                continue;
+            }
+            if other_prefixes
+                .iter()
+                .any(|other| file.starts_with(&other.to_lowercase()))
+            {
+                continue;
+            }
+            map.insert(file.clone(), hash.clone());
+        }
+        for (file, hash) in self.0.iter() {
+            if let Some(stripped) = file.strip_prefix(&prefix) {
+                map.insert(stripped.to_owned(), hash.clone());
+            }
+        }
+        Self(map)
+    }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub enum SceneIpfsLocation {
     Hash(String),
     Urn(String),
+    /// A definition built in-process (a smart wearable's scene, assembled from the wearable's
+    /// content) and already added to `Assets<EntityDefinition>`.
+    Asset(Handle<EntityDefinition>),
 }
 
 #[derive(Resource, Clone)]
