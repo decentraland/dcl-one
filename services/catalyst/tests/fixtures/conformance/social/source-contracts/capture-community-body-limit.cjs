@@ -1,8 +1,14 @@
 // Actual pinned server and router; local requests only.
+const { sourceCapture, SOCIAL_REVISION } = require(
+  require("node:path").join(
+    require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
+    "tooling/social-capture-common.cjs",
+  ),
+);
+const capture = sourceCapture(process.argv[2]);
 const fs = require("fs"),
   http = require("http");
-const root = process.argv[2];
-require(root + "/node_modules/ts-node/register/transpile-only");
+const root = capture.upstream;
 const { createUnsafeIdentity } = require(
   root + "/node_modules/@dcl/crypto/dist/crypto.js",
 );
@@ -35,6 +41,8 @@ const { createCommunityFieldsValidatorComponent } = require(
   root + "/src/logic/community/fields-validator.ts",
 );
 (async () => {
+  let server, largerServer;
+  try {
   const boot = [];
   for (const value of [
     undefined,
@@ -114,7 +122,7 @@ const { createCommunityFieldsValidatorComponent } = require(
   };
   const router = await setupHttpRoutes(context);
   const logger = { info() {}, error() {}, warn() {}, debug() {} };
-  const server = await createServerComponent(
+  server = await createServerComponent(
     {
       config: {
         requireNumber: async () => 0,
@@ -292,6 +300,7 @@ const { createCommunityFieldsValidatorComponent } = require(
     });
   }
   await server.stop();
+  server = undefined;
   // A larger global cap does not raise the independent native multipart cap
   // or the thumbnail field's byte range. Use parseable multipart, not junk.
   const largerCap = 2 * 1024 * 1024;
@@ -299,7 +308,7 @@ const { createCommunityFieldsValidatorComponent } = require(
     await createCommunityFieldsValidatorComponent({
       config: { getString: async () => undefined },
     });
-  const largerServer = await createServerComponent(
+  largerServer = await createServerComponent(
     {
       config: {
         requireNumber: async () => 0,
@@ -423,12 +432,13 @@ const { createCommunityFieldsValidatorComponent } = require(
     });
   }
   await largerServer.stop();
+  largerServer = undefined;
   fs.writeFileSync(
     process.argv[3],
     JSON.stringify(
       {
         source: "decentraland/social-service-ea",
-        revision: "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+        revision: SOCIAL_REVISION,
         node: process.version,
         sources: [
           "src/components.ts",
@@ -467,6 +477,9 @@ const { createCommunityFieldsValidatorComponent } = require(
       2,
     ) + "\n",
   );
+  } finally {
+    try { await largerServer?.stop(); } finally { await server?.stop(); }
+  }
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

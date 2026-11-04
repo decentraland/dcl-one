@@ -1,7 +1,13 @@
 // Actual registry, post component and HTTP handler, with local dependency responses.
+const { sourceCapture, SOCIAL_REVISION } = require(
+  require("node:path").join(
+    require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
+    "tooling/social-capture-common.cjs",
+  ),
+);
+const capture = sourceCapture(process.argv[2]);
 const fs = require("fs");
-const root = process.argv[2];
-require(root + "/node_modules/ts-node/register/transpile-only");
+const root = capture.upstream;
 const { createRegistryComponent } = require(root + "/src/adapters/registry.ts");
 const { createCommunityPostsComponent } = require(
   root + "/src/logic/community/posts.ts",
@@ -18,6 +24,8 @@ const logs = {
   getLogger: () => ({ info() {}, warn() {}, error() {}, debug() {} }),
 };
 (async () => {
+  const originalNow = Date.now;
+  try {
   Date.now = () => timestamp;
   const cases = [];
   for (const name of ["regular", "alias", "missing", "invalid"]) {
@@ -95,7 +103,7 @@ const logs = {
     JSON.stringify(
       {
         source: "decentraland/social-service-ea",
-        revision: "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+        revision: SOCIAL_REVISION,
         node: process.version,
         sources: [
           "src/adapters/registry.ts",
@@ -111,6 +119,7 @@ const logs = {
       2,
     ) + "\n",
   );
+  } finally { Date.now = originalNow; }
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

@@ -1,10 +1,16 @@
 // Execute the pinned ranking component without network or a provider.
 // Usage: TS_NODE_COMPILER_OPTIONS='{"module":"CommonJS","moduleResolution":"node"}' node <script> <source-root> <output-directory>
+const { sourceCapture, SOCIAL_REVISION } = require(
+  require("node:path").join(
+    require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
+    "tooling/social-capture-common.cjs",
+  ),
+);
+const capture = sourceCapture(process.argv[2]);
 const fs = require('fs');
 const path = require('path');
-const upstream = process.argv[2];
+const upstream = capture.upstream;
 const out = process.argv[3];
-require(path.join(upstream, 'node_modules/ts-node/register/transpile-only'));
 const logger = { info(){}, error(){}, warn(){}, debug(){} };
 const logs = { getLogger(){ return logger; } };
 const zero = {eventsCount:0,photosCount:0,streamsCount:0,placesCount:0,postsCount:0,newMembersCount:0,eventsTotalAttendees:0,streamsTotalParticipants:0,hasThumbnail:0,hasDescription:0,ageInDays:0};
@@ -21,5 +27,5 @@ const cases = [
  let scores;
  const {createCommunityRankingComponent} = require(path.join(upstream,'src/logic/community/ranking.ts'));
  await createCommunityRankingComponent({logs,communitiesDb:{getAllCommunitiesWithRankingMetrics:async({offset})=>offset===0?cases.map((row,i)=>({...row,communityId:String(i)})):[], updateCommunitiesRankingScores:async values=>{scores=values;}}}).calculateRankingScoreForAllCommunities();
- fs.writeFileSync(path.join(out,'community-ranking.json'),JSON.stringify({source:'decentraland/social-service-ea',revision:'b6b2cefefdf727b2ed47ddb887e77d226a41eea6',path:'src/logic/community/ranking.ts',cases:cases.map((row,i)=>({name:row.case,metrics:Object.fromEntries(Object.entries(row).filter(([k])=>k!=='case')),score:scores.get(String(i))}))},null,2)+'\n');
+ fs.writeFileSync(path.join(out,'community-ranking.json'),JSON.stringify({source:'decentraland/social-service-ea',revision:SOCIAL_REVISION,path:'src/logic/community/ranking.ts',cases:cases.map((row,i)=>({name:row.case,metrics:Object.fromEntries(Object.entries(row).filter(([k])=>k!=='case')),score:scores.get(String(i))}))},null,2)+'\n');
 })().catch(error=>{console.error(error);process.exitCode=1;});

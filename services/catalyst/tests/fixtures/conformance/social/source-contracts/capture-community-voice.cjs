@@ -1,18 +1,27 @@
 // Run with Node26 and materialized pinned sources; all dependency responses are local mocks.
 // Usage: TS_NODE_COMPILER_OPTIONS='{"module":"CommonJS","moduleResolution":"node"}' node <script> <social-root> <gatekeeper-root> <output-json>
+const { sourceCapture, SOCIAL_REVISION, GATEKEEPER_REVISION } = require(
+  require("node:path").join(
+    require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
+    "tooling/social-capture-common.cjs",
+  ),
+);
+const capture = sourceCapture(process.argv[2], { companions: [{ root: process.argv[3], kind: "gatekeeper" }] });
 const fs = require("fs");
 const path = require("path");
-const root = process.argv[2];
+const root = capture.upstream;
 const gatekeeper = process.argv[3];
-require(root + "/node_modules/ts-node/register/transpile-only");
-process.env.NODE_PATH = root + "/node_modules";
 const Module = require("module");
+const previousNodePath = process.env.NODE_PATH;
+const originalLoad = Module._load;
+async function main() {
+try {
+process.env.NODE_PATH = root + "/node_modules";
 Module._initPaths();
 // No media operation runs in the inactive branch; this unused enum import is stubbed.
-const load = Module._load;
 Module._load = function (name, ...rest) {
   if (name === "@livekit/protocol") return { DisconnectReason: {} };
-  return load.call(this, name, ...rest);
+  return originalLoad.call(this, name, ...rest);
 };
 const logs = {
   getLogger: () => ({ info() {}, debug() {}, error() {}, warn() {} }),
@@ -46,7 +55,7 @@ const { getActiveCommunityVoiceChatsHandler } = require(
 const id = "00000000-0000-4000-8000-000000000001";
 const other = "00000000-0000-4000-8000-000000000002";
 const address = "0x0000000000000000000000000000000000000001";
-(async () => {
+
   const gatekeeperVoice = createVoiceComponent({
     logs,
     voiceDB: { isCommunityRoomActive: async () => false },
@@ -183,10 +192,10 @@ const address = "0x0000000000000000000000000000000000000001";
     JSON.stringify(
       {
         source: "decentraland/social-service-ea",
-        revision: "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+        revision: SOCIAL_REVISION,
         companion: {
           source: "decentraland/comms-gatekeeper",
-          revision: "be6a4b97a2189157884503485892ff46d0ac68da",
+          revision: GATEKEEPER_REVISION,
         },
         node: process.version,
         sources: {
@@ -209,7 +218,14 @@ const address = "0x0000000000000000000000000000000000000001";
       2,
     ) + "\n",
   );
-})().catch((error) => {
+} finally {
+  Module._load = originalLoad;
+  if (previousNodePath === undefined) delete process.env.NODE_PATH;
+  else process.env.NODE_PATH = previousNodePath;
+  Module._initPaths();
+}
+}
+main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });

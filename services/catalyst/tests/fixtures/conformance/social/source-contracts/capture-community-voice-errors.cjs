@@ -1,14 +1,22 @@
 // Node26. Actual Social handlers/components/adapter and pinned Gatekeeper voice logic.
 // Usage: node <script> <social-root> <gatekeeper-root> <output>; all dependencies local.
+const { sourceCapture, SOCIAL_REVISION, GATEKEEPER_REVISION, sha256 } = require(
+  require("node:path").join(
+    require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
+    "tooling/social-capture-common.cjs",
+  ),
+);
+const capture = sourceCapture(process.argv[2], { companions: [{ root: process.argv[3], kind: "gatekeeper" }] });
 const fs = require("fs"),
-  crypto = require("crypto"),
-  root = process.argv[2],
+  root = capture.upstream,
   gatekeeper = process.argv[3];
-require(root + "/node_modules/ts-node/register/transpile-only");
-process.env.NODE_PATH = root + "/node_modules";
 const Module = require("module");
-Module._initPaths();
+const previousNodePath = process.env.NODE_PATH;
 const originalLoad = Module._load;
+async function main() {
+try {
+process.env.NODE_PATH = root + "/node_modules";
+Module._initPaths();
 Module._load = function (name, ...args) {
   if (name === "@livekit/protocol") return { DisconnectReason: {} };
   return originalLoad.call(this, name, ...args);
@@ -58,7 +66,7 @@ const routes = [
   ["/v1/communities?onlyWithActiveVoiceChat=true", "getCommunitiesHandler"],
   ["/v2/communities?onlyWithActiveVoiceChat=true", "getCommunitiesV2Handler"],
 ];
-(async () => {
+
   const cases = [];
   for (const phase of [
     "companion-sql-error",
@@ -269,10 +277,7 @@ const routes = [
   const hash = (base, paths) =>
     paths.map((path) => ({
       path,
-      sha256: crypto
-        .createHash("sha256")
-        .update(fs.readFileSync(base + "/" + path))
-        .digest("hex"),
+      sha256: sha256(base, path),
     }));
   fs.writeFileSync(
     process.argv[4],
@@ -280,12 +285,12 @@ const routes = [
       {
         source: {
           repository: "https://github.com/decentraland/social-service-ea",
-          revision: "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+          revision: SOCIAL_REVISION,
           sources: hash(root, socialPaths),
         },
         companion: {
           repository: "https://github.com/decentraland/comms-gatekeeper",
-          revision: "be6a4b97a2189157884503485892ff46d0ac68da",
+          revision: GATEKEEPER_REVISION,
           sources: hash(gatekeeper, gatekeeperPaths),
         },
         runtime: process.version,
@@ -297,7 +302,14 @@ const routes = [
       2,
     ) + "\n",
   );
-})().catch((error) => {
+} finally {
+  Module._load = originalLoad;
+  if (previousNodePath === undefined) delete process.env.NODE_PATH;
+  else process.env.NODE_PATH = previousNodePath;
+  Module._initPaths();
+}
+}
+main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });

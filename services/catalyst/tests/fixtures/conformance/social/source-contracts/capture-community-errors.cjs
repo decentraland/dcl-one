@@ -1,9 +1,14 @@
 // Run with Node26 and a checkout at the pinned social-service revision.
 // Usage: node capture-community-errors.cjs <source-root> <output> <postgres-url>
+const { sourceCapture, SOCIAL_REVISION, sha256 } = require(
+  require("node:path").join(
+    require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
+    "tooling/social-capture-common.cjs",
+  ),
+);
+const capture = sourceCapture(process.argv[2]);
 const fs = require("fs"),
-  crypto = require("crypto"),
-  root = process.argv[2];
-require(root + "/node_modules/ts-node/register/transpile-only");
+  root = capture.upstream;
 const handlers = require(root + "/src/controllers/handlers/http");
 const routes = fs.readFileSync(
   root + "/src/controllers/routes/http.routes.ts",
@@ -205,13 +210,10 @@ const log = { info() {}, debug() {}, error() {}, warn() {} };
       {
         baseline: {
           repository: "decentraland/social-service-ea",
-          revision: "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+          revision: SOCIAL_REVISION,
           sources: [...sources].sort().map((path) => ({
             path,
-            sha256: crypto
-              .createHash("sha256")
-              .update(fs.readFileSync(root + "/" + path))
-              .digest("hex"),
+            sha256: sha256(root, path),
           })),
         },
         runtime: { node: process.version },
