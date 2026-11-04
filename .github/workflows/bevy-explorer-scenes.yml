@@ -145,8 +145,7 @@ jobs:
       # Scene video through the UUAV player: the end-to-end suite's `video` scene, played by the
       # standalone just built and driven through its console under xvfb
       # (apps/bevy-explorer/e2e/specs/visual/video.test.ts), in software decode (the hosted runner
-      # has no VA driver). The e2e workflow runs the same spec against the web app, whose video is
-      # the browser's; this is the native player's only run in CI.
+      # has no VA driver).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: inputs.suite != 'snapshots'
         with:
