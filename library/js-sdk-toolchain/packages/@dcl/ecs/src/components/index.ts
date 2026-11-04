@@ -1,0 +1,136 @@
+import { GrowOnlyValueSetComponentDefinition, LastWriteWinElementSetComponentDefinition } from '../engine/component'
+import { IEngine } from '../engine/types'
+import { AnimatorComponentDefinitionExtended, defineAnimatorComponent } from './extended/Animator'
+import { AudioSourceComponentDefinitionExtended, defineAudioSourceComponent } from './extended/AudioSource'
+import { AudioAnalysisComponentDefinitionExtended, defineAudioAnalysisComponent } from './extended/AudioAnalysis'
+import type { AudioAnalysisView } from './extended/AudioAnalysis'
+import { defineMaterialComponent, MaterialComponentDefinitionExtended } from './extended/Material'
+import { defineMeshColliderComponent, MeshColliderComponentDefinitionExtended } from './extended/MeshCollider'
+import { defineMeshRendererComponent, MeshRendererComponentDefinitionExtended } from './extended/MeshRenderer'
+import { defineTweenComponent, TweenComponentDefinitionExtended } from './extended/Tween'
+import { LwwComponentGetter, GSetComponentGetter } from './generated/index.gen'
+import defineNameComponent, { NameType } from './manual/Name'
+import defineSyncComponent, { ISyncComponentsType } from './manual/SyncComponents'
+import defineNetworkEntity, { INetowrkEntityType } from './manual/NetworkEntity'
+import defineNetworkParent, { INetowrkParentType } from './manual/NetworkParent'
+import { defineTransformComponent, TransformComponentExtended } from './manual/Transform'
+import { AudioStreamComponentDefinitionExtended, defineAudioStreamComponent } from './extended/AudioStream'
+import { MediaState } from './generated/pb/decentraland/sdk/components/common/media_state.gen'
+import { defineVirtualCameraComponent, VirtualCameraComponentDefinitionExtended } from './extended/VirtualCamera'
+import { defineInputModifierComponent, InputModifierComponentDefinitionExtended } from './extended/InputModifier'
+import { defineLightSourceComponent, LightSourceComponentDefinitionExtended } from './extended/LightSource'
+import { defineTriggerAreaComponent, TriggerAreaComponentDefinitionExtended } from './extended/TriggerArea'
+import { defineParticleSystemComponent, ParticleSystemComponentDefinitionExtended } from './extended/ParticleSystem'
+import {
+  defineTouchScreenControlsComponent,
+  TouchScreenControlsComponentDefinitionExtended
+} from './extended/TouchScreenControls'
+import defineTagsComponent, { TagsComponentDefinitionExtended } from './manual/Tags'
+
+export * from './generated/index.gen'
+
+export type {
+  GrowOnlyValueSetComponentDefinition,
+  LastWriteWinElementSetComponentDefinition,
+  LwwComponentGetter,
+  GSetComponentGetter
+}
+
+/* @__PURE__ */
+export const Transform: LwwComponentGetter<TransformComponentExtended> = (engine) => defineTransformComponent(engine)
+
+/* @__PURE__ */
+export const Material: LwwComponentGetter<MaterialComponentDefinitionExtended> = (engine) =>
+  defineMaterialComponent(engine)
+
+/* @__PURE__ */
+export const Animator: LwwComponentGetter<AnimatorComponentDefinitionExtended> = (engine) =>
+  defineAnimatorComponent(engine)
+
+/* @__PURE__ */
+export const AudioSource: LwwComponentGetter<AudioSourceComponentDefinitionExtended> = (engine) =>
+  defineAudioSourceComponent(engine)
+
+/* @__PURE__ */
+export const AudioAnalysis: LwwComponentGetter<AudioAnalysisComponentDefinitionExtended> = (engine) =>
+  defineAudioAnalysisComponent(engine)
+
+/* @__PURE__ */
+export const AudioStream: (
+  engine: Pick<IEngine, 'defineComponentFromSchema' | 'defineValueSetComponentFromSchema'>
+) => AudioStreamComponentDefinitionExtended = (engine) => defineAudioStreamComponent(engine)
+
+/* @__PURE__ */
+export const MeshRenderer: LwwComponentGetter<MeshRendererComponentDefinitionExtended> = (engine) =>
+  defineMeshRendererComponent(engine)
+
+/* @__PURE__ */
+export const MeshCollider: LwwComponentGetter<MeshColliderComponentDefinitionExtended> = (engine) =>
+  defineMeshColliderComponent(engine)
+
+/* @__PURE__ */
+export const Tween: LwwComponentGetter<TweenComponentDefinitionExtended> = (engine) => defineTweenComponent(engine)
+
+/* @__PURE__ */
+export const VirtualCamera: LwwComponentGetter<VirtualCameraComponentDefinitionExtended> = (engine) =>
+  defineVirtualCameraComponent(engine)
+
+/* @__PURE__*/
+export const InputModifier: LwwComponentGetter<InputModifierComponentDefinitionExtended> = (engine) =>
+  defineInputModifierComponent(engine)
+
+/* @__PURE__ */
+export const LightSource: LwwComponentGetter<LightSourceComponentDefinitionExtended> = (engine) =>
+  defineLightSourceComponent(engine)
+
+/* @__PURE__ */
+export const TriggerArea: LwwComponentGetter<TriggerAreaComponentDefinitionExtended> = (engine) =>
+  defineTriggerAreaComponent(engine)
+
+/* @__PURE__ */
+export const ParticleSystem: LwwComponentGetter<ParticleSystemComponentDefinitionExtended> = (engine) =>
+  defineParticleSystemComponent(engine)
+
+/* @__PURE__ */
+export const TouchScreenControls: LwwComponentGetter<TouchScreenControlsComponentDefinitionExtended> = (engine) =>
+  defineTouchScreenControlsComponent(engine)
+
+/**
+ * @alpha
+ */
+/* @__PURE__ */
+export const Name: (engine: Pick<IEngine, 'defineComponent'>) => LastWriteWinElementSetComponentDefinition<NameType> = (
+  engine
+) => defineNameComponent(engine)
+
+/* @__PURE__ */
+export const Tags: (engine: Pick<IEngine, 'defineComponent'>) => TagsComponentDefinitionExtended = (engine) =>
+  defineTagsComponent(engine)
+
+/**
+ * @alpha
+ */
+/* @__PURE__ */
+export const SyncComponents: (
+  engine: Pick<IEngine, 'defineComponent'>
+) => LastWriteWinElementSetComponentDefinition<ISyncComponentsType> = (engine) => defineSyncComponent(engine)
+
+/**
+ * @alpha
+ */
+/* @__PURE__ */
+export const NetworkEntity: (
+  engine: Pick<IEngine, 'defineComponent'>
+) => LastWriteWinElementSetComponentDefinition<INetowrkEntityType> = (engine) => defineNetworkEntity(engine)
+
+/**
+ * @alpha
+ */
+/* @__PURE__ */
+export const NetworkParent: (
+  engine: Pick<IEngine, 'defineComponent'>
+) => LastWriteWinElementSetComponentDefinition<INetowrkParentType> = (engine) => defineNetworkParent(engine)
+
+export { MediaState }
+
+export type { AudioAnalysisView }
