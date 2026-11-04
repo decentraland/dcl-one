@@ -114,7 +114,7 @@ impl MirrorSource {
 /// EVENTS_MIRROR_UPSTREAM/EVENTS_UPSTREAM_URL/EVENTS_MIRROR_INTERVAL_SECS,
 /// CATALYRST_EVENTS_ADMIN_TOKEN, CONTENT_PUBLIC_URL and HTTP_BASE_URL (the
 /// asset rewrite domain, derived from PUBLIC_URL here).
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Settings {
     /// The node's content base URL; thumbnails from it pass the image filter.
     pub content_public_url: String,
@@ -123,6 +123,8 @@ pub struct Settings {
     pub asset_rewrite_domain: Option<String>,
     /// Bearer for the events moderation routes; unset refuses them.
     pub events_admin_token: Option<String>,
+    /// Optional moderation webhook, dispatched only with operator writes enabled.
+    pub events_slack_webhook: Option<String>,
     pub places_upstream: Option<MirrorSource>,
     pub places_interval: Duration,
     pub worlds_upstream: Option<MirrorSource>,
@@ -155,6 +157,20 @@ pub struct Settings {
     pub realm_name: String,
 }
 
+impl std::fmt::Debug for Settings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Settings")
+            .field("content_public_url", &self.content_public_url)
+            .field("user_writes_enabled", &self.user_writes_enabled)
+            .field("operator_writes_enabled", &self.operator_writes_enabled)
+            .field(
+                "events_slack_webhook",
+                &self.events_slack_webhook.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
 impl Settings {
     /// The old `asset_rewrite_domain` rule: the public host unless it is
     /// decentraland.org or a subdomain. Only a domain can carry the
@@ -180,6 +196,7 @@ impl Settings {
             content_public_url: "http://localhost/content/".to_string(),
             asset_rewrite_domain: None,
             events_admin_token: None,
+            events_slack_webhook: None,
             places_upstream: None,
             places_interval: Duration::from_secs(3600),
             worlds_upstream: None,
@@ -323,6 +340,15 @@ impl ExploreState {
     /// away (jittered), then every interval, doubling the wait after a failed
     /// pass up to an hour.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs, client: crate::http::Outbound) {
+        if self.settings.operator_writes_enabled {
+            events::hooks::spawn(
+                self.pool.clone(),
+                client.clone(),
+                self.settings.events_slack_webhook.clone(),
+                self.settings.events_base_url.clone(),
+                jobs,
+            );
+        }
         let cfg = |interval: Duration| {
             PeriodicCfg::every(interval)
                 .with_jitter(Duration::from_secs(30))
@@ -762,6 +788,17 @@ pub fn router(state: SharedState) -> Router {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn settings_debug_redacts_the_optional_webhook_and_other_credentials() {
+        let mut settings = super::Settings::for_tests();
+        settings.events_slack_webhook = Some("https://example.org/secret-webhook".into());
+        settings.events_admin_token = Some("secret-admin".into());
+        let debug = format!("{settings:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("secret-webhook"));
+        assert!(!debug.contains("secret-admin"));
+    }
+
     #[test]
     fn event_assets_use_the_node_mount_independently_of_the_website() {
         assert_eq!(

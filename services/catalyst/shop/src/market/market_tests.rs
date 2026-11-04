@@ -812,6 +812,32 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         (Some(3), Some("primary"), Some("male"))
     );
     assert!(listing["coupon"].is_null() && listing["compareAtCredits"].is_null());
+    // `creator` takes a comma-separated list, any of which matches, in any case (the Shop's creators filter).
+    let stranger = "0x00000000000000000000000000000000000000aa";
+    for feed in ["/v3/catalog/shop?", "/v3/catalog/unified?groupBy=item&"] {
+        let (_, all) = get(app(), &format!("{feed}contractAddress={c1}")).await;
+        let listed = all["total"].as_i64().unwrap();
+        assert!(listed > 0, "{feed}: {all}");
+        for (creators, want) in [
+            (
+                format!("{stranger},0x{}", CREATOR[2..].to_uppercase()),
+                listed,
+            ),
+            (stranger.to_string(), 0),
+        ] {
+            let (status, body) = get(
+                app(),
+                &format!("{feed}contractAddress={c1}&creator={creators}"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(
+                body["total"].as_i64(),
+                Some(want),
+                "{feed}creator={creators}: {body}"
+            );
+        }
+    }
     // The creator's live coupon discounts the listing, but only one signed
     // against the manager paired with the marketplace the listing settles on
     // (the V3 trade here): the bigger V2-manager coupon never applies.

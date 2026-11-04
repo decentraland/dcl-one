@@ -1,4 +1,5 @@
 
+import { parseEvmAddress } from "../../model/address";
 import { fetchCatalogItems, fetchShopItems, type EmoteAttributeFilters } from "../api";
 import { DEALS_SORTS, RELEVANCE_SORT, SORTS, type FilterChip } from "../components/FilterBar";
 import { STATUSES, type FilterStatus } from "../components/Filters";
@@ -34,6 +35,8 @@ export function itemsFilterDefaults(q: string, dealsRequested: boolean) {
     priceMax: "",
     smart: false,
     deals: false,
+    creators: [] as string[],
+    collection: "",
     ...EMOTE_FILTER_DEFAULTS,
     sort: defaultSortFor(!!q, dealsRequested),
   };
@@ -96,6 +99,10 @@ export function itemsGrid(filterState: ItemsFilterState, q: string, { contracts,
   const sortOptions = [...(q ? [RELEVANCE_SORT] : []), ...(deals ? DEALS_SORTS : SORTS)];
   const sortOption = sortOptions.find((s) => s.key === sort) ?? sortOptions[0]!;
   const emote = emoteAttributes(category, filterState);
+  // The creators and collection pickers; a page already scoped to its contracts (an event) offers neither.
+  const creators = contracts ? [] : [...new Set(filterState.creators.map(parseEvmAddress).filter((a): a is NonNullable<typeof a> => !!a))];
+  const collection = contracts ? null : parseEvmAddress(filterState.collection);
+  const selectedContracts = contracts ?? (collection ? [collection] : undefined);
 
   const unifiedFilters = {
     category,
@@ -110,7 +117,8 @@ export function itemsGrid(filterState: ItemsFilterState, q: string, { contracts,
     onSale: true,
     discounted: deals || undefined,
     listingType: (flags.secondarySales ? listingType : "primary") as "primary" | "secondary" | undefined,
-    contractAddresses: contracts?.length ? contracts : undefined,
+    contractAddresses: selectedContracts?.length ? selectedContracts : undefined,
+    creators: creators.length ? creators : undefined,
     ...emote,
   };
   const catalogFilters = {
@@ -125,11 +133,12 @@ export function itemsGrid(filterState: ItemsFilterState, q: string, { contracts,
     // Nothing not for sale has a price, so the range applies to the other statuses only.
     minPriceCredits: status === "not_for_sale" ? undefined : min,
     maxPriceCredits: status === "not_for_sale" ? undefined : max,
-    contractAddresses: contracts?.length ? contracts : undefined,
+    contractAddresses: selectedContracts?.length ? selectedContracts : undefined,
+    creators: creators.length ? creators : undefined,
     ...emote,
   };
   const key = category === "names" || selectsNothing ? null : isUnified ? ["shop-items", unifiedFilters] : ["catalog-items", catalogFilters];
   const fetchPage = (skip: number, opts: Parameters<typeof fetchShopItems>[1]) =>
     isUnified ? fetchShopItems({ ...unifiedFilters, first: ITEMS_PAGE_SIZE, skip }, opts) : fetchCatalogItems({ ...catalogFilters, first: ITEMS_PAGE_SIZE, skip }, opts);
-  return { defaultStatus, deals, category, status, isUnified, min, max, bodyShape, listingType, wearableGenders, emote, sortOptions, sortOption, key, fetchPage };
+  return { defaultStatus, deals, category, status, isUnified, min, max, bodyShape, listingType, wearableGenders, emote, creators, collection, sortOptions, sortOption, key, fetchPage };
 }

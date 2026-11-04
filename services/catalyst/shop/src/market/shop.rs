@@ -197,7 +197,8 @@ pub struct ShopCatalogFilters {
     pub category: Option<String>,
     pub contract_address: Option<String>,
     pub item_id: Option<String>,
-    pub creator: Option<String>,
+    /// `creator`: one or more comma-separated creator addresses, any of which matches.
+    pub creator: Vec<String>,
     pub rarities: Vec<String>,
     pub wearable_categories: Vec<String>,
     pub is_smart: bool,
@@ -225,7 +226,7 @@ impl Default for ShopCatalogFilters {
             category: None,
             contract_address: None,
             item_id: None,
-            creator: None,
+            creator: Vec::new(),
             rarities: Vec::new(),
             wearable_categories: Vec::new(),
             is_smart: false,
@@ -420,7 +421,7 @@ pub fn parse_shop_filters(pairs: &[(String, String)]) -> ShopCatalogFilters {
         category: p.get_string("category", None),
         contract_address: p.get_string("contractAddress", None),
         item_id: p.get_string("itemId", None),
-        creator: p.get_string("creator", None),
+        creator: csv(p.get_string("creator", None)),
         rarities: csv(p.get_string("rarity", None)),
         wearable_categories: csv(p.get_string("wearableCategory", None)),
         is_smart: p.get_boolean("isSmart"),
@@ -1053,9 +1054,14 @@ fn append_unified_filters(
         let p = b.bind_string(iid.clone());
         wheres.push(format!("mv.item_id = {p}"));
     }
-    if let Some(creator) = f.creator.as_deref().filter(|c| !c.is_empty()) {
-        let p = b.bind_string(creator.to_lowercase());
-        wheres.push(format!("lower(mv.creator) = {p}"));
+    if !f.creator.is_empty() {
+        let p = b.bind_strings(
+            &f.creator
+                .iter()
+                .map(|c| c.to_lowercase())
+                .collect::<Vec<_>>(),
+        );
+        wheres.push(format!("lower(mv.creator) = ANY({p})"));
     }
     match f.category.as_deref() {
         Some("emote") => wheres.push("mv.item_type ILIKE 'emote%'".to_string()),

@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
-import { useNavigate } from "react-router";
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router";
 import LdSubmitHangoutView from "@ui/landings/pages/LdSubmitHangoutView";
 
 import { fetchEventCategories, type EventCategory } from "@/data/lib/catalyst/places/events";
 import { buildHangoutSubmit, deleteHangout, emptyDraft, eventToDraft, loadEditableHangout, uploadHangoutPoster, type EditableHangout } from "@/data/lib/catalyst/landings/submit-hangout";
+import { loadHangoutOptions, type HangoutOptions } from "@/data/lib/catalyst/landings/hangout-options";
 import { useAuth } from "@/data/lib/auth/context";
 import { getIdentity } from "@/data/lib/auth/session";
 import { SitesChromeMaybe } from "@ui/web/frames/SitesChrome";
@@ -78,6 +79,22 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
   const [loaded, setLoaded] = useState<{ account: string; id: string; event?: EditableHangout; error?: string } | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [optionsRead, setOptionsRead] = useState<{ account: string; options?: HangoutOptions; error?: string } | null>(null);
+  const [optionsAttempt, setOptionsAttempt] = useState(0);
+  useEffect(() => {
+    if (!auth.identity) return;
+    const controller = new AbortController();
+    const account = auth.identity.signer;
+    loadHangoutOptions(auth.identity, controller.signal).then(
+      (options) => { if (!controller.signal.aborted) setOptionsRead({ account, options }); },
+      (error: unknown) => { if (!controller.signal.aborted) setOptionsRead({ account, error: error instanceof Error ? error.message : "Could not load authoring options." }); },
+    );
+    return () => controller.abort();
+  }, [auth.identity, optionsAttempt]);
+  const optionsResult = optionsRead?.account === auth.address ? optionsRead : null;
+  const options = optionsResult?.options ?? null;
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
   useEffect(() => {
     if (d.mode !== "edit" || !d.eventId || !auth.identity) return;
     const controller = new AbortController();
@@ -88,15 +105,23 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
       (error: unknown) => { if (!controller.signal.aborted) setLoaded({ account, id, error: error instanceof Error ? error.message : "Could not load this hangout." }); },
     );
     return () => controller.abort();
-  }, [d.mode, d.eventId, auth.identity]);
+  }, [d.mode, d.eventId, auth.identity, optionsAttempt]);
   const current = loaded?.account === auth.address && loaded?.id === d.eventId ? loaded : null;
   const original = current?.event;
-  const waiting = d.mode === "edit" && Boolean(d.eventId) && auth.isConnected && !current;
-  const error = d.mode === "edit" && !d.eventId ? "Choose a hangout to edit using its event link." : current?.error;
+  const owner = Boolean(original && original.user?.toLowerCase() === auth.address?.toLowerCase());
+  const canEditAny = options?.profile?.permissions.includes("edit_any_event") ?? false;
+  const accessPending = Boolean(original) && !owner && !optionsResult;
+  const canEdit = d.mode === "create" || Boolean(original && (owner || canEditAny));
+  const waiting = (d.mode === "edit" && Boolean(d.eventId) && auth.isConnected && !current) || accessPending;
+  const accessError = original && !owner && optionsResult
+    ? optionsResult.error || options?.profileError || (!canEditAny ? "You don't have permission to edit this hangout." : null)
+    : null;
+  const error = d.mode === "edit" && !d.eventId ? "Choose a hangout to edit using its event link." : current?.error || accessError;
+  const canChangeCommunity = d.mode === "create" || owner;
 
   async function removeHangout() {
     const identity = getIdentity();
-    if (!identity || !original || !window.confirm(`Delete ${original.name}?`)) return;
+    if (!identity || !original || !canEdit || identity.signer.toLowerCase() !== auth.address?.toLowerCase() || !window.confirm(`Delete ${original.name}?`)) return;
     setDeleting(true);
     setDeleteError(null);
     try {
@@ -112,7 +137,7 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
   return (
     <SitesChromeMaybe active="whatson">
     <LdSubmitHangoutView>
-      {waiting ? <p role="status">Loading your hangout…</p> : error ? <p role="alert">{error}</p> : <SubmitHangout
+      {waiting ? <p role="status">Loading your hangout…</p> : error ? <div><p role="alert">{error}</p><Link to="/whats-on?tab=my">Back to My Hangouts</Link><button type="button" onClick={() => { setLoaded(null); setOptionsRead(null); setOptionsAttempt((previous) => previous + 1); }}>Check access again</button></div> : <SubmitHangout
         key={`${auth.address ?? "signed-out"}:${d.eventId ?? "new"}`}
         trackCtx={{
           sid: d.sid,
@@ -123,16 +148,20 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
         categoriesError={d.categoriesError}
         mode={d.mode}
         draft={original ? eventToDraft(original) : { ...emptyDraft(), communityId: d.communityId }}
-        submit={buildHangoutSubmit(getIdentity, original)}
+        submit={buildHangoutSubmit(getIdentity, original, () => optionsRef.current?.profile?.permissions.includes("edit_any_event") ?? false)}
         signedIn={auth.isConnected}
         onSignIn={openSignIn}
+        options={options}
+        canEditAny={canEditAny}
+        privateFieldsEditable={d.mode === "create" || owner}
+        canChangeCommunity={canChangeCommunity}
         upload={(file, vertical, signal) => {
           const identity = getIdentity();
           if (!identity) return Promise.reject(new Error("Sign in to upload an image."));
           return uploadHangoutPoster(identity, file, vertical, signal);
         }}
       />}
-      {original && <button type="button" disabled={deleting} onClick={() => { void removeHangout(); }}>{deleting ? "Deleting…" : "Delete hangout"}</button>}
+      {original && canEdit && !waiting && !error && <button type="button" disabled={deleting} onClick={() => { void removeHangout(); }}>{deleting ? "Deleting…" : "Delete hangout"}</button>}
       {deleteError && <p role="alert">{deleteError}</p>}
     </LdSubmitHangoutView>
     </SitesChromeMaybe>

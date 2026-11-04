@@ -41,7 +41,8 @@ permissions:
   actions: read
 concurrency:
   group: development-${{ github.ref }}
-  cancel-in-progress: true
+  # Main runs finish: they are the macOS check for source that PRs test on Linux only.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   changes:
     name: Changes
