@@ -390,6 +390,8 @@ export interface FriendsMessage {
   /** Blocked addresses (names/avatars not resolved here). */
   blocked: string[]
   blockedUsers?: BlockedUser[]
+  /** Lowercased addresses of users who have blocked the local user (absent from older bridges). */
+  blockedBy?: string[]
   /** Signed in but the social service hasn't initialised yet (vs a guest, who never gets it). */
   loading?: boolean
 }

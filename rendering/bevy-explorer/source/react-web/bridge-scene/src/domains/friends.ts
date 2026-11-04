@@ -91,6 +91,9 @@ export function registerFriends(ctx: Ctx): void {
   let blockedStale = true
   let blocked: string[] = []
   let blockedUsers: BlockedUserData[] = []
+  // Who has blocked the local user. The block update stream fires for both directions, so it's
+  // refreshed alongside the blocked list.
+  let blockedBy: string[] = []
   ctx.push((dt) => {
     elapsed += dt
     acc += dt
@@ -111,7 +114,7 @@ export function registerFriends(ctx: Ctx): void {
         availableSince = null
         blockedStale = true
         const me = getPlayer()
-        push(false, [], [], [], [], [], me != null && !me.isGuest)
+        push(false, [], [], [], [], [], [], me != null && !me.isGuest)
         return
       }
       const [online, received, sent] = await Promise.all([
@@ -129,8 +132,15 @@ export function registerFriends(ctx: Ctx): void {
         } catch {
           blockedStale = true
         }
+        // Best effort: without it the passport just can't tell that this user blocked you.
+        try {
+          const status = await social.getBlockingStatus?.()
+          blockedBy = (status?.blockedByUsers ?? []).map((a) => a.toLowerCase())
+        } catch (e) {
+          console.error('[friends] blocking status failed', e)
+        }
       }
-      push(true, online, received, sent, blocked, blockedUsers, false)
+      push(true, online, received, sent, blocked, blockedUsers, blockedBy, false)
     } catch (e) {
       console.error('[friends] poll failed', e)
     }
@@ -144,6 +154,7 @@ export function registerFriends(ctx: Ctx): void {
     sent: FriendRequestData[],
     blocked: string[],
     blockedUsers: BlockedUserData[],
+    blockedBy: string[],
     loading: boolean
   ): void {
     const friends = online.map(toFriend)
@@ -157,9 +168,9 @@ export function registerFriends(ctx: Ctx): void {
     }
     const recv = received.map(toRequest)
     const snt = sent.map(toRequest)
-    const key = `${String(available)}|${String(loading)}|${blockedUsers.map((b) => b.address + b.name + b.profilePictureUrl).join(',')}|${friends.map((f) => `${f.address}${f.status}${f.picture ?? ''}`).join(',')}|${recv.map((r) => r.id).join(',')}|${snt.map((r) => r.id).join(',')}|${blocked.join(',')}`
+    const key = `${String(available)}|${String(loading)}|${blockedUsers.map((b) => b.address + b.name + b.profilePictureUrl).join(',')}|${friends.map((f) => `${f.address}${f.status}${f.picture ?? ''}`).join(',')}|${recv.map((r) => r.id).join(',')}|${snt.map((r) => r.id).join(',')}|${blocked.join(',')}|${blockedBy.join(',')}`
     if (key === lastKey) return
     lastKey = key
-    ctx.send({ kind: 'friends', available, loading, friends, received: recv, sent: snt, blocked, blockedUsers: blockedUsers.map(toBlocked) })
+    ctx.send({ kind: 'friends', available, loading, friends, received: recv, sent: snt, blocked, blockedUsers: blockedUsers.map(toBlocked), blockedBy })
   }
 }

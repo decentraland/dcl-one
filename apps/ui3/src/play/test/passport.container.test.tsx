@@ -62,6 +62,36 @@ describe('Passport container', () => {
   })
 })
 
+describe('Passport block & report', () => {
+  it('blocks after the confirmation, through the friends action', async () => {
+    receiveProfile('0xabc', RICH)
+    const s = renderWithSession(<PopupHost />)
+    act(() => {
+      openPassport('0xabc')
+    })
+    await userEvent.click(screen.getByRole('button', { name: 'More options' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Block' }))
+    await userEvent.click(screen.getByRole('button', { name: 'BLOCK' }))
+    expect(s.friends.act).toHaveBeenCalledWith('block', '0xabc')
+  })
+
+  it('reads blocked-by from the session: no CHAT for a user who blocked you', () => {
+    receiveProfile('0xabc', RICH)
+    renderWithSession(<Passport userId="0xabc" onClose={vi.fn()} />, (s) => {
+      s.friends.blockedBy = ['0xabc']
+    })
+    expect(screen.queryByRole('button', { name: 'CHAT' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'ADD FRIEND' })).toBeNull()
+  })
+
+  it('shows CHAT and ADD FRIEND for anyone else', () => {
+    receiveProfile('0xabc', RICH)
+    renderWithSession(<Passport userId="0xabc" onClose={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'CHAT' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'ADD FRIEND' })).toBeTruthy()
+  })
+})
+
 // The passport is the HUD's one popup that can hold unsaved work, so it is where the popup layer's
 // close guard is exercised: a stray backdrop click is refused outright, while the deliberate paths
 // (its ×, and the engine-resolved Cancel action) ask the same question.

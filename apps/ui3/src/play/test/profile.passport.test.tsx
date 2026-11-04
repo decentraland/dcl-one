@@ -55,6 +55,46 @@ describe('profile passport', () => {
     expect(fn).toHaveBeenCalledWith(profile.address)
   })
 
+  it('offers Block and Report in the options menu, and calls each with the address', async () => {
+    const onBlock = vi.fn()
+    const onReport = vi.fn()
+    render(<ProfilePassport profile={profile} onBlock={onBlock} onReport={onReport} onClose={vi.fn()} />)
+    expect(screen.queryByRole('menu')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'More options' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Block' }))
+    expect(onBlock).toHaveBeenCalledWith(profile.address)
+    expect(screen.queryByRole('menu')).toBeNull() // picking an item closes the menu
+    await userEvent.click(screen.getByRole('button', { name: 'More options' }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Report' }))
+    expect(onReport).toHaveBeenCalledWith(profile.address)
+  })
+
+  it('leaves Block out of the menu for a user you already blocked', async () => {
+    render(<ProfilePassport profile={profile} relationship="blocked" onBlock={vi.fn()} onReport={vi.fn()} onClose={vi.fn()} />)
+    await userEvent.click(screen.getByRole('button', { name: 'More options' }))
+    expect(screen.queryByRole('menuitem', { name: 'Block' })).toBeNull()
+    expect(screen.getByRole('menuitem', { name: 'Report' })).toBeInTheDocument()
+  })
+
+  it('has no options menu on your own passport', () => {
+    render(<ProfilePassport profile={profile} isSelf onBlock={vi.fn()} onReport={vi.fn()} onClose={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: 'More options' })).toBeNull()
+  })
+
+  it('offers no CHAT or friendship button when the user blocked you, but keeps Block and Report', async () => {
+    render(<ProfilePassport profile={profile} blockedBy onMessage={vi.fn()} onAddFriend={vi.fn()} onBlock={vi.fn()} onReport={vi.fn()} onClose={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: 'CHAT' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /FRIEND/ })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'More options' }))
+    expect(screen.getByRole('menuitem', { name: 'Block' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Report' })).toBeInTheDocument()
+  })
+
+  it('still offers UNBLOCK when you blocked a user who also blocked you', () => {
+    render(<ProfilePassport profile={profile} relationship="blocked" blockedBy onUnblock={vi.fn()} onClose={vi.fn()} />)
+    expect(screen.getByRole('button', { name: 'UNBLOCK' })).toBeInTheDocument()
+  })
+
   it('hides the friend action on your own passport (isSelf)', () => {
     render(<ProfilePassport profile={profile} isSelf onClose={vi.fn()} />)
     expect(screen.queryByRole('button', { name: /FRIEND/i })).toBeNull()
