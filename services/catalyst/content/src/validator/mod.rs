@@ -69,6 +69,7 @@ use crate::storage::{Storage, StorageError};
 
 pub use chain::DECENTRALAND_ADDRESS;
 pub use error::{ValidationError, ValidationResponse, ValidatorError};
+pub use metadata_schema::validate_scene_metadata;
 pub use rules::{ContentValidator, ExternalCalls};
 pub use spring_bones::validate_spring_bones_metadata;
 pub use synced::{SyncedContent, validate_synced};

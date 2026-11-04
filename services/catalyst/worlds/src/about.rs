@@ -752,23 +752,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_recently_blocked_world_stays_open_during_the_grace_period() {
-        let cfg = super::super::Settings::for_tests("https://worlds.example.org");
-        let about = local_about(
-            &cfg,
-            Some(WorldRecord {
-                name: "mine.dcl.eth".into(),
-                blocked_since: Some(chrono::Utc::now().naive_utc() - chrono::TimeDelta::hours(47)),
-                spawn_coordinates: None,
-                skybox_time: None,
-                single_player: false,
-                realm_name_override: None,
-            }),
-        );
-        assert!(about.healthy);
-    }
-
     #[tokio::test]
     async fn a_deny_listed_world_is_404_before_any_read() {
         use tower::ServiceExt;

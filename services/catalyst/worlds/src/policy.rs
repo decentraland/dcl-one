@@ -77,6 +77,18 @@ pub struct WorldRow {
 
 pub const MAX_WORLD_SIZE_BYTES: i64 = 300 * 1024 * 1024;
 pub const DEFAULT_PERSONAL_WORLD_MAX_SIZE_BYTES: i64 = 50 * 1024 * 1024;
+/// `MAX_PARCELS`' default, as the old service's.
+pub const DEFAULT_MAX_PARCELS: u32 = 4;
+
+/// The limits a publish to one world is held to: its
+/// `worlds.world_limit_overrides` row over the node defaults.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorldLimits {
+    pub max_parcels: u32,
+    pub max_size_bytes: i64,
+    /// The size came from an override row (no owner allowance applies).
+    pub size_overridden: bool,
+}
 
 pub const NOT_OWNER_MSG: &str = "signer does not own this world";
 pub const NOT_OWNER_OR_ADMIN_MSG: &str = "signer is not an owner or admin of this scene";
@@ -275,6 +287,8 @@ pub struct Policy {
     /// legs once its fold is published, the marketplace reader's owner leg
     /// before that; `None` keeps the two readers above as the only sources.
     land_authz: Option<Arc<LandAuthzState>>,
+    /// `MAX_PARCELS`: a scene's parcel cap where no override row says otherwise.
+    max_parcels: u32,
 }
 
 impl Policy {
@@ -303,7 +317,13 @@ impl Policy {
             marketplace,
             land_operators: None,
             land_authz: None,
+            max_parcels: DEFAULT_MAX_PARCELS,
         }
+    }
+
+    pub fn with_max_parcels(mut self, max_parcels: u32) -> Self {
+        self.max_parcels = max_parcels;
+        self
     }
 
     pub fn with_ban_status(mut self, bans: Arc<dyn BanStatus>) -> Self {
@@ -379,6 +399,47 @@ impl Policy {
     pub fn world_size_cap(&self, world: &WorldName) -> i64 {
         self.personal_worlds
             .size_cap_for(world, MAX_WORLD_SIZE_BYTES)
+    }
+
+    /// The parcel and size caps of a publish to `world`, the ones
+    /// `GET /world/{name}/limits` reports. An override's size replaces the
+    /// personal-world cap too: the operator set it for that world.
+    pub async fn world_limits(&self, world: &WorldName) -> Result<WorldLimits, sqlx::Error> {
+        let row: Option<(Option<i32>, Option<i64>)> = sqlx::query_as(
+            "SELECT max_parcels, max_size_bytes FROM worlds.world_limit_overrides WHERE world_name = $1",
+        )
+        .bind(world.key())
+        .fetch_optional(&self.pool)
+        .await?;
+        let (parcels, size) = row.unwrap_or_default();
+        Ok(WorldLimits {
+            max_parcels: parcels.map_or(self.max_parcels, |n| n as u32),
+            max_size_bytes: size.unwrap_or_else(|| self.world_size_cap(world)),
+            size_overridden: size.is_some(),
+        })
+    }
+
+    /// The wallet `world`'s limits are charged to: the personal address,
+    /// else the name authority's holder (the stored owner without a
+    /// reader). `Ok(None)`: nobody holds the name.
+    pub async fn limits_owner(
+        &self,
+        world: &WorldName,
+    ) -> Result<Option<Address>, AuthorityNotEstablished> {
+        if let Some(owner) = self.personal_worlds.owner_of(world) {
+            return Ok(Some(owner));
+        }
+        if let Some(market) = self.names_reader() {
+            let holder = crate::chain_index::graph::name_owner(market, world.label())
+                .await
+                .map_err(|e| reader_unavailable("marketplace names reader", &e))?;
+            return Ok(holder.and_then(|h| Address::parse(&h).ok()));
+        }
+        let row = self
+            .world(world)
+            .await
+            .map_err(|e| store_unavailable("worlds.worlds", &e))?;
+        Ok(row.and_then(|r| r.owner))
     }
 
     pub async fn world(&self, world: &WorldName) -> Result<Option<WorldRow>, sqlx::Error> {
@@ -1423,7 +1484,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn world_admission_applies_the_block_grace() {
+    async fn world_admission_refuses_a_blocked_world() {
         use crate::comms::interfaces::AccessPolicy;
         let Some(p) = scratch().await else {
             return;
@@ -1446,13 +1507,6 @@ mod tests {
             .unwrap();
         assert_eq!(
             p.world_admission(&world, now()).await.unwrap(),
-            WorldAdmission::Open(AccessType::AllowList),
-            "inside the grace period"
-        );
-        assert_eq!(
-            p.world_admission(&world, now() + chrono::TimeDelta::days(2))
-                .await
-                .unwrap(),
             WorldAdmission::Blocked
         );
     }

@@ -547,6 +547,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/world/{world_name}/limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_world_limits"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/world/{world_name}/manifest": {
         parameters: {
             query?: never;
@@ -854,9 +870,6 @@ export interface components {
         ContentStatus: {
             commitHash: string;
             worldsCount: components["schemas"]["WorldsCount"];
-        };
-        DeployErrors: {
-            errors: string[];
         };
         DeployRejection: {
             error: string;
@@ -1170,6 +1183,12 @@ export interface components {
         WorldIndexEntry: {
             name: string;
             scenes: components["schemas"]["IndexSceneSummary"][];
+        };
+        WorldLimitsResponse: {
+            /** @description A decimal string, as the old service's bigint. */
+            maxSceneSizeInBytes: string;
+            /** Format: int32 */
+            maxParcels: number;
         };
         /**
          * @description One world's instantaneous occupancy.
@@ -2055,7 +2074,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeployErrors"];
+                    "application/json": components["schemas"]["DeployRejection"];
                 };
             };
             401: {
@@ -2063,7 +2082,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeployErrors"];
+                    "application/json": components["schemas"]["DeployRejection"];
                 };
             };
             403: {
@@ -2071,10 +2090,18 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeployErrors"];
+                    "application/json": components["schemas"]["DeployRejection"];
                 };
             };
             408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployRejection"];
+                };
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2087,7 +2114,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeployErrors"];
+                    "application/json": components["schemas"]["DeployRejection"];
                 };
             };
             500: {
@@ -2095,7 +2122,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeployErrors"];
+                    "application/json": components["schemas"]["DeployRejection"];
                 };
             };
             503: {
@@ -2668,6 +2695,61 @@ export interface operations {
                 };
             };
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_world_limits: {
+        parameters: {
+            query?: {
+                parcels?: string[];
+            };
+            header?: never;
+            path: {
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorldLimitsResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

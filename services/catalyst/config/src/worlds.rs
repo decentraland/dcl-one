@@ -110,6 +110,14 @@ pub struct WorldsConfig {
     )]
     pub worlds_personal_world_max_size_bytes: u64,
 
+    /// Parcels a world scene may span unless `worlds.world_limit_overrides` says otherwise.
+    #[arg(long, env = "MAX_PARCELS", default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..))]
+    pub max_parcels: u32,
+
+    /// Entries a deployed entity's `content` may list.
+    #[arg(long, env = "MAX_FILE_COUNT", default_value_t = 10_000, value_parser = clap::value_parser!(u32).range(1..))]
+    pub max_file_count: u32,
+
     /// Deploy payload bytes buffered at once across every upload (>= one 350 MiB deploy).
     #[arg(
         long,

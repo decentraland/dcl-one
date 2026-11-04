@@ -833,7 +833,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         worlds::policy::Policy::new(pool.clone(), personal_worlds, Some(market.index.clone()))
             .with_ban_status(ban_status.clone())
             .with_land_operators(land_operators)
-            .with_land_authz(Some(land.clone())),
+            .with_land_authz(Some(land.clone()))
+            .with_max_parcels(config.worlds.max_parcels),
     );
     // A world read-through holds each mirrored scene's signer to this policy and shares the
     // content read-through's download bound.
@@ -1591,6 +1592,8 @@ async fn worlds_states(
             .map(|s| {
                 s.with_global_scenes_urn(config.worlds_content.global_scenes_urn.as_deref())
                     .with_scene_eviction_ttl_ms(config.worlds.scene_eviction_ttl_ms)
+                    .with_public_url(&worlds::Settings::from_config(config).public_url)
+                    .with_max_file_count(config.worlds.max_file_count)
             })
             .context(
                 "MAX_IN_FLIGHT_UPLOAD_* / MAX_CONCURRENT_UPLOADS / *_TIMEOUT_MS configuration",

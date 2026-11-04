@@ -139,8 +139,8 @@ pub fn envelope(status: StatusCode, message: &str) -> Response {
     (status, Json(body)).into_response()
 }
 
-/// The `{error, message}` body of the shed and timeout answers (the deploy
-/// route's rejection shape, not the worlds envelope).
+/// The `{error, message}` body of every refused deploy, and of the shed and
+/// timeout answers (not the worlds envelope).
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "worlds/"))]
 pub struct DeployRejection {

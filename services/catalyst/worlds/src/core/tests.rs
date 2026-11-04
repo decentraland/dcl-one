@@ -227,11 +227,13 @@ async fn deployment_at(
 ) -> Deployment {
     let thumb_hash = hash_bytes_v1(thumb);
     let entity = json!({
+        "version": "v3",
         "type": "scene",
         "timestamp": timestamp,
         "pointers": pointers,
         "content": [{ "file": nav_thumb, "hash": thumb_hash }],
         "metadata": {
+            "main": "bin/index.js",
             "display": { "title": title, "navmapThumbnail": nav_thumb },
             "worldConfiguration": { "name": world.display() },
             "scene": { "base": base, "parcels": pointers }
@@ -319,6 +321,12 @@ async fn grant_parcels(pool: &PgPool, world: &WorldName, address: &Address, parc
             .await
             .unwrap();
     }
+}
+
+fn no_permission(world: &str) -> String {
+    format!(
+        "Deployment failed: Deployment failed: Your wallet has no permission to publish this scene because it does not have permission to deploy under \"{world}\". Check scene.json to select a name that either you own or you were given permission to deploy."
+    )
 }
 
 fn parcels(raw: &[&str]) -> ParcelSet {
@@ -467,15 +475,8 @@ async fn first_deploy_seeds_the_resolved_name_owner() {
     let stranger = Wallet::random();
     let other = world_name();
     let d = deployment(&stranger, &other, "Nope", "0,0", &["0,0"]).await;
-    let body = post_entity(&f.app, &d, 403).await;
-    assert_eq!(
-        body["errors"][0],
-        format!(
-            "The signer {} is not authorized to deploy to the world {}",
-            stranger.address.as_str(),
-            other.key()
-        )
-    );
+    let body = post_entity(&f.app, &d, 400).await;
+    assert_eq!(body["message"], no_permission(other.display()));
     assert!(deployed_entity_ids(&f.pool, &other).await.is_empty());
 }
 
@@ -511,7 +512,7 @@ async fn a_grantee_publish_refreshes_the_owner_to_the_live_name_holder() {
     )
     .await;
     assert!(
-        body["errors"][0]
+        body["message"]
             .as_str()
             .unwrap()
             .ends_with("owner address could not be resolved."),
@@ -559,17 +560,10 @@ async fn a_name_transfer_moves_ownership_on_the_next_publish() {
     let body = post_entity(
         &f.app,
         &deployment(&old, &world, "Stale", "0,0", &["0,0"]).await,
-        403,
+        400,
     )
     .await;
-    assert_eq!(
-        body["errors"][0],
-        format!(
-            "The signer {} is not authorized to deploy to the world {}",
-            old.address.as_str(),
-            world.key()
-        )
-    );
+    assert_eq!(body["message"], no_permission(world.display()));
     let path = format!("/world/{}/permissions/deployment", world.display());
     let meta = json!({ "type": "allow-list", "wallets": [] }).to_string();
     expect(
@@ -639,7 +633,7 @@ async fn an_owner_publish_converts_a_mirrored_world_to_local() {
     post_entity(
         &f.app,
         &deployment(&stranger, &world, "Nope", "0,0", &["0,0"]).await,
-        403,
+        400,
     )
     .await;
     let rows: Vec<(String, Option<String>)> = sqlx::query_as(
@@ -751,7 +745,7 @@ async fn a_parcel_scoped_grant_authorizes_only_its_own_parcels() {
     grant_parcels(&f.pool, &world, &grantee.address, &["0,0"]).await;
 
     let outside = deployment(&grantee, &world, "Outside", "0,0", &["0,0", "0,1"]).await;
-    post_entity(&f.app, &outside, 403).await;
+    post_entity(&f.app, &outside, 400).await;
     assert!(
         !deployed_entity_ids(&f.pool, &world)
             .await
@@ -782,7 +776,7 @@ async fn replacing_a_scene_requires_authority_over_its_whole_footprint() {
     grant_parcels(&f.pool, &world, &grantee.address, &["0,0"]).await;
 
     let partial = deployment(&grantee, &world, "Partial", "0,0", &["0,0"]).await;
-    post_entity(&f.app, &partial, 403).await;
+    post_entity(&f.app, &partial, 400).await;
     let mut ids = deployed_entity_ids(&f.pool, &world).await;
     ids.sort();
     let mut expected = vec![existing.entity_id.clone(), untouched.entity_id.clone()];
@@ -811,13 +805,9 @@ async fn a_scene_may_not_declare_a_base_parcel_outside_itself() {
 
     let liar = deployment(&owner, &world, "Liar", "50,50", &["0,0", "0,1"]).await;
     let body = post_entity(&f.app, &liar, 400).await;
-    let errors = body["errors"].as_array().expect("errors array");
-    assert!(
-        errors.iter().any(|e| e.as_str()
-            == Some(
-                "The scene base parcel [50,50] must be included in the scene parcels [0,0, 0,1]."
-            )),
-        "expected the base-not-in-parcels error, got {errors:?}"
+    assert_eq!(
+        body["message"],
+        "Deployment failed: metadata.scene.parcels must contain at least 1 valid item(s)"
     );
     assert!(deployed_entity_ids(&f.pool, &world).await.is_empty());
 
@@ -1377,7 +1367,7 @@ async fn publishing_an_older_entity_answers_400_and_keeps_the_newer_scene() {
     let body = post_entity(&f.app, &older, 400).await;
     assert_eq!(
         body,
-        json!({ "errors": ["Deployment failed: a newer scene is already deployed on one or more of these parcels."] })
+        json!({ "error": "Bad request", "message": "Deployment failed: a newer scene is already deployed on one or more of these parcels." })
     );
     assert_eq!(
         deployed_entity_ids(&f.pool, &world).await,
@@ -1433,7 +1423,7 @@ async fn a_disabled_world_refuses_publishes_until_enabled() {
     )
     .await;
     assert!(
-        refused["errors"][0]
+        refused["message"]
             .as_str()
             .unwrap()
             .contains("is disabled and does not accept deployments"),
@@ -1452,14 +1442,6 @@ async fn a_disabled_world_refuses_publishes_until_enabled() {
         "nothing was published"
     );
     assert_eq!(blocked_since(&f.pool, &world).await, disabled_at);
-    assert!(!about_refuses(&f, &world).await, "inside the 2-day grace");
-    sqlx::query(
-        "UPDATE worlds.worlds SET blocked_since = blocked_since - interval '3 days' WHERE name = $1",
-    )
-    .bind(world.key())
-    .execute(&f.pool)
-    .await
-    .unwrap();
     assert!(about_refuses(&f, &world).await);
 
     expect(
@@ -3594,11 +3576,11 @@ async fn every_route_answers_its_contract() {
     )
     .await;
     let published = post_entity(app, &good, 200).await;
-    assert!(
-        published["message"]
-            .as_str()
-            .unwrap()
-            .contains(&good.entity_id)
+    assert_eq!(
+        published["message"],
+        format!(
+            "Your scene was deployed to World \"{w}\" at parcels: 0,0, 0,1!\nAccess world: https://play.decentraland.org/?realm=https%3A%2F%2Fworlds.example%2Fworld%2F{w}&position=0%2C0"
+        )
     );
     assert!(
         f.storage.exist(&good.thumb_hash).await.unwrap(),
@@ -3631,12 +3613,7 @@ async fn every_route_answers_its_contract() {
     f.names.set(&owner.address, banned.label());
     let denied = deployment(&owner, &banned, "Denied", "0,0", &["0,0"]).await;
     let body = post_entity(app, &denied, 400).await;
-    assert!(
-        body["errors"][0]
-            .as_str()
-            .unwrap()
-            .contains("name deny list")
-    );
+    assert!(body["message"].as_str().unwrap().contains("name deny list"));
     f.state.names.seed(Vec::new());
 
     expect(app, Case::new("get", "/worlds"), 200).await;
@@ -5406,4 +5383,229 @@ async fn worlds_listing_pages_leniently_with_millisecond_timestamps() {
         "{at}"
     );
     expect(&f.app, Case::new("get", "/worlds?limit=5000"), 200).await;
+}
+
+/// A signed publish of `entity` uploading the entity file and `files`.
+async fn signed_deployment(wallet: &Wallet, entity: &Value, files: &[&[u8]]) -> Deployment {
+    let entity_bytes = serde_json::to_vec(entity).unwrap();
+    let entity_id = hash_bytes_v1(&entity_bytes);
+    let chain = serde_json::to_string(&wallet.chain(&entity_id).await).unwrap();
+    let names: Vec<String> = (0..files.len()).map(|i| format!("f{i}")).collect();
+    let mut parts: Vec<(&str, Option<&str>, &[u8])> = vec![
+        ("entityId", None, entity_id.as_bytes()),
+        ("authChain", None, chain.as_bytes()),
+        ("entity.json", Some("entity.json"), &entity_bytes),
+    ];
+    for (name, file) in names.iter().zip(files) {
+        parts.push((name, Some(name), file));
+    }
+    let (body, content_type) = multipart_body(&parts);
+    Deployment {
+        body,
+        content_type,
+        entity_id,
+        thumb_hash: String::new(),
+    }
+}
+
+/// A valid scene entity of `world` on `parcels`, listing `content`.
+fn publish_entity(world: &WorldName, parcels: &[&str], content: Value) -> Value {
+    json!({
+        "version": "v3",
+        "type": "scene",
+        "timestamp": chrono::Utc::now().timestamp_millis(),
+        "pointers": parcels,
+        "content": content,
+        "metadata": {
+            "main": "bin/index.js",
+            "worldConfiguration": { "name": world.display() },
+            "scene": { "base": parcels[0], "parcels": parcels }
+        }
+    })
+}
+
+async fn refused(app: &Router, owner: &Wallet, entity: Value, files: &[&[u8]], message: &str) {
+    let d = signed_deployment(owner, &entity, files).await;
+    let body = post_entity(app, &d, 400).await;
+    assert_eq!(body["error"], "Bad request");
+    assert_eq!(body["message"], message, "{entity}");
+}
+
+#[tokio::test]
+async fn a_publish_answers_the_first_failed_check_in_the_old_words() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random());
+    f.names.set(&owner.address, world.label());
+    let file: &[u8] = b"a content file";
+    let hash = hash_bytes_v1(file);
+    let listed = json!([{ "file": "a.bin", "hash": hash }]);
+    let app = &f.app;
+
+    let mut no_version = publish_entity(&world, &["0,0"], listed.clone());
+    no_version.as_object_mut().unwrap().remove("version");
+    let message = "Deployment failed: must have required property 'version'";
+    refused(app, &owner, no_version, &[file], message).await;
+
+    let mut no_main = publish_entity(&world, &["0,0"], listed.clone());
+    no_main["metadata"].as_object_mut().unwrap().remove("main");
+    let message = "Deployment failed: metadata must have required property 'main'";
+    refused(app, &owner, no_main, &[file], message).await;
+
+    let mut profile = publish_entity(&world, &["0,0"], listed.clone());
+    profile["type"] = json!("profile");
+    let message = "Deployment failed: Entity type profile is not supported.";
+    refused(app, &owner, profile, &[file], message).await;
+
+    let five = ["0,0", "0,1", "0,2", "0,3", "0,4"];
+    let message = "Deployment failed: Max allowed scene dimensions is 4 parcels.";
+    refused(
+        app,
+        &owner,
+        publish_entity(&world, &five, listed.clone()),
+        &[file],
+        message,
+    )
+    .await;
+
+    let extra: &[u8] = b"not listed";
+    let message = format!(
+        "Deployment failed: Extra file detected {}",
+        hash_bytes_v1(extra)
+    );
+    let entity = publish_entity(&world, &["0,0"], listed.clone());
+    refused(app, &owner, entity, &[file, extra], &message).await;
+
+    let message = format!(
+        "Deployment failed: The file {hash} (a.bin) is neither present in the storage or in the provided entity"
+    );
+    let entity = publish_entity(&world, &["0,0"], listed.clone());
+    refused(app, &owner, entity, &[], &message).await;
+
+    let mut minimap = publish_entity(&world, &["0,0"], listed.clone());
+    minimap["metadata"]["worldConfiguration"]["miniMapConfig"] = json!({ "dataImage": "map.png" });
+    let message = "Deployment failed: The file map.png is not present in the entity.";
+    refused(app, &owner, minimap, &[file], message).await;
+
+    let mut skybox = publish_entity(&world, &["0,0"], listed.clone());
+    skybox["metadata"]["worldConfiguration"]["skyboxConfig"] = json!({ "textures": ["sky.png"] });
+    let message = "Deployment failed: The texture file sky.png is not present in the entity.";
+    refused(app, &owner, skybox, &[file], message).await;
+
+    let max = super::deploy::DEFAULT_MAX_FILE_COUNT;
+    let many = Value::Array(vec![listed[0].clone(); max + 1]);
+    let message = format!(
+        "Deployment failed: The deployment has too many files. The maximum allowed is {max} but the deployment has {}.",
+        max + 1
+    );
+    refused(
+        app,
+        &owner,
+        publish_entity(&world, &["0,0"], many),
+        &[file],
+        &message,
+    )
+    .await;
+    assert!(deployed_entity_ids(&f.pool, &world).await.is_empty());
+
+    let mut ok = publish_entity(&world, &["0,0"], listed.clone());
+    ok["metadata"]["worldConfiguration"]["miniMapConfig"] = json!({ "dataImage": "a.bin" });
+    ok["metadata"]["worldConfiguration"]["skyboxConfig"] = json!({ "textures": ["a.bin"] });
+    let d = signed_deployment(&owner, &ok, &[file]).await;
+    post_entity(app, &d, 200).await;
+    assert_eq!(
+        deployed_entity_ids(&f.pool, &world).await,
+        vec![d.entity_id]
+    );
+}
+
+async fn set_limit_override(
+    pool: &PgPool,
+    world: &WorldName,
+    parcels: Option<i32>,
+    size: Option<i64>,
+) {
+    sqlx::query(
+        "INSERT INTO worlds.world_limit_overrides (world_name, max_parcels, max_size_bytes) VALUES ($1, $2, $3) \
+         ON CONFLICT (world_name) DO UPDATE SET max_parcels = $2, max_size_bytes = $3",
+    )
+    .bind(world.key())
+    .bind(parcels)
+    .bind(size)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+fn limits_case(world: &WorldName, query: &str) -> Case {
+    Case::new("get", format!("/world/{}/limits{query}", world.display()))
+}
+
+#[tokio::test]
+async fn world_limits_report_what_a_publish_is_checked_against() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random());
+    f.names.set(&owner.address, world.label());
+    let app = &f.app;
+
+    assert_eq!(
+        expect(app, limits_case(&world, ""), 200).await,
+        json!({ "maxSceneSizeInBytes": crate::policy::MAX_WORLD_SIZE_BYTES.to_string(), "maxParcels": 4 })
+    );
+    expect(app, limits_case(&world, "?parcels=0,0&parcels=1,0"), 200).await;
+    for bad in [
+        "?parcels=0,0&parcels=0,0",
+        "?parcels=00,1",
+        "?parcels=151,0",
+        "?parcels=",
+    ] {
+        expect(app, limits_case(&world, bad), 400).await;
+    }
+
+    let unowned = world_name();
+    expect(app, limits_case(&unowned, ""), 404).await;
+    set_limit_override(&f.pool, &unowned, None, Some(1234)).await;
+    assert_eq!(
+        expect(app, limits_case(&unowned, ""), 200).await,
+        json!({ "maxSceneSizeInBytes": "1234", "maxParcels": 4 }),
+        "an override's size needs no owner"
+    );
+
+    // A publish reads the same limits.
+    set_limit_override(&f.pool, &world, Some(5), Some(10)).await;
+    assert_eq!(
+        expect(app, limits_case(&world, ""), 200).await,
+        json!({ "maxSceneSizeInBytes": "10", "maxParcels": 5 })
+    );
+    let file: &[u8] = b"twelve bytes";
+    let five = ["0,0", "0,1", "0,2", "0,3", "0,4"];
+    let content = json!([{ "file": "a.bin", "hash": hash_bytes_v1(file) }]);
+    let entity = publish_entity(&world, &five, content);
+    let message = "Deployment failed: The deployment is too big. The maximum total size allowed is 10 bytes for scenes. You can upload up to 10 bytes but you tried to upload 12.";
+    refused(app, &owner, entity.clone(), &[file], message).await;
+    set_limit_override(&f.pool, &world, Some(5), None).await;
+    post_entity(app, &signed_deployment(&owner, &entity, &[file]).await, 200).await;
+
+    f.state.names.seed(vec![world.label().to_string()]);
+    let denied = expect(app, limits_case(&world, ""), 404).await;
+    assert_eq!(
+        denied["message"],
+        format!("World \"{}\" not found.", world.key())
+    );
+    f.state.names.seed(Vec::new());
+}
+
+#[tokio::test]
+async fn an_oversized_deploy_body_answers_413() {
+    let Some(f) = fixture().await else { return };
+    let mut case =
+        Case::new("post", "/entities").body(Vec::new(), "multipart/form-data; boundary=x");
+    case = case.header(
+        "content-length",
+        &(super::deploy::MAX_UPLOAD_WIRE_SIZE_BYTES + 1).to_string(),
+    );
+    let body = expect(&f.app, case, 413).await;
+    assert_eq!(
+        body,
+        json!({ "error": "Payload Too Large", "message": "The multipart request is too large." })
+    );
 }
