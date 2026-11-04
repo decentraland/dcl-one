@@ -2223,16 +2223,17 @@ fn validate_signed_fetch(
             return Err("expected a 64-character lowercase hexadecimal body hash".to_owned());
         }
     }
-    let mut parsed = url::Url::parse(uri).map_err(|_| format!("failed to parse uri: {uri}"))?;
-    if !(preview || ["https", "wss"].contains(&parsed.scheme()) || parsed.is_loopback())
-        || !parsed.username().is_empty()
-        || parsed.password().is_some()
-    {
-        return Err(format!("URL scheme must be `https` (request `{uri}`)"));
+    let mut parsed = url::Url::parse(uri).map_err(|e| format!("invalid signed fetch URL: {e}"))?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("signed fetch URLs cannot contain credentials".to_owned());
+    }
+    if !(preview || ["https", "wss"].contains(&parsed.scheme()) || parsed.is_loopback()) {
+        return Err("signed fetch requires HTTPS or WSS outside preview or loopback".to_owned());
     }
     // Fetch applies WHATWG path normalization and strips fragments before transmission.
     parsed.set_fragment(None);
-    let uri = Uri::try_from(parsed.as_str()).map_err(|_| format!("failed to parse uri: {uri}"))?;
+    let uri =
+        Uri::try_from(parsed.as_str()).map_err(|e| format!("invalid signed fetch URL: {e}"))?;
     Ok((uri, body_hash.map(str::to_owned)))
 }
 
@@ -2240,6 +2241,7 @@ fn signed_fetch_tld(domain: &str) -> &'static str {
     match domain {
         "decentraland.zone" => "zone",
         "decentraland.today" => "today",
+        // Custom domains without an explicit environment mapping use the historical `org` fallback.
         _ => "org",
     }
 }
@@ -2839,7 +2841,36 @@ mod signed_fetch_body_tests {
         assert_eq!(uri.path(), "/API/Mixed");
         assert_eq!(uri.query(), Some("Q=Yes"));
         assert_eq!(uri.authority().unwrap().as_str(), "example.org");
-        assert!(validate_signed_fetch("https://user:secret@example.org/", None, false).is_err());
+    }
+
+    #[test]
+    fn rejects_url_credentials_without_disclosing_them() {
+        let error = validate_signed_fetch(
+            "https://scene-user:scene-password@example.org/",
+            None,
+            false,
+        )
+        .unwrap_err();
+        assert!(error.contains("credentials"));
+        assert!(!error.contains("scene-user"));
+        assert!(!error.contains("scene-password"));
+
+        let error = validate_signed_fetch(
+            "https://scene-user:scene-password@invalid host/",
+            None,
+            false,
+        )
+        .unwrap_err();
+        assert!(!error.contains("scene-user"));
+        assert!(!error.contains("scene-password"));
+    }
+
+    #[test]
+    fn signed_fetch_scheme_policy_allows_preview_and_loopback() {
+        assert!(validate_signed_fetch("wss://example.org", None, false).is_ok());
+        assert!(validate_signed_fetch("http://example.org", None, false).is_err());
+        assert!(validate_signed_fetch("http://example.org", None, true).is_ok());
+        assert!(validate_signed_fetch("http://localhost", None, false).is_ok());
     }
 
     #[test]

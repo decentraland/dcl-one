@@ -83,6 +83,9 @@ before `signedFetch` sends a request. Bodyless calls retain their existing compa
 signature binds the normalized request path. Callers using `getHeaders` must send the same method,
 URL and body they supplied for signing.
 
+A service that relies on a signed body must require `hashPayload` and compare it
+with the SHA-256 of the bytes it receives before it processes the request.
+
 ## Reporting
 
 Do not disclose a security problem in a public issue or PR. Use the private reporting
