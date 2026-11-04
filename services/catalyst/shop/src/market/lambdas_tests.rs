@@ -110,7 +110,10 @@ fn matic_collections(query: &str) -> Value {
             { "id": "a1", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10", "itemType": "wearable_v2", "transferredAt": "200",
               "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } },
             { "id": "a2", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "11", "itemType": "wearable_v2", "transferredAt": "300",
-              "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } }
+              "item": { "rarity": "epic", "price": "5" }, "metadata": { "wearable": { "name": "Hat", "category": "hat" } } },
+            // An item no deployed entity describes.
+            { "id": "a3", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:9"), "tokenId": "12", "itemType": "wearable_v2", "transferredAt": "100",
+              "item": { "rarity": "common", "price": "1" }, "metadata": { "wearable": { "name": "Orphan", "category": "hat" } } }
         ] })
     } else {
         json!({ "nfts": [] })
@@ -747,6 +750,55 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         body["emotes"][0]["emoteDataADR74"]["category"], "dance",
         "{body}"
     );
+    assert_eq!(
+        body["pagination"],
+        json!({ "limit": 500 }),
+        "no lastId asked, none echoed"
+    );
+    let (_, body) = get(
+        &state,
+        "/lambdas/collections/emotes?textSearch=dance&lastId=URN:DECENTRALAND:A",
+    )
+    .await;
+    assert_eq!(
+        body["pagination"],
+        json!({ "limit": 500, "lastId": "urn:decentraland:a" }),
+        "the request's lastId, lowercased"
+    );
+    // `textSearch` matches the mirrored subgraph `searchText`, case-sensitively,
+    // and the lowercased name only where the mirror has not filled it.
+    sqlx::query(
+        "UPDATE shop.items SET search_text = 'coffee dance moves' WHERE item_type = 'emote_v1'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    for (text, found) in [("moves", 1), ("dance", 1), ("Dance", 1), ("emote", 0)] {
+        let (_, body) = get(
+            &state,
+            &format!("/lambdas/collections/emotes?textSearch={text}&limit=7"),
+        )
+        .await;
+        assert_eq!(
+            body["emotes"].as_array().map(Vec::len),
+            Some(found),
+            "{text}: {body}"
+        );
+    }
+    sqlx::query("UPDATE shop.items SET search_text = 'renamed' WHERE item_type = 'emote_v1'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (_, body) = get(
+        &state,
+        "/lambdas/collections/emotes?textSearch=dance&limit=8",
+    )
+    .await;
+    assert_eq!(
+        body["emotes"].as_array().map(Vec::len),
+        Some(0),
+        "the name alone no longer matches: {body}"
+    );
 
     let (status, body) = get(&state, &format!("/lambdas/outfits/{OWNER}")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -876,6 +928,68 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     let (status, body) = get(&state, "/explorer/not-an-address/wearables").await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 
+    // `/users/{address}/wearables`: lamb2's filters, order and include keys.
+    let hat = format!("urn:decentraland:matic:collections-v2:{COFFEE}:1");
+    let orphan = format!("urn:decentraland:matic:collections-v2:{COFFEE}:9");
+    let urns_of = |body: &Value| -> Vec<String> {
+        body["elements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["urn"].as_str().unwrap().to_string())
+            .collect()
+    };
+    for (query, entity_key, definition_key) in [
+        ("includeEntities", true, false),
+        ("includeDefinitions", false, true),
+    ] {
+        let (status, body) =
+            get(&state, &format!("/lambdas/users/{OWNER}/wearables?{query}")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            urns_of(&body),
+            [hat.clone(), orphan.clone()],
+            "{query}: {body}"
+        );
+        let [with, without] = [&body["elements"][0], &body["elements"][1]];
+        assert_eq!(with.get("entity").is_some(), entity_key, "{query}: {body}");
+        assert_eq!(
+            with.get("definition").is_some(),
+            definition_key,
+            "{query}: {body}"
+        );
+        assert!(
+            without.get("entity").is_none() && without.get("definition").is_none(),
+            "{query}: a missing entity or definition leaves the key out, never null: {body}"
+        );
+    }
+    let (status, body) = get(
+        &state,
+        &format!("/lambdas/users/{OWNER}/wearables?category=HAT&rarity=Epic"),
+    )
+    .await;
+    assert_eq!(
+        (status, urns_of(&body)),
+        (StatusCode::OK, vec![hat.clone()]),
+        "{body}"
+    );
+    let (status, body) = get(
+        &state,
+        &format!("/lambdas/users/{OWNER}/wearables?direction=sideways"),
+    )
+    .await;
+    assert_eq!(
+        (status, urns_of(&body)),
+        (StatusCode::OK, vec![hat.clone(), orphan.clone()]),
+        "no orderBy: no validation, no sort: {body}"
+    );
+    let (_, body) = get(
+        &state,
+        &format!("/lambdas/users/{OWNER}/wearables?orderBy=rarity&direction=asc"),
+    )
+    .await;
+    assert_eq!(urns_of(&body), [orphan.clone(), hat.clone()], "{body}");
+
     let (status, body) = get(
         &state,
         &format!("/lambdas/users/{OWNER}/third-party-wearables?includeDefinitions"),
@@ -887,6 +1001,20 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     assert!(body["elements"][0]["definition"].is_object(), "{body}");
     let (_, body) = get(&state, &format!("/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:tp")).await;
     assert_eq!(body["totalAmount"], 1, "{body}");
+    for uri in [
+        format!("/lambdas/users/{OWNER}/third-party-wearables?pageSize=5000"),
+        format!(
+            "/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:tp?pageSize=5000"
+        ),
+    ] {
+        let (status, body) = get(&state, &uri).await;
+        assert_eq!(status, StatusCode::OK, "no pageSize cap: {uri}: {body}");
+        assert_eq!(
+            (body["pageSize"].as_i64(), body["totalAmount"].as_i64()),
+            (Some(5000), Some(1)),
+            "{body}"
+        );
+    }
     let (status, body) = get(&state, &format!("/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:other")).await;
     assert_eq!((status, body), (StatusCode::BAD_GATEWAY, not_found));
     let (_, body) = get(&state, &format!("/lambdas/collections/wearables-by-owner/{OWNER}?collectionId=urn:decentraland:matic:collections-thirdparty:tp")).await;
@@ -972,6 +1100,50 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
             "{uri}"
         );
     }
+    // The registry and the collections subgraphs down: lamb2's 502
+    // FetcherError, never an empty list or a 503.
+    let mut dark_settings = state.settings.clone();
+    dark_settings.third_party_registry_subgraph_url = Some(down.clone());
+    dark_settings.eth_collections_subgraph_url = Some(down.clone());
+    dark_settings.matic_collections_subgraph_url = Some(down.clone());
+    let dark_state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        dark_settings,
+    ));
+    dark_state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    for uri in [
+        format!("/lambdas/users/{OWNER}/third-party-wearables"),
+        format!(
+            "/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:tp"
+        ),
+        format!(
+            "/lambdas/collections/wearables-by-owner/{OWNER}?collectionId=urn:decentraland:matic:collections-thirdparty:tp"
+        ),
+        format!("/explorer/{OWNER}/wearables?collectionType=third-party"),
+        format!("/lambdas/users/{OWNER}/wearables"),
+        format!("/lambdas/users/{OWNER}/emotes"),
+        format!("/lambdas/collections/wearables-by-owner/{OWNER}"),
+        format!("/lambdas/collections/emotes-by-owner/{OWNER}"),
+    ] {
+        let (status, body) = get(&dark_state, &uri).await;
+        assert_eq!(
+            (status, body),
+            (StatusCode::BAD_GATEWAY, fetcher_error.clone()),
+            "{uri}"
+        );
+    }
+    let (status, body) = get(&dark_state, "/lambdas/third-party-integrations").await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::BAD_GATEWAY,
+            json!({ "error": "The requested items cannot be fetched right now", "message": "Cannot fetch third party providers" })
+        )
+    );
+
     let (status, body) = get(&down_state, &format!("/lambdas/profiles/{OWNER}")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
