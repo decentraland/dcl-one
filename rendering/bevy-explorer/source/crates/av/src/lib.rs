@@ -16,6 +16,7 @@ pub mod audio_source;
 pub mod audio_source_native;
 #[cfg(feature = "html")]
 pub mod audio_source_wasm;
+mod debug_panel;
 
 // video
 #[cfg(any(feature = "uuav", feature = "html"))]
@@ -109,6 +110,7 @@ pub struct AVSinks<T: AVPlayer> {
     pub audio: Option<AudioSink>,
     pub video: Option<VideoSink>,
     pub command_sender: tokio::sync::mpsc::UnboundedSender<AVCommand>,
+    /// Frame rate reported with video metadata. HTML provides dimensions but reports zero here.
     pub rate: Option<f64>,
     /// The last volume sent, to send only changes.
     pub sent_volume: Option<f32>,
@@ -387,6 +389,7 @@ impl Plugin for AVPlayerPlugin {
         app.add_plugins(VideoPlayerPlugin);
         #[cfg(all(not(test), feature = "uuav"))]
         app.add_plugins(AudioSinkPlugin);
+        debug_panel::register(app);
         app.add_plugins(AudioSourcePlugin);
         app.add_plugins(AudioSourcePluginImpl);
 

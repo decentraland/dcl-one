@@ -5,7 +5,11 @@ import react from '@vitejs/plugin-react'
 // fake bridge driver, assert every domain's wire API calls + response handling. No engine.
 // The real-engine e2e (tier 2) lives under e2e/ and runs via Playwright, not Vitest.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), {
+    name: 'scene-restricted-actions',
+    // The scene runtime supplies this virtual module. Tests provide its methods with vi.mock.
+    resolveId(id) { return id === '~system/RestrictedActions' ? id : null }
+  }],
   test: {
     environment: 'jsdom',
     globals: true,

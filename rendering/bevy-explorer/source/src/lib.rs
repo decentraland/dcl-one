@@ -4,6 +4,7 @@
 pub mod automation;
 mod autopilot;
 mod commands;
+mod debug_panel;
 mod deep_link;
 mod ext;
 mod gpu_memory;
@@ -703,6 +704,7 @@ impl DecentralandApp {
         app.add_console_command::<SceneThreadsCommand, _>(scene_threads);
         app.add_console_command::<FpsCommand, _>(set_fps);
         app.add_console_command::<SessionGraphicsCommand, _>(session_graphics);
+        debug_panel::register(&mut app);
 
         app
     }

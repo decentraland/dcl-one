@@ -25,9 +25,10 @@ use crate::{
     },
     livekit::{
         participant::{
-            ActiveSpeaker, ActiveSpeakersChanged, HostedBy, LivekitParticipant, Local,
-            ParticipantConnected, ParticipantConnectionQuality, ParticipantDisconnected,
-            ParticipantIndex, ParticipantMetadataChanged, ParticipantPayload,
+            ActiveSpeaker, ActiveSpeakersChanged, HostedBy, HostingParticipants,
+            LivekitParticipant, Local, ParticipantConnected, ParticipantConnectionQuality,
+            ParticipantDisconnected, ParticipantIndex, ParticipantMetadataChanged,
+            ParticipantPayload,
         },
         plugin::{PlayerUpdateTask, PlayerUpdateTasksMut},
         room::LivekitRoom,
@@ -276,8 +277,8 @@ fn participant_connection_quality_changed(
         room,
         connection_quality,
     } = trigger.event();
-    // nobody reads quality on the private chat room, and it is environment-wide
-    if private_rooms.contains(*room) {
+    // Only the local quality is inspected for the environment-wide private chat room.
+    if private_rooms.contains(*room) && matches!(participant.participant, Participant::Remote(_)) {
         return;
     }
     let Ok((livekit_room, index)) = rooms.get(*room) else {
@@ -472,10 +473,14 @@ fn participant_metadata_changed(
 fn active_speakers_changed(
     trigger: Trigger<ActiveSpeakersChanged>,
     mut commands: Commands,
+    rooms: Query<&HostingParticipants>,
     participants: Query<(Entity, &LivekitParticipant)>,
     old_speakers: Query<Entity, With<ActiveSpeaker>>,
 ) {
     let ActiveSpeakersChanged { speakers } = trigger.event();
+    let Ok(roster) = rooms.get(trigger.target()) else {
+        return;
+    };
 
     let active_speakers_sid = speakers
         .iter()
@@ -483,12 +488,14 @@ fn active_speakers_changed(
         .collect::<HashSet<_>>();
 
     let active_speakers = participants
-        .iter()
+        .iter_many(roster.collection())
         .filter(|(_, livekit_participant)| active_speakers_sid.contains(&livekit_participant.sid()))
         .map(|(entity, _)| entity)
         .collect::<EntityHashSet>();
 
-    let old_speakers = old_speakers.iter().collect::<EntityHashSet>();
+    let old_speakers = old_speakers
+        .iter_many(roster.collection())
+        .collect::<EntityHashSet>();
 
     let new_speakers = active_speakers.difference(&old_speakers);
     let no_longer_speakers = old_speakers.difference(&active_speakers);
@@ -636,5 +643,24 @@ fn verify_active_speaker_grace_period(
                 .entity(entity)
                 .try_remove::<(ActiveSpeakerGracePeriod, ActiveVideoCast)>();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_room_falling_silent_preserves_other_rooms_speakers() {
+        let mut world = World::new();
+        world.add_observer(active_speakers_changed);
+        let island = world.spawn_empty().id();
+        let scene = world.spawn_empty().id();
+        let island_speaker = world.spawn((HostedBy(island), ActiveSpeaker)).id();
+        let scene_speaker = world.spawn((HostedBy(scene), ActiveSpeaker)).id();
+        world.trigger_targets(ActiveSpeakersChanged { speakers: vec![] }, scene);
+        world.flush();
+        assert!(world.get::<ActiveSpeaker>(island_speaker).is_some());
+        assert!(world.get::<ActiveSpeaker>(scene_speaker).is_none());
     }
 }

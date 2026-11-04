@@ -1367,8 +1367,10 @@ dependencies = [
  "bevy",
  "bevy_console",
  "bevy_kira_audio",
+ "clap",
  "common",
  "comms",
+ "console 0.1.0",
  "dcl_component",
  "dcl_types",
  "disqualified",
@@ -1382,6 +1384,7 @@ dependencies = [
  "once_cell",
  "reqwest",
  "scene_runner",
+ "serde_json",
  "system_bridge",
  "thiserror 2.0.18",
  "tokio",
@@ -1449,9 +1452,11 @@ dependencies = [
  "ipfs",
  "naga_oil",
  "platform",
+ "rand 0.8.8",
  "rapier3d-f64",
  "scene_material",
  "scene_runner",
+ "serde",
  "serde_json",
  "social",
  "system_bridge",
@@ -3614,6 +3619,8 @@ dependencies = [
  "bevy_console",
  "clap",
  "common",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -4392,6 +4399,7 @@ dependencies = [
  "futures-lite",
  "serde",
  "serde_json",
+ "sha2",
  "strum 0.27.2",
  "system_bridge",
  "tokio",
@@ -4550,6 +4558,7 @@ dependencies = [
  "tracing-appender",
  "tween",
  "ui_core",
+ "url",
  "urlencoding",
  "user_input",
  "uuid",
@@ -9504,10 +9513,14 @@ name = "particle_system"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "bevy_console",
+ "clap",
  "common",
+ "console 0.1.0",
  "dcl_component",
  "rand 0.8.8",
  "scene_runner",
+ "serde_json",
 ]
 
 [[package]]
@@ -10736,7 +10749,7 @@ dependencies = [
  "console 0.1.0",
  "copypwasmta",
  "dcl_component",
- "futures-lite",
+ "dcl_types",
  "http 1.5.0",
  "input_manager",
  "ipfs",
@@ -13531,6 +13544,7 @@ dependencies = [
  "ipfs",
  "rapier3d-f64",
  "scene_runner",
+ "serde_json",
  "tween",
 ]
 
@@ -13714,6 +13728,7 @@ dependencies = [
  "ipfs",
  "noise",
  "scene_runner",
+ "serde_json",
  "web-time",
 ]
 

@@ -373,6 +373,7 @@ web-fs = "0.2.6"
 getrandom = { version = "0.3" }
 
 [dependencies]
+url = { workspace = true }
 assets = { workspace = true }
 analytics = { workspace = true }
 common = { workspace = true }

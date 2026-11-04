@@ -179,6 +179,16 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`,
   `/voice_state`, `/entity_screen_position <entity> [--bounds]`, plus the older `/player_position`,
   `/get_user_data`, `/connected_players`, `/time` and the scene commands.
+- In development builds the lower-right bug button toggles the debug panel. In all builds,
+  open **Sidebar settings (•••) → Debug panel** or type `/debug` in chat. Search by
+  section or control, or enter `/debug Performance` directly. Expanded sections refresh
+  about once per second. `/debug help` lists the available sections. Engine plugins
+  advertise their queries, fields and controls through `/debug_panel`. The HUD offers session actions
+  and checks `/debug_panel --dev-build` for the engine's compile-time development flag.
+  Use the panel to inspect a scene, compare frame and memory measurements, diagnose
+  room and media connections, and exercise supported controls. Availability depends
+  on the build, platform and preview mode. `/performance_state` reports the effective
+  frame-rate target and session override independently of the panel.
 - The HUD, by role and accessible name (`react-web/src/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`; `"timeout"` ms). A selector is the name or JSON
