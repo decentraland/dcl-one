@@ -9,8 +9,8 @@ dry-run and re-import behavior identical for every source; per-source scripts
 would each re-implement them.
 
 It reads from the sources (sessions are read-only) and writes only to the
-target. It needs `psql` (PostgreSQL 15 or later) and Python 3.11 or later,
-nothing else; `blobs --from-s3` also needs `boto3`.
+target. It needs `psql` (PostgreSQL 15 or later) and Python 3.11 or later
+(`tomllib`), nothing else; `blobs --from-s3` also needs `boto3`.
 
 Out of scope: the Catalyst content servers (`content.*` comes from peer sync),
 transactions-server (its relay history has no chain or contract, which
@@ -33,7 +33,13 @@ in-app purchases cannot be clawed back by a later Apple refund
   `(source, object_key, hash, size)` in `dcl_migration.blob_inventory`, and
   every object it could not store in `dcl_migration.blob_missing`; loads that
   need a blob stop the batch when it is in neither. `migrate.py blobs <source>`
-  is that copy for the sources it supports (see `blobs` below).
+  is that copy for the sources it supports (see `blobs` below). **Do not run
+  the node's storage GC between `blobs` and `run`**: the copied blobs are
+  unreferenced until `run` imports their rows, and the GC deletes unreferenced
+  files older than an hour. A `run` of a source `blobs` covers ends by
+  checking the store holds every blob its imported rows name, and fails when
+  one is missing. `blobs worlds-content-server` also goes before `run places`
+  (world images are rewritten to the copied thumbnails' CIDs).
 - **Badge art.** The node embeds the art of its seed badges only; mirror
   upstream's badge art into `BADGES_ASSETS_DIR` so every imported badge's
   images resolve (`sources/badges/MAPPING.md`).
@@ -65,6 +71,7 @@ python3 tooling/migration/migrate.py run places --since last
 python3 tooling/migration/migrate.py blobs worlds-content-server --from-dir DIR --to "$STORAGE_ROOT_FOLDER"
 python3 tooling/migration/migrate.py blobs worlds-content-server --verify --to "$STORAGE_ROOT_FOLDER"
 python3 tooling/migration/migrate.py worlds-limits whitelist.json --max-size-mb 100
+python3 tooling/migration/migrate.py worlds-unban-quota-blocks --dry-run   # one-off, see the worlds MAPPING.md
 ```
 
 `blobs <source>` reads from the source database which objects its rows name,
@@ -73,7 +80,8 @@ the node's store under `--to` (`<root>/contents/<sha1 shard>/<cid>`, staging
 file then rename), after re-hashing the bytes against their key; it skips
 objects already recorded and stored, so it is re-run before each
 `run --since last`. `--verify` lists the imported rows whose blobs the store
-lacks. `worlds-limits` seeds `worlds.world_limit_overrides` from a copy of
+lacks; `run` of that source does the same check at its end (`--storage-root`
+or `STORAGE_ROOT_FOLDER`). `worlds-limits` seeds `worlds.world_limit_overrides` from a copy of
 the old worlds service's whitelist document. Both are described in
 `sources/worlds-content-server/MAPPING.md`.
 
@@ -89,6 +97,7 @@ Options of `run`:
 | `--restart` | Ignores the stored checkpoint and starts the step over. |
 | `--batch-size N` | Rows per batch (default 5000). |
 | `--skip-unconfigured` | Skips sources whose database variable is unset (with `all`). |
+| `--storage-root DIR` | The node's storage root (default `STORAGE_ROOT_FOLDER`), required by runs of steps whose rows name blobs. |
 
 A manifest that does not validate blocks only the runs that select it or run
 after it. `check` validates every manifest; with a source's variable set it compares

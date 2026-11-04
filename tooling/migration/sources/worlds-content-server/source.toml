@@ -13,7 +13,9 @@ Places identity. See MAPPING.md.
 
 Prerequisite: `migrate.py blobs worlds-content-server` copies each scene's
 entity file and content files and each world's thumbnail into the blob store
-first; world and world_scene stop on a hash it has not recorded. Per-world
+first; world and world_scene stop on a hash it has not recorded, and a run of
+either ends by checking the store (--storage-root) holds every imported blob.
+Never run the node's storage GC between `blobs` and `run`. Per-world
 limits come from upstream's WHITELIST_URL document (`migrate.py
 worlds-limits`), not its database.
 

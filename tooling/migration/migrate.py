@@ -757,6 +757,13 @@ def cmd_run(args, sources):
             walk = plan_walk(step, checkpoints.get((source.name, step.name)), since=since,
                              since_last=args.since == 'last', overlap=args.overlap, restart=args.restart)
             plans.append((step, source_url, walk))
+    # Sources whose loaded rows name blobs end with the --verify check: a store GC'd or copied
+    # into the wrong root since `blobs` fails the run instead of serving missing files.
+    verify = sorted({step.source for step, _, _ in plans
+                     if step.name in BLOB_SETS.get(step.source, {}).get('steps', ())})
+    store = None
+    if verify and not args.dry_run:
+        store = load_blobs_module().Store(storage_root(args))
     if args.dry_run:
         log('dry run (one transaction, rolled back):')
         dry_run(plans, target_url, log)
@@ -770,6 +777,12 @@ def cmd_run(args, sources):
             rows, writes = run_step(step, source_url, target_url, walk,
                                     checkpoints.get((step.source, step.name)), batch_size=args.batch_size, log=log)
             log(f'  {step.name}: done, {rows} rows in this walk; {writes}')
+        for name in verify:
+            log(f'{name}: checking that the store holds every imported blob')
+            # Objects upstream itself lost are served as missing, as upstream did.
+            if verify_blobs(name, store, target_url, log, recorded_missing(name, target_url)):
+                raise MigrationError(f'{name}: imported rows name blobs missing from {store.contents};'
+                                     ' re-run `blobs` (and never run the storage GC between `blobs` and `run`)')
     unknown_steps = set(args.step or []) - {s.name for src in selected for s in src.steps}
     if unknown_steps:
         raise MigrationError(f'unknown step(s): {", ".join(sorted(unknown_steps))}')
@@ -802,43 +815,63 @@ def load_blobs_module():
     return module
 
 
-# Per source: the upstream object keys its imported rows name (on the source), and the
-# (owner, keys) its imported rows name now (on the target), for --verify.
+# Per source: the upstream object keys its imported rows name (on the source), the (owner, key)
+# pairs its imported rows name now (on the target), for --verify, and the steps whose rows name
+# blobs (a `run` of one of them ends with the --verify check). Output is hex-encoded so a key
+# holding a line or field separator stays one value.
 BLOB_SETS = {
     'worlds-content-server': {
         'source': """
-SELECT DISTINCT k FROM (
-    SELECT entity_id::text AS k FROM world_scenes WHERE status = 'DEPLOYED'
-    UNION ALL
-    SELECT c->>'hash' FROM world_scenes s
-    CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(s.entity::jsonb->'content') = 'array'
-                                                 THEN s.entity::jsonb->'content' ELSE '[]'::jsonb END) c
-    WHERE s.status = 'DEPLOYED'
-    UNION ALL
-    SELECT thumbnail_hash::text FROM worlds WHERE coalesce(thumbnail_hash::text, '') <> ''
-) x WHERE coalesce(k, '') <> '' ORDER BY k""",
+SELECT encode(convert_to(k, 'UTF8'), 'hex') FROM (
+    SELECT DISTINCT k FROM (
+        SELECT entity_id::text AS k FROM world_scenes WHERE status = 'DEPLOYED'
+        UNION ALL
+        SELECT c->>'hash' FROM world_scenes s
+        CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(s.entity::jsonb->'content') = 'array'
+                                                     THEN s.entity::jsonb->'content' ELSE '[]'::jsonb END) c
+        WHERE s.status = 'DEPLOYED'
+        UNION ALL
+        SELECT thumbnail_hash::text FROM worlds WHERE coalesce(thumbnail_hash::text, '') <> ''
+    ) x WHERE coalesce(k, '') <> ''
+) y ORDER BY k""",
         'target': """
-SELECT ws.world_name || '/' || ws.entity_id, h.k
-FROM worlds.world_scenes ws
-CROSS JOIN LATERAL (
-    SELECT ws.entity_id
-    UNION
-    SELECT c->>'hash' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(ws.entity->'content') = 'array'
-                                                     THEN ws.entity->'content' ELSE '[]'::jsonb END) c
-) h(k)
-WHERE ws.mirror_source IS NULL AND coalesce(h.k, '') <> ''
-UNION ALL
-SELECT name || ' (thumbnail)', thumbnail_hash FROM worlds.worlds
-WHERE mirror_source IS NULL AND coalesce(thumbnail_hash, '') <> ''
-ORDER BY 1, 2""",
+SELECT encode(convert_to(o, 'UTF8'), 'hex'), encode(convert_to(k, 'UTF8'), 'hex') FROM (
+    SELECT ws.world_name || '/' || ws.entity_id AS o, h.k
+    FROM worlds.world_scenes ws
+    CROSS JOIN LATERAL (
+        SELECT ws.entity_id
+        UNION
+        SELECT c->>'hash' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(ws.entity->'content') = 'array'
+                                                         THEN ws.entity->'content' ELSE '[]'::jsonb END) c
+    ) h(k)
+    WHERE ws.mirror_source IS NULL AND coalesce(h.k, '') <> ''
+    UNION ALL
+    SELECT name || ' (thumbnail)', thumbnail_hash FROM worlds.worlds
+    WHERE mirror_source IS NULL AND coalesce(thumbnail_hash, '') <> ''
+) x ORDER BY o, k""",
+        'steps': {'world', 'world_scene'},
     },
 }
+RECORD_BATCH = 1000
+
+
+def hex_rows(out, width):
+    """psql rows of hex-encoded columns, decoded."""
+    rows = []
+    for line in out.splitlines():
+        if line:
+            fields = line.split('\t')
+            if len(fields) != width:
+                raise MigrationError(f'unexpected psql row with {len(fields)} fields')
+            rows.append([bytes.fromhex(f).decode() for f in fields])
+    return rows
 
 
 def storage_root(args):
-    root = args.to or os.environ.get('STORAGE_ROOT_FOLDER')
+    root = getattr(args, 'to', None) or getattr(args, 'storage_root', None) or os.environ.get('STORAGE_ROOT_FOLDER')
     if not root:
-        raise MigrationError('pass --to STORAGE_ROOT_FOLDER (the node\'s storage root) or set STORAGE_ROOT_FOLDER')
+        raise MigrationError('pass the node\'s storage root (--to for blobs, --storage-root for run)'
+                             ' or set STORAGE_ROOT_FOLDER')
     return Path(root)
 
 
@@ -860,6 +893,31 @@ def record_blobs(target_url, source, stored, missing):
     psql(target_url, '\n'.join(lines) + '\n')
 
 
+def record_outcomes(outcomes, record, total, log, batch=RECORD_BATCH):
+    """Records `outcomes` through `record(stored, missing)` every `batch` and at the end, also when
+    the copy stops part-way. A `failed` read is reported, never recorded, so the next run retries
+    it. Returns (counts, report lines)."""
+    counts = dict.fromkeys(['copied', 'present', 'missing', 'corrupt', 'invalid', 'failed'], 0)
+    report, stored, missing = [], [], []
+    try:
+        for n, outcome in enumerate(outcomes, 1):
+            counts[outcome.status] += 1
+            if outcome.cid:
+                stored.append((outcome.key, outcome.cid, outcome.size))
+            else:
+                if outcome.status != 'failed':
+                    missing.append((outcome.key, outcome.reason))
+                report.append(f'  {outcome.key!r}: {outcome.reason}')
+            if len(stored) + len(missing) >= batch:
+                record(stored, missing)
+                stored, missing = [], []
+            if n % 10000 == 0:
+                log(f'  {n}/{total}')
+    finally:
+        record(stored, missing)
+    return counts, report
+
+
 def cmd_blobs(args, sources):
     if args.source not in BLOB_SETS:
         raise MigrationError(f'no blob set for {args.source!r}; known: {", ".join(sorted(BLOB_SETS))}')
@@ -868,7 +926,7 @@ def cmd_blobs(args, sources):
     target_url = database_url(args.target_env)
     log = lambda line: print(line, flush=True)  # noqa: E731
     if args.verify:
-        return verify_blobs(args, blobs, store, target_url, log)
+        return verify_blobs(args.source, store, target_url, log)
     if bool(args.from_dir) == bool(args.from_s3):
         raise MigrationError('pass exactly one of --from-dir DIR or --from-s3 BUCKET')
     try:
@@ -877,64 +935,65 @@ def cmd_blobs(args, sources):
     except (OSError, RuntimeError) as e:
         raise MigrationError(str(e)) from e
     source_url = database_url(sources[args.source].database_env)
-    keys = [k for k in psql(source_url, BLOB_SETS[args.source]['source'] + ';\n', read_only=True).splitlines() if k]
+    keys = [k for (k,) in hex_rows(psql(source_url, BLOB_SETS[args.source]['source'] + ';\n', read_only=True), 1)]
     ensure_checkpoint_table(target_url)
-    inventory = dict(line.split('\t', 1) for line in psql(
-        target_url, f'SELECT object_key, hash FROM dcl_migration.blob_inventory WHERE source = {literal(args.source)};\n'
-    ).splitlines() if line)
+    inventory = dict(hex_rows(psql(
+        target_url, "SELECT encode(convert_to(object_key, 'UTF8'), 'hex'), encode(convert_to(hash, 'UTF8'), 'hex')"
+                    f' FROM dcl_migration.blob_inventory WHERE source = {literal(args.source)};\n'), 2))
     todo = [k for k in keys if not (k in inventory and store.has(inventory[k]))]
     log(f'{args.source}: {len(keys)} objects named, {len(keys) - len(todo)} already copied;'
         f' copying {len(todo)} from {upstream.describe()} into {store.contents}')
-    reasons = {'missing': 'absent upstream', 'corrupt': 'bytes do not hash to the key', 'invalid': 'not a content id'}
-    counts = dict.fromkeys(['copied', 'present', *reasons], 0)
-    failures, stored, missing = [], [], []
-    for n, outcome in enumerate(blobs.copy_all(upstream, store, todo, args.workers), 1):
-        counts[outcome.status] += 1
-        if outcome.cid:
-            stored.append((outcome.key, outcome.cid, outcome.size))
-        else:
-            missing.append((outcome.key, reasons[outcome.status]))
-            failures.append(f'  {outcome.key}: {reasons[outcome.status]}')
-        if len(stored) + len(missing) >= 1000:
-            record_blobs(target_url, args.source, stored, missing)
-            stored, missing = [], []
-        if n % 10000 == 0:
-            log(f'  {n}/{len(todo)}')
-    record_blobs(target_url, args.source, stored, missing)
+    try:
+        counts, report = record_outcomes(
+            blobs.copy_all(upstream, store, todo, args.workers),
+            lambda stored, missing: record_blobs(target_url, args.source, stored, missing), len(todo), log)
+    except blobs.SourceError as e:
+        raise MigrationError(f'upstream storage: {e}') from e
     log(f'{args.source}: copied {counts["copied"]}, already in the store {counts["present"]},'
-        f' absent upstream {counts["missing"]}, hash mismatch {counts["corrupt"]}, not a content id {counts["invalid"]}')
-    if failures:
-        log('not stored (recorded in dcl_migration.blob_missing; the node serves them as missing):')
-        for line in failures:
+        f' absent or unreadable upstream {counts["missing"]}, hash mismatch {counts["corrupt"]},'
+        f' not a content id {counts["invalid"]}, read failed {counts["failed"]}')
+    if report:
+        log('not stored (recorded in dcl_migration.blob_missing, which the node serves as missing,'
+            ' except read failures, which the next run retries):')
+        for line in report:
             log(line)
-    return 0
+    return 1 if counts['failed'] else 0
 
 
-def verify_blobs(args, blobs, store, target_url, log):
-    """Lists every imported row whose blobs the store lacks; existence only, the copy hashed them."""
-    out = psql(target_url, BLOB_SETS[args.source]['target'] + ';\n')
+def recorded_missing(source, target_url):
+    return {k for (k,) in hex_rows(psql(
+        target_url, "SELECT encode(convert_to(object_key, 'UTF8'), 'hex') FROM dcl_migration.blob_missing"
+                    f' WHERE source = {literal(source)};\n'), 1)}
+
+
+def verify_blobs(source, store, target_url, log, skip=frozenset()):
+    """Lists every imported row whose blobs the store lacks, but for the keys in `skip`; existence
+    only, the copy hashed them."""
     lacking, checked = {}, {}
-    for line in out.splitlines():
-        if not line:
+    for owner, key in hex_rows(psql(target_url, BLOB_SETS[source]['target'] + ';\n'), 2):
+        if key in skip:
             continue
-        owner, key = line.split('\t', 1)
         if key not in checked:
             checked[key] = store.has(key)
         if not checked[key]:
             lacking.setdefault(owner, []).append(key)
     for owner, keys in lacking.items():
         log(f'{owner}: {len(keys)} missing: {", ".join(keys[:5])}{" ..." if len(keys) > 5 else ""}')
-    log(f'{args.source}: {len(checked)} blobs checked in {store.contents}, {len(lacking)} rows with missing blobs')
+    log(f'{source}: {len(checked)} blobs checked in {store.contents}, {len(lacking)} rows with missing blobs')
     return 1 if lacking else 0
 
 
 # ── worlds limits ───────────────────────────────────────────────────────────
 
 MIB = 1024 * 1024
+DIGITS = re.compile(r'\s*[0-9]+\s*')
 
 
 def positive_int(value):
-    """A JSON number upstream would use as a limit; 0, null and non-integers mean "the default"."""
+    """A limit as upstream's JS reads it (`x || default`, then BigInt(x)): a positive integer number
+    or integer string; 0, null and anything else mean "the default"."""
+    if isinstance(value, str) and DIGITS.fullmatch(value):
+        value = int(value)
     if isinstance(value, float) and value.is_integer():
         value = int(value)
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -942,16 +1001,19 @@ def positive_int(value):
     return int(value)
 
 
-def whitelist_rows(whitelist, max_size_mb):
+def whitelist_rows(whitelist, max_size_mb, warn=lambda line: print(line, file=sys.stderr)):
     """WCS `WHITELIST_URL` entries as worlds.world_limit_overrides rows (limits-manager semantics:
     a listed world's size cap is `max_size_in_mb || MAX_SIZE`, fixed, and ENS worlds keep
-    ENS_MAX_SIZE; `max_parcels || MAX_PARCELS`)."""
+    ENS_MAX_SIZE; `max_parcels || MAX_PARCELS`). Upstream looks entries up by the lowercased world
+    name, so a key that is not already lowercase and trimmed never applied and is skipped."""
     if not isinstance(whitelist, dict):
         raise MigrationError('the whitelist must be a JSON object keyed by world name')
     rows, unsized = {}, []
-    for raw_name, entry in whitelist.items():
-        name = raw_name.strip().lower()
-        if not name or not isinstance(entry, dict):
+    for name, entry in whitelist.items():
+        if not name or name != name.strip().lower():
+            warn(f'skipped whitelist key {name!r}: upstream only matched lowercase, trimmed names')
+            continue
+        if not isinstance(entry, dict):
             continue
         parcels, size_mb = positive_int(entry.get('max_parcels')), positive_int(entry.get('max_size_in_mb'))
         if name.endswith('.eth') and not name.endswith('.dcl.eth'):
@@ -1002,6 +1064,55 @@ ON CONFLICT (world_name) DO UPDATE SET
     return 0
 
 
+# ── one-off: quota blocks an older mapping loaded as bans ───────────────────
+
+def cmd_worlds_unban_quota_blocks(args, sources):
+    """Deletes from worlds.blocked_wallets the rows the former `blocked_wallet` step loaded there.
+
+    The tool records no per-wallet provenance, so a row counts as that step's when upstream
+    `blocked` still holds its wallet with the same created_at (the step copied it verbatim; a ban
+    made on the node carries its own). Runs only where that step's checkpoint exists, and drops it."""
+    source = sources['worlds-content-server']
+    target_url = database_url(args.target_env)
+    old = psql(target_url, "SELECT to_regclass('dcl_migration.checkpoint') IS NOT NULL AND EXISTS ("
+                           "SELECT 1 FROM dcl_migration.checkpoint WHERE source = 'worlds-content-server'"
+                           " AND step = 'blocked_wallet');\n").strip()
+    if old != 't':
+        print('no worlds-content-server/blocked_wallet checkpoint: the former step never ran here; nothing to do')
+        return 0
+    step = next(s for s in source.steps if s.name == 'quota_block')
+    source_url = database_url(source.database_env)
+    with tempfile.TemporaryDirectory(prefix='dcl-migration-') as tmp:
+        data = Path(tmp) / 'blocked.csv'
+        with data.open('wb') as fh:
+            psql(source_url, extract_sql(step, None, None, None), read_only=True, stdout=fh)
+        script = Path(tmp) / 'unban.sql'
+        script.write_text(f"""\\set ON_ERROR_STOP 1
+BEGIN;
+CREATE TEMP TABLE upstream_blocked (wallet text, created_at timestamptz, updated_at timestamptz) ON COMMIT DROP;
+\\copy upstream_blocked FROM pstdin WITH (FORMAT csv)
+WITH d AS (
+    DELETE FROM worlds.blocked_wallets b USING upstream_blocked u
+    WHERE b.wallet = u.wallet AND b.created_at = u.created_at AT TIME ZONE 'UTC'
+    RETURNING 1)
+SELECT '@@deleted', count(*) FROM d;
+SELECT '@@kept', count(*) FROM worlds.blocked_wallets b JOIN upstream_blocked u ON u.wallet = b.wallet;
+DELETE FROM dcl_migration.checkpoint WHERE source = 'worlds-content-server' AND step = 'blocked_wallet';
+{'ROLLBACK' if args.dry_run else 'COMMIT'};
+""")
+        with data.open('rb') as fh:
+            out = psql(target_url, None, stdin=fh, extra=['-f', str(script)])
+    counts = dict(line.split('\t') for line in out.splitlines() if line.startswith('@@'))
+    print(f'worlds.blocked_wallets: deleted {counts["@@deleted"]} quota blocks loaded as bans'
+          + (' (rolled back)' if args.dry_run else ''))
+    if counts['@@kept'] != '0':
+        print(f'kept {counts["@@kept"]} rows whose wallet is blocked upstream but whose created_at differs'
+              ' (a ban made on the node); review them by hand')
+    print('a wallet whose upstream block was lifted after the former step ran is no longer in `blocked`'
+          ' and cannot be told apart from a node ban; review worlds.blocked_wallets by hand')
+    return 0
+
+
 def parser():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument('--sources-dir', type=Path, default=SOURCES, help=argparse.SUPPRESS)
@@ -1026,6 +1137,9 @@ def parser():
     run.add_argument('--batch-size', type=int, default=5000)
     run.add_argument('--skip-unconfigured', action='store_true',
                      help='skip sources whose database variable is unset')
+    run.add_argument('--storage-root',
+                     help="the node's STORAGE_ROOT_FOLDER (default: that variable); runs of steps whose rows"
+                          ' name blobs end by checking the store holds them')
     blobs = sub.add_parser('blobs', help="copy a source's blobs into the node's store, or --verify them")
     blobs.add_argument('source', help=f'one of: {", ".join(sorted(BLOB_SETS))}')
     blobs.add_argument('--to', help='the node\'s STORAGE_ROOT_FOLDER (default: that variable)')
@@ -1040,6 +1154,9 @@ def parser():
     limits.add_argument('--max-size-mb', type=int,
                         help="the old service's MAX_SIZE: the cap of a listed world without max_size_in_mb")
     limits.add_argument('--dry-run', action='store_true', help='write, then roll back')
+    unban = sub.add_parser('worlds-unban-quota-blocks',
+                           help='one-off: delete the quota blocks the former blocked_wallet step loaded as bans')
+    unban.add_argument('--dry-run', action='store_true', help='delete, report, then roll back')
     return p
 
 
@@ -1053,9 +1170,12 @@ def main(argv=None):
         return 2
     try:
         selected = [args.source] if getattr(args, 'source', None) else getattr(args, 'sources', None)
+        if args.command == 'worlds-unban-quota-blocks':
+            selected = ['worlds-content-server']
         sources = discover(args.sources_dir, selected or ['all'])
         return {'list': cmd_list, 'check': cmd_check, 'run': cmd_run, 'status': cmd_status, 'blobs': cmd_blobs,
-                'worlds-limits': cmd_worlds_limits}[args.command](args, sources)
+                'worlds-limits': cmd_worlds_limits,
+                'worlds-unban-quota-blocks': cmd_worlds_unban_quota_blocks}[args.command](args, sources)
     except MigrationError as e:
         print(f'error: {e}', file=sys.stderr)
         return 1

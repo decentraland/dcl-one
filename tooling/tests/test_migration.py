@@ -290,10 +290,185 @@ class BlobCopy(unittest.TestCase):
         self.assertEqual(self.copy(blobs.hash_bytes_v1(b'gone')).status, 'missing')
         self.assertEqual(self.copy('../escape').status, 'invalid')
 
+    def test_when_a_key_only_starts_with_an_id_it_should_be_invalid(self):
+        self.upstream.mkdir()
+        cid, sha = blobs.hash_bytes_v1(b'x'), hashlib.sha256(b'x').hexdigest()
+        for key in (cid + '\n', cid + '\nmore', sha + '\n', 'Qm' + 'a' * 44 + '\n'):
+            self.assertEqual(self.copy(key).status, 'invalid', repr(key))
+
+    def test_when_a_read_keeps_failing_mid_stream_it_should_remove_the_staging_file(self):
+        retry = unittest.mock.patch.object(blobs, 'RETRY_DELAY', 0)
+        retry.start()
+        self.addCleanup(retry.stop)
+        data = pattern(blobs.READ_SIZE * 2)
+        source = FakeFolder({blobs.hash_bytes_v1(data): data}, fail_reads={blobs.hash_bytes_v1(data): 99})
+        outcome = blobs.copy_one(source, self.store, blobs.hash_bytes_v1(data))
+        self.assertEqual(outcome.status, 'failed')
+        self.assertIn('read failed 3 times', outcome.reason)
+        self.assertEqual(source.opened, 3)
+        self.assertEqual(self.staging_files(), [])
+
+    def test_when_the_store_has_a_staging_file_of_that_name_it_should_not_follow_or_reuse_it(self):
+        target = self.tmp / 'elsewhere'
+        target.write_bytes(b'keep')
+        cid = blobs.hash_bytes_v1(b'x')
+        directory = self.tmp / 'node' / 'contents' / blobs.shard(cid)
+        directory.mkdir(parents=True)
+        seq = next(blobs._seq) + 1
+        (directory / f'{cid}.{os.getpid()}.{seq}.tmp').symlink_to(target)
+        with self.assertRaises(FileExistsError):
+            self.store.staging(cid)
+        self.assertEqual(target.read_bytes(), b'keep')
+
+    def test_when_copying_many_keys_it_should_submit_a_bounded_window_in_order(self):
+        keys = [blobs.hash_bytes_v1(str(i).encode()) for i in range(200)]
+        source = FakeFolder({k: str(i).encode() for i, k in enumerate(keys)})
+        consumed = []
+
+        def feed():
+            for k in keys:
+                consumed.append(k)
+                yield k
+
+        outcomes = blobs.copy_all(source, self.store, feed(), workers=2)
+        first = next(outcomes)
+        self.assertLessEqual(len(consumed), 2 * 4 + 1)
+        rest = list(outcomes)
+        self.assertEqual([o.key for o in [first, *rest]], keys)
+        self.assertTrue(all(o.status == 'copied' for o in [first, *rest]))
+
+
+class FakeFolder:
+    """An upstream whose reads can fail: `fail_reads[key]` reads raise after the first chunk."""
+
+    def __init__(self, objects, fail_reads=None):
+        self.objects, self.fail_reads, self.opened = objects, dict(fail_reads or {}), 0
+
+    def open(self, key):
+        self.opened += 1
+        if key not in self.objects:
+            raise blobs.Missing('absent upstream')
+        body = FakeBody(self.objects[key], fail=self.fail_reads.get(key, 0) > 0)
+        if key in self.fail_reads:
+            self.fail_reads[key] -= 1
+        return body
+
+
+class FakeBody:
+    def __init__(self, data, fail=False):
+        self.stream, self.fail, self.reads = io.BytesIO(data), fail, 0
+
+    def read(self, n=-1):
+        self.reads += 1
+        if self.fail and self.reads > 1:
+            raise TimeoutError('read timed out')
+        return self.stream.read(n)
+
+    def close(self):
+        pass
+
+
+class FakeClientError(Exception):
+    def __init__(self, code, status):
+        super().__init__(code)
+        self.response = {'Error': {'Code': code}, 'ResponseMetadata': {'HTTPStatusCode': status}}
+
+
+class FakeS3:
+    """get_object as boto3 answers it: ClientError with `response`, a streaming Body."""
+
+    def __init__(self):
+        self.objects, self.errors, self.calls = {}, {}, 0
+
+    def get_object(self, Bucket, Key):
+        self.calls += 1
+        queued = self.errors.get(Key)
+        if queued:
+            error = queued.pop(0)
+            if error is not None:
+                raise error
+        if Key not in self.objects:
+            raise FakeClientError('NoSuchKey', 404)
+        data, encoding, fail = self.objects[Key]
+        body = FakeBody(data, fail=fail and self.calls == 1)
+        return {'Body': body, **({'ContentEncoding': encoding} if encoding else {})}
+
+
+class S3Copy(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.store = blobs.Store(self.tmp / 'node')
+        self.client = FakeS3()
+        self.source = blobs.S3Source('bucket', 'prefix/', client=self.client)
+        retry = unittest.mock.patch.object(blobs, 'RETRY_DELAY', 0)
+        retry.start()
+        self.addCleanup(retry.stop)
+
+    def copy(self, key):
+        return blobs.copy_one(self.source, self.store, key)
+
+    def test_when_the_key_is_absent_it_should_record_it_missing(self):
+        outcome = self.copy(blobs.hash_bytes_v1(b'gone'))
+        self.assertEqual((outcome.status, outcome.reason), ('missing', 'absent upstream'))
+
+    def test_when_access_is_denied_it_should_record_it_missing_with_the_reason(self):
+        key = blobs.hash_bytes_v1(b'hidden')
+        self.client.errors['prefix/' + key] = [FakeClientError('AccessDenied', 403)]
+        outcome = self.copy(key)
+        self.assertEqual(outcome.status, 'missing')
+        self.assertIn('access denied', outcome.reason)
+
+    def test_when_another_s3_error_occurs_it_should_stop_the_copy(self):
+        key = blobs.hash_bytes_v1(b'x')
+        self.client.errors['prefix/' + key] = [FakeClientError('InvalidAccessKeyId', 400)]
+        with self.assertRaisesRegex(blobs.SourceError, 'InvalidAccessKeyId'):
+            self.copy(key)
+
+    def test_when_the_object_is_gzip_encoded_it_should_store_the_inflated_bytes(self):
+        data = pattern(5000)
+        key = blobs.hash_bytes_v1(data)
+        self.client.objects['prefix/' + key] = (gzip.compress(data), 'gzip', False)
+        outcome = self.copy(key)
+        self.assertEqual(outcome.status, 'copied')
+        self.assertEqual(self.store.path(key).read_bytes(), data)
+
+    def test_when_a_stream_fails_once_it_should_retry_and_store_the_object(self):
+        data = pattern(blobs.READ_SIZE + 10)
+        key = blobs.hash_bytes_v1(data)
+        self.client.objects['prefix/' + key] = (data, None, True)
+        outcome = self.copy(key)
+        self.assertEqual((outcome.status, self.client.calls), ('copied', 2))
+        self.assertEqual(self.store.path(key).read_bytes(), data)
+        self.assertEqual(list((self.tmp / 'node').rglob('*.tmp')), [])
+
+
+class RecordOutcomes(unittest.TestCase):
+    def test_when_there_are_more_than_a_batch_of_outcomes_it_should_flush_in_batches(self):
+        outcomes = [blobs.Outcome(f'k{i}', 'copied', f'c{i}', 1) if i % 3 else
+                    blobs.Outcome(f'k{i}', 'missing', reason='absent upstream') for i in range(2500)]
+        outcomes.append(blobs.Outcome('flaky', 'failed', reason='read failed 3 times'))
+        flushed = []
+        counts, report = migrate.record_outcomes(iter(outcomes), lambda s, m: flushed.append((len(s), len(m))),
+                                                 len(outcomes), lambda line: None)
+        self.assertEqual([s + m for s, m in flushed], [1000, 1000, 500])
+        self.assertEqual(sum(m for _, m in flushed), 834)
+        self.assertEqual(counts['failed'], 1)
+        self.assertIn("  'flaky': read failed 3 times", report)
+
+    def test_when_the_copy_stops_part_way_it_should_record_what_it_finished(self):
+        def outcomes():
+            yield blobs.Outcome('a', 'copied', 'ca', 1)
+            raise blobs.SourceError('expired credentials')
+        flushed = []
+        with self.assertRaises(blobs.SourceError):
+            migrate.record_outcomes(outcomes(), lambda s, m: flushed.append(s), 1, lambda line: None)
+        self.assertEqual(flushed, [[('a', 'ca', 1)]])
+
 
 class WhitelistRows(unittest.TestCase):
     def test_when_an_entry_sets_limits_it_should_convert_megabytes(self):
-        rows = migrate.whitelist_rows({'Big.dcl.eth': {'max_parcels': 50, 'max_size_in_mb': 200}}, None)
+        rows = migrate.whitelist_rows({'big.dcl.eth': {'max_parcels': 50, 'max_size_in_mb': 200}}, None)
         self.assertEqual(rows, {'big.dcl.eth': (50, 200 * 1024 * 1024)})
 
     def test_when_an_entry_has_no_size_it_should_take_the_old_max_size(self):
@@ -307,6 +482,20 @@ class WhitelistRows(unittest.TestCase):
     def test_when_an_ens_world_is_listed_it_should_keep_only_its_parcels(self):
         rows = migrate.whitelist_rows({'x.eth': {'max_parcels': 9, 'max_size_in_mb': 500}, 'y.eth': {}}, None)
         self.assertEqual(rows, {'x.eth': (9, None)})
+
+    def test_when_a_key_is_not_lowercase_and_trimmed_it_should_warn_and_skip_it(self):
+        warnings = []
+        rows = migrate.whitelist_rows({'Big.dcl.eth': {'max_parcels': 50, 'max_size_in_mb': 200},
+                                       ' big.dcl.eth': {'max_parcels': 60, 'max_size_in_mb': 300},
+                                       'big.dcl.eth': {'max_parcels': 10, 'max_size_in_mb': 20}}, None,
+                                      warn=warnings.append)
+        self.assertEqual(rows, {'big.dcl.eth': (10, 20 * 1024 * 1024)})
+        self.assertEqual(len(warnings), 2)
+
+    def test_when_limits_are_integer_strings_it_should_read_them_as_upstream_does(self):
+        rows = migrate.whitelist_rows({'a.dcl.eth': {'max_parcels': '12', 'max_size_in_mb': '30'},
+                                       'b.dcl.eth': {'max_parcels': '1.5', 'max_size_in_mb': 'big'}}, 100)
+        self.assertEqual(rows, {'a.dcl.eth': (12, 30 * 1024 * 1024), 'b.dcl.eth': (None, 100 * 1024 * 1024)})
 
 
 def free_port():
@@ -533,8 +722,10 @@ class AgainstPostgres(unittest.TestCase):
         upload_key = put(upload, hashlib.sha256(upload).hexdigest())
         model, picture = put(b'glb bytes'), put(b'png bytes')
         lost = blobs.hash_bytes_v1(b'never stored upstream')
+        lost_thumbnail = hashlib.sha256(b'thumbnail upstream lost').hexdigest()
+        bad = f'{model}\nbroken'
         scenes = {}
-        for world, content in (('alpha.dcl.eth', {'a.glb': model, 'lost.png': lost}),
+        for world, content in (('alpha.dcl.eth', {'a.glb': model, 'lost.png': lost, 'bad.png': bad}),
                                ('beta.dcl.eth', {'thumb.png': picture})):
             entity = json.dumps({'type': 'scene', 'pointers': ['0,0'],
                                  'content': [{'file': f, 'hash': h} for f, h in content.items()]}).encode()
@@ -543,28 +734,90 @@ class AgainstPostgres(unittest.TestCase):
                           f"'{entity.decode()}', '0x{'1' * 40}', '{{0,0}}', 10, now(), now());\n")
         self.sql(src, f"INSERT INTO worlds (name, owner, thumbnail_hash, created_at, updated_at) VALUES "
                       f"('alpha.dcl.eth', '0x{'1' * 40}', '{upload_key}', now(), now()), "
-                      f"('beta.dcl.eth', '0x{'1' * 40}', '{picture}', now(), now());\n")
-        steps = ('run', 'worlds-content-server', '--step', 'world', '--step', 'world_scene')
+                      f"('beta.dcl.eth', '0x{'1' * 40}', '{picture}', now(), now()), "
+                      f"('gamma.dcl.eth', '0x{'1' * 40}', '{lost_thumbnail}', now(), now());\n")
+        steps = ('run', 'worlds-content-server', '--step', 'world', '--step', 'world_scene',
+                 '--storage-root', str(node))
 
         code, out = self.migrate(*steps, sources_dir=migrate.SOURCES)
         self.assertEqual(code, 1)
         copy = ('blobs', 'worlds-content-server', '--from-dir', str(upstream), '--to', str(node))
         code, out = self.migrate(*copy, sources_dir=migrate.SOURCES)
         self.assertEqual(code, 0, out)
-        self.assertIn('copied 5, already in the store 0, absent upstream 1', out)
+        self.assertIn('copied 5, already in the store 0, absent or unreadable upstream 2, hash mismatch 0,'
+                      ' not a content id 1', out)
         code, out = self.migrate(*copy, sources_dir=migrate.SOURCES)
-        self.assertIn('6 objects named, 5 already copied', out)
+        self.assertIn('8 objects named, 5 already copied', out)
+        missing = self.sql(tgt, 'SELECT reason FROM dcl_migration.blob_missing WHERE object_key IN '
+                                f'({migrate.literal(lost)}, {migrate.literal(lost_thumbnail)}, {migrate.literal(bad)})'
+                                ' ORDER BY 1;\n')
+        self.assertEqual(missing.splitlines(), ['absent upstream', 'absent upstream', 'not a content id'])
         code, out = self.migrate(*steps, sources_dir=migrate.SOURCES)
         self.assertEqual(code, 0, out)
+        self.assertIn('0 rows with missing blobs', out)
 
-        thumbs = self.sql(tgt, 'SELECT name, thumbnail_hash FROM worlds.worlds ORDER BY 1;\n').split()
-        self.assertEqual(thumbs, ['alpha.dcl.eth', blobs.hash_bytes_v1(upload), 'beta.dcl.eth', picture])
+        thumbs = self.sql(tgt, 'SELECT name, thumbnail_hash FROM worlds.worlds ORDER BY 1;\n').splitlines()
+        self.assertEqual(thumbs, [f'alpha.dcl.eth\t{blobs.hash_bytes_v1(upload)}', f'beta.dcl.eth\t{picture}',
+                                  'gamma.dcl.eth\t'])
         self.assertEqual(self.count(tgt, 'worlds.world_scenes'), 2)
         code, out = self.migrate('blobs', 'worlds-content-server', '--verify', '--to', str(node),
                                  sources_dir=migrate.SOURCES)
         self.assertEqual(code, 1, out)
-        self.assertIn(f'alpha.dcl.eth/{scenes["alpha.dcl.eth"]}: 1 missing: {lost}', out)
+        self.assertIn(f'alpha.dcl.eth/{scenes["alpha.dcl.eth"]}: 2 missing: ', out)
+        self.assertIn(lost, out)
         self.assertNotIn('beta.dcl.eth', out)
+
+        # A GC between `blobs` and `run` deletes copied blobs: the run fails instead of loading.
+        blobs.Store(node).path(picture).unlink()
+        code, out = self.migrate(*steps, sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 1, out)
+        self.assertIn(f'beta.dcl.eth/{scenes["beta.dcl.eth"]}: 1 missing: {picture}', out)
+
+    def test_when_a_places_world_image_names_a_copied_thumbnail_it_should_name_its_cid(self):
+        tgt = self.catalyst_db('places_images')
+        step = next(s for s in migrate.load_source(migrate.SOURCES / 'places').steps if s.name == 'place')
+        data = b'uploaded thumbnail'
+        key, cid = hashlib.sha256(data).hexdigest(), blobs.hash_bytes_v1(data)
+        unknown = hashlib.sha256(b'not copied').hexdigest()
+        base = 'https://worlds.example.org/contents/'
+        defs = ', '.join(f'{migrate.ident(c)} {t}' for c, t in step.columns)
+        rows = []
+        for name, image in (('copied.dcl.eth', base + key), ('pending.dcl.eth', base + unknown),
+                            ('scene.dcl.eth', base + 'bafkreiexample')):
+            raw = json.dumps({'id': name, 'world_name': name, 'image': image, 'world': True, 'source': 'places'})
+            rows.append(f"('{name}', '0,0', 't', '', NULL, NULL, '{{}}', now(), false, false, '{name}', "
+                        f"'{raw}'::jsonb, false, NULL, NULL)")
+        self.sql(tgt, migrate.CHECKPOINT_DDL
+                 + f"INSERT INTO dcl_migration.blob_inventory VALUES ('worlds-content-server', '{key}', '{cid}', 1);\n"
+                 + 'BEGIN;\n' + '\n'.join(migrate.step_vars(step, False))
+                 + f'\nCREATE TEMP TABLE stage ({defs});\nINSERT INTO stage VALUES {", ".join(rows)};\n'
+                 + f'\\i {step.load}\nCOMMIT;\n')
+        images = self.sql(tgt, "SELECT id, raw->>'image' FROM explore.place ORDER BY 1;\n").splitlines()
+        self.assertEqual(images, [f'copied.dcl.eth\t{base}{cid}', f'pending.dcl.eth\t{base}{unknown}',
+                                  f'scene.dcl.eth\t{base}bafkreiexample'])
+
+    def test_when_unbanning_quota_blocks_it_should_delete_only_the_former_steps_rows(self):
+        src, tgt = self.wcs()
+        imported, node_ban, other = f'0x{"a" * 40}', f'0x{"b" * 40}', f'0x{"c" * 40}'
+        self.sql(src, f"INSERT INTO blocked VALUES ('{imported}', '2026-01-01 00:00:00.123456', '2026-01-02'), "
+                      f"('{node_ban}', '2026-01-01', '2026-01-01');\n")
+        migrate.ensure_checkpoint_table(self.url(tgt))
+        self.sql(tgt, f"INSERT INTO worlds.blocked_wallets VALUES ('{imported}', '2026-01-01 00:00:00.123456', "
+                      f"'2026-01-02'), ('{node_ban}', '2026-05-05', '2026-05-05'), ('{other}', now(), now());\n")
+        code, out = self.migrate('worlds-unban-quota-blocks', sources_dir=migrate.SOURCES)
+        self.assertIn('nothing to do', out)
+        self.sql(tgt, "INSERT INTO dcl_migration.checkpoint (source, step, walk_started_at) "
+                      "VALUES ('worlds-content-server', 'blocked_wallet', now());\n")
+        code, out = self.migrate('worlds-unban-quota-blocks', '--dry-run', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertIn('deleted 1 quota blocks loaded as bans (rolled back)', out)
+        self.assertEqual(self.count(tgt, 'worlds.blocked_wallets'), 3)
+        code, out = self.migrate('worlds-unban-quota-blocks', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertIn('kept 1 rows', out)
+        self.assertEqual(self.sql(tgt, 'SELECT wallet FROM worlds.blocked_wallets ORDER BY 1;\n').split(),
+                         [node_ban, other])
+        self.assertEqual(self.count(tgt, 'dcl_migration.checkpoint'), 0)
 
     def test_when_importing_quota_blocks_it_should_not_ban_the_wallet(self):
         src, tgt = self.wcs()
@@ -585,7 +838,7 @@ class AgainstPostgres(unittest.TestCase):
                       'max_size_bytes bigint, created_at timestamp NOT NULL DEFAULT now(), '
                       'updated_at timestamp NOT NULL DEFAULT now());\n')
         whitelist = self.tmp / 'whitelist.json'
-        whitelist.write_text(json.dumps({'Big.dcl.eth': {'max_parcels': 50, 'max_size_in_mb': 200}}))
+        whitelist.write_text(json.dumps({'big.dcl.eth': {'max_parcels': 50, 'max_size_in_mb': 200}}))
         code, out = self.migrate('worlds-limits', str(whitelist), '--dry-run', sources_dir=migrate.SOURCES)
         self.assertEqual(code, 0, out)
         self.assertEqual(self.count(tgt, 'worlds.world_limit_overrides'), 0)

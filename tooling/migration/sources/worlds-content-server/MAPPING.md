@@ -11,6 +11,25 @@ Pinned at `decentraland/worlds-content-server@10af5255bb04` (migrations
 | `world_permission` | `world_permissions` + `world_permission_parcels` | `worlds.world_permissions`, `world_permission_parcels` | Covers the `deployment` and `streaming` grants. Addresses are lowercased; a value that is not an address is dropped. Each row carries the grant's canonical `x,y` parcel set and replaces the target set. An empty set means a world-wide grant. Upstream bumps the grant's `updated_at` on every parcel edit. |
 | `quota_block` | `blocked` | `worlds.quota_blocks` | Lowercased, address values only. Upstream's `blocked` is the storage-quota block of an owner over its allowance, not a visitor ban, so it never lands in `worlds.blocked_wallets` (the node's platform-wide ban). |
 
+### Targets loaded by the former `blocked_wallet` step
+
+An earlier mapping loaded `blocked` into `worlds.blocked_wallets` as the
+step `blocked_wallet`, so those owners are banned platform-wide. Undo it once
+on such a target:
+
+```sh
+python3 tooling/migration/migrate.py worlds-unban-quota-blocks --dry-run
+python3 tooling/migration/migrate.py worlds-unban-quota-blocks
+```
+
+It runs only when that step's checkpoint exists, and drops the checkpoint in
+the same transaction. The tool keeps no per-wallet provenance, so it deletes
+the `blocked_wallets` rows whose wallet upstream `blocked` holds with the same
+`created_at` (the step copied it verbatim; a node ban has its own). It reports
+the rows it kept for a blocked wallet with another `created_at`. Risk: a
+wallet whose upstream block was lifted after the old step ran is not in
+`blocked` any more and stays banned; review `worlds.blocked_wallets` by hand.
+
 `world` stores `thumbnail_hash` as the CID the blob copy stored the thumbnail
 under, and `world_scene` needs every entity and content hash of a DEPLOYED
 scene in the blob copy's records; see Blobs.
@@ -34,15 +53,32 @@ read-through fetches its files.
 
 ```sh
 export WORLDS_CONTENT_SERVER_DATABASE_URL=postgres://...  TARGET_DATABASE_URL=postgres://...
-python3 tooling/migration/migrate.py blobs worlds-content-server --from-dir /wcs/contents --to "$STORAGE_ROOT_FOLDER"
-python3 tooling/migration/migrate.py blobs worlds-content-server --from-s3 wcs-bucket --to "$STORAGE_ROOT_FOLDER"
-python3 tooling/migration/migrate.py blobs worlds-content-server --verify --to "$STORAGE_ROOT_FOLDER"   # after the import
+export STORAGE_ROOT_FOLDER=...                         # the node's storage root
+python3 tooling/migration/migrate.py blobs worlds-content-server --from-dir /wcs/contents
+python3 tooling/migration/migrate.py blobs worlds-content-server --from-s3 wcs-bucket
+python3 tooling/migration/migrate.py run worlds-content-server            # ends with the --verify check
+python3 tooling/migration/migrate.py blobs worlds-content-server --verify  # the same check on its own
 ```
+
+**Do not run the node's storage GC (`catalyst storage gc`, worlds
+`/admin/gc`) between `blobs` and `run`.** Copied blobs are not referenced
+until `run` imports their rows, and the GC's age floor (one hour) does not
+know the migration inventory, so it deletes them; the loads check only the
+inventory tables. A `run` that loads `world` or `world_scene` therefore ends
+by checking that the store holds every blob an imported local scene or world
+thumbnail names, and fails (exit 1, listing them) when one is missing: run
+`blobs` again, then `run` again. It needs the node's storage root
+(`--storage-root` or `STORAGE_ROOT_FOLDER`).
 
 - Upstream is a `STORAGE_FOLDER` (`<dir>/<sha1 shard>/<id>`, or flat with
   `disablePrefixHash`; a gzip-only `<id>.gzip` is inflated) or a `BUCKET`
   (key = id; `--from-s3` needs `boto3`, otherwise `aws s3 sync` the bucket and
-  pass the copy as `--from-dir`).
+  pass the copy as `--from-dir`). A 404 or a 403 (a missing key reads as 403
+  without `s3:ListBucket`) is recorded as missing with its reason. A read that
+  fails part-way (timeout, truncated stream) is retried three times with
+  backoff; a key still failing is listed, not recorded, and the copy exits 1 so
+  the next run retries it. Any other S3 error stops the copy.
+- At most `--workers` × 4 keys are in flight at a time.
 - Every object is re-hashed before it is stored: a CIDv1 against
   `hash_bytes_v1` (raw leaf up to 256 KiB, the chunked dag-pb tree above), a
   CIDv0 against either upstream spelling (raw sha256, or `ipfs add`).
@@ -51,18 +87,25 @@ python3 tooling/migration/migrate.py blobs worlds-content-server --verify --to "
   `thumbnail_hash` to that CID, so a thumbnail of any size resolves.
   Deploy-derived thumbnails already are a scene content CID.
 - The store layout is the node's: `<STORAGE_ROOT_FOLDER>/contents/<sha1
-  shard>/<cid>`, written through a staging file and a rename. Run the copy as
-  the user the node runs as.
+  shard>/<cid>`, written through a new staging file (`O_EXCL|O_NOFOLLOW`, as
+  the node) and a rename; the staging file is removed when the read fails. Run
+  the copy as the user the node runs as.
 - Each stored object is recorded in `dcl_migration.blob_inventory`
   (`object_key` = upstream key, `hash` = the CID). An object absent upstream,
-  whose bytes do not hash to its key, or whose key is no content id is listed
-  and recorded in `dcl_migration.blob_missing`; the node then serves it as
+  whose bytes do not hash to its key, or whose key is no content id (keys are
+  matched whole, so one holding a line break is invalid) is listed and
+  recorded in `dcl_migration.blob_missing`; the node then serves it as
   missing, as upstream did. A thumbnail recorded there is imported as no
   thumbnail.
 - Idempotent: objects already recorded and present in the store are skipped,
   so the copy runs again before each `run --since last`.
 - `--verify` lists each imported local scene (and world thumbnail) whose
   blobs are not in the store. It checks existence; the copy checked content.
+- Places: upstream Places stored an uploaded world thumbnail as the image URL
+  `<worlds server>/contents/<sha256 hex>`. The `places` source's `place` step
+  rewrites the hex to the recorded CID, so run this copy before `run places`;
+  a `places` run before it leaves those URLs (it prints a notice), and the
+  step re-scans fully, so running it again after the copy fixes them.
 
 ## Per-world limits
 
@@ -75,7 +118,10 @@ copy of it:
 python3 tooling/migration/migrate.py worlds-limits whitelist.json --max-size-mb <upstream MAX_SIZE>
 ```
 
-Names are lowercased. `max_parcels` maps as is; `max_size_bytes` is
+Upstream looks an entry up by the lowercased world name, so only keys that
+are already lowercase and trimmed ever applied; others are skipped with a
+warning. A limit may be a number or an integer string (upstream coerces
+both); 0 or anything else means the default. `max_parcels` maps as is; `max_size_bytes` is
 `max_size_in_mb` × 1 MiB. A listed world without `max_size_in_mb` had
 upstream's fixed `MAX_SIZE` cap instead of its owner's allowance, so it gets
 `--max-size-mb` × 1 MiB. ENS worlds (`.eth`, not `.dcl.eth`) keep the node's

@@ -1,3 +1,24 @@
+-- A world's image may be the old worlds server's `<base>/contents/<sha256 hex>`
+-- of an uploaded thumbnail; the node stores that file under its CID
+-- (`migrate.py blobs worlds-content-server` records key -> CID), so the URL
+-- names the CID. A key the copy has not recorded yet is left as is.
+UPDATE stage s
+SET raw = jsonb_set(s.raw, '{image}', to_jsonb(left(s.raw->>'image', -64) || b.hash))
+FROM dcl_migration.blob_inventory b
+WHERE s.world_name IS NOT NULL
+  AND s.raw->>'image' ~ '/contents/[0-9a-f]{64}$'
+  AND b.source = 'worlds-content-server'
+  AND b.object_key = right(s.raw->>'image', 64);
+
+DO $images$ DECLARE n bigint; BEGIN
+  SELECT count(*) INTO n FROM stage s
+   WHERE s.world_name IS NOT NULL AND s.raw->>'image' ~ '/contents/[0-9a-f]{64}$'
+     AND NOT EXISTS (SELECT 1 FROM dcl_migration.blob_missing m
+                      WHERE m.source = 'worlds-content-server' AND m.object_key = right(s.raw->>'image', 64));
+  IF n > 0 THEN RAISE NOTICE
+    'places/place: % world images name a sha256 thumbnail key the worlds blob copy has not recorded; run `migrate.py blobs worlds-content-server`, then this step again', n;
+  ELSE NULL; END IF; END $images$;
+
 -- Operator decisions first, as overlays the places mirror and derive re-apply
 -- (places::moderation, places::ranking). Rows this migration wrote carry
 -- set_by = 'migration:places'; a decision made on the node (any other set_by)

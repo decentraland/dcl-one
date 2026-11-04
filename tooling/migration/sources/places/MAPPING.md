@@ -41,6 +41,12 @@ which then count twice with the imported facts. Rows upstream does not list
   already in `explore.place_world_local` is skipped. When the worlds import
   and the derive pass publish a world locally, derive replaces the imported
   row with its local-leg row under the same id, and re-applies the overlays.
+- A world image of the form `<worlds server>/contents/<sha256 hex>` (an
+  uploaded thumbnail) is rewritten to end in the CID
+  `migrate.py blobs worlds-content-server` recorded for that key in
+  `dcl_migration.blob_inventory`, the only name the node serves it under. Run
+  that copy before this step; a key it has not recorded is left as is with a
+  notice, and re-running this step (a full re-scan) after the copy fixes it.
 - World-scene identities: a row is active (bound to `deployment_id`) when it
   has a deployment id, is enabled or opted out, and no preferred row of the
   same world (enabled first, then newest) overlaps it. All others are kept as
