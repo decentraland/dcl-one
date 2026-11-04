@@ -20,13 +20,10 @@ const auth = vi.hoisted(() => ({
   connectWalletConnect: vi.fn(),
 }));
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => auth }));
-const social = vi.hoisted(() => ({ fail: false }));
-vi.mock("@/data/lib/auth/thirdweb/api", async (original) => ({
-  ...(await original<typeof import("@/data/lib/auth/thirdweb/api")>()),
-  socialLoginUrl: (provider: string, redirectUrl: string) => {
-    if (social.fail) throw new Error("Social sign-in is unavailable.");
-    return `https://social.example/${provider}?redirectUrl=${encodeURIComponent(redirectUrl)}`;
-  },
+const magic = vi.hoisted(() => ({ start: vi.fn(async (_key: string, _option: string, _returnTo: string) => {}) }));
+vi.mock("./magic", async (original) => ({
+  ...(await original<typeof import("./magic")>()),
+  startMagicSignIn: magic.start,
 }));
 
 const SIGNER = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
@@ -46,8 +43,14 @@ function installWallet(answer: (req: Request) => unknown) {
   return calls;
 }
 
-function page(redirectTo: string | null = "/shop/items?sortBy=newest", layoutVariant: string | null = "two-options") {
-  return render(<LoginPage redirectTo={redirectTo} layoutVariant={layoutVariant} />);
+const MAGIC_KEY = "pk_example123";
+
+function page(
+  redirectTo: string | null = "/shop/items?sortBy=newest",
+  layoutVariant: string | null = "two-options",
+  magicApiKey: string | null = MAGIC_KEY,
+) {
+  return render(<LoginPage redirectTo={redirectTo} layoutVariant={layoutVariant} magicApiKey={magicApiKey} />);
 }
 
 beforeEach(() => {
@@ -68,7 +71,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
   delete (window as { ethereum?: unknown }).ethereum;
-  social.fail = false;
 });
 
 async function openCodeModal() {
@@ -117,7 +119,7 @@ describe("the sign-in page", () => {
     screen.getByPlaceholderText("Enter Your Email").focus();
     expect(document.activeElement).not.toBe(screen.getByTestId("otp-input-5"));
     await act(async () => refuse(new TypeError("Failed to fetch")));
-    expect(auth.verifyEmailSignIn).toHaveBeenCalledWith("jane.doe@example.com", "654321", { rethrow: true });
+    expect(auth.verifyEmailSignIn).toHaveBeenCalledWith("jane.doe@example.com", "654321", { expirationMs: 30 * 86_400_000, rethrow: true });
     expect(screen.getByRole("alert").textContent).toBe("Unable to connect. Please check your internet connection and try again.");
     // The boxes come back to the reader, focused, to correct the code.
     expect(document.activeElement).toBe(screen.getByTestId("otp-input-5"));
@@ -133,7 +135,7 @@ describe("the sign-in page", () => {
     await act(async () => {
       fireEvent.change(screen.getByTestId("otp-input-2"), { target: { value: "17" } });
     });
-    expect(auth.verifyEmailSignIn).toHaveBeenLastCalledWith("jane.doe@example.com", "117111", { rethrow: true });
+    expect(auth.verifyEmailSignIn).toHaveBeenLastCalledWith("jane.doe@example.com", "117111", { expirationMs: 30 * 86_400_000, rethrow: true });
   });
 
   it("moves focus into the wallet modal and keeps Tab inside it", async () => {
@@ -271,7 +273,8 @@ describe("the sign-in page", () => {
     await act(async () => {
       fireEvent.paste(screen.getByTestId("otp-input-0"), { clipboardData: { getData: () => "12 34 56" } });
     });
-    expect(auth.verifyEmailSignIn).toHaveBeenCalledWith("jane.doe@example.com", "123456", { rethrow: true });
+    expect(auth.verifyEmailSignIn).toHaveBeenCalledWith("jane.doe@example.com", "123456", { expirationMs: 30 * 86_400_000, rethrow: true });
+    expect(localStorage.getItem("dcl_thirdweb_user_email")).toBe("jane.doe@example.com");
     expect(assign).toHaveBeenCalledWith("/shop/items?sortBy=newest");
   });
 
@@ -302,25 +305,62 @@ describe("the sign-in page", () => {
     expect(screen.queryByTestId("email-login-modal")).toBeNull();
   });
 
-  it("starts social sign-in with a return to the checked path, never an outside one", async () => {
+  it("starts social sign-in through Magic, returning to the checked path, never an outside one", async () => {
     page("https://evil.example/steal");
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Continue with Google" }));
     });
-    expect(assign).toHaveBeenCalledWith(
-      `https://social.example/google?redirectUrl=${encodeURIComponent("http://localhost:3000/auth/callback?next=%2F")}`,
-    );
+    expect(magic.start).toHaveBeenCalledWith(MAGIC_KEY, "google", "/");
+    expect(screen.getByTestId("connection-status").textContent).toBe("Redirecting...");
+  });
+
+  it("offers every social option through Magic from the grid", async () => {
+    page();
+    fireEvent.click(screen.getByRole("button", { name: "More Options" }));
+    for (const name of ["Discord", "Apple", "X"]) {
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name }));
+      });
+      fireEvent.click(screen.getByRole("button", { name: "close" }));
+    }
+    expect(magic.start.mock.calls.map((c) => c[1])).toEqual(["discord", "apple", "x"]);
   });
 
   it("says so when social sign-in cannot start, instead of spinning", async () => {
-    social.fail = true;
+    magic.start.mockRejectedValueOnce(new Error("Magic is unavailable."));
     page();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Continue with Google" }));
     });
     expect(screen.getByTestId("connection-status").textContent).toBe("Something went wrong. Please try again.");
-    expect(screen.getByTestId("connection-error-detail").textContent).toBe("Social sign-in is unavailable.");
-    expect(assign).not.toHaveBeenCalled();
+    expect(screen.getByTestId("connection-error-detail").textContent).toBe("Magic is unavailable.");
+  });
+
+  it("does not start social sign-in on a site without Magic", async () => {
+    page("/shop", "two-options", null);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Continue with Google" }));
+    });
+    expect(magic.start).not.toHaveBeenCalled();
+    expect(screen.getByTestId("connection-error-detail").textContent).toBe("Social sign-in is not configured on this site.");
+  });
+
+  it("signs month-long sessions, as decentraland.org does", async () => {
+    installWallet((req) => {
+      if (req.method === "eth_accounts") return [SIGNER];
+      if (req.method === "personal_sign") return `0x${"44".repeat(65)}`;
+      return null;
+    });
+    localStorage.setItem("dcl_thirdweb_user_email", "old@example.com");
+    const before = Date.now();
+    page();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Continue with MetaMask" }));
+    });
+    const days = (new Date(getIdentity()!.expiration).getTime() - before) / 86_400_000;
+    expect(days).toBeGreaterThan(29.99);
+    expect(days).toBeLessThan(30.01);
+    expect(localStorage.getItem("dcl_thirdweb_user_email")).toBeNull();
   });
 
   it("ignores a wallet that answers after the reader closed its modal", async () => {
@@ -350,11 +390,11 @@ describe("the sign-in page", () => {
     // Rendered as the server would: no wallet, the full layout with MetaMask first.
     const ethereum = (window as { ethereum?: unknown }).ethereum;
     delete (window as { ethereum?: unknown }).ethereum;
-    container.innerHTML = renderToString(<LoginPage redirectTo="/shop" layoutVariant={null} />);
+    container.innerHTML = renderToString(<LoginPage redirectTo="/shop" layoutVariant={null} magicApiKey={null} />);
     (window as { ethereum?: unknown }).ethereum = ethereum;
     document.body.appendChild(container);
     await act(async () => {
-      hydrateRoot(container, <LoginPage redirectTo="/shop" layoutVariant={null} />, {
+      hydrateRoot(container, <LoginPage redirectTo="/shop" layoutVariant={null} magicApiKey={null} />, {
         onRecoverableError: (err) => errors.push(err),
       });
     });
@@ -379,7 +419,7 @@ describe("the sign-in page", () => {
     await act(async () => {
       fireEvent.change(screen.getByTestId("otp-input-1"), { target: { value: "9" } });
     });
-    expect(auth.verifyEmailSignIn).toHaveBeenLastCalledWith("jane.doe@example.com", "193456", { rethrow: true });
+    expect(auth.verifyEmailSignIn).toHaveBeenLastCalledWith("jane.doe@example.com", "193456", { expirationMs: 30 * 86_400_000, rethrow: true });
     expect(assign).toHaveBeenCalledWith("/shop/items?sortBy=newest");
   });
 });

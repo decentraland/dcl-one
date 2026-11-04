@@ -79,6 +79,8 @@ function Overlay({ className, onDismiss, children }: { className?: string; onDis
 const STATE_COPY: Record<ConnectionState, CopyKey> = {
   connecting: "connection_layout.waiting_for_signature",
   signing: "connection_layout.waiting_for_signature",
+  "signing-magic": "connection_layout.waiting_for_signature_magic",
+  validating: "connection_layout.validating_sign_in",
   redirecting: "connection_layout.loading_magic",
   error: "connection_layout.error",
   "error-generic": "connection_layout.error_generic",

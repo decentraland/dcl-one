@@ -2,8 +2,9 @@
 //       wallet options and their modals), src/components/Connection/{Connection,ConnectionPrimaryButton,
 //       ConnectionOption/ConnectionOption,EmailInput/EmailInput}.tsx, src/shared/email.ts (isEmailValid)
 // decentraland/auth is Apache-2.0.
-// decentraland.org's sign-in, on this site. Upstream's social buttons go through Magic and its Fortmatic option through
-// decentraland-connect; here the social buttons still use this site's in-app sign-in, and Fortmatic is not wired yet.
+// decentraland.org's sign-in, on this site: Google, Apple, Discord and X through Magic, email codes through thirdweb,
+// browser and phone wallets directly; every session lasts a month, as upstream's. Upstream's Fortmatic option goes
+// through decentraland-connect, which this site does not carry, so it is not wired yet.
 
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
@@ -11,7 +12,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import { useAuth } from "@/data/lib/auth/context";
 import { isIdentityExpired } from "@/data/lib/auth/expiry";
 import { getIdentity, setIdentity } from "@/data/lib/auth/session";
-import { socialLoginUrl, type ThirdwebSocialProvider } from "@/data/lib/auth/thirdweb/api";
 
 import appleIcon from "./assets/apple.svg?url";
 import coinbaseIcon from "./assets/coinbase.svg?url";
@@ -30,6 +30,7 @@ import xIcon from "./assets/x.svg?url";
 import { t } from "./copy";
 import { failureState, hasMetaMask, signInWithBrowserWallet, walletFor, type ConnectionState } from "./flow";
 import { ConnectionModal, EmailLoginModal, type PairingCode } from "./LoginModals";
+import { MAGIC_USER_EMAIL_KEY, SESSION_MS, startMagicSignIn, THIRDWEB_USER_EMAIL_KEY } from "./magic";
 import styles from "./LoginPage.module.css";
 import {
   layoutOptions,
@@ -58,6 +59,17 @@ const ICONS: Record<ConnectionOption, string | null> = {
 
 const EMAIL_PATTERN =
   /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
+
+/** Upstream keeps the email a reader signed in with for their profile setup; a wallet sign-in has none. */
+function rememberEmail(email: string | null): void {
+  try {
+    localStorage.removeItem(MAGIC_USER_EMAIL_KEY);
+    if (email) localStorage.setItem(THIRDWEB_USER_EMAIL_KEY, email);
+    else localStorage.removeItem(THIRDWEB_USER_EMAIL_KEY);
+  } catch {
+    // Only the profile setup's prefill needs it.
+  }
+}
 
 export function isEmailValid(email: string): boolean {
   return EMAIL_PATTERN.test(email);
@@ -212,9 +224,11 @@ export type LoginPageProps = {
   redirectTo: string | null;
   /** The sign-in layout rollout's variant (`dapps-sign-in-primary-option`), null when off or unread. */
   layoutVariant: string | null;
+  /** Magic's publishable key for the social options; null leaves them unavailable. */
+  magicApiKey: string | null;
 };
 
-export default function LoginPage({ redirectTo, layoutVariant }: LoginPageProps) {
+export default function LoginPage({ redirectTo, layoutVariant, magicApiKey }: LoginPageProps) {
   const auth = useAuth();
   const [client, setClient] = useState<{ userAgent: string; touch: number; injected: boolean; metamask: boolean } | null>(null);
   const [modal, setModal] = useState<Modal | null>(null);
@@ -279,16 +293,15 @@ export default function LoginPage({ redirectTo, layoutVariant }: LoginPageProps)
       walletConnect.current?.abort();
 
       if (SOCIAL_OPTIONS.includes(option)) {
-        if (!auth.inAppAvailable) {
+        if (!magicApiKey) {
           setModal({ state: "error-generic", detail: "Social sign-in is not configured on this site.", pairing: null });
           return;
         }
         setModal({ state: "redirecting", detail: null, pairing: null });
         try {
-          const callback = `${window.location.origin}/auth/callback?next=${encodeURIComponent(target())}`;
-          window.location.assign(socialLoginUrl(option as ThirdwebSocialProvider, callback));
+          await startMagicSignIn(magicApiKey, option, target());
         } catch (err) {
-          setModal({ state: "error-generic", detail: err instanceof Error ? err.message : null, pairing: null });
+          if (live()) setModal({ state: "error-generic", detail: err instanceof Error ? err.message : null, pairing: null });
         }
         return;
       }
@@ -302,12 +315,13 @@ export default function LoginPage({ redirectTo, layoutVariant }: LoginPageProps)
       if (browserWallet) {
         let askedToSign = false;
         try {
-          const identity = await signInWithBrowserWallet(browserWallet, (phase) => {
+          const identity = await signInWithBrowserWallet(browserWallet, SESSION_MS, (phase) => {
             askedToSign = phase === "signing";
             if (live()) setModal({ state: phase, detail: null, pairing: null });
           });
           if (!live()) return;
           setIdentity(identity);
+          rememberEmail(null);
           finish();
         } catch (err) {
           if (live()) setModal({ ...failureState(err, askedToSign), pairing: null });
@@ -320,7 +334,7 @@ export default function LoginPage({ redirectTo, layoutVariant }: LoginPageProps)
       walletConnect.current = request;
       setModal({ state: "connecting", detail: null, pairing: null });
       try {
-        const session = await auth.connectWalletConnect({ signal: request.signal });
+        const session = await auth.connectWalletConnect({ signal: request.signal, expirationMs: SESSION_MS });
         if (request.signal.aborted) {
           session.cancel();
           return;
@@ -329,13 +343,15 @@ export default function LoginPage({ redirectTo, layoutVariant }: LoginPageProps)
         setModal({ state: "connecting", detail: null, pairing: { qrDataUrl: session.qrDataUrl, uri: session.uri } });
         const identity = await session.connected;
         if (request.signal.aborted) return;
-        if (identity) finish();
-        else setModal({ state: "error-connection-failed", detail: null, pairing: null });
+        if (identity) {
+          rememberEmail(null);
+          finish();
+        } else setModal({ state: "error-connection-failed", detail: null, pairing: null });
       } catch (err) {
         if (!request.signal.aborted) setModal({ ...failureState(err, false), pairing: null });
       }
     },
-    [auth, finish, target],
+    [auth, finish, magicApiKey, target],
   );
 
   const closeModal = useCallback(() => {
@@ -369,8 +385,9 @@ export default function LoginPage({ redirectTo, layoutVariant }: LoginPageProps)
     async (code: string) => {
       if (!otpEmail) return;
       // The failure itself reaches the modal, which words a network drop or a refused code apart.
-      const identity = await auth.verifyEmailSignIn(otpEmail, code, { rethrow: true });
+      const identity = await auth.verifyEmailSignIn(otpEmail, code, { expirationMs: SESSION_MS, rethrow: true });
       if (!identity) throw new Error(t("email_login_modal.invalid_or_expired"));
+      rememberEmail(otpEmail);
       setOtpEmail(null);
       finish();
     },

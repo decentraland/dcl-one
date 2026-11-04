@@ -3,21 +3,18 @@ import { useNavigate } from "react-router";
 
 import type { SignInSocialProvider } from "@ui/components/SignInModalView";
 
+import { magicApiKey } from "@/data/lib/auth/magic-config";
 import { hasWalletConnect } from "@/data/lib/auth/walletconnect";
 import { useAuth } from "@/data/lib/auth/index";
 import {
   beginShellBrowserSignIn,
   isDesktopShell,
 } from "@/data/lib/auth/native-shell";
+import { startMagicSignIn } from "../../auth/login/magic";
 import { closeSignIn, takePendingRedirect, useSignInOpen } from "./signin-store";
 
 const SignInModalView = lazy(() => import("@ui/components/SignInModalView"));
 
-function socialRedirectUrl(): string {
-  if (typeof window === "undefined") return "/auth/callback";
-  const next = window.location.pathname + window.location.search;
-  return `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`;
-}
 
 export default function SignInModalHost() {
   const open = useSignInOpen();
@@ -39,15 +36,19 @@ export default function SignInModalHost() {
       <SignInModalView
         onClose={closeSignIn}
         inAppAvailable={auth.inAppAvailable}
+        socialAvailable={magicApiKey().length > 0}
         walletAvailable={auth.walletAvailable}
         wallets={auth.detectedWallets}
         desktopShell={isDesktopShell()}
         authError={auth.error}
         onStartEmailSignIn={(email) => auth.startEmailSignIn(email)}
         onVerifyEmailSignIn={(email, code) => auth.verifyEmailSignIn(email, code)}
-        onSocialSignIn={(provider: SignInSocialProvider) =>
-          auth.startSocialSignIn(provider, socialRedirectUrl())
-        }
+        // Through Magic, as /auth/login and decentraland.org: one social account, one wallet. Magic brings the reader
+        // back to this page (with its query) through /auth/callback.
+        onSocialSignIn={(provider: SignInSocialProvider) => {
+          const here = window.location.pathname + window.location.search;
+          void startMagicSignIn(magicApiKey(), provider, takePendingRedirect() ?? here).catch(() => {});
+        }}
         onConnectWallet={(walletRdns) => auth.connect({ walletRdns })}
         onWalletConnect={hasWalletConnect() ? (signal) => auth.connectWalletConnect({ signal }) : undefined}
         onBeginShellSignIn={beginShellBrowserSignIn}
