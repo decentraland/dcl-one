@@ -84,9 +84,12 @@ async fn fetch_deployments_response(state: &SharedState, query_string: &str) -> 
         )
     })??;
 
+    // Upstream drops denylisted entities from the page after `moreData` is
+    // computed, so a page can be short and still carry `next`.
     let deployments: Vec<ControllerDeployment> = result
         .deployments
         .into_iter()
+        .filter(|dep| !state.denylist.contains(&dep.entity_id))
         .map(|dep| project_deployment_fields(dep, &options.fields))
         .collect();
 

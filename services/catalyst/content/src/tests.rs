@@ -1117,6 +1117,28 @@ async fn history_reads_over_seeded_rows() {
     assert_eq!(body["deployments"][0]["entityId"], ids[0]);
     assert_eq!(body["pagination"]["moreData"], false);
 
+    // Upstream drops denylisted entities from the page after computing
+    // `moreData` (`logic/deployments/component.ts:316-318`): the page is
+    // short, `moreData` still holds and `next` follows the last kept row.
+    node.state.denylist.add(&ids[1]);
+    let (status, body) = get_json(
+        node.router(),
+        &format!("/content/deployments?{id_filter}&limit=2&fields=pointers"),
+    )
+    .await;
+    node.state.denylist.remove(&ids[1]);
+    assert_eq!(status, StatusCode::OK);
+    let listed: Vec<&str> = body["deployments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["entityId"].as_str().unwrap())
+        .collect();
+    assert_eq!(listed, vec![ids[2].as_str()]);
+    assert_eq!(body["pagination"]["moreData"], true);
+    let next = body["pagination"]["next"].as_str().unwrap();
+    assert!(next.contains(&format!("lastId={}", ids[2])), "{next}");
+
     let (status, body) = get_json(
         node.router(),
         &format!("/content/deployments?{id_filter}&sortingOrder=ASC&sortingField=entityTimestamp&fields=auditInfo"),
