@@ -249,6 +249,15 @@ pub async fn create_post(
         )
         .await
     );
+    // The source refuses a banned wallet through its missing role (a ban
+    // removes the membership). A member row left beside an active ban gets
+    // the same answer instead of a post.
+    if try_resp!(super::write_support::is_banned(&state, uuid, &signer).await) {
+        return super::http::handler_error(
+            StatusCode::UNAUTHORIZED,
+            format!("The user {signer} doesn't have permission to create posts in the community"),
+        );
+    }
     let content = match parse_content(&body, true) {
         Ok(content) => content,
         Err(response) => return response,
