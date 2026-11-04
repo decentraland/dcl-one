@@ -1866,6 +1866,34 @@ impl communities::WorldAccessRevocation for WorldsCommunityAccess {
     }
 }
 
+/// Social's boot-time provider setup: the bootstrap check, then the analytics
+/// adapter, which is configured by its own settings only.
+fn social_analytics(
+    config: &Config,
+    http_client: &http::Outbound,
+) -> anyhow::Result<Option<social::analytics::Analytics>> {
+    config
+        .social
+        .validate_provider_bootstrap()
+        .map_err(anyhow::Error::msg)?;
+    if config.social.community_compliance_api_key.is_none() {
+        tracing::info!(
+            "OPEN_AI_API_KEY unset: community AI compliance runs without its provider and skips classification"
+        );
+    }
+    social::analytics::Analytics::new(
+        http_client,
+        social::analytics::Settings {
+            context: config.social.social_analytics_context.clone(),
+            api_url: config.social.social_analytics_api_url.clone(),
+            api_token: config.social.social_analytics_api_token.clone(),
+            environment: config.social.social_environment.clone(),
+            request_timeout_ms: config.social.social_analytics_request_timeout_ms,
+        },
+    )
+    .map_err(anyhow::Error::msg)
+}
+
 /// The referral settings `social_states` passes on, including the backend
 /// proxies trusted to supply `X-Real-IP` for referral quotas.
 fn referral_settings(config: &Config) -> communities::referral::Settings {
@@ -1924,8 +1952,109 @@ fn referral_settings(config: &Config) -> communities::referral::Settings {
 
 #[cfg(test)]
 mod referral_settings_tests {
-    use super::referral_settings;
+    use super::{referral_settings, social_analytics};
     use crate::config::Config;
+
+    /// The boot path's provider setup with `ENV` set and nothing else: the
+    /// node starts, without analytics.
+    #[test]
+    fn env_alone_boots_without_analytics() {
+        let http = crate::http::Outbound::for_tests();
+        for env in ["prd", "production", ""] {
+            let config = Config::parse_env_for_tests([
+                ("DATABASE_URL", "postgres:///catalyst"),
+                ("ENV", env),
+            ])
+            .unwrap();
+            assert!(social_analytics(&config, &http).unwrap().is_none(), "{env}");
+        }
+        let config = Config::parse_env_for_tests([
+            ("DATABASE_URL", "postgres:///catalyst"),
+            ("ENV", "prd"),
+            ("ANALYTICS_CONTEXT", "fixture"),
+            ("ANALYTICS_API_URL", "https://analytics.example.org"),
+            ("ANALYTICS_API_TOKEN", "fixture"),
+        ])
+        .unwrap();
+        assert!(social_analytics(&config, &http).unwrap().is_some());
+    }
+
+    /// `HTTP_TRUSTED_PROXY_CIDRS` through `referral_settings` into the real
+    /// referral route behind a real socket: a configured proxy's `X-Real-IP`
+    /// is the stored client IP, any other peer is stored as itself.
+    #[tokio::test]
+    async fn configured_proxies_reach_the_referral_client_ip_path() {
+        use crate::social::communities;
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        for (cidrs, expected) in [("127.0.0.1/32", "198.51.100.7"), ("10.0.0.0/8", "127.0.0.1")] {
+            let config = Config::parse_env_for_tests([
+                ("DATABASE_URL", "postgres:///catalyst"),
+                ("HTTP_TRUSTED_PROXY_CIDRS", cidrs),
+            ])
+            .unwrap();
+            let dir = std::env::temp_dir().join(format!("catalyst-referral-ip-{}", uuid::Uuid::new_v4()));
+            let storage = std::sync::Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+            let state = std::sync::Arc::new(communities::State::new(
+                pool.clone(),
+                storage,
+                communities::Settings {
+                    referral: communities::referral::Settings {
+                        suspicious_window_ms: 0.0,
+                        ..referral_settings(&config)
+                    },
+                    ..communities::Settings::for_tests()
+                },
+                None,
+                &crate::http::Outbound::for_tests(),
+                communities::State::explore_for_tests(&pool),
+            ));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}/v1/referral-progress", listener.local_addr().unwrap());
+            let app = communities::router(state);
+            let server = tokio::spawn(async move {
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                )
+                .await
+                .unwrap()
+            });
+            let (referrer, invited) = (
+                alloy::signers::local::PrivateKeySigner::random(),
+                alloy::signers::local::PrivateKeySigner::random(),
+            );
+            let mut request = crate::http::Outbound::for_tests()
+                .post(&endpoint)
+                .header("x-real-ip", "198.51.100.7")
+                .json(&serde_json::json!({ "referrer": format!("{:#x}", referrer.address()) }));
+            let headers = crate::shared::signed_fetch::test_support::signed_headers_by(
+                &invited,
+                "post",
+                "/v1/referral-progress",
+                "{}",
+                true,
+                &chrono::Utc::now().timestamp_millis().to_string(),
+            )
+            .await;
+            for (name, value) in &headers {
+                request = request.header(name.as_str(), value.to_str().unwrap());
+            }
+            let response = request.send().await.unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::NO_CONTENT, "{cidrs}");
+            let stored: String = sqlx::query_scalar(
+                "SELECT invited_user_ip FROM social.referral_progress WHERE invited_user = $1",
+            )
+            .bind(format!("{:#x}", invited.address()))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(stored, expected, "{cidrs}");
+            server.abort();
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
 
     #[test]
     fn referral_quotas_trust_exactly_the_configured_proxy_networks() {
@@ -2081,18 +2210,7 @@ fn social_states(
         explore.clone(),
     ));
 
-    if let Some(analytics) = social::analytics::Analytics::new(
-        http_client,
-        social::analytics::Settings {
-            context: config.social.social_analytics_context.clone(),
-            api_url: config.social.social_analytics_api_url.clone(),
-            api_token: config.social.social_analytics_api_token.clone(),
-            environment: config.social.social_environment.clone(),
-            request_timeout_ms: config.social.social_analytics_request_timeout_ms,
-        },
-    )
-    .map_err(anyhow::Error::msg)?
-    {
+    if let Some(analytics) = social_analytics(config, http_client)? {
         communities.set_analytics(analytics);
     }
 
