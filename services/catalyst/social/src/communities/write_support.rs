@@ -2,7 +2,7 @@
 //! body, the standing loads that render a fault as a 500 (never as "not a
 //! member"), the ban pre-check that renders a fault as a 500 (never as "not
 //! banned"), and the write authority proven against `community_members`.
-//! Handlers apply the ban checks with their route-specific refusal contracts.
+//! Post creation separately checks active bans with its own refusal contract.
 
 use std::sync::{
     Arc,
@@ -289,8 +289,8 @@ pub async fn is_banned(
 pub struct ClientCommunityWriteAuthority(());
 
 impl ClientCommunityWriteAuthority {
-    /// A missing capability refuses with a 401. Handlers apply any separate
-    /// ban check using their route's response contract.
+    /// A missing capability refuses with a 401. Post creation separately
+    /// checks active bans with its own response contract.
     pub async fn resolve_requiring_capability(
         state: &State,
         community_id: CommunityId,
