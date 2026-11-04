@@ -24,6 +24,9 @@
 
 # social
 /services/catalyst/social/ @decentraland/apis
+/tooling/social-*.cjs @decentraland/apis
+/tooling/social-captures.json @decentraland/apis
+/tooling/tests/social-*.test.cjs @decentraland/apis
 
 # shop
 /services/catalyst/shop/ @decentraland/apis

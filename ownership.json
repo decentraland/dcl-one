@@ -69,7 +69,10 @@
         "@decentraland/apis"
       ],
       "paths": [
-        "/services/catalyst/social/"
+        "/services/catalyst/social/",
+        "/tooling/social-*.cjs",
+        "/tooling/social-captures.json",
+        "/tooling/tests/social-*.test.cjs"
       ]
     },
     {
