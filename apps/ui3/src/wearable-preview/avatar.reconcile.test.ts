@@ -358,3 +358,34 @@ test("legacy body shapes in the wearable list never mount an overlapping body", 
   scene.dispose();
   container.remove();
 });
+
+test("with requireWearables, a body alone is empty: wearables this network cannot resolve leave nothing to show", async () => {
+  // Only the body resolves, as for a promo's mainnet items on a testnet node. The item is one no other test resolved:
+  // resolved entities are cached for the module's life.
+  const UNRESOLVED = "urn:decentraland:matic:collections-v2:0xnotonthisnetwork:0";
+  globalThis.fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as { pointers?: string[] };
+    return { ok: true, json: async () => (body.pointers ?? []).filter((p) => p.toLowerCase() === BODY.toLowerCase()).map(entityFor) } as Response;
+  }) as unknown as typeof fetch;
+  const strict = document.createElement("div");
+  const strictStatus = vi.fn();
+  const strictScene = createAvatarScene(strict, { body: BODY, urns: [UNRESOLVED], emote: "idle", onStatus: strictStatus, requireWearables: true });
+  await vi.waitFor(() => expect(strictStatus).toHaveBeenLastCalledWith("empty"), { timeout: 10_000 });
+
+  const plain = document.createElement("div");
+  const plainStatus = vi.fn();
+  const plainScene = createAvatarScene(plain, { body: BODY, urns: [UNRESOLVED], emote: "idle", onStatus: plainStatus });
+  await vi.waitFor(() => expect(plainStatus).toHaveBeenLastCalledWith("ready"), { timeout: 10_000 });
+  strictScene.dispose();
+  plainScene.dispose();
+});
+
+test("with requireWearables, a resolved wearable is ready", async () => {
+  const { container } = mount([]);
+  container.remove();
+  const box = document.createElement("div");
+  const onStatus = vi.fn();
+  const scene = createAvatarScene(box, { body: BODY, urns: [HAT1], emote: "idle", onStatus, requireWearables: true });
+  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"), { timeout: 10_000 });
+  scene.dispose();
+});
