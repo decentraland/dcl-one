@@ -74,7 +74,7 @@ READ_ONLY mode is a mode of the first row (upstream does not register the route)
   4. Upload budget on declared length, minimum 16 MiB, capacity max(`MAX_IN_MEMORY_DEPLOYMENT_BYTES`, 200 MiB) (`create_entity.rs:386-397`, `upload_admission.rs:53-75`).
   5. Not a `multipart/form-data` body (400), or a declared length past the form limits (413); a client that spent its daily quota gets the 429 instead. Neither is counted (`create_entity.rs:402-425`).
   6. Daily quota consume, counted at admission, except for a batch declared with `?partial=true`, which section 3 counts once its form is read (`create_entity.rs:426-433`).
-  7. Form read, held in memory, with upstream's limits and texts: 3000 files, 100 MiB per file, field count/size from settings (default 32 / 32 KiB), 200 MiB of values in all, no repeated name (`create_entity.rs:62-108,217-308`, `lib.rs:693`).
+  7. Form read, held in memory, with upstream's limits and texts: 3000 files, 100 MiB per file, field count/size from settings (default 32 / 32 KiB), 200 MiB of values in all, no repeated name (`create_entity.rs:62-108,217-308`, `lib.rs:692`).
   8. `entityId`.
   9. Auth chain.
   10. Replay: an entity already deployed answers its stored timestamp (`create_entity.rs:544-558`).
@@ -113,7 +113,7 @@ Success example (both):
 | trigger | status | body | headers | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
 | Content-Type not `multipart/form-data` | 400 | `{"error":"Invalid request: expected a multipart/form-data body"}` | | `multipart.ts:196-202` | Same body, after the read-only, writes, bootstrapping and budget gates and a spent quota's 429, uncounted (`create_entity.rs:402-425`, `tests/fixtures/content/create-entity-400-not-multipart.json`) | MATCH |
-| declared Content-Length > total + framing | 413 | `{"error":"The request body is too large. The maximum allowed total upload size is 2147483648 bytes plus multipart framing (<n> bytes in all)."}` | | `multipart.ts:133-136,161-166` | Same text over dcl-one's 200 MiB total: `... 209715200 bytes plus multipart framing (<n> bytes in all).`, before the body is read; a body that grows past `<n>` gets the same 413 (`create_entity.rs:75-95,405-425`, `lib.rs:693`). Gateway: nginx 413 HTML over 200m. | MATCH except the total (200 MiB, as CW-7 keeps it) |
+| declared Content-Length > total + framing | 413 | `{"error":"The request body is too large. The maximum allowed total upload size is 2147483648 bytes plus multipart framing (<n> bytes in all)."}` | | `multipart.ts:133-136,161-166` | Same text over dcl-one's 200 MiB total: `... 209715200 bytes plus multipart framing (<n> bytes in all).`, before the body is read; a body that grows past `<n>` gets the same 413 (`create_entity.rs:75-95,405-425`, `lib.rs:692`). Gateway: nginx 413 HTML over 200m. | MATCH except the total (200 MiB, as CW-7 keeps it) |
 | received bytes > `MAX_UPLOAD_TOTAL_SIZE` | 413 | `{"error":"The request body is too large. The maximum allowed total upload size is 2147483648 bytes."}` | | `multipart.ts:259-270` | Same text with 209715200 (`create_entity.rs:235-245`) | MATCH except the total |
 | more than 3000 files | 413 | `{"error":"Too many files in the request. The maximum allowed is 3000."}` | | `multipart.ts:296-298` | same (`create_entity.rs:261-265`) | MATCH |
 | file > 100 MiB | 413 | `{"error":"File '<filename>' is too large. The maximum allowed size per file is 104857600 bytes."}` | | `multipart.ts:378-386` | same, `undefined` for a part without a file name as busboy prints it (`create_entity.rs:269-278`) | MATCH |
@@ -319,7 +319,7 @@ Bodies are `{"errors":[...]}` unless the row says otherwise. Every row is read; 
    - Place: `create_entity.rs` (an in-process limiter beside `DailyQuota` in `upload_admission.rs`) and `infra/gateway/gateway.py:149,259` (loosen or remove `zone=deploy` so it does not cut normal bursts).
    - Severity: P1.
 
-7. **CW-7: multipart limit statuses, values and messages.** Status: MATCH, no work. Every form limit answers 413 `{"error":...}` with upstream's text and limits (3000 files, 100 MiB per file, 32 fields of 32 KiB), the total kept at 200 MiB (`create_entity.rs:62-108,217-308`, `lib.rs:693`).
+7. **CW-7: multipart limit statuses, values and messages.** Status: MATCH, no work. Every form limit answers 413 `{"error":...}` with upstream's text and limits (3000 files, 100 MiB per file, 32 fields of 32 KiB), the total kept at 200 MiB (`create_entity.rs:62-108,217-308`, `lib.rs:692`).
 
 8. **CW-8: non-multipart body.** Status: MATCH, no work. A body that is not a form answers 400 `{"error":"Invalid request: expected a multipart/form-data body"}` after the gates, uncounted (`create_entity.rs:402-425`); the fixture `create-entity-400-not-multipart.json` replays it on a node that takes deploys.
 
