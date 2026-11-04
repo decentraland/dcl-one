@@ -12,7 +12,6 @@ import type { CatalogueCounts } from "@catalyst-api/worlds/CatalogueCounts";
 import type { CommsAdapterResponse } from "@catalyst-api/worlds/CommsAdapterResponse";
 import type { CommsStatus } from "@catalyst-api/worlds/CommsStatus";
 import type { ContentStatus } from "@catalyst-api/worlds/ContentStatus";
-import type { DeployErrors } from "@catalyst-api/worlds/DeployErrors";
 import type { DeployRejection } from "@catalyst-api/worlds/DeployRejection";
 import type { DeploySuccess } from "@catalyst-api/worlds/DeploySuccess";
 import type { FederationMirrorResponse } from "@catalyst-api/worlds/FederationMirrorResponse";
@@ -40,6 +39,7 @@ import type { SetMirrorHiddenResponse } from "@catalyst-api/worlds/SetMirrorHidd
 import type { SkyboxConfig } from "@catalyst-api/worlds/SkyboxConfig";
 import type { StatusResponse } from "@catalyst-api/worlds/StatusResponse";
 import type { WorldIndexEntry } from "@catalyst-api/worlds/WorldIndexEntry";
+import type { WorldLimitsResponse } from "@catalyst-api/worlds/WorldLimitsResponse";
 import type { WorldOccupancy } from "@catalyst-api/worlds/WorldOccupancy";
 import type { WorldPermissionsBlock } from "@catalyst-api/worlds/WorldPermissionsBlock";
 import type { WorldSceneEntry } from "@catalyst-api/worlds/WorldSceneEntry";
@@ -131,10 +131,6 @@ export const WorldsCountSchema = z.object({
 export const ContentStatusSchema = z.object({
   commitHash: z.string(),
   worldsCount: WorldsCountSchema,
-});
-
-export const DeployErrorsSchema = z.object({
-  errors: z.array(z.string()),
 });
 
 export const DeployRejectionSchema = z.object({
@@ -236,6 +232,11 @@ export const WorldIndexEntrySchema = z.object({
 export const IndexResponseSchema = z.object({
   data: z.array(WorldIndexEntrySchema),
   lastUpdated: z.string(),
+});
+
+export const WorldLimitsResponseSchema = z.object({
+  maxSceneSizeInBytes: z.string(),
+  maxParcels: z.number(),
 });
 
 export const WorldOccupancySchema = z.object({
@@ -347,7 +348,6 @@ export type _AssertCatalogueCounts = Assert<Mutual<CatalogueCounts, z.infer<type
 export type _AssertCommsAdapterResponse = Assert<Mutual<CommsAdapterResponse, z.infer<typeof CommsAdapterResponseSchema>>>;
 export type _AssertCommsStatus = Assert<Mutual<CommsStatus, z.infer<typeof CommsStatusSchema>>>;
 export type _AssertContentStatus = Assert<Mutual<ContentStatus, z.infer<typeof ContentStatusSchema>>>;
-export type _AssertDeployErrors = Assert<Mutual<DeployErrors, z.infer<typeof DeployErrorsSchema>>>;
 export type _AssertDeployRejection = Assert<Mutual<DeployRejection, z.infer<typeof DeployRejectionSchema>>>;
 export type _AssertDeploySuccess = Assert<Mutual<DeploySuccess, z.infer<typeof DeploySuccessSchema>>>;
 export type _AssertFederationMirrorResponse = Assert<Mutual<FederationMirrorResponse, z.infer<typeof FederationMirrorResponseSchema>>>;
@@ -375,6 +375,7 @@ export type _AssertSetMirrorHiddenResponse = Assert<Mutual<SetMirrorHiddenRespon
 export type _AssertSkyboxConfig = Assert<Mutual<SkyboxConfig, z.infer<typeof SkyboxConfigSchema>>>;
 export type _AssertStatusResponse = Assert<Mutual<StatusResponse, z.infer<typeof StatusResponseSchema>>>;
 export type _AssertWorldIndexEntry = Assert<Mutual<WorldIndexEntry, z.infer<typeof WorldIndexEntrySchema>>>;
+export type _AssertWorldLimitsResponse = Assert<Mutual<WorldLimitsResponse, z.infer<typeof WorldLimitsResponseSchema>>>;
 export type _AssertWorldOccupancy = Assert<Mutual<WorldOccupancy, z.infer<typeof WorldOccupancySchema>>>;
 export type _AssertWorldPermissionsBlock = Assert<Mutual<WorldPermissionsBlock, z.infer<typeof WorldPermissionsBlockSchema>>>;
 export type _AssertWorldSceneEntry = Assert<Mutual<WorldSceneEntry, z.infer<typeof WorldSceneEntrySchema>>>;

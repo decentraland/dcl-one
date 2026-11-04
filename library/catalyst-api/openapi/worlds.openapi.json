@@ -1164,7 +1164,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DeployErrors"
+                  "$ref": "#/components/schemas/DeployRejection"
                 }
               }
             }
@@ -1174,7 +1174,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DeployErrors"
+                  "$ref": "#/components/schemas/DeployRejection"
                 }
               }
             }
@@ -1184,7 +1184,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DeployErrors"
+                  "$ref": "#/components/schemas/DeployRejection"
                 }
               }
             }
@@ -1199,12 +1199,22 @@
               }
             }
           },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployRejection"
+                }
+              }
+            }
+          },
           "413": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DeployErrors"
+                  "$ref": "#/components/schemas/DeployRejection"
                 }
               }
             }
@@ -1214,7 +1224,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DeployErrors"
+                  "$ref": "#/components/schemas/DeployRejection"
                 }
               }
             }
@@ -2009,6 +2019,89 @@
             }
           },
           "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/world/{world_name}/limits": {
+      "get": {
+        "tags": [
+          "worlds"
+        ],
+        "operationId": "get_world_limits",
+        "parameters": [
+          {
+            "name": "world_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "parcels",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorldLimitsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
             "description": "",
             "content": {
               "application/json": {
@@ -3654,20 +3747,6 @@
           }
         }
       },
-      "DeployErrors": {
-        "type": "object",
-        "required": [
-          "errors"
-        ],
-        "properties": {
-          "errors": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
-      },
       "DeployRejection": {
         "type": "object",
         "required": [
@@ -4513,6 +4592,24 @@
             "items": {
               "$ref": "#/components/schemas/IndexSceneSummary"
             }
+          }
+        }
+      },
+      "WorldLimitsResponse": {
+        "type": "object",
+        "required": [
+          "maxSceneSizeInBytes",
+          "maxParcels"
+        ],
+        "properties": {
+          "maxSceneSizeInBytes": {
+            "type": "string",
+            "description": "A decimal string, as the old service's bigint."
+          },
+          "maxParcels": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },

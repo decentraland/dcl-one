@@ -35,6 +35,7 @@ mod deploy_form;
 mod deploy_validate;
 pub mod forwarding;
 pub mod http;
+pub mod limits;
 pub mod manifest;
 pub mod names;
 pub mod permissions;
@@ -84,6 +85,10 @@ pub struct Settings {
     /// `GLOBAL_SCENES_URN`: scenes the configuration names, kept by the blob
     /// store collector (`/admin/gc`).
     pub global_scenes_urn: Vec<String>,
+    /// This node's root URL, the realm a deploy's success message links.
+    pub public_url: String,
+    /// `MAX_FILE_COUNT`: entries a deployed entity's `content` may list.
+    pub max_file_count: usize,
 }
 
 impl std::fmt::Debug for Settings {
@@ -106,7 +111,19 @@ impl Settings {
             admin_token: admin_token.filter(|t| !t.trim().is_empty()),
             upload_limits: upload_limits.validate(deploy::MAX_UPLOAD_SIZE_BYTES as u64)?,
             global_scenes_urn: Vec::new(),
+            public_url: String::new(),
+            max_file_count: deploy::DEFAULT_MAX_FILE_COUNT,
         })
+    }
+
+    pub fn with_public_url(mut self, public_url: &str) -> Self {
+        self.public_url = public_url.trim_end_matches('/').to_string();
+        self
+    }
+
+    pub fn with_max_file_count(mut self, max_file_count: u32) -> Self {
+        self.max_file_count = max_file_count as usize;
+        self
     }
 
     pub fn with_global_scenes_urn(mut self, raw: Option<&str>) -> Self {
@@ -121,6 +138,8 @@ impl Settings {
             admin_token: admin_token.map(str::to_string),
             upload_limits: UploadLimits::default(),
             global_scenes_urn: Vec::new(),
+            public_url: "https://worlds.example".to_string(),
+            max_file_count: deploy::DEFAULT_MAX_FILE_COUNT,
         }
     }
 }
@@ -494,6 +513,7 @@ fn timed_routes() -> Router<SharedState> {
             "/world/{world_name}/settings",
             get(settings::get_world_settings),
         )
+        .route("/world/{world_name}/limits", get(limits::get_world_limits))
         .route(
             "/world/{world_name}/scenes/{scene_coord}",
             delete(scenes::delete_scene),

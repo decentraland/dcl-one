@@ -82,10 +82,7 @@ pub(super) async fn read_deploy_form(
         if field.file_name().is_some() {
             if files.len() >= MAX_DEPLOY_FILES {
                 return Err(Box::new(
-                    err_one(format!(
-                        "deployment exceeds maximum of {MAX_DEPLOY_FILES} files"
-                    ))
-                    .into_response(),
+                    err_one(super::deploy::TOO_MANY_FILES_MESSAGE).into_response(),
                 ));
             }
             if !files_lease.try_resize(files.len() as u64 + 1, max_in_flight_files) {
@@ -320,10 +317,10 @@ mod tests {
             Ok(_) => panic!("oversized field must be rejected"),
         };
         let (status, body) = response_json(resp).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(
             body,
-            json!({ "errors": ["The multipart request is too large."] })
+            json!({ "error": "Payload Too Large", "message": "The multipart request is too large." })
         );
         assert!(bytes_lease.reserved() <= upload_limits::MAX_MULTIPART_FIELD_VALUE_BYTES as u64);
 
@@ -369,10 +366,10 @@ mod tests {
             Ok(_) => panic!("101st field must be rejected"),
         };
         let (status, body) = response_json(resp).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(
             body,
-            json!({ "errors": ["The multipart request has too many fields."] })
+            json!({ "error": "Payload Too Large", "message": "The multipart request has too many fields." })
         );
     }
 }

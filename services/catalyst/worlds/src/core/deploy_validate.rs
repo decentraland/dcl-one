@@ -1,6 +1,6 @@
-//! The shape checks of a world publish: canonical parcel sets, bounds, the
-//! entity file cap, the auth chain fields of the multipart form and the
-//! navmap thumbnail rule.
+//! The shape checks of a world publish: the entity and scene schemas,
+//! canonical parcel sets, bounds, the entity file cap, the auth chain fields
+//! of the multipart form, the navmap thumbnail, minimap and skybox rules.
 
 use std::collections::BTreeMap;
 
@@ -12,8 +12,10 @@ use crate::auth::{
 
 pub(super) const MAX_ENTITY_FILE_SIZE_BYTES: usize = 5 * 1024 * 1024;
 
-pub const MAX_DEPLOY_FILES: usize = 1000;
-pub const MAX_DEPLOY_FILE_BYTES: usize = 50 * 1024 * 1024;
+/// File parts one deploy may upload (the old busboy `files` limit).
+pub const MAX_DEPLOY_FILES: usize = 10_000;
+/// No per-file cap below the request's payload cap, as the old service.
+pub const MAX_DEPLOY_FILE_BYTES: usize = super::deploy::MAX_UPLOAD_SIZE_BYTES;
 
 const MIN_PARCEL_COORDINATE: i64 = -150;
 const MAX_PARCEL_COORDINATE: i64 = 150;
@@ -137,6 +139,108 @@ pub(super) fn entity_file_too_large_error() -> String {
     )
 }
 
+/// `@dcl/schemas` `IPFSv1` / `IPFSv2`.
+fn is_ipfs_hash(s: &str) -> bool {
+    let tail_ok = |tail: &str, len: usize| {
+        tail.len() == len && tail.bytes().all(|b| b.is_ascii_alphanumeric())
+    };
+    s.strip_prefix("Qm").is_some_and(|t| tail_ok(t, 44))
+        || s.strip_prefix("ba").is_some_and(|t| tail_ok(t, 57))
+}
+
+fn unique_items(items: &[Value]) -> Result<(), String> {
+    for (j, a) in items.iter().enumerate() {
+        if let Some(i) = items[j + 1..].iter().position(|b| b == a) {
+            return Err(format!(
+                "must NOT have duplicate items (items ## {} and {j} are identical)",
+                j + 1 + i
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The first failure of `@dcl/schemas` `Entity.validate`, in ajv's words
+/// (the old service listed every one; the id is the authenticated one).
+pub(super) fn entity_schema_error(entity: &Value) -> Option<String> {
+    let check = || -> Result<(), String> {
+        let m = entity.as_object().ok_or("must be object")?;
+        for key in ["version", "type", "pointers", "timestamp", "content"] {
+            if !m.contains_key(key) {
+                return Err(format!("must have required property '{key}'"));
+            }
+        }
+        if m["version"].as_str().ok_or("must be string")? != "v3" {
+            return Err("must be equal to one of the allowed values".to_string());
+        }
+        m["type"].as_str().ok_or("must be string")?;
+        let pointers = m["pointers"].as_array().ok_or("must be array")?;
+        for p in pointers {
+            if p.as_str().ok_or("must be string")?.is_empty() {
+                return Err("must NOT have fewer than 1 characters".to_string());
+            }
+        }
+        unique_items(pointers)?;
+        if m["timestamp"].as_f64().ok_or("must be number")? < 0.0 {
+            return Err("must be >= 0".to_string());
+        }
+        for item in m["content"].as_array().ok_or("must be array")? {
+            let c = item.as_object().ok_or("must be object")?;
+            for key in ["file", "hash"] {
+                if !c.contains_key(key) {
+                    return Err(format!("must have required property '{key}'"));
+                }
+            }
+            if c["file"].as_str().ok_or("must be string")?.is_empty() {
+                return Err("must NOT have fewer than 1 characters".to_string());
+            }
+            if !is_ipfs_hash(c["hash"].as_str().ok_or("must be string")?) {
+                return Err("must match exactly one schema in oneOf".to_string());
+            }
+        }
+        match m.get("metadata") {
+            None | Some(Value::Null | Value::Object(_)) => Ok(()),
+            Some(_) => Err("must be object".to_string()),
+        }
+    };
+    check().err()
+}
+
+fn content_has_file(entity: &Value, file: &str) -> bool {
+    matches!(
+        entity.get("content"),
+        Some(Value::Array(items)) if items.iter().any(|item| item.get("file").and_then(|f| f.as_str()) == Some(file))
+    )
+}
+
+fn world_configuration(entity: &Value) -> Option<&Value> {
+    entity.pointer("/metadata/worldConfiguration")
+}
+
+/// `validateMiniMapImages`: each configured minimap image is a content file.
+pub(super) fn missing_minimap_images(entity: &Value) -> Vec<String> {
+    let config = world_configuration(entity).and_then(|w| w.get("miniMapConfig"));
+    ["dataImage", "estateImage"]
+        .iter()
+        .filter_map(|key| config?.get(*key)?.as_str())
+        .filter(|file| !file.is_empty() && !content_has_file(entity, file))
+        .map(|file| format!("The file {file} is not present in the entity."))
+        .collect()
+}
+
+/// `validateSkyboxTextures`: each skybox texture is a content file.
+pub(super) fn missing_skybox_textures(entity: &Value) -> Vec<String> {
+    world_configuration(entity)
+        .and_then(|w| w.pointer("/skyboxConfig/textures"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|file| !file.is_empty() && !content_has_file(entity, file))
+        .map(|file| format!("The texture file {file} is not present in the entity."))
+        .collect()
+}
+
 fn has_uri_scheme(path: &str) -> bool {
     let mut chars = path.chars();
     match chars.next() {
@@ -187,11 +291,7 @@ pub(super) fn validate_navmap_thumbnail(entity: &Value, errors: &mut Vec<String>
         errors.push(format!("Scene thumbnail '{thumb}' must be a relative path to a file included in the deployment."));
         return;
     }
-    let file_present = matches!(
-        entity.get("content"),
-        Some(Value::Array(items)) if items.iter().any(|item| item.get("file").and_then(|f| f.as_str()) == Some(thumb))
-    );
-    if !file_present {
+    if !content_has_file(entity, thumb) {
         errors.push(format!(
             "Scene thumbnail '{thumb}' must be a file included in the deployment."
         ));
