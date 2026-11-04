@@ -14,6 +14,7 @@ pub mod pulse;
 pub mod signed_login;
 #[cfg(test)]
 mod test;
+mod traffic;
 #[cfg(feature = "transport_debug")]
 mod transport_debug;
 pub mod websocket_room;
@@ -111,7 +112,8 @@ impl Plugin for CommsPlugin {
 
         #[cfg(feature = "livekit")]
         app.add_plugins((LivekitPlugin, private_chat::PrivateChatPlugin));
-        app.init_resource::<MicState>();
+        app.init_resource::<MicState>()
+            .init_resource::<global_crdt::NearbyPanning>();
 
         // Pulse movement transport. Inert until a `pulse::plugin::PulseConfig` resource is
         // inserted; the driver (native ENet thread / wasm no-op) is selected at compile time.

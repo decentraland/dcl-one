@@ -675,6 +675,14 @@ impl PulseDecoder {
             .is_some_and(|subject| self.selected.get(&subject.wallet) == Some(&subject_id))
     }
 
+    /// The emote playing on `wallet`'s avatar, by urn, as its selected subject's emote track holds
+    /// it: `None` when no subject of the wallet is held, `Some(None)` when it plays none. For the
+    /// debug panel.
+    fn selected_emote(&self, wallet: Address) -> Option<Option<&str>> {
+        let subject = self.subjects.get(self.selected.get(&wallet)?)?;
+        Some(subject.emote.active.as_ref().map(|(urn, _)| urn.as_str()))
+    }
+
     /// Replace a known subject's baseline from a server-supplied full state, if it is newer than the
     /// one held: a higher sequence, or for an emote event an equal one too ([`FullKind`]). An older
     /// state leaves the baseline as it is, an older teleport's realm included, and announces

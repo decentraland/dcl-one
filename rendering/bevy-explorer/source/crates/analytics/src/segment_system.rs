@@ -2,12 +2,14 @@ use bevy::{
     prelude::*,
     tasks::{IoTaskPool, Task},
 };
+use bevy_console::ConsoleCommand;
 use chrono::{DateTime, Utc};
 use common::{
     rpc::RpcStreamSender,
     structs::{AppConfig, CurrentRealm, PreviewMode},
     util::{is_loopback_url, reqwest_client, TaskCompat, TaskExt},
 };
+use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use std::{collections::VecDeque, time::Duration};
 use system_bridge::{AnalyticsEvent, SystemApi};
 use uuid::Uuid;
@@ -24,6 +26,20 @@ impl Plugin for SegmentMetricPlugin {
             TimerMode::Repeating,
         )))
         .init_resource::<SegmentMetricsEvents>()
+        .add_console_command::<AnalyticsDebug, _>(analytics_debug)
+        .add_debug_section(DebugSection {
+            title: "Analytics",
+            query: "/debug_analytics",
+            fields: &[
+                ("Service", "service"),
+                ("Terms accepted", "consent"),
+                ("Events queued", "queued"),
+                ("Batch in flight", "inFlight"),
+                ("Rejected batches", "rejections"),
+            ],
+            actions: &[("Flush queued events", "/debug_analytics flush")],
+            inputs: &[],
+        })
         .add_systems(
             Update,
             (
@@ -48,6 +64,37 @@ pub struct SegmentConfig {
 
 #[derive(Resource)]
 pub struct SegmentMetricTimer(Timer);
+
+/// Inspect the telemetry queue or request a send through the normal consent and retry checks.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/debug_analytics")]
+struct AnalyticsDebug {
+    #[arg(value_parser = ["flush"])]
+    action: Option<String>,
+}
+
+fn analytics_debug(
+    mut cmd: ConsoleCommand<AnalyticsDebug>,
+    events: Res<SegmentMetricsEvents>,
+    config: Res<AppConfig>,
+    mut timer: ResMut<SegmentMetricTimer>,
+) {
+    let Some(Ok(args)) = cmd.take() else { return };
+    if args.action.is_some() {
+        if !config.terms_accepted() {
+            cmd.reply_failed("Analytics requires accepted terms");
+            return;
+        }
+        let duration = timer.0.duration();
+        timer.0.set_elapsed(duration);
+        cmd.reply_ok("Flush requested");
+    } else {
+        cmd.reply_ok(serde_json::json!({
+            "service": "Segment", "consent": config.terms_accepted(), "queued": events.events.len(),
+            "inFlight": events.in_flight.is_some(), "rejections": events.rejections
+        }).to_string());
+    }
+}
 
 /// An event with the moment and the common fields it was queued with, what it carries when it
 /// goes out later: behind the consent gate a queue can hold the whole sign-in, and a batch sent

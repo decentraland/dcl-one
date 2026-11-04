@@ -552,7 +552,7 @@ async fn removing_the_last_reader_wakes_a_queued_attempt_without_a_free_slot() {
     use std::task::Poll;
 
     let gate = PriorityGate::new(0);
-    let (registration, mut attempts) = DownloadReaders::first(&gate, scene("first"), None);
+    let (registration, mut attempts) = DownloadReaders::first(&gate, scene("first"), None, None);
     let mut attempt = Box::pin(attempts.acquire());
     poll_fn(|cx| {
         assert!(attempt.as_mut().poll(cx).is_pending());
@@ -592,7 +592,7 @@ async fn keys_are_read_while_a_slot_is_in_use() {
 async fn a_departed_hash_ranks_last_for_a_retry_after_its_queue_drained() {
     let gate = PriorityGate::new(1);
     gate.register("left", key(1, false, 100.0));
-    let (registration, mut attempts) = DownloadReaders::first(&gate, scene("left"), None);
+    let (registration, mut attempts) = DownloadReaders::first(&gate, scene("left"), None, None);
     // the first attempt holds the slot; nothing of "left" waits when its scene goes
     let permit = attempts.acquire().await.unwrap();
     gate.unregister("left");

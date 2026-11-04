@@ -131,6 +131,21 @@ scenario('Enter opens the chat with its input focused and Escape leaves the inpu
   await closeChat(explorer)
 })
 
+scenario('the slash key and Unicode text reach the focused chat composer', async ({ explorer }) => {
+  await openChat(explorer)
+  try {
+    await explorer.hud.fill(INPUT_FOCUSED, '')
+    await explorer.key('Slash')
+    assert.equal((await explorer.hud.get(INPUT_FOCUSED)).value, '/')
+    const text = '/? ¿ Привет 🙂'
+    assert.equal((await explorer.hud.fill(INPUT_FOCUSED, text)).value, text)
+  } finally {
+    await explorer.hud.fill(INPUT_FOCUSED, '')
+    await explorer.key('Backspace')
+    await closeChat(explorer)
+  }
+})
+
 scenario('a message sent from the chat input is recorded in the chat history', async ({ explorer }) => {
   await openChat(explorer)
   const sent = await sendMessage(explorer, 'automation ping')

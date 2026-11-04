@@ -41,6 +41,9 @@ use prost::Message as _;
 use tokio::sync::mpsc;
 use wallet::Wallet;
 
+#[path = "debug.rs"]
+mod debug;
+
 use super::pacing::DiscreteEventPacer;
 use super::reconnect::{Failure, Next, ReconnectPolicy};
 use super::transport::{
@@ -72,13 +75,15 @@ pub struct PulseConfig {
     pub server_id: String,
 }
 
-/// The Pulse connection's lifecycle — a single linear progression with two off-ramps (`Down` to
-/// rebuild, `Dead` to give up). The driver/link are live from `Connecting` through `Established`;
-/// `Down` and `Dead` have no driver. There are no side-flags beyond `PulseSession::accepted`, kept
+/// The Pulse connection's lifecycle — a single linear progression with three off-ramps (`Down` to
+/// rebuild, `Dead` to give up, `Paused` where the user parked it). The driver/link are live from
+/// `Connecting` through `Established`; `Paused`, `Down` and `Dead` have no driver. There are no side-flags beyond `PulseSession::accepted`, kept
 /// for the reconnect policy: the transport-up signal *is* the `Connecting → Idle` transition, and a
 /// disconnect's reason is consumed the moment it arrives.
 #[derive(Debug)]
 enum Connection {
+    /// Explicitly disconnected by the user. Only an explicit resume dials again.
+    Paused,
     /// No live driver. The next tick after `respawn_at` (re)builds one. This is both the initial
     /// state and where every retryable failure lands, at the time the [`ReconnectPolicy`] gives.
     Down { respawn_at: f64 },
@@ -120,6 +125,7 @@ pub(crate) struct PulseSession {
     /// every (re)connect — this is the "machinery" we reinitialise when the pipe closes.
     _driver: Option<PulseDriverHandle>,
     decoder: PulseDecoder,
+    resyncs: [(u64, u32); 60],
     /// What this session is on the wire — see [`PulseRole`]. Everything that differs between a
     /// player and a listening server lives in there.
     role: PulseRole,
@@ -430,6 +436,52 @@ impl Announcement {
 }
 
 impl PulseSession {
+    fn connection_enabled(&self, no_render: bool) -> Result<bool, &'static str> {
+        if no_render || common::structs::server_mode() {
+            return Err("Only a graphical player client can control the Pulse connection");
+        }
+        if !matches!(self.role, PulseRole::Player(_)) {
+            return Err("Only a player session can control its Pulse connection");
+        }
+        match self.state {
+            Connection::Dead => Err("A terminal disconnect holds until the realm changes"),
+            Connection::Paused => Ok(false),
+            _ => Ok(true),
+        }
+    }
+
+    fn set_connection_enabled(
+        &mut self,
+        enabled: bool,
+        no_render: bool,
+        commands: &mut Commands,
+    ) -> Result<(), &'static str> {
+        if self.connection_enabled(no_render)? == enabled {
+            return Ok(());
+        }
+        if enabled {
+            // A resume is the user's own fresh start, like a realm change after a terminal stop:
+            // it dials at once, and the backoff counts from the first attempt again.
+            self.state = Connection::Down { respawn_at: 0.0 };
+            self.policy.reset();
+        } else {
+            if let Some(transport) = self
+                .role
+                .player_mut()
+                .and_then(|p| p.routing_transport.take())
+            {
+                commands.entity(transport).try_despawn();
+            }
+            self.link = None;
+            self._driver = None;
+            self.decoder.reset();
+            self.last_state = None;
+            self.accepted = false;
+            self.state = Connection::Paused;
+        }
+        Ok(())
+    }
+
     /// Forward an inbound Pulse update for a peer standing in `parcel` of `realm`, re-homing it
     /// first if that lands in a different scene than the one it was last routed to. A peer that has
     /// left every hosted parcel is reported as departed and its state dropped.
@@ -492,6 +544,7 @@ pub struct PulsePlugin;
 
 impl Plugin for PulsePlugin {
     fn build(&self, app: &mut App) {
+        debug::register(app);
         app.add_event::<PlayerTeleported>();
         app.add_systems(Startup, configure_pulse);
         app.add_systems(
@@ -653,6 +706,7 @@ fn connect_pulse(
         link: None,
         _driver: None,
         decoder: PulseDecoder::new(config.parcel_grid),
+        resyncs: [(0, 0); 60],
         role,
         lsd_realm: LsdRealm::Unresolved { retry_at: 0.0 },
         realm_override: realm_override.map(|announced| announced.0.clone()),
@@ -698,6 +752,9 @@ fn follow_realm(
         return;
     };
 
+    if matches!(session.state, Connection::Paused) {
+        return;
+    }
     let Some(player_role) = session.role.player_mut() else {
         // A listener has no realm to follow: its transports track the scenes it hosts, not the
         // realm the process is on. `update_listener_aoi` owns them.
@@ -804,8 +861,7 @@ fn drain_pulse_outbox(
                 local_emote: &mut session.local_emote,
                 now,
             };
-            let (Some(frame), Some(link)) = (message.message.to_pulse(&mut ctx), &session.link)
-            else {
+            let Some(frame) = message.message.to_pulse(&mut ctx) else {
                 continue;
             };
             if DiscreteEventPacer::paces(frame.kind) {
@@ -817,10 +873,12 @@ fn drain_pulse_outbox(
                     session.pacer.offer(frame);
                     release_paced(session, now);
                 }
-            } else if matches!(session.state, Connection::Established) {
+            } else if let (Some(link), Connection::Established) =
+                (session.link.as_mut(), &session.state)
+            {
                 // Not before: an input is superseded by the next one anyway, and the acceptance
                 // announces the profile version.
-                let _ = link.outbound.try_send(frame);
+                link.send(frame);
             }
         }
     }
@@ -830,11 +888,11 @@ fn drain_pulse_outbox(
 /// Send the teleports and emotes the pacer allows at `now`. Only an `Established` connection sends;
 /// in any other state they keep waiting.
 fn release_paced(session: &mut PulseSession, now: f64) {
-    let (Some(link), Connection::Established) = (session.link.as_ref(), &session.state) else {
+    let (Some(link), Connection::Established) = (session.link.as_mut(), &session.state) else {
         return;
     };
     for frame in session.pacer.release(now) {
-        let _ = link.outbound.try_send(frame);
+        link.send(frame);
     }
 }
 
@@ -1039,7 +1097,10 @@ fn drive_connection(
     match &mut session.state {
         // Passive states: `Connecting` waits for the transport-up status; the others are terminal or
         // steady.
-        Connection::Dead | Connection::Established | Connection::Connecting => {}
+        Connection::Paused
+        | Connection::Dead
+        | Connection::Established
+        | Connection::Connecting => {}
         Connection::Down { respawn_at } => {
             // Nothing to dial for without an identity to hand the handshake; the server drops an
             // unauthenticated peer after a timeout, which would otherwise cycle the connection
@@ -1103,8 +1164,8 @@ fn drive_connection(
             if let Some(result) = task.complete() {
                 match result {
                     Ok(bytes) => {
-                        if let Some(link) = session.link.as_ref() {
-                            let _ = link.outbound.try_send(PulseFrame {
+                        if let Some(link) = session.link.as_mut() {
+                            link.send(PulseFrame {
                                 bytes,
                                 reliability: PulseReliability::Reliable,
                                 kind: FrameKind::Control,
@@ -1153,7 +1214,7 @@ fn drain_inbound(
     };
     let for_engine = |peer_realm: &str| own_realm.as_deref().is_none_or(|own| own == peer_realm);
 
-    while let Some(Ok(bytes)) = session.link.as_mut().map(|link| link.inbound.try_recv()) {
+    while let Some(bytes) = session.link.as_mut().and_then(PulseLink::receive) {
         let events = match pulse::ServerMessage::decode(bytes.as_slice()) {
             Ok(message) => session.decoder.handle(message),
             Err(err) => {
@@ -1195,17 +1256,22 @@ fn drain_inbound(
                     let message = pulse::ClientMessage {
                         message: Some(pulse::client_message::Message::Resync(request)),
                     };
-                    let sent = session.link.as_ref().is_some_and(|link| {
-                        link.outbound
-                            .try_send(PulseFrame {
-                                bytes: message.encode_to_vec(),
-                                reliability: PulseReliability::Reliable,
-                                kind: FrameKind::Control,
-                            })
-                            .is_ok()
+                    let sent = session.link.as_mut().is_some_and(|link| {
+                        link.send(PulseFrame {
+                            bytes: message.encode_to_vec(),
+                            reliability: PulseReliability::Reliable,
+                            kind: FrameKind::Control,
+                        })
                     });
-                    // Unsent, it would hold back every later request for the subject.
-                    if !sent {
+                    if sent {
+                        let second = now as u64;
+                        let bucket = &mut session.resyncs[(second % 60) as usize];
+                        if bucket.0 != second {
+                            *bucket = (second, 0);
+                        }
+                        bucket.1 += 1;
+                    } else {
+                        // Unsent, it would hold back every later request for the subject.
                         session.decoder.resync_not_sent(subject_id);
                     }
                 }
@@ -1607,7 +1673,7 @@ fn set_listener_aoi(session: &mut PulseSession, aoi: Vec<pulse::SceneListenerAoi
 /// final set. The connection stays up and the server swaps the AoI in place, which costs no
 /// re-authentication and no gap in the positional stream.
 fn flush_listener_aoi(session: &mut PulseSession, now: f64) {
-    let (Some(link), Connection::Established) = (session.link.as_ref(), &session.state) else {
+    let (Some(link), Connection::Established) = (session.link.as_mut(), &session.state) else {
         return;
     };
     let Some(listener) = session.role.listener_mut() else {
@@ -1633,7 +1699,7 @@ fn flush_listener_aoi(session: &mut PulseSession, now: f64) {
             },
         )),
     };
-    let _ = link.outbound.try_send(PulseFrame {
+    link.send(PulseFrame {
         bytes: message.encode_to_vec(),
         reliability: PulseReliability::Reliable,
         kind: FrameKind::Control,
@@ -1890,8 +1956,8 @@ fn send_teleport_at(session: &mut PulseSession, realm: &CurrentRealm, world: Vec
 
 /// Send a `ProfileVersionAnnouncement` for `version`, reliably: peers fetch the profile when it is
 /// newer than the one they hold. No-op without a live link.
-fn send_profile_version(session: &PulseSession, version: i32) {
-    let Some(link) = session.link.as_ref() else {
+fn send_profile_version(session: &mut PulseSession, version: i32) {
+    let Some(link) = session.link.as_mut() else {
         return;
     };
     let message = pulse::ClientMessage {
@@ -1899,7 +1965,7 @@ fn send_profile_version(session: &PulseSession, version: i32) {
             pulse::ProfileVersionAnnouncement { version },
         )),
     };
-    let _ = link.outbound.try_send(PulseFrame {
+    link.send(PulseFrame {
         bytes: message.encode_to_vec(),
         reliability: PulseReliability::Reliable,
         kind: FrameKind::Control,

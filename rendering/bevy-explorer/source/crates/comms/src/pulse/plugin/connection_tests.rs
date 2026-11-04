@@ -27,6 +27,7 @@ fn session_with_link(role: PulseRole) -> (PulseSession, PulseDriverChannels) {
         link: Some(link),
         _driver: None,
         decoder: PulseDecoder::new(grid),
+        resyncs: [(0, 0); 60],
         role,
         lsd_realm: LsdRealm::Unresolved { retry_at: 0.0 },
         realm_override: None,
@@ -419,6 +420,18 @@ impl Harness {
         self.world.run_system_once(follow_realm).unwrap();
     }
 
+    /// The debug panel connects the player, or disconnects it.
+    fn set_connection_enabled(&mut self, enabled: bool) {
+        self.world
+            .run_system_once(
+                move |mut session: ResMut<PulseSession>, mut commands: Commands| {
+                    session.set_connection_enabled(enabled, false, &mut commands)
+                },
+            )
+            .unwrap()
+            .unwrap();
+    }
+
     /// The peers reported as left since the last look, every one of them on the routing transport.
     fn left(&mut self) -> Vec<Address> {
         departures(&mut self.updates)
@@ -576,6 +589,34 @@ fn a_realm_change_out_of_a_terminal_stop_starts_the_backoff_over() {
 
     harness.world.insert_resource(realm("away"));
     harness.follow_realm();
+    assert_eq!(respawn_at(harness.session()), Some(0.0));
+
+    harness.redial(Connection::Connecting);
+    harness.report(PulseStatus::Failed("no route".to_owned()));
+    harness.pump_at(40.0);
+    assert_eq!(respawn_at(harness.session()), Some(41.0));
+}
+
+/// A pause from the debug panel parks the session with no link, and nothing dials it. A resume is
+/// the user's own fresh start, as a realm change out of a terminal stop is: it dials at once, and
+/// the next failure waits the first second again.
+#[test]
+fn a_resume_dials_at_once_and_starts_the_backoff_over() {
+    let mut harness = Harness::player(Connection::Connecting);
+
+    harness.report(PulseStatus::Failed("no route".to_owned()));
+    harness.pump_at(10.0);
+    harness.redial(Connection::Connecting);
+    harness.report(PulseStatus::Failed("no route".to_owned()));
+    harness.pump_at(20.0);
+    assert_eq!(respawn_at(harness.session()), Some(22.0));
+
+    harness.set_connection_enabled(false);
+    harness.pump_at(30.0);
+    assert!(matches!(harness.session().state, Connection::Paused));
+    assert!(harness.session().link.is_none());
+
+    harness.set_connection_enabled(true);
     assert_eq!(respawn_at(harness.session()), Some(0.0));
 
     harness.redial(Connection::Connecting);

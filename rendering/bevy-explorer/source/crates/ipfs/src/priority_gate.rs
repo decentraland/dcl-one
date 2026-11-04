@@ -9,6 +9,7 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     sync::{Arc, Mutex, MutexGuard, PoisonError, Weak},
+    time::Duration,
 };
 
 use bevy::log::error;
@@ -84,6 +85,7 @@ pub(super) struct DownloadReaders {
 pub(super) struct DownloadAttempts {
     readers: DownloadReaders,
     first: Option<Arc<Ticket>>,
+    initial_delay: Option<Duration>,
 }
 
 pub(super) struct Registration {
@@ -96,21 +98,28 @@ impl DownloadReaders {
         gate: &Arc<PriorityGate>,
         owner: Option<String>,
         cancel: Option<oneshot::Sender<()>>,
+        initial_delay: Option<Duration>,
     ) -> (Registration, DownloadAttempts) {
         let mut state = gate.state();
         let id = state.next_download;
         state.next_download += 1;
-        let ticket = gate.enqueue(&mut state, [owner.clone()]);
+        // Delayed preview downloads can acquire readers immediately, but only enter the
+        // gate once the artificial delay ends. They never hold a slot while sleeping.
+        let ticket = initial_delay
+            .is_none()
+            .then(|| gate.enqueue(&mut state, [owner.clone()]));
         state.readers.insert(
             id,
             ReaderState {
                 owners: [(owner.clone(), 1)].into_iter().collect(),
-                queued: Some(ticket.seq),
+                queued: ticket.as_ref().map(|ticket| ticket.seq),
                 cancel,
             },
         );
         drop(state);
-        gate.grant();
+        if ticket.is_some() {
+            gate.grant();
+        }
         let readers = Self {
             gate: gate.clone(),
             id,
@@ -122,7 +131,8 @@ impl DownloadReaders {
             },
             DownloadAttempts {
                 readers,
-                first: Some(ticket),
+                first: ticket,
+                initial_delay,
             },
         )
     }
@@ -143,7 +153,7 @@ impl DownloadReaders {
         })
     }
 
-    fn retry_ticket(&self) -> Result<Arc<Ticket>, GateClosed> {
+    fn next_ticket(&self) -> Result<Arc<Ticket>, GateClosed> {
         let mut state = self.gate.state();
         let seq = state.next_seq;
         let readers = state.readers.get_mut(&self.id).ok_or(GateClosed)?;
@@ -158,9 +168,12 @@ impl DownloadReaders {
 
 impl DownloadAttempts {
     pub(super) async fn acquire(&mut self) -> Result<Permit, GateClosed> {
+        if let Some(delay) = self.initial_delay.take() {
+            async_std::task::sleep(delay).await;
+        }
         let ticket = match self.first.take() {
             Some(ticket) => ticket,
-            None => self.readers.retry_ticket()?,
+            None => self.readers.next_ticket()?,
         };
         let permit = self.readers.gate.acquire(ticket).await?;
         let mut state = self.readers.gate.state();
@@ -335,6 +348,10 @@ impl PriorityGate {
         } else {
             None
         }
+    }
+
+    pub(super) fn available_permits(&self) -> usize {
+        self.state().available
     }
 
     pub fn add_permits(self: &Arc<Self>, n: usize) {
