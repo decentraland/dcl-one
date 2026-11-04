@@ -2590,7 +2590,7 @@
       "id": "api_http:POST:/v1/communities/:id/members",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately. Membership acquisition deliberately has a one-second absolute budget, including pool checkout and temporary COMMIT, with a 750ms server lock timeout. Interrupted acquisitions close their connection; successful joins retain autocommit on the same shared connection. This bounds contention and differs from unlimited source waits.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -2629,6 +2629,16 @@
           "path": "services/catalyst/social/src/communities/tests/gateway_auth.rs",
           "test": "gateway_real_http_auth_precedes_sniff_and_client_json_uses_http_cap",
           "scope": "Common gateway boundary for 17 registered writes. Twelve actual-source HTTP server/router/auth/schema/multipart cases are independently recaptured exactly; eight healthy candidate exchanges compare complete status/body/application headers and bounded EOF through real Hyper+drain+Normalize. Separate denied-role tests cover unsigned400/signed500 before mirror. This is not every internal handler failure or incomplete-body parity."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/membership_concurrency.rs",
+          "test": "blocked_membership_requests_release_the_shared_pool_with_one_or_two_connections",
+          "scope": "Real PostgreSQL contention keeps the lock holder active while the bounded signed join waiter returns and unrelated shared-pool SQL resumes with pool sizes one and two."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/membership_concurrency.rs",
+          "test": "interrupted_acquisition_commit_closes_its_backend_before_any_membership_write",
+          "scope": "Actual PostgreSQL wire relay withholds COMMIT completion after server commit/native lock success. Caller cancellation and the original helper deadline close the backend before relay release; an independent same-key caller succeeds and maxpool1 replaces the connection with clean transaction/GUC state and no protected join. A real PostgreSQL error injected at the COMMIT SQL slot verifies failure cleanup too. This exercises direct join, not every handler through the shared helper."
         }
       ],
       "gaps": [],
@@ -8361,7 +8371,7 @@
         "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
         "api_http:PUT:/v1/communities/:id"
       ],
-      "description": "Client BAN and update now preserve the source commit phases on the existing pool: completed membership/unlike/analytics stages survive a later ban/request failure, while community updates precede separate places and atomic bulk acceptance. Nine actual-source PostgreSQL trigger captures independently match exactly; package community186 tests pass. Native federation and atomic join retain their separate contracts. Production crash/retry/concurrency and nonempty cutover remain unverified. Community-scoped native advisory guards now coordinate joins, all acceptance paths, BAN and ownership SQL transfer while retaining separate source commit stages. Cancellation/error and queued owner/BAN cases pass local PostgreSQL barriers; this strengthens concurrency coordination beyond source. Acquisition now has an absolute one-second budget including pool checkout and a 750ms local server lock timeout; an interrupted connection is closed until temporary transaction completion is confirmed. SQLx 0.9 native acquire was already cancellation-safe. This bounds retention and differs from unlimited source waits; existing separate commit phases remain."
+      "description": "Client BAN and update now preserve the source commit phases on the existing pool: completed membership/unlike/analytics stages survive a later ban/request failure, while community updates precede separate places and atomic bulk acceptance. Nine actual-source PostgreSQL trigger captures independently match exactly; package community186 tests pass. Native federation and atomic join retain their separate contracts. Production crash/retry/concurrency and nonempty cutover remain unverified. Community-scoped native advisory guards now coordinate joins, all acceptance paths, BAN and ownership SQL transfer while retaining separate source commit stages. Cancellation/error and queued owner/BAN cases pass local PostgreSQL barriers; this strengthens concurrency coordination beyond source. Acquisition now has an absolute one-second budget including pool checkout and a 750ms local server lock timeout; an interrupted connection is closed until temporary transaction completion is confirmed. SQLx 0.9 native acquire was already cancellation-safe. This bounds retention and differs from unlimited source waits; existing separate commit phases remain. The real PostgreSQL COMMIT-response barrier now exercises caller cancellation, helper deadline and real SQL-error cleanup: backend disappearance precedes relay release, independent same-key acquisition and a clean maxpool1 replacement succeed, and protected join writes never run. This direct-join proof does not execute every other handler at that wire boundary."
     },
     {
       "id": "community-voice-raw-cache-aliases",
