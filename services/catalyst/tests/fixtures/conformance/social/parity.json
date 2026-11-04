@@ -3291,8 +3291,8 @@
     {
       "id": "api_http:POST:/v1/referral-progress",
       "owner": "friends-settings-blocks-referrals",
-      "status": "reviewed",
-      "result": "Source-reviewed schema/auth/IP priority, first-wins retries, direct/one-hop denylist and persisted rejected-IP responses; registration kill flag uses the shared DAPPS snapshot. Unexpected referral SQL failures now preserve the source message-only 500 boundary; five actual Node/PostgreSQL handler cases replay through corresponding real SQLx HTTP routes, including privacy. Configured Slack sends timing/IP alerts after insertion and 100-invite alerts after grant/notification, awaiting and swallowing Slack failures; same-referrer retries emit no duplicate alerts. MAX_IP/MIN_LOGIN use source parseFloat configuration; node-pg bigint rejection and fractional, zero and infinite login-day comparisons replay sixteen executed source configurations. Slack now retains one lazy fixed-endpoint provider profile with no application connect/read/total deadline, matching source timeout0; explicitly empty tokens omit Authorization. Awaited insertion/grant boundaries remain source-compatible.",
+      "status": "known_gap",
+      "result": "Source-reviewed schema/auth and first-wins retries, direct/one-hop denylist and persisted rejected-IP responses; registration kill flag uses the shared DAPPS snapshot. Unexpected referral SQL failures now preserve the source message-only 500 boundary; five actual Node/PostgreSQL handler cases replay through corresponding real SQLx HTTP routes, including privacy. Configured Slack sends timing/IP alerts after insertion and 100-invite alerts after grant/notification, awaiting and swallowing Slack failures; same-referrer retries emit no duplicate alerts. MAX_IP/MIN_LOGIN use source parseFloat configuration; node-pg bigint rejection and fractional, zero and infinite login-day comparisons replay sixteen executed source configurations. Slack retains source payloads and empty-token serialization; its shared Outbound transport deliberately limits each complete effect to ten seconds, three attempts and a two-second Retry-After cap, including permit wait and shared pause. The source timeout0/unbounded retry timing is not equivalent. Awaited insertion/grant boundaries remain source-compatible. Referral quota identity now comes from the real TCP peer; only an explicitly trusted backend proxy may supply one valid overwritten X-Real-IP. Historical valid inet aliases share a quota, including mapped IPv4; stored history is retained.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/referral.rs",
@@ -3327,12 +3327,12 @@
         {
           "path": "services/catalyst/social/src/communities/referral_slack.rs",
           "test": "referral_slack_payloads_and_forms_match_the_executed_source_sdk",
-          "scope": "Six actual source payload builders and installed Slack SDK produce development/production messages, form/auth fields and the default retry schedule with deterministic random input. Local loopback captures compare decoded form fields, preserving JSON block contents without requiring object property order."
+          "scope": "Six executed source payload builders and installed SDK captures retain development/production messages and form/auth fields. Local loopback requests compare decoded forms and block contents. Source retry receipts remain frozen; candidate retries deliberately use three attempts and a ten-second whole-effect budget."
         },
         {
           "path": "services/catalyst/social/src/communities/referral_slack.rs",
-          "test": "referral_slack_transport_matches_the_executed_sdk_retry_classifications",
-          "scope": "Eight actual SDK cases replay against a loopback HTTP/connection-drop stub: success, platform rejection, HTTP retry,429valid/missing Retry-After, transport retry,11-attempt exhaustion and redirects. Test retry waits are shortened; source default jitter formula is separately captured."
+          "test": "referral_slack_keeps_source_failure_classifications_with_bounded_attempts",
+          "scope": "Eight executed SDK classifications replay against a loopback HTTP/connection-drop stub. Success, platform rejection, HTTP/transport retry, 429 and redirects retain classifications; candidate exhaustion deliberately stops at three attempts instead of eleven. Test retry waits are shortened."
         },
         {
           "path": "services/catalyst/social/src/communities/referral_slack.rs",
@@ -3352,16 +3352,39 @@
         {
           "path": "services/catalyst/social/src/communities/referral_slack.rs",
           "test": "an_explicit_empty_slack_token_sends_without_authorization_like_the_source",
-          "scope": "Installed source SDK defaults/serialization are captured; target real loopback requests verify the empty-token and unbounded application-timeout contract without external Slack traffic."
+          "scope": "Installed source SDK serialization and local loopback requests compare empty-token omission of Authorization. Provider timeout and retry limits deliberately differ from the captured source defaults."
         },
         {
           "path": "services/catalyst/social/src/communities/referral_slack.rs",
-          "test": "slack_zero_timeout_keeps_a_response_body_pending_past_the_shared_deadline",
-          "scope": "Installed source SDK defaults/serialization are captured; target real loopback requests verify the empty-token and unbounded application-timeout contract without external Slack traffic."
+          "test": "slack_effect_budget_cancels_stalled_headers_and_bodies_and_releases_permits",
+          "scope": "Real loopback stalled headers and response bodies are canceled by the candidate whole-effect budget; retained attribution and provider permit cleanup are checked. This deliberately differs from source timeout0."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/referral_lifecycle.rs",
+          "test": "referral_network_peer_prevents_spoofing_and_trusted_gateway_keeps_client_buckets",
+          "scope": "Real TCP sockets verify forged headers cannot change an untrusted peer bucket and explicitly trusted proxy X-Real-IP retains separate client buckets."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/referral_lifecycle.rs",
+          "test": "referral_http_response_and_committed_rejection_survive_a_stalled_slack_body",
+          "scope": "Real HTTP/SQLx attribution and rejected-IP response finish after the bounded stalled Slack effect without undoing the insert."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/referral_slack.rs",
+          "test": "slack_effect_budget_includes_permit_wait_and_shared_rate_limit_pause",
+          "scope": "The same absolute budget covers shared permit and shared pause waits, including a stalled response."
+        },
+        {
+          "path": "services/catalyst/social/src/legacy_events.rs",
+          "test": "queue_acknowledges_committed_milestone_and_processes_next_login_after_slack_stalls",
+          "scope": "Actual SQS process_message path preserves committed milestone, ordered delete-finally acknowledgement and progress to the next event after a bounded Slack stall. No whole-batch visibility deadline is inferred."
         }
       ],
-      "gaps": [],
-      "remaining_verification": "Real Slack/AWS credentials, subscriptions, cutover state and delivery remain unverified. SDK cases use controlled local providers; exhausted concurrent rate-limit ordering and full lifecycle email replay remain outstanding."
+      "gaps": [
+        "Intentional ingress hardening: untrusted CF-Connecting-IP, X-Forwarded-For and X-Real-IP no longer select the quota bucket. Direct headerless sockets use their real peer. Trusted backend proxies must be provisioned with HTTP_TRUSTED_PROXY_CIDRS and overwrite X-Real-IP; this differs from source header priority.",
+        "Intentional provider hardening: Slack uses a ten-second absolute whole-effect budget, at most three attempts and Retry-After capped at two seconds, differing from the captured source timeout0 and eleven-attempt exhaustion. Committed attribution/grant and ordered swallowed-error boundaries are retained."
+      ],
+      "remaining_verification": "Real Slack/AWS credentials, subscriptions, cutover state and delivery remain unverified. SDK cases use controlled local providers; exhausted concurrent rate-limit ordering and full lifecycle email replay remain outstanding. Backend proxy trust provisioning and live client-IP distribution must be verified before cutover; exact source equivalence is not claimed."
     },
     {
       "id": "api_http:PUT:/v1/communities/:id",
@@ -5691,12 +5714,28 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json",
           "scope": "Independently regenerated byte-exact through actual pinned source registry, wrappers, subscription components and loopback HTTP listener. Controlled wall-clock/provider inputs; no deployed/runtime identity claim."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "test": "http_method_labels_preserve_source_casing_and_bound_direct_callers",
+          "scope": "Direct instrumentation callers share the finite method normalization; ordinary/uWS casing remains source-compatible for standard methods."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "test": "real_http_extension_methods_share_bounded_counter_and_histogram_labels",
+          "scope": "128 distinct extension methods through actual native, source-gateway and uWS HTTP paths share other counter and histogram labels."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "test": "websocket_close_code_labels_have_a_fixed_standard_and_source_allowlist",
+          "scope": "All u16 close-code inputs map into the finite standard/source allowlist plus other."
         }
       ],
       "gaps": [
         "WKC_METRICS_RESET_AT_NIGHT=true still does not rotate the Social view; the existing global lifetime recorder is retained. The ordinary source HTTP metrics listener also has an unimplemented reset schedule.",
         "Node/V8 default collectors and native uWS buffer/drop/drain observations are different. Tokio Sink::start_send acceptance is observed before flush; it is not a native uWS send-result or buffer measurement.",
-        "Auth completion after disconnect, forwarding exceptions, subscriber stale reconciliation, source LOG_LEVEL filtering and producer failures represented as ordinary generator termination have unmatched or incomplete event boundaries. Declarations/initial zeros do not prove production emitters."
+        "Auth completion after disconnect, forwarding exceptions, subscriber stale reconciliation, source LOG_LEVEL filtering and producer failures represented as ordinary generator termination have unmatched or incomplete event boundaries. Declarations/initial zeros do not prove production emitters.",
+        "Intentional cardinality bounds: the nine standard HTTP methods retain source casing; every extension method uses other in request counters and both histograms. Unknown client close codes use other after a finite standard/source allowlist. Raw source label values are not preserved for those inputs."
       ],
       "remaining_verification": "Provider-specific default collectors, night reset semantics, actual disconnected scrape, runtime label/event interpretation and arbitrary wildcard/custom-path collisions remain unverified. Global sample values across processes are not compared."
     },
@@ -7898,7 +7937,7 @@
     {
       "id": "referral-lifecycle",
       "status": "unverified",
-      "description": "Attribution/IP rejection, signup, UTC login days, guarded grants, artwork, email, handler-specific SQL errors and configured Slack effects have source-paired/local regressions. Slack now uses a retained provider profile matching timeout0 and empty-token serialization. Sixteen executed numeric configurations cover source parser values, bigint rejection/overflow and login-day comparisons. Live providers, concurrent rate-limit ordering and stateful deployed cutover remain unverified. Referrer/IP quotas and milestone counts are serialized in SQL; tier-image and tier-notification work retain independent fail-fast completion. Actual source partial-failure receipts and local concurrent PostgreSQL cases are compared; simultaneous decision ordering is strengthened beyond source.",
+      "description": "Attribution/IP rejection, signup, UTC login days, guarded grants, artwork, email, handler-specific SQL errors and configured Slack effects have source-paired/local regressions. Slack keeps source payloads and empty-token serialization but deliberately bounds each effect to ten seconds, three attempts and a two-second Retry-After cap. Referral identity uses the TCP peer or explicitly trusted backend proxy X-Real-IP, and canonical historical inet aliases share a quota; these are intentional source differences. Sixteen executed numeric configurations cover source parser values, bigint rejection/overflow and login-day comparisons. Live providers, concurrent rate-limit ordering and stateful deployed cutover remain unverified. Referrer/IP quotas and milestone counts are serialized in SQL; tier-image and tier-notification work retain independent fail-fast completion. Actual source partial-failure receipts and local concurrent PostgreSQL cases are compared; simultaneous decision ordering is strengthened beyond source.",
       "operations": [
         "api_http:GET:/v1/referral-progress",
         "api_http:PATCH:/v1/referral-progress",
@@ -8322,7 +8361,7 @@
         "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
         "api_http:PUT:/v1/communities/:id"
       ],
-      "description": "Client BAN and update now preserve the source commit phases on the existing pool: completed membership/unlike/analytics stages survive a later ban/request failure, while community updates precede separate places and atomic bulk acceptance. Nine actual-source PostgreSQL trigger captures independently match exactly; package community186 tests pass. Native federation and atomic join retain their separate contracts. Production crash/retry/concurrency and nonempty cutover remain unverified. Community-scoped native advisory guards now coordinate joins, all acceptance paths, BAN and ownership SQL transfer while retaining separate source commit stages. Cancellation/error and queued owner/BAN cases pass local PostgreSQL barriers; this strengthens concurrency coordination beyond source."
+      "description": "Client BAN and update now preserve the source commit phases on the existing pool: completed membership/unlike/analytics stages survive a later ban/request failure, while community updates precede separate places and atomic bulk acceptance. Nine actual-source PostgreSQL trigger captures independently match exactly; package community186 tests pass. Native federation and atomic join retain their separate contracts. Production crash/retry/concurrency and nonempty cutover remain unverified. Community-scoped native advisory guards now coordinate joins, all acceptance paths, BAN and ownership SQL transfer while retaining separate source commit stages. Cancellation/error and queued owner/BAN cases pass local PostgreSQL barriers; this strengthens concurrency coordination beyond source. Acquisition now has an absolute one-second budget including pool checkout and a 750ms local server lock timeout; an interrupted connection is closed until temporary transaction completion is confirmed. SQLx 0.9 native acquire was already cancellation-safe. This bounds retention and differs from unlimited source waits; existing separate commit phases remain."
     },
     {
       "id": "community-voice-raw-cache-aliases",

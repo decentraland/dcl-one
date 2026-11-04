@@ -1,11 +1,10 @@
 # Social voice schema release definitions
 
 This directory contains the sole canonical definitions used by
-[`v3-private-voice-pending.sql`](../v3-private-voice-pending.sql). The current
-version-2 binary does not discover nested release definitions during fresh
-bootstrap or migration. Adding these artifacts leaves its required version,
-fresh stamp and enrolled additive steps unchanged. A compatible version-3
-artifact must explicitly enroll these same definitions once.
+[`v3-private-voice-pending.sql`](../v3-private-voice-pending.sql). A version-2
+schema build does not discover nested release definitions during fresh
+bootstrap or migration. The version-3 build explicitly enrolls these same
+definitions once in dependency order, alongside its compatible runtime.
 
 The release accepts captured shipped-main version 2 without historical step
 0020 and prepared version 2 with its genuine matching receipt. It refuses
@@ -15,11 +14,11 @@ facts, real ledgers and the remaining notification TTL and generation.
 Historical UUID columns cannot recover raw identifier aliases already lost.
 
 `services/catalyst/db/tests/social_voice_release.rs` exercises both genuine
-origins, populated rows, rollback boundaries, refusal and retry. Its version-2
-executor checks establish that fresh bootstrap is unchanged and that the old
-binary refuses a released version-3 database. Production version-3 bootstrap,
-migration retirement and compatible writers require their own activation
-checks; these release-only tests do not establish them.
+origins, populated rows, rollback boundaries, refusal and retry. The separate
+`social_voice_upgrade.rs` suite verifies the current version-3 bootstrap, real
+migrator and immutable historical-step retirement against both genuine origins.
+A version-2 binary refuses a released version-3 database. Release-only tests
+do not establish compatible runtime behavior or deployment readiness.
 
 ```sh
 CATALYST_TEST_DATABASE_URL=postgres://test_role@localhost/test_admin \

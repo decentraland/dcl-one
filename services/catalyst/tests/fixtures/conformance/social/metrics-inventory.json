@@ -44,7 +44,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 261,
+          "line": 312,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -68,7 +68,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 260,
+          "line": 311,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -115,7 +115,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 265,
+          "line": 316,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -140,7 +140,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 121,
+          "line": 129,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -149,7 +149,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 224,
+          "line": 233,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -181,7 +181,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 137,
+          "line": 141,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -273,14 +273,14 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 120,
+          "line": 124,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
         },
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 230,
+          "line": 235,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -303,7 +303,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 219,
+          "line": 224,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -411,7 +411,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 132,
+          "line": 136,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -525,7 +525,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 134,
+          "line": 138,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -544,7 +544,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 331,
+          "line": 382,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -575,7 +575,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 333,
+          "line": 384,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -606,7 +606,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 324,
+          "line": 375,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -637,7 +637,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 361,
+          "line": 412,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -658,7 +658,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "line": 382,
+          "line": 433,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -925,7 +925,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 309,
+          "line": 314,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -948,7 +948,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 310,
+          "line": 315,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []

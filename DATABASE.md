@@ -481,7 +481,11 @@ catalyst schema status
 Keep every writer stopped through that sequence. The release refuses mixed
 layouts, changed receipt hashes and a pre-existing destination. It audits pending
 wallets across both roles and refuses overlapping or non-normalized pending state.
-In one transaction it creates the canonical exact-key notification relation,
+The canonical future definitions live once under `schemas/releases/v3/`; the
+compatible version-3 build explicitly enrolls them in the single fresh bootstrap.
+A version-2 build does not discover that nested directory. Merging dormant
+release artifacts does not activate version 3 or establish cutover readiness.
+In one transaction the release creates the canonical exact-key notification relation,
 preserves prepared legacy generations and TTLs, verifies the backfill both ways,
 retires the legacy layout when present, creates the canonical caller/callee
 indexes, drops the former uniqueness constraints and stamps version 3 last. It
@@ -677,7 +681,11 @@ bounded, while the scanned history grows with that referrer. A query failure aft
 the insert retains attribution and reaches the source handler's error boundary.
 Configured timing/IP Slack calls occur after insertion and the hundred-invite
 alert after the grant and accepted notification; no external await holds an SQL
-transaction. Same-referrer retries exit before recent reads or alert delivery.
+transaction. Each complete Slack effect has a ten-second absolute deadline, at
+most three attempts and a two-second Retry-After cap, including shared provider
+permit and pause waits. A failure retains the committed state and is swallowed
+at the existing boundary. Same-referrer retries exit before alert delivery.
+These timing limits deliberately differ from the pinned source SDK defaults.
 
 Registry cache keys retain the requested spelling, including case; batch key
 uniqueness is case-sensitive. Only the physical content-pointer lookup normalizes
@@ -771,7 +779,14 @@ are compared for accepted, sent/received requests, absent friendship and empty
 history, with V2 and anonymous controls; no performance change was measured.
 
 Referral attribution serializes quota decisions with a transaction-scoped
-referrer/IP advisory key; count and insertion share that transaction. Finalizing
+referrer/IP advisory key; count and insertion share that transaction. The IP is
+the actual TCP peer unless an explicitly trusted backend proxy supplies one
+valid overwritten X-Real-IP. New facts use canonical addresses; the count uses
+guarded inet equality over historical text, including mapped IPv4 aliases.
+Malformed historical values remain stored and do not abort the count. The
+existing referrer-leading index bounds the prefix; alias conversion is still
+per matching row and has a measured CPU cost (see METRICS.md). No new table,
+index or historical rewrite is introduced. Finalizing
 a referral serializes its referrer and counts the milestone before committing
 the grant. External Slack, SNS and reward requests occur after commit. A failed
 notification or reward request retains the committed tier as the pinned source
@@ -791,9 +806,15 @@ community on the shared pool. BAN, direct join, request acceptance, bulk public
 acceptance and the SQL phase of ownership transfer serialize under that guard.
 BAN retains separate committed kick, unlike, analytics, ban and request-removal
 phases. Ownership NAME validation precedes its guard; external notification,
-voice and provider awaits follow release. SQLx's native owned-connection guard
-releases on failure or cancellation. This strengthens concurrency coordination
-without making the separate phases atomic.
+voice and provider awaits follow release. SQLx 0.9 native acquire already owns
+its cancellation cleanup. Acquisition now has one absolute one-second budget
+covering pool checkout, temporary BEGIN, SET LOCAL, native acquire and COMMIT.
+The local server lock timeout is 750ms; the connection is marked close-on-drop
+until COMMIT is confirmed, then disarmed synchronously. This bounds waiting
+backend retention while preserving the same connection, autocommit and previous
+GUC values after success, including a pool of size one. Normal release remains
+native guard Drop. These limits strengthen coordination and bound contention;
+the separate source commit phases remain independently committed.
 
 Private media credentials serialize same-call writers before a plain party read,
 then take sorted wallet transaction locks before locking/upserting the call.

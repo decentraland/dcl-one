@@ -298,3 +298,30 @@ with its session advisory guard, 1.029/1.189ms; guards over eight communities
 measured 0.269/0.427ms. These isolate SQL coordination cost and exclude HTTP
 signatures, Rust/SQLx prepare costs and external awaits. They establish no
 production capacity or service-level bound.
+
+
+## Referral canonical IP quota comparison
+
+On 2026-11-04, PostgreSQL 18.6 TEMP data held 100,000 four-column referral
+probe rows with the existing `(referrer,status)` index shape. Seven warm
+`EXPLAIN (ANALYZE, BUFFERS)` samples after warmup compared text equality with
+guarded inet equality including mapped IPv4 aliases. Median execution times:
+
+| Matching referrer prefix | Text equality | Guarded inet equality | Local buffer hits, both |
+| --- | --- | --- | --- |
+| 10 rows | 0.004 ms | 0.006 ms | 3 |
+| 1,000 rows | 0.053 ms | 0.183 ms | 16 |
+| 10,000 rows | 0.520 ms | 1.819 ms | 135 |
+
+The index access paths and buffer counts stayed the same; canonical historical
+comparison adds conversion work within the selected prefix. This synthetic
+probe does not measure full attribution writes, transaction contention,
+providers, cold data, production distributions or a service-level bound.
+No index or historical-row rewrite is inferred from these observations.
+
+HTTP method labels now have nine standard values plus `other`; WebSocket close
+labels use a finite standard/source allowlist plus `other`. Per-protocol open
+counts update under the existing socket-map mutex without scanning that map.
+These are bounded label/state invariants, not measured throughput improvements.
+The earlier community coordination benchmark excludes the new bounded SQLx
+acquisition setup and must not be treated as its performance measurement.
