@@ -266,8 +266,10 @@ fn stale_delta_is_dropped() {
         .is_empty());
 }
 
+/// A subject not held is about to be announced, with its full state, or has left, and the server
+/// answers nothing for a subject out of view. Either way there is nothing to ask for.
 #[test]
-fn delta_for_unknown_subject_requests_full() {
+fn a_delta_for_an_unknown_subject_is_dropped() {
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
     let delta = pulse::PlayerStateDeltaTier0 {
         subject_id: 99,
@@ -278,13 +280,7 @@ fn delta_for_unknown_subject_requests_full() {
     let events = decoder.handle(server_msg(
         pulse::server_message::Message::PlayerStateDelta(delta),
     ));
-    match &events[0] {
-        PulseEvent::Resync(r) => {
-            assert_eq!(r.subject_id, 99);
-            assert_eq!(r.known_seq, 0);
-        }
-        other => panic!("expected Resync, got {other:?}"),
-    }
+    assert!(events.is_empty(), "{events:?}");
 }
 
 #[test]
@@ -302,21 +298,18 @@ fn left_drops_subject_and_emits_address() {
         other => panic!("expected Left, got {other:?}"),
     }
 
-    // After leaving, a delta should be treated as unknown (resync), proving the baseline is gone.
+    // After leaving, a delta that would follow on from the join applies to nothing, proving the
+    // baseline is gone: it is an unknown subject's, and dropped.
     let delta = pulse::PlayerStateDeltaTier0 {
         subject_id: SUBJECT,
         baseline_seq: 5,
         new_seq: 6,
         ..Default::default()
     };
-    assert!(matches!(
-        decoder
-            .handle(server_msg(
-                pulse::server_message::Message::PlayerStateDelta(delta)
-            ))
-            .as_slice(),
-        [PulseEvent::Resync(_)]
+    let events = decoder.handle(server_msg(
+        pulse::server_message::Message::PlayerStateDelta(delta),
     ));
+    assert!(events.is_empty(), "{events:?}");
 }
 
 /// Server ticks are `u32` milliseconds since the Pulse server started and roll over after ~49.7
@@ -497,9 +490,9 @@ fn reset_forgets_every_subject() {
     )));
     assert_eq!(decoder.reset(), [wallet()]);
     assert!(decoder.replay("home").is_empty());
-    // and a delta for it is now a stranger's: full state is requested rather than applied
+    // and a delta for it is now a stranger's: dropped rather than applied
     let events = decoder.handle(delta(SUBJECT, 1, 2, 1500, 5.0));
-    assert!(matches!(events.as_slice(), [PulseEvent::Resync(r)] if r.known_seq == 0));
+    assert!(events.is_empty(), "{events:?}");
 }
 
 fn teleported(sequence: u32, tick: u32, realm: &str) -> pulse::ServerMessage {
@@ -685,16 +678,30 @@ fn a_full_state_clears_the_pending_resync() {
     assert!(is_one_resync(&events, SUBJECT, 9), "{events:?}");
 }
 
+/// An unknown subject's deltas leave nothing waiting on a resync. Once it is held, its gaps ask
+/// as any held subject's do: once.
 #[test]
-fn an_unknown_subject_is_asked_for_once() {
+fn an_unknown_subject_leaves_nothing_pending() {
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
 
     let events: Vec<PulseEvent> = [(0, 1), (1, 2)]
         .into_iter()
         .flat_map(|(baseline, new)| decoder.handle(delta(99, baseline, new, 1500, 5.0)))
         .collect();
+    assert!(events.is_empty(), "{events:?}");
+    assert!(decoder.pending_resync.is_empty());
 
-    assert!(is_one_resync(&events, 99, 0), "{events:?}");
+    decoder.handle(server_msg(joined_in_realm(
+        99,
+        WALLET,
+        "home",
+        (1.0, 2.0, 3.0),
+    )));
+    let events: Vec<PulseEvent> = [(3, 4), (4, 5)]
+        .into_iter()
+        .flat_map(|(baseline, new)| decoder.handle(delta(99, baseline, new, 1600, 5.0)))
+        .collect();
+    assert!(is_one_resync(&events, 99, 1), "{events:?}");
 }
 
 /// A full state travels reliably, so it can arrive behind a delta sent after it, and then describes
@@ -820,10 +827,13 @@ fn a_leave_clears_the_pending_resync() {
             subject_id: SUBJECT,
         },
     )));
+    assert!(decoder.pending_resync.is_empty());
 
-    // a stranger again, and asked for as one
-    let events = decoder.handle(delta(SUBJECT, 7, 8, 1600, 5.0));
-    assert!(is_one_resync(&events, SUBJECT, 0), "{events:?}");
+    // a delta the leave overtook is a stranger's: it asks for nothing, so nothing waits on an
+    // answer the server will never send
+    let events = decoder.handle(delta(SUBJECT, 8, 9, 1600, 5.0));
+    assert!(events.is_empty(), "{events:?}");
+    assert!(decoder.pending_resync.is_empty());
 }
 
 #[test]
@@ -834,11 +844,14 @@ fn reset_clears_the_pending_resyncs() {
     let events = decoder.handle(delta(SUBJECT, 7, 8, 1500, 5.0));
     assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
 
-    // the request went with the connection that is gone; the next one must be able to ask
+    // the request went with the connection that is gone; nothing waits on its answer
     decoder.reset();
+    assert!(decoder.pending_resync.is_empty());
 
+    // and the subject's deltas are a stranger's now, which ask for nothing
     let events = decoder.handle(delta(SUBJECT, 7, 8, 1600, 5.0));
-    assert!(is_one_resync(&events, SUBJECT, 0), "{events:?}");
+    assert!(events.is_empty(), "{events:?}");
+    assert!(decoder.pending_resync.is_empty());
 }
 
 /// The plugin could not send the request (its queue was full, or the link gone), so nothing waits

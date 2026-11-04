@@ -421,6 +421,8 @@ pub struct PulseDecoder {
     /// Subjects with a `Resync` sent that nothing has answered yet. A gap in a subject's deltas
     /// shows in every one after it, so without this each would ask again. A full state, a delta
     /// that applies, a join, a leave and `reset` each end the wait, as does `resync_not_sent`.
+    /// Only a held subject is asked for (a delta for any other is dropped, see `on_delta`), so no
+    /// entry outlives its subject.
     pending_resync: HashSet<u32>,
     /// Server ticks are `u32` milliseconds since the Pulse server started, so they roll over after
     /// ~49.7 days of server uptime. The newest raw tick seen, and the number of milliseconds to
@@ -678,9 +680,10 @@ impl PulseDecoder {
     /// state leaves the baseline as it is, an older teleport's realm included, and announces
     /// nothing. Any state for a known subject ends the wait for its resync, an older one too, as
     /// in unity-explorer's `TryUpdateLastMovementAndCompleteResync`
-    /// (`PulseMultiplayerBus.PlayerState.cs`); one for an unknown subject, or a message without a
-    /// state, does not. Unknown subjects are dropped: full state carries no wallet, so without a
-    /// prior `PlayerJoined` we can't address it. A shadow takes a state in the same way, silently.
+    /// (`PulseMultiplayerBus.PlayerState.cs`); a message without a state does not, and an unknown
+    /// subject has no wait to end. Unknown subjects are dropped: full state carries no wallet, so
+    /// without a prior `PlayerJoined` we can't address it. A shadow takes a state in the same way,
+    /// silently.
     fn on_full(
         &mut self,
         subject_id: u32,
@@ -792,8 +795,13 @@ impl PulseDecoder {
     fn on_delta(&mut self, delta: pulse::PlayerStateDeltaTier0) -> Vec<PulseEvent> {
         let selected = self.is_selected(delta.subject_id);
         let Some(subject) = self.subjects.get_mut(&delta.subject_id) else {
-            // No baseline yet — ask the server for full state (known_seq 0 = "I have nothing").
-            return self.request_resync(delta.subject_id, 0);
+            // Not held. Either its `PlayerJoined`, reliable and carrying the full state, is still
+            // on its way, or it has left and this delta arrived after the `PlayerLeft` (the two
+            // channels keep no order between them), and the server answers nothing for a subject
+            // out of our view. A resync is no use either way, so the delta is dropped, as
+            // unity-explorer drops a message from an unknown peer (`HandlePlayerStateDelta` in
+            // `PulseMultiplayerBus.PlayerState.cs`).
+            return Vec::new();
         };
 
         // Already have this (e.g. a reliable resync retransmit of a seq we applied unreliably).
