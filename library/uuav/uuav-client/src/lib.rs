@@ -1162,11 +1162,13 @@ pub unsafe extern "C" fn uuav_player_open_media_async(
     };
 
     // new media, new info: drop the cached one until the helper re-announces, and a
-    // presentation failure of the previous media with it
+    // presentation failure of the previous media with it (under the video lock, so a render
+    // event still presenting the previous media cannot set it again afterwards)
     if let Some(client) = CLIENT.load().as_ref()
         && let Some(mirror) = client.mirror(player_id)
     {
         mirror.media_info.store(None);
+        let _presenting = mirror.video.lock();
         mirror.present_failed.store(false, Ordering::Release);
     }
     // buffered audio belongs to the previous media
@@ -1533,9 +1535,14 @@ extern "C" fn uuav_render_event(event_id: i32) {
         let Ok(mut video) = mirror.video.lock() else {
             return;
         };
+        let frames_before = video.frames();
         match video.present(&client.unity) {
             Ok(ack) => {
-                mirror.present_failed.store(false, Ordering::Release);
+                // only a frame that presented ends the failure: a render event with nothing
+                // new to show returns Ok as well
+                if video.frames() != frames_before {
+                    mirror.present_failed.store(false, Ordering::Release);
+                }
                 ack
             }
             Err(e) => {

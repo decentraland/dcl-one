@@ -27,6 +27,10 @@ type Texture = Retained<ProtocolObject<dyn MTLTexture>>;
 /// refused before anything is allocated.
 const MAX_PIXELS: u64 = 4096 * 4096;
 
+/// Largest edge a generation may announce; the helper is the untrusted side
+/// of this channel.
+const MAX_DIMENSION: u32 = 16_384;
+
 const SLOTS: usize = 3;
 const PLANES: usize = 2;
 
@@ -256,6 +260,14 @@ fn wrap_generation(unity: &UnityDevice, pending: &PendingGen) -> Result<ActiveGe
         .dims
         .ok_or_else(|| anyhow!("generation has no dims"))?;
     ensure!(
+        (1..=MAX_DIMENSION).contains(&width) && (1..=MAX_DIMENSION).contains(&height),
+        "helper announced an unpresentable size {width}x{height}"
+    );
+    ensure!(
+        width % 2 == 0 && height % 2 == 0,
+        "helper announced odd NV12 dimensions {width}x{height}"
+    );
+    ensure!(
         u64::from(width).saturating_mul(u64::from(height)) <= MAX_PIXELS,
         "helper announced {width}x{height}, past the {MAX_PIXELS} pixel cap"
     );
@@ -268,6 +280,22 @@ fn wrap_generation(unity: &UnityDevice, pending: &PendingGen) -> Result<ActiveGe
             let uv = slot[1]
                 .as_ref()
                 .ok_or_else(|| anyhow!("missing UV surface"))?;
+            // the surfaces must hold the frame the dims describe: the blit reads the
+            // announced extent out of them
+            ensure!(
+                y.width() >= width as usize && y.height() >= height as usize,
+                "Y surface {}x{} is smaller than the announced {width}x{height}",
+                y.width(),
+                y.height()
+            );
+            ensure!(
+                uv.width() >= (width / 2) as usize && uv.height() >= (height / 2) as usize,
+                "UV surface {}x{} is smaller than the announced {}x{}",
+                uv.width(),
+                uv.height(),
+                width / 2,
+                height / 2
+            );
             Ok([
                 wrap_surface(unity, y, MTLPixelFormat::R8Unorm)?,
                 wrap_surface(unity, uv, MTLPixelFormat::RG8Unorm)?,

@@ -53,41 +53,38 @@ pub fn av_sinks<T: AVPlayer>(
     let (video_sender, video_receiver) = tokio::sync::mpsc::channel(10);
 
     #[cfg(feature = "uuav")]
-    let audio = {
+    let (audio, rejected_commands) = {
         let (audio_sender, audio_receiver) = tokio::sync::mpsc::channel(10);
         let (handle_sender, handle_receiver) = tokio::sync::oneshot::channel();
-        match media::resolve_source(&ipfs, &source, &hash) {
-            Ok(url) => media::spawn_av(
-                command_receiver,
-                T::has_video().then_some(video_sender),
-                url,
-                &image,
-                audio_sender,
-                handle_receiver,
-            ),
+        let rejected_commands = match media::resolve_source(&ipfs, &source, &hash) {
+            Ok(url) => {
+                media::spawn_av(
+                    command_receiver,
+                    T::has_video().then_some(video_sender),
+                    url,
+                    &image,
+                    audio_sender,
+                    handle_receiver,
+                );
+                None
+            }
             Err(e) => {
                 warn!("av source `{source}`: {e}");
-                // the commands keep a receiver until the sender goes, so each send succeeds
-                // silently instead of reporting a closed channel every time (a thread where
-                // no task pool runs, as in a test)
-                let mut command_receiver = command_receiver;
-                match bevy::tasks::IoTaskPool::try_get() {
-                    Some(pool) => pool
-                        .spawn(async move { while command_receiver.recv().await.is_some() {} })
-                        .detach(),
-                    None => drop(std::thread::spawn(move || {
-                        while command_receiver.blocking_recv().is_some() {}
-                    })),
-                }
                 if T::has_video() {
                     video_sender
                         .try_send(VideoData::State(VideoState::VsError))
                         .report();
                 }
+                Some(command_receiver)
             }
-        }
-        Some(AudioSink::new(audio_receiver, handle_sender))
+        };
+        (
+            Some(AudioSink::new(audio_receiver, handle_sender)),
+            rejected_commands,
+        )
     };
+    #[cfg(not(feature = "uuav"))]
+    let rejected_commands = None;
     #[cfg(feature = "html")]
     {
         let url = ipfs
@@ -112,6 +109,7 @@ pub fn av_sinks<T: AVPlayer>(
         audio,
         video: T::has_video().then_some(VideoSink::new(source, video_receiver, image)),
         command_sender,
+        rejected_commands,
         rate: None,
         sent_volume: None,
         _phantom: Default::default(),
@@ -139,6 +137,7 @@ pub fn noop_sinks<T: AVPlayer>(source: String, image: Handle<Image>) -> AVSinks<
         audio,
         video: Some(VideoSink::new(source, video_receiver, image)),
         command_sender,
+        rejected_commands: None,
         rate: None,
         sent_volume: None,
         _phantom: Default::default(),

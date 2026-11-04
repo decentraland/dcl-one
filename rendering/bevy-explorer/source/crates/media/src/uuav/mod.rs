@@ -108,6 +108,12 @@ fn unpack_size(packed: u64) -> Option<(u32, u32)> {
     (packed != 0).then_some(((packed >> 32) as u32, packed as u32))
 }
 
+/// A stream header's size when it has one: FFmpeg leaves an edge at 0 when the probe decoded
+/// no frame (live HLS and RTMP, often), and the planes bring the size later.
+fn known_size((width, height): (u32, u32)) -> Option<(u32, u32)> {
+    (width != 0 && height != 0).then_some((width, height))
+}
+
 /// A video player's target image and how many frames the render world has presented into it.
 pub(crate) struct Target {
     pub image: AssetId<Image>,
@@ -566,7 +572,7 @@ impl Player {
         if let Some(presented) = unpack_size(target.presented_size.load(Ordering::Acquire)) {
             return Some(presented);
         }
-        let (width, height) = ffi::video_size(self.id)?;
+        let (width, height) = ffi::video_size(self.id).and_then(known_size)?;
         match render::check_bounds(width, height, max_dimension) {
             Ok(()) => Some((width, height)),
             Err(e) => {
@@ -691,6 +697,14 @@ mod tests {
             presented_size: AtomicU64::new(0),
             failed: AtomicBool::new(false),
         })
+    }
+
+    #[test]
+    fn a_header_with_a_zero_edge_has_no_size_yet() {
+        assert_eq!(known_size((0, 0)), None);
+        assert_eq!(known_size((1920, 0)), None);
+        assert_eq!(known_size((0, 1080)), None);
+        assert_eq!(known_size((1920, 1080)), Some((1920, 1080)));
     }
 
     #[test]
