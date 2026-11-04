@@ -224,6 +224,8 @@ export function useAuth(): UseAuth {
     // The Explorer's account is the Explorer's to end; the website's own session stays as it is.
     if (hostOwnsSession()) return;
     clearThirdwebSession();
+    // Magic keeps its own session; left open, /auth/callback would sign this account back in.
+    void import("./magic-session").then(({ endMagicSession }) => endMagicSession()).catch(() => {});
     clearStored();
     void fetch("/auth/callback", {
       method: "POST",

@@ -77,6 +77,25 @@ describe("returning from Magic", () => {
     expect(replace).toHaveBeenCalledTimes(2);
   });
 
+  it("finishes no sign-in on a visit that is no return from Magic", async () => {
+    at("");
+    await act(async () => {
+      render(<MagicCallback magicApiKey="pk_example123" />);
+    });
+    expect(finish).not.toHaveBeenCalled();
+    expect(getIdentity()).toBeNull();
+    expect(replace).toHaveBeenCalledWith("/auth/login?redirectTo=%2F");
+  });
+
+  it("says social sign-in is not configured where the site has no Magic key", async () => {
+    at(`?state=${encodeURIComponent(state("/shop"))}`);
+    await act(async () => {
+      render(<MagicCallback magicApiKey={null} />);
+    });
+    expect(finish).not.toHaveBeenCalled();
+    expect(screen.getByTestId("connection-error-detail").textContent).toBe("Social sign-in is not configured on this site.");
+  });
+
   it("shows the failure with Try Again, which returns to sign-in", async () => {
     finish.mockRejectedValueOnce(new Error("Magic said no"));
     at(`?state=${encodeURIComponent(state("/shop"))}`);

@@ -39,7 +39,6 @@ const COPY = {
   "connection_layout.error_connection_failed":
     "We couldn't complete the connection to your wallet. To continue, please try again.",
   "connection_layout.waiting_for_signature": "Confirm in your digital wallet extension to continue.",
-  "connection_layout.waiting_for_signature_magic": "Almost done! Confirm your request to login Decentraland",
   "connection_layout.validating_sign_in": "Just a moment, we're verifying your login credentials...",
   "connection_layout.loading_magic": "Redirecting...",
   "connection_layout.error_generic": "Something went wrong. Please try again.",

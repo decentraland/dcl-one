@@ -11,7 +11,6 @@ import { connectWallet, detectWallets, getConnectedAddress, selectWallet } from 
 export type ConnectionState =
   | "connecting"
   | "signing"
-  | "signing-magic"
   | "validating"
   | "redirecting"
   | "error"
@@ -20,7 +19,7 @@ export type ConnectionState =
   | "error-signature-unsupported"
   | "error-connection-failed";
 
-export const LOADING_STATES: readonly ConnectionState[] = ["connecting", "signing", "signing-magic", "validating", "redirecting"];
+export const LOADING_STATES: readonly ConnectionState[] = ["connecting", "signing", "validating", "redirecting"];
 
 type WalletFailure = { code?: unknown; message?: unknown; name?: unknown };
 

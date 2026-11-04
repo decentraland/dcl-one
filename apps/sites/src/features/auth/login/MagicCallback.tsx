@@ -26,8 +26,9 @@ export default function MagicCallback({ magicApiKey }: { magicApiKey: string | n
     started.current = true;
     const params = new URLSearchParams(window.location.search);
     returnTo.current = safeRedirectTarget(returnFromState(params.get("state")), new URL(window.location.href));
-    // The reader cancelled at the provider.
-    if (params.get("error") === "access_denied") {
+    // The reader cancelled at the provider, or this is no return from Magic at all (a bookmark, the history): only a
+    // return carrying Magic's state may finish a sign-in, never a Magic session left over from an earlier one.
+    if (params.get("error") === "access_denied" || !params.has("state")) {
       backToSignIn();
       return;
     }

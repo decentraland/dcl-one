@@ -161,6 +161,21 @@ export function claimWalletCookieOnUse(win: Window): () => void {
 
 function onStorage(e: StorageEvent) {
   const shared = e.key?.startsWith(SINGLE_SIGN_ON_PREFIX) ?? false;
+  // Another dapp on this origin signed this account out (it removed the account's shared session): this site's
+  // record of the same account goes too, or the next read would sign the reader straight back in. Other accounts'
+  // shared sessions stay.
+  if (
+    hostIdentity === undefined &&
+    shared &&
+    e.newValue === null &&
+    current &&
+    e.key === `${SINGLE_SIGN_ON_PREFIX}${current.signer.toLowerCase()}`
+  ) {
+    try {
+      window.localStorage.removeItem(SESSION_STORAGE_KEY);
+    } catch {
+    }
+  }
   if (hostIdentity === undefined && (e.key === null || e.key === SESSION_STORAGE_KEY || shared)) {
     current = readStorage();
     syncWalletCookie(current);

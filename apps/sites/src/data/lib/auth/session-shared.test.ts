@@ -71,4 +71,27 @@ describe("a session shared with decentraland.org's dapps", () => {
     expect(session.getIdentity()?.signer).toBe(B);
     unsubscribe();
   });
+
+  it("signs this account out when another dapp signs it out, leaving other accounts' sessions", async () => {
+    const session = await import("./session");
+    const unsubscribe = session.subscribe(() => {});
+    session.setIdentity(identity(A, 30));
+    localStorage.setItem(`single-sign-on-${B}`, JSON.stringify(toShared(identity(B, 30))));
+    localStorage.removeItem(`single-sign-on-${A}`);
+    window.dispatchEvent(new StorageEvent("storage", { key: `single-sign-on-${A}`, newValue: null }));
+    expect(localStorage.getItem(session.SESSION_STORAGE_KEY)).toBeNull();
+    expect(localStorage.getItem(`single-sign-on-${B}`)).not.toBeNull();
+    expect(session.getIdentity()?.signer).toBe(B);
+    unsubscribe();
+  });
+
+  it("keeps this account when another dapp ends some other account's session", async () => {
+    const session = await import("./session");
+    const unsubscribe = session.subscribe(() => {});
+    session.setIdentity(identity(A, 30));
+    window.dispatchEvent(new StorageEvent("storage", { key: `single-sign-on-${B}`, newValue: null }));
+    expect(session.getIdentity()?.signer).toBe(A);
+    expect(localStorage.getItem(session.SESSION_STORAGE_KEY)).not.toBeNull();
+    unsubscribe();
+  });
 });

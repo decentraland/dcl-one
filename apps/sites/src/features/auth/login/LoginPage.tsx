@@ -30,7 +30,7 @@ import xIcon from "./assets/x.svg?url";
 import { t } from "./copy";
 import { failureState, hasMetaMask, signInWithBrowserWallet, walletFor, type ConnectionState } from "./flow";
 import { ConnectionModal, EmailLoginModal, type PairingCode } from "./LoginModals";
-import { MAGIC_USER_EMAIL_KEY, SESSION_MS, startMagicSignIn, THIRDWEB_USER_EMAIL_KEY } from "./magic";
+import { rememberEmail, SESSION_MS, startMagicSignIn } from "./magic";
 import styles from "./LoginPage.module.css";
 import {
   layoutOptions,
@@ -59,17 +59,6 @@ const ICONS: Record<ConnectionOption, string | null> = {
 
 const EMAIL_PATTERN =
   /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;
-
-/** Upstream keeps the email a reader signed in with for their profile setup; a wallet sign-in has none. */
-function rememberEmail(email: string | null): void {
-  try {
-    localStorage.removeItem(MAGIC_USER_EMAIL_KEY);
-    if (email) localStorage.setItem(THIRDWEB_USER_EMAIL_KEY, email);
-    else localStorage.removeItem(THIRDWEB_USER_EMAIL_KEY);
-  } catch {
-    // Only the profile setup's prefill needs it.
-  }
-}
 
 export function isEmailValid(email: string): boolean {
   return EMAIL_PATTERN.test(email);

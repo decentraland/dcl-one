@@ -8,6 +8,7 @@
 // sites. Magic's SDK is loaded only when a reader picks one of them, and only in the browser.
 
 import { createIdentityWith } from "@/data/lib/auth/identity";
+import { magicClient, markMagicSession } from "@/data/lib/auth/magic-session";
 import type { AuthIdentity } from "@/data/lib/auth/types";
 
 import type { ConnectionOption } from "./options";
@@ -18,19 +19,15 @@ export const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 export const MAGIC_USER_EMAIL_KEY = "dcl_magic_user_email";
 export const THIRDWEB_USER_EMAIL_KEY = "dcl_thirdweb_user_email";
 
-type Eip1193 = { request(args: { method: string; params?: unknown[] }): Promise<unknown> };
-type MagicClient = {
-  user: { isLoggedIn(): Promise<boolean>; logout(): Promise<unknown> };
-  oauth2: {
-    loginWithRedirect(config: { provider: string; redirectURI: string; customData?: string }): Promise<unknown>;
-    getRedirectResult(): Promise<{ oauth?: { userInfo?: { email?: string } } }>;
-  };
-  rpcProvider: Eip1193;
-};
-
-async function magic(apiKey: string): Promise<MagicClient> {
-  const [{ Magic }, { OAuthExtension }] = await Promise.all([import("magic-sdk"), import("@magic-ext/oauth2")]);
-  return new Magic(apiKey, { extensions: [new OAuthExtension()] }) as unknown as MagicClient;
+/** Upstream keeps the email a reader signed in with for their profile setup; a wallet sign-in has none. */
+export function rememberEmail(email: string | null): void {
+  try {
+    localStorage.removeItem(MAGIC_USER_EMAIL_KEY);
+    if (email) localStorage.setItem(THIRDWEB_USER_EMAIL_KEY, email);
+    else localStorage.removeItem(THIRDWEB_USER_EMAIL_KEY);
+  } catch {
+    // Only the profile setup's prefill needs it.
+  }
 }
 
 function forget(key: string): void {
@@ -43,7 +40,7 @@ function forget(key: string): void {
 
 /** Ends any earlier Magic session, then hands the reader to the provider; Magic returns them to /auth/callback. */
 export async function startMagicSignIn(apiKey: string, option: ConnectionOption, returnTo: string): Promise<void> {
-  const client = await magic(apiKey);
+  const client = await magicClient(apiKey);
   if (await client.user.isLoggedIn()) await client.user.logout();
   // A previous account's email must not follow this one into its profile setup.
   forget(MAGIC_USER_EMAIL_KEY);
@@ -86,7 +83,7 @@ function utf8ToHex(input: string): `0x${string}` {
 
 /** Finishes the provider's sign-in and signs a one-month session with the account Magic holds for it. */
 export async function finishMagicSignIn(apiKey: string): Promise<AuthIdentity> {
-  const client = await magic(apiKey);
+  const client = await magicClient(apiKey);
   try {
     const result = await client.oauth2.getRedirectResult();
     const email = result?.oauth?.userInfo?.email;
@@ -104,7 +101,7 @@ export async function finishMagicSignIn(apiKey: string): Promise<AuthIdentity> {
   const accounts = (await client.rpcProvider.request({ method: "eth_accounts" })) as string[] | undefined;
   const signer = accounts?.[0]?.toLowerCase();
   if (!signer) throw new Error("Could not connect to your account. Please try again.");
-  return createIdentityWith(
+  const identity = await createIdentityWith(
     signer,
     async (message) => {
       const signature = await client.rpcProvider.request({ method: "personal_sign", params: [utf8ToHex(message), signer] });
@@ -113,4 +110,7 @@ export async function finishMagicSignIn(apiKey: string): Promise<AuthIdentity> {
     },
     { expirationMs: SESSION_MS },
   );
+  // Sign-out must also end Magic's own session (data/lib/auth/magic-session.ts).
+  markMagicSession();
+  return identity;
 }
