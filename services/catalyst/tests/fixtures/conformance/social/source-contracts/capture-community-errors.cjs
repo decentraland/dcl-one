@@ -1,11 +1,12 @@
 // Run with Node26 and a checkout at the pinned social-service revision.
 // Usage: node capture-community-errors.cjs <source-root> <output> <postgres-url>
-const { sourceCapture, SOCIAL_REVISION, sha256 } = require(
+const { sourceCapture, SOCIAL_REVISION, sha256, requireDatabaseUrl } = require(
   require("node:path").join(
     require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
     "tooling/social-capture-common.cjs",
   ),
 );
+const databaseUrl = requireDatabaseUrl(process.argv[4]);
 const capture = sourceCapture(process.argv[2]);
 const fs = require("fs"),
   root = capture.upstream;
@@ -59,7 +60,7 @@ const actor = "0x1111111111111111111111111111111111111111",
 const log = { info() {}, debug() {}, error() {}, warn() {} };
 (async () => {
   const pg = new (require(root + "/node_modules/pg").Client)({
-    connectionString: process.argv[4],
+    connectionString: databaseUrl,
   });
   await pg.connect();
   let failure;

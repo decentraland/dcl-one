@@ -11,6 +11,7 @@ const { SOCIAL_REVISION, GATEKEEPER_REVISION, sha256, provenance, requireDatabas
 const repository = path.resolve(__dirname, '../..')
 const helper = path.join(repository, 'tooling/social-capture-common.cjs')
 const captures = path.join(repository, 'services/catalyst/tests/fixtures/conformance/social/source-contracts')
+const catalog = JSON.parse(fs.readFileSync(path.join(repository, 'tooling/social-captures.json'), 'utf8'))
 
 function fixture(t) {
   const directory = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'social-capture-test-')))
@@ -165,12 +166,17 @@ test('both voice CLIs validate both source repositories before dependency import
   }
 })
 
-test('database CLIs reject omitted URLs despite ambient PostgreSQL configuration', t => {
+test('all catalogued database CLIs reject missing, empty and blank URLs despite ambient PostgreSQL configuration', t => {
   const f = fixture(t)
-  for (const name of ['member-request-pages', 'member-friendship-fields', 'community-write-failures', 'community-federation-boundary']) {
-    rejected(f.run([path.join(captures, `capture-${name}.cjs`), f.source, f.output], { PGHOST: 'fixture.invalid', PGDATABASE: 'ambient', CATALYST_TEST_DATABASE_URL: 'postgresql://fixture.invalid/ambient' }), /explicit disposable PostgreSQL URL/)
-    assert.equal(fs.existsSync(f.marker), false)
-    assert.equal(fs.existsSync(f.output), false)
+  const databaseCaptures = catalog.captures.filter(capture => capture.args.includes('postgres-url'))
+  assert.equal(databaseCaptures.length, 5)
+  for (const capture of databaseCaptures) for (const value of [undefined, '', ' \t ']) {
+    assert.deepEqual(capture.args, ['social', 'fixture', 'postgres-url'], capture.id)
+    const args = [path.join(repository, capture.script), f.source, f.output]
+    if (value !== undefined) args.push(value)
+    rejected(f.run(args, { PGHOST: 'fixture.invalid', PGDATABASE: 'ambient', CATALYST_TEST_DATABASE_URL: 'postgresql://fixture.invalid/ambient' }), /explicit disposable PostgreSQL URL/)
+    assert.equal(fs.existsSync(f.marker), false, capture.id)
+    assert.equal(fs.existsSync(f.output), false, capture.id)
   }
 })
 
