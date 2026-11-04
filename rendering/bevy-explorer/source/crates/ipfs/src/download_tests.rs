@@ -9,6 +9,8 @@ use tokio::{
 const LIMIT: Duration = Duration::from_secs(10);
 const OK: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\nx";
 const BUSY: &[u8] = b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 60\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+const UNAVAILABLE: &[u8] =
+    b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
 struct Server(TcpListener);
 
@@ -167,6 +169,39 @@ async fn retry_uses_live_priorities_after_another_download_completes_in_backoff(
     })
     .await
     .expect("priority retry did not finish");
+}
+
+#[tokio::test]
+async fn a_503_without_retry_after_is_retried_after_a_growing_wait() {
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let (_reader, attempts) = DownloadReaders::first(&io.request_slots, None, None);
+        let waits = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let fetched = {
+            let io = io.clone();
+            let waits = waits.clone();
+            let request = io.client.get(server.url("flaky")).build().unwrap();
+            tokio::spawn(async move {
+                io.fetch_request_inner(attempts, request, &io.client, LIMIT, LIMIT, move |delay| {
+                    waits.lock().unwrap().push(delay);
+                    async {}
+                })
+                .await
+            })
+        };
+
+        server.reply("flaky", UNAVAILABLE).await;
+        server.reply("flaky", UNAVAILABLE).await;
+        server.reply("flaky", OK).await;
+        assert!(matches!(fetched.await.unwrap(), Ok(response) if response.body == b"x"));
+        assert_eq!(
+            *waits.lock().unwrap(),
+            [Duration::from_millis(500), Duration::from_millis(1000)]
+        );
+    })
+    .await
+    .expect("the 503 retries did not finish");
 }
 
 #[tokio::test]

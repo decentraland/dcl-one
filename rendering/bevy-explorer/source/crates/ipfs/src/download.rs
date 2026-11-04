@@ -173,6 +173,13 @@ impl IpfsIo {
                     add_saturating(&self.request_metrics.status_failures, 1);
                     server_retry_delay(*status, headers)
                         .filter(|delay| *delay <= platform::http::MAX_RETRY_AFTER)
+                        // A host that is briefly unavailable (a gateway error, or GitHub Pages'
+                        // 503 under load) answers the same request a moment later and says
+                        // nothing usable about when: wait a little longer each time, then ask.
+                        .or_else(|| {
+                            matches!(status.as_u16(), 502..=504)
+                                .then(|| Duration::from_millis(500 * attempt))
+                        })
                 }
                 Err(platform::FetchError::Headers | platform::FetchError::Stalled) => {
                     Some(Duration::ZERO)

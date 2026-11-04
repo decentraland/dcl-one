@@ -81,11 +81,13 @@ async fn all_forty_fetch_and_signed_fetch_calls_complete() {
         )
         .unwrap();
     let calls = std::mem::take(runtime.op_state().borrow_mut().borrow_mut::<RpcCalls>());
-    let Some(RpcCall::SignRequest { response, .. }) = calls.into_iter().next() else {
+    let Some(RpcCall::SignRequest(request)) = calls.into_iter().next() else {
         panic!("signedFetch should request a signature");
     };
     tokio::task::spawn_blocking(move || {
-        response.send(Ok(vec![("X-Test".into(), "signed".into())]))
+        request
+            .response
+            .send(Ok(vec![("X-Test".into(), "signed".into())]))
     })
     .await
     .unwrap();

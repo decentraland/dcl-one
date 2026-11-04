@@ -35,9 +35,11 @@ anyhow = { workspace = true }
 clap = { workspace = true }
 copypwasmta = { workspace = true }
 http = { workspace = true }
-futures-lite = { workspace = true }
 web-time = { workspace = true }
 rand = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { workspace = true }
+
+[dev-dependencies]
+dcl_types = { workspace = true }

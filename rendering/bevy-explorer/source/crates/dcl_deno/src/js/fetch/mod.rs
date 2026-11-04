@@ -719,12 +719,14 @@ pub fn op_fetch_custom_client(
 
 #[op2(async)]
 #[serde]
-pub async fn op_signed_fetch_headers(
+pub fn op_signed_fetch_headers(
     state: Rc<RefCell<OpState>>,
     #[string] uri: String,
     #[string] method: Option<String>,
-) -> Result<Vec<(String, String)>, AnyError> {
-    dcl_js::fetch::op_signed_fetch_headers(state, uri, method).await
+    #[string] body: Option<String>,
+) -> impl Future<Output = Result<Vec<(String, String)>, AnyError>> {
+    let rx = dcl_js::fetch::start_signed_fetch_headers(state, uri, method, body);
+    async move { dcl_js::fetch::finish_signed_fetch_headers(rx?).await }
 }
 
 use core::future::Future;
