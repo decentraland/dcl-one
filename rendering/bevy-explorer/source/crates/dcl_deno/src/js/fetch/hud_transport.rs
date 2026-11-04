@@ -1,24 +1,15 @@
 //! A signed native HUD request may reach the exact service selected by the operator.
-//! Only an engine bootstrap on the registered super-user stream can install these bases.
+//! Only the engine's service-URL reply to the super-user scene can install these bases.
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::VecDeque,
     time::{Duration, Instant},
 };
 
+use common::base_domain::{HudServices, Service};
 use dcl_js::SuperUserScene;
 use dcl_types::interface::crdt_context::CrdtContext;
 use deno_core::anyhow::{bail, Result};
-use deno_core::{OpState, ResourceId};
-use serde::Deserialize;
-
-pub(crate) struct BootstrapStream(pub ResourceId);
-
-#[derive(Deserialize)]
-struct Bootstrap {
-    to: String,
-    gateway: bool,
-    bases: HashMap<String, String>,
-}
+use deno_core::OpState;
 
 struct Grant {
     method: String,
@@ -28,26 +19,19 @@ struct Grant {
 }
 
 struct HudTransport {
-    bases: HashMap<String, String>,
+    bases: Vec<(Service, String)>,
     pending: VecDeque<Grant>,
     client: Option<reqwest::Client>,
 }
 
-pub(crate) fn bootstrap(state: &mut OpState, rid: ResourceId, frame: &str) {
-    if state.try_borrow::<BootstrapStream>().map(|stream| stream.0) != Some(rid) {
-        return;
-    }
-    state.take::<BootstrapStream>(); // Only the first engine frame on this exact stream.
-    state.try_take::<HudTransport>();
-    if !state.has::<SuperUserScene>() || state.borrow::<CrdtContext>().is_server {
-        return;
-    }
-    let Ok(message) = serde_json::from_str::<Bootstrap>(frame) else {
-        return;
-    };
-    if message.to == "nativeHudServices" && message.gateway {
+pub(crate) fn configure(state: &mut OpState, services: &HudServices) {
+    if services.gateway_enabled
+        && state.has::<SuperUserScene>()
+        && !state.borrow::<CrdtContext>().is_server
+        && !state.has::<HudTransport>()
+    {
         state.put(HudTransport {
-            bases: message.bases,
+            bases: services.bases.clone(),
             pending: VecDeque::new(),
             client: None,
         });
@@ -56,7 +40,7 @@ pub(crate) fn bootstrap(state: &mut OpState, rid: ResourceId, frame: &str) {
 
 // Match the raw target before URL normalization. No escaped delimiters, dot components,
 // credentials, backslashes or arbitrary same-origin routes can reach the private client.
-fn eligible_url(bases: &HashMap<String, String>, method: &str, url: &str) -> Option<reqwest::Url> {
+fn eligible_url(bases: &[(Service, String)], method: &str, url: &str) -> Option<reqwest::Url> {
     if url.len() > 4096 || url.contains(['#', '\\']) {
         return None;
     }
@@ -91,24 +75,25 @@ fn eligible_url(bases: &HashMap<String, String>, method: &str, url: &str) -> Opt
             return false;
         }
         matches!(
-            (service.as_str(), method, parts.as_slice()),
-            ("notifications", "GET", ["notifications"])
-                | ("notifications", "PUT", ["notifications", "read"])
-                | ("events", "GET", ["api", "events"])
+            (service, method, parts.as_slice()),
+            (Service::Notifications, "GET", ["notifications"])
+                | (Service::Notifications, "PUT", ["notifications", "read"])
+                | (Service::Events, "GET", ["api", "events"])
+                | (Service::MarketplaceApi, "GET", ["v1", "items"])
                 | (
-                    "badges",
+                    Service::Badges,
                     "GET",
                     ["users", _, "badges"] | ["badges", _, "tiers"]
                 )
                 | (
-                    "reels",
+                    Service::CameraReel,
                     "GET",
                     ["api", "users" | "communities", _, "images"]
                         | ["api", "images", _, "metadata"]
                 )
-                | ("reels", "DELETE", ["api", "images", _])
+                | (Service::CameraReel, "DELETE", ["api", "images", _])
                 | (
-                    "catalyst",
+                    Service::Catalyst,
                     "GET",
                     ["lambdas", "users", _, "names"]
                         | ["lambdas", "outfits", _]
@@ -116,24 +101,24 @@ fn eligible_url(bases: &HashMap<String, String>, method: &str, url: &str) -> Opt
                         | ["explorer", _, "wearables" | "emotes"]
                 )
                 | (
-                    "socialApi",
+                    Service::SocialApi,
                     "GET",
                     ["v2", "communities"]
                         | ["v2", "communities", _, "members" | "posts"]
                         | ["v1", "communities", _, "places"]
                 )
                 | (
-                    "socialApi",
+                    Service::SocialApi,
                     "POST",
                     ["v1", "communities"] | ["v1", "communities", _, "members" | "requests"]
                 )
                 | (
-                    "socialApi",
+                    Service::SocialApi,
                     "PATCH",
                     ["v1", "communities", _, "requests", _]
                 )
                 | (
-                    "socialApi",
+                    Service::SocialApi,
                     "DELETE",
                     ["v1", "communities", _, "members", _]
                 )
@@ -158,9 +143,7 @@ pub(crate) fn signed(
     let Some(transport) = state.try_borrow_mut::<HudTransport>() else {
         return;
     };
-    // A fresh bootstrap may have replaced the service bases while the signer was replying.
-    if eligible_url(&transport.bases, method, url.as_str()).is_none()
-        || identity.is_empty()
+    if identity.is_empty()
         || identity
             .iter()
             .map(|(k, v)| k.len() + v.len())
@@ -230,7 +213,6 @@ pub(super) fn take_client(
     if transport.client.is_none() {
         transport.client = Some(
             super::scene_client_builder(true)
-                .timeout(Duration::from_secs(15))
                 .no_proxy()
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?,
@@ -246,7 +228,7 @@ mod tests {
     #[test]
     fn only_known_methods_and_literal_paths_are_admitted() {
         let base = "https://example.test/mount/social-api";
-        let bases = HashMap::from([("socialApi".to_owned(), base.to_owned())]);
+        let bases = [(Service::SocialApi, base.to_owned())];
         assert!(eligible_url(
             &bases,
             "POST",

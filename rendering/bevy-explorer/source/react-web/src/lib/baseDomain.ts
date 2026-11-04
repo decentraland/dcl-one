@@ -55,7 +55,6 @@ const nativeHostParams = isNativeHud() && typeof cef?.emit === 'function' && typ
   ? new URLSearchParams(window.location.search)
   : null
 const nativeImageBase = nativeHostParams?.get('nativeProfileImageBase')
-export const eventsBase = nativeHostParams?.get('nativeEventsBase') ?? `https://events.${BASE_DOMAIN}`
 export function nativeProfileImage(raw: string | undefined): string | undefined {
   if (!nativeImageBase || raw == null) return raw
   const authority = /^https:\/\/([^/?#]+)/i.exec(raw)?.[1]

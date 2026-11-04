@@ -4,15 +4,12 @@
 //     GET  /api/images/:id/metadata                  one photo's place + people (detail view)
 //     DELETE /api/images/:id                          remove a photo (own only)
 import { getPlayer } from '@dcl/sdk/players'
-import { hudBase, signed } from '../http'
+import { serviceBase, signed } from '../http'
 import type { GalleryPhoto, GalleryPhotoMeta } from '../../../src/engine/protocol'
 import type { Ctx } from '../bridge'
 
-const ORG = 'https://camera-reel-service.decentraland.org'
-const ZONE = 'https://camera-reel-service.decentraland.zone'
-
 async function base(): Promise<string> {
-  return `${await hudBase('reels', ORG, ZONE)}/api`
+  return `${await serviceBase('cameraReel')}/api`
 }
 
 type CompactImage = { id: string; url?: string; thumbnailUrl?: string; isPublic?: boolean; dateTime?: string }

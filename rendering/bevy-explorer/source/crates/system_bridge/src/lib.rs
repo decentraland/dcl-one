@@ -35,6 +35,7 @@ impl Plugin for SystemBridgePlugin {
             (
                 post_events,
                 handle_home_scene,
+                handle_service_urls,
                 handle_satellite_view,
                 handle_exit,
                 world_access::handle_world_access,
@@ -139,6 +140,8 @@ pub enum SystemApi {
     LiveSceneInfo(RpcResultSender<Vec<LiveSceneInfo>>),
     GetHomeScene(RpcResultSender<HomeScene>),
     SetHomeScene(HomeScene),
+    /// Credential-free resolved endpoints and the native operator's gateway policy.
+    GetServiceUrls(RpcResultSender<common::base_domain::HudServices>),
     GetWelcome(RpcResultSender<WelcomeState>),
     AcceptTerms(RpcResultSender<()>),
     GetSatelliteView(RpcResultSender<Option<SatelliteView>>),
@@ -285,6 +288,14 @@ fn handle_home_scene(mut ev: EventReader<SystemApi>, mut config: ResMut<AppConfi
                 platform::write_config_file(&*config);
             }
             _ => (),
+        }
+    }
+}
+
+fn handle_service_urls(mut ev: EventReader<SystemApi>) {
+    for ev in ev.read() {
+        if let SystemApi::GetServiceUrls(sender) = ev {
+            sender.send(common::base_domain::hud_services());
         }
     }
 }

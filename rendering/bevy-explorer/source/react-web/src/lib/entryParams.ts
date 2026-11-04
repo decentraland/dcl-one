@@ -47,7 +47,6 @@ export function entryRealm(q: URLSearchParams): string | null {
 const INTERNAL_PARAMS = [
   'native',
   'nativeProfileImageBase',
-  'nativeEventsBase',
   'hud',
   'mock',
   'showcase',

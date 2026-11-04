@@ -1,4 +1,5 @@
 use super::{context, create_runtime};
+use common::base_domain::{self, HudServices, Service};
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::TcpListener,
@@ -8,7 +9,7 @@ use std::{
 
 // Use the real system module, fetch ops, inbox and scene permission grant.
 // Only the renderer replies are supplied by the fixture.
-fn run_scene(super_user: bool, bootstrap: String, script: String) -> String {
+fn run_scene(super_user: bool, services: HudServices, script: String) -> String {
     let (mut runtime, _) = create_runtime(
         false,
         super_user,
@@ -32,8 +33,8 @@ fn run_scene(super_user: bool, bootstrap: String, script: String) -> String {
     std::thread::spawn(move || {
         while let Some(event) = inbox.blocking_recv() {
             match event {
-                system_bridge::SystemApi::GetBridgeStream(stream) => {
-                    stream.send(bootstrap.clone()).unwrap();
+                system_bridge::SystemApi::GetServiceUrls(response) => {
+                    response.send(services.clone());
                 }
                 system_bridge::SystemApi::SignRequest { uri, response, .. }
                     if uri.parse::<http::Uri>().is_err() =>
@@ -82,7 +83,18 @@ fn signed_hud_gateway_fetch_is_scoped_to_engine_routes() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let base = format!("{origin}/mount/notifications");
-    let bootstrap = serde_json::json!({"to":"nativeHudServices","gateway":true,"bases":{"notifications":base,"reels":format!("{origin}/mount/reels")}}).to_string();
+    let credentialed = base.replacen("http://", "http://operator:password@", 1);
+    let marketplace = format!("{origin}/market");
+    let share = format!("{origin}/share");
+    base_domain::set_services([
+        (Service::Notifications, credentialed.as_str()),
+        (Service::MarketplaceApi, marketplace.as_str()),
+        (Service::Reels, share.as_str()),
+    ])
+    .unwrap();
+    let without_gateway = base_domain::hud_services();
+    base_domain::set_gateway(&format!("{origin}/mount")).unwrap();
+    let services = base_domain::hud_services();
     let target = format!("{base}/notifications/read?case=Kept&search=two words");
     let (seen, requests) = mpsc::channel();
     listener.set_nonblocking(true).unwrap();
@@ -110,8 +122,10 @@ fn signed_hud_gateway_fetch_is_scoped_to_engine_routes() {
             let mut body = vec![0; size];
             reader.read_exact(&mut body).unwrap();
             request.push_str(&String::from_utf8(body).unwrap());
-            let redirect = request.starts_with("GET /mount/reels/api/images/redirect/metadata");
-            let stalled = request.starts_with("GET /mount/reels/api/images/stall/metadata");
+            let redirect =
+                request.starts_with("GET /mount/camera-reel-service/api/images/redirect/metadata");
+            let stalled =
+                request.starts_with("GET /mount/camera-reel-service/api/images/stall/metadata");
             seen.send(request).unwrap();
             if stalled {
                 reader
@@ -136,10 +150,11 @@ fn signed_hud_gateway_fetch_is_scoped_to_engine_routes() {
             reader.get_mut().write_all(reply.as_bytes()).unwrap();
         }
     });
-    let script = format!("const origin={origin:?}, target={target:?}, base={base:?};")
+    let script = format!("const target={target:?}, base={base:?};")
         + r#"
-        await new BroadcastChannel("bevy-ui-bridge").nativeHudServices;
         const api = require("~system/BevyExplorerApi");
+        const services = await api.getServiceUrls();
+        if (services.notifications !== base) throw Error("unexpected notifications base");
         const signed = (url, init = {}) => api.kernelFetch({url, init, meta: "{}"});
         async function denied(label, operation) {
             try { await operation(); } catch (error) { return error; }
@@ -160,16 +175,30 @@ fn signed_hud_gateway_fetch_is_scoped_to_engine_routes() {
         }
         await denied("encoded slash", () => signed(base + "/%2e%2e%2fadmin"));
         await denied("dot segments", () => signed(base + "/anything/../notifications/read", {method: "PUT"}));
-        await denied("redirect", () => signed(origin + "/mount/reels/api/images/redirect/metadata"));
+        const item = services.marketplaceApi + "/v1/items?id=legacy";
+        const headers = await Deno.core.ops.op_kernel_fetch_headers(item, "GET", "{}");
+        await api.getServiceUrls();
+        await (await fetch(item, {headers: Object.fromEntries(headers)})).text();
+        await denied("marketplace writes", () => signed(services.marketplaceApi + "/v1/items", {method: "POST"}));
+        await denied("share page", () => signed(services.reels + "/api/images/private/metadata"));
+        await denied("redirect", () => signed(services.cameraReel + "/api/images/redirect/metadata"));
         const controller = new AbortController();
         setTimeout(() => controller.abort(), 200);
         const error = await denied("aborted request", () =>
-            signed(origin + "/mount/reels/api/images/stall/metadata", {signal: controller.signal}));
+            signed(services.cameraReel + "/api/images/stall/metadata", {signal: controller.signal}));
         return [response.status, response.body, error.name].join(":");"#;
-    let privileged = run_scene(true, bootstrap.clone(), script);
+    let privileged = run_scene(true, services.clone(), script);
+    let private_override = run_scene(true, without_gateway, r#"
+        const api = require("~system/BevyExplorerApi");
+        const services = await api.getServiceUrls();
+        try {
+            await api.kernelFetch({url: services.notifications + "/notifications", init: {method: "GET"}, meta: "{}"});
+            return "accepted";
+        } catch { return "denied"; }
+    "#.into());
     let ordinary = run_scene(
         false,
-        bootstrap,
+        services,
         format!(
             r#"try {{await fetch("{target}", {{method:"PUT"}}); return "accepted"}} catch {{return "denied"}}"#
         ),
@@ -177,12 +206,16 @@ fn signed_hud_gateway_fetch_is_scoped_to_engine_routes() {
     stop.send(()).unwrap();
     server.join().unwrap();
     assert_eq!(privileged, "200:ok:AbortError");
+    assert_eq!(private_override, "denied");
     assert_eq!(ordinary, "denied");
     let requests: Vec<_> = requests.try_iter().collect();
-    assert!((2..=3).contains(&requests.len()), "{requests:?}");
-    assert!(requests[1].starts_with("GET /mount/reels/api/images/redirect/metadata "));
-    if requests.len() == 3 {
-        assert!(requests[2].starts_with("GET /mount/reels/api/images/stall/metadata "));
+    assert!((3..=4).contains(&requests.len()), "{requests:?}");
+    assert!(requests[1].starts_with("GET /market/v1/items?id=legacy "));
+    assert!(requests[2].starts_with("GET /mount/camera-reel-service/api/images/redirect/metadata "));
+    if requests.len() == 4 {
+        assert!(
+            requests[3].starts_with("GET /mount/camera-reel-service/api/images/stall/metadata ")
+        );
     }
     let raw = &requests[0];
     assert!(raw.starts_with(

@@ -533,9 +533,17 @@ mod tests {
             ),
         ])
         .unwrap();
-        let bases = base_domain::hud_service_bases();
+        let bases: std::collections::HashMap<_, _> = base_domain::hud_services()
+            .into_web_params()
+            .into_iter()
+            .collect();
         assert_eq!(bases["socialApi"], "https://custom.example/override");
         assert_eq!(bases["events"], format!("{gateway}/events"));
+        assert_eq!(
+            bases["cameraReel"],
+            format!("{gateway}/camera-reel-service")
+        );
+        assert_eq!(bases["reels"], "https://decentraland.org/reels");
         let notices = format!(
             "{}/notifications/read?private=value",
             bases["notifications"]

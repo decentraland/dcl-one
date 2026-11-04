@@ -28,25 +28,41 @@ fn endpoint_override(service: Service) -> Option<String> {
         .or_else(|| GATEWAY.get()?.service(service))
 }
 
-/// Deployment metadata for the native super-user HUD bridge. Credentials never cross the
-/// scene process boundary. An explicit service endpoint still wins over a gateway default.
-pub fn hud_service_bases() -> HashMap<String, String> {
-    let mut bases = HashMap::new();
-    for service in [Service::Catalyst, Service::Reels, Service::SocialApi] {
-        if let Some(base) = hud_endpoint(service) {
-            bases.insert(service.param(), base);
-        }
-    }
-    if let Some(gateway) = GATEWAY.get() {
-        bases.extend(gateway.hud_services());
-    }
-    bases
+/// Engine reply to the super-user scene. Only the native Rust transport consumes the gateway bit.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+pub struct HudServices {
+    pub bases: Vec<(Service, String)>,
+    pub gateway_enabled: bool,
 }
 
-/// An endpoint safe to publish to the HUD page or its bridge process.
-pub fn hud_endpoint(service: Service) -> Option<String> {
+impl HudServices {
+    pub fn into_web_params(self) -> Vec<(String, String)> {
+        self.bases
+            .into_iter()
+            .map(|(s, url)| (s.param(), url))
+            .collect()
+    }
+}
+
+pub fn hud_services() -> HudServices {
+    HudServices {
+        bases: Service::all()
+            .filter(|s| s.has_web_param())
+            .map(|s| {
+                (
+                    s,
+                    public_endpoint_override(s).unwrap_or_else(|| composed_service(s)),
+                )
+            })
+            .collect(),
+        gateway_enabled: GATEWAY.get().is_some(),
+    }
+}
+
+/// The resolved override, with credentials removed before publishing or matching a public URL.
+pub fn public_endpoint_override(service: Service) -> Option<String> {
     let base = endpoint_override(service)?;
-    if service.value() == ServiceValue::Authority {
+    if !base.contains('@') {
         return Some(base);
     }
     let mut url = url::Url::parse(&base).ok()?;
@@ -70,7 +86,9 @@ pub fn profile_image(raw: &str) -> std::borrow::Cow<'_, str> {
 
 pub fn gateway_signed_path(raw: &str) -> anyhow::Result<Option<String>> {
     match GATEWAY.get() {
-        Some(gateway) => gateway.original_path(raw),
+        Some(gateway) => {
+            gateway.original_path(raw, Service::all().filter_map(public_endpoint_override))
+        }
         None => Ok(None),
     }
 }
@@ -169,9 +187,10 @@ pub fn service_override(service: Service) -> Option<&'static str> {
 /// The service's base url (an authority service: its host) — its override, else its
 /// composition from the base domain.
 pub fn service(service: Service) -> String {
-    if let Some(value) = endpoint_override(service) {
-        return value;
-    }
+    endpoint_override(service).unwrap_or_else(|| composed_service(service))
+}
+
+fn composed_service(service: Service) -> String {
     let (scheme, sub, path) = service.composition();
     let host = if sub.is_empty() {
         get().to_owned()
@@ -229,6 +248,7 @@ mod tests {
             url(Service::AuthPage, "/requests"),
             "https://decentraland.org/auth/requests"
         );
+        assert_eq!(service(Service::Reels), "https://decentraland.org/reels");
         assert_eq!(
             url(Service::SocialRpc, ""),
             "wss://rpc-social-service-ea.decentraland.org"

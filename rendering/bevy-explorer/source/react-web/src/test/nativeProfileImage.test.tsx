@@ -37,16 +37,24 @@ describe('native HUD snapshot presentation', () => {
     }
   )
 
-  it.each(['https://gateway.example.org/events','https://example.org/mount/events'])(
-    'fetches Events from the native service at %s', async events => {
-      vi.stubGlobal('cef', {emit: vi.fn(), listen: vi.fn()})
-      vi.stubGlobal('__NATIVE_HUD__', true)
-      history.replaceState(null, '', '?' + new URLSearchParams({native: '1', nativeEventsBase: events}))
-      const fetcher = vi.fn(async () => Response.json({ok:true,data:[]}))
+  it.each([
+    { runtime: 'native', events: 'https://gateway.example.org/events' },
+    { runtime: 'native', events: 'https://example.org/mount/events' },
+    { runtime: 'web', events: 'https://custom.example/events' }
+  ])(
+    'fetches Events from the $runtime service at $events', async ({ runtime, events }) => {
+      const query = new URLSearchParams({ events })
+      if (runtime === 'native') {
+        vi.stubGlobal('cef', { emit: vi.fn(), listen: vi.fn() })
+        vi.stubGlobal('__NATIVE_HUD__', true)
+        query.set('native', '1')
+      }
+      history.replaceState(null, '', '?' + query)
+      const fetcher = vi.fn(async () => Response.json({ ok: true, data: [] }))
       vi.stubGlobal('fetch', fetcher)
       const { fetchEvents } = await import('../features/events/eventsApi')
       await fetchEvents('upcoming')
-      expect(fetcher).toHaveBeenCalledWith(events + '/api/events?list=upcoming', {signal:undefined})
+      expect(fetcher).toHaveBeenCalledWith(events + '/api/events?list=upcoming', { signal: undefined })
     }
   )
 

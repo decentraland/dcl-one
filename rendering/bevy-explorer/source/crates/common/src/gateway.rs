@@ -1,10 +1,7 @@
 //! Trusted native gateway configuration. The deployment's gateway virtual host
 //! preserves service identities. Its apex serves the same APIs at canonical paths.
-use system_api_types::services::Service;
+use system_api_types::services::{Service, ServiceValue};
 use url::Url;
-
-// These additional HUD services have deployed path prefixes matching their host labels.
-const HUD_ALIASES: [&str; 4] = ["events", "badges", "notifications", "assets-cdn"];
 
 #[derive(Debug, PartialEq)]
 pub struct Gateway {
@@ -36,24 +33,16 @@ impl Gateway {
         })
     }
 
-    // Only the HTTP service identities shared with GatewayUrlsSource. For the
-    // nginx gateway alias table, peer maps to the root and the local gatekeeper
-    // maps to the ordinary gatekeeper. Reels has no /reels gateway alias.
+    // API vhosts use their service host label. Direct origins expose the peer at
+    // the root, preview on the main gatekeeper, and community thumbnails through social.
     fn segment(&self, service: Service) -> Option<&'static str> {
         match service {
             Service::Catalyst if !self.virtual_host => Some(""),
             Service::PreviewGatekeeper if !self.virtual_host => Some("comms-gatekeeper"),
-            Service::Reels => Some("camera-reel-service"),
-            Service::RealmProvider
-            | Service::Catalyst
-            | Service::WorldsServer
-            | Service::Places
-            | Service::CommsGatekeeper
-            | Service::PreviewGatekeeper
-            | Service::AuthApi
-            | Service::AssetBundleRegistry
-            | Service::SocialApi
-            | Service::MapApi => Some(service.composition().1),
+            Service::AssetsCdn if !self.virtual_host => Some("social-api"),
+            // Site links and storage delegations use their own public destinations.
+            Service::AuthPage | Service::Reels | Service::Storage => None,
+            service if service.value() == ServiceValue::Http => Some(service.composition().1),
             _ => None,
         }
     }
@@ -65,12 +54,6 @@ impl Gateway {
         } else {
             format!("{}/{segment}", self.prefix)
         })
-    }
-
-    pub fn hud_services(&self) -> impl Iterator<Item = (String, String)> + '_ {
-        HUD_ALIASES
-            .into_iter()
-            .map(|alias| (alias.to_owned(), format!("{}/{alias}", self.prefix)))
     }
 
     pub fn profile_image_base(&self) -> String {
@@ -101,7 +84,11 @@ impl Gateway {
 
     // nginx sets x-original-path to the path after the service segment only
     // on the gateway virtual host. An apex request signs its entire public path.
-    pub fn original_path(&self, raw: &str) -> anyhow::Result<Option<String>> {
+    pub fn original_path(
+        &self,
+        raw: &str,
+        mut service_bases: impl Iterator<Item = String>,
+    ) -> anyhow::Result<Option<String>> {
         if !self.virtual_host {
             return Ok(None);
         }
@@ -139,14 +126,24 @@ impl Gateway {
         else {
             return Ok(None);
         };
-        // nginx strips an alias only when a slash follows it. A bare alias keeps its
-        // public path, even when its query contains a slash.
-        let (segment, path) = rest.split_once('/').unwrap_or((rest, rest));
-        if !HUD_ALIASES.contains(&segment)
-            && !Service::all().any(|service| self.segment(service) == Some(segment))
-        {
+        // A resolved service beneath this mount can have a custom alias and a subpath.
+        // A base at the mount itself has no service alias to strip.
+        if !service_bases.any(|base| {
+            let Some(route) = base
+                .strip_prefix(&self.prefix)
+                .and_then(|s| s.strip_prefix('/'))
+            else {
+                return false;
+            };
+            !route.is_empty()
+                && rest
+                    .strip_prefix(route)
+                    .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('/'))
+        }) {
             return Ok(None);
         }
+        // nginx strips only the first segment, and only when followed by a slash.
+        let (_, path) = rest.split_once('/').unwrap_or((rest, rest));
         Ok(Some(format!("/{path}")))
     }
 }
@@ -166,16 +163,43 @@ mod gateway_tests {
     use super::*;
 
     #[test]
+    fn signing_matches_explicit_bases_at_path_boundaries() {
+        let gateway = Gateway::parse("https://gateway.example.test/mount").unwrap();
+        let configured = [
+            "https://gateway.example.test/mount",
+            "https://gateway.example.test/mount/private-api/custom",
+        ];
+        for (path, signed) in [
+            ("private-api/custom/items", Some("/custom/items")),
+            ("private-api/custom", Some("/custom")),
+            ("private-api/custom-other/items", None),
+            ("private-api/items", None),
+            ("v1/communities", None),
+        ] {
+            let url = format!("https://gateway.example.test/mount/{path}");
+            assert_eq!(
+                gateway
+                    .original_path(&url, configured.into_iter().map(str::to_owned))
+                    .unwrap()
+                    .as_deref(),
+                signed,
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
     fn only_configured_service_routes_change_signing_paths() {
         let vhost = Gateway::parse("https://gateway.example.test/mount/").unwrap();
+        let sign =
+            |raw: &str| vhost.original_path(raw, Service::all().filter_map(|s| vhost.service(s)));
         let gate = Service::CommsGatekeeper;
         assert_eq!(
             vhost.service(gate).as_deref(),
             Some("https://gateway.example.test/mount/comms-gatekeeper")
         );
         assert_eq!(
-            vhost
-                .original_path("https://gateway.example.test/mount/comms-gatekeeper/a%2Fb?q=1")
+            sign("https://gateway.example.test/mount/comms-gatekeeper/a%2Fb?q=1")
                 .unwrap()
                 .as_deref(),
             Some("/a%2Fb")
@@ -185,7 +209,7 @@ mod gateway_tests {
             "https://gateway.example.test/mount2/comms-gatekeeper/a",
             "https://gateway.example.test/mount/unknown/a",
         ] {
-            assert_eq!(vhost.original_path(raw).unwrap(), None);
+            assert_eq!(sign(raw).unwrap(), None);
         }
         for (target, expected) in [
             ("social-api", Some("/social-api")),
@@ -199,37 +223,69 @@ mod gateway_tests {
             ),
         ] {
             let raw = format!("https://gateway.example.test/mount/{target}");
-            assert_eq!(
-                vhost.original_path(&raw).unwrap().as_deref(),
-                expected,
-                "{target}"
-            );
+            assert_eq!(sign(&raw).unwrap().as_deref(), expected, "{target}");
         }
         assert_eq!(
-            vhost
-                .original_path("https://user@GATEWAY.example.test:443/mount/social-api/v1/search")
+            sign("https://user@GATEWAY.example.test:443/mount/social-api/v1/search")
                 .unwrap()
                 .as_deref(),
             Some("/v1/search")
         );
-        assert_eq!(vhost.service(Service::PulseServer), None);
-        assert_eq!(vhost.service(Service::AuthPage), None);
         let direct = Gateway::parse("http://localhost:5222").unwrap();
-        assert_eq!(
-            direct.service(Service::PreviewGatekeeper).as_deref(),
-            Some("http://localhost:5222/comms-gatekeeper")
-        );
-        assert_eq!(
-            direct.service(Service::Catalyst).as_deref(),
-            Some("http://localhost:5222")
-        );
-        assert_eq!(
-            direct.service(Service::Reels).as_deref(),
-            Some("http://localhost:5222/camera-reel-service")
-        );
+        for external in [
+            Service::Storage,
+            Service::Reels,
+            Service::AuthPage,
+            Service::EthereumRpc,
+            Service::SocialRpc,
+            Service::PulseServer,
+        ] {
+            assert_eq!(vhost.service(external), None);
+            assert_eq!(direct.service(external), None);
+        }
+        for (service, alias) in [
+            (Service::RealmProvider, "realm-provider-ea"),
+            (Service::Catalyst, "peer"),
+            (Service::WorldsServer, "worlds-content-server"),
+            (Service::Places, "places"),
+            (Service::CommsGatekeeper, "comms-gatekeeper"),
+            (Service::PreviewGatekeeper, "comms-gatekeeper-local"),
+            (Service::AuthApi, "auth-api"),
+            (Service::AssetBundleRegistry, "asset-bundle-registry"),
+            (Service::SocialApi, "social-api"),
+            (Service::MapApi, "api"),
+            (Service::Opensea, "opensea"),
+            (Service::CameraReel, "camera-reel-service"),
+            (Service::Events, "events"),
+            (Service::Badges, "badges"),
+            (Service::Notifications, "notifications"),
+            (Service::AssetsCdn, "assets-cdn"),
+            (Service::MarketplaceApi, "marketplace-api"),
+            (Service::Autotranslate, "autotranslate-server"),
+        ] {
+            let direct_path = match service {
+                Service::Catalyst => String::new(),
+                Service::PreviewGatekeeper => "/comms-gatekeeper".to_owned(),
+                Service::AssetsCdn => "/social-api".to_owned(),
+                _ => format!("/{alias}"),
+            };
+            assert_eq!(
+                direct.service(service),
+                Some(format!("http://localhost:5222{direct_path}"))
+            );
+            assert_eq!(
+                vhost.service(service),
+                Some(format!("https://gateway.example.test/mount/{alias}"))
+            );
+            let raw = format!("https://gateway.example.test/mount/{alias}/child");
+            assert_eq!(sign(&raw).unwrap().as_deref(), Some("/child"));
+        }
         assert_eq!(
             direct
-                .original_path("http://localhost:5222/comms-gatekeeper/a")
+                .original_path(
+                    "http://localhost:5222/comms-gatekeeper/a",
+                    std::iter::empty()
+                )
                 .unwrap(),
             None
         );

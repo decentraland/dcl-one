@@ -42,6 +42,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_live_scene_info(),
             op_get_home_scene(),
             op_set_home_scene(),
+            op_get_service_urls(),
             op_get_welcome(),
             op_accept_terms(),
             op_get_satellite_view(),
@@ -285,6 +286,16 @@ pub async fn op_get_home_scene(state: Rc<RefCell<OpState>>) -> Result<HomeScene,
 
 #[op2(async)]
 #[serde]
+pub async fn op_get_service_urls(
+    state: Rc<RefCell<OpState>>,
+) -> Result<Vec<(String, String)>, anyhow::Error> {
+    let services = dcl_js::system_api::op_get_service_urls(state.clone()).await?;
+    crate::js::fetch::hud_transport::configure(&mut state.borrow_mut(), &services);
+    Ok(services.into_web_params())
+}
+
+#[op2(async)]
+#[serde]
 pub async fn op_get_welcome(state: Rc<RefCell<OpState>>) -> Result<WelcomeState, anyhow::Error> {
     dcl_js::system_api::op_get_welcome(state).await
 }
@@ -380,11 +391,7 @@ pub fn op_bridge_to_page(state: Rc<RefCell<OpState>>, #[string] msg: String) {
 
 #[op2(async)]
 pub async fn op_get_bridge_stream(state: Rc<RefCell<OpState>>) -> u32 {
-    let rid = dcl_js::system_api::op_get_bridge_stream(state.clone()).await;
-    state
-        .borrow_mut()
-        .put(crate::js::fetch::hud_transport::BootstrapStream(rid));
-    rid
+    dcl_js::system_api::op_get_bridge_stream(state).await
 }
 
 #[op2(async)]
@@ -393,9 +400,7 @@ pub async fn op_read_bridge_stream(
     state: Rc<RefCell<OpState>>,
     rid: u32,
 ) -> Result<String, deno_core::anyhow::Error> {
-    let frame = dcl_js::system_api::op_read_bridge_stream(state.clone(), rid).await?;
-    crate::js::fetch::hud_transport::bootstrap(&mut state.borrow_mut(), rid, &frame);
-    Ok(frame)
+    dcl_js::system_api::op_read_bridge_stream(state, rid).await
 }
 
 #[op2(async)]

@@ -219,10 +219,6 @@ fn spawn_hud(
     // A non-default --base-domain reaches the HUD the same way it reaches the web page: as the
     // ?baseDomain= param the page composes all its backend fetch hosts from.
     let image_base = common::base_domain::profile_image_base();
-    if let Some(events) = common::base_domain::hud_service_bases().get("events") {
-        url.push_str("&nativeEventsBase=");
-        url.push_str(&urlencoding::encode(events));
-    }
     if image_base.is_some() || common::base_domain::get() != common::base_domain::DEFAULT {
         url.push_str(if url.contains('?') { "&" } else { "?" });
         url.push_str("baseDomain=");
@@ -236,7 +232,7 @@ fn spawn_hud(
     // service urls); a native-only service is not in its table, so it would land in the page's
     // unrecognised-parameter dialog
     for service in common::base_domain::Service::all().filter(|s| s.has_web_param()) {
-        if let Some(override_url) = common::base_domain::hud_endpoint(service) {
+        if let Some(override_url) = common::base_domain::public_endpoint_override(service) {
             url.push_str(if url.contains('?') { "&" } else { "?" });
             url.push_str(&service.param());
             url.push('=');
@@ -561,10 +557,6 @@ fn pump_bridge(
             SystemApi::BridgeToPage(env) => to_page_raw(&mut commands, hud, env.clone()),
             SystemApi::GetBridgeStream(sx) => {
                 info!("[react-hud-cef] bridge-scene connected (piping Envelopes)");
-                // The first frame on the native super-user stream is from the engine.
-                // on_page_envelope only forwards messages addressed to "scene".
-                let bootstrap = serde_json::json!({"to":"nativeHudServices", "gateway":common::base_domain::profile_image_base().is_some(), "bases":common::base_domain::hud_service_bases()});
-                let _ = sx.send(bootstrap.to_string());
                 state.bridge_sender = Some(sx.clone());
             }
             _ => {}

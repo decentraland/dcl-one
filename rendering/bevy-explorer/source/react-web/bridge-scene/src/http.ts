@@ -1,43 +1,38 @@
-// Shared data helpers: the catalyst base + two fetch primitives the domains build on.
+// Shared data helpers: the service bases + two fetch primitives the domains build on.
 //
 // IMPORTANT: a system scene's `getRealm()` reports the scene's OWN realm (the local preview
 // it was served from), NOT the world realm the engine is connected to — so it can't be used
-// to locate the catalyst. Native can supply service bases on the trusted bridge stream. Otherwise
-// `BevyApi.getRealmProvider()` selects the existing .org / .zone fallbacks.
+// to locate the catalyst. Every service base comes from the ENGINE via
+// `BevyApi.getServiceUrls()`: its override, else its composition from the base domain.
 import { BevyApi } from './bevy-api'
 
-const PEER_ORG = 'https://peer.decentraland.org'
-const PEER_ZONE = 'https://peer.decentraland.zone'
+/** The services the bridge calls, by their web param (crates/system_api_types/src/services.rs). */
+export type ServiceName =
+  | 'catalyst'
+  | 'socialApi'
+  | 'cameraReel'
+  | 'events'
+  | 'badges'
+  | 'notifications'
+  | 'assetsCdn'
+  | 'marketplaceApi'
 
-export type HudServiceBases = Partial<Record<'catalyst' | 'reels' | 'socialApi' | 'events' | 'badges' | 'notifications' | 'assets-cdn', string>>
-let nativeBases: Promise<HudServiceBases> | undefined
+let services: Promise<Record<string, string>> | null = null
 
-/** Only the engine's native super-user stream supplies bases. Browser bridges retain their normal hosts. */
-export function configureHudServices(bases: Promise<HudServiceBases> | undefined): void {
-  nativeBases = bases
+/** The engine's base url for a service (no trailing slash). */
+export async function serviceBase(name: ServiceName): Promise<string> {
+  services ??= BevyApi.getServiceUrls().catch((e: unknown) => {
+    services = null
+    throw e
+  })
+  const base = (await services)[name]
+  if (base == null) throw new Error(`the engine reports no '${name}' service`)
+  return base
 }
 
-export async function hudBase(service: keyof HudServiceBases, org: string, zone = org): Promise<string> {
-  const configured = (await nativeBases)?.[service]
-  if (configured != null) return configured
-  return org !== zone && (await resolveZone()) ? zone : org
-}
-
-let cachedZone: boolean | null = null
-async function resolveZone(): Promise<boolean> {
-  if (cachedZone !== null) return cachedZone
-  try {
-    const provider = await BevyApi.getRealmProvider()
-    cachedZone = typeof provider === 'string' && provider.includes('.zone')
-  } catch {
-    cachedZone = false
-  }
-  return cachedZone
-}
-
-/** Public catalyst base for the engine's realm (lambdas/content live under here). */
+/** Catalyst base for the engine's realm (lambdas/content live under here). */
 export async function catalystBase(): Promise<string> {
-  return hudBase('catalyst', PEER_ORG, PEER_ZONE)
+  return serviceBase('catalyst')
 }
 
 const META = JSON.stringify({})
