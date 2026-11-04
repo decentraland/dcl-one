@@ -52,7 +52,7 @@ pub async fn fetch_with_permit<P, E, F>(
     send: impl FnOnce(reqwest::Request) -> F,
     headers_timeout: Duration,
     idle_timeout: Duration,
-    on_chunk: impl Fn(usize),
+    on_chunk: impl FnMut(usize),
 ) -> Result<FetchedResponse, FetchError<E>>
 where
     P: HttpAttemptPermit,
@@ -84,7 +84,7 @@ async fn fetch_traced<E, F: Future<Output = Result<reqwest::Response, E>>>(
     send: impl FnOnce(reqwest::Request) -> F,
     headers_timeout: Duration,
     idle_timeout: Duration,
-    on_chunk: impl Fn(usize),
+    on_chunk: impl FnMut(usize),
 ) -> Result<FetchedResponse, FetchError<E>> {
     #[cfg(not(target_arch = "wasm32"))]
     let mut trace = crate::devtools::Trace::start(&request);
@@ -118,7 +118,7 @@ async fn fetch_traced<E, F: Future<Output = Result<reqwest::Response, E>>>(
 async fn read_response<E>(
     response: reqwest::Response,
     idle_timeout: Duration,
-    on_chunk: impl Fn(usize),
+    mut on_chunk: impl FnMut(usize),
 ) -> Result<FetchedResponse, FetchError<E>> {
     if !response.status().is_success() {
         return Err(FetchError::Status(

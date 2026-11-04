@@ -15,6 +15,7 @@ pub struct HeadIkPlugin;
 
 impl Plugin for HeadIkPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<HeadIkConfig>();
         // `apply_head_ik` runs after `apply_point_at_ik` so it reads the
         // post-point-at avatar yaw (point_at writes avatar.rotation inline
         // for the local player). Without this ordering, our per-frame
@@ -74,6 +75,27 @@ const YAW_CLAMP_DEG: f32 = 70.0;
 /// Above this deviation the head IK is disabled entirely (caller is looking
 /// well past anything the neck could plausibly reach).
 const YAW_DISABLE_DEG: f32 = 110.0;
+
+#[derive(Resource, serde::Serialize, serde::Deserialize)]
+pub(crate) struct HeadIkConfig {
+    enabled: bool,
+    smooth_seconds: f32,
+    pitch_limit: f32,
+    yaw_limit: f32,
+    yaw_reset: f32,
+}
+
+impl Default for HeadIkConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            smooth_seconds: SMOOTH_TAU,
+            pitch_limit: PITCH_CLAMP_DEG,
+            yaw_limit: YAW_CLAMP_DEG,
+            yaw_reset: YAW_DISABLE_DEG,
+        }
+    }
+}
 
 fn wrap_180(deg: f32) -> f32 {
     let mut d = deg % 360.0;
@@ -169,6 +191,7 @@ fn reset_head_ik_chain(rigs: Query<&HeadIkRig>, mut transforms: Query<&mut Trans
 #[allow(clippy::type_complexity)]
 fn apply_head_ik(
     time: Res<Time>,
+    config: Res<HeadIkConfig>,
     mut avatars: Query<
         (
             Entity,
@@ -182,9 +205,19 @@ fn apply_head_ik(
     parents: Query<&ChildOf>,
     mut tx: ParamSet<(Query<&mut Transform>, TransformHelper)>,
 ) {
+    if !config.enabled {
+        if config.is_changed() {
+            for (_, mut rig, ..) in &mut avatars {
+                rig.yaw_offset_deg = 0.0;
+                rig.pitch_deg = 0.0;
+                rig.prev_dcl_avatar_yaw = None;
+            }
+        }
+        return;
+    }
     let dt = time.delta_secs();
     let alpha = if dt > 0.0 {
-        1.0 - (-dt / SMOOTH_TAU).exp()
+        1.0 - (-dt / config.smooth_seconds).exp()
     } else {
         0.0
     };
@@ -259,10 +292,13 @@ fn apply_head_ik(
         // the gaze.
         let yaw_dev = wrap_180(gaze_yaw_deg - dcl_avatar_yaw);
         let active = gaze_active
-            && yaw_dev.abs() <= YAW_DISABLE_DEG
+            && yaw_dev.abs() <= config.yaw_reset
             && !emotes.is_some_and(|(active, masked)| is_emoting(active, masked));
         let (target_yaw_offset, target_pitch) = if active {
-            (yaw_dev.clamp(-YAW_CLAMP_DEG, YAW_CLAMP_DEG), gaze_pitch_deg)
+            (
+                yaw_dev.clamp(-config.yaw_limit, config.yaw_limit),
+                gaze_pitch_deg,
+            )
         } else {
             (0.0, 0.0)
         };
@@ -277,7 +313,7 @@ fn apply_head_ik(
         let bevy_yaw_swing = -rig.yaw_offset_deg.to_radians();
         let pitch_swing = -rig
             .pitch_deg
-            .clamp(-PITCH_CLAMP_DEG, PITCH_CLAMP_DEG)
+            .clamp(-config.pitch_limit, config.pitch_limit)
             .to_radians();
         let avatar_world_rot = avatar_global.rotation();
         let avatar_right_world = avatar_world_rot * Vec3::X;

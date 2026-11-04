@@ -103,8 +103,12 @@ async fn retry_uses_live_priorities_after_another_download_completes_in_backoff(
         io.register_download_priority("retry", LoadPriority::TOP);
         io.register_download_priority("competitor", LoadPriority::SCENE_PENDING);
         io.register_download_priority("first-reader", LoadPriority::TOP);
-        let (first_reader, attempts) =
-            DownloadReaders::first(&io.request_slots, Some("first-reader".to_owned()), None);
+        let (first_reader, attempts) = DownloadReaders::first(
+            &io.request_slots,
+            Some("first-reader".to_owned()),
+            None,
+            None,
+        );
         let owners = first_reader.readers.clone();
         let sleeping = Arc::new(Notify::new());
         let resume = Arc::new(Notify::new());
@@ -114,11 +118,18 @@ async fn retry_uses_live_priorities_after_another_download_completes_in_backoff(
             let resume = resume.clone();
             let request = io.client.get(server.url("retry")).build().unwrap();
             tokio::spawn(async move {
-                io.fetch_request_inner(attempts, request, &io.client, LIMIT, LIMIT, |delay| {
-                    assert_eq!(delay, Duration::from_secs(60));
-                    sleeping.notify_one();
-                    resume.notified()
-                })
+                io.fetch_request_inner(
+                    attempts,
+                    request,
+                    &io.client,
+                    (LIMIT, LIMIT),
+                    None,
+                    |delay| {
+                        assert_eq!(delay, Duration::from_secs(60));
+                        sleeping.notify_one();
+                        resume.notified()
+                    },
+                )
                 .await
             })
         };
@@ -164,6 +175,9 @@ async fn retry_uses_live_priorities_after_another_download_completes_in_backoff(
             1
         );
         assert_eq!(io.request_metrics.bytes.load(Ordering::Relaxed), 5);
+        let downloads = io.download_stats();
+        assert_eq!(downloads.bytes, 4, "only completed assets count here");
+        assert!(downloads.mean_first_byte_ms().is_some());
         assert!(!io.request_slots.has_waiters());
         assert!(io.request_slots.try_acquire().is_some());
     })
@@ -172,21 +186,50 @@ async fn retry_uses_live_priorities_after_another_download_completes_in_backoff(
 }
 
 #[tokio::test]
+async fn preview_delay_leaves_the_slot_free_and_shared_readers_can_cancel() {
+    timeout(LIMIT, async {
+        let mut io = ipfs();
+        Arc::get_mut(&mut io).unwrap().is_preview = true;
+        io.preview_delay_ms.store(60_000, Ordering::Relaxed);
+        let server = Server::start().await;
+        let first = shared(&io, &server, "preview", "first");
+        let second = shared(&io, &server, "preview", "second");
+        assert!(Arc::ptr_eq(&first.download, &second.download));
+        assert_eq!(io.request_slots.available_permits(), 1);
+        drop(first);
+        assert_eq!(io.in_flight.lock().unwrap().len(), 1);
+        drop(second);
+        until(|| io.in_flight.lock().unwrap().is_empty()).await;
+        assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 0);
+        assert_eq!(io.request_slots.available_permits(), 1);
+    })
+    .await
+    .expect("delayed download survived its last reader");
+}
+
+#[tokio::test]
 async fn a_503_without_retry_after_is_retried_after_a_growing_wait() {
     timeout(LIMIT, async {
         let io = ipfs();
         let server = Server::start().await;
-        let (_reader, attempts) = DownloadReaders::first(&io.request_slots, None, None);
+        let (_reader, attempts) = DownloadReaders::first(&io.request_slots, None, None, None);
         let waits = Arc::new(std::sync::Mutex::new(Vec::new()));
         let fetched = {
             let io = io.clone();
             let waits = waits.clone();
             let request = io.client.get(server.url("flaky")).build().unwrap();
             tokio::spawn(async move {
-                io.fetch_request_inner(attempts, request, &io.client, LIMIT, LIMIT, move |delay| {
-                    waits.lock().unwrap().push(delay);
-                    async {}
-                })
+                io.fetch_request_inner(
+                    attempts,
+                    request,
+                    &io.client,
+                    (LIMIT, LIMIT),
+                    None,
+                    move |delay| {
+                        waits.lock().unwrap().push(delay);
+                        async {}
+                    },
+                )
                 .await
             })
         };

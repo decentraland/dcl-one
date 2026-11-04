@@ -15,6 +15,8 @@ vi.mock('../../bridge-scene/node_modules/@dcl/sdk/ecs.js', () => ({
 }))
 vi.mock('../../bridge-scene/src/domains/profile', () => ({fetchIdentities: vi.fn(async () => () => ({}))}))
 let player: { userId: string } | null = null
+const { openExternalUrl } = vi.hoisted(() => ({ openExternalUrl: vi.fn() }))
+vi.mock('~system/RestrictedActions', () => ({ openExternalUrl }))
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player }))
 vi.mock('../../bridge-scene/src/bevy-api', () => ({
   BevyApi: {
@@ -50,6 +52,13 @@ function fakeCtx(): { ctx: Ctx; sent: SceneToPage[]; req: (msg: PageToScene) => 
   }
   return { ctx, sent, req, frame: () => pushed.forEach((s) => s(1 / 60)) }
 }
+
+it('opens only the fixed support URL through the scene permission boundary', async () => {
+  const { ctx, req } = fakeCtx()
+  registerSession(ctx)
+  await req({ kind: 'navAction', action: 'support' })
+  expect(openExternalUrl).toHaveBeenCalledWith({ url: 'https://decentraland.org/help/' })
+})
 
 const readies = (sent: SceneToPage[]): number => sent.filter((m) => m.kind === 'event' && m.name === 'playerReady').length
 

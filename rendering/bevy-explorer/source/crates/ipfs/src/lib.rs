@@ -1,4 +1,6 @@
+mod batch_sizes;
 pub mod content_hash;
+mod debug_panel;
 mod download;
 use download::{InFlightDownloads, RequestMetrics};
 mod priority_gate;
@@ -6,6 +8,7 @@ pub use priority_gate::{PriorityGate, Ticket};
 #[cfg(feature = "ipfs_debug")]
 mod ipfs_debug;
 pub mod ipfs_path;
+mod request_metrics;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod web_cache;
 
@@ -588,6 +591,7 @@ impl Plugin for IpfsIoPlugin {
         );
 
         app.add_console_command::<ChangeRealmCommand, _>(change_realm_command);
+        debug_panel::register(app, self.preview);
 
         app.register_diagnostic(Diagnostic::new(IPFS_IN_FLIGHT_DIAGNOSTIC_PATH));
         app.register_diagnostic(Diagnostic::new(IPFS_SUCCESS_DIAGNOSTIC_PATH));
@@ -962,6 +966,8 @@ fn readiness_retry_delay(
 }
 
 pub struct IpfsIo {
+    /// Effective preview-only delay before a real outbound request, without holding a slot.
+    preview_delay_ms: AtomicU32,
     is_preview: bool, // determines whether we always retry failed assets immediately
     default_io: Box<dyn ErasedAssetReader>,
     default_fs_path: Option<PathBuf>,
@@ -1012,6 +1018,7 @@ impl IpfsIo {
             }),
             request_slots: PriorityGate::new(num_slots),
             request_metrics: RequestMetrics::default(),
+            preview_delay_ms: AtomicU32::new(0),
             reqno: default(),
             static_files: static_paths,
             #[cfg(not(target_arch = "wasm32"))]
@@ -1026,6 +1033,14 @@ impl IpfsIo {
             #[cfg(feature = "ipfs_debug")]
             debug_overlay_sender,
         }
+    }
+
+    fn preview_request_delay(&self) -> Option<Duration> {
+        if !self.is_preview {
+            return None;
+        }
+        let ms = self.preview_delay_ms.load(Ordering::Relaxed);
+        (ms > 0).then(|| Duration::from_millis(ms.into()))
     }
 
     /// Allow `file://` reads under `root` (canonical). See `allowed_file_roots`.
@@ -1373,8 +1388,12 @@ impl IpfsIo {
         match request {
             ActiveEntitiesRequest::Pointers(pointers) => {
                 let client = self.client.clone();
+                let delay = self.preview_request_delay();
                 IoTaskPool::get().spawn_compat(async move {
                     let active_url = active_url.ok_or(anyhow!("not connected"))?;
+                    if let Some(delay) = delay {
+                        async_std::task::sleep(delay).await;
+                    }
                     let body = serde_json::to_string(&ActiveEntitiesPointersRequest { pointers })?;
                     // Headers-phase timeout + body inactivity timeout (the total is
                     // left unbounded, so a large-but-progressing response — e.g. bulk
