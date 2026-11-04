@@ -5718,7 +5718,7 @@ async fn a_source_past_its_concurrent_uploads_gets_429() {
 }
 
 #[tokio::test]
-async fn a_deploy_reusing_a_blob_the_collector_removed_is_refused_under_the_store_lock() {
+async fn a_deploy_reusing_a_blob_the_collector_removed_is_deferred_under_the_store_lock() {
     let Some(f) = fixture().await else { return };
     let world = world_name();
     let owner = Wallet::random();
@@ -5778,9 +5778,9 @@ async fn a_deploy_reusing_a_blob_the_collector_removed_is_refused_under_the_stor
     batch.commit().await.unwrap();
 
     let err = publish.await.unwrap().expect_err("the blob is gone");
-    assert!(err.is_bad_request(), "{err:?}");
+    assert_eq!(err.status(), 503, "retryable, not a client error: {err:?}");
     assert!(
-        err.public_message().contains(&reused),
+        err.public_message().contains(&reused) && err.public_message().contains("retry"),
         "{}",
         err.public_message()
     );

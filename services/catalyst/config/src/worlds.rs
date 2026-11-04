@@ -114,8 +114,8 @@ pub struct WorldsConfig {
     #[arg(long, env = "MAX_PARCELS", default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..))]
     pub max_parcels: u32,
 
-    /// Entries a deployed entity's `content` may list.
-    #[arg(long, env = "MAX_FILE_COUNT", default_value_t = 10_000, value_parser = clap::value_parser!(u32).range(1..))]
+    /// Entries a deployed entity's `content` may list, at most the 10,000 file parts a deploy may upload.
+    #[arg(long, env = "MAX_FILE_COUNT", default_value_t = 10_000, value_parser = clap::value_parser!(u32).range(1..=10_000))]
     pub max_file_count: u32,
 
     /// Deploy payload bytes buffered at once across every upload (>= one 350 MiB deploy).
@@ -464,6 +464,22 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn max_file_count_is_capped_at_the_deploy_file_parts() {
+        let with = |v: &str| {
+            parse(&[
+                "x",
+                "--database-url",
+                "postgres:///c",
+                "--max-file-count",
+                v,
+            ])
+        };
+        assert_eq!(with("10000").unwrap().worlds.max_file_count, 10_000);
+        assert!(with("10001").is_err());
+        assert!(with("0").is_err());
     }
 
     #[test]
