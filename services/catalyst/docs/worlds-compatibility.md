@@ -175,7 +175,8 @@ difference not listed here is a gap, not a decision.
     lock; across replicas each staging step is atomic in the database.
     There is no `CONTENT_LOCK_CONNECTIONS`. `MAX_CONCURRENT_UPLOADS` is
     lowered to three quarters of `PG_POOL_SIZE` (at least one) with a
-    startup warning when it is set higher.
+    startup warning when it is set higher. Single-request and partial
+    publishes share that limit, so the lowered value bounds both.
   - A personal world accepts partial uploads only once it is published on
     this realm; its first scene goes in a single request.
   - `MAX_PENDING_BYTES_PER_SOURCE` (default 4 GiB, at least
