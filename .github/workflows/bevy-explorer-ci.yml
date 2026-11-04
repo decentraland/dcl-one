@@ -13,6 +13,7 @@
       - tooling/play-artifact.py
       - tooling/tests/test_play_*.py
       - tooling/tests/test_bevy_*.py
+      - tooling/uuav/**
       - .github/workflows/bevy-explorer-*.yml
       - .github/actions/bevy-explorer-ci-status/**
       - flake.*
@@ -43,6 +44,7 @@
       - tooling/play-artifact.py
       - tooling/tests/test_play_*.py
       - tooling/tests/test_bevy_*.py
+      - tooling/uuav/**
       - .github/workflows/bevy-explorer-*.yml
       - .github/actions/bevy-explorer-ci-status/**
       - flake.*

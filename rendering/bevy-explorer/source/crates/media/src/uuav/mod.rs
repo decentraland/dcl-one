@@ -19,11 +19,12 @@ mod source;
 use std::{
     collections::HashMap,
     ffi::CStr,
-    os::raw::c_char,
+    os::raw::{c_char, c_void},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, MutexGuard,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use bevy::{
@@ -45,12 +46,17 @@ use crate::{AVCommand, VideoData, VideoFrame, VideoInfo};
 use audio::UuavKiraDecoder;
 use ffi::PlayerId;
 
-/// The protocols the helper's demuxer may open: network streaming only, no local files.
-const PROTOCOL_WHITELIST: &CStr = c"https,http,tls,tcp,crypto,data,udp,rtp,rtcp,rtsp";
+/// The protocols the helper's demuxer may open: http(s) over tcp and tls, nothing else. No local
+/// files, and no udp, rtp or rtsp for an http body that probes as SDP to open towards hosts
+/// the scene names.
+const PROTOCOL_WHITELIST: &CStr = c"https,http,tls,tcp,crypto";
 /// FFmpeg's `AV_LOG_WARNING`.
 const LOG_LEVEL: i32 = 24;
 /// Frames to retry a busy render device before giving up on the player runtime.
 const INIT_ATTEMPTS: u32 = 600;
+/// How often a playing player's clock goes to the scene while no frame is presented (no target
+/// image yet, or a platform without frames).
+const CLOCK_INTERVAL: Duration = Duration::from_millis(250);
 
 pub struct UuavPlugin;
 
@@ -60,6 +66,7 @@ impl Plugin for UuavPlugin {
         app.insert_resource(UuavRuntime::new(shared.clone()))
             .add_systems(PreUpdate, serve_uuav_players);
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            shared.render_world.store(true, Ordering::Release);
             render::build(render_app, shared);
         } else {
             warn!("no render app: uuav video frames will not be presented");
@@ -78,16 +85,49 @@ pub fn uuav_shutdown() {
     uuav::uuav_deinit();
 }
 
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// A video player's target image and how many frames the render world has presented into it.
 pub(crate) struct Target {
     pub image: AssetId<Image>,
     pub presented: AtomicU64,
+    /// Set by the render world when the player's frames cannot be presented (a size the device
+    /// refuses); it presents nothing more for the player.
+    pub failed: AtomicBool,
 }
 
-/// What the main and render worlds share: the video players to present.
+/// What the main and render worlds share: the video players to present, and the closed ones
+/// the render world still has to let go of.
 #[derive(Default)]
 pub(crate) struct Shared {
     pub targets: Mutex<HashMap<PlayerId, Arc<Target>>>,
+    /// Closed players whose planes the render world may still be reading; it frees each once
+    /// it has dropped its textures.
+    retired: Mutex<Vec<PlayerId>>,
+    /// Whether a render world presents frames: with none, a closed player is freed at once.
+    render_world: AtomicBool,
+}
+
+impl Shared {
+    pub fn take_retired(&self) -> Vec<PlayerId> {
+        std::mem::take(&mut *lock(&self.retired))
+    }
+
+    /// Ends a player's presentation and frees it: at once when no render world can be reading
+    /// its planes, otherwise from the render world ([`take_retired`](Self::take_retired)).
+    /// Returns whether the free was deferred.
+    fn retire(&self, id: PlayerId) -> bool {
+        let had_target = lock(&self.targets).remove(&id).is_some();
+        if had_target && self.render_world.load(Ordering::Acquire) {
+            lock(&self.retired).push(id);
+            true
+        } else {
+            uuav::uuav_player_free(id);
+            false
+        }
+    }
 }
 
 /// A source the `av` crate opened, waiting for the runtime's next look.
@@ -114,28 +154,52 @@ pub fn spawn_av(
     audio: mpsc::Sender<StreamingSoundData<AudioDecoderError>>,
     audio_handle: oneshot::Receiver<AudioHandle>,
 ) {
-    NEW_SOURCES
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .push(NewSource {
-            commands,
-            video,
-            url,
-            image: image.id(),
-            audio,
-            audio_handle,
-        });
+    lock(&NEW_SOURCES).push(NewSource {
+        commands,
+        video,
+        url,
+        image: image.id(),
+        audio,
+        audio_handle,
+    });
 }
 
+/// The probe kept alive while `uuav_init` runs on another thread.
+struct ProbeHold {
+    _probe: platform::Probe,
+}
+
+// SAFETY: the probe is a 1x1 texture that nothing here reads or writes after creation; it is
+// only kept alive and dropped. Metal and D3D11 objects are free-threaded, and the Linux probe
+// holds nothing.
+unsafe impl Send for ProbeHold {}
+unsafe impl Sync for ProbeHold {}
+
 enum Runtime {
-    Pending { attempts: u32 },
+    Pending {
+        attempts: u32,
+    },
+    /// `uuav_init` runs on its own thread: it spawns the helper and waits for its handshake. The
+    /// probe stays alive until the call has answered.
+    Starting {
+        _probe: ProbeHold,
+        done: oneshot::Receiver<Result<(), String>>,
+    },
     Ready,
     Failed,
+}
+
+/// A source whose player is being created on another thread (`uuav_player_new` round-trips to
+/// the helper).
+struct Creating {
+    source: NewSource,
+    done: oneshot::Receiver<Result<PlayerId, String>>,
 }
 
 #[derive(Resource)]
 struct UuavRuntime {
     runtime: Runtime,
+    creating: Vec<Creating>,
     players: Vec<Player>,
     shared: Arc<Shared>,
 }
@@ -144,72 +208,99 @@ impl UuavRuntime {
     fn new(shared: Arc<Shared>) -> Self {
         Self {
             runtime: Runtime::Pending { attempts: 0 },
+            creating: Vec::new(),
             players: Vec::new(),
             shared,
         }
     }
 
-    /// Starts the helper once a render device is there to derive the decode device from.
+    /// Starts the helper once a render device is there to derive the decode device from, and
+    /// picks up the answer on a later frame.
     fn initialize(&mut self, device: Option<&RenderDevice>, adapter: Option<&RenderAdapter>) {
-        let Runtime::Pending { attempts } = &mut self.runtime else {
-            return;
-        };
-        if uuav::uuav_status().initialized {
-            self.runtime = Runtime::Ready;
-            return;
-        }
-        let (Some(device), Some(adapter)) = (device, adapter) else {
-            return;
-        };
-        let probe = match platform::probe(device, adapter) {
-            Ok(probe) => probe,
-            Err(e) => {
-                *attempts += 1;
-                if *attempts >= INIT_ATTEMPTS {
-                    error!("uuav: no decode device probe after {INIT_ATTEMPTS} frames: {e}");
-                    self.runtime = Runtime::Failed;
-                } else {
-                    debug!("uuav: probe not ready: {e}");
+        match &mut self.runtime {
+            Runtime::Pending { attempts } => {
+                if uuav::uuav_status().initialized {
+                    self.runtime = Runtime::Ready;
+                    return;
                 }
-                return;
+                let (Some(device), Some(adapter)) = (device, adapter) else {
+                    return;
+                };
+                let probe = match platform::probe(device, adapter) {
+                    Ok(probe) => probe,
+                    Err(e) => {
+                        *attempts += 1;
+                        if *attempts >= INIT_ATTEMPTS {
+                            error!("uuav: no decode device probe after {INIT_ATTEMPTS} frames: {e}");
+                            self.runtime = Runtime::Failed;
+                        } else {
+                            debug!("uuav: probe not ready: {e}");
+                        }
+                        return;
+                    }
+                };
+                // the pointer crosses as an address: the probe object itself stays here
+                let probe_ptr = probe.ptr() as usize;
+                let (done_tx, done) = oneshot::channel();
+                let spawned = std::thread::Builder::new()
+                    .name("uuav-init".to_owned())
+                    .spawn(move || {
+                        let result = unsafe {
+                            uuav::uuav_init(
+                                probe_ptr as *const c_void,
+                                uuav::AudioOptionsRaw {
+                                    sample_rate: audio::SAMPLE_RATE as i32,
+                                    channels: audio::CHANNELS as i32,
+                                },
+                                Some(on_error),
+                                Some(on_warning),
+                                Some(on_log),
+                                PROTOCOL_WHITELIST.as_ptr(),
+                                LOG_LEVEL,
+                            )
+                        };
+                        _ = done_tx.send(ffi::consume(result));
+                    });
+                match spawned {
+                    Ok(_) => {
+                        self.runtime = Runtime::Starting {
+                            _probe: ProbeHold { _probe: probe },
+                            done,
+                        }
+                    }
+                    Err(e) => {
+                        error!("uuav: player runtime failed to start: {e}");
+                        self.runtime = Runtime::Failed;
+                    }
+                }
             }
-        };
-        let result = unsafe {
-            uuav::uuav_init(
-                probe.ptr(),
-                uuav::AudioOptionsRaw {
-                    sample_rate: audio::SAMPLE_RATE as i32,
-                    channels: audio::CHANNELS as i32,
-                },
-                Some(on_error),
-                Some(on_warning),
-                Some(on_log),
-                PROTOCOL_WHITELIST.as_ptr(),
-                LOG_LEVEL,
-            )
-        };
-        drop(probe);
-        match ffi::consume(result) {
-            Ok(()) => {
-                info!("uuav: player runtime started");
-                self.runtime = Runtime::Ready;
-            }
-            Err(e) => {
-                error!("uuav: player runtime failed to start: {e}");
-                self.runtime = Runtime::Failed;
-            }
+            Runtime::Starting { done, .. } => match done.try_recv() {
+                Ok(Ok(())) => {
+                    info!("uuav: player runtime started");
+                    self.runtime = Runtime::Ready;
+                }
+                Ok(Err(e)) => {
+                    error!("uuav: player runtime failed to start: {e}");
+                    self.runtime = Runtime::Failed;
+                }
+                Err(oneshot::error::TryRecvError::Closed) => {
+                    error!("uuav: player runtime failed to start: the init thread ended");
+                    self.runtime = Runtime::Failed;
+                }
+                Err(oneshot::error::TryRecvError::Empty) => {}
+            },
+            Runtime::Ready | Runtime::Failed => {}
         }
     }
 
+    /// Begins creating a player for the source; [`poll_creating`](Self::poll_creating) starts
+    /// it once the helper has answered.
     fn adopt(&mut self, source: NewSource, has_renderer: bool) {
         match self.runtime {
             Runtime::Ready => {}
-            Runtime::Pending { .. } if has_renderer => {
+            Runtime::Pending { .. } | Runtime::Starting { .. } if has_renderer => {
                 // the runtime is still coming up; look again next frame
-                NEW_SOURCES
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push(source);
+                lock(&NEW_SOURCES).push(source);
                 return;
             }
             _ => {
@@ -219,18 +310,52 @@ impl UuavRuntime {
             }
         }
 
-        let id = match ffi::player_new() {
-            Ok(id) => id,
+        let (done_tx, done) = oneshot::channel();
+        let spawned = std::thread::Builder::new()
+            .name("uuav-player".to_owned())
+            .spawn(move || {
+                _ = done_tx.send(ffi::player_new());
+            });
+        match spawned {
+            Ok(_) => self.creating.push(Creating { source, done }),
             Err(e) => {
                 warn!("uuav: player for `{}` not created: {e}", source.url);
                 send(source.video.as_ref(), VideoData::State(VideoState::VsError));
-                return;
             }
-        };
+        }
+    }
+
+    fn poll_creating(&mut self) {
+        for mut creating in std::mem::take(&mut self.creating) {
+            let created = match creating.done.try_recv() {
+                Ok(created) => created,
+                Err(oneshot::error::TryRecvError::Empty) => {
+                    self.creating.push(creating);
+                    continue;
+                }
+                Err(oneshot::error::TryRecvError::Closed) => {
+                    Err("the creation thread ended".to_owned())
+                }
+            };
+            match created {
+                Ok(id) => self.start(id, creating.source),
+                Err(e) => {
+                    warn!("uuav: player for `{}` not created: {e}", creating.source.url);
+                    send(
+                        creating.source.video.as_ref(),
+                        VideoData::State(VideoState::VsError),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Opens the source on its new player and begins serving it.
+    fn start(&mut self, id: PlayerId, source: NewSource) {
         debug!("uuav player {id}: open `{}`", source.url);
         if let Err(e) = ffi::open_media(id, &source.url) {
             warn!("uuav player {id}: open `{}` failed: {e}", source.url);
-            uuav::uuav_player_free(id);
+            self.shared.retire(id);
             send(source.video.as_ref(), VideoData::State(VideoState::VsError));
             return;
         }
@@ -245,12 +370,9 @@ impl UuavRuntime {
             let target = Arc::new(Target {
                 image: source.image,
                 presented: AtomicU64::new(0),
+                failed: AtomicBool::new(false),
             });
-            self.shared
-                .targets
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert(id, target.clone());
+            lock(&self.shared.targets).insert(id, target.clone());
             target
         });
 
@@ -264,8 +386,9 @@ impl UuavRuntime {
             alive,
             target,
             last_state: None,
-            last_size: None,
+            last_info: None,
             last_presented: 0,
+            last_clock: None,
         });
     }
 }
@@ -281,9 +404,13 @@ struct Player {
     /// Cleared on close so the kira decoder ends the sound.
     alive: Arc<AtomicBool>,
     target: Option<Arc<Target>>,
+    /// What went out last; a send the channel refused leaves these as they were, so it is
+    /// tried again next frame.
     last_state: Option<VideoState>,
-    last_size: Option<(u32, u32)>,
+    /// (width, height, framerate, duration)
+    last_info: Option<(u32, u32, f64, f64)>,
     last_presented: u64,
+    last_clock: Option<Instant>,
 }
 
 impl Player {
@@ -314,41 +441,60 @@ impl Player {
             }
         }
 
-        let state = match ffi::state(self.id) {
+        let mut state = match ffi::state(self.id) {
             uuav::UUAVState::UUAV_CLOSED | uuav::UUAVState::UUAV_OPENING => VideoState::VsLoading,
             uuav::UUAVState::UUAV_READY => VideoState::VsReady,
             uuav::UUAVState::UUAV_PLAYING => VideoState::VsPlaying,
             uuav::UUAVState::UUAV_PAUSED | uuav::UUAVState::UUAV_ENDED => VideoState::VsPaused,
             uuav::UUAVState::UUAV_ERROR | uuav::UUAVState::UUAV_UNKNOWN => VideoState::VsError,
         };
-        if self.last_state != Some(state) {
+        if self
+            .target
+            .as_ref()
+            .is_some_and(|target| target.failed.load(Ordering::Acquire))
+        {
+            state = VideoState::VsError;
+        }
+        if self.last_state != Some(state)
+            && send(self.video.as_ref(), VideoData::State(state))
+        {
             debug!("uuav player {}: {state:?}", self.id);
             self.last_state = Some(state);
-            send(self.video.as_ref(), VideoData::State(state));
         }
 
         if self.video.is_some() {
-            if let Some(size) = ffi::video_size(self.id)
-                && self.last_size != Some(size)
-            {
-                self.last_size = Some(size);
-                send(
-                    self.video.as_ref(),
-                    VideoData::Info(VideoInfo {
-                        width: size.0,
-                        height: size.1,
-                        rate: ffi::framerate(self.id).unwrap_or(0.0),
-                        // live streams have no duration
-                        length: ffi::duration(self.id).unwrap_or(-1.0),
-                    }),
-                );
+            if let Some((width, height)) = ffi::video_size(self.id) {
+                // the header size: the render world sizes the image to the presented planes
+                let rate = ffi::framerate(self.id).unwrap_or(0.0);
+                // live streams have no duration
+                let length = ffi::duration(self.id).unwrap_or(-1.0);
+                let info = (width, height, rate, length);
+                if self.last_info != Some(info)
+                    && send(
+                        self.video.as_ref(),
+                        VideoData::Info(VideoInfo {
+                            width,
+                            height,
+                            rate,
+                            length,
+                        }),
+                    )
+                {
+                    self.last_info = Some(info);
+                }
             }
             if let Some(target) = &self.target {
                 let presented = target.presented.load(Ordering::Acquire);
-                if presented != self.last_presented {
-                    self.last_presented = presented;
+                let clock_due = state == VideoState::VsPlaying
+                    && self
+                        .last_clock
+                        .is_none_or(|at| at.elapsed() >= CLOCK_INTERVAL);
+                if presented != self.last_presented || clock_due {
                     let time = ffi::current_time(self.id).unwrap_or(0.0);
-                    send(self.video.as_ref(), VideoData::Frame(VideoFrame {}, time));
+                    if send(self.video.as_ref(), VideoData::Frame(VideoFrame {}, time)) {
+                        self.last_presented = presented;
+                        self.last_clock = Some(Instant::now());
+                    }
                 }
             }
         }
@@ -383,21 +529,28 @@ impl Player {
         }
     }
 
+    /// Ends the sound; the player itself is freed by [`Shared::retire`].
     fn close(&mut self) {
         debug!("uuav player {}: close", self.id);
         self.alive.store(false, Ordering::Release);
         if let Some(mut handle) = self.handle.take() {
             handle.stop(Tween::default());
         }
-        uuav::uuav_player_free(self.id);
     }
 }
 
-fn send(video: Option<&mpsc::Sender<VideoData>>, data: VideoData) {
-    if let Some(video) = video
-        && video.try_send(data).is_err()
-    {
-        trace!("uuav: video channel full or closed");
+/// Whether the data went out. A player without a video channel has nowhere to send and counts
+/// as sent.
+fn send(video: Option<&mpsc::Sender<VideoData>>, data: VideoData) -> bool {
+    let Some(video) = video else {
+        return true;
+    };
+    match video.try_send(data) {
+        Ok(()) => true,
+        Err(_) => {
+            trace!("uuav: video channel full or closed");
+            false
+        }
     }
 }
 
@@ -408,25 +561,18 @@ fn serve_uuav_players(
 ) {
     runtime.initialize(device.as_deref(), adapter.as_deref());
 
-    let new_sources = std::mem::take(
-        &mut *NEW_SOURCES
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner),
-    );
+    let new_sources = std::mem::take(&mut *lock(&NEW_SOURCES));
     for source in new_sources {
         runtime.adopt(source, device.is_some());
     }
+    runtime.poll_creating();
 
     let runtime = &mut *runtime;
+    let shared = &runtime.shared;
     runtime.players.retain_mut(|player| {
         let keep = player.serve();
         if !keep {
-            runtime
-                .shared
-                .targets
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .remove(&player.id);
+            shared.retire(player.id);
         }
         keep
     });
@@ -453,4 +599,45 @@ extern "C" fn on_warning(text: *const c_char) {
 
 extern "C" fn on_log(text: *const c_char) {
     debug!(target: "uuav", "{}", message(text));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn target() -> Arc<Target> {
+        Arc::new(Target {
+            image: AssetId::default(),
+            presented: AtomicU64::new(0),
+            failed: AtomicBool::new(false),
+        })
+    }
+
+    #[test]
+    fn without_a_render_world_a_closed_player_is_freed_at_once() {
+        let shared = Shared::default();
+        lock(&shared.targets).insert(7, target());
+        assert!(!shared.retire(7));
+        assert!(lock(&shared.targets).is_empty());
+        assert!(shared.take_retired().is_empty());
+    }
+
+    #[test]
+    fn under_a_render_world_the_free_waits_for_it() {
+        let shared = Shared::default();
+        shared.render_world.store(true, Ordering::Release);
+        lock(&shared.targets).insert(7, target());
+        assert!(shared.retire(7));
+        assert!(lock(&shared.targets).is_empty());
+        assert_eq!(shared.take_retired(), vec![7]);
+        assert!(shared.take_retired().is_empty());
+    }
+
+    #[test]
+    fn a_player_without_frames_is_freed_at_once() {
+        let shared = Shared::default();
+        shared.render_world.store(true, Ordering::Release);
+        assert!(!shared.retire(9));
+        assert!(shared.take_retired().is_empty());
+    }
 }

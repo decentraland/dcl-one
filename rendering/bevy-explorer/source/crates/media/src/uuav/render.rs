@@ -1,6 +1,7 @@
 //! The render-world half: each frame, every video player's latest presented NV12 planes are
-//! converted into its target image, sized to the video (the main world's image only follows
-//! suit through `VideoData::Info`, it never uploads a video image itself).
+//! converted into its target image, sized to the planes (the main world's image only follows
+//! suit through `VideoData::Info`, it never uploads a video image itself). Players the main
+//! world closed are freed here, once their planes are no longer read.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -9,7 +10,7 @@ use bevy::{
     render::{
         Render, RenderSet,
         render_asset::{RenderAssets, prepare_assets},
-        render_resource::{TextureFormat, TextureUsages},
+        render_resource::{TextureFormat, TextureId, TextureUsages},
         renderer::{RenderDevice, RenderQueue},
         texture::GpuImage,
     },
@@ -17,6 +18,10 @@ use bevy::{
 use common::structs::SnapshotInProgress;
 
 use super::{Shared, ffi, ffi::PlayerId, platform};
+
+/// Pixels a player's planes may hold: DCI 4K and a little more. A larger stream is refused
+/// before it reaches the device.
+const MAX_PIXELS: u64 = 4096 * 4096;
 
 /// The player table the main world maintains ([`super::UuavRuntime`]), read here.
 #[derive(Resource)]
@@ -182,10 +187,40 @@ struct Planes {
     height: u32,
     textures: (wgpu::Texture, wgpu::Texture),
     bind_group: wgpu::BindGroup,
+    /// The client's frame count at the last upload; `None` before the first.
+    frames: Option<u64>,
+    /// The target texture the last conversion drew into: a new one needs the frame again.
+    drawn_into: Option<TextureId>,
+}
+
+impl Planes {
+    fn holds(&self, presented: &ffi::Presented) -> bool {
+        self.y == presented.y as usize
+            && self.uv == presented.uv as usize
+            && self.width == presented.width
+            && self.height == presented.height
+    }
 }
 
 #[derive(Resource, Default)]
 struct PlayerPlanes(HashMap<PlayerId, Planes>);
+
+/// Why planes of this size cannot become textures: not an NV12 size, or more than the device
+/// (`max_dimension` per edge) or [`MAX_PIXELS`] take.
+fn check_size(width: u32, height: u32, max_dimension: u32) -> Result<(), String> {
+    if width < 2 || height < 2 || !width.is_multiple_of(2) || !height.is_multiple_of(2) {
+        return Err(format!("{width}x{height} is not an NV12 size"));
+    }
+    if width > max_dimension || height > max_dimension {
+        return Err(format!(
+            "{width}x{height} exceeds the device's {max_dimension} texture edge"
+        ));
+    }
+    if u64::from(width) * u64::from(height) > MAX_PIXELS {
+        return Err(format!("{width}x{height} exceeds the {MAX_PIXELS} pixel cap"));
+    }
+    Ok(())
+}
 
 fn present_uuav_frames(
     shared: Res<UuavRenderShared>,
@@ -196,6 +231,13 @@ fn present_uuav_frames(
     render_queue: Res<RenderQueue>,
     snapshot: Option<Res<SnapshotInProgress>>,
 ) {
+    // Players the main world closed: their textures go first, then the client may release the
+    // planes behind them. Nothing below reads a retired player.
+    for id in shared.0.take_retired() {
+        planes.0.remove(&id);
+        uuav::uuav_player_free(id);
+    }
+
     let Some(mut pipeline) = pipeline else {
         return;
     };
@@ -212,27 +254,30 @@ fn present_uuav_frames(
         .iter()
         .map(|(id, target)| (*id, target.clone()))
         .collect();
-    planes
-        .0
-        .retain(|id, _| targets.iter().any(|(target, _)| target == id));
 
     let device = render_device.wgpu_device();
+    let max_dimension = render_device.limits().max_texture_dimension_2d;
     let render_callback = uuav::uuav_get_render_callback();
 
     for (id, target) in targets {
+        if target.failed.load(std::sync::atomic::Ordering::Acquire) {
+            continue;
+        }
         let Ok(event_id) = i32::try_from(id) else {
             continue;
         };
         // moves the helper's latest published frame into the presentation planes
         render_callback(event_id);
 
-        let Some((width, height)) = ffi::video_size(id) else {
+        let Some(presented) = ffi::presented(id) else {
             continue;
         };
-        let (Some(y), Some(uv)) = (ffi::video_texture(id, 0), ffi::video_texture(id, 1)) else {
-            continue;
-        };
-        if width < 2 || height < 2 {
+        if let Err(e) = check_size(presented.width, presented.height, max_dimension) {
+            warn!("uuav player {id}: frames not presented: {e}");
+            target
+                .failed
+                .store(true, std::sync::atomic::Ordering::Release);
+            planes.0.remove(&id);
             continue;
         }
 
@@ -241,46 +286,38 @@ fn present_uuav_frames(
             continue;
         };
 
-        let current = planes.0.get(&id).filter(|planes| {
-            planes.y == y as usize
-                && planes.uv == uv as usize
-                && planes.width == width
-                && planes.height == height
-        });
-        let planes = match current {
-            Some(_) => planes.0.get(&id).unwrap(),
-            None => {
-                let Some(textures) = platform::make_planes(&render_device, y, uv, width, height)
-                else {
-                    continue;
-                };
-                let bind_group = pipeline.bind_group(device, &textures);
-                planes.0.insert(
-                    id,
-                    Planes {
-                        y: y as usize,
-                        uv: uv as usize,
-                        width,
-                        height,
-                        textures,
-                        bind_group,
-                    },
-                );
-                planes.0.get(&id).unwrap()
-            }
+        if !planes.0.get(&id).is_some_and(|planes| planes.holds(&presented)) {
+            let Some(textures) = platform::make_planes(
+                &render_device,
+                presented.y,
+                presented.uv,
+                presented.width,
+                presented.height,
+            ) else {
+                continue;
+            };
+            let bind_group = pipeline.bind_group(device, &textures);
+            planes.0.insert(
+                id,
+                Planes {
+                    y: presented.y as usize,
+                    uv: presented.uv as usize,
+                    width: presented.width,
+                    height: presented.height,
+                    textures,
+                    bind_group,
+                    frames: None,
+                    drawn_into: None,
+                },
+            );
+        }
+        let Some(planes) = planes.0.get_mut(&id) else {
+            continue;
         };
-        platform::upload(
-            &render_queue,
-            (&planes.textures.0, &planes.textures.1),
-            y,
-            uv,
-            width,
-            height,
-        );
 
         let size = wgpu::Extent3d {
-            width,
-            height,
+            width: presented.width,
+            height: presented.height,
             depth_or_array_layers: 1,
         };
         if gpu_image.size != size
@@ -301,6 +338,23 @@ fn present_uuav_frames(
             gpu_image.texture = texture;
             gpu_image.texture_descriptor = descriptor;
             gpu_image.size = size;
+        }
+
+        // nothing new to show and the target still holds the last conversion
+        let target_texture = gpu_image.texture.id();
+        if planes.frames == Some(presented.frames) && planes.drawn_into == Some(target_texture) {
+            continue;
+        }
+        if planes.frames != Some(presented.frames) {
+            platform::upload(
+                &render_queue,
+                (&planes.textures.0, &planes.textures.1),
+                presented.y,
+                presented.uv,
+                presented.width,
+                presented.height,
+            );
+            planes.frames = Some(presented.frames);
         }
 
         let render_pipeline = pipeline.pipeline(device, gpu_image.texture_format);
@@ -327,8 +381,41 @@ fn present_uuav_frames(
             pass.draw(0..3, 0..1);
         }
         render_queue.submit(std::iter::once(encoder.finish()));
+        planes.drawn_into = Some(target_texture);
         target
             .presented
             .fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::check_size;
+
+    #[test]
+    fn an_nv12_size_within_the_limits_passes() {
+        assert_eq!(check_size(852, 480, 8192), Ok(()));
+        assert_eq!(check_size(4096, 4096, 8192), Ok(()));
+    }
+
+    #[test]
+    fn an_odd_or_degenerate_size_is_refused() {
+        assert!(check_size(853, 480, 8192).is_err());
+        assert!(check_size(852, 481, 8192).is_err());
+        assert!(check_size(0, 480, 8192).is_err());
+    }
+
+    #[test]
+    fn a_size_past_the_device_or_the_pixel_cap_is_refused() {
+        assert!(
+            check_size(8194, 2, 8192)
+                .unwrap_err()
+                .contains("texture edge")
+        );
+        assert!(
+            check_size(8192, 4096, 8192)
+                .unwrap_err()
+                .contains("pixel cap")
+        );
     }
 }

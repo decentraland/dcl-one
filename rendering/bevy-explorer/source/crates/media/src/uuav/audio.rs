@@ -22,8 +22,11 @@ pub const CHANNELS: usize = 2;
 const PULL_FRAMES: usize = 480;
 
 /// kira polls the decoder in a tight loop while its buffer has room; a read that found nothing
-/// waits this long before trying again.
+/// waits this long before trying again while the player plays, within the helper's 10 ms pump.
 const EMPTY_WAIT: Duration = Duration::from_millis(2);
+/// The wait while the player is not playing (paused, opening, ended, no runtime): nothing is
+/// expected, so the thread polls at a fraction of the rate.
+const IDLE_WAIT: Duration = Duration::from_millis(20);
 
 /// Pulls a player's audio out of the uuav client's jitter ring for kira.
 ///
@@ -74,11 +77,17 @@ impl kira::sound::streaming::Decoder for UuavKiraDecoder {
             if copied > 0 {
                 let samples = (copied as usize).min(PULL_FRAMES) * CHANNELS;
                 return Ok(self.buffer[..samples]
-                    .chunks_exact(CHANNELS)
+                    .as_chunks::<CHANNELS>()
+                    .0
+                    .iter()
                     .map(|frame| kira::Frame::new(frame[0], frame[1]))
                     .collect());
             }
-            std::thread::sleep(EMPTY_WAIT);
+            let wait = match super::ffi::state(self.id) {
+                uuav::UUAVState::UUAV_PLAYING => EMPTY_WAIT,
+                _ => IDLE_WAIT,
+            };
+            std::thread::sleep(wait);
         }
     }
 

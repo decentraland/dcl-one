@@ -23,10 +23,10 @@ INPUTS = ('rendering/bevy-explorer/source', 'library/vendor/rusty_enet', 'toolin
           '.github/workflows/bevy-explorer-headless-build.yml',
           'tooling/ci-publication.py', '.cargo', 'rust-toolchain*')
 # Paths of the end-to-end suite that select the scenes lane: the inputs of the video playback
-# steps in bevy-explorer-scenes.yml.
+# steps in bevy-explorer-scenes.yml. The run loads every visual spec before it filters, so the
+# whole folder is an input.
 SCENES_E2E_INPUTS = ('apps/bevy-explorer/e2e/scenes/', 'apps/bevy-explorer/e2e/driver/',
-                     'apps/bevy-explorer/e2e/scripts/', 'apps/bevy-explorer/e2e/specs/visual/video.test.ts',
-                     'apps/bevy-explorer/e2e/specs/visual/realm.ts', 'apps/bevy-explorer/e2e/specs/visual/scenes.ts',
+                     'apps/bevy-explorer/e2e/scripts/', 'apps/bevy-explorer/e2e/specs/visual/',
                      'apps/bevy-explorer/e2e/package.json', 'apps/bevy-explorer/e2e/package-lock.json')
 # Web files that the Test Suite's harness tests read: the benchmark runner's
 # (rendering/bevy-explorer/source/local-harness/benchmark/tests) and the web driver's

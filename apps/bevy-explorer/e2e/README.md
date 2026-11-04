@@ -169,7 +169,9 @@ A reference counts as approved once a reviewer has checked it against the scene'
   *InWorld* and *Automation* sections of the PR's CI status comment from the uploaded report
   (`tooling/bevy-e2e-report.py`).
 
-`tooling/bevy-ci.py` selects no engine lane for a change under this folder.
+`tooling/bevy-ci.py` selects the scenes lane of `bevy-explorer-ci.yml` for a change to an
+input of the video run below (the scenes, the driver, the runner scripts, the visual specs and
+the package files) and no engine lane for the rest of this folder.
 
 The standalone runs in `.github/workflows/bevy-explorer-scenes.yml` only: its graphical job
 plays the video spec (`npm run e2e -- --visual --filter 'video plays'`) on the Linux release

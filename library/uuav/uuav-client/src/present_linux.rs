@@ -156,6 +156,8 @@ pub struct PlayerVideo {
     presented: Option<(u32, u8)>,
     /// Ack the render event owes the helper after mapping a generation.
     ack_due: Option<u32>,
+    /// Frames copied into the presentation buffers.
+    frames: u64,
 }
 
 impl PlayerVideo {
@@ -272,7 +274,23 @@ impl PlayerVideo {
             .uv
             .copy_from_slice(sources[1].bytes(planes.uv.len())?);
         self.presented = Some((generation, slot));
+        self.frames = self.frames.wrapping_add(1);
         Ok(ack)
+    }
+
+    /// The size the presentation planes were created for, once the first
+    /// frame was presented: the decoded frame's (even-rounded), which the
+    /// stream header behind the state update need not match.
+    pub fn presented_size(&self) -> Option<(u32, u32)> {
+        self.presentation
+            .as_ref()
+            .map(|planes| (planes.width, planes.height))
+    }
+
+    /// Frames copied into the presentation planes so far; unchanged while
+    /// nothing new was published.
+    pub const fn frames(&self) -> u64 {
+        self.frames
     }
 
     fn ensure_presentation(&mut self, width: u32, height: u32) -> Result<()> {

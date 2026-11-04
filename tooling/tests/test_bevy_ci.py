@@ -165,7 +165,7 @@ class SelectionTest(unittest.TestCase):
                                   if selected[lane]}, {'web', 'test'})
 
     def test_the_end_to_end_suite_selects_no_engine_lane(self):
-        for name in ('specs/chat.test.ts', 'specs/pages.ts', 'specs/visual/visual.test.ts', 'README.md',
+        for name in ('specs/chat.test.ts', 'specs/pages.ts', 'README.md',
                      'test/explorer.test.ts', 'references/core.png'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
@@ -177,7 +177,8 @@ class SelectionTest(unittest.TestCase):
     def test_what_the_graphical_run_plays_from_the_end_to_end_suite_selects_scenes(self):
         for name in ('driver/explorer.ts', 'scenes/video/src/index.ts', 'scenes/video/assets/video/red_tone.mp4',
                      'scenes/core/scene.json', 'scenes/dcl-workspace.json', 'specs/visual/video.test.ts',
-                     'specs/visual/realm.ts', 'specs/visual/scenes.ts', 'scripts/e2e.ts', 'package-lock.json'):
+                     'specs/visual/visual.test.ts', 'specs/visual/realm.ts', 'specs/visual/scenes.ts',
+                     'scripts/e2e.ts', 'package-lock.json'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write('apps/bevy-explorer/e2e/' + name, 'changed')

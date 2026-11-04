@@ -58,8 +58,9 @@ fn create(device: &RenderDevice, format: TextureFormat, width: u32, height: u32)
     })
 }
 
-/// Copies the client's planes into the textures. Both planes are `width` bytes per row: the
-/// CbCr plane is half as wide with two bytes per texel.
+/// Copies the client's planes into the textures; `width` and `height` are the planes' own size,
+/// read together with the pointers. Both planes are `width` bytes per row: the CbCr plane is
+/// half as wide with two bytes per texel.
 pub fn upload(
     queue: &RenderQueue,
     planes: (&wgpu::Texture, &wgpu::Texture),
@@ -72,8 +73,9 @@ pub fn upload(
         return;
     }
     let row = width as usize;
-    // SAFETY: the client keeps `height` rows of `width` bytes behind the Y pointer and half as
-    // many behind the CbCr pointer, alive until it hands out a new pointer (one poll of grace)
+    // SAFETY: the client created the planes for this size, `height` rows of `width` bytes
+    // behind the Y pointer and half as many behind the CbCr pointer, and keeps them alive until
+    // one poll after it hands out new ones; the player is freed only after this system ran
     let y_bytes = unsafe { std::slice::from_raw_parts(y.cast::<u8>(), row * height as usize) };
     let uv_bytes =
         unsafe { std::slice::from_raw_parts(uv.cast::<u8>(), row * (height / 2) as usize) };

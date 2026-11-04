@@ -153,6 +153,7 @@ jobs:
           cp -r "$cef\locales" package/locales
           # the video helper and its FFmpeg, spawned as siblings of the exe
           python ../../../tooling/uuav/stage-dist.py windows-x86_64 package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           7z a ${{ env.PACKAGE_FILE }} ./package/*
         shell: pwsh
       - name: Package Linux

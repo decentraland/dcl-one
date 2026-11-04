@@ -1578,6 +1578,51 @@ pub unsafe extern "C" fn uuav_player_get_video_texture(
     )
 }
 
+/// What the host presents from, read in one call.
+///
+/// The plane pointers of `uuav_player_get_video_texture`, the size the
+/// planes were created for and a count of the frames presented so far. The
+/// size is the decoded frame's, even-rounded; the stream header behind
+/// `uuav_player_get_video_size` can disagree with it on an odd-sized or a
+/// resolution-switching stream, and the planes hold exactly this many
+/// bytes. `frames` stays put while nothing new was published.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PresentedVideo {
+    pub plane0: *const c_void,
+    pub plane1: *const c_void,
+    pub width: u32,
+    pub height: u32,
+    pub frames: u64,
+}
+
+// Fails until the first presented frame, like `uuav_player_get_video_texture`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn uuav_player_get_presented_video(
+    player_id: PlayerId,
+    out_video: *mut PresentedVideo,
+) -> ResultFFI {
+    write_out(
+        out_video,
+        with_mirror(player_id, |_, mirror| {
+            let video = mirror
+                .video
+                .lock()
+                .map_err(|_| "video state is poisoned".to_owned())?;
+            let (width, height) = video
+                .presented_size()
+                .ok_or_else(|| "video texture is not available yet".to_owned())?;
+            Ok(PresentedVideo {
+                plane0: video.texture_ptr(0)?,
+                plane1: video.texture_ptr(1)?,
+                width,
+                height,
+                frames: video.frames(),
+            })
+        }),
+    )
+}
+
 // ---- audio -------------------------------------------------------------
 
 // [audio] fills interleaved FLT from the jitter ring; pads silence on

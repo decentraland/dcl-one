@@ -8,8 +8,11 @@ on:
       - rendering/bevy-explorer/**
       - library/protocol/proto/**
       - apps/bevy-explorer/**
+      - apps/dcl-scene-cli/**
+      - library/uuav/**
       - library/vendor/rusty_enet/**
       - tooling/dev-regressions*
+      - tooling/uuav/**
       - tooling/bevy-ci.py
       - tooling/tests/test_bevy_*.py
       - .github/workflows/bevy-explorer-scenes.yml
@@ -116,6 +119,7 @@ jobs:
       - name: Build the graphical test engine
         run: cargo build --release --locked --timings --bin decentra-bevy
       - name: Stage the UUAV runtime set
+        id: engine
         # the engine spawns the video helper as a sibling (library/uuav/dist, Git LFS)
         run: python3 "$GITHUB_WORKSPACE/tooling/uuav/stage-dist.py" linux-x86_64 target/release
       - name: Configure virtual audio for graphical tests
@@ -147,39 +151,39 @@ jobs:
       # (apps/bevy-explorer/e2e/specs/visual/video.test.ts), in software decode (the hosted runner
       # has no VA driver).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: inputs.suite != 'snapshots'
+        if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: apps/bevy-explorer/e2e/package-lock.json
       - name: Fetch the end-to-end scenes' assets
-        if: inputs.suite != 'snapshots'
+        if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
         run: git lfs pull --include 'apps/bevy-explorer/e2e/scenes/**'
       - name: Install the end-to-end suite
-        if: inputs.suite != 'snapshots'
+        if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
         working-directory: apps/bevy-explorer/e2e
         run: npm ci
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        if: inputs.suite != 'snapshots'
+        if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
         with:
           workspaces: apps/dcl-scene-cli
           key: e2e-scene-cli
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build dcl-scene-cli
-        if: inputs.suite != 'snapshots'
+        if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
         working-directory: apps/dcl-scene-cli
         # The crate is a member of the catalyst workspace (services/catalyst), whose target folder
         # would otherwise take the binary; its own keeps the path below and the cache local.
         run: cargo build --release --locked --target-dir target
       - name: Build the end-to-end scenes
-        if: inputs.suite != 'snapshots'
+        if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
         working-directory: apps/bevy-explorer/e2e
         env:
           DCL_SCENE_CLI: ${{ github.workspace }}/apps/dcl-scene-cli/target/release/dcl-scene-cli
         run: npm run build-scenes
       - name: Video playback through the UUAV player
         id: video
-        if: inputs.suite != 'snapshots'
+        if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
         continue-on-error: true
         timeout-minutes: 20
         working-directory: apps/bevy-explorer/e2e
