@@ -225,6 +225,9 @@ jobs:
       DCL_E2E_BASE_DOMAIN: ${{ vars.DCL_E2E_BASE_DOMAIN || 'decentraland.zone' }}
       DCL_E2E_REALM: ${{ vars.DCL_E2E_REALM || 'https://peer.decentraland.zone' }}
       DCL_E2E_WORKER: '0'
+      # Without them the runner's browser answers requestAdapter with no adapter and the app
+      # stops at its "Enable GPU acceleration" page, which asks for the first of these.
+      CHROME_EXTRA_ARGS: --enable-unsafe-webgpu --ignore-gpu-blocklist
     steps:
       # The checkout fetches the scenes' assets through git-lfs, which the image's MinGit lacks:
       # the pinned release goes on PATH first, checked against the sum the release signs.
@@ -279,6 +282,19 @@ jobs:
             Write-Output "::warning::No Chrome on this runner; the scenarios run in Edge at $found"
             Add-Content -Path $env:GITHUB_ENV -Value "CHROME_PATH=$found"
           }
+      # What the scenarios will find, said in seconds rather than after a boot's timeout: the
+      # GPU and its driver, whether the job's session is interactive, and the WebGPU adapter the
+      # browser gives a page, bare and then with the scenarios' flags (`npm run gpu-probe`).
+      - name: GPU probe
+        continue-on-error: true
+        run: |
+          Get-CimInstance Win32_VideoController | ForEach-Object { Write-Output "video controller: $($_.Name) driver=$($_.DriverVersion) status=$($_.Status)" }
+          Write-Output "session: interactive=$([Environment]::UserInteractive) id=$((Get-Process -Id $PID).SessionId)"
+          $flags = $env:CHROME_EXTRA_ARGS
+          $env:CHROME_EXTRA_ARGS = ''
+          npm run gpu-probe
+          $env:CHROME_EXTRA_ARGS = $flags
+          npm run gpu-probe
       # The accounts secret is on the two scenario steps alone: never in the environment of the
       # install, the builds, or the report.
       - name: InWorld scenarios
