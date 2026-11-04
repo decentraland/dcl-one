@@ -2886,6 +2886,73 @@ async fn the_island_feed_needs_no_switch() {
     jobs.shutdown(Duration::from_secs(5)).await;
 }
 
+/// WCS `isWorldValid`: an unknown world, or one blocked past its grace, is 404
+/// on every mint, not a retryable 503.
+#[tokio::test]
+async fn world_mints_answer_404_for_an_unknown_or_blocked_world() {
+    use crate::access::WorldAdmission;
+    use crate::rooms::ResolvedRoom;
+    use crate::world_identity::{RealmId, WorldName};
+    let world = WorldName::parse("alice.dcl.eth").unwrap();
+    let handshake = r#"{"signer":"dcl:explorer","intent":"dcl:explorer:comms-handshake"}"#;
+    for (admission, expected) in [
+        (WorldAdmission::Unknown, StatusCode::NOT_FOUND),
+        (WorldAdmission::Blocked, StatusCode::NOT_FOUND),
+        (
+            WorldAdmission::Open(crate::access::AccessType::Unrestricted),
+            StatusCode::OK,
+        ),
+    ] {
+        let scenes = StubScenes {
+            room: Ok(ResolvedRoom {
+                realm: RealmId::World(world.clone()),
+                scene_id: None,
+                deployment: None,
+                room: crate::rooms::worlds_service_world_room(&world),
+            }),
+            ..Default::default()
+        };
+        let state = Arc::new(
+            CommsState::new(
+                lazy_pool(),
+                Outbound::for_tests(),
+                Settings::for_tests(),
+                None,
+                None,
+                Arc::new(StubPolicy {
+                    admission: Some(admission),
+                    ..Default::default()
+                }),
+                Arc::new(scenes),
+                Arc::new(crate::presence::Presence::new()),
+                Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+            )
+            .with_ban_status(Arc::new(super::moderation::test_support::StubBanStatus(
+                Ok(None),
+            ))),
+        );
+        let app = super::admission::world_mint::router(state.clone());
+        for (path, metadata) in [
+            ("/worlds/alice.dcl.eth/comms", "{}"),
+            ("/get-comms-adapter/world-alice.dcl.eth", handshake),
+        ] {
+            state.presence.complete_empty_fixture();
+            let mut request = Request::post(path).body(Body::empty()).unwrap();
+            request
+                .headers_mut()
+                .extend(signed(KEY, "post", path, metadata).await);
+            let (status, body) = body_json(app.clone().oneshot(request).await.unwrap()).await;
+            assert_eq!(status, expected, "{admission:?} {path}: {body}");
+            if expected == StatusCode::NOT_FOUND {
+                assert_eq!(
+                    body["error"], "World \"alice.dcl.eth\" is invalid or blocked.",
+                    "{body}"
+                );
+            }
+        }
+    }
+}
+
 /// Signed metadata is checked after cryptographic verification.
 #[tokio::test]
 async fn world_adapter_requires_exact_signed_handshake() {

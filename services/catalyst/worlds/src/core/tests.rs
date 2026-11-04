@@ -1452,6 +1452,14 @@ async fn a_disabled_world_refuses_publishes_until_enabled() {
         "nothing was published"
     );
     assert_eq!(blocked_since(&f.pool, &world).await, disabled_at);
+    assert!(!about_refuses(&f, &world).await, "inside the 2-day grace");
+    sqlx::query(
+        "UPDATE worlds.worlds SET blocked_since = blocked_since - interval '3 days' WHERE name = $1",
+    )
+    .bind(world.key())
+    .execute(&f.pool)
+    .await
+    .unwrap();
     assert!(about_refuses(&f, &world).await);
 
     expect(

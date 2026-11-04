@@ -512,6 +512,11 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     if let Some(about) = &about_comms {
         worlds_settings.sfu = about.sfu.clone();
     }
+    // Worlds' visitors use this node's content unless CONTENT_URL points elsewhere.
+    if Config::non_empty(&config.node.content_url).is_none() {
+        worlds_settings.content_readiness =
+            worlds::about::ContentReadiness::local(sync_status.clone());
+    }
     let worlds_mirror = worlds::MirrorSettings::from_config(&config, &local_urls)?;
     // The live world presence: ONE map the gatekeeper's LiveKit webhook
     // feeds, read by its world mints, its own routes, worlds' status and the
@@ -1803,6 +1808,7 @@ async fn comms_states(
     })
     .context("ARCHIPELAGO_CONTROL_V4_AUDIENCE and NATS_URL configuration")?
     .with_max_users_per_world(config.worlds.max_users_per_world)
+    .with_shared_secret_max_attempts(config.worlds.shared_secret_max_attempts_per_minute)
     .with_room_authority_key(non_empty(&config.room_authority.pulse_room_authority_key).as_deref())?
     .with_room_event_sink(room_events);
     let gatekeeper = Arc::new(gatekeeper);

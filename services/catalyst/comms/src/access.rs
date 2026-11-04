@@ -38,6 +38,27 @@ impl AccessType {
     }
 }
 
+/// How long a world with `blocked_since` stays open (WCS `isWorldBlocked`, two days).
+pub const BLOCKED_WORLD_GRACE: chrono::TimeDelta = chrono::TimeDelta::days(2);
+
+/// The one "blocked past grace" predicate `/about` and the comms mints share.
+pub fn blocked_past_grace(
+    blocked_since: Option<chrono::NaiveDateTime>,
+    now: chrono::NaiveDateTime,
+) -> bool {
+    blocked_since.is_some_and(|since| now - since > BLOCKED_WORLD_GRACE)
+}
+
+/// Whether a world can be joined at all, before any actor is considered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorldAdmission {
+    /// No `worlds.worlds` row.
+    Unknown,
+    /// Blocked for longer than [`BLOCKED_WORLD_GRACE`].
+    Blocked,
+    Open(AccessType),
+}
+
 /// Why a world join is refused before any access setting is consulted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ban {
@@ -127,5 +148,24 @@ impl LandOperators {
     /// or approvedForAll.
     pub fn manages(&self, actor: &Address) -> bool {
         self.addresses().any(|a| a == actor.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_block_takes_effect_only_after_the_two_day_grace() {
+        let now = chrono::DateTime::from_timestamp(1_800_000_000, 0)
+            .unwrap()
+            .naive_utc();
+        assert!(!blocked_past_grace(None, now));
+        assert!(!blocked_past_grace(Some(now), now));
+        assert!(!blocked_past_grace(Some(now - BLOCKED_WORLD_GRACE), now));
+        assert!(blocked_past_grace(
+            Some(now - BLOCKED_WORLD_GRACE - chrono::TimeDelta::seconds(1)),
+            now
+        ));
     }
 }

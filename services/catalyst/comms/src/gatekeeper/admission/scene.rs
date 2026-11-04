@@ -28,7 +28,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use sqlx::Row;
 
-use crate::access::{Access, LandOperators, SceneRef};
+use crate::access::{Access, AccessType, LandOperators, SceneRef, WorldAdmission};
 use crate::shared::cache::TtlMap;
 use crate::world_identity::{Parcel, ParcelSet, SceneId, WorldName, is_world_realm_name};
 use crate::{Address, AuthorityNotEstablished, PermissionDecision};
@@ -972,32 +972,84 @@ pub(crate) async fn live_world_rooms(
 }
 
 /// Evicts from `world`'s rooms every participant the access setting no
-/// longer admits (the owner stays; a shared-secret participant must mint
-/// again with the new secret, as the host requires).
+/// longer admits, as WCS's access-change handler: switching to unrestricted
+/// evicts nobody; the owner and the deployment/streaming grantees of the
+/// world or of a live scene (`protected_addresses`) stay; a shared-secret
+/// participant must mint again with the new secret; an allow-list edit
+/// evicts only who lost access; an undetermined decision evicts nobody.
 pub(crate) async fn readmit_world_rooms(
     state: &CommsState,
     world: &WorldName,
 ) -> Result<(), String> {
     let now = chrono::Utc::now().naive_utc();
-    for room in live_world_rooms(state, world).await? {
-        let client = state.room_service();
+    match state.policy.world_admission(world, now).await {
+        Ok(WorldAdmission::Open(AccessType::Unrestricted)) => return Ok(()),
+        Ok(_) => {}
+        Err(error) => return Err(format!("access setting undetermined: {error}")),
+    }
+    let rooms = live_world_rooms(state, world).await?;
+    let protected = readmit_protected(state, world, &rooms).await?;
+    let client = state.room_service();
+    for room in rooms {
         for identity in client.list_participant_identities(&room).await {
             let Ok(address) = Address::parse(&identity) else {
                 continue;
             };
-            let allowed = matches!(
-                state
-                    .policy
-                    .can_access(world, &address, None, None, None, now)
-                    .await,
-                Ok(Access::Allowed(_))
-            );
-            if !allowed && let Err(error) = client.remove_participant(&room, &identity).await {
-                tracing::warn!(%error, room = %room, %address, "failed to evict a revoked participant (best-effort)");
+            if protected.contains(&address) {
+                continue;
+            }
+            match state
+                .policy
+                .can_access(world, &address, None, None, None, now)
+                .await
+            {
+                Ok(Access::Allowed(_)) => {}
+                Ok(_) => {
+                    if let Err(error) = client.remove_participant(&room, &identity).await {
+                        tracing::warn!(%error, room = %room, %address, "failed to evict a revoked participant (best-effort)");
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(%error, room = %room, %address, "access undetermined; participant kept")
+                }
             }
         }
     }
     Ok(())
+}
+
+/// The wallets an access change never evicts: the owner and the grantees
+/// world-wide or over any live scene of `world` (its active scene included).
+async fn readmit_protected(
+    state: &CommsState,
+    world: &WorldName,
+    rooms: &[String],
+) -> Result<BTreeSet<Address>, String> {
+    let mut parcels = ParcelSet::new();
+    if let Some(active) = state
+        .scenes
+        .world_active_scene(world)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        parcels.extend(active.parcels.iter().copied());
+    }
+    for room in rooms {
+        if let Some((_, scene)) = crate::rooms::decode_world_scene_room(room)
+            && let Some(deployment) = state
+                .scenes
+                .world_scene(world, &scene)
+                .await
+                .map_err(|e| e.to_string())?
+        {
+            parcels.extend(deployment.parcels.iter().copied());
+        }
+    }
+    state
+        .policy
+        .protected_addresses(world, &parcels)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

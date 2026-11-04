@@ -608,6 +608,12 @@ impl CommsState {
         self
     }
 
+    /// `SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE` for the world comms mints (3 by default).
+    pub fn with_shared_secret_max_attempts(mut self, max: u32) -> Self {
+        self.world_mint.max_secret_attempts = max.max(1);
+        self
+    }
+
     pub fn eip1654(&self) -> Option<&dyn Eip1654Validator> {
         self.eip1654.as_deref()
     }
@@ -655,6 +661,22 @@ impl CommsState {
             move |_ctx| {
                 let state = state.clone();
                 async move { moderation::maintenance::run_once(&state).await }
+            },
+        );
+        let pool = self.pool.clone();
+        jobs.spawn_periodic_leased(
+            "comms-secret-attempts-sweep",
+            PeriodicCfg::every(Duration::from_secs(300))
+                .with_error_backoff(Duration::from_secs(600)),
+            move |_ctx| {
+                let pool = pool.clone();
+                async move {
+                    admission::world_mint::sweep_secret_attempts(
+                        &pool,
+                        chrono::Utc::now().naive_utc(),
+                    )
+                    .await
+                }
             },
         );
         let state = self.clone();

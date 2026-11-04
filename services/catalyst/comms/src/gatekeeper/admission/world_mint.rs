@@ -4,54 +4,132 @@
 //! at the root and under `/worlds-content-server`, answering in the worlds
 //! envelope (`crate::worlds_envelope`). `worlds::core` assigns them to
 //! comms, which owns the LiveKit transport: the room is the worlds service's
-//! contract (`rooms`, `world-<name>` / `scene-<name>-<id>`, resolved by
-//! `SceneIdentity`), the decision the ONE permission core's
-//! (`AccessPolicy::is_banned`, `AccessPolicy::can_access`), the capacity the
+//! contract (`rooms`: the lobby `world-<key>`, a scene
+//! `w1:<base36 key length>:<key><scene id>`, resolved by `SceneIdentity`),
+//! the decision the ONE permission core's (`AccessPolicy::world_admission`:
+//! an unknown world or one blocked past its grace is 404;
+//! `AccessPolicy::is_banned`, `AccessPolicy::can_access`), the capacity the
 //! live presence's (`crate::presence`, `MAX_USERS_PER_WORLD`, 100), and a
-//! shared-secret world's wrong secrets are throttled per world and caller (3
-//! a minute). The old explorer-api shim proxied the two `/worlds/...` paths
-//! here; they are these routes now. The old service's external wallet
+//! shared-secret world's wrong secrets are throttled per world and caller
+//! (`SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE`, 3) in Postgres, so every replica
+//! shares one count. The old explorer-api shim proxied the two `/worlds/...`
+//! paths here; they are these routes now. The old service's external wallet
 //! denylist is checked through the shared DENY_LIST_URL reader, alongside
 //! the operator's block list, platform and scene bans.
-
-use std::time::Duration;
 
 use axum::extract::{OriginalUri, Path, State};
 use axum::http::{HeaderMap, Uri};
 use axum::routing::post;
 use axum::{Json, Router};
+use chrono::NaiveDateTime;
 use serde::Serialize;
+use sqlx::PgPool;
 
-use crate::access::{Access, AccessType, Ban};
+use crate::access::{Access, AccessType, Ban, WorldAdmission};
 use crate::gatekeeper::SharedState;
 use crate::gatekeeper::livekit::{AccessToken, build_adapter_url, join_grants};
-use crate::limits::RateLimiter;
 use crate::rooms::{ResolveError, RoomRequest, WORLD_ROOM_PREFIX};
 use crate::shared::signed_fetch::SignedPath;
 use crate::signed_fetch::{EXPLORER_METADATA_KEYS, map_auth_error_api, require_verified};
 use crate::world_identity::{SceneId, WorldName};
 use crate::worlds_envelope::ApiError;
 
-pub const RATE_LIMIT_MAX_ATTEMPTS: u32 = 3;
+pub const DEFAULT_SHARED_SECRET_MAX_ATTEMPTS: u32 = 3;
 pub const RATE_LIMIT_WINDOW_SECONDS: u64 = 60;
 pub const DEFAULT_MAX_USERS_PER_WORLD: i64 = 100;
 
-/// The mints' process state: the shared-secret throttle and the capacity.
+/// The mints' settings: the shared-secret throttle and the capacity.
 pub struct MintState {
-    pub(crate) limiter: RateLimiter,
+    pub(crate) max_secret_attempts: u32,
     pub(crate) max_users_per_world: i64,
 }
 
 impl Default for MintState {
     fn default() -> Self {
         Self {
-            limiter: RateLimiter::new(
-                RATE_LIMIT_MAX_ATTEMPTS,
-                Duration::from_secs(RATE_LIMIT_WINDOW_SECONDS),
-            ),
+            max_secret_attempts: DEFAULT_SHARED_SECRET_MAX_ATTEMPTS,
             max_users_per_world: DEFAULT_MAX_USERS_PER_WORLD,
         }
     }
+}
+
+fn window_start_cutoff(now: NaiveDateTime) -> NaiveDateTime {
+    now - chrono::TimeDelta::seconds(RATE_LIMIT_WINDOW_SECONDS as i64)
+}
+
+/// Wrong shared secrets of one caller for one world, in
+/// `social.world_secret_attempts` (a fixed window from the first failure).
+struct SecretAttempts<'a> {
+    pool: &'a PgPool,
+    world: &'a str,
+    subject: String,
+    max: u32,
+}
+
+impl SecretAttempts<'_> {
+    async fn is_limited(&self, now: NaiveDateTime) -> Result<bool, sqlx::Error> {
+        let attempts: Option<i32> = sqlx::query_scalar(
+            "SELECT attempts FROM social.world_secret_attempts \
+             WHERE world_name = $1 AND subject = $2 AND window_start > $3",
+        )
+        .bind(self.world)
+        .bind(&self.subject)
+        .bind(window_start_cutoff(now))
+        .fetch_optional(self.pool)
+        .await?;
+        Ok(attempts.is_some_and(|n| n.max(0) as u32 >= self.max))
+    }
+
+    /// Counts a failure; `true` when it went past the limit (WCS: the
+    /// limit-th failure still answers 403, the next request 429).
+    async fn record_failure(&self, now: NaiveDateTime) -> Result<bool, sqlx::Error> {
+        let attempts: i32 = sqlx::query_scalar(
+            "INSERT INTO social.world_secret_attempts AS a (world_name, subject, attempts, window_start) \
+             VALUES ($1, $2, 1, $3) \
+             ON CONFLICT (world_name, subject) DO UPDATE SET \
+               attempts = CASE WHEN a.window_start <= $4 THEN 1 ELSE a.attempts + 1 END, \
+               window_start = CASE WHEN a.window_start <= $4 THEN $3 ELSE a.window_start END \
+             RETURNING attempts",
+        )
+        .bind(self.world)
+        .bind(&self.subject)
+        .bind(now)
+        .bind(window_start_cutoff(now))
+        .fetch_one(self.pool)
+        .await?;
+        Ok(attempts.max(0) as u32 > self.max)
+    }
+
+    async fn clear(&self) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "DELETE FROM social.world_secret_attempts WHERE world_name = $1 AND subject = $2",
+        )
+        .bind(self.world)
+        .bind(&self.subject)
+        .execute(self.pool)
+        .await
+        .map(|_| ())
+    }
+}
+
+/// Drops expired throttle windows (the `comms-secret-attempts-sweep` job).
+pub async fn sweep_secret_attempts(pool: &PgPool, now: NaiveDateTime) -> anyhow::Result<()> {
+    sqlx::query("DELETE FROM social.world_secret_attempts WHERE window_start <= $1")
+        .bind(window_start_cutoff(now))
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+fn too_many_attempts() -> ApiError {
+    ApiError::too_many(
+        "Too many shared-secret attempts. Try again later.",
+        RATE_LIMIT_WINDOW_SECONDS,
+    )
+}
+
+fn invalid_world(world_name: &str) -> ApiError {
+    ApiError::not_found(format!("World \"{world_name}\" is invalid or blocked."))
 }
 
 #[derive(Debug, Serialize)]
@@ -155,23 +233,25 @@ async fn mint(
     }
     let now = chrono::Utc::now().naive_utc();
 
-    let access_type = state
+    let admission = state
         .policy
-        .access_type(&world)
+        .world_admission(&world, now)
         .await
         .map_err(undetermined)?;
-    let is_shared_secret = access_type == Some(AccessType::SharedSecret);
+    let is_shared_secret = admission == WorldAdmission::Open(AccessType::SharedSecret);
     let subject = headers
         .get("cf-connecting-ip")
         .and_then(|v| v.to_str().ok())
         .map(str::to_string)
         .unwrap_or_else(|| identity.as_str().to_string());
-    let rate_limit_key = format!("{world_name}:{subject}");
-    if is_shared_secret && state.world_mint.limiter.is_rate_limited(&rate_limit_key) {
-        return Err(ApiError::too_many(
-            "Too many shared-secret attempts. Try again later.",
-            RATE_LIMIT_WINDOW_SECONDS,
-        ));
+    let attempts = SecretAttempts {
+        pool: &state.pool,
+        world: world.key(),
+        subject: subject.to_lowercase(),
+        max: state.world_mint.max_secret_attempts,
+    };
+    if is_shared_secret && attempts.is_limited(now).await.map_err(undetermined)? {
+        return Err(too_many_attempts());
     }
 
     match crate::gatekeeper::moderation::admission_ban(
@@ -191,6 +271,9 @@ async fn mint(
             ));
         }
         Some(Ban::Scene) | None => {}
+    }
+    if matches!(admission, WorldAdmission::Unknown | WorldAdmission::Blocked) {
+        return Err(invalid_world(world_name));
     }
 
     let scene = match scene_id {
@@ -221,6 +304,8 @@ async fn mint(
                 scene_id.unwrap_or_default()
             )));
         }
+        // The row vanished since `world_admission`: still an unknown world.
+        Err(ResolveError::UnresolvedRoom(_)) => return Err(invalid_world(world_name)),
         Err(e) => return Err(undetermined(e)),
     };
 
@@ -249,15 +334,8 @@ async fn mint(
             ));
         }
         Access::InvalidSecret => {
-            state
-                .world_mint
-                .limiter
-                .record_failed_attempt(&rate_limit_key);
-            if state.world_mint.limiter.is_rate_limited(&rate_limit_key) {
-                return Err(ApiError::too_many(
-                    "Too many shared-secret attempts. Try again later.",
-                    RATE_LIMIT_WINDOW_SECONDS,
-                ));
+            if attempts.record_failure(now).await.map_err(undetermined)? {
+                return Err(too_many_attempts());
             }
             return Err(ApiError::forbidden(format!(
                 "Access denied, invalid secret for world \"{world_name}\"."
@@ -281,7 +359,7 @@ async fn mint(
         )));
     }
     if is_shared_secret {
-        state.world_mint.limiter.clear(&rate_limit_key);
+        attempts.clear().await.map_err(undetermined)?;
     }
     let token = AccessToken::new(
         &state.livekit.api_key,
