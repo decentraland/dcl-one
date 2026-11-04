@@ -605,24 +605,29 @@ mod tests {
             let adapter = Arc::new(adapter);
             let running = adapter.clone();
             let pending = tokio::spawn(async move {
-                running
+                let started = Instant::now();
+                let result = running
                     .send_with_delays(
                         json!({"channel":"fixture","text":"hello"}),
                         &[Duration::ZERO; 10],
                     )
-                    .await
+                    .await;
+                (started.elapsed(), result)
             });
             received.await.unwrap();
             tokio::time::pause();
-            tokio::time::advance(EFFECT_TIMEOUT).await;
-            for _ in 0..64 {
-                tokio::task::yield_now().await;
-            }
+            // Awaiting the task lets the runtime drive its timer and advance
+            // only to the next deadline. advance()+yield_now() does not promise
+            // that expired timers have run. The driver rounds both the deadline
+            // and the remaining parking duration up to millisecond boundaries.
+            let (elapsed, result) = pending.await.unwrap();
+            let error = result.unwrap_err();
+            assert!(error.to_string().contains("time budget"), "{error}");
             assert!(
-                pending.is_finished(),
-                "the effect deadline includes response headers and body"
+                elapsed <= EFFECT_TIMEOUT + Duration::from_millis(2),
+                "Slack effect took {elapsed:?} with stalled_body={stalled_body}"
             );
-            assert!(pending.await.unwrap().is_err());
+            eprintln!("Slack stalled_body={stalled_body}: budget error after {elapsed:?}");
             assert_eq!(adapter.slots.available_permits(), 100);
             tokio::time::resume();
             release.send(()).unwrap();
