@@ -160,14 +160,9 @@ impl PartialUploadLimits {
     }
 }
 
-/// `MAX_CONCURRENT_UPLOADS` must leave a quarter of `PG_POOL_SIZE` to the other domains.
-pub fn check_pool_headroom(max_concurrent_uploads: u64, pool_size: u32) -> anyhow::Result<()> {
-    if max_concurrent_uploads.saturating_mul(4) > u64::from(pool_size) * 3 {
-        anyhow::bail!(
-            "MAX_CONCURRENT_UPLOADS ({max_concurrent_uploads}) must be at most three quarters of PG_POOL_SIZE ({pool_size})"
-        );
-    }
-    Ok(())
+/// `MAX_CONCURRENT_UPLOADS` capped to three quarters of `PG_POOL_SIZE` (at least one).
+pub fn uploads_within_pool(max_concurrent_uploads: u64, pool_size: u32) -> u64 {
+    max_concurrent_uploads.min((u64::from(pool_size) * 3 / 4).max(1))
 }
 
 /// The in-process locks serializing the batches of one entity; an entry lives while it is held or awaited.
@@ -388,14 +383,15 @@ async fn replay(
         .map(|(created_ms, world_name, parcels)| success(state, created_ms, &world_name, &parcels)))
 }
 
-/// The live scene of `entity_id`: its creation time (ms), world and scene parcels.
+/// The scene of `entity_id` published here (not mirrored): its creation time (ms), world and scene parcels.
 async fn find_publication(
     state: &CoreState,
     entity_id: &str,
 ) -> Result<Option<(i64, String, Vec<String>)>, sqlx::Error> {
     let row: Option<(String, Value, Vec<String>, i64)> = sqlx::query_as(
         "SELECT world_name, entity, parcels, (extract(epoch FROM created_at) * 1000)::bigint \
-         FROM worlds.world_scenes WHERE entity_id = $1 ORDER BY created_at DESC LIMIT 1",
+         FROM worlds.world_scenes WHERE entity_id = $1 AND mirror_source IS NULL \
+         ORDER BY created_at DESC LIMIT 1",
     )
     .bind(entity_id)
     .fetch_optional(&state.pool)
@@ -603,7 +599,7 @@ async fn stage_batch(
         return Err(failed(TOO_BIG_MESSAGE).into_response());
     }
 
-    let upload = upsert(
+    let (upload, created) = upsert(
         state,
         &limits,
         UpsertInput {
@@ -630,13 +626,13 @@ async fn stage_batch(
     )
     .await
     {
-        // A first batch that is not admitted must not keep its upload holding a slot.
-        if pending.is_none() {
+        // An upload this batch created and could not admit must not keep holding a slot.
+        if created {
             discard_unadmitted(&state.pool, entity_id).await;
         }
         return Err(resp);
     }
-    if pending.is_none() {
+    if created {
         worlds_metrics::partial_started();
     }
     // Re-checked right before storing on this instance's clock; cleanup and publication use the database's.
@@ -717,8 +713,10 @@ async fn stage_batch(
                 resp.status(),
                 StatusCode::BAD_REQUEST | StatusCode::SERVICE_UNAVAILABLE
             ) {
-                let missing = vanished(state, entity_id, &content).await?;
-                if !missing.is_empty() {
+                // Only for an upload still live: an expired one is answered as such.
+                if let Some(missing) = vanished(state, entity_id, &content).await?
+                    && !missing.is_empty()
+                {
                     return Ok(
                         (StatusCode::ACCEPTED, Json(PartialDeployPending { missing }))
                             .into_response(),
@@ -759,12 +757,13 @@ fn client_source(headers: &HeaderMap) -> Option<String> {
     (!ip.is_empty()).then(|| crate::shared::client_ip::source_key(&ip))
 }
 
-/// The content files the store no longer holds, marked outstanding again.
+/// The content files the store no longer holds, marked outstanding again; `None` once the
+/// upload is expired or gone (database clock).
 async fn vanished(
     state: &CoreState,
     entity_id: &str,
     content: &[String],
-) -> Result<Vec<String>, Response> {
+) -> Result<Option<Vec<String>>, Response> {
     let keys: Vec<&str> = content.iter().map(String::as_str).collect();
     let present = state
         .storage
@@ -776,6 +775,21 @@ async fn vanished(
         .filter(|h| !present.get(h.as_str()).copied().unwrap_or(false))
         .cloned()
         .collect();
+    let mut tx = state.pool.begin().await.map_err(db_error)?;
+    // Held to commit, so the cleanup cannot reclaim the upload in between.
+    let live: Option<i32> = sqlx::query_scalar(
+        "SELECT 1 FROM worlds.pending_scenes WHERE entity_id = $1 \
+           AND created_at > timezone('UTC', now()) - make_interval(secs => $2::float8 / 1000) \
+         FOR SHARE",
+    )
+    .bind(entity_id)
+    .bind(state.settings.partial_uploads.pending_deployment_ttl_ms as f64)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(db_error)?;
+    if live.is_none() {
+        return Ok(None);
+    }
     if !missing.is_empty() {
         sqlx::query(
             "UPDATE worlds.pending_scene_files SET stored = false, written = false \
@@ -783,19 +797,21 @@ async fn vanished(
         )
         .bind(entity_id)
         .bind(&missing)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await
         .map_err(db_error)?;
     }
-    Ok(missing)
+    tx.commit().await.map_err(db_error)?;
+    Ok(Some(missing))
 }
 
-/// Creates or resumes the upload under the per-account and per-world upload caps.
+/// Creates or resumes the upload under the per-account and per-world upload caps; whether
+/// this call created it.
 async fn upsert(
     state: &CoreState,
     limits: &PartialUploadLimits,
     input: UpsertInput<'_>,
-) -> Result<PendingRow, Response> {
+) -> Result<(PendingRow, bool), Response> {
     let mut tx = state.pool.begin().await.map_err(db_error)?;
     let deployer = input.deployer;
     lock_key(&mut tx, &format!("worlds-partial-deployer:{deployer}"))
@@ -816,7 +832,7 @@ async fn upsert(
         if existing.deployer != deployer {
             return Err(err_one(OWNERSHIP_MESSAGE));
         }
-        return Ok(existing);
+        return Ok((existing, false));
     }
     if input.resumes || now_ms() >= input.admitted_ms + limits.ttl_ms() {
         return Err(expired());
@@ -897,7 +913,7 @@ async fn upsert(
     .await
     .map_err(db_error)?;
     tx.commit().await.map_err(db_error)?;
-    Ok(row)
+    Ok((row, true))
 }
 
 #[derive(sqlx::FromRow)]
@@ -1191,6 +1207,9 @@ async fn progress(pool: &PgPool, entity_id: &str) -> Result<HashMap<String, i64>
 /// Expired uploads fetched per cleanup query.
 const CLEANUP_PAGE: i64 = 100;
 
+/// Expired uploads reclaimed under one hold of the exclusive store lock.
+const RECLAIM_BATCH: usize = 20;
+
 #[derive(Debug, thiserror::Error)]
 enum ReclaimError {
     #[error("publishes kept the store lock busy")]
@@ -1230,13 +1249,15 @@ pub async fn delete_expired_uploads(state: &CoreState) -> ExpiredUploadsCleanup 
 async fn run_cleanup(
     state: &CoreState,
     limits: &PartialUploadLimits,
-) -> Result<ExpiredUploadsCleanup, sqlx::Error> {
+) -> anyhow::Result<ExpiredUploadsCleanup> {
     let ttl = limits.pending_deployment_ttl_ms as f64;
     let mut report = ExpiredUploadsCleanup {
         outcome: "success",
         removed: 0,
         failed: 0,
     };
+    // The catalogue and global scenes, read once per run and outside the store lock.
+    let mut fixed: Option<HashSet<String>> = None;
     let mut after: Option<(NaiveDateTime, String)> = None;
     loop {
         let page: Vec<(String, NaiveDateTime)> = sqlx::query_as(
@@ -1251,17 +1272,31 @@ async fn run_cleanup(
         .bind(CLEANUP_PAGE)
         .fetch_all(&state.pool)
         .await?;
-        for (entity_id, created_at) in &page {
-            after = Some((*created_at, entity_id.clone()));
-            match reclaim(state, limits, entity_id).await {
-                Ok(true) => {
-                    report.removed += 1;
-                    worlds_metrics::partial_expired_reclaimed();
+        let Some(last) = page.last() else { break };
+        after = Some((last.1, last.0.clone()));
+        let fixed_refs = match &mut fixed {
+            Some(fixed) => &*fixed,
+            slot @ None => {
+                let mut conn = state.pool.acquire().await?;
+                slot.insert(catalyst_storage::gc::fixed_references(&mut conn, pins(state)).await?)
+            }
+        };
+        for batch in page.chunks(RECLAIM_BATCH) {
+            let ids: Vec<String> = batch.iter().map(|(id, _)| id.clone()).collect();
+            match reclaim(state, limits, fixed_refs, &ids).await {
+                Ok((removed, failed)) => {
+                    for _ in 0..removed {
+                        worlds_metrics::partial_expired_reclaimed();
+                    }
+                    for _ in 0..failed {
+                        worlds_metrics::partial_cleanup_failed();
+                    }
+                    report.removed += removed;
+                    report.failed += failed;
                 }
-                Ok(false) => {}
                 Err(ReclaimError::Deferred) => {
                     tracing::warn!(
-                        entity_id,
+                        uploads = ids.len(),
                         "deferred expired upload cleanup: the store lock is busy"
                     );
                     report.outcome = if report.failed > 0 {
@@ -1272,9 +1307,11 @@ async fn run_cleanup(
                     return Ok(report);
                 }
                 Err(ReclaimError::Failed(error)) => {
-                    report.failed += 1;
-                    worlds_metrics::partial_cleanup_failed();
-                    tracing::error!(entity_id, %error, "failed to reclaim an expired upload");
+                    report.failed += ids.len() as u64;
+                    for _ in &ids {
+                        worlds_metrics::partial_cleanup_failed();
+                    }
+                    tracing::error!(?ids, %error, "failed to reclaim expired uploads");
                 }
             }
         }
@@ -1288,71 +1325,112 @@ async fn run_cleanup(
     Ok(report)
 }
 
-/// One expired upload: `Ok(false)` when it is no longer there to reclaim.
+/// Whether the stored file at `key` is at least `floor` old.
+async fn aged(state: &CoreState, key: &str, floor: Duration) -> Result<bool, ReclaimError> {
+    let path = state
+        .storage
+        .file_path(key)
+        .await
+        .map_err(|e| ReclaimError::Failed(e.to_string()))?;
+    let Some(path) = path else { return Ok(false) };
+    Ok(tokio::fs::metadata(&path)
+        .await
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+        .is_some_and(|age| age >= floor))
+}
+
+/// A batch of expired uploads under one store lock: `(reclaimed, failed)`, an upload failing
+/// when a file it stored could not be unlinked (left to the collector).
 async fn reclaim(
     state: &CoreState,
     limits: &PartialUploadLimits,
-    entity_id: &str,
-) -> Result<bool, ReclaimError> {
+    fixed: &HashSet<String>,
+    entity_ids: &[String],
+) -> Result<(u64, u64), ReclaimError> {
     let failed = |e: &dyn std::fmt::Display| ReclaimError::Failed(e.to_string());
-    // Only what this upload stored itself: an inventoried file belongs to whoever stored it.
-    let keys: Vec<String> = sqlx::query_scalar(
-        "SELECT hash FROM worlds.pending_scene_files WHERE entity_id = $1 AND written",
+    // Only what each upload stored itself: an inventoried file belongs to whoever stored it.
+    let written: Vec<(String, String)> = sqlx::query_as(
+        "SELECT entity_id, hash FROM worlds.pending_scene_files \
+         WHERE entity_id = ANY($1::text[]) AND written",
     )
-    .bind(entity_id)
+    .bind(entity_ids)
     .fetch_all(&state.pool)
     .await
     .map_err(|e| failed(&e))?;
-    let mut lock = match catalyst_storage::gc::lock_store_exclusive(&state.pool).await {
-        Ok(lock) => lock,
-        Err(catalyst_storage::gc::GcError::LockTimeout) => return Err(ReclaimError::Deferred),
-        Err(e) => return Err(failed(&e)),
-    };
-    // Deleted first, in the lock's transaction, so the reference check below no longer counts it.
-    let gone: Option<i32> = sqlx::query_scalar(
-        "DELETE FROM worlds.pending_scenes WHERE entity_id = $1 \
-           AND created_at <= timezone('UTC', now()) - make_interval(secs => $2::float8 / 1000) \
-         RETURNING 1",
-    )
-    .bind(entity_id)
-    .bind(limits.pending_deployment_ttl_ms as f64)
-    .fetch_optional(&mut *lock)
-    .await
-    .map_err(|e| failed(&e))?;
-    if gone.is_none() {
-        lock.commit().await.map_err(|e| failed(&e))?;
-        return Ok(false);
-    }
-    let referenced = catalyst_storage::gc::referenced_among_on(&mut lock, pins(state), &keys)
-        .await
-        .map_err(|e| failed(&e))?;
     // The collector's age floor: a younger file may belong to a writer still committing.
     let upload_limits = &state.settings.upload_limits;
     let floor = catalyst_storage::gc::orphan_age_floor(
         upload_limits.multipart_upload_timeout_ms,
         upload_limits.deployment_processing_timeout_ms,
     );
-    let now = SystemTime::now();
-    for key in keys.iter().filter(|k| !referenced.contains(*k)) {
-        let path = state.storage.file_path(key).await.map_err(|e| failed(&e))?;
-        let Some(path) = path else { continue };
-        let aged = tokio::fs::metadata(&path)
-            .await
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .and_then(|modified| now.duration_since(modified).ok())
-            .is_some_and(|age| age >= floor);
-        if !aged {
+    // Candidates are found before the lock; under it only references, a re-stat and unlinks remain.
+    let mut candidates: Vec<(String, String)> = Vec::new();
+    for (entity_id, key) in written {
+        if !fixed.contains(&key) && aged(state, &key, floor).await? {
+            candidates.push((entity_id, key));
+        }
+    }
+    let mut lock = match catalyst_storage::gc::lock_store_exclusive(&state.pool).await {
+        Ok(lock) => lock,
+        Err(catalyst_storage::gc::GcError::LockTimeout) => return Err(ReclaimError::Deferred),
+        Err(e) => return Err(failed(&e)),
+    };
+    // Deleted first, in the lock's transaction, so the reference check below no longer counts them.
+    let gone: Vec<String> = sqlx::query_scalar(
+        "DELETE FROM worlds.pending_scenes WHERE entity_id = ANY($1::text[]) \
+           AND created_at <= timezone('UTC', now()) - make_interval(secs => $2::float8 / 1000) \
+         RETURNING entity_id",
+    )
+    .bind(entity_ids)
+    .bind(limits.pending_deployment_ttl_ms as f64)
+    .fetch_all(&mut *lock)
+    .await
+    .map_err(|e| failed(&e))?;
+    let gone: HashSet<String> = gone.into_iter().collect();
+    candidates.retain(|(entity_id, _)| gone.contains(entity_id));
+    let mut keys: Vec<String> = candidates.iter().map(|(_, k)| k.clone()).collect();
+    keys.sort();
+    keys.dedup();
+    let referenced = catalyst_storage::gc::referenced_rows_among_on(&mut lock, &keys)
+        .await
+        .map_err(|e| failed(&e))?;
+    let mut unlinked: HashMap<String, bool> = HashMap::new();
+    let mut broken: HashSet<String> = HashSet::new();
+    for (entity_id, key) in &candidates {
+        if referenced.contains(key) {
             continue;
         }
-        state
-            .storage
-            .delete_strict(key)
-            .await
-            .map_err(|e| failed(&e))?;
+        let ok = match unlinked.get(key) {
+            Some(ok) => *ok,
+            None => {
+                // Stored again since the scan, it is young again: keep it.
+                let ok = match aged(state, key, floor).await {
+                    Ok(false) => true,
+                    Ok(true) => match state.storage.delete_strict(key).await {
+                        Ok(()) => true,
+                        Err(error) => {
+                            tracing::warn!(%error, key, "expired upload cleanup: could not unlink a file");
+                            false
+                        }
+                    },
+                    Err(error) => {
+                        tracing::warn!(%error, key, "expired upload cleanup: could not stat a file");
+                        false
+                    }
+                };
+                unlinked.insert(key.clone(), ok);
+                ok
+            }
+        };
+        if !ok {
+            broken.insert(entity_id.clone());
+        }
     }
     lock.commit().await.map_err(|e| failed(&e))?;
-    Ok(true)
+    let failed_count = broken.len() as u64;
+    Ok((gone.len() as u64 - failed_count, failed_count))
 }
 
 /// Prunes completion receipts and rate windows and refreshes the staging gauges.
@@ -1440,10 +1518,12 @@ mod tests {
 
     #[test]
     fn uploads_leave_a_quarter_of_the_pool() {
-        assert!(check_pool_headroom(40, 60).is_ok());
-        assert!(check_pool_headroom(45, 60).is_ok());
-        assert!(check_pool_headroom(46, 60).is_err());
-        assert!(check_pool_headroom(40, 20).is_err());
+        assert_eq!(uploads_within_pool(40, 60), 40);
+        assert_eq!(uploads_within_pool(46, 60), 45);
+        // The dev and image-smoke pools start with the default.
+        assert_eq!(uploads_within_pool(40, 12), 9);
+        assert_eq!(uploads_within_pool(40, 8), 6);
+        assert_eq!(uploads_within_pool(40, 1), 1);
     }
 
     #[tokio::test]

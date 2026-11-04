@@ -149,8 +149,9 @@ difference not listed here is a gap, not a decision.
     is listed in `missing` again (202) instead of failing the publish.
   - Batches of one entity are serialized within a process by an in-memory
     lock; across replicas each staging step is atomic in the database.
-    There is no `CONTENT_LOCK_CONNECTIONS`. `MAX_CONCURRENT_UPLOADS` must
-    be at most three quarters of `PG_POOL_SIZE`.
+    There is no `CONTENT_LOCK_CONNECTIONS`. `MAX_CONCURRENT_UPLOADS` is
+    lowered to three quarters of `PG_POOL_SIZE` (at least one) with a
+    startup warning when it is set higher.
   - A personal world accepts partial uploads only once it is published on
     this realm; its first scene goes in a single request.
   - `MAX_PENDING_BYTES_PER_SOURCE` (default 4 GiB, at least

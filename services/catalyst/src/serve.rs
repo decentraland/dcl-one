@@ -1592,10 +1592,18 @@ async fn worlds_states(
     jobs: &Arc<jobs::Jobs>,
     presence: Arc<comms::presence::Presence>,
 ) -> anyhow::Result<worlds::Stage5> {
-    worlds::core::partial::check_pool_headroom(
+    let max_concurrent_uploads = worlds::core::partial::uploads_within_pool(
         config.worlds.max_concurrent_uploads,
         config.node.pg_pool_size,
-    )?;
+    );
+    if max_concurrent_uploads < config.worlds.max_concurrent_uploads {
+        tracing::warn!(
+            configured = config.worlds.max_concurrent_uploads,
+            effective = max_concurrent_uploads,
+            pg_pool_size = config.node.pg_pool_size,
+            "MAX_CONCURRENT_UPLOADS lowered to three quarters of PG_POOL_SIZE"
+        );
+    }
     let non_empty = Config::non_empty;
 
     let core = Arc::new(
@@ -1607,7 +1615,7 @@ async fn worlds_states(
                 non_empty(&config.worlds.catalyrst_worlds_admin_token),
                 worlds::core::UploadLimits {
                     max_in_flight_upload_bytes: config.worlds.max_in_flight_upload_bytes,
-                    max_concurrent_uploads: config.worlds.max_concurrent_uploads,
+                    max_concurrent_uploads,
                     max_in_flight_upload_files: config.worlds.max_in_flight_upload_files,
                     multipart_upload_timeout_ms: config.worlds.multipart_upload_timeout_ms,
                     deployment_processing_timeout_ms: config

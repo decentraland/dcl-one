@@ -553,6 +553,14 @@ pub async fn referenced_among_on(
     references_among(conn, pins, keys, true).await
 }
 
+/// [`referenced_among_on`] without the fixed references, which a caller resolved beforehand.
+pub async fn referenced_rows_among_on(
+    conn: &mut sqlx::PgConnection,
+    keys: &[String],
+) -> Result<HashSet<String>, GcError> {
+    rows_among(conn, keys, true).await
+}
+
 /// [`referenced_among_on`] on a pooled connection.
 pub async fn referenced_among(
     pool: &PgPool,

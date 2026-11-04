@@ -413,6 +413,27 @@ async fn an_expired_upload_is_refused_and_reclaimed_by_the_cleanup() {
 }
 
 #[tokio::test]
+async fn one_cleanup_run_reclaims_several_uploads() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let uploads = [upload(&world, 2), upload_of(&world, &["1,0"], 2, 64)];
+    for u in &uploads {
+        expect_batch(&f.app, u, Batch::of(&owner, true, &[0]), 202).await;
+    }
+    let _cleanup = CLEANUP.lock().await;
+    for u in &uploads {
+        age_upload(&f, u, std::time::Duration::from_secs(2 * 3600)).await;
+    }
+    let report = partial::delete_expired_uploads(&f.state).await;
+    assert!(report.removed >= 2, "{report:?}");
+    for u in &uploads {
+        assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
+        assert!(!f.storage.exist(&u.files[0].0).await.unwrap());
+        assert!(!f.storage.exist(&u.entity_id).await.unwrap());
+    }
+}
+
+#[tokio::test]
 async fn the_cleanup_keeps_files_something_else_names() {
     let Some(f) = fixture().await else { return };
     let (world, owner) = owned(&f).await;
@@ -890,4 +911,203 @@ async fn uploads_from_one_source_share_its_staging_budget() {
         "{body}"
     );
     assert!(retry_after(&headers) >= 1);
+}
+
+/// Waits until a backend running a statement that contains `fragment` waits on a lock.
+async fn wait_for_lock_wait(pool: &PgPool, fragment: &str) {
+    for _ in 0..200 {
+        let waiting: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
+             WHERE wait_event_type = 'Lock' AND strpos(query, $1) > 0)",
+        )
+        .bind(fragment)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if waiting {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("no statement with {fragment:?} waited on a lock");
+}
+
+#[tokio::test]
+async fn a_partial_upload_of_a_mirrored_scene_publishes_it_here() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 1);
+    sqlx::query(
+        "INSERT INTO worlds.worlds (name, mirror_source) VALUES ($1, 'https://upstream.example')",
+    )
+    .bind(world.key())
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    let entity: Value = serde_json::from_slice(&u.entity_bytes).unwrap();
+    sqlx::query(
+        "INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size, mirror_source) \
+         VALUES ($1, $2, '[]'::json, $3, $4, ARRAY['0,0'], 1, 'https://upstream.example')",
+    )
+    .bind(world.key())
+    .bind(&u.entity_id)
+    .bind(&entity)
+    .bind(crate::ZERO_ADDRESS)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+
+    // Mirrored only, the entity is not answered as deployed: the upload stages and completes.
+    let body = expect_batch(&f.app, &u, Batch::of(&owner, true, &[]), 202).await;
+    assert_eq!(body, json!({ "missing": hashes(&u, &[0]) }));
+    expect_batch(&f.app, &u, Batch::of(&owner, false, &[0]), 200).await;
+    let mirror: Option<String> =
+        sqlx::query_scalar("SELECT mirror_source FROM worlds.world_scenes WHERE entity_id = $1")
+            .bind(&u.entity_id)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(mirror, None, "the scene is published here");
+}
+
+#[tokio::test]
+async fn concurrent_batches_of_one_entity_publish_once() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 2);
+    expect_batch(&f.app, &u, Batch::of(&owner, true, &[]), 202).await;
+    let (a, b) = tokio::join!(
+        send(&f.app, &u, Batch::of(&owner, false, &[0])),
+        send(&f.app, &u, Batch::of(&owner, false, &[1])),
+    );
+    let mut statuses = [a.0.as_u16(), b.0.as_u16()];
+    statuses.sort();
+    assert_eq!(statuses, [200, 202], "{} {}", a.2, b.2);
+    assert_eq!(
+        deployed_entity_ids(&f.pool, &world).await,
+        vec![u.entity_id.clone()]
+    );
+    assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
+}
+
+#[tokio::test]
+async fn a_refused_batch_keeps_an_upload_another_replica_created() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 1);
+    // The account's per-minute rate is spent, so this batch is refused after its upsert.
+    sqlx::query(
+        "INSERT INTO worlds.partial_upload_rates (deployer, window_started, bytes) \
+         VALUES ($1, timezone('UTC', now()), $2) \
+         ON CONFLICT (deployer) DO UPDATE SET window_started = EXCLUDED.window_started, bytes = EXCLUDED.bytes",
+    )
+    .bind(owner.address.as_str())
+    .bind(PartialUploadLimits::default().max_bytes_per_minute as i64)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    // Held so this batch reaches its upsert having seen no upload.
+    let mut held = f.pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(format!(
+            "worlds-partial-deployer:{}",
+            owner.address.as_str()
+        ))
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let ((status, _, body), ()) = tokio::join!(
+        send(&f.app, &u, Batch::of(&owner, true, &[])),
+        async {
+            wait_for_lock_wait(&f.pool, "pg_advisory_xact_lock(hashtextextended").await;
+            // Another replica creates the upload meanwhile.
+            let entity: Value = serde_json::from_slice(&u.entity_bytes).unwrap();
+            sqlx::query(
+                "INSERT INTO worlds.pending_scenes (entity_id, world_name, parcels, entity, deployer, created_at) \
+                 VALUES ($1, $2, ARRAY['0,0'], $3, $4, timezone('UTC', now()))",
+            )
+            .bind(&u.entity_id)
+            .bind(world.key())
+            .bind(&entity)
+            .bind(owner.address.as_str())
+            .execute(&f.pool)
+            .await
+            .unwrap();
+            held.commit().await.unwrap();
+        },
+    );
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(
+        pending_count(&f.pool, &u.entity_id).await,
+        1,
+        "the other replica's upload stays"
+    );
+}
+
+#[tokio::test]
+async fn an_upload_expiring_during_its_completing_publish_is_refused_as_expired() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 2);
+    put(&f, &u.files[0].1).await;
+    sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
+        .bind(world.key())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    expect_batch(&f.app, &u, Batch::of(&owner, true, &[]), 202).await;
+
+    // The completing batch waits on the world row inside its publish.
+    let mut held = f.pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM worlds.worlds WHERE name = $1 FOR UPDATE")
+        .bind(world.key())
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let ((status, _, body), ()) =
+        tokio::join!(send(&f.app, &u, Batch::of(&owner, false, &[1])), async {
+            wait_for_lock_wait(&f.pool, "INSERT INTO worlds.worlds AS w").await;
+            // Meanwhile the upload expires and a file it found stored is collected.
+            sqlx::query(
+                "UPDATE worlds.pending_scenes SET created_at = created_at - interval '2 hours' \
+                 WHERE entity_id = $1",
+            )
+            .bind(&u.entity_id)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+            f.storage.delete_strict(&u.files[0].0).await.unwrap();
+            held.commit().await.unwrap();
+        },);
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        body["message"],
+        "This upload expired. Create a new entity with a fresh timestamp."
+    );
+    assert!(deployed_entity_ids(&f.pool, &world).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_completion_after_the_permission_is_revoked_is_refused() {
+    let Some(f) = fixture().await else { return };
+    let (world, _owner) = owned(&f).await;
+    let grantee = Wallet::random();
+    grant_parcels(&f.pool, &world, &grantee.address, &["0,0"]).await;
+    let u = upload(&world, 1);
+    expect_batch(&f.app, &u, Batch::of(&grantee, true, &[]), 202).await;
+    sqlx::query("DELETE FROM worlds.world_permissions WHERE world_name = $1 AND address = $2")
+        .bind(world.key())
+        .bind(&grantee.address)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let body = expect_batch(&f.app, &u, Batch::of(&grantee, false, &[0]), 400).await;
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("has no permission to publish"),
+        "{body}"
+    );
+    assert!(deployed_entity_ids(&f.pool, &world).await.is_empty());
 }
