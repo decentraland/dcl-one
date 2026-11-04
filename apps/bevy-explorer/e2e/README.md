@@ -59,7 +59,9 @@ boots a second one on its own realm.
 The report goes to `report/`: `junit-<groups>.xml`, and per scenario `commands.jsonl` (every
 console command, its reply or error and its time; `/login_identity` payloads redacted) and
 `final.png` (the engine's frame as the scenario left it). A failed visual scenario adds
-`frame.png`, `reference.png` and `diff.png`.
+`frame.png`, `reference.png` and `diff.png`. A client that fails to boot is booted once more for
+the next scenario; after a second failure every later scenario fails at once with that error,
+which the run logs as it happens.
 
 ## How a spec is written
 

@@ -33,7 +33,15 @@ export interface Session {
 }
 
 const sessions = new Map<string, Promise<Session>>()
+/** The boots of a session that failed, by its key. */
+const bootFailures = new Map<string, { count: number; error: unknown }>()
+/** How many times a client is booted for one session: past it, its scenarios fail at once. */
+export const MAX_BOOTS = 2
 let webServer: Promise<StaticServer> | undefined
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 
 function key(target: Target, options: OpenOptions): string {
   const size = options.windowSize ?? target.windowSize
@@ -47,8 +55,16 @@ export function openSession(options: OpenOptions = {}, target: Target = readTarg
   const id = key(target, options)
   let session = sessions.get(id)
   if (!session) {
-    session = boot(options, target).catch((error) => {
+    const failed = bootFailures.get(id)
+    if (failed && failed.count >= MAX_BOOTS) {
+      return Promise.reject(new Error(`the client failed to boot ${failed.count} times; not booting it again in this run: ${message(failed.error)}`))
+    }
+    session = boot(options, target).catch((error: unknown) => {
       sessions.delete(id)
+      const count = (bootFailures.get(id)?.count ?? 0) + 1
+      bootFailures.set(id, { count, error })
+      // Said at once: the run's own failure summary comes at its end, which a step timeout cuts off.
+      console.error(`[e2e] boot ${count} of ${MAX_BOOTS} failed: ${message(error)}`)
       throw error
     })
     sessions.set(id, session)
@@ -64,6 +80,7 @@ export async function openExplorer(options: OpenOptions = {}): Promise<Explorer>
 export async function closeSessions(): Promise<void> {
   const open = [...sessions.values()]
   sessions.clear()
+  bootFailures.clear()
   for (const session of open) {
     try {
       await (await session).close()
