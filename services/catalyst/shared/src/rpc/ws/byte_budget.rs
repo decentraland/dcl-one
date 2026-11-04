@@ -15,6 +15,26 @@ pub(super) struct Permit {
     budget: Arc<ByteBudget>,
     bytes: usize,
 }
+/// Why an ordinary frame was not admitted.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum Refused {
+    /// Buffered bytes are over the limit: the source's dropped send.
+    Full,
+    /// A guarded frame holds the admission turn. It is not backpressure, so
+    /// it is not counted as a drop; the turn's release wakes [`ByteBudget::changed`].
+    Contended,
+}
+/// The admission turn of a guarded waiter. Releasing it, also on
+/// cancellation, wakes ordinary frames that found the turn taken.
+struct Turn<'a> {
+    budget: &'a ByteBudget,
+    _permit: tokio::sync::SemaphorePermit<'a>,
+}
+impl Drop for Turn<'_> {
+    fn drop(&mut self) {
+        self.budget.changed.notify_waiters();
+    }
+}
 impl ByteBudget {
     pub(super) fn new(limit: usize) -> Arc<Self> {
         Arc::new(Self {
@@ -25,7 +45,10 @@ impl ByteBudget {
         })
     }
     pub(super) async fn reserve(self: &Arc<Self>, bytes: usize) -> Permit {
-        let _turn = self.admission.acquire().await.unwrap();
+        let _turn = Turn {
+            budget: self,
+            _permit: self.admission.acquire().await.unwrap(),
+        };
         loop {
             let changed = self.changed.notified();
             tokio::pin!(changed);
@@ -43,14 +66,20 @@ impl ByteBudget {
             changed.await;
         }
     }
-    pub(super) fn try_reserve_buffered(self: &Arc<Self>, bytes: usize) -> Option<(Permit, bool)> {
-        let _turn = self.admission.try_acquire().ok()?;
+    pub(super) fn try_reserve_buffered(
+        self: &Arc<Self>,
+        bytes: usize,
+    ) -> Result<(Permit, bool), Refused> {
+        let _turn = self
+            .admission
+            .try_acquire()
+            .map_err(|_| Refused::Contended)?;
         let mut used = self.used.lock().unwrap();
         if *used > self.limit {
-            return None;
+            return Err(Refused::Full);
         }
-        *used = used.checked_add(bytes)?;
-        Some((
+        *used = used.checked_add(bytes).ok_or(Refused::Full)?;
+        Ok((
             Permit {
                 budget: self.clone(),
                 bytes,
@@ -107,13 +136,16 @@ mod tests {
         tokio::pin!(large);
         assert!(futures::poll!(&mut large).is_pending());
         for _ in 0..1000 {
-            assert!(budget.try_reserve_buffered(1).is_none());
+            assert_eq!(
+                budget.try_reserve_buffered(1).err(),
+                Some(Refused::Contended)
+            );
         }
         assert_eq!(budget.used(), 700);
         drop(existing);
         let large = large.await;
         assert_eq!(budget.used(), 32 * 1024);
-        assert!(budget.try_reserve_buffered(1).is_none());
+        assert!(budget.try_reserve_buffered(1).is_err());
         drop(large);
         let (ordinary, _) = budget.try_reserve_buffered(1).unwrap();
         drop(ordinary);
@@ -135,12 +167,12 @@ mod tests {
         assert!(futures::poll!(&mut next).is_pending());
         let first = first.await;
         assert_eq!(budget.used(), 2000);
-        assert!(budget.try_reserve_buffered(1).is_none());
+        assert!(budget.try_reserve_buffered(1).is_err());
         drop(first);
         let next = next.await;
         assert_eq!(budget.used(), 4000);
         drop(next);
-        assert!(budget.try_reserve_buffered(1).is_some());
+        assert!(budget.try_reserve_buffered(1).is_ok());
         assert_eq!(budget.used(), 0);
     }
 
@@ -153,7 +185,7 @@ mod tests {
             budget.reserve(32 * 1024),
         ));
         assert!(futures::poll!(&mut expired).is_pending());
-        assert!(budget.try_reserve_buffered(1).is_none());
+        assert!(budget.try_reserve_buffered(1).is_err());
         assert!(expired.await.is_err());
         assert_eq!(budget.used(), 700);
         let (ordinary, _) = budget.try_reserve_buffered(1).unwrap();

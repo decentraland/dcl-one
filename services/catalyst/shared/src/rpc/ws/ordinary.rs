@@ -87,6 +87,9 @@ fn timer_delay(ms: f64) -> Duration {
 pub(super) enum SendOutcome {
     Code(i32),
     Failure(String),
+    /// A guarded frame holds the writer's admission turn. Not a source send
+    /// result: the frame waits for the turn without spending an attempt.
+    Contended,
 }
 struct Pending {
     bytes: Vec<u8>,
@@ -192,6 +195,9 @@ impl Queue {
             }
             let size = item.bytes.len();
             let outcome = send(&mut item.bytes);
+            if matches!(outcome, SendOutcome::Contended) {
+                return;
+            }
             if matches!(outcome, SendOutcome::Code(_)) {
                 let pending_bytes = buffered();
                 if pending_bytes > 0 && !self.defer_socket_metrics {
@@ -236,6 +242,7 @@ impl Queue {
                     self.counter("ws_unexpected_send_result_events", None);
                     attempts
                 }
+                SendOutcome::Contended => unreachable!("returned above"),
                 SendOutcome::Failure(error) => {
                     let message = format!("Failed to send message: {error}");
                     let item = self.pending.pop_front().unwrap();
@@ -305,9 +312,13 @@ impl OrdinaryLane {
             |bytes| {
                 // uWS checks bytes already buffered, allowing one frame to cross
                 // the threshold. A zero-byte frame still costs one admission byte.
-                let Some((permit, crossing)) = self.budget.try_reserve_buffered(bytes.len().max(1))
-                else {
-                    return SendOutcome::Code(2);
+                let (permit, crossing) = match self.budget.try_reserve_buffered(bytes.len().max(1))
+                {
+                    Ok(admitted) => admitted,
+                    Err(super::byte_budget::Refused::Full) => return SendOutcome::Code(2),
+                    Err(super::byte_budget::Refused::Contended) => {
+                        return SendOutcome::Contended;
+                    }
                 };
                 let envelope = OrdinaryOutbound {
                     social_metrics: true,

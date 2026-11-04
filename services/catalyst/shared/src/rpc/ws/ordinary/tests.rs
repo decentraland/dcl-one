@@ -227,7 +227,7 @@ fn backpressure_uses_source_raw_queue_capacity_and_native_wrapped_writer_limit()
         let budget = ByteBudget::new(native);
         let crossing = budget.try_reserve_buffered(native + 1).unwrap();
         assert!(crossing.1, "{raw}");
-        assert!(budget.try_reserve_buffered(1).is_none(), "{raw}");
+        assert!(budget.try_reserve_buffered(1).is_err(), "{raw}");
         drop(crossing);
     }
 }
@@ -270,6 +270,43 @@ async fn writer_budget_admits_crossing_frame_drains_promptly_and_does_not_duplic
         weak.upgrade().is_none(),
         "worker cannot retain transport queue"
     );
+}
+
+/// A guarded frame waiting for buffered bytes to drain holds the admission
+/// turn. Ordinary frames behind it wait for the turn without spending their
+/// retry attempts, however long the drain takes, and then go out in order.
+#[tokio::test(start_paused = true)]
+async fn contended_admission_waits_without_spending_retry_attempts() {
+    let (output, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    let budget = ByteBudget::new(1024);
+    let close = Arc::new(SocketClose::default());
+    let lane = OrdinaryLane::new(
+        OrdinaryQueueConfig::default(),
+        output,
+        budget.clone(),
+        close.clone(),
+        1024.0,
+    );
+    let (buffered, _) = budget.try_reserve_buffered(700).unwrap();
+    let mut guarded = Box::pin(budget.reserve(32 * 1024));
+    assert!(futures::poll!(&mut guarded).is_pending());
+    let small = [lane.send(vec![1]), lane.send(vec![2])];
+    // Far past the five attempts' backoff (1 + 2 + 4 + 8 + 16 s).
+    tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+    assert!(!close.is_ended(), "contended admission is not a drop");
+    assert!(receiver.try_recv().is_err());
+
+    drop(buffered);
+    let guarded = guarded.await;
+    drop(guarded);
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    for (expected, sent) in [1u8, 2].into_iter().zip(small) {
+        assert!(sent.await.unwrap().is_ok());
+        assert_eq!(receiver.try_recv().unwrap().bytes, vec![expected]);
+    }
+    assert!(!close.is_ended());
 }
 
 #[tokio::test(start_paused = true)]

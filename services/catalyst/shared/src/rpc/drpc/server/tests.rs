@@ -49,7 +49,13 @@ impl Transport for StalledTransport {
     async fn close(&self) {}
 }
 
-fn stalled(admitted: usize) -> (Arc<StalledTransport>, UnboundedSender<Vec<u8>>, Arc<AtomicUsize>) {
+fn stalled(
+    admitted: usize,
+) -> (
+    Arc<StalledTransport>,
+    UnboundedSender<Vec<u8>>,
+    Arc<AtomicUsize>,
+) {
     let (client, inbound) = unbounded_channel();
     let stalled_sends = Arc::new(AtomicUsize::new(0));
     let transport = Arc::new(StalledTransport {
@@ -98,7 +104,9 @@ async fn healthy_client_is_served(events: &super::ServerEventsSender<dyn Transpo
         port.load_module::<Module>("Module").await.unwrap();
     })
     .await
-    .expect("a stalled client must not hold up another client's attach, CreatePort or RequestModule");
+    .expect(
+        "a stalled client must not hold up another client's attach, CreatePort or RequestModule",
+    );
 }
 
 #[tokio::test]
@@ -126,10 +134,7 @@ async fn stalled_port_and_module_replies_do_not_block_other_clients() {
     client
         .send(
             CreatePort {
-                message_identifier: build_message_identifier(
-                    RpcMessageTypes::CreatePort as u32,
-                    1,
-                ),
+                message_identifier: build_message_identifier(RpcMessageTypes::CreatePort as u32, 1),
                 port_name: "stalled".to_string(),
             }
             .encode_to_vec(),
