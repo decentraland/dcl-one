@@ -134,9 +134,9 @@
           "-C",
           "link-arg=-Wl,-rpath,@loader_path"
         ],
-        "source_digest": "a405a48a1ca94fafe65d22cbfc6668fc4d1149d12d6b87d6a83b7639f0f26837",
+        "source_digest": "a38000ac2c10dc43f7728f87ee69cd819e83b4e4b6ca85a9c78ba64e5a554fa0",
         "source_files": 22,
-        "repo_commit": "7cce91b9feb1b76ecef3e473ac73172da77bf28b",
+        "repo_commit": "b0004c2bee3f129f17f91424485b36b145c23c1b",
         "toolchain": {
           "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
           "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
