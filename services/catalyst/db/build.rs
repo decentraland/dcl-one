@@ -1,7 +1,7 @@
-//! Renders `schemas/*.sql` (name order) into `$OUT_DIR/schema.sql`, which
-//! `db::SCHEMA_SQL` embeds. One file per domain keeps parallel work off one
-//! giant DDL file; `catalyst schema print` writes the same rendering (the
-//! gitignored root `schema.sql` is that output, never a source).
+//! Renders root `schemas/*.sql` and the two explicitly enrolled definitions
+//! in `schemas/releases/v3/`, ordered by filename, into `$OUT_DIR/schema.sql`.
+//! `db::SCHEMA_SQL` embeds it and `catalyst schema print` writes the same
+//! rendering. The gitignored root `schema.sql` is output, never a source.
 
 use std::path::PathBuf;
 use std::{env, fs};
@@ -11,9 +11,9 @@ const HEADER: &str = "\
 -- Design/review contract: DATABASE.md. The inherited indexes below are a
 -- baseline; query/layout changes require representative workload evidence.
 --
--- RENDERED FILE. The source is schemas/*.sql, concatenated in name order by
--- build.rs (one file per domain: 00 content + meta, 10 explore, 20 worlds,
--- 30 shop, 40 social, 50 create: builder + camera_reel). Edit those;
+-- RENDERED FILE. Sources are schemas/*.sql and the two explicitly enrolled
+-- definitions in schemas/releases/v3/, ordered by filename by build.rs.
+-- Edit those source definitions;
 -- `catalyst schema print` writes this rendering.
 --
 -- Applied once, by an operator, with `catalyst schema apply` (or psql -f). No
