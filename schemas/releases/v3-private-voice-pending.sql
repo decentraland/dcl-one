@@ -64,7 +64,7 @@ BEGIN
     END IF;
 END $$;
 -- This is the sole canonical table definition; do not duplicate its DDL here.
-\ir ../41_social_voice_notifications.sql
+\ir v3/41_social_voice_notifications.sql
 -- Cutover boundary: destination created.
 DO $transfer$
 DECLARE mismatch boolean;
@@ -118,7 +118,7 @@ BEGIN
 END $retire$;
 -- These sole canonical definitions are shared with fresh bootstrap. Both
 -- address access paths exist before the old UNIQUEs and final stamp change.
-\ir ../42_social_private_voice_indexes.sql
+\ir v3/42_social_private_voice_indexes.sql
 -- Cutover boundary: replacement indexes created.
 ALTER TABLE social.private_voice_chats DROP CONSTRAINT IF EXISTS private_voice_chats_caller_key;
 ALTER TABLE social.private_voice_chats DROP CONSTRAINT IF EXISTS private_voice_chats_callee_key;

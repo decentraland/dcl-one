@@ -35,16 +35,26 @@ fn main() {
         .map(|entry| entry.expect("schema entry").path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "sql"))
         .collect();
-    files.sort();
+    // These sole definitions are also used by the explicit v3 release. Keep
+    // them outside automatic root discovery and enroll them only with v3.
+    files.extend([
+        dir.join("releases/v3/41_social_voice_notifications.sql"),
+        dir.join("releases/v3/42_social_private_voice_indexes.sql"),
+    ]);
+    files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
     assert!(!files.is_empty(), "schema/ holds no .sql file");
 
     let mut out = String::from(HEADER);
     for path in &files {
         println!("cargo:rerun-if-changed={}", path.display());
-        let name = path.file_name().unwrap().to_string_lossy();
+        let repository = root();
+        let name = path
+            .strip_prefix(&repository)
+            .expect("schema within repository")
+            .display();
         let body =
             fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
-        out.push_str(&format!("-- ════ schemas/{name} ════\n\n"));
+        out.push_str(&format!("-- ════ {name} ════\n\n"));
         out.push_str(body.trim_end_matches('\n'));
         out.push_str("\n\n");
     }

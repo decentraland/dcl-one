@@ -56,7 +56,7 @@ const RELEASE_V3: &str = include_str!(concat!(
 ));
 const VOICE_FACTS: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),
-    "/schemas/41_social_voice_notifications.sql"
+    "/schemas/releases/v3/41_social_voice_notifications.sql"
 ));
 const MAIN_V2: &str = include_str!("fixtures/schema/v2-main-0fb63aa3f.sql");
 const PREPARED_V2: &str = include_str!("fixtures/schema/v2-prepared-c1fab3991.sql");
@@ -64,14 +64,14 @@ const UPGRADE_ROWS: &str = include_str!("fixtures/schema/v2-upgrade-rows-c1fab39
 const ORIGIN_ROWS: &str = include_str!("fixtures/schema/v2-origin-rows-c1fab3991.sql");
 const PRIVATE_INDEXES: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),
-    "/schemas/42_social_private_voice_indexes.sql"
+    "/schemas/releases/v3/42_social_private_voice_indexes.sql"
 ));
 fn release_v3() -> String {
     let mut release = RELEASE_V3.to_owned();
     for (directive, canonical) in [
-        ("\\ir ../41_social_voice_notifications.sql", VOICE_FACTS),
+        ("\\ir v3/41_social_voice_notifications.sql", VOICE_FACTS),
         (
-            "\\ir ../42_social_private_voice_indexes.sql",
+            "\\ir v3/42_social_private_voice_indexes.sql",
             PRIVATE_INDEXES,
         ),
     ] {
