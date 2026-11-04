@@ -50,11 +50,20 @@ remembers the blocks it read.
   outage or a pruned node turns deploys into 503s until it recovers. The defaults are
   Decentraland's public RPCs; operators can point both variables at their own archive-capable
   endpoints.
-- With the RPCs always present, the request-time readers that answered empty or skipped a check
-  without them now ask the chain: contract-wallet (EIP-1654) signatures, `/lambdas/contracts/*`,
-  third-party ownership, the relay's collection-code and meta-transaction signature checks. The
-  chain indexes keep their own `*_ENABLED` switches; only the light `executions-track` poller
-  starts on the L1 RPC alone, and only on mainnet.
+- With the RPCs always present, the readers that answered empty or skipped a check without them
+  now ask the chain: third-party ownership and the relay's collection-code and meta-transaction
+  signature checks. The default L1 RPC alone turns on:
+  - EIP-1654 contract-wallet signature verification, for explore, social and deploys;
+  - `/lambdas/contracts/servers` and `/lambdas/contracts/denylisted-names`
+    (`/lambdas/contracts/pois` reads the L2 RPC);
+  - the `executions-track` poller of MANA executions, on mainnet only;
+  - the NAMEs Ethereum signer and its receipt reconciler, when `META_TX_BROADCAST_ENABLED=true`
+    and `RELAYER_PRIVATE_KEY_FILE` are set; its routes still need the admin token and
+    `DATA_WRITES_ENABLED`, and a set `NAMES_MAX_PRICE_WEI` caps each buy.
+
+  The chain indexes keep their own `*_ENABLED` switches.
+- An `ETH_RPC_URL_FILE` or `RPC_ENDPOINT_POLYGON_FILE` naming an empty file fails startup
+  rather than reading the default; each default applied is logged by variable name.
 - Each deploy costs a few RPC calls: two block searches per chain when the timestamp is new,
   then one Checker multicall or one item batch per block, plus two probe batches the first time
   a third-party contract is seen.

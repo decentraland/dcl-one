@@ -344,35 +344,40 @@ impl Chain {
     }
 
     /// Whether each address holds code at the head, in JSON-RPC batches; an
-    /// address the endpoint does not answer for counts as holding none.
+    /// address left out of the batch answer is asked alone, and one that gets
+    /// no answer counts as holding none.
     async fn has_code(&self, addresses: &[Address]) -> Vec<bool> {
         let mut out = Vec::with_capacity(addresses.len());
         for chunk in addresses.chunks(CALLS_PER_BATCH) {
             let requests: Vec<Value> = chunk
                 .iter()
                 .enumerate()
-                .map(|(i, a)| {
-                    request(
-                        i as u64,
-                        "eth_getCode",
-                        json!([a.to_string(), BlockTag::Latest.param()]),
-                    )
-                })
+                .map(|(i, a)| request(i as u64, "eth_getCode", code_params(a)))
                 .collect();
-            let mut code = vec![false; chunk.len()];
+            let mut by_id: Vec<Option<Value>> = vec![None; chunk.len()];
             for envelope in self.rpc().batch(&requests).await.unwrap_or_default() {
-                let Some(slot) = envelope
+                if let Some(slot) = envelope
                     .get("id")
                     .and_then(Value::as_u64)
-                    .and_then(|id| usize::try_from(id).ok())
-                    .filter(|id| *id < chunk.len())
-                else {
-                    continue;
-                };
-                code[slot] = result_of(envelope)
-                    .and_then(hex_of)
-                    .is_ok_and(|hex| !hex.trim_start_matches("0x").is_empty());
+                    .and_then(|id| by_id.get_mut(usize::try_from(id).ok()?))
+                {
+                    *slot = Some(envelope);
+                }
             }
+            let pending: Vec<_> = chunk
+                .iter()
+                .zip(by_id)
+                .map(|(a, envelope)| async move {
+                    holds_code(match envelope {
+                        Some(envelope) => result_of(envelope),
+                        None => self.rpc().call("eth_getCode", code_params(a)).await,
+                    })
+                })
+                .collect();
+            let code: Vec<bool> = futures::stream::iter(pending)
+                .buffered(CALLS_IN_FLIGHT)
+                .collect()
+                .await;
             out.extend(code);
         }
         out
@@ -1024,6 +1029,16 @@ impl OnChainAccess {
         }
         Ok(kinds)
     }
+}
+
+fn code_params(address: &Address) -> Value {
+    json!([address.to_string(), BlockTag::Latest.param()])
+}
+
+fn holds_code(answer: Result<Value, RpcError>) -> bool {
+    answer
+        .and_then(hex_of)
+        .is_ok_and(|hex| !hex.trim_start_matches("0x").is_empty())
 }
 
 #[cfg(test)]
