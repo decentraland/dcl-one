@@ -452,7 +452,10 @@ mod tests {
         assert!(is_chat_message(&event(player, "Nearby", "hello"), me));
         assert!(is_chat_message(&event(player, "some scene", "hello"), me));
         // a community message: in `/dm_history community:<id>`
-        assert!(!is_chat_message(&event(player, "community:abc-1", "hello"), me));
+        assert!(!is_chat_message(
+            &event(player, "community:abc-1", "hello"),
+            me
+        ));
         // no sender: a console or system line
         assert!(!is_chat_message(
             &event(Entity::PLACEHOLDER, "Nearby", "[ok]"),

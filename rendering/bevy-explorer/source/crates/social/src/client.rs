@@ -1258,7 +1258,9 @@ async fn run_one_connection(
                 })
                 .map_err(dbgerr)?;
         }
-        Err(anyhow!("[social] community connectivity update stream ended"))
+        Err(anyhow!(
+            "[social] community connectivity update stream ended"
+        ))
     }
     .fuse();
 

@@ -28,7 +28,10 @@ pub fn router_env(base_domain: &str) -> &'static str {
 
 /// The LiveKit identity of the server's message router on the private chat room.
 pub fn message_router_identity() -> String {
-    format!("message-router-{}-0", router_env(common::base_domain::get()))
+    format!(
+        "message-router-{}-0",
+        router_env(common::base_domain::get())
+    )
 }
 
 /// The community id a channel or topic names, if it is a well-formed community channel.
@@ -124,12 +127,18 @@ mod tests {
         let bob = BOB.as_h160().unwrap();
         // from the router: the stamped author, when it is a wallet
         assert_eq!(resolve_author(ROUTER, ROUTER, Some(ALICE)), Some(alice));
-        assert_eq!(resolve_author("MESSAGE-ROUTER-PRD-0", ROUTER, Some(ALICE)), Some(alice));
+        assert_eq!(
+            resolve_author("MESSAGE-ROUTER-PRD-0", ROUTER, Some(ALICE)),
+            Some(alice)
+        );
         assert_eq!(resolve_author(ROUTER, ROUTER, Some("not a wallet")), None);
         assert_eq!(resolve_author(ROUTER, ROUTER, None), None);
         // from a peer: their own identity, whatever they claim
         assert_eq!(resolve_author(BOB, ROUTER, Some(ALICE)), Some(bob));
         assert_eq!(resolve_author(BOB, ROUTER, None), Some(bob));
-        assert_eq!(resolve_author("message-router-dev-0", ROUTER, Some(ALICE)), None);
+        assert_eq!(
+            resolve_author("message-router-dev-0", ROUTER, Some(ALICE)),
+            None
+        );
     }
 }

@@ -284,7 +284,8 @@ pub fn handle_dm_history_requests(
         match request {
             SystemApi::GetDmHistory(partner, sender) => {
                 let sender = sender.clone();
-                let (Some(account), Some(partner)) = (wallet.address(), history_key(partner)) else {
+                let (Some(account), Some(partner)) = (wallet.address(), history_key(partner))
+                else {
                     sender.send(Vec::new());
                     continue;
                 };
@@ -295,7 +296,8 @@ pub fn handle_dm_history_requests(
                 });
             }
             SystemApi::DeleteDmHistory(partner) => {
-                let (Some(account), Some(partner)) = (wallet.address(), history_key(partner)) else {
+                let (Some(account), Some(partner)) = (wallet.address(), history_key(partner))
+                else {
                     continue;
                 };
                 store.queue.push_back(DmStoreOp::Delete {

@@ -465,8 +465,7 @@ fn participant_payload(
                 });
             }
             rfc4::packet::Message::ChatReaction(reaction) => {
-                let Some(from) = resolve_author(&identity, &router, Some(&reaction.address))
-                else {
+                let Some(from) = resolve_author(&identity, &router, Some(&reaction.address)) else {
                     stats.dropped.unattributed += 1;
                     debug!(target: "comms::private_chat", "dropping community reaction from {identity} ({})", reaction.address);
                     return;
@@ -709,10 +708,7 @@ fn community_chat(
     };
     let channel = channel_for(&command.community_id);
     if community_id(&channel).is_none() {
-        input.reply_failed(format!(
-            "`{}` is not a community id",
-            command.community_id
-        ));
+        input.reply_failed(format!("`{}` is not a community id", command.community_id));
         return;
     }
     let message = command.message.join(" ");
@@ -781,7 +777,8 @@ fn community_state(
     }
     let router = message_router_identity();
     let room = rooms.single().ok();
-    let router_in_room = room.is_some_and(|(index, _)| index.contains_key(&ParticipantIndex::key(&router)));
+    let router_in_room =
+        room.is_some_and(|(index, _)| index.contains_key(&ParticipantIndex::key(&router)));
     let mut listed: Vec<_> = channels.0.iter().cloned().collect();
     listed.sort();
     let mut state = json!({

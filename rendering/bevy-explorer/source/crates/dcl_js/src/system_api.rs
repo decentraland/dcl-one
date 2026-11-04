@@ -15,12 +15,12 @@ use std::{cell::RefCell, collections::HashMap, marker::PhantomData, rc::Rc, sync
 use strum::IntoEnumIterator;
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
-    BlockingStatusData, ChatMessage, ChatReactionData, DmHistoryEntryData, DmUserStateData,
-    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
-    PermissionRequestEvent, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
-    SetAvatarData, SetPermanentPermission, SetSinglePermission, SystemApi, VoiceMessage,
-    WelcomeState, WorldAccessEvent, CommunityMemberConnectivityData,
+    BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
+    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
+    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
+    PermanentPermissionItem, PermissionRequestEvent, ProfileChangedEvent, ProximityEvent,
+    SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission, SetSinglePermission,
+    SystemApi, VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 use tokio::sync::Notify;
 

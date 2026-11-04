@@ -9,11 +9,11 @@ use deno_core::{anyhow, error::AnyError, op2, OpDecl, OpState};
 use std::{cell::RefCell, rc::Rc};
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
-    BlockingStatusData, ChatMessage, ChatReactionData, DmHistoryEntryData, DmUserStateData,
-    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
-    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
-    PermissionRequestEvent, ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi,
-    SetAvatarData, VoiceMessage, WelcomeState, WorldAccessEvent, CommunityMemberConnectivityData,
+    BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
+    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
+    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
+    PermanentPermissionItem, PermissionRequestEvent, ProfileChangedEvent, ProximityEvent,
+    SatelliteView, SceneLoadingUi, SetAvatarData, VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 
 // list of op declarations
