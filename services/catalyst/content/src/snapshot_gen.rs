@@ -252,8 +252,13 @@ impl SnapshotGenerator {
             return Ok(());
         }
         let forced = self.requested.swap(false, Ordering::SeqCst);
+        // A window the deleter repair marked is regenerated at the next tick, not the next
+        // interval; a failed pass keeps its backoff.
         if !forced && !self.due() {
-            return Ok(());
+            let succeeded = self.last.lock().succeeded;
+            if !succeeded || !any_marked_window(&self.content.pool).await? {
+                return Ok(());
+            }
         }
         let end_ms = chrono::Utc::now().timestamp_millis();
         match self.run_pass(end_ms, forced, Some(&ctx.cancel)).await {
@@ -540,8 +545,8 @@ const WINDOW_SQL: &str = r#"
 /// (the old `snapshot_is_outdated`, inclusive window, strict `>`), or a
 /// local unpublish since then touched it: a scene tombstoned after the
 /// generation shares a pointer with a deployment of the window (the scene
-/// itself, which the windows leave out once tombstoned, and the older
-/// scenes the unpublish restored, whose `local_timestamp` is old). The
+/// itself, which the windows leave out once tombstoned), or the row is
+/// stamped at the epoch (the deleter repair's mark). The
 /// second leg reads the tombstones since the generation
 /// (`local_entities_tombstoned_idx`, a handful) and the GIN pointer index. Planned
 /// per call (`persistent(false)`): with the values, the planner walks
@@ -555,6 +560,10 @@ pub async fn snapshot_is_outdated(
     window: &TimeRange,
     generation_ms: Timestamp,
 ) -> Result<bool, GenerationError> {
+    // The deleter repair marks a window whose rows it superseded with the epoch.
+    if generation_ms == 0 {
+        return Ok(true);
+    }
     Ok(sqlx::query_scalar(
         "SELECT EXISTS (
              SELECT 1 FROM content.deployments
@@ -598,6 +607,35 @@ async fn read_horizon_ms(pool: &PgPool) -> Result<Timestamp, GenerationError> {
     Ok(ms - 1)
 }
 
+/// Whether the deleter repair marked a window (a generation stamped at the
+/// epoch) that no pass has regenerated yet. A scan of a few dozen rows.
+async fn any_marked_window(pool: &PgPool) -> Result<bool, GenerationError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM content.snapshots WHERE generation_time = 'epoch'::timestamp)",
+    )
+    .fetch_one(pool)
+    .await?)
+}
+
+/// Advisory lock key the generator takes shared while it writes a window's row
+/// and the deleter repair takes exclusive while it marks windows outdated.
+pub const SNAPSHOT_ROWS_LOCK: i64 = 0x636f_6e74_656e_7473;
+
+/// The `content.system_properties` key counting deleter repairs that superseded rows.
+pub const DELETER_REPAIR_RUNS_KEY: &str = "deleter_repair_runs";
+
+/// The deleter repair count, read before a window read and again under the row lock.
+async fn deleter_repair_runs<'e>(
+    conn: impl sqlx::PgExecutor<'e>,
+) -> Result<Option<String>, GenerationError> {
+    Ok(
+        sqlx::query_scalar("SELECT value FROM content.system_properties WHERE key = $1")
+            .bind(DELETER_REPAIR_RUNS_KEY)
+            .fetch_optional(conn)
+            .await?,
+    )
+}
+
 async fn generate_window(
     pool: &PgPool,
     storage: &crate::storage::Storage,
@@ -605,6 +643,7 @@ async fn generate_window(
     cancel: Option<&CancellationToken>,
 ) -> Result<Written, GenerationError> {
     let started = Instant::now();
+    let repairs_before = deleter_repair_runs(pool).await?;
     let generation_ms = read_horizon_ms(pool).await?;
     let (bytes, entities) = read_window(pool, &window, cancel).await?;
     let number_of_entities = i32::try_from(entities).map_err(|_| {
@@ -620,6 +659,16 @@ async fn generate_window(
     storage.store(&hash, Bytes::from(bytes)).await?;
 
     let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
+        .bind(SNAPSHOT_ROWS_LOCK)
+        .execute(&mut *tx)
+        .await?;
+    // A repair that committed since the read may have superseded rows the file lists: keep its mark.
+    let generation_ms = if deleter_repair_runs(&mut *tx).await? == repairs_before {
+        generation_ms
+    } else {
+        0
+    };
     let gone: Vec<Option<String>> = sqlx::query_scalar(
         "WITH gone AS (
              DELETE FROM content.snapshots
