@@ -700,7 +700,11 @@ async fn bench_retry_cycle_shapes_over_a_populated_backlog() {
                 },
                 reqwest::Client::new(),
                 storage,
-                Arc::new(LiveSyncDeployer::new(pool.clone(), 1)),
+                Arc::new(LiveSyncDeployer::new(
+                    pool.clone(),
+                    1,
+                    catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
+                )),
                 store.clone(),
                 Arc::new(tokio::sync::RwLock::new(Vec::new())),
             );

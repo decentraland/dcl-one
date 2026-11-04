@@ -38,6 +38,7 @@ export default function WearablePreview({
   spin = true,
   spinSpeed,
   background,
+  requireWearables = false,
   className,
   style,
   pauseOffscreen = false,
@@ -61,7 +62,7 @@ export default function WearablePreview({
   onStatusRef.current = onStatus;
 
   const key = JSON.stringify([
-    model, base, controls, pan, platform, spin, spinSpeed, background, emotes ?? null,
+    model, base, controls, pan, platform, spin, spinSpeed, background, emotes ?? null, requireWearables,
   ]);
   const outfitKey = JSON.stringify([
     profile, Array.isArray(urns) ? urns : urns ?? null, body, outfit ?? null,
@@ -126,6 +127,7 @@ export default function WearablePreview({
           spin,
           spinSpeed,
           background,
+          requireWearables,
           onStatus: (s) => {
             if (cancelled) return;
             if (s === "loading") watchLoading();

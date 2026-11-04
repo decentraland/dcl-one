@@ -30,8 +30,8 @@ use super::db::{PendingPrivateCall, PrivateVoiceChatRow, StartOutcome};
 
 use super::{
     CommunityVoiceChatBody, community_status, community_voice_credentials_for,
-    destroy_community_voice_chat, end_private_call, get_private_voice_chat_room_credentials,
-    kick_from_community_room, merge_metadata, patch, require_livekit, set_speaker,
+    destroy_community_voice_chat, end_private_call, kick_from_community_room, merge_metadata,
+    patch, pending_private_voice_chat_room_credentials, require_livekit, set_speaker,
 };
 use crate::gatekeeper::CommsState;
 use crate::gatekeeper::errors::ApiError;
@@ -67,7 +67,10 @@ impl CommunityVoiceAction {
 
 #[async_trait]
 pub trait VoiceRooms: Send + Sync {
-    /// Atomically reclaim stale calls and create a pending call unless either party is busy.
+    /// The existing comms presence configuration also governs shared SQL readers.
+    fn presence_config(&self) -> super::db::VoiceDbConfig;
+
+    /// Create a pending call unless either party is busy; expiry belongs to the sweep.
     async fn create_pending_private_call(
         &self,
         caller: &str,
@@ -171,6 +174,9 @@ pub struct NoVoiceRuntime;
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait]
 impl VoiceRooms for NoVoiceRuntime {
+    fn presence_config(&self) -> super::db::VoiceDbConfig {
+        Default::default()
+    }
     async fn create_pending_private_call(
         &self,
         _: &str,
@@ -285,7 +291,9 @@ impl VoiceRooms for NoVoiceRuntime {
 }
 
 fn unavailable(e: ApiError) -> VoiceUnavailable {
-    if e.code == 503 {
+    if e.code == 404 {
+        VoiceUnavailable::NotFound
+    } else if e.code == 503 {
         VoiceUnavailable::NotConfigured
     } else {
         VoiceUnavailable::Failed(e.to_string())
@@ -321,6 +329,9 @@ fn address(raw: &str) -> Result<Address, VoiceUnavailable> {
 
 #[async_trait]
 impl VoiceRooms for CommsState {
+    fn presence_config(&self) -> super::db::VoiceDbConfig {
+        self.voice_db.config()
+    }
     async fn create_pending_private_call(
         &self,
         caller: &str,
@@ -362,7 +373,7 @@ impl VoiceRooms for CommsState {
         require_livekit(self).map_err(unavailable)?;
         let participants = [address(caller)?, address(callee)?];
         let grants =
-            get_private_voice_chat_room_credentials(self, &call_id.to_string(), &participants)
+            pending_private_voice_chat_room_credentials(self, &call_id.to_string(), &participants)
                 .await
                 .map_err(unavailable)?;
         Ok(grants

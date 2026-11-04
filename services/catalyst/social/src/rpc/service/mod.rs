@@ -21,6 +21,7 @@ mod community_voice;
 mod domain;
 mod friends;
 mod helpers;
+mod metrics_json;
 mod private_voice;
 mod settings;
 mod subscriptions;
@@ -37,9 +38,13 @@ pub(crate) mod ops {
     };
     pub(crate) use super::friends::{apply_friendship_action, friendship_status};
     pub(crate) use super::helpers::FRIENDSHIP_REQUEST_MESSAGE_MAX_LENGTH;
+    #[cfg(test)]
     pub(crate) use super::private_voice::{
-        accept_private_voice_chat, end_private_voice_chat, incoming_not_found,
-        reject_private_voice_chat, start_private_voice_chat,
+        accept_private_voice_chat, end_private_voice_chat, reject_private_voice_chat,
+    };
+    pub(crate) use super::private_voice::{
+        accept_private_voice_chat_with_id, end_private_voice_chat_with_id, incoming_not_found,
+        reject_private_voice_chat_with_id, start_private_voice_chat,
     };
     pub(crate) use super::settings::{MAX_USER_ADDRESSES, private_messages_settings};
 }
@@ -111,12 +116,26 @@ macro_rules! unary {
         $def.add_unary($name, move |request, context| {
             let service = service.clone();
             Box::pin(async move {
-                write_gate($name, &context)?;
                 let request =
                     <$req>::decode(request.as_slice()).map_err(|e| malformed($name, e))?;
-                match service.$method(request, context).await {
-                    Ok(response) => Ok(response.encode_to_vec()),
-                    Err(err) => Err(err.into()),
+                let started = crate::rpc::metrics::rpc_request($name, &request.metrics_json());
+                let result = async {
+                    write_gate($name, &context)?;
+                    service
+                        .$method(request, context)
+                        .await
+                        .map_err(RemoteError::from)
+                }
+                .await;
+                match result {
+                    Ok(response) => {
+                        crate::rpc::metrics::rpc_response($name, &response.metrics_json(), started);
+                        Ok(response.encode_to_vec())
+                    }
+                    Err(err) => {
+                        crate::rpc::metrics::rpc_finished($name, "ERROR", started);
+                        Err(err)
+                    }
                 }
             })
         });
@@ -126,9 +145,16 @@ macro_rules! unary {
         $def.add_unary($name, move |_request, context| {
             let service = service.clone();
             Box::pin(async move {
+                let started = crate::rpc::metrics::rpc_request($name, &serde_json::json!({}));
                 match service.$method(context).await {
-                    Ok(response) => Ok(response.encode_to_vec()),
-                    Err(err) => Err(err.into()),
+                    Ok(response) => {
+                        crate::rpc::metrics::rpc_response($name, &response.metrics_json(), started);
+                        Ok(response.encode_to_vec())
+                    }
+                    Err(err) => {
+                        crate::rpc::metrics::rpc_finished($name, "ERROR", started);
+                        Err(err.into())
+                    }
                 }
             })
         });
@@ -141,11 +167,16 @@ macro_rules! server_stream {
         $def.add_server_streams($name, move |_request, context| {
             let service = service.clone();
             Box::pin(async move {
-                SocialServiceImpl::caller(&context).map_err(RemoteError::from)?;
+                let mut observation = crate::rpc::metrics::RpcStream::new($name);
+                if let Err(error) = SocialServiceImpl::caller(&context) {
+                    observation.failed();
+                    return Err(RemoteError::from(error));
+                }
                 let Some(guard) = context
                     .server_context
                     .try_subscription(context.transport_id, $name)
                 else {
+                    metrics::counter!("subscription_duplicates_total", "event" => $event).increment(1);
                     let (generator, yielder) = Generator::create();
                     let notice = $update {
                         stream_closed: Some(SubscriptionStreamClosed {
@@ -164,14 +195,18 @@ macro_rules! server_stream {
                         ..Default::default()
                     };
                     let _ = yielder.r#yield(notice.encode_to_vec()).await;
-                    return Ok(generator);
+                    return Ok(Generator::from_generator(generator, move |item| {
+                        observation.update($event);
+                        Some(item)
+                    }));
                 };
                 match service.$method(context, guard.cancellation()).await {
                     Ok(generator) => Ok(Generator::from_generator(generator, move |item| {
                         let _ = &guard;
+                        observation.update($event);
                         Some(item.encode_to_vec())
                     })),
-                    Err(err) => Err(err.into()),
+                    Err(err) => { observation.failed(); Err(err.into()) },
                 }
             })
         });
@@ -496,7 +531,7 @@ mod tests {
                     .connect_lazy("postgres://localhost/unused")
                     .unwrap(),
             ),
-            crate::rpc::profiles::Profiles::new(None, Default::default()),
+            crate::rpc::profiles::Profiles::new(None),
             Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
         );
         let pctx = ProcedureContext {

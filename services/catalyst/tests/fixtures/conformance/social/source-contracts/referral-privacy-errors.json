@@ -1,0 +1,92 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+    "sources": [
+      {
+        "path": "src/controllers/handlers/uws/privacy-handler.ts",
+        "sha256": "599a49d4d540e86bd7e9ae299385b7fab357071d7356ad2610baef62bd6c6217"
+      },
+      {
+        "path": "src/utils/errors.ts",
+        "sha256": "dbbc993a0f06c734e2f3d6a5b45bfae5174453f1bf798b74627a7a85decbb4f8"
+      },
+      {
+        "path": "src/adapters/pg.ts",
+        "sha256": "612c1c5539ef3873a5a4417052934b277a22b69dccb479ff851cafd495e6ccc8"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-invited-users-accepted-handler.ts",
+        "sha256": "8b121becce0d9a3d5c6232a6415c7d386676f94efdaba1e623a8678287f825c1"
+      },
+      {
+        "path": "src/controllers/handlers/http/create-referral-handler.ts",
+        "sha256": "0cf0f1aef613cf942b9fee0e2702db2e868911b2990d066e3de669f1a31ab866"
+      },
+      {
+        "path": "src/controllers/handlers/http/update-referral-signed-up-handler.ts",
+        "sha256": "d1d398dd66b7f017df5b637c1266627f8fe910f1a5f5f012e84bfc004bbeea65"
+      },
+      {
+        "path": "src/controllers/handlers/http/add-referral-email-handler.ts",
+        "sha256": "ebc7cffa90ac46b8417bae576854d5208f2f9cc38bf6be706fea9a690bef3877"
+      }
+    ]
+  },
+  "runtime": {
+    "node": "v26.12.0"
+  },
+  "scope": "Actual five pinned HTTP/uWS handlers with dependency calls raising a real PostgreSQL server exception through node-pg. Domain dependencies are injected; local replay raises the same server exception through SQLx and the real routes. This does not establish equal messages for unrelated drivers or operating-system failures.",
+  "cases": [
+    {
+      "method": "GET",
+      "path": "/v1/referral-progress",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "source dependency failure"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/referral-progress",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "source dependency failure"
+        }
+      }
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/referral-progress",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "source dependency failure"
+        }
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/referral-email",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "source dependency failure"
+        }
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/users/:address/privacy-settings",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "source dependency failure"
+        }
+      }
+    }
+  ]
+}

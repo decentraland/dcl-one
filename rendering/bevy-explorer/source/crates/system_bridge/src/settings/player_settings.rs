@@ -16,7 +16,7 @@ macro_rules! player_setting {
             }
 
             fn value(&self) -> i32 {
-                (self.0.0 / $scale) as i32
+                (self.0.0 / $scale).round() as i32
             }
 
             fn min() -> i32 {

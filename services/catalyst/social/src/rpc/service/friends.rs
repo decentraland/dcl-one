@@ -49,6 +49,7 @@ pub(crate) async fn apply_friendship_action(
     if !ctx
         .friendship_limiter()
         .allow(me, other, PairScope::Symmetric)
+        .await
     {
         tracing::warn!(actor = %me, target = %other, "friendship mutation rate limited");
         return Err(Refusal::RateLimited(FRIENDSHIP_RATE_LIMIT_MESSAGE.into()));
@@ -75,10 +76,21 @@ pub(crate) async fn apply_friendship_action(
     )
     .await?;
     let created_ms = created_at.timestamp_millis();
-    ctx.publish_friendship(me, other, |my_profile| {
-        friendship_update_for(action, me, &id, created_ms, message, my_profile)
-    })
-    .await;
+    let mut my_profile = ctx.profiles().friend_profile(me).await;
+    // Raw/JSON updates identify the actor wallet. RPC delivery resolves the
+    // public profile separately, whose historical userId may be an alias.
+    my_profile.address = me.to_string();
+    let update = friendship_update_for(
+        action,
+        me,
+        &action_id,
+        chrono::Utc::now().timestamp_millis(),
+        message,
+        my_profile,
+    );
+    ctx.pubsub()
+        .publish_mutation(other, SocialEvent::Friendship(update))
+        .await;
     if action == Action::Accept {
         announce_accepted_connectivity(ctx, me, other).await;
     }
@@ -100,16 +112,16 @@ async fn announce_accepted_connectivity(ctx: &Context, me: &str, other: &str) {
         let Some(profile) = ctx.profiles().existing_friend_profile(friend).await else {
             continue;
         };
-        let friend = crate::rpc::profiles::connectivity_profile(profile);
-        let address = friend.address.clone();
+        let mut friend_profile = profile;
+        friend_profile.address = friend.to_string();
         ctx.topology()
-            .deliver_if_current(snapshot.generation, &address, true, || {
+            .deliver_if_current(snapshot.generation, friend, true, || {
                 ctx.pubsub().publish(
                     recipient,
                     SocialEvent::TopologyFriendConnectivity(
                         FriendConnectivityUpdate {
                             stream_closed: None,
-                            friend: Some(friend),
+                            friend: Some(friend_profile),
                             status: ConnectivityStatus::Online as i32,
                         },
                         snapshot.generation,
@@ -167,6 +179,33 @@ async fn notify_friendship_action(
     {
         metadata["message"] = serde_json::json!(message);
     }
+    if let Some(publisher) = ctx
+        .communities()
+        .and_then(|state| state.referral.publisher())
+        .cloned()
+    {
+        let metadata = metadata.clone();
+        // Source dispatch is detached after commit. Each attempt creates its
+        // event again, preserving the action key and refreshing its timestamp.
+        tokio::spawn(async move {
+            for attempt in 1..=3 {
+                let event = serde_json::json!({
+                    "type":"social-service", "subType":if action==Action::Request {"friendship-request"} else {"friendship-accepted"},
+                    "key":action_id.to_string(), "timestamp":chrono::Utc::now().timestamp_millis(),
+                    "metadata":metadata,
+                });
+                match publisher.publish(&event).await {
+                    Ok(()) => break,
+                    Err(error) => {
+                        tracing::warn!(%error, attempt, kind, "friendship SNS publication failed");
+                        if attempt < 3 {
+                            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                        }
+                    }
+                }
+            }
+        });
+    }
     let notification = NewNotification {
         id: action_id,
         ..NewNotification::now(address, kind, metadata)
@@ -176,8 +215,8 @@ async fn notify_friendship_action(
     }
 }
 
-/// The status `me` reads for the pair: the last action, or the block rows
-/// when there is none (the RPC procedure and the HTTP route alike).
+/// Upstream's latest-action query synthesizes a block action from the block
+/// table only when no friendship action exists.
 pub(crate) async fn friendship_status(
     ctx: &Context,
     me: &str,
@@ -213,11 +252,18 @@ impl SocialServiceImpl {
                 return Ok(empty_friends_profiles());
             }
         };
-        let profiles = context
+        let profiles = match context
             .server_context
             .profiles()
-            .existing_friend_profiles(&friends)
-            .await;
+            .friend_profiles(&friends)
+            .await
+        {
+            Ok(profiles) => profiles,
+            Err(error) => {
+                tracing::error!(%error, "friend profiles unavailable");
+                return Ok(empty_friends_profiles());
+            }
+        };
         Ok(PaginatedFriendsProfilesResponse {
             friends: profiles,
             pagination_data: Some(PaginatedResponse {
@@ -246,11 +292,18 @@ impl SocialServiceImpl {
                 return Ok(empty_friends_profiles());
             }
         };
-        let profiles = context
+        let profiles = match context
             .server_context
             .profiles()
-            .existing_friend_profiles(&friends)
-            .await;
+            .friend_profiles(&friends)
+            .await
+        {
+            Ok(profiles) => profiles,
+            Err(error) => {
+                tracing::error!(%error, "friend profiles unavailable");
+                return Ok(empty_friends_profiles());
+            }
+        };
         Ok(PaginatedFriendsProfilesResponse {
             friends: profiles,
             pagination_data: Some(PaginatedResponse {
@@ -283,14 +336,13 @@ impl SocialServiceImpl {
     ) -> Result<GetFriendshipStatusResponse, SocialError> {
         let me = Self::caller(&context)?;
         let other = match request.user.as_ref().map(|u| u.address.clone()) {
-            Some(a) if !a.trim().is_empty() => {
-                let n = normalize(&a);
-                if !is_eth_address(&n) {
+            Some(a) if !a.is_empty() => {
+                if !is_eth_address(&a) {
                     return Ok(friendship_status_invalid(
                         "Invalid user address in the request payload",
                     ));
                 }
-                n
+                normalize(&a)
             }
             _ => {
                 return Ok(friendship_status_invalid(
@@ -323,6 +375,19 @@ impl SocialServiceImpl {
         context: ProcedureContext<Context>,
     ) -> Result<UpsertFriendshipResponse, SocialError> {
         let me = Self::caller(&context)?;
+        let missing_user = match request.action.as_ref() {
+            Some(upsert_friendship_payload::Action::Request(p)) => p.user.is_none(),
+            Some(upsert_friendship_payload::Action::Accept(p)) => p.user.is_none(),
+            Some(upsert_friendship_payload::Action::Reject(p)) => p.user.is_none(),
+            Some(upsert_friendship_payload::Action::Delete(p)) => p.user.is_none(),
+            Some(upsert_friendship_payload::Action::Cancel(p)) => p.user.is_none(),
+            None => false,
+        };
+        if missing_user {
+            return Ok(upsert_internal_error(
+                "Cannot read properties of undefined (reading 'address')",
+            ));
+        }
         let invalid_request = |message: &str| UpsertFriendshipResponse {
             response: Some(upsert_friendship_response::Response::InvalidRequest(
                 invalid_req(message),
@@ -386,17 +451,23 @@ impl SocialServiceImpl {
             }
             Err(refusal) => return Ok(invalid_action(refusal.message().to_string())),
         };
-        let profiles = context.server_context.profiles();
-        if profiles.existing_friend_profile(&me).await.is_none() {
-            return Ok(upsert_internal_error(format!(
-                "Profile not found for address {me}"
-            )));
-        }
-        let Some(other_profile) = profiles.existing_friend_profile(&other).await else {
-            return Ok(upsert_internal_error(format!(
-                "Profile not found for address {other}"
-            )));
+        let profiles = match context
+            .server_context
+            .profiles()
+            .get_profiles_result(&[me.clone(), other.clone()])
+            .await
+        {
+            Ok(profiles) => profiles,
+            Err(error) => return Ok(upsert_internal_error(error.to_string())),
         };
+        for address in [&me, &other] {
+            if !profiles.contains_key(address) {
+                return Ok(upsert_internal_error(format!(
+                    "Profile not found for address {address}"
+                )));
+            }
+        }
+        let other_profile = crate::rpc::profiles::friend_profile(&other, profiles.get(&other));
 
         Ok(UpsertFriendshipResponse {
             response: Some(upsert_friendship_response::Response::Accepted(

@@ -15,6 +15,7 @@ uuid.workspace = true
 hex.workspace = true
 sha2.workspace = true
 url.workspace = true
+libc.workspace = true
 
 # The shared throwaway test database (`scratch`), for dependents' tests.
 [features]

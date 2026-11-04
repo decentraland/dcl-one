@@ -230,6 +230,12 @@ pub struct SceneColliderData {
     disabled: HashSet<ColliderHandle>,
 }
 
+impl SceneColliderData {
+    pub(crate) fn collider_count(&self) -> usize {
+        self.collider_set.len()
+    }
+}
+
 // max world-space size change (metres) before we rebuild the scaled shape
 const COLLIDER_RESCALE_SIZE: f32 = 0.01;
 // disable colliders whose largest scaled extent falls below this (metres)
