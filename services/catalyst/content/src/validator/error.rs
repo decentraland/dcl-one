@@ -123,7 +123,8 @@ impl fmt::Display for ValidationError {
 
 /// A check that could not be completed. The checks answer `Ok(false)` /
 /// a failing list for a provable "no" and this for everything else, so the
-/// caller turns it into [`ValidationResponse::Unavailable`], never a rejection.
+/// caller turns it into [`ValidationResponse::Unavailable`], never a rejection
+/// ([`ValidatorError::TooManyItems`] aside).
 #[derive(Debug, thiserror::Error)]
 pub enum ValidatorError {
     #[error("failed to parse entity: {0}")]
@@ -135,6 +136,11 @@ pub enum ValidatorError {
     /// The source this check needs is not configured on this node.
     #[error("{0}")]
     Unconfigured(String),
+
+    /// More items than one ownership check asks about: a refusal, not an
+    /// undecided check.
+    #[error("too many items to check: {0}")]
+    TooManyItems(String),
 }
 
 #[derive(Debug, Clone)]

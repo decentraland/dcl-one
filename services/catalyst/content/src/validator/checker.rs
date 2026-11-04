@@ -210,6 +210,9 @@ pub async fn validate_profile_access(
                         ));
                     }
                 }
+                Err(e @ ValidatorError::TooManyItems(_)) => {
+                    return ValidationResponse::fail(format!("Error checking item ownership: {e}"));
+                }
                 Err(e) => {
                     return ValidationResponse::unavailable(format!(
                         "Error checking item ownership: {e}"
@@ -361,6 +364,11 @@ pub async fn validate_outfits_access(
                             deployer_address.to_lowercase()
                         ));
                     }
+                }
+                Err(e @ ValidatorError::TooManyItems(_)) => {
+                    return ValidationResponse::fail(format!(
+                        "Error checking wearable ownership: {e}"
+                    ));
                 }
                 Err(e) => {
                     return ValidationResponse::unavailable(format!(
