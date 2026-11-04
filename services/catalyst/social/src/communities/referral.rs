@@ -120,7 +120,7 @@ impl Referral {
         }
     }
     #[cfg(test)]
-    pub(super) fn set_test_slack_endpoint(&mut self, endpoint: String) {
+    pub(crate) fn set_test_slack_endpoint(&mut self, endpoint: String) {
         self.slack.set_test_endpoint(endpoint);
     }
     pub fn set_mailer(&self, mailer: crate::notifications::email::EmailSender) {

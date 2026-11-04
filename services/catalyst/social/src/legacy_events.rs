@@ -604,7 +604,7 @@ mod tests {
             // The production consumer awaits process_message in this order.
             for (user, receipt) in [(first, "first"), (second, "second")] {
                 process_message(&*acks, &state, &QueueMessage {
-                    body: Some(serde_json::json!({"type":"client","subType":"logged-in","metadata":{"userAddress":user}}).to_string()),
+                    body: Some(serde_json::json!({"type":"client","subType":"logged-in","metadata":{"userAddress":user.as_str()}}).to_string()),
                     receipt: Some(receipt.into()),
                 }).await;
             }
