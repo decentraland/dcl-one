@@ -133,10 +133,17 @@ async fn with_schema(schema: &str) -> Option<Old> {
         )
         .await
         .unwrap();
+    // One captured schema at a time per process, like `apply_schema`: each
+    // applies as one implicit transaction holding thousands of object locks
+    // until commit, so overlapping applies exhaust the cluster's shared lock
+    // table ("out of shared memory").
+    static APPLYING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let applying = APPLYING.lock().await;
     sqlx::raw_sql(sqlx::AssertSqlSafe(schema.to_owned()))
         .execute(&pool)
         .await
         .expect("the closure base's schema.sql applies");
+    drop(applying);
     Some(Old { pool, admin, name })
 }
 
