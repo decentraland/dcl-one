@@ -29,7 +29,10 @@ const PRIVATE_INDEXES: &str = include_str!(concat!(
     "/schemas/releases/v3/42_social_private_voice_indexes.sql"
 ));
 fn release_v3() -> String {
-    let mut release = RELEASE_V3.to_owned();
+    // SQLx executes the SQL transaction; psql owns this client-side setting.
+    let stop_on_error = "\\set ON_ERROR_STOP on\n";
+    assert_eq!(RELEASE_V3.matches(stop_on_error).count(), 1);
+    let mut release = RELEASE_V3.replace(stop_on_error, "");
     for (directive, canonical) in [
         ("\\ir v3/41_social_voice_notifications.sql", VOICE_FACTS),
         (
