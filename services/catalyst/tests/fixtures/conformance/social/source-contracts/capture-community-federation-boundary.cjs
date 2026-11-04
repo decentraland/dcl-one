@@ -1,10 +1,16 @@
 // Node26, actual source server/router/auth/schema/multipart. Local domain
 // dependencies; PostgreSQL fault injected only after the auth/schema gates.
+const { sourceCapture, SOCIAL_REVISION, sha256, requireDatabaseUrl } = require(
+  require("node:path").join(
+    require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
+    "tooling/social-capture-common.cjs",
+  ),
+);
+const databaseUrl = requireDatabaseUrl(process.argv[4]);
+const capture = sourceCapture(process.argv[2]);
 const fs = require("fs"),
   net = require("net"),
-  crypto = require("crypto"),
-  root = process.argv[2];
-require(root + "/node_modules/ts-node/register/transpile-only");
+  root = capture.upstream;
 const { createUnsafeIdentity } = require(
   root + "/node_modules/@dcl/crypto/dist/crypto.js",
 );
@@ -29,11 +35,14 @@ const logs = {
   },
   id = "00000000-0000-4000-8000-000000000001";
 (async () => {
+  let server;
+  try {
   const pg = new (require(root + "/node_modules/pg").Client)({
-    connectionString: process.argv[4],
+    connectionString: databaseUrl,
   });
   await pg.connect();
   let failure;
+  try {
   try {
     await pg.query(
       "DO $$ BEGIN RAISE EXCEPTION 'permission denied for table communities'; END $$",
@@ -41,7 +50,7 @@ const logs = {
   } catch (error) {
     failure = error;
   }
-  await pg.end();
+  } finally { await pg.end(); }
   if (failure?.code !== "P0001") throw Error("missing PG exception");
   let currentInput,
     domainCalls = 0;
@@ -74,7 +83,7 @@ const logs = {
     },
   };
   const router = await setupHttpRoutes(context);
-  const server = await createServerComponent(
+  server = await createServerComponent(
     {
       logs,
       config: {
@@ -269,12 +278,13 @@ const logs = {
     socket.destroy();
   }
   await server.stop();
+  server = undefined;
   fs.writeFileSync(
     process.argv[3],
     JSON.stringify(
       {
         source: "decentraland/social-service-ea",
-        revision: "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+        revision: SOCIAL_REVISION,
         node: process.version,
         cap: 2 * 1024 * 1024,
         observationMs: 200,
@@ -285,10 +295,7 @@ const logs = {
           "src/components.ts",
         ].map((path) => ({
           path,
-          sha256: crypto
-            .createHash("sha256")
-            .update(fs.readFileSync(root + "/" + path))
-            .digest("hex"),
+          sha256: sha256(root, path),
         })),
         scope:
           "Actual server/router/auth/schema/multipart middleware. Domain mutators are local stubs, with real PostgreSQL P0001 injected after successful auth/schema for the marked fault case. Header-only cases are observed for 2s; EOF is observed for 200ms after complete response. No inference about longer transport lifetime.",
@@ -298,6 +305,9 @@ const logs = {
       2,
     ) + "\n",
   );
+  } finally {
+    await server?.stop();
+  }
 })().catch((error) => {
   console.error(error);
   process.exitCode = 1;

@@ -1,9 +1,17 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/voice-analytics-source-cases.json
 // Executes source voice mutations + analytics SDK; PostgreSQL is owned by this
 // capture. Media dependencies and analytics fetch are deterministic local stubs.
+const { requireNode26, sourceCapture, requireDatabaseUrl } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-voice-analytics-cases.cjs <upstream-checkout> <output.json>')
+const databaseUrl = requireDatabaseUrl(process.env.CATALYST_TEST_DATABASE_URL)
 const fs = require('node:fs')
 const { randomUUID } = require('node:crypto')
-const { req, load, logs, revision, components } = require('./social-service-voice-source-cases.cjs')
+const { req, load, revision } = sourceCapture(process.argv[2])
+const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
+const { createCommunityVoiceFixtures } = require('./social-voice-fixtures.cjs')
+const components = createCommunityVoiceFixtures({ load, logs })
 const { Pool } = req('pg')
 const { createAnalyticsComponent } = req('@dcl/analytics-component')
 const { createRecordConfigComponent } = req('@well-known-components/env-config-provider')
@@ -13,8 +21,7 @@ const mixedAddress = address => '0x' + address.slice(2).toUpperCase()
 const community = 'a3333333-b333-4c33-8d33-e33333333333'
 const call = 'c6666666-6666-4666-8666-666666666666'
 async function main() {
-  if (!process.env.CATALYST_TEST_DATABASE_URL) throw Error('CATALYST_TEST_DATABASE_URL required; no silent capture skip')
-  const url = new URL(process.env.CATALYST_TEST_DATABASE_URL)
+  const url = new URL(databaseUrl)
   const name = `social_analytics_voice_${process.pid}_${randomUUID().replaceAll('-', '')}`
   const admin = new Pool({ connectionString: url.toString(), max: 1 })
   let pg

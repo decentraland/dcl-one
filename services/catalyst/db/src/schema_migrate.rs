@@ -1068,6 +1068,9 @@ pub struct SchemaStatus {
     pub drifted_steps: Vec<String>,
     pub refused_step: Option<String>,
     pub gaps: Gaps,
+    /// Hash-named functions an earlier layout created and this one no longer
+    /// declares (`schema.name(args)`); informational, the exit code ignores them.
+    pub superseded_functions: Vec<String>,
 }
 
 impl SchemaStatus {
@@ -1148,6 +1151,12 @@ impl SchemaStatus {
                 self.gaps.columns.join(", ")
             }
         ));
+        if !self.superseded_functions.is_empty() {
+            out.push(format!(
+                "functions superseded after migrate (drop once no process runs an older binary): {}",
+                self.superseded_functions.join(", ")
+            ));
+        }
         out.push(format!(
             "verdict: {}",
             match self.exit_code() {
@@ -1192,7 +1201,64 @@ pub async fn status(
                 Err(_) => out.drifted_steps.push(step.name.clone()),
             }
         }
-        out.gaps = gaps_on(&mut conn, &plan(sql)?).await?;
+        let plan = plan(sql)?;
+        out.gaps = gaps_on(&mut conn, &plan).await?;
+        out.superseded_functions = superseded_functions(&mut conn, &plan).await?;
+    }
+    Ok(out)
+}
+
+/// `name` split into its prefix when it ends in `_` and 12 hex digits, the
+/// body-hash suffix of the write path's functions.
+fn hash_named_prefix(name: &str) -> Option<&str> {
+    let (prefix, hash) = name.rsplit_once('_')?;
+    (!prefix.is_empty()
+        && hash.len() == 12
+        && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+    .then_some(prefix)
+}
+
+/// Functions in the database named like a hash-named function of the layout
+/// (same schema and prefix, another hash) that the layout does not declare.
+async fn superseded_functions(
+    conn: &mut sqlx::PgConnection,
+    plan: &[Planned],
+) -> sqlx::Result<Vec<String>> {
+    let declared: Vec<(String, String)> = plan
+        .iter()
+        .filter_map(|p| match &p.step {
+            Step::Create {
+                object: Object::Function { schema, name },
+                ..
+            } => Some((schema.clone(), name.clone())),
+            _ => None,
+        })
+        .collect();
+    let mut families: Vec<(String, String)> = declared
+        .iter()
+        .filter_map(|(schema, name)| {
+            hash_named_prefix(name).map(|prefix| (schema.clone(), prefix.to_string()))
+        })
+        .collect();
+    families.sort();
+    families.dedup();
+    let mut out = Vec::new();
+    for (schema, prefix) in families {
+        let found: Vec<(String, String)> = sqlx::query_as(
+            "SELECT p.proname::text, format('%I.%I(%s)', n.nspname, p.proname, pg_get_function_identity_arguments(p.oid))
+             FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname = $1 AND starts_with(p.proname, $2 || '_')
+             ORDER BY 2",
+        )
+        .bind(&schema)
+        .bind(&prefix)
+        .fetch_all(&mut *conn)
+        .await?;
+        out.extend(found.into_iter().filter_map(|(name, signature)| {
+            (hash_named_prefix(&name) == Some(prefix.as_str())
+                && !declared.iter().any(|(s, n)| *s == schema && *n == name))
+            .then_some(signature)
+        }));
     }
     Ok(out)
 }
@@ -1633,6 +1699,53 @@ mod tests {
             layout("catalyst", 2, "CREATE TABLE a.t ();\n", rendered),
             base
         );
+    }
+
+    #[test]
+    fn hash_named_prefixes_need_twelve_lowercase_hex_digits() {
+        assert_eq!(
+            hash_named_prefix("unpublish_scene_47d21316abf2"),
+            Some("unpublish_scene")
+        );
+        assert_eq!(hash_named_prefix("decode_coord"), None);
+        assert_eq!(hash_named_prefix("f_47D21316ABF2"), None);
+        assert_eq!(hash_named_prefix("f_47d21316abf"), None);
+    }
+
+    /// A hash-named function the layout replaced is listed for the operator to
+    /// drop; the layout's own functions and unrelated ones are not.
+    #[tokio::test]
+    async fn status_lists_hash_named_functions_the_layout_superseded() {
+        let Some(pool) = crate::scratch::pool(2).await else {
+            return;
+        };
+        let schema = format!("fns_{}", uuid::Uuid::new_v4().simple());
+        let body = "RETURNS int LANGUAGE sql AS $f$ SELECT 1; $f$";
+        let layout = format!(
+            "CREATE SCHEMA {schema};\nCREATE FUNCTION {schema}.unpublish_scene_bbbbbbbbbbbb(text, text) {body};\n\
+             CREATE FUNCTION {schema}.helper() {body};"
+        );
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "{layout}\nCREATE FUNCTION {schema}.unpublish_scene_aaaaaaaaaaaa(text) {body};\n\
+             CREATE FUNCTION {schema}.unpublish_scene_notes() {body};\n\
+             CREATE FUNCTION {schema}.helper_aaaaaaaaaaaa() {body};"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let found = superseded_functions(&mut conn, &plan(&layout).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            found,
+            vec![format!("{schema}.unpublish_scene_aaaaaaaaaaaa(text)")]
+        );
+        drop(conn);
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

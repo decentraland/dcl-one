@@ -1,7 +1,14 @@
 // Runs only against the materialized, pinned social-service-ea source.
 // Usage: TS_NODE_COMPILER_OPTIONS='{"module":"CommonJS","moduleResolution":"node"}' node <script> <source-root> <output-json>
+const { sourceCapture, SOCIAL_REVISION } = require(
+  require("node:path").join(
+    require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
+    "tooling/social-capture-common.cjs",
+  ),
+);
+const capture = sourceCapture(process.argv[2]);
 const fs=require('fs');
-const upstream=process.argv[2];
+const upstream=capture.upstream;
 const {createCorsMiddleware}=require(upstream+'/node_modules/@dcl/http-server/dist/cors.js');
 const {normalizeResponseBody}=require(upstream+'/node_modules/@dcl/http-server/dist/logic.js');
 const middleware=createCorsMiddleware({methods:['GET','HEAD','OPTIONS','DELETE','POST','PUT','PATCH'],maxAge:86400});
@@ -15,5 +22,5 @@ const inputs=[
 ];
 const cases=[];
 for(const input of inputs){const request=new Request('http://fixture.invalid'+input.path,{method:input.method,headers:input.headers});const response=normalizeResponseBody(request,await middleware({request},async()=>({status:404,body:'Not found'})));cases.push({...input,status:response.status,body:response.body?.toString()||'',responseHeaders:Object.fromEntries(new Headers(response.headers).entries())});}
-fs.writeFileSync(process.argv[3],JSON.stringify({source:'decentraland/social-service-ea',revision:'b6b2cefefdf727b2ed47ddb887e77d226a41eea6',adapter:'@dcl/http-server/dist/cors.js',cases},null,2)+'\n');
+fs.writeFileSync(process.argv[3],JSON.stringify({source:'decentraland/social-service-ea',revision:SOCIAL_REVISION,adapter:'@dcl/http-server/dist/cors.js',cases},null,2)+'\n');
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -431,6 +431,8 @@ pub async fn deploy_entity_streaming(
         report,
         retry_state,
     } = target;
+    // The read-through never removes a file held here until the flush takes the entity.
+    let _in_flight = crate::sync_deployer::hold_buffered(entity_id);
     let budget = deployer.inflight_bytes();
     download_file_with_retries(client, storage.as_ref(), entity_id, servers, Some(budget)).await?;
 
@@ -551,7 +553,7 @@ fn entity_parse_error(
 pub(crate) const PROFILE_RENDER_FILES: &[&str] =
     &["face.png", "face128.png", "face256.png", "body.png"];
 
-fn is_profile_render_file(file: &str) -> bool {
+pub(crate) fn is_profile_render_file(file: &str) -> bool {
     let file = file.strip_prefix("./").unwrap_or(file);
     PROFILE_RENDER_FILES
         .iter()
@@ -903,6 +905,67 @@ mod tests {
             verify_cached_entity(CORRUPT_BYTES, "zUnknownScheme"),
             CachedEntityVerification::Unverifiable
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_entity_is_held_from_its_download_until_the_attempt_ends() {
+        let asked = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (on_ask, on_release) = (asked.clone(), release.clone());
+        let app = axum::Router::new().route(
+            "/contents/{hash}",
+            axum::routing::get(move || {
+                let (asked, release) = (on_ask.clone(), on_release.clone());
+                async move {
+                    asked.notify_one();
+                    let _open = release.acquire().await;
+                    axum::http::StatusCode::NOT_FOUND
+                }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (storage, tmp) = temp_storage("in-flight").await;
+        let deployer = LiveSyncDeployer::new(
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+            1,
+            crate::sync_deployer::SyncValidation::AuthChainOnly,
+        );
+        let id = hash_bytes_v1(format!("in-flight-{}", uuid::Uuid::new_v4()).as_bytes());
+        let servers = vec![url];
+        let (client, chain) = (reqwest::Client::new(), Vec::new());
+        let attempt = deploy_entity_streaming(
+            ContentSource {
+                client: &client,
+                storage,
+                servers: &servers,
+                content_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
+            },
+            &deployer,
+            RemoteDeployment {
+                entity_id: &id,
+                auth_chain: &chain,
+                context: DeploymentContext::Synced,
+                report: None,
+                retry_state: None,
+            },
+        );
+        let observe = async {
+            asked.notified().await;
+            let during = crate::sync_deployer::is_buffered(&id);
+            release.add_permits(1);
+            during
+        };
+        let (result, held_during_download) = tokio::join!(attempt, observe);
+        assert!(held_during_download, "held while its file downloads");
+        assert!(result.is_err());
+        assert!(
+            !crate::sync_deployer::is_buffered(&id),
+            "released after the attempt"
+        );
+        server.abort();
+        let _ = std::fs::remove_dir_all(tmp);
     }
 
     #[tokio::test]

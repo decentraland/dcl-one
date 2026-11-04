@@ -1,9 +1,13 @@
 #!/usr/bin/env node
+// Output fixture: library/dcl-http/tests/fixtures/social-analytics-source-cases.json
 // Runs the installed source analytics/fetch SDKs with controlled responses and
 // a local redirect server. No request reaches a real analytics endpoint.
+const { requireNode26, sourceCapture } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-analytics-cases.cjs <upstream-checkout> <output.json>')
 const fs = require('node:fs')
 const http = require('node:http')
-const { req, revision } = require('./social-service-voice-source-cases.cjs')
+const { req, revision } = sourceCapture(process.argv[2])
 const { createAnalyticsComponent } = req('@dcl/analytics-component')
 const { createFetchComponent } = req('@dcl/fetch-component')
 const { createRecordConfigComponent } = req('@well-known-components/env-config-provider')

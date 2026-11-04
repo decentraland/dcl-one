@@ -2127,6 +2127,7 @@ dependencies = [
  "clap",
  "ipnet",
  "serde_json",
+ "tracing",
  "tracing-subscriber",
  "url",
  "uuid",
@@ -2138,6 +2139,7 @@ version = "0.1.0"
 dependencies = [
  "alloy",
  "alloy-primitives",
+ "alloy-sol-types",
  "anyhow",
  "async-trait",
  "axum",
@@ -2146,6 +2148,7 @@ dependencies = [
  "bytes",
  "catalyst-chain-index",
  "catalyst-config",
+ "catalyst-content",
  "catalyst-db",
  "catalyst-jobs",
  "catalyst-land-authz",

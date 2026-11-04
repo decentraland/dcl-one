@@ -1,9 +1,16 @@
 // Node26; actual source members/bans handlers/components/SQL over disposable PG.
 // Usage: node <script> <source-root> <output> <postgres-url>. All profiles local.
+const { sourceCapture, SOCIAL_REVISION, sha256, requireDatabaseUrl } = require(
+  require("node:path").join(
+    require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
+    "tooling/social-capture-common.cjs",
+  ),
+);
+const databaseUrl = requireDatabaseUrl(process.argv[4]);
+const capture = sourceCapture(process.argv[2]);
 const fs = require("fs"),
   crypto = require("crypto"),
-  root = process.argv[2];
-require(root + "/node_modules/ts-node/register/transpile-only");
+  root = capture.upstream;
 const { Client } = require(root + "/node_modules/pg");
 const { createCommunitiesDBComponent } = require(
   root + "/src/adapters/communities-db.ts",
@@ -24,7 +31,7 @@ const logs = {
   getLogger: () => ({ info() {}, warn() {}, debug() {}, error() {} }),
 };
 (async () => {
-  const client = new Client({ connectionString: process.argv[4] });
+  const client = new Client({ connectionString: databaseUrl });
   await client.connect();
   const schema = "member_fields_" + crypto.randomBytes(12).toString("hex"),
     cases = [];
@@ -172,7 +179,7 @@ const logs = {
       JSON.stringify(
         {
           source: "https://github.com/decentraland/social-service-ea",
-          revision: "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+          revision: SOCIAL_REVISION,
           runtime: process.version,
           postgres: (await client.query("SHOW server_version")).rows[0]
             .server_version,
@@ -181,10 +188,7 @@ const logs = {
           seed: { id, viewer, peer },
           sources: paths.map((path) => ({
             path,
-            sha256: crypto
-              .createHash("sha256")
-              .update(fs.readFileSync(root + "/" + path))
-              .digest("hex"),
+            sha256: sha256(root, path),
           })),
           cases,
         },

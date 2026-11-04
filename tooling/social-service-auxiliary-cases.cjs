@@ -1,13 +1,13 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/auxiliary-cases.json
 // Optional actual-source captures; no external server/network is invoked.
-const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto')
-const {execFileSync}=require('node:child_process'),{createRequire}=require('node:module')
-const revision='b6b2cefefdf727b2ed47ddb887e77d226a41eea6',upstream=path.resolve(process.argv[2]||''),output=process.argv[3]
-if(!process.argv[2]||!output)throw Error('Usage: node tooling/social-service-auxiliary-cases.cjs <upstream> <output.json>')
-const git=(...args)=>execFileSync('git',['-C',upstream,...args],{encoding:'utf8'}).trim()
-if(git('rev-parse','HEAD')!==revision||git('status','--porcelain','--untracked-files=no'))throw Error('Pinned clean upstream required')
-const from=createRequire(path.join(upstream,'package.json'));from('ts-node').register({transpileOnly:true,project:path.join(upstream,'tsconfig.json')})
-const load=file=>from(path.join(upstream,'src',file)),logs={getLogger:()=>({info(){},warn(){},error(){},debug(){}})}
+const { requireNode26, sourceCapture, sha256 } = require('./social-capture-common.cjs')
+requireNode26()
+const fs=require('node:fs')
+const output = process.argv[3]
+if (!process.argv[2] || !output) throw Error('Usage: node tooling/social-service-auxiliary-cases.cjs <upstream> <output.json>')
+const { upstream, revision, req: from, load } = sourceCapture(process.argv[2])
+const logs={getLogger:()=>({info(){},warn(){},error(){},debug(){}})}
 async function main(){
  const cases=[]
  for(const values of [{},{CURRENT_VERSION:'custom-version',COMMIT_HASH:'custom-commit'},{CURRENT_VERSION:'',COMMIT_HASH:'  '}] ){
@@ -28,7 +28,7 @@ async function main(){
  }
  const declarations=load('metrics.ts').metricDeclarations
  const sourceFiles=['src/controllers/handlers/uws/status-handler.ts','src/controllers/handlers/uws/privacy-handler.ts','node_modules/@dcl/uws-http-server/dist/src/metrics.js','src/metrics.ts']
- fs.writeFileSync(output,JSON.stringify({baseline:{repository:'decentraland/social-service-ea',revision,yarn_lock_sha256:crypto.createHash('sha256').update(fs.readFileSync(path.join(upstream,'yarn.lock'))).digest('hex'),sources:sourceFiles.map(file=>({path:file,sha256:crypto.createHash('sha256').update(fs.readFileSync(path.join(upstream,file))).digest('hex')}))},runtime:{node:process.version},scope:'Actual pinned uWS status/privacy factories and installed metrics handler, with injected database, registry and request/response objects. No deployed lifecycle, Prometheus samples or real connection abort claimed.',cases,metric_declarations:declarations},null,2)+'\n')
+ fs.writeFileSync(output,JSON.stringify({baseline:{repository:'decentraland/social-service-ea',revision,yarn_lock_sha256:sha256(upstream, 'yarn.lock'),sources:sourceFiles.map(file=>({path:file,sha256:sha256(upstream, file)}))},runtime:{node:process.version},scope:'Actual pinned uWS status/privacy factories and installed metrics handler, with injected database, registry and request/response objects. No deployed lifecycle, Prometheus samples or real connection abort claimed.',cases,metric_declarations:declarations},null,2)+'\n')
  process.stdout.write(`Captured ${cases.length} source auxiliary cases and ${Object.keys(declarations).length} metric declarations\n`)
 }
 main().catch(error=>{console.error(error);process.exitCode=1})

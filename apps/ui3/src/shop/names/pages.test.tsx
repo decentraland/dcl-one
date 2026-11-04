@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { Hex } from "viem";
+import { useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LAND_NETWORKS } from "../land/contracts";
@@ -279,4 +280,96 @@ describe("NAMEs being resold", () => {
     expect(await screen.findByText(/nft-indexer is catching up.*not an empty market/)).toBeInTheDocument();
   });
 
+  describe("the MANA price range", () => {
+    const Search = () => <output data-testid="search">{useLocation().search}</output>;
+    const browse = (path: string, results = [nameResult("Nacho", { price: (5n * MANA).toString() })]) => {
+      const client = stubClient({ "GET /shop-api/v1/nfts": { body: { data: results, total: results.length } } });
+      render(
+        <ShopHarness session="web2" path={path} route="/shop/names">
+          <NamesHub client={client} />
+          <Search />
+        </ShopHarness>,
+      );
+      const sent = () => client.requests.filter((r) => r.url.includes("/v1/nfts")).map((r) => new URL(r.url).searchParams);
+      return { client, sent };
+    };
+
+    it("asks for the range in wei and keeps MANA in the URL", async () => {
+      const { sent } = browse("/shop/names?section=resale");
+      await screen.findByRole("link", { name: "Nacho.dcl.eth, 5 MANA" });
+      expect([sent()[0]!.get("minPrice"), sent()[0]!.get("maxPrice")]).toEqual([null, null]);
+      fireEvent.change(screen.getByRole("textbox", { name: "Minimum price in MANA" }), { target: { value: "1.5" } });
+      fireEvent.change(screen.getByRole("textbox", { name: "Maximum price in MANA" }), { target: { value: " 20 " } });
+      fireEvent.submit(screen.getByRole("form", { name: "Price in MANA" }));
+      await waitFor(() => expect(sent()).toHaveLength(2));
+      expect([sent()[1]!.get("minPrice"), sent()[1]!.get("maxPrice")]).toEqual([(15n * MANA / 10n).toString(), (20n * MANA).toString()]);
+      const search = new URLSearchParams(screen.getByTestId("search").textContent!);
+      expect([search.get("minPrice"), search.get("maxPrice"), search.get("section")]).toEqual(["1.5", "20", "resale"]);
+    });
+
+    it("applies the range when the focus leaves it, not while moving between its boxes", async () => {
+      const { sent } = browse("/shop/names?section=resale");
+      await screen.findByRole("link", { name: "Nacho.dcl.eth, 5 MANA" });
+      const min = screen.getByRole("textbox", { name: "Minimum price in MANA" });
+      const max = screen.getByRole("textbox", { name: "Maximum price in MANA" });
+      fireEvent.change(min, { target: { value: "3" } });
+      fireEvent.blur(min, { relatedTarget: max });
+      expect(screen.getByTestId("search").textContent).not.toContain("minPrice");
+      fireEvent.blur(max, { relatedTarget: null });
+      await waitFor(() => expect(sent()).toHaveLength(2));
+      expect([sent()[1]!.get("minPrice"), sent()[1]!.get("maxPrice")]).toEqual([(3n * MANA).toString(), null]);
+    });
+
+    it("restores a range from the URL and drops a bound that is not a MANA amount", async () => {
+      const { sent } = browse("/shop/names?section=resale&minPrice=2&maxPrice=lots");
+      await screen.findByRole("link", { name: "Nacho.dcl.eth, 5 MANA" });
+      expect(screen.getByRole("textbox", { name: "Minimum price in MANA" })).toHaveValue("2");
+      expect(screen.getByRole("textbox", { name: "Maximum price in MANA" })).toHaveValue("");
+      expect([sent()[0]!.get("minPrice"), sent()[0]!.get("maxPrice")]).toEqual([(2n * MANA).toString(), null]);
+    });
+
+    it("holds back a bound that is not an amount, or a minimum above the maximum, and says why", async () => {
+      const { sent } = browse("/shop/names?section=resale");
+      await screen.findByRole("link", { name: "Nacho.dcl.eth, 5 MANA" });
+      const min = screen.getByRole("textbox", { name: "Minimum price in MANA" });
+      const max = screen.getByRole("textbox", { name: "Maximum price in MANA" });
+      const form = screen.getByRole("form", { name: "Price in MANA" });
+      fireEvent.change(min, { target: { value: "ten" } });
+      fireEvent.submit(form);
+      expect(screen.getByRole("alert")).toHaveTextContent("Enter a MANA amount, such as 10 or 2.5.");
+      expect(min).toHaveAttribute("aria-invalid", "true");
+      fireEvent.change(min, { target: { value: "30" } });
+      fireEvent.change(max, { target: { value: "10" } });
+      fireEvent.submit(form);
+      expect(screen.getByRole("alert")).toHaveTextContent("The minimum is above the maximum.");
+      expect(sent()).toHaveLength(1);
+      fireEvent.change(max, { target: { value: "40" } });
+      expect(screen.queryByRole("alert")).toBeNull();
+      fireEvent.submit(form);
+      await waitFor(() => expect(sent()).toHaveLength(2));
+    });
+
+    it("reads zero as no bound, refuses an amount past uint256, and asks for live listings with a range", async () => {
+      const { sent } = browse("/shop/names?section=resale&onlyOnSale=false&minPrice=0");
+      await screen.findByRole("link", { name: "Nacho.dcl.eth, 5 MANA" });
+      expect([sent()[0]!.get("minPrice"), sent()[0]!.get("isOnSale")]).toEqual([null, null]);
+      const min = screen.getByRole("textbox", { name: "Minimum price in MANA" });
+      const max = screen.getByRole("textbox", { name: "Maximum price in MANA" });
+      const form = screen.getByRole("form", { name: "Price in MANA" });
+      fireEvent.change(max, { target: { value: "1" + "0".repeat(60) } });
+      fireEvent.submit(form);
+      expect(screen.getByRole("alert")).toHaveTextContent("Enter a MANA amount");
+      fireEvent.change(min, { target: { value: "0.0" } });
+      fireEvent.change(max, { target: { value: " 8 " } });
+      fireEvent.submit(form);
+      await waitFor(() => expect(sent()).toHaveLength(2));
+      expect([sent()[1]!.get("minPrice"), sent()[1]!.get("maxPrice"), sent()[1]!.get("isOnSale")]).toEqual([null, (8n * MANA).toString(), "true"]);
+      expect([min, max].map((b) => (b as HTMLInputElement).value)).toEqual(["", "8"]);
+    });
+
+    it("says when nothing on resale falls in the range", async () => {
+      browse("/shop/names?section=resale&maxPrice=1", []);
+      expect(await screen.findByText("No NAMEs on resale in this price range")).toBeInTheDocument();
+    });
+  });
 });

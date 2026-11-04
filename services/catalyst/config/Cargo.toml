@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 ipnet.workspace = true
+tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
 clap.workspace = true

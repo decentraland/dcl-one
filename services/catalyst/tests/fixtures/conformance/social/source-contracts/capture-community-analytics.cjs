@@ -1,8 +1,13 @@
 // Actual source mutators, with local DB/provider dependencies and analytics capture.
+const { sourceCapture, SOCIAL_REVISION, sha256 } = require(
+  require("node:path").join(
+    require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
+    "tooling/social-capture-common.cjs",
+  ),
+);
+const capture = sourceCapture(process.argv[2]);
 const fs = require("fs"),
-  crypto = require("crypto"),
-  root = process.argv[2];
-require(root + "/node_modules/ts-node/register/transpile-only");
+  root = capture.upstream;
 const { createCommunityComponent } = require(
   root + "/src/logic/community/communities.ts",
 );
@@ -256,14 +261,11 @@ const cases = [];
     JSON.stringify(
       {
         source: "decentraland/social-service-ea",
-        revision: "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+        revision: SOCIAL_REVISION,
         node: process.version,
         sources: sources.map((path) => ({
           path,
-          sha256: crypto
-            .createHash("sha256")
-            .update(fs.readFileSync(root + "/" + path))
-            .digest("hex"),
+          sha256: sha256(root, path),
         })),
         scope:
           "Actual seven source community analytics hook locations; domain dependencies are local mocks. Emission and DB/pubsub call order, no-ops and selected DB failures are captured. The SDK transport is covered separately; this capture does not establish database atomicity.",

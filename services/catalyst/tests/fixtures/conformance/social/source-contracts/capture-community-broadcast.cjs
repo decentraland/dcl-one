@@ -1,7 +1,13 @@
 // Source-only preparation. No network requests or paid providers.
+const { sourceCapture, SOCIAL_REVISION } = require(
+  require("node:path").join(
+    require("node:child_process").execFileSync("git", ["-C", __dirname, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim(),
+    "tooling/social-capture-common.cjs",
+  ),
+);
+const capture = sourceCapture(process.argv[2]);
 const fs = require("fs");
-const root = process.argv[2];
-require(root + "/node_modules/ts-node/register/transpile-only");
+const root = capture.upstream;
 const { SNSClient } = require(root + "/node_modules/@aws-sdk/client-sns");
 const { createSnsComponent } = require(
   root + "/node_modules/@dcl/sns-component",
@@ -16,6 +22,9 @@ const address = (n) => "0x" + n.toString(16).padStart(40, "0");
 let requests = [];
 let fail = false;
 let partial = false;
+const originalSend = SNSClient.prototype.send;
+async function main() {
+try {
 SNSClient.prototype.send = async function (command) {
   requests.push({ command: command.constructor.name, input: command.input });
   if (fail) throw new Error("fixture SNS failure");
@@ -52,8 +61,8 @@ const logs = {
     },
   }),
 };
-const source = "b6b2cefefdf727b2ed47ddb887e77d226a41eea6";
-(async () => {
+const source = SOCIAL_REVISION;
+
   const sns = await createSnsComponent({
     config: {
       requireString: async () => "arn:aws:sns:us-east-1:000000000000:fixture",
@@ -255,7 +264,9 @@ const source = "b6b2cefefdf727b2ed47ddb887e77d226a41eea6";
       2,
     ) + "\n",
   );
-})().catch((error) => {
+} finally { SNSClient.prototype.send = originalSend; }
+}
+main().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });

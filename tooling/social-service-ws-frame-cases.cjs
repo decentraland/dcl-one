@@ -1,8 +1,14 @@
 #!/usr/bin/env node
+// Output fixture: services/catalyst/tests/fixtures/conformance/social/ws-frames-source-cases.json
 // Executes the authenticated handler -> transport -> actual dRPC server path.
 // Authentication and the native socket are controlled component boundaries.
+const { requireNode26, sourceCapture } = require('./social-capture-common.cjs')
+requireNode26()
+if (!process.argv[2] || !process.argv[3]) throw Error('Usage: node tooling/social-service-ws-frame-cases.cjs <upstream-checkout> <output.json>')
 const fs=require('node:fs')
-const {req,load,logs,caller,revision}=require('./social-service-voice-source-cases.cjs')
+const { req, load, revision } = sourceCapture(process.argv[2])
+const logs = { getLogger: () => ({ error() {}, warn() {}, info() {}, debug() {} }) }
+const caller = '0x1111111111111111111111111111111111111111'
 const mitt=req('mitt').default||req('mitt')
 const {createRecordConfigComponent}=req('@well-known-components/env-config-provider')
 const {registerWsHandler}=load('controllers/handlers/uws/ws-handler.ts')

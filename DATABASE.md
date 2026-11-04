@@ -56,6 +56,18 @@ the data and its operations.
    records it in `meta.schema_steps`; `services/catalyst/tests/`). A step
    that drops, renames, retypes or deletes is refused: that change is its own
    reviewed release (record the data-safe release procedure and evidence in the task report).
+   A changed body of a hash-named write function (`content.deploy_entity_<hash>`,
+   `content.unpublish_scene_<hash>`) is a new function; `migrate` creates it and
+   leaves the old one for binaries still calling it. `catalyst schema status`
+   lists the old ones as superseded after migrate (run before `migrate`, that
+   includes the one the running binary still calls); drop them by hand once no
+   process runs an older binary.
+   The `deleter_deployment` repair runs once per database and repair version
+   (`content.system_properties` key `deleter_repair_version`, only ever
+   raised), at a sync leader's bootstrap or a non-syncing process's startup.
+   During a rolling deploy an older binary still writing can leave rows the
+   repair's rules would change after the marker is set; the next sync leader
+   bootstrap repairs them, or restart a sync leader once the rollout is done.
 
 ## Worlds, persistent storage and scene hosting
 
