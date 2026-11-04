@@ -26,15 +26,15 @@ pub const THE_GRAPH_PAGE_SIZE: i64 = 1000;
 /// Pages walked per owner and network before the names and lands answers
 /// are cut off.
 const MAX_PAGES: usize = 10;
-/// Pages of owned wearables or emotes walked per owner and network: 100,000
-/// tokens, the marketplace-server's 100 pages of 1,000 groups that lamb2
-/// reads before its own whole subgraph walk
-/// (decentraland/lamb2:src/adapters/marketplace-api-fetcher.ts:362-385). An
-/// inventory past it is a failed read, never a truncated one. Each page is
-/// one subgraph request (at most 1,000 copies, a few hundred KiB), so a
-/// whale costs up to 100 sequential requests per network, memoized
-/// [`OWNED_TTL`] per owner and category.
-const OWNED_MAX_PAGES: usize = 100;
+/// The owned wearables or emotes walk reads every page, as lamb2's subgraph
+/// fallback does (decentraland/lamb2:src/logic/fetch-elements/fetch-elements.ts:13-46).
+/// This is only a runaway guard: 1,000 pages is 1,000,000 tokens on one
+/// network, past which the read fails (502) rather than answer a truncated
+/// list. Each page is one subgraph request (at most 1,000 copies, a few
+/// hundred KiB), sequential per network, both networks in parallel, the
+/// result memoized [`OWNED_TTL`] per owner and category: an owner of `n`
+/// tokens on a network costs `n / 1000 + 1` requests there.
+const OWNED_MAX_PAGES: usize = 1000;
 const BODY_CAP: usize = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_ATTEMPTS: u32 = 3;
