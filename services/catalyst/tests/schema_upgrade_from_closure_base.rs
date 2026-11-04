@@ -10,9 +10,11 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 
 use catalyst::schema_migrate::{self, MigrateError};
 
-const MAIN_EVENT_HOOK_STEPS: [&str; 2] = [
+/// The steps a prepared version-2 database has not recorded.
+const PREPARED_PENDING_STEPS: [&str; 3] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
+    "0023_social_referral_pending_reward",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 
@@ -25,8 +27,8 @@ async fn step_ledger(pool: &PgPool) -> Vec<LedgerRow> {
     .unwrap()
 }
 
-fn assert_only_event_hook_steps_added(before: &[LedgerRow], after: &[LedgerRow]) {
-    assert_eq!(after.len(), before.len() + MAIN_EVENT_HOOK_STEPS.len());
+fn assert_only_pending_steps_added(before: &[LedgerRow], after: &[LedgerRow]) {
+    assert_eq!(after.len(), before.len() + PREPARED_PENDING_STEPS.len());
     for row in before {
         assert!(
             after.contains(row),
@@ -36,7 +38,7 @@ fn assert_only_event_hook_steps_added(before: &[LedgerRow], after: &[LedgerRow])
     let added: Vec<_> = after.iter().filter(|row| !before.contains(row)).collect();
     assert_eq!(
         added.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
-        MAIN_EVENT_HOOK_STEPS
+        PREPARED_PENDING_STEPS
     );
     let steps = schema_migrate::parse_steps(catalyst::db::MIGRATIONS_SQL);
     for row in added {
@@ -322,10 +324,10 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
             .await
             .unwrap();
     assert_eq!(
-        done.steps, MAIN_EVENT_HOOK_STEPS,
-        "only the newly merged main event-hook steps run; historical steps never replay"
+        done.steps, PREPARED_PENDING_STEPS,
+        "only steps the prepared capture lacks run; historical steps never replay"
     );
-    assert_only_event_hook_steps_added(&historical_ledger, &step_ledger(pool).await);
+    assert_only_pending_steps_added(&historical_ledger, &step_ledger(pool).await);
     assert!(
         !done.created.iter().any(|object| matches!(object,
         schema_migrate::Object::Index(name) if name == "social.private_voice_chats_caller_idx"
@@ -872,7 +874,7 @@ async fn composed_voice_release_rolls_back_connection_loss_at_each_boundary_then
                 .await
                 .unwrap();
         assert_eq!(
-            applied.steps, MAIN_EVENT_HOOK_STEPS,
+            applied.steps, PREPARED_PENDING_STEPS,
             "only new main event-hook steps apply; historical 0020 never re-adds retired columns"
         );
         catalyst::db::bootstrap(pool).await.unwrap();
@@ -882,7 +884,7 @@ async fn composed_voice_release_rolls_back_connection_loss_at_each_boundary_then
                 .unwrap()
                 .is_empty()
         );
-        assert_only_event_hook_steps_added(&ledger_before, &step_ledger(pool).await);
+        assert_only_pending_steps_added(&ledger_before, &step_ledger(pool).await);
         // New aliases are additional facts, never an overwrite of the canonical backfill.
         sqlx::query("INSERT INTO social.community_voice_notifications(raw_community_id,community_id,notification_scope,generation,expires_at) SELECT upper(raw_community_id),community_id,'members',gen_random_uuid(),expires_at+interval '1 hour' FROM social.community_voice_notifications").execute(pool).await.unwrap();
         assert_eq!(

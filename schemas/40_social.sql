@@ -825,6 +825,10 @@ CREATE TABLE social.referral_progress (
     signed_up_at timestamp without time zone,
     tier_granted boolean NOT NULL DEFAULT false,
     tier_granted_at timestamp without time zone,
+    -- The reward tier this grant reached while its reward is not yet done:
+    -- set with the grant, cleared once the reward, notification and image
+    -- succeed. A later finalize of the same invited user retries it.
+    reward_tier integer,
     -- The source's no-TTL login-day set; whole-value reads, at most the
     -- configured minimum distinct UTC dates before the next login grants.
     login_days date[] NOT NULL DEFAULT '{}',
@@ -838,9 +842,10 @@ CREATE TABLE social.referral_progress (
 );
 
 -- The referrer's `COUNT(*) WHERE status = 'tier_granted'` and progress list.
+-- Its referrer prefix also bounds registration's referrer+IP count, which
+-- compares each row's IP as inet (historical aliases included), so no index
+-- on the stored IP text can serve it.
 CREATE INDEX referral_progress_referrer_idx ON social.referral_progress (referrer, status);
--- Registration counts all prior rows for this referrer+IP, including rejections.
-CREATE INDEX referral_progress_ip_idx ON social.referral_progress (referrer, invited_user_ip);
 CREATE INDEX referral_progress_granted_idx ON social.referral_progress (referrer) WHERE tier_granted;
 
 -- Reward art returned by the rewards API after a tier's guarded transition;

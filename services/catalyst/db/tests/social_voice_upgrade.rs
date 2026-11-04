@@ -7,9 +7,11 @@ use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 const STEP: &str = "0020_social_voice_notifications";
-const MAIN_EVENT_HOOK_STEPS: [&str; 2] = [
+/// The steps a prepared version-2 database has not recorded.
+const PREPARED_PENDING_STEPS: [&str; 3] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
+    "0023_social_referral_pending_reward",
 ];
 const PREPARED_V2: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),
@@ -166,8 +168,8 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
         .await
         .unwrap();
     assert_eq!(
-        done.steps, MAIN_EVENT_HOOK_STEPS,
-        "only newly merged main event-hook steps run; recorded historical steps never replay"
+        done.steps, PREPARED_PENDING_STEPS,
+        "only steps the prepared capture lacks run; recorded historical steps never replay"
     );
     let after: String = sqlx::query_scalar(facts_sql).fetch_one(pool).await.unwrap();
     assert_eq!(after, facts);
@@ -191,7 +193,7 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
     );
     let ledger: Vec<(String, String, bool, chrono::NaiveDateTime)> =
         sqlx::query_as(ledger_sql).fetch_all(pool).await.unwrap();
-    assert_eq!(ledger.len(), before.len() + MAIN_EVENT_HOOK_STEPS.len());
+    assert_eq!(ledger.len(), before.len() + PREPARED_PENDING_STEPS.len());
     for row in &before {
         assert!(
             ledger.contains(row),
@@ -201,7 +203,7 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
     let added: Vec<_> = ledger.iter().filter(|row| !before.contains(row)).collect();
     assert_eq!(
         added.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
-        MAIN_EVENT_HOOK_STEPS
+        PREPARED_PENDING_STEPS
     );
     let embedded = schema_migrate::parse_steps(MIGRATIONS_SQL);
     for row in added {
@@ -352,6 +354,58 @@ async fn real_main_v2_release_rolls_back_at_each_boundary_then_migrates_without_
         );
         db.close().await;
     }
+}
+
+/// Shipped main v2 has `social.referral_progress` without the referral
+/// lifecycle columns. Step 0021 adds them: its volatile `id` default rewrites
+/// the table under ACCESS EXCLUSIVE (inside the writer-stopped cutover) and
+/// mints an id per existing row. Every stored value survives; granted rows are
+/// marked, and no reward is left pending.
+#[tokio::test]
+async fn populated_main_v2_referrals_survive_the_upgrade_with_minted_ids() {
+    let Some(db) = Database::with_schema(MAIN_V2).await else {
+        return;
+    };
+    let pool = &db.pool;
+    sqlx::raw_sql("INSERT INTO social.referral_progress(invited_user,referrer,status,created_at,updated_at) SELECT 'invited-'||n,'referrer-'||(n%3),(ARRAY['pending','signed_up','tier_granted','rejected_ip_match'])[1+n%4],timestamp '2026-01-01'+n*interval '1 minute',timestamp '2026-02-01'+n*interval '1 minute' FROM generate_series(1,200) AS n")
+        .execute(pool).await.unwrap();
+    let snapshot = "SELECT jsonb_agg(jsonb_build_object('invited_user',invited_user,'referrer',referrer,'status',status,'created_at',created_at,'updated_at',updated_at) ORDER BY invited_user)::text FROM social.referral_progress";
+    let before: String = sqlx::query_scalar(snapshot).fetch_one(pool).await.unwrap();
+    let file = "SELECT pg_relation_filenode('social.referral_progress')::bigint";
+    let file_before: i64 = sqlx::query_scalar(file).fetch_one(pool).await.unwrap();
+    release_result(pool, &release_v3()).await.unwrap();
+    let done = schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    assert!(
+        done.steps
+            .iter()
+            .any(|step| step == "0021_social_referral_lifecycle")
+    );
+    catalyst_db::bootstrap(pool).await.unwrap();
+    assert_eq!(
+        schema_migrate::status(pool, SCHEMA_SQL, MIGRATIONS_SQL)
+            .await
+            .unwrap()
+            .exit_code(),
+        0
+    );
+    let after: String = sqlx::query_scalar(snapshot).fetch_one(pool).await.unwrap();
+    assert_eq!(before, after, "every stored referral value survives");
+    let (rows, ids, granted, tier_rows, pending): (i64, i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT count(*),count(DISTINCT id),count(*) FILTER (WHERE tier_granted),count(*) FILTER (WHERE status='tier_granted'),count(reward_tier) FROM social.referral_progress",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!((rows, ids, pending), (200, 200, 0), "one minted id per row");
+    assert_eq!(granted, tier_rows, "granted rows are marked");
+    let file_after: i64 = sqlx::query_scalar(file).fetch_one(pool).await.unwrap();
+    assert_ne!(
+        file_before, file_after,
+        "the volatile id default rewrites the table"
+    );
+    db.close().await;
 }
 
 #[tokio::test]

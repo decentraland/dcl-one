@@ -466,7 +466,8 @@ pub struct State {
     /// local-first path arrives with the lambdas module.
     pub content: Arc<ContentState>,
     pub registry: registry::Cache,
-    pub denylist: denylist::Snapshot,
+    /// Shared with social's referral checks, which read it in place.
+    pub denylist: Arc<denylist::Snapshot>,
     pub flags: feature_flags::Snapshot,
     pub map: map::MapState,
     pub ab_cdn: ab_cdn::Cache,
@@ -511,7 +512,7 @@ impl State {
             http,
             content,
             registry: registry::Cache::new(),
-            denylist: denylist::Snapshot::default(),
+            denylist: Arc::default(),
             flags: feature_flags::Snapshot::default(),
             map: map::MapState::new(),
             ab_cdn,

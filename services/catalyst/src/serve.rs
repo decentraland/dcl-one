@@ -961,6 +961,10 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     social
         .communities
         .spawn_flags_job(&jobs, explorer_api.clone());
+    social
+        .communities
+        .referral
+        .set_denylist(explorer_api.denylist.clone());
     communities::ranking::spawn_jobs(&social.communities, &jobs);
     communities::compliance::spawn_job(&social.communities, &jobs);
     // A permission, access-setting or block edit reaches the running rooms
@@ -1862,6 +1866,94 @@ impl communities::WorldAccessRevocation for WorldsCommunityAccess {
     }
 }
 
+/// The referral settings `social_states` passes on, including the backend
+/// proxies trusted to supply `X-Real-IP` for referral quotas.
+fn referral_settings(config: &Config) -> communities::referral::Settings {
+    communities::referral::Settings {
+        trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
+        max_ip_matches: config.social.referral_max_ip_matches,
+        suspicious_window_ms: config.social.referral_suspicious_window_ms,
+        slack: communities::referral::SlackSettings {
+            token: config.social.referral_slack_token.clone(),
+            dashboard: config.social.referral_metabase_dashboard.clone(),
+            environment: config.social.social_environment.clone().unwrap_or_default(),
+        },
+        min_login_days: config.social.referral_min_login_days,
+        profile_url: config.social.referral_profile_url.clone(),
+        reward_server_url: config.social.referral_reward_server_url.clone(),
+        reward_keys: [
+            (
+                5,
+                &config.social.rewards_api_key_by_referral_invited_users_5,
+            ),
+            (
+                10,
+                &config.social.rewards_api_key_by_referral_invited_users_10,
+            ),
+            (
+                20,
+                &config.social.rewards_api_key_by_referral_invited_users_20,
+            ),
+            (
+                25,
+                &config.social.rewards_api_key_by_referral_invited_users_25,
+            ),
+            (
+                30,
+                &config.social.rewards_api_key_by_referral_invited_users_30,
+            ),
+            (
+                50,
+                &config.social.rewards_api_key_by_referral_invited_users_50,
+            ),
+            (
+                60,
+                &config.social.rewards_api_key_by_referral_invited_users_60,
+            ),
+            (
+                75,
+                &config.social.rewards_api_key_by_referral_invited_users_75,
+            ),
+        ]
+        .into_iter()
+        .map(|(tier, key)| (tier, key.clone().unwrap_or_default()))
+        .collect(),
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod referral_settings_tests {
+    use super::referral_settings;
+    use crate::config::Config;
+
+    #[test]
+    fn referral_quotas_trust_exactly_the_configured_proxy_networks() {
+        let parse = |vars: &[(&str, &str)]| {
+            Config::parse_env_for_tests(
+                [("DATABASE_URL", "postgres:///catalyst")]
+                    .iter()
+                    .chain(vars)
+                    .copied(),
+            )
+            .unwrap()
+        };
+        assert!(
+            referral_settings(&parse(&[]))
+                .trusted_proxy_cidrs
+                .is_empty(),
+            "no proxy is trusted unless configured"
+        );
+        let config = parse(&[("HTTP_TRUSTED_PROXY_CIDRS", "10.0.0.0/8,2001:db8::/32")]);
+        let trusted = referral_settings(&config).trusted_proxy_cidrs;
+        assert_eq!(trusted, config.node.http_trusted_proxy_cidrs);
+        assert_eq!(
+            trusted.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ["10.0.0.0/8", "2001:db8::/32"]
+        );
+    }
+}
+
 /// The social bundle's states (the old catalyrst-social members: communities,
 /// notifications, badges, media, plus profile-images, the social RPC and the
 /// MLS delivery service), every one over the same pool, client, blob store
@@ -1982,59 +2074,7 @@ fn social_states(
             mirror_interval: Duration::from_secs(
                 config.social.communities_mirror_interval_secs.max(1),
             ),
-            referral: communities::referral::Settings {
-                trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
-                max_ip_matches: config.social.referral_max_ip_matches,
-                suspicious_window_ms: config.social.referral_suspicious_window_ms,
-                slack: communities::referral::SlackSettings {
-                    token: config.social.referral_slack_token.clone(),
-                    dashboard: config.social.referral_metabase_dashboard.clone(),
-                    environment: config.social.social_environment.clone().unwrap_or_default(),
-                },
-                denylist_url: (!config.explore.explorer_denylist_source_url.is_empty())
-                    .then(|| config.explore.explorer_denylist_source_url.clone()),
-                min_login_days: config.social.referral_min_login_days,
-                profile_url: config.social.referral_profile_url.clone(),
-                reward_server_url: config.social.referral_reward_server_url.clone(),
-                reward_keys: [
-                    (
-                        5,
-                        &config.social.rewards_api_key_by_referral_invited_users_5,
-                    ),
-                    (
-                        10,
-                        &config.social.rewards_api_key_by_referral_invited_users_10,
-                    ),
-                    (
-                        20,
-                        &config.social.rewards_api_key_by_referral_invited_users_20,
-                    ),
-                    (
-                        25,
-                        &config.social.rewards_api_key_by_referral_invited_users_25,
-                    ),
-                    (
-                        30,
-                        &config.social.rewards_api_key_by_referral_invited_users_30,
-                    ),
-                    (
-                        50,
-                        &config.social.rewards_api_key_by_referral_invited_users_50,
-                    ),
-                    (
-                        60,
-                        &config.social.rewards_api_key_by_referral_invited_users_60,
-                    ),
-                    (
-                        75,
-                        &config.social.rewards_api_key_by_referral_invited_users_75,
-                    ),
-                ]
-                .into_iter()
-                .map(|(tier, key)| (tier, key.clone().unwrap_or_default()))
-                .collect(),
-                ..Default::default()
-            },
+            referral: referral_settings(config),
         },
         eip1654.clone(),
         http_client,

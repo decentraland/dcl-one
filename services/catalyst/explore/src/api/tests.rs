@@ -339,7 +339,7 @@ async fn node_without_db(settings: Settings) -> Node {
         http: crate::http::Outbound::for_tests(),
         content,
         registry: registry::Cache::new(),
-        denylist: denylist::Snapshot::default(),
+        denylist: Default::default(),
         flags: feature_flags::Snapshot::default(),
         map: map::MapState::new(),
         ab_cdn: ab_cdn::Cache::new(tmp.0.join("ab-cdn"), u64::MAX).unwrap(),

@@ -12,7 +12,6 @@ use axum::extract::{ConnectInfo, Extension, OriginalUri, State};
 use axum::http::{HeaderMap, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::HashSet;
 use std::sync::OnceLock;
 
 use crate::Address;
@@ -71,7 +70,6 @@ pub struct Settings {
     pub suspicious_window_ms: f64,
     pub slack: SlackSettings,
     pub profile_url: String,
-    pub denylist_url: Option<String>,
     pub reward_server_url: Option<String>,
     pub reward_keys: std::collections::HashMap<i64, String>,
 }
@@ -84,16 +82,19 @@ impl Default for Settings {
             suspicious_window_ms: 300_000.0,
             slack: Default::default(),
             profile_url: "https://decentraland.org".into(),
-            denylist_url: None,
             reward_server_url: None,
             reward_keys: Default::default(),
         }
     }
 }
 impl Settings {
+    /// Every reward tier has a fixture campaign key, as the source requires.
     pub fn for_tests() -> Self {
         Self {
-            denylist_url: None,
+            reward_keys: REWARD_TIERS
+                .iter()
+                .map(|tier| (*tier, format!("fixture-campaign-{tier}")))
+                .collect(),
             ..Self::default()
         }
     }
@@ -106,6 +107,9 @@ pub struct Referral {
     slack: super::referral_slack::Adapter,
     mailer: OnceLock<crate::notifications::email::EmailSender>,
     publisher: OnceLock<std::sync::Arc<crate::legacy_events::LegacyEvents>>,
+    /// The node's explorer denylist (mirror plus local overlay), held in memory
+    /// by `explore`. Unset, no wallet is denied.
+    denylist: OnceLock<std::sync::Arc<crate::explore::api::denylist::Snapshot>>,
 }
 impl Referral {
     pub fn new(pool: sqlx::PgPool, http: Outbound, settings: Settings) -> Self {
@@ -117,6 +121,7 @@ impl Referral {
             slack,
             mailer: OnceLock::new(),
             publisher: OnceLock::new(),
+            denylist: OnceLock::new(),
         }
     }
     #[cfg(test)]
@@ -127,6 +132,10 @@ impl Referral {
         let _ = self.mailer.set(mailer);
     }
 
+    pub fn set_denylist(&self, denylist: std::sync::Arc<crate::explore::api::denylist::Snapshot>) {
+        let _ = self.denylist.set(denylist);
+    }
+
     pub fn set_publisher(&self, publisher: std::sync::Arc<crate::legacy_events::LegacyEvents>) {
         let _ = self.publisher.set(publisher);
     }
@@ -135,44 +144,24 @@ impl Referral {
         self.publisher.get()
     }
 
-    async fn denylist(&self) -> HashSet<String> {
-        let Some(url) = self.settings.denylist_url.as_deref() else {
-            return HashSet::new();
-        };
-        let result: anyhow::Result<Value> = async {
-            let response = self.http.get(url).send().await?;
-            let response = response.error_for_status()?;
-            Ok(response.json::<Value>().await?)
-        }
-        .await;
-        match result {
-            Ok(value) => value["users"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|user| user["wallet"].as_str())
-                .map(str::to_lowercase)
-                .collect(),
-            Err(error) => {
-                tracing::error!(%error, "Referral denylist fetch failed");
-                HashSet::new()
-            }
-        }
+    pub(crate) fn denied(&self, wallet: &str) -> bool {
+        self.denylist
+            .get()
+            .is_some_and(|list| list.contains(wallet))
     }
     async fn assert_not_banned(&self, referrer: &str, ip: Option<&str>) -> Result<(), CommError> {
-        let denylist = self.denylist().await;
         let context = match ip {
             Some(ip) => format!("{referrer}, {ip}"),
             None => referrer.into(),
         };
-        if denylist.contains(referrer) {
+        if self.denied(referrer) {
             return Err(CommError::bad_request(format!(
                 "Referrer is on the deny list {context}"
             )));
         }
         let original: Option<String> = sqlx::query_scalar("SELECT referrer FROM social.referral_progress WHERE invited_user=$1 ORDER BY created_at DESC LIMIT 1")
             .bind(referrer).fetch_optional(&self.pool).await.map_err(database_error)?;
-        if original.is_some_and(|original| denylist.contains(&original.to_lowercase())) {
+        if original.is_some_and(|original| self.denied(&original)) {
             return Err(CommError::bad_request(format!(
                 "Referrer is part of a banned referral chain {context}"
             )));
@@ -329,9 +318,15 @@ impl Referral {
             .execute(&mut *tx)
             .await
             .map_err(database_error)?;
-        let (status,granted,mut days): (String,bool,Vec<chrono::NaiveDate>) = sqlx::query_as("SELECT status,tier_granted,login_days FROM social.referral_progress WHERE invited_user=$1 FOR UPDATE")
+        let (status,granted,mut days,pending): (String,bool,Vec<chrono::NaiveDate>,Option<i32>) = sqlx::query_as("SELECT status,tier_granted,login_days,reward_tier FROM social.referral_progress WHERE invited_user=$1 FOR UPDATE")
             .bind(&invited).fetch_one(&mut *tx).await.map_err(database_error)?;
         if granted || status == "tier_granted" || status == "rejected_ip_match" {
+            drop(tx);
+            // A redelivered login retries the reward a failed finalize left.
+            if let Some(tier) = pending {
+                self.reward(&referrer, invited.as_str(), tier.into())
+                    .await?;
+            }
             return Ok(());
         }
         if (days.len() as f64) < self.settings.min_login_days {
@@ -363,61 +358,92 @@ impl Referral {
         .fetch_one(&mut *tx)
         .await
         .map_err(database_error)?;
+        let tier = REWARD_TIERS.contains(&total);
+        if tier {
+            sqlx::query("UPDATE social.referral_progress SET reward_tier=$2 WHERE invited_user=$1")
+                .bind(&invited)
+                .bind(total as i32)
+                .execute(&mut *tx)
+                .await
+                .map_err(database_error)?;
+        }
         tx.commit().await.map_err(database_error)?;
         self.notify(&referrer, invited.as_str(), total, None)
             .await?;
-        if [5, 10, 20, 25, 30, 50, 60, 75].contains(&total) {
-            let url = self.settings.reward_server_url.as_deref().ok_or_else(|| {
-                CommError::MessageOnly(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Reward server is not configured".into(),
-                )
-            })?;
-            let url = url::Url::parse(url)
-                .and_then(|base| base.join("/api/rewards"))
-                .map_err(|_| CommError::Internal)?;
-            let key = self
-                .settings
-                .reward_keys
-                .get(&total)
-                .map(String::as_str)
-                .unwrap_or_default();
-            let response = self
-                .http
-                .post(url)
-                .json(&json!({"campaign_key":key,"beneficiary":referrer}))
-                .send()
-                .await
-                .map_err(|_| CommError::Internal)?;
-            let response = response
-                .error_for_status()
-                .map_err(|_| CommError::Internal)?;
-            let value: Value = response.json().await.map_err(|_| CommError::Internal)?;
-            let reward = value["data"]
-                .as_array()
-                .and_then(|values| values.first())
-                .ok_or(CommError::Internal)?;
-            // Promise.all starts both source operations independently. Once
-            // started, either operation survives the other's early failure.
-            let notice =
-                tokio::spawn(self.notify(&referrer, invited.as_str(), total, Some(reward)));
-            let image = reward["image"].as_str().map(str::to_owned);
-            let image_referrer = referrer.clone();
-            let pool = self.pool.clone();
-            let image = tokio::spawn(async move {
-                let image = image.ok_or(CommError::Internal)?;
-                sqlx::query("INSERT INTO social.referral_reward_images(referrer,reward_image_url,tier) VALUES($1,$2,$3)")
-                    .bind(image_referrer).bind(image).bind(total as i32).execute(&pool).await.map_err(database_error)?;
-                Ok::<_, CommError>(())
-            });
-            futures::try_join!(
-                async { notice.await.map_err(|_| CommError::Internal)? },
-                async { image.await.map_err(|_| CommError::Internal)? }
-            )?;
+        if tier {
+            self.reward(&referrer, invited.as_str(), total).await?;
         }
         if total == TIERS_IRL_SWAG {
             self.slack.send(self.slack.milestone(&referrer)).await;
         }
+        Ok(())
+    }
+    /// The tier reward of one grant: the rewards request, then its notification
+    /// and image together. Only their joint success clears the grant's
+    /// `reward_tier`, so a failure is retried by the next finalize of the same
+    /// invited user. The image is stored once per referrer and tier.
+    async fn reward(&self, referrer: &str, invited: &str, total: i64) -> Result<(), CommError> {
+        let url = self.settings.reward_server_url.as_deref().ok_or_else(|| {
+            CommError::MessageOnly(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Reward server is not configured".into(),
+            )
+        })?;
+        let url = url::Url::parse(url)
+            .and_then(|base| base.join("/api/rewards"))
+            .map_err(|_| CommError::Internal)?;
+        // The source requires every tier's key at boot; an unset key leaves
+        // the reward pending instead of requesting an empty campaign.
+        let key = self
+            .settings
+            .reward_keys
+            .get(&total)
+            .filter(|key| !key.is_empty())
+            .ok_or_else(|| {
+                CommError::MessageOnly(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Reward campaign key is not configured for tier {total}"),
+                )
+            })?;
+        let response = self
+            .http
+            .post(url)
+            .json(&json!({"campaign_key":key,"beneficiary":referrer}))
+            .send()
+            .await
+            .map_err(|_| CommError::Internal)?;
+        let response = response
+            .error_for_status()
+            .map_err(|_| CommError::Internal)?;
+        let value: Value = response.json().await.map_err(|_| CommError::Internal)?;
+        let reward = value["data"]
+            .as_array()
+            .and_then(|values| values.first())
+            .ok_or(CommError::Internal)?;
+        // Promise.all starts both source operations independently. Once
+        // started, either operation survives the other's early failure.
+        let notice = tokio::spawn(self.notify(referrer, invited, total, Some(reward)));
+        let image = reward["image"].as_str().map(str::to_owned);
+        let image_referrer = referrer.to_owned();
+        let pool = self.pool.clone();
+        let image = tokio::spawn(async move {
+            let image = image.ok_or(CommError::Internal)?;
+            sqlx::query("INSERT INTO social.referral_reward_images(referrer,reward_image_url,tier) SELECT $1,$2,$3 WHERE NOT EXISTS (SELECT 1 FROM social.referral_reward_images WHERE referrer=$1 AND tier=$3)")
+                .bind(image_referrer).bind(image).bind(total as i32).execute(&pool).await.map_err(database_error)?;
+            Ok::<_, CommError>(())
+        });
+        futures::try_join!(
+            async { notice.await.map_err(|_| CommError::Internal)? },
+            async { image.await.map_err(|_| CommError::Internal)? }
+        )?;
+        sqlx::query(
+            "UPDATE social.referral_progress SET reward_tier=NULL WHERE invited_user=$1 AND reward_tier=$2",
+        )
+        .bind(invited)
+        .bind(total as i32)
+        .execute(&self.pool)
+        .await
+        .map_err(database_error)?;
         Ok(())
     }
     #[cfg(test)]
@@ -437,7 +463,7 @@ impl Referral {
         total: i64,
         reward: Option<&Value>,
     ) -> impl std::future::Future<Output = Result<(), CommError>> + Send + 'static + use<> {
-        let tier = [5, 10, 20, 25, 30, 50, 60, 75]
+        let tier = REWARD_TIERS
             .iter()
             .position(|tier| total <= *tier)
             .map_or(0, |index| index + 1);
@@ -689,6 +715,8 @@ pub async fn update_referral_signed_up(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Upstream's `TIERS`: the accepted invites that unlock a reward.
+const REWARD_TIERS: [i64; 8] = [5, 10, 20, 25, 30, 50, 60, 75];
 /// Upstream's `TIERS_IRL_SWAG`: the accepted invites that unlock the email.
 const TIERS_IRL_SWAG: i64 = 100;
 
@@ -771,7 +799,7 @@ pub async fn add_referral_email(
         &["email"],
         0,
     )?;
-    if state.referral.denylist().await.contains(referrer.as_str()) {
+    if state.referral.denied(referrer.as_str()) {
         return Err(CommError::bad_request(format!(
             "Referrer is on the deny list {referrer}"
         )));
@@ -968,6 +996,27 @@ mod tests {
         }
     }
 
+    /// Replaces this test's wallets in the node's local denylist overlay.
+    async fn set_denied(
+        pool: &sqlx::PgPool,
+        denylist: &crate::explore::api::denylist::Snapshot,
+        denied: &mut Vec<String>,
+        wallets: Vec<String>,
+    ) {
+        sqlx::query("DELETE FROM explore_api.denylist_users_local WHERE wallet = ANY($1)")
+            .bind(&*denied)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO explore_api.denylist_users_local (wallet, present) SELECT lower(w), TRUE FROM unnest($1::text[]) AS w")
+            .bind(&wallets)
+            .execute(pool)
+            .await
+            .unwrap();
+        *denied = wallets;
+        denylist.reload(pool).await.unwrap();
+    }
+
     #[tokio::test]
     async fn referral_sql_lifecycle_matches_executed_upstream_component_and_db_cases() {
         let Some(pool) = crate::db::scratch::pool(6).await else {
@@ -978,20 +1027,21 @@ mod tests {
             "/services/catalyst/tests/fixtures/conformance/social/referral-cases.json"
         )))
         .unwrap();
-        let denied = std::sync::Arc::new(parking_lot::RwLock::new(Vec::<String>::new()));
-        let deny = denied.clone();
-        let app=axum::Router::new().route("/denylist",axum::routing::get(move||{let deny=deny.clone();async move{Json(json!({"users":deny.read().iter().map(|wallet|json!({"wallet":wallet})).collect::<Vec<_>>()}))}}))
+        let app=axum::Router::new()
             .route("/api/rewards",axum::routing::post(||async{Json(json!({"data":[{"image":"https://reward.example.org/tier.png","rarity":"rare"}]}))}));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let settings = Settings {
             profile_url: "https://profile.example.org".into(),
-            denylist_url: Some(format!("{base}/denylist")),
             reward_server_url: Some(base),
             ..Settings::for_tests()
         };
         let referral = Referral::new(pool.clone(), Outbound::for_tests(), settings);
+        // The node's in-memory explorer denylist, fed from its local overlay.
+        let denylist = std::sync::Arc::new(crate::explore::api::denylist::Snapshot::default());
+        referral.set_denylist(denylist.clone());
+        let mut denied: Vec<String> = Vec::new();
         for case in fixture["cases"]
             .as_array()
             .unwrap()
@@ -1008,14 +1058,15 @@ mod tests {
                     .clone()
             };
             let referrer = mapped(fixture["referrer"].as_str().unwrap(), &mut addresses);
-            denied.write().clear();
+            set_denied(&pool, &denylist, &mut denied, Vec::new()).await;
             for attempt in case["attempts"].as_array().unwrap() {
                 let step = &attempt["step"];
                 if let Some(deny) = step["deny"].as_array() {
-                    *denied.write() = deny
+                    let wallets = deny
                         .iter()
                         .map(|raw| mapped(raw.as_str().unwrap(), &mut addresses))
                         .collect();
+                    set_denied(&pool, &denylist, &mut denied, wallets).await;
                 }
                 let invited = step["invited"]
                     .as_str()
@@ -1186,17 +1237,24 @@ mod tests {
         .replace("social.", &format!("{schema}."));
         let step_name = format!("0021_referral_test_{}", uuid::Uuid::new_v4().simple());
         let steps = format!(
-            "-- ════ step {step_name} ════\n{}",
+            "-- ════ step {step_name} ════\n{}\n-- ════ step {step_name}_reward ════\n{}",
             include_str!(concat!(
                 env!("DCL_ONE_ROOT"),
                 "/schemas/migrations/0021_social_referral_lifecycle.sql"
+            )),
+            include_str!(concat!(
+                env!("DCL_ONE_ROOT"),
+                "/schemas/migrations/0023_social_referral_pending_reward.sql"
             ))
         )
         .replace("social.", &format!("{schema}."));
         let done = crate::db::schema_migrate::migrate(&pool, &canonical, &steps)
             .await
             .unwrap();
-        assert_eq!(done.steps, vec![step_name.clone()]);
+        assert_eq!(
+            done.steps,
+            vec![step_name.clone(), format!("{step_name}_reward")]
+        );
         assert!(
             !done.created.is_empty(),
             "new reward table and indexes come from canonical bootstrap pass"
@@ -1208,13 +1266,13 @@ mod tests {
                 .is_empty()
         );
         let count: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM meta.schema_steps WHERE step=$1 AND NOT created_fresh",
+            "SELECT count(*) FROM meta.schema_steps WHERE step LIKE $1 || '%' AND NOT created_fresh",
         )
         .bind(&step_name)
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(count, 2);
         let actual: Vec<uuid::Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT id FROM {schema}.referral_progress ORDER BY invited_user"
         )))
@@ -1233,7 +1291,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("DELETE FROM meta.schema_steps WHERE step=$1")
+        sqlx::query("DELETE FROM meta.schema_steps WHERE step LIKE $1 || '%'")
             .bind(step_name)
             .execute(&pool)
             .await

@@ -334,7 +334,6 @@ async fn independent_tier_image_and_sns_work_survive_the_other_operations_early_
         })
         .await
         .unwrap();
-        referral.finalize_referral(invited.as_str()).await.unwrap();
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP TRIGGER {function} ON social.referral_reward_images"
         )))
@@ -351,8 +350,11 @@ async fn independent_tier_image_and_sns_work_survive_the_other_operations_early_
     }
 }
 
+/// The first finalize fails as the source does (state and first effects), but
+/// the grant keeps its reward tier pending: the next finalize of the same
+/// invited user (a redelivered login) retries the reward, and only the reward.
 #[tokio::test]
-async fn committed_grant_remains_a_retry_receipt_after_initial_sns_or_reward_failure() {
+async fn a_failed_tier_reward_is_retried_by_the_next_finalize_of_its_grant() {
     for reward_failure in [false, true] {
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
@@ -363,8 +365,11 @@ async fn committed_grant_remains_a_retry_receipt_after_initial_sns_or_reward_fai
         let rewards = Arc::new(AtomicUsize::new(0));
         let observed_sends = sends.clone();
         let observed_rewards = rewards.clone();
-        let app=axum::Router::new().route("/api/rewards",axum::routing::post(move || {let calls=observed_rewards.clone();async move {calls.fetch_add(1,Ordering::SeqCst);StatusCode::BAD_REQUEST}}))
-        .fallback(move || {let calls=observed_sends.clone();async move {calls.fetch_add(1,Ordering::SeqCst);if !reward_failure {(StatusCode::BAD_REQUEST,[("content-type","text/xml")],"<ErrorResponse><Error><Type>Sender</Type><Code>InvalidParameter</Code><Message>fixture SNS failure</Message></Error><RequestId>fixture</RequestId></ErrorResponse>")}else{(StatusCode::OK,[("content-type","text/xml")],"<PublishResponse xmlns=\"http://sns.amazonaws.com/doc/2010-03-31/\"><PublishResult><MessageId>fixture</MessageId></PublishResult><ResponseMetadata><RequestId>fixture</RequestId></ResponseMetadata></PublishResponse>")}}});
+        let app=axum::Router::new().route("/api/rewards",axum::routing::post(move || {let calls=observed_rewards.clone();async move {
+            let call=calls.fetch_add(1,Ordering::SeqCst);
+            if reward_failure && call==0 {(StatusCode::BAD_REQUEST,Json(json!({})))} else {(StatusCode::OK,Json(json!({"data":[{"image":"https://reward.example.org/tier.png","rarity":"rare"}]})))}
+        }}))
+        .fallback(move || {let calls=observed_sends.clone();async move {let call=calls.fetch_add(1,Ordering::SeqCst);if !reward_failure && call==0 {(StatusCode::BAD_REQUEST,[("content-type","text/xml")],"<ErrorResponse><Error><Type>Sender</Type><Code>InvalidParameter</Code><Message>fixture SNS failure</Message></Error><RequestId>fixture</RequestId></ErrorResponse>")}else{(StatusCode::OK,[("content-type","text/xml")],"<PublishResponse xmlns=\"http://sns.amazonaws.com/doc/2010-03-31/\"><PublishResult><MessageId>fixture</MessageId></PublishResult><ResponseMetadata><RequestId>fixture</RequestId></ResponseMetadata></PublishResponse>")}}});
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -384,28 +389,125 @@ async fn committed_grant_remains_a_retry_receipt_after_initial_sns_or_reward_fai
             .create(&referrer, &invited, "192.0.2.1")
             .await
             .unwrap();
-        assert!(referral.finalize_referral(invited.as_str()).await.is_err());
-        referral.finalize_referral(invited.as_str()).await.unwrap();
         let source = source_failure(if reward_failure {
             "reward-failure"
         } else {
             "first-sns-failure"
         });
-        let state: (String, bool) = sqlx::query_as(
-            "SELECT status,tier_granted FROM social.referral_progress WHERE invited_user=$1",
-        )
-        .bind(&invited)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+        let progress = |pool: sqlx::PgPool, invited: Address| async move {
+            sqlx::query_as::<_, (String, bool, Option<i32>)>(
+                "SELECT status,tier_granted,reward_tier FROM social.referral_progress WHERE invited_user=$1",
+            )
+            .bind(&invited)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        let images = |pool: sqlx::PgPool, referrer: Address| async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM social.referral_reward_images WHERE referrer=$1 AND tier=5",
+            )
+            .bind(&referrer)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+
+        assert!(referral.finalize_referral(invited.as_str()).await.is_err());
+        let (status, granted, pending) = progress(pool.clone(), invited.clone()).await;
         assert_eq!(
-            json!({"status":state.0,"tier_granted":state.1}),
+            json!({"status":status,"tier_granted":granted}),
             source["state"]
         );
+        assert_eq!(pending, Some(5), "the failed reward stays pending");
         assert_eq!(sends.load(Ordering::SeqCst) as u64, source["sns_calls"]);
         assert_eq!(rewards.load(Ordering::SeqCst), usize::from(reward_failure));
+        assert_eq!(images(pool.clone(), referrer.clone()).await, 0);
+
+        // The redelivered login retries the reward alone: the accepted
+        // notification is not sent again.
+        referral.finalize_referral(invited.as_str()).await.unwrap();
+        assert_eq!(progress(pool.clone(), invited.clone()).await.2, None);
+        assert_eq!(
+            rewards.load(Ordering::SeqCst),
+            1 + usize::from(reward_failure)
+        );
+        assert_eq!(
+            sends.load(Ordering::SeqCst),
+            2,
+            "accepted once, tier reached once"
+        );
+        assert_eq!(images(pool.clone(), referrer.clone()).await, 1);
+
+        referral.finalize_referral(invited.as_str()).await.unwrap();
+        assert_eq!(
+            rewards.load(Ordering::SeqCst),
+            1 + usize::from(reward_failure)
+        );
+        assert_eq!(
+            sends.load(Ordering::SeqCst),
+            2,
+            "a finished grant sends nothing"
+        );
         server.abort();
     }
+}
+
+/// A tier without a configured campaign key posts nothing; the reward stays
+/// pending until the key is configured.
+#[tokio::test]
+async fn an_unset_campaign_key_leaves_the_reward_pending_without_a_request() {
+    let Some(pool) = crate::db::scratch::pool(6).await else {
+        return;
+    };
+    let (referrer, invited) = (wallet(), wallet());
+    let rewards = Arc::new(AtomicUsize::new(0));
+    let observed = rewards.clone();
+    let app=axum::Router::new().route("/api/rewards",axum::routing::post(move || {let calls=observed.clone();async move {calls.fetch_add(1,Ordering::SeqCst);Json(json!({"data":[{"image":"https://reward.example.org/tier.png","rarity":"rare"}]}))}}));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let settings = Settings {
+        min_login_days: 0.0,
+        reward_server_url: Some(url.clone()),
+        reward_keys: Default::default(),
+        suspicious_window_ms: 0.0,
+        ..Settings::for_tests()
+    };
+    sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,status,tier_granted) SELECT $1,'0x'||replace(gen_random_uuid()::text,'-','')||'00000000','tier_granted',true FROM generate_series(1,4)").bind(&referrer).execute(&pool).await.unwrap();
+    let unset = Referral::new(pool.clone(), Outbound::for_tests(), settings.clone());
+    unset
+        .create(&referrer, &invited, "192.0.2.1")
+        .await
+        .unwrap();
+    assert!(unset.finalize_referral(invited.as_str()).await.is_err());
+    assert_eq!(
+        rewards.load(Ordering::SeqCst),
+        0,
+        "no empty campaign_key request"
+    );
+    let configured = Referral::new(
+        pool.clone(),
+        Outbound::for_tests(),
+        Settings {
+            reward_keys: Settings::for_tests().reward_keys,
+            ..settings
+        },
+    );
+    configured
+        .finalize_referral(invited.as_str())
+        .await
+        .unwrap();
+    assert_eq!(rewards.load(Ordering::SeqCst), 1);
+    let pending: Option<i32> = sqlx::query_scalar(
+        "SELECT reward_tier FROM social.referral_progress WHERE invited_user=$1",
+    )
+    .bind(&invited)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(pending, None);
+    server.abort();
 }
 
 #[tokio::test]
