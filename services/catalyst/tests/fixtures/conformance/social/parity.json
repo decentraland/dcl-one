@@ -835,6 +835,31 @@
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
           "test": "friendship_sql_errors_empty_pages_anonymous_and_request_status_match_source",
           "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request combinations are covered separately by the36-case actual-PostgreSQL fixture."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/ranking_scan_tests.rs",
+          "test": "cyclic_scan_reconsiders_duration_edits_new_backdated_rows_and_recurrence_changes",
+          "scope": "Target PostgreSQL collector cycles revisit late/backdated keys, duration edits and appended recurrence windows; durable receipts retain counter idempotence. Native scheduling is an implementation difference, not a source timing capture."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/ranking_scan_tests.rs",
+          "test": "failed_and_cancelled_pages_retain_the_cursor_and_roll_back_receipts_with_counters",
+          "scope": "Actual PostgreSQL failure and cancellation barriers preserve the current cursor and atomic producer receipt/counter transaction; restart replays committed receipts safely."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/ranking_scan_tests.rs",
+          "test": "pass_shares_one_deadline_and_receipt_budget_across_pages_without_losing_progress",
+          "scope": "The existing leased collector shares one three-second pass deadline across at most1024 source-key pages and100 new occurrences; a real occupied pool and100+100+5 effects exercise resume. Production freshness remains unverified."
+        },
+        {
+          "path": "services/catalyst/camera-reel/src/tests.rs",
+          "test": "ranking_repair_slow_row_does_not_starve_healthy_tail_while_lock_stays_held",
+          "scope": "A real PostgreSQL row lock remains held while a later healthy photo publishes. Repair-only one-second row/SQL budgets preserve pending markers and continue the tail; global cancellation is separate. Physical filesystem stalls are not executed."
+        },
+        {
+          "path": "services/catalyst/camera-reel/src/tests.rs",
+          "test": "ranking_repair_bounds_keys_before_age_filter_and_retries_late_cold_blobs",
+          "scope": "Bounded pending UUID reads precede age classification; recent/cold scalar cursors preserve late actual blob completion and retained missing rows. Candidate retry cadence and measured full-sweep latency are target policy, not source timing equivalence."
         }
       ],
       "gaps": [],
@@ -1652,6 +1677,31 @@
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
           "test": "friendship_sql_errors_empty_pages_anonymous_and_request_status_match_source",
           "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request combinations are covered separately by the36-case actual-PostgreSQL fixture."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/ranking_scan_tests.rs",
+          "test": "cyclic_scan_reconsiders_duration_edits_new_backdated_rows_and_recurrence_changes",
+          "scope": "Target PostgreSQL collector cycles revisit late/backdated keys, duration edits and appended recurrence windows; durable receipts retain counter idempotence. Native scheduling is an implementation difference, not a source timing capture."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/ranking_scan_tests.rs",
+          "test": "failed_and_cancelled_pages_retain_the_cursor_and_roll_back_receipts_with_counters",
+          "scope": "Actual PostgreSQL failure and cancellation barriers preserve the current cursor and atomic producer receipt/counter transaction; restart replays committed receipts safely."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/ranking_scan_tests.rs",
+          "test": "pass_shares_one_deadline_and_receipt_budget_across_pages_without_losing_progress",
+          "scope": "The existing leased collector shares one three-second pass deadline across at most1024 source-key pages and100 new occurrences; a real occupied pool and100+100+5 effects exercise resume. Production freshness remains unverified."
+        },
+        {
+          "path": "services/catalyst/camera-reel/src/tests.rs",
+          "test": "ranking_repair_slow_row_does_not_starve_healthy_tail_while_lock_stays_held",
+          "scope": "A real PostgreSQL row lock remains held while a later healthy photo publishes. Repair-only one-second row/SQL budgets preserve pending markers and continue the tail; global cancellation is separate. Physical filesystem stalls are not executed."
+        },
+        {
+          "path": "services/catalyst/camera-reel/src/tests.rs",
+          "test": "ranking_repair_bounds_keys_before_age_filter_and_retries_late_cold_blobs",
+          "scope": "Bounded pending UUID reads precede age classification; recent/cold scalar cursors preserve late actual blob completion and retained missing rows. Candidate retry cadence and measured full-sweep latency are target policy, not source timing equivalence."
         }
       ],
       "gaps": [],
@@ -7859,7 +7909,7 @@
     {
       "id": "community-ranking-and-configured-moderation",
       "status": "unverified",
-      "description": "Dynamic moderators, ranking producers and configured AI compliance have source/local regressions. Provider probes cover active-bootstrap missing/empty strings, bodies above4MiB, headers-only600s timer, native10s connect/300s inactivity and AI metric outcomes. Delayed DNS, composed network phases and deployed credentials remain unverified. Existing lifetime ranking counters and watermarks have not been imported, so historical ranking equality is unverified.",
+      "description": "Dynamic moderators, ranking producers and configured AI compliance have source/local regressions. Provider probes cover active-bootstrap missing/empty strings, bodies above4MiB, headers-only600s timer, native10s connect/300s inactivity and AI metric outcomes. Delayed DNS, composed network phases and deployed credentials remain unverified. Existing lifetime ranking counters and watermarks have not been imported, so historical ranking equality is unverified. Local event collection now bounds source keys and recurrence windows under one pass budget; pending-photo repair cycles bounded recent/cold cohorts and isolates slow/error rows. SQL and100k synthetic backlog measurements do not establish deployed freshness. Retry scheduling is an explicit target policy; physical filesystem stalls are not executed.",
       "operations": [
         "api_http:DELETE:/v1/communities/:id",
         "api_http:GET:/v1/communities",

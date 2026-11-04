@@ -567,6 +567,18 @@ eligible for collection; zero counter defaults do not reconstruct history. An
 authoritative cutover must import the lifetime counters, collection watermark and
 local producer receipts together before enabling local ranking ownership.
 
+The existing leased event collector keeps a scalar source-key cursor and a
+recurrence ordinal window. It selects 100 event keys through the existing primary
+key before reading schedules, expanding at most 100 recurrence positions per
+event or probing receipts. One pass shares a three-second budget across at most
+1,024 pages and commits at most 100 new occurrences. Page receipts and lifetime
+counter changes commit before cursor advancement. Cancellation, SQL failure and
+process restart retain durable deduplication; cursor state is only local work
+progress. Full cyclic revisits reconsider backdated inserts, duration edits and
+appended recurrences. No end-time watermark hides these changes. A long catalogue
+or recurrence list can take multiple minute passes; these bounds do not establish
+ranking freshness in production.
+
 `social.community_ranking_events` retains local producer receipts with primary key
 `(kind,event_key,community_id)`. One photo may contribute to several communities;
 receipt insertion and counter changes share a transaction. Receipts have no expiry.
@@ -584,8 +596,24 @@ they are not production capacity measurements.
 New camera uploads start with `ranking_published=false`. After both blobs are
 written, one transaction marks the row and applies local photo contributions.
 Existing photos receive `true` during migration, preserving the history boundary.
-The existing job repairs at most 100 pending photos per pass, reading the partial
-`images_ranking_pending_idx`; it checks both blobs before taking SQL locks. Deletion
+The existing leased minute job keeps two scalar UUID cursors over the partial
+`images_ranking_pending_idx`. Each query fetches 100 pending keys before age
+classification. Recent and cold sweeps alternate while due, with a frozen
+ten-minute age boundary per sweep. A pass visits at most 32 pages under one
+three-second budget, including storage and SQL. Cold retries wait an hour after
+the full cold sweep; recent sweeps wait a minute. These are bounded candidate
+policies, not a production freshness guarantee: a large backlog adds whole-sweep
+latency, as measured in `METRICS.md`.
+
+Both blobs must exist before the publication transaction. A candidate one-second
+row budget covers both existence checks and publication; repair transactions set
+a local SQL statement timeout from the remaining row budget. The direct upload
+finalizer keeps its existing timeout behavior. A row error or row-budget timeout
+logs and advances that pending row so later rows can proceed and a later sweep
+can retry it. Job cancellation or the shared pass deadline retains the in-flight
+row and unvisited tail. Restart resets only the two local cursors and delays. Durable markers and receipts prevent repeat
+contributions. Missing blobs retain their pending rows for later completion;
+nothing is expired or marked published merely to shrink the backlog. Deletion
 does not decrement lifetime counters. A failed best-effort publication followed by
 photo deletion before repair can lose the contribution.
 

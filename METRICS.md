@@ -89,17 +89,73 @@ from a developer machine during a concurrent build, with uncontrolled cache stat
 | Same empty page, index scans disabled | 0 of 100,000 | 30.039 ms |
 | Pending-photo page, partial index | 50 of 100,000 | 0.166 ms |
 | Photo receipt and counter fanout | 100 communities | 11.098 ms |
-| Ended local occurrence scan | capped at 100 of 100,000 | 538.459 ms |
+| Former ended local occurrence scan | capped at 100 of 100,000 | 538.459 ms |
 | Fresh compliance result by primary key | 1 of 100,000 | 0.057 ms |
 | Expired compliance deletion | capped at 1,000 of 100,000 | 85.488 ms |
 
 The partial index avoids a full photo-history scan when no repair is due. Cache
-reads use the primary key; bounded expiry selection uses the expiry index. The
-occurrence scan and ranking aggregates still depend on the amount of local history
-and membership data. Repeated latency percentiles, production distributions,
+reads use the primary key; bounded expiry selection uses the expiry index.
+Ranking aggregates still depend on membership data. The current event collector
+bounds source reads and recurrence expansion as measured below. Repeated latency
+percentiles, production distributions,
 concurrent writer throughput, cold-cache performance, hardware characterization,
 receipt growth and replica lag remain unmeasured. These samples establish query
 paths and bounded output sizes, without establishing production capacity.
+
+## Bounded local event collection
+
+A disposable PostgreSQL 18.6 comparison used actual query text, 100,000 already
+receipted ordinary events and then 100 additional schedules of 1,000 recurrence
+positions each. Three warm `EXPLAIN (ANALYZE, BUFFERS, WAL)` executions measured:
+
+| Work | Execution times |
+| --- | --- |
+| Former full scan, ordinary history | 1,084.812 / 1,006.240 / 1,131.275 ms |
+| Current 100-key page, ordinary history | 0.342 / 0.353 / 0.374 ms |
+| Current ordinary occurrence window | 0.881 / 0.479 / 1.055 ms |
+| Former full scan, history plus long schedules | 2,874.111 / 1,851.613 / 2,495.208 ms |
+| Current 100-key page, long schedules | 3.243 / 3.316 / 3.241 ms |
+| Current 10,000-position window, long schedules | 89.958 / 59.554 / 179.075 ms |
+
+These compare bounded page work with whole-catalogue work, rather than claiming
+that one page completes the catalogue. Materializing the bounded schedules and
+parsed occurrence rows avoids repeated JSON extraction within the page. Receipt
+checks use the existing primary key and attendance counts run only for new
+candidates. No schema or index changed. A 100-receipt/counter batch took 17.623 ms
+of SQL execution and 114.364 ms wall time, writing 79,611 WAL bytes. Cache state,
+concurrent builds and per-query timings do not establish production throughput;
+full-cycle latency also depends on the three-second pass budget, the 1,024-page
+cap, the 100-new-receipt cap, recurrence lengths and the minute cadence.
+
+## Pending photo repair scheduling
+
+A disposable PostgreSQL 18.6 fixture at `6b155ec89` contained 100,000 pending
+photos across 200 owners and used the actual storage adapter with an absent valid
+content hash. This measurement was not rerun with the row-timeout correction.
+The two age cohorts read 200,000 keys through 2,002 bounded pages and performed
+100,000 storage probes. At 32 pages per pass with one shared three-second budget,
+the complete dual sweep took 63 passes and 30.155 seconds of active work: median
+364 ms, p95 983 ms and maximum 1.651 seconds per pass. No pass timed out; there
+were no storage errors or false publications in this measurement. Adding the
+existing 60-second sleep between passes gives a derived first-sweep duration of
+62 minutes 30.155 seconds. Minute sleeps were not part of the measured wall time.
+Cold retries add an hour after completion of their sweep; the ten-minute age
+split and retry policy are candidates rather than an accepted freshness target.
+
+The pending index returned 100 keys in 0.136 ms at the start and 0.126 ms midway,
+with eight and nine shared buffer hits. No new index was added. A separate 1,000
+actual publication run measured median 1.671 ms and p95 7.968 ms per transaction;
+markers, receipts and counter increments each totaled 1,000. These warm local
+samples exclude production storage/network latency, sustained incoming writes,
+cold caches and deployment interruption. They show bounded work and its backlog
+cost; they do not establish production throughput or a 60-second repair bound.
+
+The current one-second row-budget regression at `3039330c1` used an actual held
+PostgreSQL row lock. A healthy later photo published in 1,029.286 ms while the
+blocked row remained pending and its lock remained held. PostgreSQL activity
+confirmed the blocked UPDATE had ended before unlock. The shared pass deadline
+also retained its tail with a shorter 500 ms budget. The repair-only SQL timeout's
+extra setup cost and physically stalled storage were not measured separately.
 
 ## Shared social registry profile cache
 
