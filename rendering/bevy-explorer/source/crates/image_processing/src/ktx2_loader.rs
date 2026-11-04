@@ -3,23 +3,39 @@
 //! transcode produces is kept in `KTX2_RESULTS` until `engine::check_assets` queues it as a
 //! `ProcessingAssetType::Ktx2Cache` and the processor writes it over the cached ktx2 bytes, so
 //! the next load reads a dds (`DDS ` magic) and skips the transcode. A ktx2 that already holds
-//! BC7 is only unwrapped and not written back: the cache would only grow.
+//! BC7 is not written back: the cache would only grow. A transcode whose write never comes (the
+//! image was dropped before it loaded, or it has no cache entry) is evicted after
+//! `RESULT_LIFETIME`.
 
 use std::{
     collections::HashMap,
     sync::{LazyLock, Mutex},
+    time::Duration,
 };
 
 use bevy::{
     asset::{io::Reader, AssetLoader, LoadContext},
     image::{CompressedImageFormats, ImageFormat, ImageLoaderSettings, ImageType},
+    platform::time::Instant,
     prelude::*,
     render::renderer::RenderCapabilities,
 };
 
-/// Transcoded dds bytes by asset path string, waiting to be written over the cached ktx2.
-pub(crate) static KTX2_RESULTS: LazyLock<Mutex<HashMap<String, Vec<u8>>>> =
+/// Transcoded dds bytes by asset path string, with when they were stashed, waiting to be written
+/// over the cached ktx2.
+pub(crate) static KTX2_RESULTS: LazyLock<Mutex<HashMap<String, (Instant, Vec<u8>)>>> =
     LazyLock::new(Default::default);
+
+/// Far longer than a stashed transcode waits for its write, which goes ahead of every texture
+/// compression in the processor's queue.
+const RESULT_LIFETIME: Duration = Duration::from_secs(60);
+
+/// Drops the transcodes stashed longer than `RESULT_LIFETIME`.
+pub(crate) fn evict_stale_results() {
+    if let Ok(mut results) = KTX2_RESULTS.lock() {
+        results.retain(|_, (stashed, _)| stashed.elapsed() < RESULT_LIFETIME);
+    }
+}
 
 const DDS_MAGIC: &[u8] = b"DDS ";
 
@@ -57,7 +73,8 @@ impl AssetLoader for Ktx2Loader {
             // a previous load's transcode, written over the ktx2 bytes in the cache
             bytes
         } else {
-            // vkFormat, at byte 12 of the header: 145/146 are BC7 already, only unwrapped
+            // vkFormat, at byte 12 of the header: 145/146 are BC7 already, so whatever
+            // `transcode_ktx2` makes of them is not worth a cache write
             let bc7 = bytes
                 .get(12..16)
                 .and_then(|f| <[u8; 4]>::try_from(f).ok())
@@ -66,7 +83,10 @@ impl AssetLoader for Ktx2Loader {
                 .map_err(|e| anyhow::anyhow!("ktx2 transcode failed: {e:?}"))?;
             if !bc7 {
                 if let Ok(mut results) = KTX2_RESULTS.lock() {
-                    results.insert(load_context.asset_path().to_string(), dds.clone());
+                    results.insert(
+                        load_context.asset_path().to_string(),
+                        (Instant::now(), dds.clone()),
+                    );
                 }
             }
             dds

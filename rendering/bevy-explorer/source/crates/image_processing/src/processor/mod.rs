@@ -111,6 +111,7 @@ fn take_ktx2_result(req: &AssetForProcessing) -> Option<Vec<u8>> {
         .lock()
         .ok()?
         .remove(&req.base_path.to_string())
+        .map(|(_, dds)| dds)
 }
 
 #[derive(Debug)]

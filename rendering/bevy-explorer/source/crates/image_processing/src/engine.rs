@@ -108,7 +108,8 @@ struct ImgReprocessStats {
 }
 
 /// Frees a `.ktx2` transcode the loader stashed when its cache write is not going to happen
-/// (uncacheable, unhashable or already queued paths), so the stash holds queued work only.
+/// (uncacheable or unhashable paths), so the stash holds queued work only. Anything missed here
+/// is evicted by `ktx2_loader::evict_stale_results`.
 fn drop_ktx2_result(ty: ProcessingAssetType, path: &AssetPath) {
     if matches!(ty, ProcessingAssetType::Ktx2Cache) {
         if let Ok(mut results) = crate::ktx2_loader::KTX2_RESULTS.lock() {
@@ -129,6 +130,9 @@ fn check_assets(
     mut stats: ResMut<ImgReprocessStats>,
     mut task: Local<Option<Task<(usize, usize, Vec<AssetForProcessing>)>>>,
 ) {
+    // before any early return, so stale transcodes go even when nothing can be cached
+    crate::ktx2_loader::evict_stale_results();
+
     #[cfg(not(target_arch = "wasm32"))]
     let Some(cache_root) = ipfas.ipfs_cache_path() else {
         return;
@@ -218,8 +222,8 @@ fn check_assets(
             };
 
             if paths_processed.contains(&ipfs_path) {
+                // a stashed transcode is kept: it can be the one the queued write is waiting for
                 stats.total -= 1;
-                drop_ktx2_result(ty, &asset_path);
                 continue;
             }
             paths_processed.insert(ipfs_path.clone());
