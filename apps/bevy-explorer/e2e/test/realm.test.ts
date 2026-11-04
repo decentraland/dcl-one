@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
-import { aboutDocument, BODY_SHAPES, buildPreviewWearable, buildScene, contentHash, PREVIEW_WEARABLE_URN, serveRealm, type BuiltScene, type PreviewWearable, type RealmServer } from '../driver/realm.ts'
+import { aboutDocument, BODY_SHAPES, buildPreviewWearable, buildScene, contentHash, EMPTY_REALM_MAP, PREVIEW_WEARABLE_URN, serveRealm, type BuiltScene, type PreviewWearable, type RealmServer } from '../driver/realm.ts'
 
 describe('realm', () => {
   let dir: string
@@ -56,9 +56,10 @@ describe('realm', () => {
     assert.equal(response.headers.get('access-control-allow-origin'), '*')
     assert.equal(response.headers.get('cross-origin-resource-policy'), 'cross-origin')
     const about = (await response.json()) as ReturnType<typeof aboutDocument>
-    const configurations = about.configurations as { scenesUrn: string[]; realmName: string }
+    const configurations = about.configurations as { scenesUrn: string[]; realmName: string; map?: unknown }
     assert.deepEqual(configurations.scenesUrn, [`urn:decentraland:entity:${scene.entity.id}?=&baseUrl=${server.realm}/content/contents/`])
     assert.equal(configurations.realmName, 'e2e-visual')
+    assert.equal(configurations.map, undefined, 'a realm with scenes is bounded by them, like a World')
     assert.deepEqual(about.content, { healthy: true, publicUrl: `${server.realm}/content` })
     assert.deepEqual(about.comms, { healthy: true, protocol: 'v3', fixedAdapter: 'offline:offline' })
   })
@@ -176,8 +177,10 @@ describe('realm with a previewed smart wearable', () => {
   })
 
   test('the previewed wearable is no scene of the realm', async () => {
-    const about = (await (await fetch(`${server.realm}/about`)).json()) as { configurations: { scenesUrn: string[] } }
+    const about = (await (await fetch(`${server.realm}/about`)).json()) as { configurations: { scenesUrn: string[]; map?: unknown } }
     assert.deepEqual(about.configurations.scenesUrn, [])
+    // with no scene to place, the map is what lets the client resolve the spawn parcel and arrive
+    assert.deepEqual(about.configurations.map, EMPTY_REALM_MAP)
     const active = await fetch(`${server.realm}/content/entities/active`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pointers: ['0,0'] }) })
     assert.deepEqual(await active.json(), [])
   })

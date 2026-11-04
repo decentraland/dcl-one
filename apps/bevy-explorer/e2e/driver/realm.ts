@@ -184,6 +184,11 @@ const CORS_HEADERS: Record<string, string> = {
   'cache-control': 'no-store'
 }
 
+/** The parcels an empty realm spans: the client resolves pointers only inside a realm's advertised
+ *  bounds (its listed scenes, else its map), so a realm with neither would hold the player out of
+ *  the world forever. One parcel each way around the spawn, as a tiny Genesis-like map. */
+export const EMPTY_REALM_MAP = { minimapEnabled: false, sizes: [{ left: -1, right: 1, top: 1, bottom: -1 }] }
+
 export function aboutDocument(origin: string, scenes: BuiltScene[], realmName: string): Record<string, unknown> {
   return {
     healthy: true,
@@ -192,7 +197,8 @@ export function aboutDocument(origin: string, scenes: BuiltScene[], realmName: s
       networkId: 0,
       globalScenesUrn: [],
       scenesUrn: scenes.map((scene) => `urn:decentraland:entity:${scene.entity.id}?=&baseUrl=${origin}/content/contents/`),
-      realmName
+      realmName,
+      ...(scenes.length === 0 ? { map: EMPTY_REALM_MAP } : {})
     },
     content: { healthy: true, publicUrl: `${origin}/content` },
     lambdas: { healthy: true, publicUrl: `${origin}/lambdas` },
