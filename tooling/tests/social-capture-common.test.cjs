@@ -34,6 +34,7 @@ function fixture(t) {
 const fs = require('node:fs'), path = require('node:path'), cp = require('node:child_process'), Module = require('node:module');
 const exec = cp.execFileSync, originalLoad = Module._load;
 const pins = JSON.parse(process.env.CAPTURE_TEST_PINS || '{}');
+let serverCount = 0;
 cp.execFileSync = function(command, args, ...rest) {
   const result = exec.call(this, command, args, ...rest);
   if (command === 'git' && args.includes('--verify') && args.at(-1) === 'HEAD' && pins[args[1]]) return pins[args[1]] + '\\n';
@@ -50,17 +51,39 @@ Module._load = function(name, parent, ...rest) {
     }
     if (name === 'ts-node') return { register() {} };
     if (name.endsWith('/server.js')) return { async createServerComponent() {
-      const server = require('node:http').createServer((_request, response) => response.end());
-      return { use() {}, setContext() {},
+      const index = ++serverCount;
+      const server = require('node:http').createServer((request, response) => {
+        request.resume();
+        const mode = process.env.CAPTURE_TEST_HTTP_FAILURE;
+        if (!mode || index !== Number(process.env.CAPTURE_TEST_HTTP_SERVER || 1)) return response.end();
+        fs.appendFileSync(process.env.CAPTURE_TEST_EVENTS, 'request:' + mode + '\\n');
+        response.on('close', () => fs.appendFileSync(process.env.CAPTURE_TEST_EVENTS, 'response-close\\n'));
+        if (mode === 'stalled-headers') return;
+        response.writeHead(200, { 'Content-Length': mode === 'truncated' ? 100 : 1000000 });
+        response.write('x');
+        if (mode === 'truncated') setTimeout(() => response.destroy(), 20);
+        else {
+          const progress = setInterval(() => response.write('x'), 100);
+          response.on('close', () => clearInterval(progress));
+        }
+      });
+      return { server, use() {}, setContext() {},
         async start() { await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); fs.appendFileSync(process.env.CAPTURE_TEST_EVENTS, 'start\\n'); },
         async stop() { await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())); fs.appendFileSync(process.env.CAPTURE_TEST_EVENTS, 'stop\\n'); }
       };
     } };
-    if (name.endsWith('/injectors.js')) return { getUnderlyingServer() { throw Error('injected failure after listener start'); } };
+    if (name.endsWith('/injectors.js')) return { getUnderlyingServer(component) {
+      if (process.env.CAPTURE_TEST_HTTP_FAILURE) return component.server;
+      throw Error('injected failure after listener start');
+    } };
     if (name.endsWith('/http.routes.ts')) return { async setupHttpRoutes() { return { middleware() {}, allowedMethods() {} }; } };
     if (name.endsWith('/env-config-provider')) return { createRecordConfigComponent(values) { return { async getNumber(key) { return Number(values[key]); } }; } };
     if (name.endsWith('/requestBodyLimit.ts')) return { resolveMaxRequestBodyBytes(value) { return value; } };
     if (name.endsWith('/schema-validator-component')) return { createSchemaValidatorComponent() { return {}; } };
+    if (name.endsWith('/crypto/dist/crypto.js')) return { createUnsafeIdentity() { return { address: '0x' + '1'.repeat(40) }; } };
+    if (name.endsWith('/@dcl/crypto')) return { Authenticator: { createSignature() { return ''; } } };
+    if (name.endsWith('/crypto-middleware')) return { createPayload() { return ''; } };
+    if (name.endsWith('/fields-validator.ts')) return { async createCommunityFieldsValidatorComponent() { return {}; } };
     if (name.endsWith('/pg')) return { Client: class { async connect() {} async end() {} async query() { throw Object.assign(Error('injected SQL failure'), { code: 'P0001' }); } } };
     return {};
   }
@@ -187,4 +210,24 @@ for (const name of ['body-limit', 'federation-boundary', 'routing']) {
     assert.equal(fs.readFileSync(f.events, 'utf8'), 'start\nstop\n')
     assert.equal(fs.existsSync(f.output), false)
   })
+}
+
+for (const [name, serverNumber] of [['routing', 1], ['body-limit', 1], ['body-limit multipart', 2]]) {
+  for (const mode of ['truncated', 'stalled-headers', 'stalled-body']) {
+    test(`${name} ${mode} response rejects the real HTTP request, closes listeners and exits`, t => {
+      const f = fixture(t)
+      const started = Date.now()
+      const result = f.run([path.join(captures, `capture-community-${name.split(' ')[0]}.cjs`), f.source, f.output], {
+        CAPTURE_TEST_SERVER: '1', CAPTURE_TEST_HTTP_FAILURE: mode, CAPTURE_TEST_HTTP_SERVER: String(serverNumber)
+      })
+      rejected(result, mode === 'truncated' ? /Capture response aborted/ : /Capture request deadline exceeded/)
+      assert.equal(result.signal, null, 'the child exits without forced termination')
+      if (mode === 'truncated') assert.ok(Date.now() - started < 3000, 'aborted requests clear their five-second deadline')
+      const events = fs.readFileSync(f.events, 'utf8').trim().split('\n')
+      assert.deepEqual(events.filter(event => event === 'start' || event === 'stop'), serverNumber === 2 ? ['start', 'stop', 'start', 'stop'] : ['start', 'stop'])
+      assert.equal(events.filter(event => event === `request:${mode}`).length, 1)
+      assert.ok(events.includes('response-close'), 'the failed request releases its server response')
+      assert.equal(fs.existsSync(f.output), false)
+    })
+  }
 }

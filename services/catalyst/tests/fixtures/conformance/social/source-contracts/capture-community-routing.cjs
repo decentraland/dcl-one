@@ -30,7 +30,30 @@ const inputs=[
  {method:'POST',path:'/unknown'}, {method:'HEAD',path:'/unknown'},
  {method:'OPTIONS',path:'/unknown'}
 ];const cases=[];
-for(const input of inputs){const response=await new Promise((resolve,reject)=>{const request=http.request({hostname:'127.0.0.1',port,path:input.path,method:input.method,headers:{origin:'https://decentraland.org',connection:'close'}},response=>{const chunks=[];response.on('data',chunk=>chunks.push(chunk));response.on('end',()=>resolve({status:response.statusCode,body:Buffer.concat(chunks).toString(),headers:Object.fromEntries(Object.entries(response.headers).filter(([key])=>!['date','connection','keep-alive','transfer-encoding'].includes(key)))}));});request.on('error',reject);request.end();});cases.push({...input,...response});}
+for(const input of inputs){
+  const response=await new Promise((resolve,reject)=>{
+    let request, deadline, settled=false;
+    const fail=error=>{
+      if(settled)return;
+      settled=true;clearTimeout(deadline);request?.destroy();reject(error);
+    };
+    const complete=value=>{
+      if(settled)return;
+      settled=true;clearTimeout(deadline);resolve(value);
+    };
+    request=http.request({hostname:'127.0.0.1',port,path:input.path,method:input.method,headers:{origin:'https://decentraland.org',connection:'close'}},response=>{
+      const chunks=[];
+      response.on('error',fail);
+      response.on('aborted',()=>fail(Error('Capture response aborted')));
+      response.on('data',chunk=>chunks.push(chunk));
+      response.on('end',()=>complete({status:response.statusCode,body:Buffer.concat(chunks).toString(),headers:Object.fromEntries(Object.entries(response.headers).filter(([key])=>!['date','connection','keep-alive','transfer-encoding'].includes(key)))}));
+    });
+    request.on('error',fail);
+    deadline=setTimeout(()=>fail(Error('Capture request deadline exceeded')),5000);
+    try{request.end();}catch(error){fail(error);}
+  });
+  cases.push({...input,...response});
+}
 await server.stop();server=undefined;
 fs.writeFileSync(process.argv[3],JSON.stringify({source:'decentraland/social-service-ea',revision:SOCIAL_REVISION,path:'src/controllers/routes/http.routes.ts',transport:'@dcl/http-server/dist/server.js on loopback ephemeral test listener',cases},null,2)+'\n');
 } finally { await server?.stop(); }

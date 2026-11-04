@@ -260,7 +260,21 @@ const { createCommunityFieldsValidatorComponent } = require(
       }
       if (input.length !== undefined) headers["content-length"] = input.length;
       else headers["transfer-encoding"] = "chunked";
-      const request = http.request(
+      let request, deadline, settled = false;
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        request?.destroy();
+        reject(error);
+      };
+      const complete = value => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        resolve(value);
+      };
+      request = http.request(
         {
           hostname: "127.0.0.1",
           port,
@@ -271,9 +285,11 @@ const { createCommunityFieldsValidatorComponent } = require(
         },
         (res) => {
           const parts = [];
+          res.on("error", fail);
+          res.on("aborted", () => fail(Error("Capture response aborted")));
           res.on("data", (part) => parts.push(part));
           res.on("end", () =>
-            resolve({
+            complete({
               status: res.statusCode,
               body: Buffer.concat(parts).toString(),
               headers: Object.fromEntries(
@@ -286,12 +302,15 @@ const { createCommunityFieldsValidatorComponent } = require(
           );
         },
       );
-      request.on("error", reject);
-      request.end(
-        input.sendBody === false
-          ? undefined
-          : Buffer.alloc(input.length ?? input.chunked, 97),
-      );
+      request.on("error", fail);
+      deadline = setTimeout(() => fail(Error("Capture request deadline exceeded")), 5000);
+      try {
+        request.end(
+          input.sendBody === false
+            ? undefined
+            : Buffer.alloc(input.length ?? input.chunked, 97),
+        );
+      } catch (error) { fail(error); }
     });
     cases.push({
       ...input,
@@ -395,7 +414,21 @@ const { createCommunityFieldsValidatorComponent } = require(
       };
       if (spec.chunked) headers["transfer-encoding"] = "chunked";
       else headers["content-length"] = wire.length;
-      const request = http.request(
+      let request, deadline, settled = false;
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        request?.destroy();
+        reject(error);
+      };
+      const complete = value => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        resolve(value);
+      };
+      request = http.request(
         {
           hostname: "127.0.0.1",
           port: largerPort,
@@ -406,9 +439,11 @@ const { createCommunityFieldsValidatorComponent } = require(
         },
         (res) => {
           const chunks = [];
+          res.on("error", fail);
+          res.on("aborted", () => fail(Error("Capture response aborted")));
           res.on("data", (chunk) => chunks.push(chunk));
           res.on("end", () =>
-            resolve({
+            complete({
               status: res.statusCode,
               body: Buffer.concat(chunks).toString(),
               headers: Object.fromEntries(
@@ -421,8 +456,10 @@ const { createCommunityFieldsValidatorComponent } = require(
           );
         },
       );
-      request.on("error", reject);
-      request.end(spec.sendBody === false ? undefined : wire);
+      request.on("error", fail);
+      deadline = setTimeout(() => fail(Error("Capture request deadline exceeded")), 5000);
+      try { request.end(spec.sendBody === false ? undefined : wire); }
+      catch (error) { fail(error); }
     });
     multipartCases.push({
       ...spec,
