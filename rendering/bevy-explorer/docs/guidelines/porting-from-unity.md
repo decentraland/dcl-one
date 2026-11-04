@@ -64,6 +64,8 @@ checking its licence and provenance.
 | A prefab child `GameObject` with a serialised renderer | An embedded asset under `crates/assets/src/assets/<kind>/` (every file there is embedded; path `embedded://<kind>/<file>`), loaded in a `Startup` system into a resource and spawned under the entity with `SceneSpawner::spawn_as_child` |
 | A feature flag plus an `--arg` | A `GraphicsSettings` field in `crates/common/src/structs.rs` with a default, an `EnumAppSetting` in `crates/system_bridge/src/settings/`, registered in `settings/mod.rs`; the HUD lists it on its own. A launch-time switch is a `LaunchOptions` field; a web-only one is a page param ([recipes](recipes.md#a-new-engine-parameter)) |
 | `Profile.UserNameColor` | `comms::profile::UserProfile::name_color()` |
+| `IProfileRepository.GetCompactAsync`, `ProfileTier.Kind.Compact` | `comms::profile::ProfileManager::get_compact` (`common::profile::CompactProfile`); `get_data` is the full tier |
+| `SelfProfile.UpdateProfileAsync`'s revert, `ProfilePropagated` after the save | `comms::profile::CurrentUserProfile::revert_to`; peers hear `peer_profile()`, a version once it deploys |
 | Skipping `CharacterPreviewComponent` and SDK avatars | `Or<(With<ForeignPlayer>, With<PrimaryUser>)>`: excludes scene `AvatarShape` NPCs and photo-booth previews |
 | `AvatarBase` anchor points, `GetAdaptiveNametagPosition` | `AttachPoints`; `crates/avatar/src/dynamic_nametag.rs` |
 | PlayMode tests | `#[test]` on the plain state struct; headless asset tests; `#[ignore]`d GPU tests |
