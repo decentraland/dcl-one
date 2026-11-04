@@ -199,6 +199,8 @@ pub struct EconomyConfig {
     /// The collections chain's JSON-RPC (the old RPC_URL; public https, or
     /// RPC_ENDPOINT_POLYGON_FILE since gateway keys sit in the path); the
     /// content validator's L2 deploy access checks read it too (https only).
+    /// Unset or empty: https://rpc.decentraland.org/<polygon|amoy>?project=catalyst-content
+    /// by ETH_NETWORK, except under NODE_POSTURE island and journey.
     #[arg(long, env = "RPC_ENDPOINT_POLYGON", hide_env_values = true)]
     pub rpc_endpoint_polygon: Option<String>,
 
