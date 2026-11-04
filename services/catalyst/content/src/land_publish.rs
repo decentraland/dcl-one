@@ -3,9 +3,9 @@
 //! **Publish.** A scene deployed against this node's write API is local
 //! authority: the write deployer admits it only when the signer holds a
 //! deploy-granting leg on every parcel it points at (the content
-//! validator's LAND leg, `land_authz::can_deploy_batch`: the index once its
-//! fold is published, the marketplace subgraph's owner leg before that,
-//! `Unavailable` when neither can answer), and the deploy function records
+//! validator's LAND leg, the Checker contract's `checkLAND` at the deploy's
+//! block or five minutes before it, `Unavailable` when the chain cannot
+//! answer), and the deploy function records
 //! its provenance row (`content.local_entities`, signer lowercased, origin
 //! `land-publish`) in the same statement as the deployment. Peer data never
 //! creates a row. [`local_provenance`] is the row as `/audit` shows it.
