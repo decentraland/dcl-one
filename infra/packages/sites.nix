@@ -58,6 +58,9 @@ let
       (ui + /src) (ui + /public) (ui + /scripts/gen-error-pages.mts)
       (ui + /vite.validate.js) (ui + /package.json)
       (root + /library/catalyst-api)
+      # The Play HUD imports the same HTTP observer as the browser engine.
+      (root + /rendering/bevy-explorer/source/deploy/web/engine/core_http.js)
+      (root + /rendering/bevy-explorer/source/deploy/web/engine/core_http.d.ts)
     ];
   };
 in stdenv.mkDerivation {

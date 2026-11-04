@@ -67,7 +67,7 @@ def web(no_opt=False, engine_cache=None):
     shutil.copytree(SOURCE / 'deploy/web', output,
                     ignore=shutil.ignore_patterns('node_modules', '.env', '.gitignore', 'package*.json', 'scripts', '*.md'))
     for name in ('index.html', 'app.html', 'engine/pkg/webgpu_build_bg.wasm',
-                 'engine/pkg-scene/dcl_scene_wasm_bg.wasm', 'service_worker.js'):
+                 'engine/pkg-scene/dcl_scene_wasm_bg.wasm', 'engine/core_http.js', 'service_worker.js'):
         if not (output / name).is_file():
             raise SystemExit(f'Missing web build output: {name}')
     shutil.copy2(SOURCE / 'LICENSE', output / 'LICENSE')

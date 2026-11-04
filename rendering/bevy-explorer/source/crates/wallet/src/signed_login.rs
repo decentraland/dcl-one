@@ -27,6 +27,7 @@ pub async fn signed_login(
         request = request.header(key, value)
     }
 
+    let _transfer = platform::core_http::begin();
     let res = request.send().await?;
 
     if res.status() != StatusCode::OK {

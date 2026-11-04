@@ -1,3 +1,4 @@
+import { hudFetch } from '../lib/http'
 // Shared "jump to this world?" confirmation, mirroring unity-explorer's ChangeRealmPrompt.
 // Triggered from the map (world search results) and from chat (a `*.dcl.eth` link). Given just the
 // world name it looks the world up in the places API for the friendly title, description and cover
@@ -38,8 +39,7 @@ export function WorldVisitModal({
   useEffect(() => {
     const ac = new AbortController()
     setImageBroken(false) // a different world gets a fresh shot at its image
-    fetch(`${WORLDS_API}?names=${encodeURIComponent(worldName)}`, { signal: ac.signal })
-      .then((r) => r.json())
+    hudFetch(`${WORLDS_API}?names=${encodeURIComponent(worldName)}`, { signal: ac.signal }, (r) => r.json())
       .then((j: { data?: WorldInfo[] }) => {
         const w = j.data?.[0]
         if (w) setInfo((prev) => ({ title: w.title || prev.title, description: w.description, image: w.image }))

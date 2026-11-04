@@ -461,6 +461,7 @@ fn is_transient(status: u16) -> bool {
 async fn send_segment_batch(write_key: &str, events: &[String]) -> Result<(), SendError> {
     let json_body = batch_body(write_key, events);
 
+    let _transfer = common::util::core_http::begin();
     let response = reqwest_client()
         .post(SEGMENT_BATCH_URL)
         .header("Content-Type", "application/json")

@@ -1,3 +1,5 @@
+pub use platform::core_http;
+
 use std::{
     collections::VecDeque,
     marker::PhantomData,

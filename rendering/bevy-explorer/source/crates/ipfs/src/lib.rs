@@ -1204,6 +1204,7 @@ impl IpfsIo {
         let mut about;
         let mut final_url;
         loop {
+            let _transfer = platform::core_http::begin();
             let about_raw = self
                 .client
                 .get(format!("{new_realm}/about"))
@@ -1515,6 +1516,7 @@ impl IpfsIo {
                     all = false;
                     break;
                 }
+                let transfer = platform::core_http::begin();
                 let Ok(response) = async_std::future::timeout(
                     remaining,
                     self.client
@@ -1537,6 +1539,7 @@ impl IpfsIo {
                     ),
                     Err(_) => Some(Duration::from_millis(150)),
                 };
+                drop(transfer);
                 let Some(delay) =
                     delay.filter(|d| *d < deadline.saturating_duration_since(Instant::now()))
                 else {
@@ -1701,6 +1704,7 @@ impl IpfsIo {
         about: &mut ServerAbout,
         new_realm: &str,
     ) -> Result<(), anyhow::Error> {
+        let transfer = platform::core_http::begin();
         let scenes_raw = self
             .client
             .get(format!("{new_realm}/scenes"))
@@ -1717,6 +1721,7 @@ impl IpfsIo {
             .await
             .map_err(|e| anyhow!(e))?;
 
+        drop(transfer);
         if scenes.total > 0 {
             if let Some(scenes_urn) = about.configurations.as_mut().and_then(|config| {
                 config

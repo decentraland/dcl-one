@@ -2,6 +2,7 @@
 // Handles WASM/WebGPU initialization and game execution
 
 import init, { engine_init, engine_start, engine_spawn_worker, engine_console_command, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, gpu_cache_hash, report_pointer_lock, media_host_main, audio_host_main, livekit_host_main, engine_prepare_render, engine_set_viewport_active } from "./pkg/webgpu_build.js";
+import { attachCoreWorker, coreFetch, installCoreHttp } from './core_http.js';
 import { createSandboxHost } from "./sandbox_host.js";
 
 // Re-export for main.js
@@ -14,7 +15,7 @@ export function prepareRender() {
   return new Promise((resolve, reject) => {
     window.__gpuCacheReady = resolve;
     try {
-      engine_prepare_render(document.getElementById("mygame-canvas"), glueUrl);
+      attachCoreWorker(engine_prepare_render(document.getElementById("mygame-canvas"), glueUrl));
     } catch (e) {
       reject(e);
     }
@@ -57,7 +58,9 @@ export function startServer(options) {
   const started = new Promise((resolve, reject) => {
     frame.addEventListener("load", () => {
       try {
-        frame.contentWindow.startHeadless(compiledModule, options).then(resolve, reject);
+        let observer;
+        try { observer = installCoreHttp().child(); } catch { /* optional diagnostics */ }
+        frame.contentWindow.startHeadless(compiledModule, options, observer).then(resolve, reject);
       } catch (e) {
         reject(e);
       }
@@ -110,16 +113,15 @@ function workerCrashHandler(name) {
 }
 
 /**
- * Fetches a URL with download progress tracking.
- * @param {string} url - URL to fetch
+ * Reads a response while reporting download progress.
+ * @param {Response} response
  * @param {function} onProgress - Callback with percentage (0-100)
  * @param {number|null} expectedSize - Expected decoded size in bytes. Preferred over
  *   Content-Length, which under CDN compression counts compressed bytes while the body
  *   reader yields decoded bytes.
  * @returns {Promise<ArrayBuffer>}
  */
-async function fetchWithProgress(url, onProgress, expectedSize) {
-  const response = await fetch(url);
+async function readWithProgress(response, onProgress, expectedSize) {
   const contentLength = response.headers.get('Content-Length');
   const total = expectedSize || (contentLength ? parseInt(contentLength, 10) : null);
 
@@ -134,13 +136,17 @@ async function fetchWithProgress(url, onProgress, expectedSize) {
   const chunks = [];
   let received = 0;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    chunks.push(value);
-    received += value.length;
-    onProgress(Math.min((received / total) * 100, 100));
+      chunks.push(value);
+      received += value.length;
+      onProgress(Math.min((received / total) * 100, 100));
+    }
+  } finally {
+    reader.releaseLock();
   }
 
   // Combine chunks into single ArrayBuffer
@@ -171,7 +177,16 @@ async function fetchWithProgress(url, onProgress, expectedSize) {
  * @returns {Promise<WebAssembly.Module>}
  */
 async function compileWasmWithProgress(url, expectedSize, onProgress, onDownloaded) {
-  const response = await fetch(url);
+  const { module, total } = await coreFetch(url, undefined, response =>
+    tryCompileStreaming(response, expectedSize, onProgress, onDownloaded));
+  if (module) return module;
+
+  const buffer = await coreFetch(url, undefined, response => readWithProgress(response, onProgress, total));
+  onDownloaded();
+  return WebAssembly.compile(buffer);
+}
+
+async function tryCompileStreaming(response, expectedSize, onProgress, onDownloaded) {
   if (!response.ok) {
     throw new Error(`WASM fetch failed: ${response.status} ${response.statusText}`);
   }
@@ -201,22 +216,15 @@ async function compileWasmWithProgress(url, expectedSize, onProgress, onDownload
       await progressTask;
       onProgress(100);
       onDownloaded();
-      return module;
+      return { module };
     } catch (e) {
       // typically a server not sending Content-Type: application/wasm — refetch
       // (usually straight from the HTTP cache) and compile from a buffer instead
       cancelProgress();
       console.warn('[Main JS] compileStreaming failed, falling back to buffered compile', e);
     }
-  } else {
-    try {
-      response.body?.cancel();
-    } catch (e) { /* body already consumed or locked */ }
   }
-
-  const buffer = await fetchWithProgress(url, onProgress, total);
-  onDownloaded();
-  return WebAssembly.compile(buffer);
+  return { total };
 }
 
 /**
@@ -233,7 +241,7 @@ export async function initEngine() {
   // Fetch manifest for expected WASM size (used when Content-Length is missing due to CDN compression)
   let expectedWasmSize = null;
   try {
-    const manifest = await fetch(`${publicUrl}/pkg/manifest.json`).then(r => r.json());
+    const manifest = await coreFetch(`${publicUrl}/pkg/manifest.json`, undefined, r => r.json());
     expectedWasmSize = manifest.wasmSize;
   } catch (e) {
     console.warn("Could not load manifest.json, progress may not be accurate", e);
@@ -277,7 +285,7 @@ export async function initEngine() {
   window.setVideoSource = (video, src) => {
     async function isHlsStream(url) {
       try {
-        const response = await fetch(url, {
+        const response = await coreFetch(url, {
           method: "HEAD",
           mode: "cors",
         });
@@ -351,11 +359,13 @@ export async function initEngine() {
   // The asset loader and processor threads: workers of ours, spawned on bevy's terms
   // (src/web.rs init_asset_load_thread / image_processor_main).
   const assetLoader = engine_spawn_worker(glueUrl, "init_asset_load_thread", "asset loader");
+  attachCoreWorker(assetLoader);
   assetLoader.onerror = workerCrashHandler("asset loader");
   await workerReady(assetLoader);
   setLoadingStepProgress('workers', 50);
 
   const assetProcessor = engine_spawn_worker(glueUrl, "image_processor_main", "asset processor");
+  attachCoreWorker(assetProcessor);
   assetProcessor.onerror = workerCrashHandler("asset processor");
   await workerReady(assetProcessor);
   setLoadingStepCompleted('workers');
@@ -477,6 +487,7 @@ export function start(options = {}) {
     asyncCompute: asyncComputeWorkers,
   } = engine_start(canvas, options, glueUrl);
   console.log(`[Main JS] compute workers: ${computeWorkers.length}`);
+  [engineWorker, renderWorker, ...computeWorkers, ...asyncComputeWorkers].forEach(attachCoreWorker);
   renderWorker.onerror = workerCrashHandler("render");
   renderWorker.addEventListener("message", workerMessageHandler("render"));
   computeWorkers.forEach((worker, i) => {

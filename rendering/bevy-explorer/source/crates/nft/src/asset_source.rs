@@ -93,6 +93,7 @@ impl AssetReader for NftReader {
             let data = loop {
                 attempt += 1;
 
+                let _transfer = platform::core_http::begin();
                 let response = reqwest_client()
                     .get(&remote)
                     .timeout(Duration::from_secs(30 * attempt))

@@ -1,3 +1,4 @@
+import { hudFetch } from '../../../lib/http'
 // The editor's super-user scene, served by the page's service worker from bytes checked here.
 
 import { CID_PATTERN, contentCid } from './cid'
@@ -6,9 +7,10 @@ import { CID_PATTERN, contentCid } from './cid'
 const CACHE = 'dcl-editor-scene-v1'
 
 async function verified(url: string, hash: string): Promise<Uint8Array<ArrayBuffer>> {
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`the editor scene file ${hash} answered ${res.status}`)
-  const bytes = new Uint8Array(await res.arrayBuffer())
+  const bytes = await hudFetch(url, undefined, async (res) => {
+    if (!res.ok) throw new Error(`the editor scene file ${hash} answered ${res.status}`)
+    return new Uint8Array(await res.arrayBuffer())
+  })
   if ((await contentCid(bytes)) !== hash) throw new Error(`the editor scene file ${hash} does not match its hash`)
   return bytes
 }

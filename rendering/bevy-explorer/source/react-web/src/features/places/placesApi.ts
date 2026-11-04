@@ -1,3 +1,4 @@
+import { hudFetchJson } from '../../lib/http'
 // Typed client for the Decentraland Places API (places.decentraland.org/api).
 // Plain fetch; the pure helpers below derive card fields from a DiscoverPlace and
 // are kept side-effect free so they're unit-testable.
@@ -67,9 +68,11 @@ function buildParams(args: FetchPlacesArgs, withCategories: boolean): URLSearchP
 }
 
 async function getPlaces(path: string, params: URLSearchParams): Promise<PlacesResponse> {
-  const res = await fetch(`${API_BASE}${path}?${params.toString()}`)
-  if (!res.ok) throw new Error(`places API ${path} failed: ${res.status}`)
-  const json = (await res.json()) as Partial<PlacesResponse>
+  const json = await hudFetchJson<Partial<PlacesResponse>>(
+    `${API_BASE}${path}?${params.toString()}`,
+    undefined,
+    `places API ${path} failed:`,
+  )
   if (json.ok !== true || !Array.isArray(json.data)) throw new Error(`places API ${path} returned not-ok`)
   return { ok: true, total: json.total ?? json.data.length, data: json.data }
 }

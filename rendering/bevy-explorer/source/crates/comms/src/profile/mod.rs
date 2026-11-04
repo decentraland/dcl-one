@@ -1049,6 +1049,7 @@ async fn deploy_profile(
             .body(prepared_data)
     };
 
+    let _transfer = platform::core_http::begin();
     let response = post.send().await?;
 
     match response.status() {
@@ -1106,6 +1107,7 @@ async fn fetch_registry_profiles(
     debug!("requesting {} profiles from {registry_url}", ids.len());
 
     let outcome: Result<Vec<LambdaProfiles>, anyhow::Error> = async {
+        let _transfer = platform::core_http::begin();
         let response = ipfs
             .client()
             .post(&registry_url)
@@ -1174,6 +1176,7 @@ async fn fetch_catalyst_profile_by_id(
     let url = format!("{}/profiles/{id}", endpoint.trim_end_matches('/'));
     debug!("requesting profile from {url}");
 
+    let transfer = platform::core_http::begin();
     let response = ipfs
         .client()
         .get(&url)
@@ -1192,6 +1195,7 @@ async fn fetch_catalyst_profile_by_id(
     }
 
     let body = response.text().await?;
+    drop(transfer);
     let content = match serde_json::from_str::<LambdaProfiles>(&body) {
         Ok(content) => content,
         Err(e) => {

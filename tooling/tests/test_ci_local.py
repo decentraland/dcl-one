@@ -42,6 +42,16 @@ class CiLocalTest(unittest.TestCase):
         self.assertTrue(ci.triggered('apis-sites-images.yml', changed))
         self.assertFalse(ci.triggered('development.yml', changed))
 
+    def test_shared_browser_http_inputs_run_the_play_consumers(self):
+        for name in ('core_http.js', 'core_http.d.ts'):
+            changed = {'rendering/bevy-explorer/source/deploy/web/engine/' + name}
+            with self.subTest(name=name):
+                for event in ('push', 'pull_request'):
+                    self.assertTrue(ci.triggered('development.yml', changed, event=event))
+                self.assertTrue(ci.triggered('bevy-explorer-ci.yml', changed))
+                self.assertTrue(ci.triggered('apis-sites-images.yml', changed))
+                self.assertIn('ui3 unit tests', [step.name for step in ci.pre_commit_steps(changed)])
+
     def test_root_cargo_and_toolchain_edits_select_sites_and_its_web_producer(self):
         for path in ('.cargo/config.toml', 'rust-toolchain', 'rust-toolchain.toml'):
             with self.subTest(path=path):

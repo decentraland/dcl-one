@@ -56,6 +56,7 @@
 //     __bevyTermsAccepted() — whether the persisted config has accepted the terms (null =
 //       unknown), so the host can hold a link's world for its welcome page; set alongside too
 import { initEngine, start, prepareRender, applyOptionsToUrlParams, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take } from './engine.js'
+import { coreFetch } from './core_http.js'
 import { createPerfStream } from './perf_stream.js'
 
 // ---- boot progress (replaces ui.js's DOM loading steps) -----------------------------------------
@@ -157,7 +158,7 @@ publish()
       const event = engine_crash_event(msg, source || 'error')
       if (event) {
         const { url, body } = JSON.parse(event)
-        fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {})
+        coreFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }, () => {}).catch(() => {})
       }
     } catch (_) {}
   }
@@ -442,7 +443,7 @@ initEngine()
     // perf_stream.js sends them.
     const perf = window.__bevyPerfStream
     // null for a path that is not on this page's origin: no stream, and the engine is not told of one
-    const stream = perf ? createPerfStream(perf, { take: () => engine_perf_take() }) : null
+    const stream = perf ? createPerfStream(perf, { fetch: (url, init) => coreFetch(url, init, r => ({ status: r.status })), take: () => engine_perf_take() }) : null
     if (perf && stream) {
       window.__perfStream = stream
       window.__perfAppend = (name, text) => stream.append(name, text)

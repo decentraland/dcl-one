@@ -64,6 +64,7 @@ async fn fetch_server(req_id: String) -> Result<(Address, serde_json::Value), an
         attempt += 1;
 
         let url = format!("{}/{req_id}", auth_server_endpoint_url());
+        let transfer = platform::core_http::begin();
         let response = platform::http_client_builder()
             .use_native_tls()
             .build()
@@ -77,6 +78,7 @@ async fn fetch_server(req_id: String) -> Result<(Address, serde_json::Value), an
             Ok(response) => {
                 if response.status().is_success() {
                     let text = response.text().await?;
+                    drop(transfer);
                     if text.is_empty() {
                         async_std::task::sleep(AUTH_SERVER_RETRY_INTERVAL).await;
                         continue;
@@ -103,6 +105,8 @@ async fn fetch_server(req_id: String) -> Result<(Address, serde_json::Value), an
                     }
                 } else {
                     if response.status() == StatusCode::NOT_FOUND {
+                        drop(response);
+                        drop(transfer);
                         async_std::task::sleep(AUTH_SERVER_RETRY_INTERVAL).await;
                         continue;
                     }
@@ -123,6 +127,7 @@ async fn fetch_server(req_id: String) -> Result<(Address, serde_json::Value), an
 async fn init_request(request: CreateRequest) -> Result<InitializedRequest, anyhow::Error> {
     let body = serde_json::to_string(&request).expect("valid json");
 
+    let _transfer = platform::core_http::begin();
     let response = platform::http_client_builder()
         .use_native_tls()
         .build()
@@ -243,6 +248,7 @@ async fn fetch_identity(identity_id: &str) -> Result<AuthIdentity, anyhow::Error
         common::base_domain::Service::AuthApi,
         &format!("/identities/{identity_id}"),
     );
+    let _transfer = platform::core_http::begin();
     let response = platform::http_client_builder()
         .use_native_tls()
         .build()

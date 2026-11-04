@@ -16,6 +16,9 @@ LOCK = 'rendering/bevy-explorer/upstream.lock.json'
 SOURCE = 'rendering/bevy-explorer/source/'
 PROTO = 'library/protocol/proto/'
 HUD = SOURCE + 'react-web/src/'
+# These runtime modules are also imported directly into both HUD bundles.
+HUD_SHARED = tuple(SOURCE + 'deploy/web/engine/' + name
+                   for name in ('core_http.js', 'core_http.d.ts'))
 MANIFEST = 'sites-play.json'
 PARTS = ('engine', 'bridge-scene', 'service_worker.js', 'preview_realm.js')
 # Source is maintained here. Hash its tracked files directly, alongside the
@@ -30,7 +33,8 @@ TOOLCHAINS = ('rust-toolchain', 'rust-toolchain.toml')
 BUILD_ENV = ('BEVY_SEGMENT_WRITE_KEY', 'BEVY_ANALYTICS_DEV')
 REQUIRED = ('engine/pkg/webgpu_build_bg.wasm', 'engine/pkg/webgpu_build.js',
             'engine/pkg/manifest.json', 'engine/pkg-scene/dcl_scene_wasm_bg.wasm',
-            'engine/headless.html', 'bridge-scene/static/BevyExplorerUI/about',
+            'engine/headless.html', 'engine/core_http.js',
+            'bridge-scene/static/BevyExplorerUI/about',
             'service_worker.js', 'preview_realm.js')
 ENGINE_PARTS = {
     'pkg': SOURCE + 'deploy/web/engine/pkg',
@@ -57,7 +61,7 @@ def read_json(path):
 def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
     def selected(path):
         if hud_only:
-            return path.startswith(HUD)
+            return path.startswith(HUD) or path in HUD_SHARED
         # Native npm packaging is not consumed by the web builder or WASM.
         if path.startswith(SOURCE + 'deploy/headless/'):
             return False

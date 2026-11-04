@@ -144,7 +144,9 @@ def pre_commit_steps(changed):
     if touches(changed, 'apps/dcl-scene-cli/*', 'library/*', '.cargo/*'):
         steps.append(Step('cargo check (sdk)', 'cd services/catalyst && cargo check --locked -p dcl-scene-cli --all-targets',
                           tools=('cargo',)))
-    if touches(changed, 'apps/ui3/*', 'library/catalyst-api/*'):
+    if touches(changed, 'apps/ui3/*', 'library/catalyst-api/*',
+               'rendering/bevy-explorer/source/deploy/web/engine/core_http.js',
+               'rendering/bevy-explorer/source/deploy/web/engine/core_http.d.ts'):
         steps += web_steps()
     elif touches(changed, 'apps/sites/*'):
         steps += web_steps(changed_ui3=False)

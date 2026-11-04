@@ -1,3 +1,4 @@
+import { hudFetch } from '../../lib/http'
 // React Map — full-screen page inside MainMenuShell matching the Unity map: the satellite
 // atlas (the same 8×8 tile grid unity-explorer renders) pannable/zoomable, category filter
 // chips + search, a player marker, zoom controls, a satellite minimap, a category sidebar
@@ -225,8 +226,7 @@ export function MapPage({
       return
     }
     try {
-      const res = await fetch(`${PLACES_API}?positions=${key}`)
-      const json = (await res.json()) as { data?: Place[] }
+      const json = await hudFetch(`${PLACES_API}?positions=${key}`, undefined, (r) => r.json() as Promise<{ data?: Place[] }>)
       const p = json.data?.[0] ?? null
       cache.current.set(key, p)
       setPlace(p)
@@ -247,8 +247,7 @@ export function MapPage({
 
     const ac = new AbortController()
     setLoading(true)
-    fetch(`${PLACES_API}?${params.toString()}`, { signal: ac.signal })
-      .then((r) => r.json())
+    hudFetch(`${PLACES_API}?${params.toString()}`, { signal: ac.signal }, (r) => r.json())
       .then((j: { data?: Place[] }) => {
         setList((j.data ?? []).filter((p) => p.base_position))
         setLoading(false)
@@ -273,7 +272,7 @@ export function MapPage({
       const isEns = /\.eth$/i.test(q)
       const worldParam = isEns ? `names=${encodeURIComponent(q)}` : `search=${encodeURIComponent(q)}`
       const getJson = (url: string): Promise<{ data?: unknown[] }> =>
-        fetch(url, { signal: ac.signal }).then((r) => r.json() as Promise<{ data?: unknown[] }>)
+        hudFetch(url, { signal: ac.signal }, (r) => r.json() as Promise<{ data?: unknown[] }>)
       void getJson(`${WORLDS_API}?${worldParam}&limit=12`)
         .then((j) => setWorldHits((j.data as World[]) ?? []))
         .catch(() => undefined)

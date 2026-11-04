@@ -1,3 +1,4 @@
+import { hudFetchJson } from '../../lib/http'
 // Chat translation, from the server unity-explorer uses: autotranslate-server, a LibreTranslate.
 // A message goes as its text runs only, with links, coordinates, worlds, @mentions and emoji
 // kept back (the server drops emoji and whatever follows them in a run), all runs in one batch
@@ -110,14 +111,12 @@ export async function translateText(text: string, target: string): Promise<{ tex
   const timer = setTimeout(() => abort.abort(), TIMEOUT_MS)
   let body: BatchResponse
   try {
-    const res = await fetch(TRANSLATE_URL, {
+    body = await hudFetchJson<BatchResponse>(TRANSLATE_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ q: runs.map((r) => r.core), source: 'auto', target, format: 'text' }),
       signal: abort.signal
-    })
-    if (!res.ok) throw new Error(`translate: HTTP ${res.status}`)
-    body = (await res.json()) as BatchResponse
+    }, 'translate: HTTP')
   } finally {
     clearTimeout(timer)
   }

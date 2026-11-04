@@ -1,3 +1,4 @@
+import { hudFetchJson } from '../../lib/http'
 // Client for the public marketplace catalog (marketplace-api.<base domain>/v1/catalog). Buying is a
 // wallet transaction, so purchases finish on the web marketplace (as in Unity).
 
@@ -32,9 +33,11 @@ export async function fetchShop(
 ): Promise<{ items: ShopItem[]; total: number }> {
   const params = new URLSearchParams({ first: String(SHOP_PAGE_SIZE), skip: String(q.skip), category: q.category, sortBy: q.sortBy, isOnSale: 'true' })
   if (q.search.trim() !== '') params.set('search', q.search.trim())
-  const res = await fetch(`${CATALOG_API}?${params}`, { signal })
-  if (!res.ok) throw new Error(`Marketplace returned ${res.status}`)
-  const body = (await res.json()) as { data?: ShopItem[]; total?: number }
+  const body = await hudFetchJson<{ data?: ShopItem[]; total?: number }>(
+    `${CATALOG_API}?${params}`,
+    { signal },
+    'Marketplace returned',
+  )
   if (!Array.isArray(body.data)) throw new Error('Marketplace returned an unexpected response')
   return { items: body.data, total: body.total ?? body.data.length }
 }

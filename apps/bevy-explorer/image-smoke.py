@@ -48,13 +48,17 @@ def main():
             else:
                 raise AssertionError('Web image never became ready')
             headers = {}
-            for path in ('/', '/app.html', '/engine/headless.html', '/service_worker.js'):
+            for path in ('/', '/app.html', '/engine/headless.html', '/service_worker.js', '/engine/core_http.js'):
                 response = docker('exec', name, 'wget', '-S', '-O', '/dev/null', f'http://127.0.0.1:8080{path}')
                 headers[path] = response.stderr.lower()
             assert 'cross-origin-opener-policy:' not in headers['/']
             assert 'document-isolation-policy: isolate-and-credentialless' in headers['/app.html']
             assert 'document-isolation-policy: isolate-and-credentialless' in headers['/engine/headless.html']
             assert 'cross-origin-embedder-policy: credentialless' in headers['/service_worker.js']
+            module_types = [line.strip().split(':', 1)[1].split(';', 1)[0].strip()
+                            for line in headers['/engine/core_http.js'].splitlines()
+                            if line.strip().startswith('content-type:')]
+            assert any(mime in ('application/javascript', 'text/javascript') for mime in module_types), module_types
             for path in ('engine/pkg/webgpu_build_bg.wasm', 'engine/pkg-scene/dcl_scene_wasm_bg.wasm'):
                 docker('exec', name, 'wget', '-q', '-O', '/tmp/smoke.wasm', f'http://127.0.0.1:8080/{path}')
                 actual = docker('exec', name, 'sha256sum', '/tmp/smoke.wasm').stdout.split()[0]

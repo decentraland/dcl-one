@@ -3,6 +3,7 @@
 // It runs in its own document (headless.html, a hidden frame of the client's page), which gives
 // its page side (the glue instance, the page functions its workers call) its own global too.
 
+import { attachCoreWorker } from './core_http.js';
 import { createSandboxHost } from "./sandbox_host.js";
 
 const RESTART_WAIT_MS = 5000;
@@ -60,7 +61,11 @@ function loadLivekit() {
   });
 }
 
-export async function startHeadless(compiledModule, options) {
+export async function startHeadless(compiledModule, options, coreHost) {
+  if (coreHost) {
+    window.__dclCoreHttp = coreHost;
+    window.addEventListener('pagehide', () => coreHost.dispose(), { once: true });
+  }
   if (!(await claimRealm(options.realm))) {
     throw new Error(`headless: ${options.realm} already has a scene server in this browser`);
   }
@@ -87,6 +92,7 @@ export async function startHeadless(compiledModule, options) {
   await loadLivekit();
   glue.livekit_host_main();
   const { engine, compute } = glue.headless_start(options, glueUrl);
+  [engine, ...compute].forEach(attachCoreWorker);
   engine.onerror = (e) => console.error("[headless] engine worker crashed", e);
   engine.addEventListener("message", (e) => {
     const log = e.data?.sceneLog;
