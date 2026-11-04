@@ -118,6 +118,13 @@ async fn community_analytics_payloads_and_no_ops_match_executed_source() {
             .unwrap();
             let mut body = properties;
             body["env"] = json!("fixture");
+            // Going public accepts pending requests only; the source also
+            // accepts and reports a request already decided (a deliberate fix).
+            if name == "privacy-accept-all"
+                && let Some(ids) = body["requests_ids"].as_array_mut()
+            {
+                ids.retain(|value| value != &json!(other_request_id.to_string()));
+            }
             expected
                 .push(json!({"event":event["event"],"body":body,"context":"community-fixture"}));
         }
@@ -210,17 +217,19 @@ async fn community_analytics_payloads_and_no_ops_match_executed_source() {
         let (status, body) = hit(&rig.app, call.signed(wallet).await).await;
         assert_eq!(status, expected_status, "{name}: {body}");
         if let Some(banned_request) = banned_request {
-            let ids: Vec<Uuid> = sqlx::query_scalar(
+            let mut ids: Vec<Uuid> = sqlx::query_scalar(
                 "SELECT id FROM social.community_requests WHERE community_id=$1",
             )
             .bind(id)
             .fetch_all(&rig.pool)
             .await
             .unwrap();
+            ids.sort();
+            let mut kept = vec![banned_request, other_request_id];
+            kept.sort();
             assert_eq!(
-                ids,
-                vec![banned_request],
-                "only banned join requests remain after source accept-all"
+                ids, kept,
+                "banned and already decided join requests remain after accept-all"
             );
             let members: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM social.community_members WHERE community_id=$1",
@@ -229,10 +238,7 @@ async fn community_analytics_payloads_and_no_ops_match_executed_source() {
             .fetch_one(&rig.pool)
             .await
             .unwrap();
-            assert_eq!(
-                members, 3,
-                "owner, pending requester and historical-status requester"
-            );
+            assert_eq!(members, 2, "owner and pending requester");
         }
     }
     assert_eq!(scenarios, 17);

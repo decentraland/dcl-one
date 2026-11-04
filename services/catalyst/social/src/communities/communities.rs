@@ -969,19 +969,21 @@ pub async fn update_community(
     let accepted_request_ids: Vec<uuid::Uuid> = if becomes_public {
         // The source bulk acceptance owns its transaction. Failure rolls back
         // its membership/request changes, preserving the preceding UPDATE.
+        // Only pending requests: federation decisions keep rejected and
+        // cancelled rows, which the source deletes.
         let mut guard = try_resp!(map_db(acquire_membership(&state.pool, uuid).await));
         let mut tx = try_resp!(map_db(guard.begin().await));
         try_resp!(map_db(sqlx::query(
             "INSERT INTO social.community_members (community_id,member_address,role) \
              SELECT $1,r.member_address,'member' FROM social.community_requests r \
-              WHERE r.community_id=$1 AND r.type='request_to_join' \
+              WHERE r.community_id=$1 AND r.type='request_to_join' AND r.status='pending' \
                 AND NOT EXISTS (SELECT 1 FROM social.community_bans b \
                     WHERE b.community_id=r.community_id AND b.banned_address=r.member_address AND b.active) \
              ON CONFLICT (community_id,member_address) DO NOTHING"
         ).bind(uuid).execute(&mut *tx).await));
         let ids = try_resp!(map_db(sqlx::query_scalar(
             "DELETE FROM social.community_requests r WHERE r.community_id=$1 AND r.type='request_to_join' \
-                AND NOT EXISTS (SELECT 1 FROM social.community_bans b \
+                AND r.status='pending' AND NOT EXISTS (SELECT 1 FROM social.community_bans b \
                     WHERE b.community_id=r.community_id AND b.banned_address=r.member_address AND b.active) \
              RETURNING r.id"
         ).bind(uuid).fetch_all(&mut *tx).await));

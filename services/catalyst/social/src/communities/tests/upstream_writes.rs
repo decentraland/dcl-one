@@ -211,6 +211,18 @@ async fn going_public_accepts_the_pending_requests_to_join_of_unbanned_wallets()
     let asked = rig.request(c, &asker, "request_to_join").await;
     let refused = rig.request(c, &banned, "request_to_join").await;
     let invite = rig.request(c, &invited, "invite").await;
+    // Federation decisions keep the decided row; going public must not accept it.
+    let (rejected_wallet, cancelled_wallet) = (wallet(), wallet());
+    let rejected = rig.request(c, &rejected_wallet, "request_to_join").await;
+    let cancelled = rig.request(c, &cancelled_wallet, "request_to_join").await;
+    for (id, decided) in [(rejected, "rejected"), (cancelled, "cancelled")] {
+        sqlx::query("UPDATE social.community_requests SET status = $2 WHERE id = $1")
+            .bind(id)
+            .bind(decided)
+            .execute(&rig.pool)
+            .await
+            .unwrap();
+    }
     sqlx::query("INSERT INTO social.community_bans (community_id, banned_address, banned_by) VALUES ($1, $2, $3)")
         .bind(c)
         .bind(&banned.address)
@@ -248,6 +260,10 @@ async fn going_public_accepts_the_pending_requests_to_join_of_unbanned_wallets()
         "invites are not requests to join"
     );
     assert_eq!(rig.role_of(c, &invited).await, None);
+    assert_eq!(status_of(rejected).await.as_deref(), Some("rejected"));
+    assert_eq!(rig.role_of(c, &rejected_wallet).await, None);
+    assert_eq!(status_of(cancelled).await.as_deref(), Some("cancelled"));
+    assert_eq!(rig.role_of(c, &cancelled_wallet).await, None);
 
     // public to public accepts nothing
     let late = wallet();
