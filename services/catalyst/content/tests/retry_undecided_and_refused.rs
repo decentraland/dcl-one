@@ -1,5 +1,5 @@
-//! The retry worker keeps an entity the validator could not decide for as long as it stays
-//! undecided, past the retry cap, and never retries one the validator refused. A retry cycle
+//! The retry worker keeps an entity the validator could not decide for up to a week, past the
+//! retry cap and the prune, and never retries one the validator refused. A retry cycle
 //! walks every due record in its database, so this runs in a binary of its own over a scratch
 //! database of its own.
 
@@ -54,8 +54,11 @@ async fn peer(body: Vec<u8>) -> (String, tokio::task::JoinHandle<()>) {
 struct Record {
     reason: String,
     retry_count: i32,
-    /// `next_retry_at - failure_time`, ms.
-    wait_ms: f64,
+    error_description: String,
+    /// `next_retry_at - now()`, minutes.
+    wait_min: f64,
+    /// `now() - failure_time`, minutes.
+    age_min: f64,
 }
 
 #[tokio::test]
@@ -97,8 +100,9 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
         let pool = pool.clone();
         async move {
             sqlx::query_as::<_, Record>(
-                "SELECT reason, retry_count, \
-                 (date_part('epoch', next_retry_at - failure_time) * 1000)::float8 AS wait_ms \
+                "SELECT reason, retry_count, error_description, \
+                 (date_part('epoch', next_retry_at - timezone('UTC', now())) / 60)::float8 AS wait_min, \
+                 (date_part('epoch', timezone('UTC', now()) - failure_time) / 60)::float8 AS age_min \
                  FROM content.failed_deployments WHERE entity_id = $1",
             )
             .bind(entity_id)
@@ -107,14 +111,17 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
             .unwrap()
         }
     };
-    let make_due = || {
+    // Moves every record back by `extra` minutes past its wait: its wait served and then some.
+    let elapse = |extra: i32| {
         let pool = pool.clone();
         async move {
             sqlx::query(
                 "UPDATE content.failed_deployments \
-                 SET next_retry_at = next_retry_at - make_interval(days => 30), \
-                     failure_time = failure_time - make_interval(days => 30)",
+                 SET failure_time = failure_time - (next_retry_at - timezone('UTC', now())) \
+                                    - make_interval(mins => $1), \
+                     next_retry_at = timezone('UTC', now()) - make_interval(mins => $1)",
             )
+            .bind(extra)
             .execute(&pool)
             .await
             .unwrap();
@@ -161,7 +168,7 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
 
         if label == "undecided" {
             let mut waits = Vec::new();
-            for cycle in 0..MAX_RETRIES + 3 {
+            for cycle in 0..5 {
                 let stats = retry.execute_retry_cycle().await.unwrap();
                 assert_eq!(
                     (stats.still_failing, stats.evicted),
@@ -171,19 +178,72 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
                 let record = read(entity_id.clone()).await.expect("still queued");
                 assert_eq!(record.reason, "Validation undecided", "cycle {cycle}");
                 assert_eq!(record.retry_count, 0, "cycle {cycle}: nothing spent");
-                waits.push(record.wait_ms.round() as i64);
-                make_due().await;
+                waits.push(record.wait_min.round() as i64);
+                elapse(0).await;
             }
-            assert_eq!(
-                waits,
-                [900_000, 1_800_000, 3_600_000, 7_200_000, 14_400_000],
-                "the backoff still grows"
-            );
-            // The prune spares it too.
-            catalyst_content::sync::retry_failed::prune_failed_deployments(&pool, 7)
+            assert_eq!(waits, [15, 15, 30, 60, 120], "the backoff doubles");
+
+            // Sync reports it undecided again: the first failure and the deadline stay.
+            let before = read(entity_id.clone()).await.unwrap();
+            store
+                .report_failure(FailedDeployment {
+                    entity_type: "scene".into(),
+                    entity_id: entity_id.clone(),
+                    reason: FailureReason::ValidationUndecided,
+                    auth_chain: signed_chain(&entity_id).await,
+                    error_description: "undecided".into(),
+                    failure_timestamp: chrono::Utc::now().timestamp_millis(),
+                    snapshot_hash: None,
+                    retry_count: 0,
+                    next_retry_at: 0,
+                })
                 .await
                 .unwrap();
-            assert!(read(entity_id.clone()).await.is_some());
+            let after = read(entity_id.clone()).await.unwrap();
+            assert_eq!(after.age_min.round(), before.age_min.round());
+            assert_eq!(after.wait_min.round(), before.wait_min.round());
+            retry.execute_retry_cycle().await.unwrap();
+            let record = read(entity_id.clone()).await.unwrap();
+            assert_eq!(record.wait_min.round(), 240.0, "the backoff kept growing");
+
+            // Past the retry cap and the prune it stays.
+            sqlx::query("UPDATE content.failed_deployments SET retry_count = $1")
+                .bind(MAX_RETRIES as i32 + 5)
+                .execute(&pool)
+                .await
+                .unwrap();
+            elapse(0).await;
+            let stats = retry.execute_retry_cycle().await.unwrap();
+            assert_eq!((stats.still_failing, stats.evicted), (1, 0));
+            catalyst_content::sync::retry_failed::prune_failed_deployments(&pool, 0)
+                .await
+                .unwrap();
+            let record = read(entity_id.clone())
+                .await
+                .expect("never evicted or pruned");
+            assert_eq!(record.reason, "Validation undecided");
+
+            // A week undecided: given up, recorded as a refusal.
+            elapse(7 * 24 * 60).await;
+            let stats = retry.execute_retry_cycle().await.unwrap();
+            assert_eq!(stats.still_failing, 1);
+            let record = read(entity_id.clone()).await.expect("recorded");
+            assert_eq!(record.reason, "Deployment rejected");
+            assert!(
+                record
+                    .error_description
+                    .starts_with("Gave up after 7 days undecided:"),
+                "{}",
+                record.error_description
+            );
+            assert!(record.age_min < 1.0, "the prune counts from the give-up");
+            elapse(0).await;
+            let stats = retry.execute_retry_cycle().await.unwrap();
+            assert_eq!(
+                (stats.still_failing, stats.evicted),
+                (0, 0),
+                "never retried"
+            );
         } else {
             let stats = retry.execute_retry_cycle().await.unwrap();
             assert_eq!(stats.still_failing, 1);

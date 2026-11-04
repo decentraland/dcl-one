@@ -60,7 +60,7 @@ pub enum FailureReason {
     DeploymentError,
     NoEntity,
     /// The validator could not reach a verdict: retried with backoff, never counted against
-    /// the retry cap, never given up on.
+    /// the retry cap, given up on (recorded as a refusal) after a week.
     ValidationUndecided,
     /// The validator refused the entity: recorded, never retried.
     Rejected,

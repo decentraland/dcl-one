@@ -62,7 +62,7 @@ pub fn memory_limits_from_config(config: &Config) -> anyhow::Result<SyncMemoryLi
 /// links in synced chains are asked of the validator's EIP-1654 RPC at the
 /// entity's block; without `ETH_RPC_URL`, or with an RPC that lacks that block's
 /// state, the entity is recorded as undecided and retried with backoff, without
-/// counting against `MAX_FAILED_DEPLOYMENT_RETRIES` and without being given up on.
+/// counting against `MAX_FAILED_DEPLOYMENT_RETRIES`, for up to a week.
 #[derive(Debug, Clone)]
 pub struct SyncSettings {
     pub peers: Vec<String>,

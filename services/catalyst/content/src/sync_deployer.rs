@@ -15,7 +15,8 @@
 //! state) as
 //! [`SyncError::ValidationUndecided`]. The callers record both in
 //! `content.failed_deployments`: the retry worker re-attempts an undecided
-//! entity with backoff, outside the retry cap, and never retries a refusal.
+//! entity with backoff, outside the retry cap, for up to a week, and never
+//! retries a refusal.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -1139,14 +1140,20 @@ impl LiveFailedDeploymentsStore {
 
     /// GREATEST-monotonic on the retry columns: the sync path reports a failure with a fresh
     /// entity's zeroed retry state every time an entity reappears in a snapshot, and that must
-    /// never rewind a backoff deadline or attempt count the retry worker already advanced.
+    /// never rewind a backoff deadline or attempt count the retry worker already advanced. An
+    /// undecided record re-reported undecided keeps its first failure time, which its backoff
+    /// and give-up are measured from.
     pub async fn report_failure(&self, failure: FailedDeployment) -> Result<(), SyncError> {
         let reason = reason_label(&failure.reason);
         sqlx::query(
             r#"INSERT INTO content.failed_deployments (entity_id, entity_type, failure_time, reason, auth_chain, error_description, snapshot_hash, retry_count, next_retry_at)
                VALUES ($1, $2, to_timestamp($9::double precision / 1000.0), $3, $4::json, $5, $6, $7, to_timestamp($8::double precision / 1000.0))
                ON CONFLICT (entity_id) DO UPDATE
-               SET failure_time = EXCLUDED.failure_time, reason = $3, error_description = $5,
+               SET failure_time = CASE
+                       WHEN failed_deployments.reason = 'Validation undecided' AND $3 = 'Validation undecided'
+                       THEN LEAST(failed_deployments.failure_time, EXCLUDED.failure_time)
+                       ELSE EXCLUDED.failure_time END,
+                   reason = $3, error_description = $5,
                    retry_count = GREATEST(failed_deployments.retry_count, EXCLUDED.retry_count),
                    next_retry_at = GREATEST(failed_deployments.next_retry_at, EXCLUDED.next_retry_at)"#,
         )
@@ -1283,6 +1290,17 @@ impl LiveFailedDeploymentsStore {
                 retry_count: retry_count.max(0) as u32,
             })
             .collect())
+    }
+
+    /// Records waiting for a verdict.
+    pub async fn count_undecided(&self) -> Result<u64, SyncError> {
+        let (count,): (i64,) = sqlx::query_as(
+            "SELECT count(*) FROM content.failed_deployments WHERE reason = 'Validation undecided'",
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| SyncError::Storage(e.to_string()))?;
+        Ok(count.max(0) as u64)
     }
 
     /// Records whose deadline is still ahead of `now_ms`: the backlog gauge of the cycle report.
