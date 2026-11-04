@@ -1,0 +1,288 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+    "yarn_lock_sha256": "5e5f4a1ee4bd960bede74f5877921117ebbfa88a67cf5c75ffd86ea9416c7088",
+    "sources": [
+      {
+        "path": "src/logic/notifications.ts",
+        "sha256": "15e0dddd6843da3298aae9b2a0246f4c63f53be98e4c57fa0113a78310eece96"
+      },
+      {
+        "path": "src/utils/retrier.ts",
+        "sha256": "499da7afdfbde97e5ed7b60d5fed19d0c80c484484a6cdbf4220ee7ebec0407a"
+      },
+      {
+        "path": "src/logic/profiles.ts",
+        "sha256": "3856e67cd3fcc10b9e4e40c5b775b93a2714cdd10bd1484996cd1aff501333ff"
+      }
+    ]
+  },
+  "runtime": {
+    "node": "v26.12.0"
+  },
+  "scope": "Actual pinned notification event creator and three-attempt retrier; injected SNS component, clock and sleep. SDK HTTP retries and deployed topic policies are outside this fixture.",
+  "context": {
+    "requestId": "00000000-0000-0000-0000-000000000099",
+    "senderAddress": "0x9511111111111111111111111111111111111111",
+    "receiverAddress": "0x9622222222222222222222222222222222222222",
+    "senderProfile": {
+      "avatars": [
+        {
+          "userId": "0x9511111111111111111111111111111111111111",
+          "name": "Alice",
+          "hasClaimedName": true,
+          "avatar": {
+            "snapshots": {
+              "face256": "https://images.example.org/Alice.png"
+            }
+          }
+        }
+      ]
+    },
+    "receiverProfile": {
+      "avatars": [
+        {
+          "userId": "0x9622222222222222222222222222222222222222",
+          "name": "Bob",
+          "hasClaimedName": true,
+          "avatar": {
+            "snapshots": {
+              "face256": "https://images.example.org/Bob.png"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "request",
+      "action": "request",
+      "failures": 0,
+      "message": "hello",
+      "events": [
+        {
+          "key": "00000000-0000-0000-0000-000000000099",
+          "type": "social-service",
+          "subType": "friendship-request",
+          "timestamp": 1770000000000,
+          "metadata": {
+            "requestId": "00000000-0000-0000-0000-000000000099",
+            "sender": {
+              "address": "0x9511111111111111111111111111111111111111",
+              "name": "Alice",
+              "profileImageUrl": "https://images.example.org/Alice.png",
+              "hasClaimedName": true
+            },
+            "receiver": {
+              "address": "0x9622222222222222222222222222222222222222",
+              "name": "Bob",
+              "profileImageUrl": "https://images.example.org/Bob.png",
+              "hasClaimedName": true
+            },
+            "message": "hello"
+          }
+        }
+      ],
+      "waits": [],
+      "logs": []
+    },
+    {
+      "id": "accepted",
+      "action": "accept",
+      "failures": 0,
+      "events": [
+        {
+          "key": "00000000-0000-0000-0000-000000000099",
+          "type": "social-service",
+          "subType": "friendship-accepted",
+          "timestamp": 1770000000001,
+          "metadata": {
+            "requestId": "00000000-0000-0000-0000-000000000099",
+            "sender": {
+              "address": "0x9511111111111111111111111111111111111111",
+              "name": "Alice",
+              "profileImageUrl": "https://images.example.org/Alice.png",
+              "hasClaimedName": true
+            },
+            "receiver": {
+              "address": "0x9622222222222222222222222222222222222222",
+              "name": "Bob",
+              "profileImageUrl": "https://images.example.org/Bob.png",
+              "hasClaimedName": true
+            }
+          }
+        }
+      ],
+      "waits": [],
+      "logs": []
+    },
+    {
+      "id": "retry-success",
+      "action": "request",
+      "failures": 2,
+      "message": "hello",
+      "events": [
+        {
+          "key": "00000000-0000-0000-0000-000000000099",
+          "type": "social-service",
+          "subType": "friendship-request",
+          "timestamp": 1770000000002,
+          "metadata": {
+            "requestId": "00000000-0000-0000-0000-000000000099",
+            "sender": {
+              "address": "0x9511111111111111111111111111111111111111",
+              "name": "Alice",
+              "profileImageUrl": "https://images.example.org/Alice.png",
+              "hasClaimedName": true
+            },
+            "receiver": {
+              "address": "0x9622222222222222222222222222222222222222",
+              "name": "Bob",
+              "profileImageUrl": "https://images.example.org/Bob.png",
+              "hasClaimedName": true
+            },
+            "message": "hello"
+          }
+        },
+        {
+          "key": "00000000-0000-0000-0000-000000000099",
+          "type": "social-service",
+          "subType": "friendship-request",
+          "timestamp": 1770000000003,
+          "metadata": {
+            "requestId": "00000000-0000-0000-0000-000000000099",
+            "sender": {
+              "address": "0x9511111111111111111111111111111111111111",
+              "name": "Alice",
+              "profileImageUrl": "https://images.example.org/Alice.png",
+              "hasClaimedName": true
+            },
+            "receiver": {
+              "address": "0x9622222222222222222222222222222222222222",
+              "name": "Bob",
+              "profileImageUrl": "https://images.example.org/Bob.png",
+              "hasClaimedName": true
+            },
+            "message": "hello"
+          }
+        },
+        {
+          "key": "00000000-0000-0000-0000-000000000099",
+          "type": "social-service",
+          "subType": "friendship-request",
+          "timestamp": 1770000000004,
+          "metadata": {
+            "requestId": "00000000-0000-0000-0000-000000000099",
+            "sender": {
+              "address": "0x9511111111111111111111111111111111111111",
+              "name": "Alice",
+              "profileImageUrl": "https://images.example.org/Alice.png",
+              "hasClaimedName": true
+            },
+            "receiver": {
+              "address": "0x9622222222222222222222222222222222222222",
+              "name": "Bob",
+              "profileImageUrl": "https://images.example.org/Bob.png",
+              "hasClaimedName": true
+            },
+            "message": "hello"
+          }
+        }
+      ],
+      "waits": [
+        300,
+        300
+      ],
+      "logs": [
+        "Attempt 1 failed for action request",
+        "Attempt 2 failed for action request"
+      ]
+    },
+    {
+      "id": "retry-exhausted",
+      "action": "request",
+      "failures": 3,
+      "message": "hello",
+      "events": [
+        {
+          "key": "00000000-0000-0000-0000-000000000099",
+          "type": "social-service",
+          "subType": "friendship-request",
+          "timestamp": 1770000000005,
+          "metadata": {
+            "requestId": "00000000-0000-0000-0000-000000000099",
+            "sender": {
+              "address": "0x9511111111111111111111111111111111111111",
+              "name": "Alice",
+              "profileImageUrl": "https://images.example.org/Alice.png",
+              "hasClaimedName": true
+            },
+            "receiver": {
+              "address": "0x9622222222222222222222222222222222222222",
+              "name": "Bob",
+              "profileImageUrl": "https://images.example.org/Bob.png",
+              "hasClaimedName": true
+            },
+            "message": "hello"
+          }
+        },
+        {
+          "key": "00000000-0000-0000-0000-000000000099",
+          "type": "social-service",
+          "subType": "friendship-request",
+          "timestamp": 1770000000006,
+          "metadata": {
+            "requestId": "00000000-0000-0000-0000-000000000099",
+            "sender": {
+              "address": "0x9511111111111111111111111111111111111111",
+              "name": "Alice",
+              "profileImageUrl": "https://images.example.org/Alice.png",
+              "hasClaimedName": true
+            },
+            "receiver": {
+              "address": "0x9622222222222222222222222222222222222222",
+              "name": "Bob",
+              "profileImageUrl": "https://images.example.org/Bob.png",
+              "hasClaimedName": true
+            },
+            "message": "hello"
+          }
+        },
+        {
+          "key": "00000000-0000-0000-0000-000000000099",
+          "type": "social-service",
+          "subType": "friendship-request",
+          "timestamp": 1770000000007,
+          "metadata": {
+            "requestId": "00000000-0000-0000-0000-000000000099",
+            "sender": {
+              "address": "0x9511111111111111111111111111111111111111",
+              "name": "Alice",
+              "profileImageUrl": "https://images.example.org/Alice.png",
+              "hasClaimedName": true
+            },
+            "receiver": {
+              "address": "0x9622222222222222222222222222222222222222",
+              "name": "Bob",
+              "profileImageUrl": "https://images.example.org/Bob.png",
+              "hasClaimedName": true
+            },
+            "message": "hello"
+          }
+        }
+      ],
+      "waits": [
+        300,
+        300
+      ],
+      "logs": [
+        "Attempt 1 failed for action request",
+        "Attempt 2 failed for action request",
+        "Attempt 3 failed for action request",
+        "Error sending notification for action request"
+      ]
+    }
+  ]
+}
