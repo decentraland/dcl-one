@@ -26,7 +26,9 @@
 # (explorer-automation's `win-gpu-t4-explorer`; an org admin enables it for this repository), and
 # the zone accounts in the `e2e` environment (DCL_E2E_ACCOUNT_KEYS, comma-separated private keys,
 # one per worker). Until the variable is set the scenarios job is skipped; the Inputs job's summary
-# says what would have run.
+# says what would have run. That image carries MinGit alone, so the job runs its steps in
+# PowerShell, puts a pinned git-lfs on PATH before the checkout (the scenes' assets), and drives
+# Chrome where the image has it, else Edge, the same Chromium.
 #
 # GitHub starts `workflow_run`, `schedule` and `workflow_dispatch` only from the workflow file on
 # the default branch: until this file is on main, only the pull request jobs run.
@@ -171,7 +173,7 @@ jobs:
       actions: read
     defaults:
       run:
-        shell: bash
+        shell: powershell
         working-directory: apps/bevy-explorer/e2e
     env:
       GROUP: ${{ github.event.inputs.group || 'both' }}
@@ -180,6 +182,23 @@ jobs:
       DCL_E2E_REALM: ${{ vars.DCL_E2E_REALM || 'https://peer.decentraland.zone' }}
       DCL_E2E_WORKER: '0'
     steps:
+      # The checkout fetches the scenes' assets through git-lfs, which the image's MinGit lacks:
+      # the pinned release goes on PATH first, checked against the sum the release signs.
+      - name: Put git-lfs on PATH
+        working-directory: ${{ runner.temp }}
+        env:
+          GIT_LFS_VERSION: '3.8.1'
+          GIT_LFS_SHA256: 5bb771c12b3dacc535e912d0270a010c209d4da2e63819c5918e3547c2defed9
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = "git-lfs-windows-amd64-v$env:GIT_LFS_VERSION.zip"
+          Invoke-WebRequest -Uri "https://github.com/git-lfs/git-lfs/releases/download/v$env:GIT_LFS_VERSION/$zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:GIT_LFS_SHA256) { throw "$zip has sha256 $hash, not $env:GIT_LFS_SHA256" }
+          Expand-Archive -Path $zip -DestinationPath git-lfs -Force
+          $exe = Get-ChildItem -Path git-lfs -Filter git-lfs.exe -Recurse | Select-Object -First 1
+          Add-Content -Path $env:GITHUB_PATH -Value $exe.DirectoryName
+          & $exe.FullName version
       # The suite and the scenes at the commit under test; the scenes' assets are in Git LFS.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -200,6 +219,21 @@ jobs:
           github-token: ${{ github.token }}
       - name: Install the suite
         run: npm ci
+      # The web driver looks for Chrome under Google's install paths; an image without one has
+      # Edge, the same Chromium, which CHROME_PATH points the driver at.
+      - name: Find a browser
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $chrome = @("$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe", "$env:LocalAppData\Google\Chrome\Application\chrome.exe")
+          $edge = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe")
+          $found = $chrome | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($found) { Write-Output "Chrome: $found" }
+          else {
+            $found = $edge | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if (-not $found) { throw 'neither Chrome nor Edge is installed on this runner' }
+            Write-Output "::warning::No Chrome on this runner; the scenarios run in Edge at $found"
+            Add-Content -Path $env:GITHUB_ENV -Value "CHROME_PATH=$found"
+          }
       # The accounts secret is on the two scenario steps alone: never in the environment of the
       # install, the builds, or the report.
       - name: InWorld scenarios
@@ -259,7 +293,7 @@ jobs:
       - name: Fail when a group failed
         if: steps.inworld.outcome == 'failure' || steps.visual.outcome == 'failure'
         run: |
-          echo "InWorld: ${{ steps.inworld.outcome }}; Visual: ${{ steps.visual.outcome }}"
+          Write-Output "InWorld: ${{ steps.inworld.outcome }}; Visual: ${{ steps.visual.outcome }}"
           exit 1
   # The pull request's status comment, from the report the scenarios uploaded. This job holds no
   # secret; the report is data to it (the JUnit files `node --test` wrote).

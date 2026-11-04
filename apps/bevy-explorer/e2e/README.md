@@ -151,7 +151,9 @@ A reference counts as approved once a reviewer has checked it against the scene'
   scenarios, then builds the scenes and runs the Visual ones, and uploads `report/`. It runs on the Windows runner with a GPU that the
   `BEVY_E2E_WINDOWS_RUNNER` repository variable names (explorer-automation's
   `win-gpu-t4-explorer`, which an org admin enables for this repository), in the `e2e`
-  environment, whose `DCL_E2E_ACCOUNT_KEYS` secret reaches only the two scenario steps. The label
+  environment, whose `DCL_E2E_ACCOUNT_KEYS` secret reaches only the two scenario steps. That
+  image carries MinGit alone, so the job runs its steps in PowerShell, puts a pinned git-lfs on
+  PATH before the checkout, and drives Chrome where the image has it, else Edge. The label
   is what admits a pull request's code to that runner and those accounts; the Inputs summary
   names the pull request and the commit under test; the job holds no write permission and saves
   no cache; required reviewers on the environment (a repository setting) add an approval on top.
