@@ -1266,13 +1266,13 @@ mod world_mint {
             let (status, body, _) = post(&app, &visitor, &path, "{}").await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{path}: {body}");
             assert_eq!(
-                body["error"],
+                body["message"],
                 format!("World \"{}\" is invalid or blocked.", unknown.display())
             );
         }
-        // Blocked: open for two days, then 404.
+        // Blocked (operator disable): 404 at once.
         let blocked = world();
-        sqlx::query("INSERT INTO worlds.worlds (name, blocked_since) VALUES ($1, timezone('UTC', now()) - interval '1 day')")
+        sqlx::query("INSERT INTO worlds.worlds (name, blocked_since) VALUES ($1, timezone('UTC', now()))")
             .bind(blocked.key())
             .execute(&pool)
             .await
@@ -1280,14 +1280,7 @@ mod world_mint {
         let blocked_path = format!("/worlds/{}/comms", blocked.display());
         state.presence.complete_empty_fixture();
         let (status, body, _) = post(&app, &visitor, &blocked_path, "{}").await;
-        assert_eq!(status, StatusCode::OK, "inside the grace: {body}");
-        sqlx::query("UPDATE worlds.worlds SET blocked_since = blocked_since - interval '2 days' WHERE name = $1")
-            .bind(blocked.key())
-            .execute(&pool)
-            .await
-            .unwrap();
-        let (status, body, _) = post(&app, &visitor, &blocked_path, "{}").await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "past the grace: {body}");
+        assert_eq!(status, StatusCode::NOT_FOUND, "blocked: {body}");
         let (status, body, _) = post(&app, &visitor, "/get-comms-adapter/scene-x", handshake).await;
         assert_eq!(
             (status, body["message"].as_str().or(body["error"].as_str())),

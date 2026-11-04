@@ -2945,7 +2945,7 @@ async fn world_mints_answer_404_for_an_unknown_or_blocked_world() {
             assert_eq!(status, expected, "{admission:?} {path}: {body}");
             if expected == StatusCode::NOT_FOUND {
                 assert_eq!(
-                    body["error"], "World \"alice.dcl.eth\" is invalid or blocked.",
+                    body["message"], "World \"alice.dcl.eth\" is invalid or blocked.",
                     "{body}"
                 );
             }
