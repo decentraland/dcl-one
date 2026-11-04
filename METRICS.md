@@ -319,7 +319,8 @@ probe does not measure full attribution writes, transaction contention,
 providers, cold data, production distributions or a service-level bound.
 No index or historical-row rewrite is inferred from these observations.
 
-HTTP method labels now have nine standard values plus `other`; WebSocket close
+HTTP method labels cover nine standard methods in each source transport casing
+(uppercase for ordinary HTTP, lowercase for uWS), plus `other`; WebSocket close
 labels use a finite standard/source allowlist plus `other`. Per-protocol open
 counts update under the existing socket-map mutex without scanning that map.
 These are bounded label/state invariants, not measured throughput improvements.
