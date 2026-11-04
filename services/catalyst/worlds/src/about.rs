@@ -166,8 +166,13 @@ pub fn build_about(
     if let Some(since) = disabled.or(quota)
         && crate::comms::access::world_blocked(disabled, quota, chrono::Utc::now().naive_utc())
     {
+        let cause = if disabled.is_some() {
+            "by an operator"
+        } else {
+            "as it exceeded its allowed storage space"
+        };
         return Err(AppError::Unauthorized(format!(
-            "World \"{world_name}\" has been blocked since {} as it exceeded its allowed storage space.",
+            "World \"{world_name}\" has been blocked since {} {cause}.",
             since
                 .and_utc()
                 .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
@@ -762,7 +767,7 @@ mod tests {
         };
         let err = build_about(&cfg, "b.dcl.eth", blocked.clone()).unwrap_err();
         assert!(
-            matches!(err, AppError::Unauthorized(m) if m.contains("blocked since 2023-11-14T22:13:20.000Z"))
+            matches!(err, AppError::Unauthorized(m) if m.ends_with("blocked since 2023-11-14T22:13:20.000Z by an operator."))
         );
 
         // A quota block refuses only after its two-day grace.

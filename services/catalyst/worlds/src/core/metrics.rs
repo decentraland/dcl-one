@@ -133,6 +133,23 @@ pub fn gc_run(outcome: &'static str, elapsed: Duration, removed: usize, removed_
     }
 }
 
+/// The standard methods by name; any other method is `other`, so labels stay bounded.
+fn method_label(method: &axum::http::Method) -> &'static str {
+    use axum::http::Method;
+    match *method {
+        Method::GET => "GET",
+        Method::HEAD => "HEAD",
+        Method::POST => "POST",
+        Method::PUT => "PUT",
+        Method::DELETE => "DELETE",
+        Method::PATCH => "PATCH",
+        Method::OPTIONS => "OPTIONS",
+        Method::CONNECT => "CONNECT",
+        Method::TRACE => "TRACE",
+        _ => "other",
+    }
+}
+
 /// `http_requests_total` and `http_request_duration_seconds` by method, matched route (`handler`)
 /// and status (`code`), the labels of upstream's default HTTP metrics.
 pub async fn http_metrics(request: Request, next: Next) -> Response {
@@ -143,7 +160,7 @@ pub async fn http_metrics(request: Request, next: Next) -> Response {
     else {
         return next.run(request).await;
     };
-    let method = request.method().as_str().to_string();
+    let method = method_label(request.method()).to_string();
     let started = Instant::now();
     let response = next.run(request).await;
     let code = response.status().as_u16().to_string();
@@ -170,6 +187,18 @@ mod tests {
         assert_eq!(outcome(StatusCode::SERVICE_UNAVAILABLE), "error");
         assert_eq!(deployment_kind("Name.DCL.eth"), "dcl-name");
         assert_eq!(deployment_kind("name.eth"), "ens-name");
+    }
+
+    #[test]
+    fn unknown_http_methods_share_one_label() {
+        use axum::http::Method;
+        assert_eq!(method_label(&Method::GET), "GET");
+        assert_eq!(method_label(&Method::PATCH), "PATCH");
+        assert_eq!(method_label(&Method::from_bytes(b"BREW").unwrap()), "other");
+        assert_eq!(
+            method_label(&Method::from_bytes(b"XYZZY1").unwrap()),
+            "other"
+        );
     }
 
     #[tokio::test(flavor = "current_thread")]

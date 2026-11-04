@@ -977,18 +977,20 @@ pub(crate) async fn live_world_rooms(
 /// world or of a live scene (`protected_addresses`) stay; a shared-secret
 /// participant must mint again with the new secret; an allow-list edit
 /// evicts only who lost access; an undetermined decision evicts nobody.
+/// `Ok(false)`: some decision or eviction did not complete; the pass may run again.
 pub(crate) async fn readmit_world_rooms(
     state: &CommsState,
     world: &WorldName,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let now = chrono::Utc::now().naive_utc();
     match state.policy.world_admission(world, now).await {
-        Ok(WorldAdmission::Open(AccessType::Unrestricted)) => return Ok(()),
+        Ok(WorldAdmission::Open(AccessType::Unrestricted)) => return Ok(true),
         Ok(_) => {}
         Err(error) => return Err(format!("access setting undetermined: {error}")),
     }
     let rooms = live_world_rooms(state, world).await?;
     let (protected, undecided) = readmit_protected(state, world, &rooms).await?;
+    let mut complete = undecided.is_empty();
     let client = state.room_service();
     for room in rooms {
         if undecided.contains(&room) {
@@ -1009,16 +1011,38 @@ pub(crate) async fn readmit_world_rooms(
                 Ok(Access::Allowed(_)) => {}
                 Ok(_) => {
                     if let Err(error) = client.remove_participant(&room, &identity).await {
-                        tracing::warn!(%error, room = %room, %address, "failed to evict a revoked participant (best-effort)");
+                        complete = false;
+                        tracing::warn!(%error, room = %room, %address, "failed to evict a revoked participant");
                     }
                 }
                 Err(error) => {
-                    tracing::warn!(%error, room = %room, %address, "access undetermined; participant kept")
+                    complete = false;
+                    tracing::warn!(%error, room = %room, %address, "access undetermined; participant kept for now")
                 }
             }
         }
     }
-    Ok(())
+    Ok(complete)
+}
+
+/// [`readmit_world_rooms`] again after each of `delays` until a pass completes; false if none did.
+pub(crate) async fn readmit_until_settled(
+    state: &CommsState,
+    world: &WorldName,
+    delays: &[std::time::Duration],
+) -> bool {
+    let mut delays = delays.iter();
+    loop {
+        match readmit_world_rooms(state, world).await {
+            Ok(true) => return true,
+            Ok(false) => tracing::warn!(%world, "access-change readmission incomplete"),
+            Err(error) => tracing::warn!(%error, %world, "access-change readmission failed"),
+        }
+        let Some(delay) = delays.next() else {
+            return false;
+        };
+        tokio::time::sleep(*delay).await;
+    }
 }
 
 /// The wallets an access change never evicts: the owner and the grantees
