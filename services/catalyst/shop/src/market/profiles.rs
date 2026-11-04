@@ -6,7 +6,9 @@
 //! marketplace subgraph. With no reader configured the profile is served unfiltered,
 //! as the old handler did with `squid_pool: None`; a reader that is
 //! configured but unreachable fails the request closed (503) rather than
-//! serving cosmetics nobody proved.
+//! serving cosmetics nobody proved. The one exception is a linked
+//! third-party item whose chain read failed: only that profile's linked
+//! items are left out.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -33,6 +35,8 @@ pub const PROFILE_CACHE_TTL: Duration = Duration::from_secs(10);
 pub const PROFILE_CACHE_MAX_ENTRIES: usize = 50_000;
 const PROFILE_BATCH_MAX: usize = 50;
 const PROFILE_IDS_MAX: usize = 1000;
+/// Profiles whose linked third-party items are checked at once.
+const THIRD_PARTY_CONCURRENCY: usize = 8;
 const MISSING_PROFILE_IDS_MSG: &str =
     "No profile ids were specified. Expected ids:string[] in body";
 
@@ -391,23 +395,33 @@ pub async fn process_profiles_positional(
                 let names_futs = addresses
                     .iter()
                     .map(|a| graph::owned_names(&state.index, a));
+                // A profile whose linked items could not be checked keeps
+                // its v1 items only; the others in the batch are unaffected.
                 let third_party_futs = addresses.iter().zip(&worn).map(|(a, worn)| async move {
-                    if collections {
-                        third_party::sanitize_third_party_urns(state, a, worn).await
+                    let kept = if collections {
+                        third_party::sanitize_third_party_urns(state, a, worn)
+                            .await
+                            .unwrap_or_else(|e| {
+                                tracing::warn!(error = %e, address = %a, "profiles: third-party items could not be checked; keeping the v1 items only");
+                                third_party::v1_third_party_urns(worn)
+                            })
                     } else {
-                        Ok(Vec::new())
-                    }
+                        Vec::new()
+                    };
+                    (a.clone(), kept)
                 });
-                let (owned, names, third_party) = tokio::join!(
+                // Collected first: a stream over the closure itself is not
+                // `Send` for every lifetime the router asks of it.
+                let third_party_futs: Vec<_> = third_party_futs.collect();
+                use futures::stream::StreamExt;
+                let (owned, names, third_party_by_address) = tokio::join!(
                     graph::owned_urns(&state.index, &requested),
                     futures::future::join_all(names_futs),
-                    futures::future::join_all(third_party_futs)
+                    futures::stream::iter(third_party_futs)
+                        .buffer_unordered(THIRD_PARTY_CONCURRENCY)
+                        .collect::<HashMap<String, Vec<String>>>()
                 );
                 let owned = owned?;
-                let mut third_party_by_address: HashMap<String, Vec<String>> = HashMap::new();
-                for (address, owned) in addresses.iter().zip(third_party) {
-                    third_party_by_address.insert(address.clone(), owned?);
-                }
                 let mut names_by_address: HashMap<String, Vec<String>> = HashMap::new();
                 for (address, names) in addresses.iter().zip(names) {
                     names_by_address.insert(

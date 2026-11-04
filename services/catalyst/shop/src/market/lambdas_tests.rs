@@ -841,16 +841,13 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
             ),
             1,
         ),
+        // Two values naming one provider list it once (the old handler
+        // listed it twice).
         (
             format!(
                 "thirdPartyCollectionId={tp_collection}:c1&thirdPartyCollectionId={tp_collection}"
             ),
-            2,
-        ),
-        (
-            "thirdPartyCollectionId=urn:decentraland:matic:collections-thirdparty:other"
-                .to_string(),
-            0,
+            1,
         ),
         ("thirdPartyCollectionId=not-a-urn".to_string(), 0),
     ] {
@@ -861,6 +858,16 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         .await;
         assert_eq!(body["totalAmount"], total, "{filter}: {body}");
     }
+    let not_found = json!({ "error": "The requested items cannot be fetched right now", "message": "Third Party not found: other" });
+    let (status, body) = get(
+        &state,
+        &format!("/explorer/{OWNER}/wearables?thirdPartyCollectionId=urn:decentraland:matic:collections-thirdparty:other"),
+    )
+    .await;
+    assert_eq!((status, &body), (StatusCode::BAD_GATEWAY, &not_found));
+    let too_many = "thirdPartyCollectionId=urn:a&".repeat(101);
+    let (status, body) = get(&state, &format!("/explorer/{OWNER}/wearables?{too_many}")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
     let (_, body) = get(&state, &format!("/explorer/{OWNER}/emotes")).await;
     assert_eq!(
         body["totalAmount"], 0,
@@ -880,8 +887,8 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     assert!(body["elements"][0]["definition"].is_object(), "{body}");
     let (_, body) = get(&state, &format!("/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:tp")).await;
     assert_eq!(body["totalAmount"], 1, "{body}");
-    let (_, body) = get(&state, &format!("/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:other")).await;
-    assert_eq!(body["totalAmount"], 0, "{body}");
+    let (status, body) = get(&state, &format!("/lambdas/users/{OWNER}/third-party-wearables/urn:decentraland:matic:collections-thirdparty:other")).await;
+    assert_eq!((status, body), (StatusCode::BAD_GATEWAY, not_found));
     let (_, body) = get(&state, &format!("/lambdas/collections/wearables-by-owner/{OWNER}?collectionId=urn:decentraland:matic:collections-thirdparty:tp")).await;
     assert_eq!(body, json!([{ "urn": TP_URN, "amount": 1 }]));
     let (_, body) = get(&state, "/lambdas/third-party-integrations").await;
@@ -921,6 +928,60 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
             linked(2)
         ]),
         "token 3 is mapped but not held, token 9 is not mapped: {body}"
+    );
+
+    // The chain endpoint down: the explorer and the profiles leave the
+    // third-party items they could not check out, the dedicated route and
+    // the outfits answer the old lambdas' FetcherError.
+    let down = {
+        use axum::routing::post;
+        serve(Router::new().route("/", post(|| async { StatusCode::BAD_GATEWAY }))).await
+    };
+    let mut down_settings = state.settings.clone();
+    down_settings.eth_rpc_url = Some(down.clone());
+    down_settings.polygon_rpc_url = Some(down.clone());
+    down_settings.market.trade_rpc_urls = RpcEndpoints::from_env(Some(&format!("137={down}")));
+    let down_state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        down_settings,
+    ));
+    down_state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let (status, body) = get(&down_state, &format!("/explorer/{OWNER}/wearables")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["totalAmount"], 3, "{body}");
+    assert!(
+        body["elements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["type"] != "third-party"),
+        "{body}"
+    );
+    let fetcher_error = json!({ "error": "The requested items cannot be fetched right now", "message": format!("Cannot fetch elements for {OWNER}") });
+    for uri in [
+        format!("/lambdas/users/{OWNER}/third-party-wearables"),
+        format!("/lambdas/outfits/{OWNER}"),
+    ] {
+        let (status, body) = get(&down_state, &uri).await;
+        assert_eq!(
+            (status, body),
+            (StatusCode::BAD_GATEWAY, fetcher_error.clone()),
+            "{uri}"
+        );
+    }
+    let (status, body) = get(&down_state, &format!("/lambdas/profiles/{OWNER}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["avatars"][0]["avatar"]["wearables"],
+        json!([
+            "urn:decentraland:off-chain:base-avatars:eyes_00",
+            hat,
+            TP_URN
+        ]),
+        "the v1 item needs no check: {body}"
     );
 
     let (status, body) = get(&state, &format!("/lambdas/users/{OWNER}/lands")).await;

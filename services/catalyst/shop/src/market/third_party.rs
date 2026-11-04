@@ -12,16 +12,31 @@
 //!   (`sanitize_third_party_urns`).
 //!
 //! Chain reads go over each `ContractNetwork`'s JSON-RPC endpoint
-//! (`rpc_url_for`) through the ONE guarded client. An endpoint that fails
-//! fails the read (`Err`): it never reads as "nothing owned".
+//! (`rpc_url_for`) through the ONE guarded client, and never scan logs: per
+//! contract a `balanceOf(owner)` and two `supportsInterface` probes, then
+//! the `tokenOfOwnerByIndex` walk of an enumerable ERC-721, or the mapped
+//! ids' `ownerOf`/`balanceOfBatch`. An `any` or wide `range` mapping on a
+//! contract that cannot list an owner's tokens (a plain ERC-721 the owner
+//! holds some of, any ERC-1155) is unresolved on this path: its mapped ids
+//! are still confirmed, the rest is logged and left out. The old lambdas
+//! read those holdings from the NFT worker only; without it they need an
+//! indexer of the contracts' transfers.
+//!
+//! A contract whose read failed (transport, non-2xx, a JSON-RPC error other
+//! than a revert) is a failure of that contract, never "nothing owned", and
+//! is remembered `FAILED_TTL`. The dedicated routes and the by-owner list
+//! answer it with the old lambdas' 502 `FetcherError`; the explorer leaves
+//! that contract's items out (`OnFailure`). The NFT worker answers as the
+//! old fetcher read it: a non-2xx answer reports nothing for that network,
+//! a transport failure or an unreadable body is a failure.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use alloy_primitives::{Address, B256, Bytes, U256, address, hex};
-use alloy_sol_types::{SolCall, SolEvent, SolType, sol, sol_data};
+use alloy_primitives::{Address, Bytes, U256, address, hex};
+use alloy_sol_types::{SolCall, sol};
 use axum::Json;
 use axum::extract::{Path, Request, State};
 use axum::response::{IntoResponse, Response};
@@ -43,6 +58,9 @@ use super::{MarketplaceState, SharedState, bad_request};
 const PROVIDER_TTL: Duration = Duration::from_secs(6 * 60 * 60);
 const COLLECTION_ENTITIES_TTL: Duration = Duration::from_secs(300);
 const OWNED_TTL: Duration = Duration::from_secs(60);
+/// A holdings read that failed is answered from memory this long, so a
+/// burst of requests does not ask the failing endpoint again.
+const FAILED_TTL: Duration = Duration::from_secs(5);
 const OWNED_MAX_ENTRIES: usize = 4096;
 
 sol! {
@@ -50,14 +68,11 @@ sol! {
         function supportsInterface(bytes4 interfaceId) external view returns (bool);
     }
     interface IERC721 {
-        event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
         function balanceOf(address owner) external view returns (uint256);
         function ownerOf(uint256 tokenId) external view returns (address);
         function tokenOfOwnerByIndex(address owner, uint256 index) external view returns (uint256);
     }
     interface IERC1155 {
-        event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value);
-        event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values);
         function balanceOf(address account, uint256 id) external view returns (uint256);
         function balanceOfBatch(address[] accounts, uint256[] ids) external view returns (uint256[]);
     }
@@ -74,25 +89,34 @@ const IFACE_ERC1155: [u8; 4] = [0xd9, 0xb6, 0x7a, 0x26];
 const IFACE_ERC721_ENUMERABLE: [u8; 4] = [0x78, 0x0e, 0x9d, 0x63];
 /// A `range` mapping wider than this is not expanded into ids.
 const RANGE_CAP: u64 = 2048;
-/// The largest enumerable balance walked; past it the read fails.
+/// The largest enumerable balance walked; past it the contract's read fails.
 const ENUMERATE_MAX: u64 = 50_000;
-/// `eth_getLogs` requests one open-mapping scan may take when the endpoint
-/// refuses the whole history and it is split in halves.
-const LOG_SCAN_CALLS: usize = 64;
-const MULTICALL_CHUNK: usize = 1000;
+/// Sub-calls per `aggregate3` (ids per `balanceOfBatch`), and those calls
+/// per JSON-RPC request: a walk is paged 2,000 tokens a request.
+const MULTICALL_CHUNK: usize = 500;
+const MULTICALLS_PER_REQUEST: usize = 4;
 const RPC_BATCH: usize = 50;
 const CONTRACT_LEG_CONCURRENCY: usize = 8;
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const RPC_BODY_CAP: usize = 16 * 1024 * 1024;
+/// A JSON-RPC answer quoted in an error is cut to this many bytes.
+const ERROR_TEXT_CAP: usize = 512;
+
+/// `(owner, network, fingerprint of the network's whole candidate set)`.
+type OwnedKey = (String, String, u64);
+/// One provider contract's read: its `network:contract:tokenId` triples, or
+/// why they could not be read.
+type ContractRead = (String, Result<Vec<String>, String>);
 
 /// The third-party readers' memo: the provider list (6 h), each provider's
-/// mapped entities (5 min), the owner's tokens per network (60 s) and the
-/// integrations list (6 h).
+/// mapped entities (5 min), the owner's tokens per network (60 s, a failed
+/// read `FAILED_TTL`) and the integrations list (6 h).
 pub struct Caches {
     providers: TtlMap<(), Arc<Vec<ThirdPartyProvider>>>,
     integrations: TtlMap<(), Value>,
     collection_entities: TtlMap<String, Arc<Vec<Value>>>,
-    owned: TtlMap<(String, String, String), Arc<Vec<String>>>,
+    owned: TtlMap<OwnedKey, Arc<Vec<ContractRead>>>,
+    failed: TtlMap<OwnedKey, Arc<Vec<ContractRead>>>,
 }
 
 impl Default for Caches {
@@ -102,6 +126,7 @@ impl Default for Caches {
             integrations: TtlMap::bounded(PROVIDER_TTL, 1),
             collection_entities: TtlMap::bounded(COLLECTION_ENTITIES_TTL, 256),
             owned: TtlMap::bounded(OWNED_TTL, OWNED_MAX_ENTRIES),
+            failed: TtlMap::bounded(FAILED_TTL, OWNED_MAX_ENTRIES),
         }
     }
 }
@@ -236,7 +261,7 @@ pub fn mappings_includes_nft(
         })
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Candidates {
     /// Token ids exactly as the mappings spell them.
     pub ids: BTreeSet<String>,
@@ -351,17 +376,26 @@ fn rpc_url_for(state: &MarketplaceState, network: &str) -> Option<String> {
     }
 }
 
-/// Owned `network:contract:tokenId` triples, the NFT worker's answer shape.
-/// `Err` when an endpoint failed: the caller answers the fetch error, never
-/// "nothing owned". A network with no RPC endpoint configured reports
-/// nothing (logged): the deployment did not provide the reader.
+/// An owner's holdings: `network:contract:tokenId` triples, the NFT worker's
+/// answer shape, and the contracts (or worker networks) that could not be
+/// read, each with its cause.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Holdings {
+    pub owned: Vec<String>,
+    pub failed: Vec<String>,
+}
+
+/// The owner's holdings over each network's JSON-RPC endpoint. A network
+/// with no RPC endpoint configured reports nothing (logged): the deployment
+/// did not provide the reader.
 pub async fn owned_via_rpc(
     state: &MarketplaceState,
     owner: &str,
     candidates: &CandidateMap,
-) -> Result<Vec<String>, String> {
+) -> Holdings {
+    let mut holdings = Holdings::default();
     let Ok(owner_addr) = Address::from_str(owner) else {
-        return Ok(Vec::new());
+        return holdings;
     };
     let mut by_network: BTreeMap<&str, Vec<(String, Candidates)>> = BTreeMap::new();
     for ((network, contract), c) in candidates {
@@ -375,45 +409,69 @@ pub async fn owned_via_rpc(
             tracing::warn!(network, "third-party wearable ownership: no RPC endpoint for this network; reporting nothing owned");
             return None;
         };
-        let fingerprint = contracts
-            .iter()
-            .map(|(c, k)| format!("{c}/{}{}", k.ids.len(), if k.open { "+" } else { "" }))
-            .collect::<Vec<_>>()
-            .join(",");
-        let key = (owner.to_lowercase(), network.to_string(), fingerprint);
+        let key = (
+            owner.to_lowercase(),
+            network.to_string(),
+            fingerprint(&contracts),
+        );
         let network = network.to_string();
         Some(async move {
-            state
+            if let Some(reads) = state.third_party.failed.get_fresh(&key) {
+                return (network, reads);
+            }
+            let reads = state
                 .third_party
                 .owned
-                .get_or_fetch(key, || async {
-                    owned_on_network(state, &rpc, owner_addr, &network, &contracts)
-                        .await
-                        .map(Arc::new)
+                .get_or_fetch(key.clone(), || async {
+                    let reads = Arc::new(
+                        owned_on_network(state, &rpc, owner_addr, &network, &contracts).await,
+                    );
+                    if reads.iter().any(|(_, read)| read.is_err()) {
+                        state.third_party.failed.insert(key, reads.clone());
+                        Err(reads)
+                    } else {
+                        Ok(reads)
+                    }
                 })
                 .await
+                .unwrap_or_else(|failed| failed);
+            (network, reads)
         })
     });
-    let mut out = Vec::new();
-    for found in futures::future::join_all(per_network).await {
-        out.extend(found?.iter().cloned());
+    for (network, reads) in futures::future::join_all(per_network).await {
+        for (contract, read) in reads.iter() {
+            match read {
+                Ok(owned) => holdings.owned.extend(owned.iter().cloned()),
+                Err(e) => holdings.failed.push(format!("{network}:{contract}: {e}")),
+            }
+        }
     }
-    Ok(out)
+    holdings
+}
+
+/// A network's candidate set, every contract's ids and open flag included,
+/// so two sets that differ in any id never share a cache entry.
+fn fingerprint(contracts: &[(String, Candidates)]) -> u64 {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    let mut h = DefaultHasher::new();
+    contracts.hash(&mut h);
+    h.finish()
 }
 
 /// The owner's holdings on one network's provider contracts, contract by
-/// contract: every ERC-1155 id the mappings name or the owner ever received,
-/// the whole `tokenOfOwnerByIndex` walk of an enumerable ERC-721, and on a
-/// plain ERC-721 the mapped ids plus, for an `any` or wide `range` mapping,
-/// every id the owner ever received; each confirmed against current
-/// ownership. That is the set the NFT worker answers from its indexer.
+/// contract, each confirmed against current ownership: the whole
+/// `tokenOfOwnerByIndex` walk of an enumerable ERC-721, else the mapped ids
+/// (`ownerOf` on an ERC-721 the owner holds some of, `balanceOfBatch` on an
+/// ERC-1155). An open mapping (`any`, a wide `range`) on a contract that
+/// cannot be walked is logged as unresolved. A failure fails its contract
+/// only; a failed probe batch fails them all.
 async fn owned_on_network(
     state: &MarketplaceState,
     rpc: &str,
     owner: Address,
     network: &str,
     contracts: &[(String, Candidates)],
-) -> Result<Vec<String>, String> {
+) -> Vec<ContractRead> {
     let mut probes = Vec::with_capacity(contracts.len() * 3);
     let mut addrs = Vec::with_capacity(contracts.len());
     for (contract, _) in contracts {
@@ -429,7 +487,15 @@ async fn owned_on_network(
         probes.push(supports_call(addr, IFACE_ERC1155));
         probes.push(supports_call(addr, IFACE_ERC721_ENUMERABLE));
     }
-    let answers = eth_call_batch(state, rpc, &probes).await?;
+    let answers = match eth_call_batch(state, rpc, &probes).await {
+        Ok(answers) => answers,
+        Err(e) => {
+            return contracts
+                .iter()
+                .map(|(contract, _)| (contract.clone(), Err(e.clone())))
+                .collect();
+        }
+    };
 
     // One leg per contract, run concurrently; the answer keeps contract order.
     let mut legs = Vec::with_capacity(contracts.len());
@@ -445,43 +511,55 @@ async fn owned_on_network(
         let is_1155 = decode_bool(answers.get(i + 1));
         let enumerable = decode_bool(answers.get(i + 2));
         i += 3;
-        let holds_721 = balance.is_some_and(|b| !b.is_zero());
         legs.push(async move {
-            let ids = if is_1155 {
-                let mut ids = parsed_ids(cand);
+            let found = if is_1155 {
                 if cand.open {
-                    merge_received(
-                        &mut ids,
-                        received_ids(state, rpc, addr, owner, ReceivedVia::Erc1155).await?,
+                    unresolved(
+                        network,
+                        contract,
+                        owner,
+                        "an ERC-1155 cannot list an owner's tokens",
                     );
                 }
-                owned_1155(state, rpc, addr, owner, ids).await?
-            } else if holds_721 && enumerable {
-                enumerate_721(state, rpc, addr, owner, balance.unwrap_or_default()).await?
-            } else if holds_721 {
-                let mut ids = parsed_ids(cand);
-                if cand.open {
-                    merge_received(
-                        &mut ids,
-                        received_ids(state, rpc, addr, owner, ReceivedVia::Erc721).await?,
-                    );
-                }
-                check_721(state, rpc, addr, owner, ids).await?
+                owned_1155(state, rpc, addr, owner, parsed_ids(cand)).await
             } else {
-                Vec::new()
+                match balance {
+                    Some(b) if b.is_zero() => Ok(Vec::new()),
+                    Some(b) if enumerable => enumerate_721(state, rpc, addr, owner, b).await,
+                    Some(_) => {
+                        if cand.open {
+                            unresolved(network, contract, owner, "the ERC-721 is not enumerable");
+                        }
+                        check_721(state, rpc, addr, owner, parsed_ids(cand)).await
+                    }
+                    // Neither an ERC-721 nor an ERC-1155.
+                    None => Ok(Vec::new()),
+                }
             };
-            Ok::<_, String>(
+            let found = found.map(|ids| {
                 ids.into_iter()
                     .map(|id| format!("{network}:{contract}:{id}"))
-                    .collect::<Vec<_>>(),
-            )
+                    .collect()
+            });
+            (contract.clone(), found)
         });
     }
-    use futures::stream::{StreamExt, TryStreamExt};
+    use futures::stream::StreamExt;
     futures::stream::iter(legs)
         .buffered(CONTRACT_LEG_CONCURRENCY)
-        .try_concat()
+        .collect()
         .await
+}
+
+/// Logs an open mapping the chain path cannot list (`owned_on_network`).
+fn unresolved(network: &str, contract: &str, owner: Address, why: &'static str) {
+    tracing::info!(
+        network,
+        contract,
+        owner = %owner,
+        why,
+        "third-party holdings: an open mapping is unresolved without NFT_WORKER_BASE_URL; only its mapped ids are read"
+    );
 }
 
 fn supports_call(to: Address, interface: [u8; 4]) -> RpcCall {
@@ -513,16 +591,6 @@ fn parsed_ids(cand: &Candidates) -> IdSet {
         .collect()
 }
 
-/// Adds the received ids no mapping spells already.
-fn merge_received(ids: &mut IdSet, received: Vec<U256>) {
-    let known: BTreeSet<U256> = ids.values().copied().collect();
-    for id in received {
-        if !known.contains(&id) {
-            ids.insert(id.to_string(), id);
-        }
-    }
-}
-
 async fn check_721(
     state: &MarketplaceState,
     rpc: &str,
@@ -548,8 +616,9 @@ async fn check_721(
 }
 
 /// Every token of an enumerable ERC-721 the owner holds, up to a balance of
-/// `ENUMERATE_MAX`; a larger one (or a contract answering a nonsense
-/// balance) fails the fetch rather than truncating it.
+/// `ENUMERATE_MAX`, paged (`multicall`); a larger one (or a contract
+/// answering a nonsense balance) fails the contract's read rather than
+/// truncating it.
 async fn enumerate_721(
     state: &MarketplaceState,
     rpc: &str,
@@ -591,193 +660,73 @@ async fn owned_1155(
     ids: IdSet,
 ) -> Result<Vec<String>, String> {
     let ids: Vec<(String, U256)> = ids.into_iter().collect();
-    let calls: Vec<RpcCall> = ids
-        .chunks(MULTICALL_CHUNK)
-        .map(|chunk| RpcCall {
-            to: addr,
-            data: IERC1155::balanceOfBatchCall {
-                accounts: vec![owner; chunk.len()],
-                ids: chunk.iter().map(|(_, u)| *u).collect(),
-            }
-            .abi_encode()
-            .into(),
-        })
-        .collect();
-    let answers = eth_call_batch(state, rpc, &calls).await?;
     let mut owned = Vec::new();
-    for (chunk, answer) in ids.chunks(MULTICALL_CHUNK).zip(answers) {
-        let Some(balances) = answer
-            .as_ref()
-            .and_then(|b| IERC1155::balanceOfBatchCall::abi_decode_returns(b).ok())
-        else {
-            continue;
-        };
-        for ((id, _), balance) in chunk.iter().zip(balances) {
-            if !balance.is_zero() {
-                owned.push(id.clone());
+    for page in ids.chunks(MULTICALL_CHUNK * MULTICALLS_PER_REQUEST) {
+        let calls: Vec<RpcCall> = page
+            .chunks(MULTICALL_CHUNK)
+            .map(|chunk| RpcCall {
+                to: addr,
+                data: IERC1155::balanceOfBatchCall {
+                    accounts: vec![owner; chunk.len()],
+                    ids: chunk.iter().map(|(_, u)| *u).collect(),
+                }
+                .abi_encode()
+                .into(),
+            })
+            .collect();
+        let answers = eth_call_batch(state, rpc, &calls).await?;
+        for (chunk, answer) in page.chunks(MULTICALL_CHUNK).zip(answers) {
+            let Some(balances) = answer
+                .as_ref()
+                .and_then(|b| IERC1155::balanceOfBatchCall::abi_decode_returns(b).ok())
+            else {
+                continue;
+            };
+            for ((id, _), balance) in chunk.iter().zip(balances) {
+                if !balance.is_zero() {
+                    owned.push(id.clone());
+                }
             }
         }
     }
     Ok(owned)
 }
 
-#[derive(Clone, Copy)]
-enum ReceivedVia {
-    /// `Transfer(from, to indexed, tokenId indexed)`.
-    Erc721,
-    /// `TransferSingle`/`TransferBatch(operator, from, to indexed, ...)`.
-    Erc1155,
-}
-
-/// The ids of every transfer `contract` logged to `owner`, from genesis: the
-/// candidates of an open mapping, which the caller confirms against current
-/// ownership. One `eth_getLogs` over the whole history; a range the endpoint
-/// refuses is asked again in halves, at most `LOG_SCAN_CALLS` requests.
-async fn received_ids(
-    state: &MarketplaceState,
-    rpc: &str,
-    contract: Address,
-    owner: Address,
-    via: ReceivedVia,
-) -> Result<Vec<U256>, String> {
-    let to = B256::left_padding_from(owner.as_slice());
-    let topics = match via {
-        ReceivedVia::Erc721 => json!([IERC721::Transfer::SIGNATURE_HASH, null, to]),
-        ReceivedVia::Erc1155 => json!([
-            [
-                IERC1155::TransferSingle::SIGNATURE_HASH,
-                IERC1155::TransferBatch::SIGNATURE_HASH
-            ],
-            null,
-            null,
-            to
-        ]),
-    };
-    let filter = |from: Value, to: Value| json!([{ "address": contract, "topics": topics, "fromBlock": from, "toBlock": to }]);
-    let mut logs: Vec<Value> = Vec::new();
-    let mut calls = 1;
-    match rpc_call(
-        state,
-        rpc,
-        "eth_getLogs",
-        filter(json!("0x0"), json!("latest")),
-    )
-    .await?
-    {
-        Ok(found) => logs.extend(found.as_array().cloned().unwrap_or_default()),
-        Err(refused) => {
-            tracing::debug!(%contract, refused, "eth_getLogs refused the whole history; splitting it");
-            let head = rpc_call(state, rpc, "eth_blockNumber", json!([]))
-                .await?
-                .ok()
-                .as_ref()
-                .and_then(Value::as_str)
-                .and_then(|h| u64::from_str_radix(h.trim_start_matches("0x"), 16).ok())
-                .ok_or_else(|| format!("{contract}: eth_blockNumber gave no block"))?;
-            let mut ranges = vec![(0u64, head / 2), (head / 2 + 1, head)];
-            while let Some((from, upto)) = ranges.pop() {
-                calls += 1;
-                if calls > LOG_SCAN_CALLS {
-                    return Err(format!(
-                        "{contract}: the endpoint refused eth_getLogs over ranges of {} blocks and more",
-                        upto - from + 1
-                    ));
-                }
-                match rpc_call(
-                    state,
-                    rpc,
-                    "eth_getLogs",
-                    filter(json!(format!("0x{from:x}")), json!(format!("0x{upto:x}"))),
-                )
-                .await?
-                {
-                    Ok(found) => logs.extend(found.as_array().cloned().unwrap_or_default()),
-                    Err(refused) if upto > from => {
-                        tracing::debug!(%contract, from, upto, refused, "eth_getLogs refused the range; splitting it");
-                        let mid = from + (upto - from) / 2;
-                        ranges.push((mid + 1, upto));
-                        ranges.push((from, mid));
-                    }
-                    Err(refused) => return Err(format!("{contract}: eth_getLogs: {refused}")),
-                }
-            }
-        }
-    }
-    Ok(logs
-        .iter()
-        .flat_map(|log| log_token_ids(log, via))
-        .collect())
-}
-
-fn log_token_ids(log: &Value, via: ReceivedVia) -> Vec<U256> {
-    let word = |s: &str| U256::from_str_radix(s.trim_start_matches("0x"), 16).ok();
-    let topics: Vec<&str> = log
-        .get("topics")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect();
-    let data = log
-        .get("data")
-        .and_then(Value::as_str)
-        .and_then(|d| hex::decode(d.trim_start_matches("0x")).ok())
-        .unwrap_or_default();
-    match via {
-        ReceivedVia::Erc721 => topics.get(3).and_then(|t| word(t)).into_iter().collect(),
-        ReceivedVia::Erc1155 => {
-            let topic0 = topics.first().and_then(|t| B256::from_str(t).ok());
-            if topic0 == Some(IERC1155::TransferSingle::SIGNATURE_HASH) {
-                data.get(..32)
-                    .map(|w| U256::from_be_slice(w))
-                    .into_iter()
-                    .collect()
-            } else if topic0 == Some(IERC1155::TransferBatch::SIGNATURE_HASH) {
-                <(
-                    sol_data::Array<sol_data::Uint<256>>,
-                    sol_data::Array<sol_data::Uint<256>>,
-                )>::abi_decode_params(&data)
-                .map(|(ids, _)| ids)
-                .unwrap_or_default()
-            } else {
-                Vec::new()
-            }
-        }
-    }
-}
-
 /// One entry per calldata: the sub-call's return data when it succeeded.
+/// Paged `MULTICALLS_PER_REQUEST` multicalls of `MULTICALL_CHUNK` a request.
 async fn multicall(
     state: &MarketplaceState,
     rpc: &str,
     target: Address,
     calldatas: Vec<Bytes>,
 ) -> Result<Vec<Option<Bytes>>, String> {
-    let calls: Vec<RpcCall> = calldatas
-        .chunks(MULTICALL_CHUNK)
-        .map(|chunk| RpcCall {
-            to: MULTICALL3,
-            data: IMulticall3::aggregate3Call {
-                calls: chunk
-                    .iter()
-                    .map(|d| IMulticall3::Call3 {
-                        target,
-                        allowFailure: true,
-                        callData: d.clone(),
-                    })
-                    .collect(),
-            }
-            .abi_encode()
-            .into(),
-        })
-        .collect();
-    let answers = eth_call_batch(state, rpc, &calls).await?;
     let mut out = Vec::with_capacity(calldatas.len());
-    for (chunk, answer) in calldatas.chunks(MULTICALL_CHUNK).zip(answers) {
-        out.extend(
-            decode_aggregate3(answer.as_ref(), chunk.len())
-                .ok_or_else(|| format!("{target}: the multicall answered no results"))?,
-        );
+    for page in calldatas.chunks(MULTICALL_CHUNK * MULTICALLS_PER_REQUEST) {
+        let calls: Vec<RpcCall> = page
+            .chunks(MULTICALL_CHUNK)
+            .map(|chunk| RpcCall {
+                to: MULTICALL3,
+                data: IMulticall3::aggregate3Call {
+                    calls: chunk
+                        .iter()
+                        .map(|d| IMulticall3::Call3 {
+                            target,
+                            allowFailure: true,
+                            callData: d.clone(),
+                        })
+                        .collect(),
+                }
+                .abi_encode()
+                .into(),
+            })
+            .collect();
+        let answers = eth_call_batch(state, rpc, &calls).await?;
+        for (chunk, answer) in page.chunks(MULTICALL_CHUNK).zip(answers) {
+            out.extend(
+                decode_aggregate3(answer.as_ref(), chunk.len())
+                    .ok_or_else(|| format!("{target}: the multicall answered no results"))?,
+            );
+        }
     }
     Ok(out)
 }
@@ -801,8 +750,10 @@ struct RpcCall {
     data: Bytes,
 }
 
-/// `eth_call` each call at `latest`; a call the node refused (a revert) is
-/// `None`, as the old checkers read a missing `result` as not owned.
+/// `eth_call` each call at `latest`. A call the node answers with a revert
+/// is `None`, as the old checkers read a missing `result` as not owned; any
+/// other JSON-RPC error (a rate limit such as -32005, a node timeout) fails
+/// the batch.
 async fn eth_call_batch(
     state: &MarketplaceState,
     rpc: &str,
@@ -817,30 +768,40 @@ async fn eth_call_batch(
             )
         })
         .collect();
-    Ok(rpc_batch(state, rpc, &requests)
+    rpc_batch(state, rpc, &requests)
         .await?
         .into_iter()
-        .map(|answer| {
-            answer
-                .ok()
-                .as_ref()
-                .and_then(Value::as_str)
+        .map(|answer| match answer {
+            Ok(result) => Ok(result
+                .as_str()
                 .and_then(|h| hex::decode(h.trim_start_matches("0x")).ok())
-                .map(Bytes::from)
+                .map(Bytes::from)),
+            Err(error) if is_revert(&error) => Ok(None),
+            Err(error) => Err(format!("eth_call: {}", clipped(&error.to_string()))),
         })
-        .collect())
+        .collect()
 }
 
-async fn rpc_call(
-    state: &MarketplaceState,
-    rpc: &str,
-    method: &str,
-    params: Value,
-) -> Result<Result<Value, String>, String> {
-    rpc_batch(state, rpc, &[(method, params)])
-        .await?
-        .pop()
-        .ok_or_else(|| "JSON-RPC batch: no answer".to_string())
+/// A JSON-RPC error that is the call reverting: code 3, or the `execution
+/// reverted` message nodes answer with -32000.
+fn is_revert(error: &Value) -> bool {
+    error.get("code").and_then(Value::as_i64) == Some(3)
+        || error
+            .get("message")
+            .and_then(Value::as_str)
+            .is_some_and(|m| m.to_ascii_lowercase().contains("revert"))
+}
+
+/// `text` cut to `ERROR_TEXT_CAP` bytes, for an error or a log line.
+fn clipped(text: &str) -> String {
+    if text.len() <= ERROR_TEXT_CAP {
+        return text.to_string();
+    }
+    let mut end = ERROR_TEXT_CAP;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}... ({} bytes)", &text[..end], text.len())
 }
 
 /// JSON-RPC batches of `RPC_BATCH` requests through the guarded client:
@@ -851,11 +812,11 @@ async fn rpc_batch(
     state: &MarketplaceState,
     rpc: &str,
     requests: &[(&str, Value)],
-) -> Result<Vec<Result<Value, String>>, String> {
+) -> Result<Vec<Result<Value, Value>>, String> {
     if !state.upstream_allowed(rpc) {
         return Err("the RPC endpoint is not a publicly routable http(s) URL".to_string());
     }
-    let mut out: Vec<Option<Result<Value, String>>> = vec![None; requests.len()];
+    let mut out: Vec<Option<Result<Value, Value>>> = vec![None; requests.len()];
     for (chunk_index, chunk) in requests.chunks(RPC_BATCH).enumerate() {
         let base = chunk_index * RPC_BATCH;
         let body: Vec<Value> = chunk
@@ -883,7 +844,8 @@ async fn rpc_batch(
             .ok_or_else(|| "JSON-RPC batch: unreadable response".to_string())?;
         let Some(items) = parsed.as_array() else {
             return Err(format!(
-                "JSON-RPC batch: answered {parsed} instead of a batch"
+                "JSON-RPC batch: answered {} instead of a batch",
+                clipped(&parsed.to_string())
             ));
         };
         for item in items {
@@ -897,8 +859,8 @@ async fn rpc_batch(
                 Some(result) => Ok(result.clone()),
                 None => Err(item
                     .get("error")
-                    .map(Value::to_string)
-                    .unwrap_or_else(|| "no result".to_string())),
+                    .cloned()
+                    .unwrap_or_else(|| json!("no result"))),
             });
         }
     }
@@ -909,61 +871,67 @@ async fn rpc_batch(
 
 /// `NFT_WORKER_BASE_URL`: `POST <base>/wallets/<owner>/networks/<network>/nfts`
 /// with the network's contract addresses, answering `{data: [triple]}`, the
-/// old lambdas' source. As there, a network outside `ContractNetwork` and a
-/// non-2xx answer are logged and report nothing; a transport failure or an
-/// unreadable body fails the fetch.
+/// old lambdas' source (`alchemy-nft-fetcher.ts`). As there, a network
+/// outside `ContractNetwork` and a non-2xx answer are logged and report
+/// nothing; a transport failure or an unreadable body fails that network.
 async fn owned_via_nft_worker(
     state: &MarketplaceState,
     base: &str,
     owner: &str,
     contracts_by_network: &BTreeMap<String, BTreeSet<String>>,
-) -> Result<Vec<String>, String> {
+) -> Holdings {
     let per_network = contracts_by_network
         .iter()
         .map(|(network, contracts)| async move {
-            if chain_id_of(network).is_none() {
-                tracing::warn!(network, "network not supported for linked wearables");
-                return Ok(Vec::new());
-            }
-            let url = format!("{base}/wallets/{owner}/networks/{network}/nfts");
-            if !state.upstream_allowed(&url) {
-                return Err(
-                    "NFT_WORKER_BASE_URL is not a publicly routable http(s) URL".to_string()
-                );
-            }
-            let resp = state
-                .http
-                .post(&url)
-                .timeout(RPC_TIMEOUT)
-                .header("Accept", "application/json")
-                .json(contracts)
-                .send()
-                .await
-                .map_err(|e| format!("NFT worker: {e}"))?;
-            if !resp.status().is_success() {
-                tracing::error!(status = %resp.status(), network, "NFT worker answered an error");
-                return Ok(Vec::new());
-            }
-            let body: Value = crate::http::read_body_capped(resp, RPC_BODY_CAP)
-                .await
-                .ok()
-                .and_then(|b| serde_json::from_slice(&b).ok())
-                .ok_or_else(|| "NFT worker: unreadable response".to_string())?;
-            Ok::<_, String>(
-                body.get("data")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter_map(Value::as_str)
-                    .map(str::to_string)
-                    .collect::<Vec<_>>(),
-            )
+            let found = async {
+                if chain_id_of(network).is_none() {
+                    tracing::warn!(network, "network not supported for linked wearables");
+                    return Ok(Vec::new());
+                }
+                let url = format!("{base}/wallets/{owner}/networks/{network}/nfts");
+                if !state.upstream_allowed(&url) {
+                    return Err(
+                        "NFT_WORKER_BASE_URL is not a publicly routable http(s) URL".to_string()
+                    );
+                }
+                let resp = state
+                    .http
+                    .post(&url)
+                    .timeout(RPC_TIMEOUT)
+                    .header("Accept", "application/json")
+                    .json(contracts)
+                    .send()
+                    .await
+                    .map_err(|e| format!("NFT worker: {e}"))?;
+                if !resp.status().is_success() {
+                    tracing::error!(status = %resp.status(), network, "NFT worker answered an error");
+                    return Ok(Vec::new());
+                }
+                let body: Value = crate::http::read_body_capped(resp, RPC_BODY_CAP)
+                    .await
+                    .ok()
+                    .and_then(|b| serde_json::from_slice(&b).ok())
+                    .ok_or_else(|| "NFT worker: unreadable response".to_string())?;
+                Ok::<_, String>(
+                    body.get("data")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>(),
+                )
+            };
+            (network, found.await)
         });
-    let mut out = Vec::new();
-    for found in futures::future::join_all(per_network).await {
-        out.extend(found?);
+    let mut holdings = Holdings::default();
+    for (network, found) in futures::future::join_all(per_network).await {
+        match found {
+            Ok(owned) => holdings.owned.extend(owned),
+            Err(e) => holdings.failed.push(format!("{network}: {e}")),
+        }
     }
-    Ok(out)
+    holdings
 }
 
 #[derive(Clone)]
@@ -988,20 +956,64 @@ impl TpwElement {
     }
 }
 
+/// What a holdings read does with a provider contract it could not read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnFailure {
+    /// Fail the whole read: the dedicated routes' 502 `FetcherError`.
+    Fail,
+    /// Leave that contract's items out (logged): the explorer.
+    Skip,
+}
+
+/// Why a third-party read answers no list, as the old lambdas' `FetcherError`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FetchFailure {
+    /// The owner's holdings could not be read (the cause is logged).
+    Fetch(String),
+    /// The provider name a route asked for is not an approved provider.
+    ThirdPartyNotFound(String),
+}
+
+impl FetchFailure {
+    /// The old lambdas' answer: 502, `Cannot fetch elements for <address>`
+    /// or `Third Party not found: <name>`.
+    pub(crate) fn response(&self, address: &str) -> Response {
+        match self {
+            Self::Fetch(cause) => fetch_error(address, cause),
+            Self::ThirdPartyNotFound(name) => super::lambdas_error(
+                axum::http::StatusCode::BAD_GATEWAY,
+                FETCHER_ERROR,
+                &format!("Third Party not found: {name}"),
+            ),
+        }
+    }
+}
+
+/// The provider name of a registry id (`urn:decentraland:<network>:collections-thirdparty:<name>`).
+fn provider_name(id: &str) -> Option<&str> {
+    id.split(':').nth(4)
+}
+
 /// Every third-party wearable `owner` holds through a mapped NFT, optionally
-/// only the provider named `only_name` (the URN's fifth part). `Err` when the
-/// owner's holdings could not be read.
+/// only the provider named `only_name` (the URN's fifth part). With a
+/// registry configured, a name no approved provider has is
+/// `ThirdPartyNotFound`, as the old lambdas threw. A contract that could not
+/// be read fails the fetch or is left out, per `on_failure`.
 pub async fn fetch_all_third_party_wearables(
     state: &MarketplaceState,
     owner: &str,
     only_name: Option<&str>,
-) -> Result<Vec<TpwElement>, String> {
+    on_failure: OnFailure,
+) -> Result<Vec<TpwElement>, FetchFailure> {
     let owner = owner.to_lowercase();
     let mut providers = third_party_providers(state).await;
-    providers.retain(|p| !p.contracts.is_empty());
     if let Some(name) = only_name {
-        providers.retain(|p| p.id.split(':').nth(4) == Some(name));
+        providers.retain(|p| provider_name(&p.id) == Some(name));
+        if providers.is_empty() && state.settings.third_party_registry_subgraph_url.is_some() {
+            return Err(FetchFailure::ThirdPartyNotFound(name.to_string()));
+        }
     }
+    providers.retain(|p| !p.contracts.is_empty());
     if providers.is_empty() {
         return Ok(Vec::new());
     }
@@ -1014,21 +1026,24 @@ pub async fn fetch_all_third_party_wearables(
                 .insert(c.address.clone());
         }
     }
-    let (lists, owned) = match state.settings.nft_worker_base_url.as_deref() {
+    let (lists, holdings) = match state.settings.nft_worker_base_url.as_deref() {
         Some(base) => {
-            let owned = owned_via_nft_worker(state, base, &owner, &contracts_by_network).await?;
+            let holdings = owned_via_nft_worker(state, base, &owner, &contracts_by_network).await;
             // Only the providers whose contracts returned a token are read.
             let hit: Vec<&str> = providers
                 .iter()
                 .filter(|p| {
                     p.contracts.iter().any(|c| {
                         let prefix = format!("{}:{}:", c.network, c.address);
-                        owned.iter().any(|nft| nft.starts_with(&prefix))
+                        holdings.owned.iter().any(|nft| nft.starts_with(&prefix))
                     })
                 })
                 .map(|p| p.id.as_str())
                 .collect();
-            (collection_entity_lists(state, hit.into_iter()).await, owned)
+            (
+                collection_entity_lists(state, hit.into_iter()).await,
+                holdings,
+            )
         }
         None => {
             let lists =
@@ -1039,14 +1054,23 @@ pub async fn fetch_all_third_party_wearables(
                     .get(network)
                     .is_some_and(|cs| cs.contains(contract))
             });
-            let owned = owned_via_rpc(state, &owner, &candidates).await?;
-            (lists, owned)
+            (lists, owned_via_rpc(state, &owner, &candidates).await)
         }
     };
-    if owned.is_empty() {
+    if !holdings.failed.is_empty() {
+        match on_failure {
+            OnFailure::Fail => return Err(FetchFailure::Fetch(holdings.failed.join("; "))),
+            OnFailure::Skip => tracing::warn!(
+                owner = %owner,
+                failed = ?holdings.failed,
+                "third-party holdings: leaving out what could not be read"
+            ),
+        }
+    }
+    if holdings.owned.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(elements_from(&lists, &owned))
+    Ok(elements_from(&lists, &holdings.owned))
 }
 
 fn elements_from(lists: &[Arc<Vec<Value>>], owned_nft_urns: &[String]) -> Vec<TpwElement> {
@@ -1226,10 +1250,11 @@ pub async fn user_third_party_wearables(
     if !(sort == "name" && (direction == "ASC" || direction == "DESC")) {
         return bad_request(&format!("Invalid sorting requested: {sort} {direction}"));
     }
-    let mut elements = match fetch_all_third_party_wearables(&state, &address, None).await {
-        Ok(elements) => elements,
-        Err(e) => return fetch_error(&address, &e),
-    };
+    let mut elements =
+        match fetch_all_third_party_wearables(&state, &address, None, OnFailure::Fail).await {
+            Ok(elements) => elements,
+            Err(e) => return e.response(&address),
+        };
     elements.retain(|e| tpw_passes_filter(e, &categories, &name));
     elements.sort_by(|a, b| {
         let primary = locale_cmp(&a.name, &b.name).then_with(|| locale_cmp(&a.urn, &b.urn));
@@ -1267,10 +1292,12 @@ pub async fn user_third_party_collection_wearables(
         Ok(p) => p,
         Err(resp) => return resp,
     };
-    let mut elements = match fetch_all_third_party_wearables(&state, &address, Some(&name)).await {
-        Ok(elements) => elements,
-        Err(e) => return fetch_error(&address, &e),
-    };
+    let mut elements =
+        match fetch_all_third_party_wearables(&state, &address, Some(&name), OnFailure::Fail).await
+        {
+            Ok(elements) => elements,
+            Err(e) => return e.response(&address),
+        };
     elements.sort_by(|a, b| locale_cmp(&a.name, &b.name).then_with(|| locale_cmp(&a.urn, &b.urn)));
     let include_definitions = params.contains_key("includeDefinitions");
     finish_tpw_response(&state, elements, &pagination, include_definitions)
@@ -1378,9 +1405,9 @@ pub(crate) async fn owned_third_party_urns(
     state: &MarketplaceState,
     owner: &str,
     provider_name: &str,
-) -> Result<Vec<(String, usize, Value)>, String> {
+) -> Result<Vec<(String, usize, Value)>, FetchFailure> {
     Ok(
-        fetch_all_third_party_wearables(state, owner, Some(provider_name))
+        fetch_all_third_party_wearables(state, owner, Some(provider_name), OnFailure::Fail)
             .await?
             .into_iter()
             .map(|e| (e.urn, e.individual_data.len(), e.entity))
@@ -1388,8 +1415,10 @@ pub(crate) async fn owned_third_party_urns(
     )
 }
 
-/// A worn third-party URN, as the old lambdas' checker split them: only
-/// items of an L2 collection (`matic`, `amoy`) count.
+/// A worn URN naming a third-party collection (it contains
+/// `collections-thirdparty`, the old lambdas' test), as their checker split
+/// them: only items of an L2 collection (`matic`, `amoy`) count. The one
+/// classifier the profiles and the outfits share.
 #[derive(Debug, PartialEq, Eq)]
 enum WornThirdParty {
     /// `urn:decentraland:<l2>:collections-thirdparty:<tp>:<collection>:<item>`:
@@ -1398,6 +1427,8 @@ enum WornThirdParty {
     /// `...:<item>:<nftChain>:<contract>:<tokenId>`: a linked item, kept when
     /// its NFT is owned.
     Linked(LinkedItem),
+    /// Any other shape: never kept.
+    Unrecognised,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1411,14 +1442,18 @@ struct LinkedItem {
     on_l1: bool,
 }
 
+/// `None` when `urn` is not a third-party item.
 fn worn_third_party(urn: &str) -> Option<WornThirdParty> {
+    if !urn.contains("collections-thirdparty") {
+        return None;
+    }
     let p: Vec<&str> = urn.split(':').collect();
     let is = |i: usize, want: &str| p.get(i).is_some_and(|s| s.eq_ignore_ascii_case(want));
     if !(is(0, "urn") && is(1, "decentraland") && is(3, "collections-thirdparty"))
         || !(is(2, "matic") || is(2, "amoy"))
         || p[4..].iter().any(|s| s.is_empty())
     {
-        return None;
+        return Some(WornThirdParty::Unrecognised);
     }
     match p.len() {
         7 => Some(WornThirdParty::V1),
@@ -1427,7 +1462,7 @@ fn worn_third_party(urn: &str) -> Option<WornThirdParty> {
             let on_l1 = match network.as_str() {
                 "mainnet" | "sepolia" => true,
                 "matic" | "amoy" => false,
-                _ => return None,
+                _ => return Some(WornThirdParty::Unrecognised),
             };
             Some(WornThirdParty::Linked(LinkedItem {
                 asset_urn: p[..7].join(":"),
@@ -1437,8 +1472,23 @@ fn worn_third_party(urn: &str) -> Option<WornThirdParty> {
                 on_l1,
             }))
         }
-        _ => None,
+        _ => Some(WornThirdParty::Unrecognised),
     }
+}
+
+/// Whether a worn URN is a third-party item, to be checked by
+/// `sanitize_third_party_urns`.
+pub(crate) fn is_third_party_urn(urn: &str) -> bool {
+    worn_third_party(urn).is_some()
+}
+
+/// The v1 items among worn URNs, which need no check: what a profile keeps
+/// of its third-party items when its linked items could not be read.
+pub(crate) fn v1_third_party_urns(urns: &[String]) -> Vec<String> {
+    urns.iter()
+        .filter(|u| worn_third_party(u) == Some(WornThirdParty::V1))
+        .cloned()
+        .collect()
 }
 
 /// The worn third-party URNs `owner` may keep, in the order the old lambdas
@@ -1446,9 +1496,8 @@ fn worn_third_party(urn: &str) -> Option<WornThirdParty> {
 /// the linked items whose NFT is on L1, then those on L2. A linked item is
 /// kept when its entity's mappings include the NFT and the chain confirms it
 /// (`ownerOf` is the owner, or an ERC-1155 `balanceOf` above zero); any
-/// other URN is not a third-party item and is left out. A linked item on a
-/// network with no RPC endpoint is kept unchecked (logged), as a profile is
-/// served unfiltered without its readers. `Err` when an endpoint failed.
+/// other URN is not kept. A linked item on a network with no RPC endpoint
+/// reads as not owned (logged). `Err` when an endpoint failed.
 pub async fn sanitize_third_party_urns(
     state: &MarketplaceState,
     owner: &str,
@@ -1460,7 +1509,7 @@ pub async fn sanitize_third_party_urns(
         match worn_third_party(urn) {
             Some(WornThirdParty::V1) => v1.push(urn.clone()),
             Some(WornThirdParty::Linked(item)) => linked.push((urn, item)),
-            None => {}
+            Some(WornThirdParty::Unrecognised) | None => {}
         }
     }
     let items: Vec<&LinkedItem> = linked.iter().map(|(_, item)| item).collect();
@@ -1485,12 +1534,11 @@ async fn linked_items_owned(
     owner: &str,
     items: &[&LinkedItem],
 ) -> Result<Vec<bool>, String> {
-    let mut owned = vec![false; items.len()];
     let Ok(owner) = Address::from_str(owner) else {
-        return Ok(owned);
+        return Ok(vec![false; items.len()]);
     };
     if items.is_empty() {
-        return Ok(owned);
+        return Ok(Vec::new());
     }
     let mut pointers: Vec<String> = items.iter().map(|i| i.asset_urn.to_lowercase()).collect();
     pointers.sort();
@@ -1506,7 +1554,18 @@ async fn linked_items_owned(
             Some((id, e.pointer("/metadata/mappings")?.clone()))
         })
         .collect();
+    confirm_linked_items(state, owner, items, &mappings).await
+}
 
+/// Per item, whether its entity's `mappings` include its NFT and the chain
+/// confirms `owner` holds it.
+async fn confirm_linked_items(
+    state: &MarketplaceState,
+    owner: Address,
+    items: &[&LinkedItem],
+    mappings: &HashMap<String, Value>,
+) -> Result<Vec<bool>, String> {
+    let mut owned = vec![false; items.len()];
     // The mapped items, grouped by the network their NFT is on.
     let mut by_network: BTreeMap<&str, Vec<(usize, Address, U256)>> = BTreeMap::new();
     for (i, item) in items.iter().enumerate() {
@@ -1530,11 +1589,9 @@ async fn linked_items_owned(
         let Some(rpc) = rpc_url_for(state, network) else {
             tracing::warn!(
                 network,
-                "third-party item ownership: no RPC endpoint for this network; keeping the items unchecked"
+                items = checks.len(),
+                "third-party item ownership: no RPC endpoint for this network; reading the items as not owned"
             );
-            for (i, _, _) in checks {
-                owned[i] = true;
-            }
             continue;
         };
         let contracts: Vec<Address> = checks
@@ -1584,13 +1641,16 @@ async fn linked_items_owned(
     Ok(owned)
 }
 
+/// The old lambdas' `FetcherError` label.
+const FETCHER_ERROR: &str = "The requested items cannot be fetched right now";
+
 /// The old lambdas' `FetcherError` answer: 502 `Cannot fetch elements for
 /// <address>`, the cause logged.
 pub(crate) fn fetch_error(address: &str, cause: &str) -> Response {
     tracing::warn!(error = %cause, address, "third-party ownership read failed");
     super::lambdas_error(
         axum::http::StatusCode::BAD_GATEWAY,
-        "The requested items cannot be fetched right now",
+        FETCHER_ERROR,
         &format!("Cannot fetch elements for {address}"),
     )
 }
@@ -1719,13 +1779,17 @@ mod tests {
     const OWNER: Address = address!("0x0000000000000000000000000000000000000001");
     const OTHER: Address = address!("0x0000000000000000000000000000000000000002");
     const PLAIN_721: Address = address!("0x00000000000000000000000000000000000000a1");
+    /// A plain ERC-721 the owner holds none of; its `ownerOf` would answer
+    /// the owner, so a call to it shows in the holdings.
+    const EMPTY_721: Address = address!("0x00000000000000000000000000000000000000a0");
     const ENUM_721: Address = address!("0x00000000000000000000000000000000000000e1");
     const MULTI_1155: Address = address!("0x0000000000000000000000000000000000001155");
-    /// The fake chain's head; `eth_getLogs` refuses any range wider than
-    /// `LOG_RANGE_LIMIT` blocks, the whole history included.
-    const HEAD: u64 = 4095;
-    const LOG_RANGE_LIMIT: u64 = 1000;
-    const ENUM_BALANCE: u64 = 1500;
+    /// A plain ERC-721 whose multicalls the endpoint throttles (-32005).
+    const THROTTLED_721: Address = address!("0x00000000000000000000000000000000000000f1");
+    /// The fake chain's head: a polygon-sized history no log scan could cover.
+    const HEAD: u64 = 80_000_000;
+    /// Past one request's 2,000 tokens, so the walk is paged.
+    const ENUM_BALANCE: u64 = 4500;
 
     fn word(v: U256) -> Bytes {
         Bytes::from(v.abi_encode())
@@ -1743,9 +1807,15 @@ mod tests {
                     || (to == MULTI_1155 && iface.0 == IFACE_ERC1155);
                 Some(Bytes::from(yes.abi_encode()))
             }
-            IERC721::balanceOfCall::SELECTOR if to == PLAIN_721 => Some(word(U256::from(1))),
+            IERC721::balanceOfCall::SELECTOR if to == PLAIN_721 || to == THROTTLED_721 => {
+                Some(word(U256::from(1)))
+            }
+            IERC721::balanceOfCall::SELECTOR if to == EMPTY_721 => Some(word(U256::ZERO)),
             IERC721::balanceOfCall::SELECTOR if to == ENUM_721 => {
                 Some(word(U256::from(ENUM_BALANCE)))
+            }
+            IERC721::ownerOfCall::SELECTOR if to == EMPTY_721 => {
+                Some(Bytes::from(OWNER.abi_encode()))
             }
             IERC721::ownerOfCall::SELECTOR if to == PLAIN_721 => {
                 let id = IERC721::ownerOfCall::abi_decode(data).ok()?.tokenId;
@@ -1773,6 +1843,10 @@ mod tests {
             }
             IMulticall3::aggregate3Call::SELECTOR if to == MULTICALL3 => {
                 let call = IMulticall3::aggregate3Call::abi_decode(data).ok()?;
+                assert!(
+                    call.calls.len() <= MULTICALL_CHUNK,
+                    "a multicall holds at most {MULTICALL_CHUNK} sub-calls"
+                );
                 let results: Vec<IMulticall3::Result3> = call
                     .calls
                     .iter()
@@ -1795,86 +1869,32 @@ mod tests {
         }
     }
 
-    fn topic(a: Address) -> String {
-        B256::left_padding_from(a.as_slice()).to_string()
-    }
-
-    /// The transfers the owner received: plain ERC-721 tokens 5 (sold since)
-    /// and 7, ERC-1155 ids 11 and 12 in one batch and 13 alone.
-    fn chain_logs(address: Address, from: u64, to: u64) -> Vec<Value> {
-        let at = |block: u64, log: Value| (from <= block && block <= to).then_some(log);
-        let id_topic = |id: u64| B256::from(U256::from(id)).to_string();
-        let logs = if address == PLAIN_721 {
-            vec![
-                at(
-                    100,
-                    json!({ "topics": [IERC721::Transfer::SIGNATURE_HASH, topic(OTHER), topic(OWNER), id_topic(5)], "data": "0x" }),
-                ),
-                at(
-                    3000,
-                    json!({ "topics": [IERC721::Transfer::SIGNATURE_HASH, topic(OTHER), topic(OWNER), id_topic(7)], "data": "0x" }),
-                ),
-            ]
-        } else if address == MULTI_1155 {
-            let batch = (
-                vec![U256::from(11), U256::from(12)],
-                vec![U256::from(1), U256::from(1)],
-            )
-                .abi_encode_params();
-            let single = (U256::from(13), U256::from(2)).abi_encode_params();
-            vec![
-                at(
-                    200,
-                    json!({ "topics": [IERC1155::TransferBatch::SIGNATURE_HASH, topic(OTHER), topic(OTHER), topic(OWNER)], "data": Bytes::from(batch) }),
-                ),
-                at(
-                    2500,
-                    json!({ "topics": [IERC1155::TransferSingle::SIGNATURE_HASH, topic(OTHER), topic(OTHER), topic(OWNER)], "data": Bytes::from(single) }),
-                ),
-            ]
-        } else {
-            Vec::new()
-        };
-        logs.into_iter().flatten().collect()
-    }
-
-    fn block_of(v: &Value) -> Option<u64> {
-        match v.as_str()? {
-            "latest" => Some(HEAD),
-            h => u64::from_str_radix(h.trim_start_matches("0x"), 16).ok(),
-        }
+    fn throttled(data: &[u8]) -> bool {
+        IMulticall3::aggregate3Call::abi_decode(data)
+            .is_ok_and(|call| call.calls.iter().any(|c| c.target == THROTTLED_721))
     }
 
     fn chain_answer(req: &Value) -> Value {
         let id = req["id"].clone();
-        let refuse = |msg: &str| json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -32005, "message": msg } });
+        let error = |code: i64, msg: &str| json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": msg } });
         let result = |r: Value| json!({ "jsonrpc": "2.0", "id": id, "result": r });
         let p = &req["params"][0];
         match req["method"].as_str() {
             Some("eth_blockNumber") => result(json!(format!("0x{HEAD:x}"))),
-            Some("eth_getLogs") => {
-                let (Some(from), Some(to)) = (block_of(&p["fromBlock"]), block_of(&p["toBlock"]))
-                else {
-                    return refuse("bad range");
-                };
-                if to - from + 1 > LOG_RANGE_LIMIT {
-                    return refuse("block range too large");
-                }
-                let address: Address = p["address"].as_str().unwrap().parse().unwrap();
-                result(json!(chain_logs(address, from, to)))
-            }
             Some("eth_call") => {
                 let to: Address = p["to"].as_str().unwrap().parse().unwrap();
                 let data =
                     hex::decode(p["data"].as_str().unwrap().trim_start_matches("0x")).unwrap();
+                if throttled(&data) {
+                    return error(-32005, "rate limit exceeded");
+                }
                 match chain_call(to, &data) {
                     Some(ret) => result(json!(ret)),
-                    None => {
-                        json!({ "jsonrpc": "2.0", "id": id, "error": { "code": 3, "message": "execution reverted" } })
-                    }
+                    None => error(3, "execution reverted"),
                 }
             }
-            _ => refuse("unknown method"),
+            // `eth_getLogs` included: no read scans the history.
+            other => panic!("unexpected JSON-RPC method {other:?}"),
         }
     }
 
@@ -1885,18 +1905,26 @@ mod tests {
         format!("http://{addr}/")
     }
 
-    async fn serve_chain() -> String {
+    /// The fake chain, and the count of JSON-RPC requests (HTTP posts) it took.
+    async fn serve_chain() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
         use axum::routing::post;
-        serve(axum::Router::new().route(
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let posts = Arc::new(AtomicUsize::new(0));
+        let counted = posts.clone();
+        let url = serve(axum::Router::new().route(
             "/",
-            post(|Json(body): Json<Value>| async move {
-                Json(match &body {
-                    Value::Array(reqs) => Value::Array(reqs.iter().map(chain_answer).collect()),
-                    req => chain_answer(req),
-                })
+            post(move |Json(body): Json<Value>| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    Json(match &body {
+                        Value::Array(reqs) => Value::Array(reqs.iter().map(chain_answer).collect()),
+                        req => chain_answer(req),
+                    })
+                }
             }),
         ))
-        .await
+        .await;
+        (url, posts)
     }
 
     fn state_with(settings: crate::market::Settings) -> crate::market::SharedState {
@@ -1930,6 +1958,10 @@ mod tests {
                 open,
             },
         )
+    }
+
+    fn triple(network: &str, contract: Address, id: u64) -> String {
+        format!("{network}:{}:{id}", contract.to_string().to_lowercase())
     }
 
     #[tokio::test]
@@ -1974,27 +2006,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn holdings_cover_open_mappings_past_the_old_caps_and_testnets() {
-        let rpc = serve_chain().await;
+    async fn holdings_never_scan_logs_and_leave_open_mappings_unresolved() {
+        let (rpc, posts) = serve_chain().await;
         let state = state_with(with_rpcs(&format!("11155111={rpc},80002={rpc}")));
         let candidates: CandidateMap = [
-            // `any` on a plain ERC-721: the received tokens, of which 7 is still held.
-            candidate("amoy", PLAIN_721, &["3"], true),
-            // An enumerable ERC-721 past the old 1,000-token walk.
+            // `any` on a plain ERC-721 the owner holds one of: only the
+            // mapped ids are read (7 held, 3 not); the rest is unresolved.
+            candidate("amoy", PLAIN_721, &["3", "7"], true),
+            // A zero balance: nothing owned, no `ownerOf`.
+            candidate("amoy", EMPTY_721, &["1"], true),
+            // An enumerable ERC-721, walked whole, 2,000 tokens a request.
             candidate("amoy", ENUM_721, &[], true),
-            // `any` on an ERC-1155: the batch and the single transfer, 12 sold since.
-            candidate("sepolia", MULTI_1155, &["14"], true),
+            // `any` on an ERC-1155: the mapped ids only (13 is held but
+            // named by no mapping).
+            candidate("sepolia", MULTI_1155, &["11", "12", "14"], true),
         ]
         .into_iter()
         .collect();
-        let owner = OWNER.to_string();
-        let mut owned = owned_via_rpc(&state, &owner, &candidates).await.unwrap();
-        owned.sort();
-        let plain = format!("amoy:{}:7", PLAIN_721.to_string().to_lowercase());
-        let multi = MULTI_1155.to_string().to_lowercase();
-        assert!(owned.contains(&plain), "{owned:?}");
-        assert!(owned.contains(&format!("sepolia:{multi}:11")), "{owned:?}");
-        assert!(owned.contains(&format!("sepolia:{multi}:13")), "{owned:?}");
+        let holdings = owned_via_rpc(&state, &OWNER.to_string(), &candidates).await;
+        assert_eq!(holdings.failed, Vec::<String>::new());
+        let owned = holdings.owned;
+        assert!(owned.contains(&triple("amoy", PLAIN_721, 7)), "{owned:?}");
+        assert!(
+            owned.contains(&triple("sepolia", MULTI_1155, 11)),
+            "{owned:?}"
+        );
         let enumerated = owned
             .iter()
             .filter(|o| o.contains(&ENUM_721.to_string().to_lowercase()))
@@ -2003,31 +2039,124 @@ mod tests {
             enumerated as u64, ENUM_BALANCE,
             "the whole balance is walked"
         );
-        assert_eq!(owned.len() as u64, 3 + ENUM_BALANCE, "{:?}", &owned[..5]);
+        assert_eq!(owned.len() as u64, 2 + ENUM_BALANCE, "{:?}", &owned[..5]);
+        // amoy: the probes, PLAIN_721's `ownerOf` and the walk's three pages;
+        // sepolia: the probes and one `balanceOfBatch`. No `eth_getLogs`
+        // (`chain_answer` refuses it), however long the chain.
+        assert_eq!(posts.load(std::sync::atomic::Ordering::SeqCst), 7);
     }
 
     #[tokio::test]
-    async fn a_failing_endpoint_is_an_error_not_an_empty_wallet() {
+    async fn a_failing_contract_fails_alone_and_is_remembered_briefly() {
+        let (rpc, posts) = serve_chain().await;
+        let state = state_with(with_rpcs(&format!("80002={rpc}")));
+        let candidates: CandidateMap = [
+            candidate("amoy", PLAIN_721, &["7"], false),
+            candidate("amoy", THROTTLED_721, &["7"], false),
+        ]
+        .into_iter()
+        .collect();
+        let owner = OWNER.to_string();
+        let holdings = owned_via_rpc(&state, &owner, &candidates).await;
+        assert_eq!(holdings.owned, vec![triple("amoy", PLAIN_721, 7)]);
+        assert_eq!(holdings.failed.len(), 1, "{:?}", holdings.failed);
+        assert!(
+            holdings.failed[0].contains(&THROTTLED_721.to_string().to_lowercase())
+                && holdings.failed[0].contains("-32005"),
+            "a rate limit is an error, not a revert: {:?}",
+            holdings.failed
+        );
+        let asked = posts.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            owned_via_rpc(&state, &owner, &candidates).await,
+            holdings,
+            "the failed read is answered from memory"
+        );
+        assert_eq!(posts.load(std::sync::atomic::Ordering::SeqCst), asked);
+
+        // A down endpoint fails every contract of its network.
         use axum::routing::post;
         let down = serve(
             axum::Router::new().route("/", post(|| async { axum::http::StatusCode::BAD_GATEWAY })),
         )
         .await;
         let state = state_with(with_rpcs(&format!("80002={down}")));
-        let candidates: CandidateMap = [candidate("amoy", PLAIN_721, &["7"], false)]
-            .into_iter()
-            .collect();
-        assert!(
-            owned_via_rpc(&state, &OWNER.to_string(), &candidates)
-                .await
-                .is_err()
-        );
+        let holdings = owned_via_rpc(&state, &owner, &candidates).await;
+        assert!(holdings.owned.is_empty());
+        assert_eq!(holdings.failed.len(), 2, "{:?}", holdings.failed);
 
         // No endpoint configured for the network: the deployment has no reader.
         let state = state_with(with_rpcs(""));
         assert_eq!(
-            owned_via_rpc(&state, &OWNER.to_string(), &candidates).await,
-            Ok(Vec::new())
+            owned_via_rpc(&state, &owner, &candidates).await,
+            Holdings::default()
+        );
+    }
+
+    #[tokio::test]
+    async fn candidate_sets_of_one_size_never_share_a_cache_entry() {
+        let (rpc, _) = serve_chain().await;
+        let state = state_with(with_rpcs(&format!("80002={rpc}")));
+        let owner = OWNER.to_string();
+        let held: CandidateMap = [candidate("amoy", PLAIN_721, &["7"], false)]
+            .into_iter()
+            .collect();
+        let not_held: CandidateMap = [candidate("amoy", PLAIN_721, &["8"], false)]
+            .into_iter()
+            .collect();
+        assert_eq!(
+            owned_via_rpc(&state, &owner, &held).await.owned,
+            vec![triple("amoy", PLAIN_721, 7)]
+        );
+        assert_eq!(
+            owned_via_rpc(&state, &owner, &not_held).await.owned,
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn long_rpc_answers_are_clipped_in_errors() {
+        let long = "x".repeat(10 * ERROR_TEXT_CAP);
+        let cut = clipped(&long);
+        assert!(cut.len() < ERROR_TEXT_CAP + 32, "{}", cut.len());
+        assert!(cut.ends_with(&format!("({} bytes)", long.len())));
+        assert_eq!(clipped("short"), "short");
+        assert!(is_revert(
+            &json!({ "code": 3, "message": "execution reverted" })
+        ));
+        assert!(is_revert(
+            &json!({ "code": -32000, "message": "Execution Reverted: no token" })
+        ));
+        assert!(!is_revert(
+            &json!({ "code": -32005, "message": "rate limit exceeded" })
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_linked_item_on_a_network_without_an_endpoint_reads_as_not_owned() {
+        let item = LinkedItem {
+            asset_urn: "urn:decentraland:amoy:collections-thirdparty:tp:c1:hat".into(),
+            network: "amoy".into(),
+            contract: PLAIN_721.to_string().to_lowercase(),
+            token_id: "7".into(),
+            on_l1: false,
+        };
+        let mappings: HashMap<String, Value> = [(
+            item.asset_urn.clone(),
+            json!({ "amoy": { item.contract.clone(): [{ "type": "single", "id": "7" }] } }),
+        )]
+        .into_iter()
+        .collect();
+        let state = state_with(with_rpcs(""));
+        assert_eq!(
+            confirm_linked_items(&state, OWNER, &[&item], &mappings).await,
+            Ok(vec![false])
+        );
+        let (rpc, _) = serve_chain().await;
+        let state = state_with(with_rpcs(&format!("80002={rpc}")));
+        assert_eq!(
+            confirm_linked_items(&state, OWNER, &[&item], &mappings).await,
+            Ok(vec![true])
         );
     }
 
@@ -2058,15 +2187,22 @@ mod tests {
         .into_iter()
         .collect();
         let base = worker.trim_end_matches('/');
-        let owned = owned_via_nft_worker(&state, base, "0xowner", &contracts).await;
+        let holdings = owned_via_nft_worker(&state, base, "0xowner", &contracts).await;
         assert_eq!(
-            owned,
-            Ok(vec!["matic:0xabc:0xowner".to_string()]),
+            holdings,
+            Holdings {
+                owned: vec!["matic:0xabc:0xowner".to_string()],
+                failed: Vec::new(),
+            },
             "a non-2xx answer and a network outside ContractNetwork report nothing"
         );
         let unreachable =
             owned_via_nft_worker(&state, "http://127.0.0.1:1", "0xowner", &contracts).await;
-        assert!(unreachable.is_err(), "a transport failure fails the fetch");
+        assert_eq!(
+            unreachable.failed.len(),
+            2,
+            "a transport failure fails its network: {unreachable:?}"
+        );
     }
 
     #[test]
@@ -2087,20 +2223,35 @@ mod tests {
                 on_l1: true,
             }))
         );
-        for other in [
+        for unrecognised in [
             // An L1 collection: not checked, so not kept.
             "urn:decentraland:mainnet:collections-thirdparty:tp:c1:hat",
             "urn:decentraland:ethereum:collections-thirdparty:tp:c1:hat",
             // The NFT on a chain outside ContractNetwork.
             "urn:decentraland:matic:collections-thirdparty:tp:c1:hat:ethereum:0xabc:1",
             "urn:decentraland:matic:collections-thirdparty:tp:c1",
+        ] {
+            assert_eq!(
+                worn_third_party(unrecognised),
+                Some(WornThirdParty::Unrecognised),
+                "{unrecognised}"
+            );
+            assert!(is_third_party_urn(unrecognised));
+        }
+        for other in [
             "urn:decentraland:matic:collections-v2:0xabc:1",
             "urn:decentraland:off-chain:base-avatars:eyes_00",
         ] {
             assert_eq!(worn_third_party(other), None, "{other}");
         }
+        assert_eq!(
+            v1_third_party_urns(&[
+                "urn:decentraland:matic:collections-thirdparty:tp:c1:hat".to_string(),
+                "urn:decentraland:matic:collections-thirdparty:tp:c1:hat:matic:0xabc:1".to_string(),
+            ]),
+            ["urn:decentraland:matic:collections-thirdparty:tp:c1:hat"]
+        );
     }
-
     #[test]
     fn providers_parse_the_registry_answer() {
         let data = json!({ "thirdParties": [

@@ -437,7 +437,7 @@ async fn items_by_owner(
         let content_public_url = &state.settings.content_public_url;
         let owned = match super::third_party::owned_third_party_urns(state, owner, &name).await {
             Ok(owned) => owned,
-            Err(e) => return super::third_party::fetch_error(owner, &e),
+            Err(e) => return e.response(owner),
         };
         let body: Vec<Value> = owned
             .into_iter()

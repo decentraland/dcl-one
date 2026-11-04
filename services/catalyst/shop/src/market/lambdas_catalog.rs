@@ -1150,7 +1150,8 @@ pub async fn outfits(State(state): State<SharedState>, Path(id): Path<String>) -
 /// are lowercased. The upstream walk stops at the first wearable not owned,
 /// and its third-party check then decides alone for the items seen so far:
 /// an outfit `[owned third-party, not owned]` is kept with the first only.
-/// Without a collections subgraph nothing is checked, as profiles do.
+/// Without a collections subgraph nothing is checked, as profiles do. A
+/// failed ownership read answers the old lambdas' 502 `FetcherError`.
 async fn sanitize_outfits(
     state: &MarketplaceState,
     address: &str,
@@ -1210,7 +1211,7 @@ async fn sanitize_outfits(
                     wearables.push(wearable.to_string());
                     continue;
                 }
-                if wearable.contains("collections-thirdparty") {
+                if super::third_party::is_third_party_urn(wearable) {
                     wearables.push(wearable.to_string());
                     third_party.push(wearable.to_string());
                     continue;
@@ -1240,10 +1241,7 @@ async fn sanitize_outfits(
     } else {
         super::third_party::sanitize_third_party_urns(state, address, &worn_third_party)
             .await
-            .map_err(|e| {
-                tracing::error!(error = %e, address, "outfits: third-party ownership read failed");
-                super::internal_server_error()
-            })?
+            .map_err(|e| super::third_party::fetch_error(address, &e))?
             .into_iter()
             .collect()
     };

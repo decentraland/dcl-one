@@ -9,7 +9,7 @@
 //! table; without the subgraph readers this route answers the unavailable
 //! envelope, as the other ownership lambdas do.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use axum::Json;
@@ -32,12 +32,15 @@ use super::definitions::{
 use super::graph;
 use super::lambdas_catalog::cached_base_wearables;
 use super::readers;
-use super::third_party::fetch_all_third_party_wearables;
+use super::third_party::{FetchFailure, OnFailure, TpwElement, fetch_all_third_party_wearables};
 use super::user_items::is_third_party_name_urn;
-use super::{MarketplaceState, SharedState, bad_request, service_unavailable};
+use super::{MarketplaceState, SharedState, bad_request};
 
 const EXPLORER_CACHE_TTL: Duration = Duration::from_secs(30);
 const EXPLORER_CACHE_MAX_ENTRIES: usize = 50_000;
+/// The most `thirdPartyCollectionId` values one request may give. The old
+/// lambdas took any number; past this the request is refused (400).
+const MAX_THIRD_PARTY_COLLECTION_IDS: usize = 100;
 
 /// `(address, sort, direction, collection types, category, filters)`.
 pub type ExplorerKey = (String, String, String, String, &'static str, String);
@@ -91,6 +94,12 @@ fn parse_query(
         NonPositivePolicy::PassThrough,
     )
     .map_err(|e| Box::new(bad_request(&e)))?;
+    let third_party_collection_ids = qs_get_array(&params, "thirdPartyCollectionId");
+    if third_party_collection_ids.len() > MAX_THIRD_PARTY_COLLECTION_IDS {
+        return Err(Box::new(bad_request(&format!(
+            "Too many thirdPartyCollectionId values: at most {MAX_THIRD_PARTY_COLLECTION_IDS}."
+        ))));
+    }
     let name = get_first("name").map(|n| n.to_lowercase());
     let categories: Vec<String> = qs_get_array(&params, "category")
         .iter()
@@ -127,7 +136,7 @@ fn parse_query(
         include_amount: flag("includeAmount"),
         is_smart_wearable: flag("isSmartWearable"),
         network,
-        third_party_collection_ids: qs_get_array(&params, "thirdPartyCollectionId"),
+        third_party_collection_ids,
     })
 }
 
@@ -585,7 +594,7 @@ async fn fetch_base_items(state: &MarketplaceState) -> Vec<OwnedItem> {
         .collect()
 }
 
-fn third_party_item(e: super::third_party::TpwElement) -> OwnedItem {
+fn third_party_item(e: TpwElement) -> OwnedItem {
     OwnedItem {
         amount: e.individual_data.len() as i64,
         individual_data: e.individual_data,
@@ -605,48 +614,38 @@ fn third_party_item(e: super::third_party::TpwElement) -> OwnedItem {
 
 /// The third-party leg: every provider's wearables, or with
 /// `thirdPartyCollectionId` only those values' providers. As in
-/// decentraland/lamb2's explorer handler, each distinct value is cut to its
-/// first five parts and kept when it names a provider
-/// (`urn:decentraland:<network>:collections-thirdparty:<name>`); two values
-/// that name the same provider list its wearables twice.
+/// decentraland/lamb2's explorer handler, each value is cut to its first
+/// five parts and kept when it names a provider
+/// (`urn:decentraland:<network>:collections-thirdparty:<name>`), and a name
+/// no approved provider has is `Third Party not found`. Each provider is
+/// listed once: the old handler listed one twice when two distinct values
+/// named it. A provider contract that could not be read is left out.
 async fn fetch_third_party_items(
     state: &MarketplaceState,
     owner: &str,
     collection_ids: &[String],
-) -> Result<Vec<OwnedItem>, String> {
-    if collection_ids.is_empty() {
-        return Ok(fetch_all_third_party_wearables(state, owner, None)
-            .await?
-            .into_iter()
-            .map(third_party_item)
-            .collect());
-    }
-    let mut distinct: Vec<&str> = Vec::new();
-    for id in collection_ids {
-        if !distinct.contains(&id.as_str()) {
-            distinct.push(id);
-        }
-    }
-    let names: Vec<String> = distinct
-        .into_iter()
-        .filter_map(|id| {
-            let cleaned = id.split(':').take(5).collect::<Vec<_>>().join(":");
-            if !is_third_party_name_urn(&cleaned) {
-                return None;
-            }
-            cleaned.split(':').nth(4).map(str::to_string)
-        })
-        .collect();
-    let mut by_name: HashMap<&str, Vec<super::third_party::TpwElement>> = HashMap::new();
-    for name in &names {
-        if !by_name.contains_key(name.as_str()) {
-            let found = fetch_all_third_party_wearables(state, owner, Some(name)).await?;
-            by_name.insert(name.as_str(), found);
-        }
-    }
+) -> Result<Vec<OwnedItem>, FetchFailure> {
+    let names: Vec<Option<&str>> = if collection_ids.is_empty() {
+        vec![None]
+    } else {
+        let mut seen: HashSet<&str> = HashSet::new();
+        collection_ids
+            .iter()
+            .filter_map(|id| {
+                let cleaned = id.splitn(6, ':').take(5).collect::<Vec<_>>().join(":");
+                if !is_third_party_name_urn(&cleaned) {
+                    return None;
+                }
+                id.split(':').nth(4)
+            })
+            .filter(|name| seen.insert(name))
+            .map(Some)
+            .collect()
+    };
     let mut items = Vec::new();
-    for name in &names {
-        items.extend(by_name[name.as_str()].iter().cloned().map(third_party_item));
+    for name in names {
+        let found = fetch_all_third_party_wearables(state, owner, name, OnFailure::Skip).await?;
+        items.extend(found.into_iter().map(third_party_item));
     }
     Ok(items)
 }
@@ -715,8 +714,8 @@ async fn explorer_items(
             Json(json!({ "elements": page, "totalAmount": total, "pageNum": page_num, "pageSize": page_size })).into_response()
         }
         Err(e) => {
-            tracing::warn!(error = %e, address = %addr_lc, category, "explorer backpack reader failed");
-            service_unavailable("ownership readers unavailable")
+            tracing::warn!(error = ?e, address = %addr_lc, category, "explorer backpack reader failed");
+            e.response(&addr_lc)
         }
     }
 }
@@ -727,7 +726,7 @@ async fn compute_explorer_items(
     q: ExplorerQuery,
     category: &'static str,
     valid_collection_types: &[&'static str],
-) -> Result<Value, String> {
+) -> Result<Value, FetchFailure> {
     let item_types = if category == "wearable" {
         q.item_types()
     } else {
@@ -768,7 +767,7 @@ async fn compute_explorer_items(
         }
     };
     let (mut items, owned, third_party) = tokio::join!(base_leg, owned_leg, third_party_leg);
-    items.extend(owned?);
+    items.extend(owned.map_err(FetchFailure::Fetch)?);
     items.extend(third_party?);
     items.retain(|it| passes_filters(it, &q));
     sort_items(&mut items, &q.sort, &q.direction);
