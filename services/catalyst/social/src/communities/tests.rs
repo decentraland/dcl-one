@@ -29,7 +29,7 @@ use super::{Settings, State, router};
 
 mod analytics_parity;
 mod body_limit;
-mod compliance_parity;
+pub(super) mod compliance_parity;
 mod dependency_errors;
 mod fixture_shapes;
 mod full_http_parity;

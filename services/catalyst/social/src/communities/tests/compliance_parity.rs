@@ -8,7 +8,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
-fn goldens() -> Value {
+pub(in crate::communities) fn goldens() -> Value {
     serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"),"/services/catalyst/tests/fixtures/conformance/social/source-contracts/community-ai-compliance.json"))).unwrap()
 }
 fn content<'a>(case: &'a Value, bytes: Option<&'a [u8]>) -> Content<'a> {
@@ -49,10 +49,10 @@ fn provider_requests_and_cache_hashes_match_executed_sdk_source() {
     assert!(!compliance::changed(" \u{feff}NAME ", "name"));
     assert!(compliance::changed("\u{0085}name", "name"));
 }
-struct Provider {
-    url: String,
+pub(in crate::communities) struct Provider {
+    pub(in crate::communities) url: String,
     task: tokio::task::JoinHandle<()>,
-    calls: Arc<AtomicUsize>,
+    pub(in crate::communities) calls: Arc<AtomicUsize>,
     bodies: Arc<Mutex<Vec<Value>>>,
 }
 impl Drop for Provider {
@@ -60,7 +60,7 @@ impl Drop for Provider {
         self.task.abort();
     }
 }
-async fn provider(case: &Value, delay: std::time::Duration) -> Provider {
+pub(in crate::communities) async fn provider(case: &Value, delay: std::time::Duration) -> Provider {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/v1", listener.local_addr().unwrap());
     let calls = Arc::new(AtomicUsize::new(0));
@@ -113,7 +113,7 @@ async fn provider(case: &Value, delay: std::time::Duration) -> Provider {
         bodies,
     }
 }
-fn enabled_settings(url: &str) -> Settings {
+pub(in crate::communities) fn enabled_settings(url: &str) -> Settings {
     let mut settings = Settings::for_tests();
     settings.compliance.environment = "prd".into();
     settings.compliance.base_url = url.into();
