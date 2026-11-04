@@ -202,6 +202,7 @@ export function fakeSession(): EngineSession {
     },
     profile: fakeProfileState(),
     notifications: { list: [], unread: 0, open: false, toggle: vi.fn(), markAllRead: vi.fn() },
+    runDebugCommand: vi.fn(),
     skybox: { open: false, toggle: vi.fn(), hours: 10, progressing: true, setHours: vi.fn(), setProgressing: vi.fn() },
     emotes: { list: [], open: false, toggle: vi.fn(), play: vi.fn(), equip: vi.fn() },
     backpack: { list: [], total: 0, loading: false, query: vi.fn(), equipped: [], setColor: vi.fn(), open: false, toggle: vi.fn(), equip: vi.fn(), saveError: null, retrySave: vi.fn(), revertSave: vi.fn(), preview: vi.fn(), focus: vi.fn(), forceRender: [], setForceRender: vi.fn(), outfits: [], outfitSlots: 5, saveOutfit: vi.fn(), deleteOutfit: vi.fn(), equipOutfit: vi.fn(), outfitHistory: { canUndo: false, canRedo: false, rolling: false }, randomizeOutfit: vi.fn(), undoOutfit: vi.fn(), redoOutfit: vi.fn() },

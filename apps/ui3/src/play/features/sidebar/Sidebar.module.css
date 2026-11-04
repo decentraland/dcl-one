@@ -32,6 +32,21 @@
   gap: 8px;
 }
 
+/* Unity's standalone debug-container button for development play. */
+button.debugLauncher {
+  position: fixed;
+  right: calc(8px * var(--ui-scale));
+  bottom: calc(8px * var(--ui-scale));
+  z-index: var(--z-hud);
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: var(--r-button);
+  background: var(--panel-translucent);
+  transform: scale(var(--ui-scale));
+  transform-origin: bottom right;
+}
+
 /* 40px hairline divider — DCL/White10%. */
 .divider {
   width: 40px;

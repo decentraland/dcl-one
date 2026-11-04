@@ -1,0 +1,284 @@
+{
+  "provenance": {
+    "repository": "https://github.com/decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+    "runtime": "v26.12.0",
+    "sources": [
+      {
+        "path": "src/adapters/communities-db.ts",
+        "sha256": "0748e0d7f408e5565a89ff87975eea64fd84ff9c2213bb1038149a3473f0ad8a"
+      },
+      {
+        "path": "src/logic/community/bans.ts",
+        "sha256": "915b2cbc7c886e39b08150681a2bcd31c2a8a0494c8d1b310dd5475a5bf6e72d"
+      },
+      {
+        "path": "src/logic/community/communities.ts",
+        "sha256": "b5da768f47f9fcb5a400c25fa16a278fb4c2b7b8be7bbabbda94981951ad1391"
+      },
+      {
+        "path": "src/logic/community/places.ts",
+        "sha256": "5b39705d35d72443f8a07dc89e8041e4cf311b455c4c43f07e0e58e5a90eb358"
+      },
+      {
+        "path": "src/controllers/handlers/http/ban-member-handler.ts",
+        "sha256": "215504c3e95ac88c72c56e034863f6f70ff3febfdc34f58b0a57927ff8fdaf48"
+      },
+      {
+        "path": "src/controllers/handlers/http/update-community-handler.ts",
+        "sha256": "95b8c2634726e9d3c215bc65283a7766172fa5eff05b7a8896b6cc6fb0384b83"
+      }
+    ],
+    "scope": "Actual source HTTP handlers, community components and SQL adapter with real PostgreSQL triggers. Authority, thumbnail, analytics and external notification providers are local test dependencies; no source authentication middleware or production crash/concurrency test."
+  },
+  "id": "aabbccdd-0000-4000-8000-000000000001",
+  "owner": "0x1111111111111111111111111111111111111111",
+  "member": "0x2222222222222222222222222222222222222222",
+  "oldPlace": "00000000-0000-4000-8000-000000000004",
+  "newPlace": "00000000-0000-4000-8000-000000000005",
+  "cases": [
+    {
+      "name": "ban-kick-failure",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "fixture ban-kick-failure"
+        }
+      },
+      "state": {
+        "private": true,
+        "members": 1,
+        "likes": 1,
+        "bans": 0,
+        "requests": 1,
+        "places": [
+          "00000000-0000-4000-8000-000000000004"
+        ]
+      },
+      "events": [],
+      "trace": []
+    },
+    {
+      "name": "ban-unlike-failure",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "fixture ban-unlike-failure"
+        }
+      },
+      "state": {
+        "private": true,
+        "members": 0,
+        "likes": 1,
+        "bans": 0,
+        "requests": 1,
+        "places": [
+          "00000000-0000-4000-8000-000000000004"
+        ]
+      },
+      "events": [],
+      "trace": []
+    },
+    {
+      "name": "ban-insert-failure",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "fixture ban-insert-failure"
+        }
+      },
+      "state": {
+        "private": true,
+        "members": 0,
+        "likes": 0,
+        "bans": 0,
+        "requests": 1,
+        "places": [
+          "00000000-0000-4000-8000-000000000004"
+        ]
+      },
+      "events": [
+        {
+          "event": "BAN_MEMBER_FROM_COMMUNITY",
+          "properties": {
+            "community_id": "aabbccdd-0000-4000-8000-000000000001",
+            "banner_user_id": "0x1111111111111111111111111111111111111111",
+            "target_user_id": "0x2222222222222222222222222222222222222222"
+          }
+        }
+      ],
+      "trace": [
+        "analytics"
+      ]
+    },
+    {
+      "name": "ban-requests-failure",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "fixture ban-requests-failure"
+        }
+      },
+      "state": {
+        "private": true,
+        "members": 0,
+        "likes": 0,
+        "bans": 1,
+        "requests": 1,
+        "places": [
+          "00000000-0000-4000-8000-000000000004"
+        ]
+      },
+      "events": [
+        {
+          "event": "BAN_MEMBER_FROM_COMMUNITY",
+          "properties": {
+            "community_id": "aabbccdd-0000-4000-8000-000000000001",
+            "banner_user_id": "0x1111111111111111111111111111111111111111",
+            "target_user_id": "0x2222222222222222222222222222222222222222"
+          }
+        }
+      ],
+      "trace": [
+        "analytics"
+      ]
+    },
+    {
+      "name": "ban-success",
+      "response": {
+        "status": 204
+      },
+      "state": {
+        "private": true,
+        "members": 0,
+        "likes": 0,
+        "bans": 1,
+        "requests": 0,
+        "places": [
+          "00000000-0000-4000-8000-000000000004"
+        ]
+      },
+      "events": [
+        {
+          "event": "BAN_MEMBER_FROM_COMMUNITY",
+          "properties": {
+            "community_id": "aabbccdd-0000-4000-8000-000000000001",
+            "banner_user_id": "0x1111111111111111111111111111111111111111",
+            "target_user_id": "0x2222222222222222222222222222222222222222"
+          }
+        }
+      ],
+      "trace": [
+        "analytics",
+        "voice",
+        "pubsub",
+        "sns"
+      ]
+    },
+    {
+      "name": "update-place-insert-failure",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "fixture update-place-insert-failure"
+        }
+      },
+      "state": {
+        "private": false,
+        "members": 0,
+        "likes": 1,
+        "bans": 0,
+        "requests": 1,
+        "places": [
+          "00000000-0000-4000-8000-000000000005"
+        ]
+      },
+      "events": [],
+      "trace": []
+    },
+    {
+      "name": "update-accept-insert-failure",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "fixture update-accept-insert-failure"
+        }
+      },
+      "state": {
+        "private": false,
+        "members": 0,
+        "likes": 1,
+        "bans": 0,
+        "requests": 1,
+        "places": [
+          "00000000-0000-4000-8000-000000000004"
+        ]
+      },
+      "events": [],
+      "trace": []
+    },
+    {
+      "name": "update-accept-delete-failure",
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "fixture update-accept-delete-failure"
+        }
+      },
+      "state": {
+        "private": false,
+        "members": 0,
+        "likes": 1,
+        "bans": 0,
+        "requests": 1,
+        "places": [
+          "00000000-0000-4000-8000-000000000004"
+        ]
+      },
+      "events": [],
+      "trace": []
+    },
+    {
+      "name": "update-success",
+      "response": {
+        "status": 200,
+        "body": {
+          "message": "Community updated successfully",
+          "data": {
+            "id": "aabbccdd-0000-4000-8000-000000000001",
+            "name": "Fixture community",
+            "description": "Description",
+            "ownerAddress": "0x1111111111111111111111111111111111111111",
+            "privacy": "public",
+            "visibility": "all",
+            "active": true
+          }
+        }
+      },
+      "state": {
+        "private": false,
+        "members": 1,
+        "likes": 1,
+        "bans": 0,
+        "requests": 0,
+        "places": [
+          "00000000-0000-4000-8000-000000000004"
+        ]
+      },
+      "events": [
+        {
+          "event": "ACCEPT_ALL_REQUESTS_TO_JOIN",
+          "properties": {
+            "community_id": "aabbccdd-0000-4000-8000-000000000001",
+            "requests_ids": [
+              "00000000-0000-4000-8000-000000000003"
+            ]
+          }
+        }
+      ],
+      "trace": [
+        "analytics"
+      ]
+    }
+  ]
+}

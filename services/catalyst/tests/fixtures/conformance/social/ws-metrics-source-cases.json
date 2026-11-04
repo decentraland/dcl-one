@@ -1,0 +1,365 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+  },
+  "runtime": {
+    "node": "v26.12.0",
+    "metrics": "1.0.1",
+    "promClient": "15.1.3"
+  },
+  "scope": "Actual source metrics component with deterministic byte observations at every declared bucket boundary. No service startup or native socket buffering.",
+  "files": [
+    {
+      "path": "src/metrics.ts",
+      "sha256": "e872d06e154dd82ad0f6174aee657d0cf1c2bb3049f7282ef74e3b2dcab52f99"
+    },
+    {
+      "path": "node_modules/@dcl/metrics/dist/base.js",
+      "sha256": "63ba689b0b059de8f1e78559a7575842782179ded610a480e5cff56f88fe84b7"
+    },
+    {
+      "path": "node_modules/prom-client/lib/histogram.js",
+      "sha256": "09e2dbdeb98dfcc4f059eedfd7b890da52261bd90952e8223f788f8e3019199c"
+    }
+  ],
+  "observations": [
+    {
+      "result": "success",
+      "bytes": 0
+    },
+    {
+      "result": "success",
+      "bytes": 63
+    },
+    {
+      "result": "success",
+      "bytes": 64
+    },
+    {
+      "result": "success",
+      "bytes": 65
+    },
+    {
+      "result": "success",
+      "bytes": 127
+    },
+    {
+      "result": "success",
+      "bytes": 128
+    },
+    {
+      "result": "success",
+      "bytes": 129
+    },
+    {
+      "result": "success",
+      "bytes": 255
+    },
+    {
+      "result": "success",
+      "bytes": 256
+    },
+    {
+      "result": "success",
+      "bytes": 257
+    },
+    {
+      "result": "success",
+      "bytes": 511
+    },
+    {
+      "result": "success",
+      "bytes": 512
+    },
+    {
+      "result": "success",
+      "bytes": 513
+    },
+    {
+      "result": "success",
+      "bytes": 1023
+    },
+    {
+      "result": "success",
+      "bytes": 1024
+    },
+    {
+      "result": "success",
+      "bytes": 1025
+    },
+    {
+      "result": "success",
+      "bytes": 2047
+    },
+    {
+      "result": "success",
+      "bytes": 2048
+    },
+    {
+      "result": "success",
+      "bytes": 2049
+    },
+    {
+      "result": "success",
+      "bytes": 4095
+    },
+    {
+      "result": "success",
+      "bytes": 4096
+    },
+    {
+      "result": "success",
+      "bytes": 4097
+    },
+    {
+      "result": "success",
+      "bytes": 8191
+    },
+    {
+      "result": "success",
+      "bytes": 8192
+    },
+    {
+      "result": "success",
+      "bytes": 8193
+    },
+    {
+      "result": "success",
+      "bytes": 16383
+    },
+    {
+      "result": "success",
+      "bytes": 16384
+    },
+    {
+      "result": "success",
+      "bytes": 16385
+    },
+    {
+      "result": "backpressure",
+      "bytes": 0
+    },
+    {
+      "result": "backpressure",
+      "bytes": 63
+    },
+    {
+      "result": "backpressure",
+      "bytes": 64
+    },
+    {
+      "result": "backpressure",
+      "bytes": 65
+    },
+    {
+      "result": "backpressure",
+      "bytes": 127
+    },
+    {
+      "result": "backpressure",
+      "bytes": 128
+    },
+    {
+      "result": "backpressure",
+      "bytes": 129
+    },
+    {
+      "result": "backpressure",
+      "bytes": 255
+    },
+    {
+      "result": "backpressure",
+      "bytes": 256
+    },
+    {
+      "result": "backpressure",
+      "bytes": 257
+    },
+    {
+      "result": "backpressure",
+      "bytes": 511
+    },
+    {
+      "result": "backpressure",
+      "bytes": 512
+    },
+    {
+      "result": "backpressure",
+      "bytes": 513
+    },
+    {
+      "result": "backpressure",
+      "bytes": 1023
+    },
+    {
+      "result": "backpressure",
+      "bytes": 1024
+    },
+    {
+      "result": "backpressure",
+      "bytes": 1025
+    },
+    {
+      "result": "backpressure",
+      "bytes": 2047
+    },
+    {
+      "result": "backpressure",
+      "bytes": 2048
+    },
+    {
+      "result": "backpressure",
+      "bytes": 2049
+    },
+    {
+      "result": "backpressure",
+      "bytes": 4095
+    },
+    {
+      "result": "backpressure",
+      "bytes": 4096
+    },
+    {
+      "result": "backpressure",
+      "bytes": 4097
+    },
+    {
+      "result": "backpressure",
+      "bytes": 8191
+    },
+    {
+      "result": "backpressure",
+      "bytes": 8192
+    },
+    {
+      "result": "backpressure",
+      "bytes": 8193
+    },
+    {
+      "result": "backpressure",
+      "bytes": 16383
+    },
+    {
+      "result": "backpressure",
+      "bytes": 16384
+    },
+    {
+      "result": "backpressure",
+      "bytes": 16385
+    },
+    {
+      "result": "dropped",
+      "bytes": 0
+    },
+    {
+      "result": "dropped",
+      "bytes": 63
+    },
+    {
+      "result": "dropped",
+      "bytes": 64
+    },
+    {
+      "result": "dropped",
+      "bytes": 65
+    },
+    {
+      "result": "dropped",
+      "bytes": 127
+    },
+    {
+      "result": "dropped",
+      "bytes": 128
+    },
+    {
+      "result": "dropped",
+      "bytes": 129
+    },
+    {
+      "result": "dropped",
+      "bytes": 255
+    },
+    {
+      "result": "dropped",
+      "bytes": 256
+    },
+    {
+      "result": "dropped",
+      "bytes": 257
+    },
+    {
+      "result": "dropped",
+      "bytes": 511
+    },
+    {
+      "result": "dropped",
+      "bytes": 512
+    },
+    {
+      "result": "dropped",
+      "bytes": 513
+    },
+    {
+      "result": "dropped",
+      "bytes": 1023
+    },
+    {
+      "result": "dropped",
+      "bytes": 1024
+    },
+    {
+      "result": "dropped",
+      "bytes": 1025
+    },
+    {
+      "result": "dropped",
+      "bytes": 2047
+    },
+    {
+      "result": "dropped",
+      "bytes": 2048
+    },
+    {
+      "result": "dropped",
+      "bytes": 2049
+    },
+    {
+      "result": "dropped",
+      "bytes": 4095
+    },
+    {
+      "result": "dropped",
+      "bytes": 4096
+    },
+    {
+      "result": "dropped",
+      "bytes": 4097
+    },
+    {
+      "result": "dropped",
+      "bytes": 8191
+    },
+    {
+      "result": "dropped",
+      "bytes": 8192
+    },
+    {
+      "result": "dropped",
+      "bytes": 8193
+    },
+    {
+      "result": "dropped",
+      "bytes": 16383
+    },
+    {
+      "result": "dropped",
+      "bytes": 16384
+    },
+    {
+      "result": "dropped",
+      "bytes": 16385
+    }
+  ],
+  "prometheus": "# HELP ws_message_size_bytes Size of WebSocket messages in bytes\n# TYPE ws_message_size_bytes histogram\nws_message_size_bytes_bucket{le=\"64\",result=\"success\"} 3\nws_message_size_bytes_bucket{le=\"128\",result=\"success\"} 6\nws_message_size_bytes_bucket{le=\"256\",result=\"success\"} 9\nws_message_size_bytes_bucket{le=\"512\",result=\"success\"} 12\nws_message_size_bytes_bucket{le=\"1024\",result=\"success\"} 15\nws_message_size_bytes_bucket{le=\"2048\",result=\"success\"} 18\nws_message_size_bytes_bucket{le=\"4096\",result=\"success\"} 21\nws_message_size_bytes_bucket{le=\"8192\",result=\"success\"} 24\nws_message_size_bytes_bucket{le=\"16384\",result=\"success\"} 27\nws_message_size_bytes_bucket{le=\"+Inf\",result=\"success\"} 28\nws_message_size_bytes_sum{result=\"success\"} 98112\nws_message_size_bytes_count{result=\"success\"} 28\nws_message_size_bytes_bucket{le=\"64\",result=\"backpressure\"} 3\nws_message_size_bytes_bucket{le=\"128\",result=\"backpressure\"} 6\nws_message_size_bytes_bucket{le=\"256\",result=\"backpressure\"} 9\nws_message_size_bytes_bucket{le=\"512\",result=\"backpressure\"} 12\nws_message_size_bytes_bucket{le=\"1024\",result=\"backpressure\"} 15\nws_message_size_bytes_bucket{le=\"2048\",result=\"backpressure\"} 18\nws_message_size_bytes_bucket{le=\"4096\",result=\"backpressure\"} 21\nws_message_size_bytes_bucket{le=\"8192\",result=\"backpressure\"} 24\nws_message_size_bytes_bucket{le=\"16384\",result=\"backpressure\"} 27\nws_message_size_bytes_bucket{le=\"+Inf\",result=\"backpressure\"} 28\nws_message_size_bytes_sum{result=\"backpressure\"} 98112\nws_message_size_bytes_count{result=\"backpressure\"} 28\nws_message_size_bytes_bucket{le=\"64\",result=\"dropped\"} 3\nws_message_size_bytes_bucket{le=\"128\",result=\"dropped\"} 6\nws_message_size_bytes_bucket{le=\"256\",result=\"dropped\"} 9\nws_message_size_bytes_bucket{le=\"512\",result=\"dropped\"} 12\nws_message_size_bytes_bucket{le=\"1024\",result=\"dropped\"} 15\nws_message_size_bytes_bucket{le=\"2048\",result=\"dropped\"} 18\nws_message_size_bytes_bucket{le=\"4096\",result=\"dropped\"} 21\nws_message_size_bytes_bucket{le=\"8192\",result=\"dropped\"} 24\nws_message_size_bytes_bucket{le=\"16384\",result=\"dropped\"} 27\nws_message_size_bytes_bucket{le=\"+Inf\",result=\"dropped\"} 28\nws_message_size_bytes_sum{result=\"dropped\"} 98112\nws_message_size_bytes_count{result=\"dropped\"} 28\n"
+}
