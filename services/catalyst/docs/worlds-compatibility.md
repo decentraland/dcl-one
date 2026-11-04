@@ -91,7 +91,10 @@ difference not listed here is a gap, not a decision.
   only reuse files from its own bucket.
 - **Thumbnails** are hashed as CIDv1.
 - **Publish names.** Only `.dcl.eth` worlds (and personal worlds) accept
-  publishes and owner routes.
+  publishes and owner routes. ENS (`*.eth`) and bare names have no owner,
+  so in comms nobody gets the owner's implicit scene-admin and streaming
+  rights over them (explicit grants still apply), and their limits route
+  answers 404.
 - **Newer-entity check** compares against the lower of the stored entity's
   timestamp and its row's update time, so a future-dated mirrored or
   imported entity cannot block redeploys.
