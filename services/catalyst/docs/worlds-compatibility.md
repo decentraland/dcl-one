@@ -34,7 +34,11 @@ difference not listed here is a gap, not a decision.
   the wallet's DCL NAME worlds; the stats route reports the same during an
   outage, while the publish and `/limits` answer 503 and the quota pass
   keeps existing blocks. An answered allowance is reused for 60 seconds and
-  a failed lookup for 15 seconds; at most 8 lookups run at once.
+  a failed lookup for 15 seconds. At most 8 publish and `/limits` lookups
+  run at once, and one that waits over 5 seconds for a slot answers 503;
+  the stats route has 2 slots of its own and, when they are busy, reports
+  the per-scene caps instead of waiting. The 12-hourly quota pass evaluates
+  both the stored owner and the live holder of each DCL NAME world.
   A publish credits back only the replaced scenes of a world charged to
   the same owner.
 - **Legacy content keys.** The worlds `/contents/{key}` route also accepts a
@@ -85,11 +89,16 @@ difference not listed here is a gap, not a decision.
   included) is shared for 5 seconds. When the authority cannot answer,
   nobody is admitted as owner: the stored owner's refusal answers 503
   (upstream fails the whole mint), anyone else gets the access setting's
-  401/403. The scene host's periodic re-admission keeps connected clients
-  while the answer is undetermined. `GET /world/{name}/permissions` reports
-  the live holder (no `owner` while the authority cannot answer), and the
-  comms owner read for stream-key notices is unavailable then; neither
-  falls back to the stored owner.
+  401/403. The scene host's re-admission (periodic and on access changes)
+  keeps a connected client whose answer is undetermined: an authority
+  fault for the stored owner or a client admitted as owner, and a database
+  fault reading the world, its grants or bans; a client admitted by the
+  shared secret keeps that grant until the secret or access type changes.
+  `GET /world/{name}/permissions` reports the live holder and, like
+  `/limits`, answers 503 while the authority cannot answer; the comms owner
+  read for stream-key notices is unavailable then too. Neither falls back
+  to the stored owner. Publishes of one world are serialized, so a publish
+  by a new holder always sees the owner it replaces.
 - **Capacity check fails closed.** When the live occupancy of a world cannot
   be recovered, the comms mint answers 503 instead of counting zero
   participants and admitting the user.
@@ -134,6 +143,10 @@ difference not listed here is a gap, not a decision.
   included. A previous holder the world's access setting no longer admits
   is removed from the world's live rooms, as it is when a new holder's
   publish replaces the stored owner.
+- **Unowned names.** Bare names, and ENS names while `ALLOW_ENS_DOMAINS`
+  is off, have no owner, so in comms nobody gets the owner's implicit
+  scene-admin and streaming rights over them (explicit grants still
+  apply), and their limits route answers 404.
 - **Newer-entity check** compares against the lower of the stored entity's
   timestamp and its row's update time, so a future-dated mirrored or
   imported entity cannot block redeploys.

@@ -55,6 +55,12 @@ fn counts_against_allowance(world: &WorldName) -> bool {
 pub trait SpaceAllowance: Send + Sync {
     async fn allowance_bytes(&self, wallet: &Address) -> Result<i64, String>;
 
+    /// [`Self::allowance_bytes`] for unauthenticated reads: an error rather
+    /// than waiting behind other lookups.
+    async fn allowance_bytes_if_idle(&self, wallet: &Address) -> Result<i64, String> {
+        self.allowance_bytes(wallet).await
+    }
+
     /// Whether a source is configured (else every allowance is unlimited).
     fn is_limited(&self) -> bool {
         true
@@ -269,6 +275,13 @@ impl CoreState {
                 .map_err(|e| CapError::Unavailable(e.to_string()))?
                 .ok_or(CapError::OwnerNotFound)?,
         };
+        // No allowance source: nothing to re-check, so no wallet lock.
+        if !self.allowance.is_limited() {
+            return Ok(SceneCap {
+                max: limits.max_size_bytes,
+                charge: None,
+            });
+        }
         let allowance = self
             .allowance
             .allowance_bytes(&owner)
@@ -452,24 +465,39 @@ impl CoreState {
     }
 
     /// The 12-hourly quota pass (the old update-owner job's second step):
-    /// every owner of a local DCL world with a scene is blocked when over
+    /// every stored owner and live holder of a local DCL world with a scene is blocked when over
     /// its allowance; blocks this pass did not refresh are lifted, except
     /// those of owners it failed to evaluate.
     pub async fn quota_pass(&self) -> anyhow::Result<()> {
         let started = chrono::Utc::now().naive_utc();
-        let rows: Vec<(String, String)> = sqlx::query_as(
+        let rows: Vec<(String, Option<String>)> = sqlx::query_as(
             "SELECT w.name, w.owner FROM worlds.worlds w \
-              WHERE w.owner IS NOT NULL AND w.mirror_source IS NULL \
+              WHERE w.mirror_source IS NULL \
                 AND EXISTS (SELECT 1 FROM worlds.world_scenes s \
                              WHERE s.world_name = w.name AND s.mirror_source IS NULL)",
         )
         .fetch_all(&self.pool)
         .await?;
+        let rows: Vec<(WorldName, Option<String>)> = rows
+            .into_iter()
+            .filter_map(|(name, owner)| Some((WorldName::parse(&name).ok()?, owner)))
+            .filter(|(world, _)| counts_against_allowance(world))
+            .collect();
         let mut owners: Vec<Address> = rows
             .iter()
-            .filter(|(name, _)| WorldName::parse(name).is_ok_and(|w| counts_against_allowance(&w)))
-            .filter_map(|(_, owner)| Address::parse(owner).ok())
+            .filter_map(|(_, owner)| Address::parse(owner.as_deref()?).ok())
             .collect();
+        // The live holders too, so a NAME's new holder is evaluated before the owner reconcile.
+        let worlds: Vec<WorldName> = rows.into_iter().map(|(w, _)| w).collect();
+        for (world, holder) in self.policy.reconcile_owners(&worlds).await {
+            match holder {
+                Ok(Some(holder)) => owners.push(holder),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::warn!(%world, %error, "quota pass: live holder unresolved; stored owner used")
+                }
+            }
+        }
         owners.sort();
         owners.dedup();
         let mut failed = Vec::new();
@@ -515,22 +543,30 @@ pub(crate) mod test_support {
 
     /// Allowances by wallet in bytes (`None`: an outage); unknown wallets are unlimited.
     #[derive(Default)]
-    pub(crate) struct FixedAllowance(parking_lot::Mutex<HashMap<Address, Option<i64>>>);
+    pub(crate) struct FixedAllowance {
+        bytes: parking_lot::Mutex<HashMap<Address, Option<i64>>>,
+        /// Answers as if no allowance source were configured.
+        pub(crate) unconfigured: std::sync::atomic::AtomicBool,
+    }
 
     impl FixedAllowance {
         pub(crate) fn set(&self, wallet: &Address, bytes: Option<i64>) {
-            self.0.lock().insert(wallet.clone(), bytes);
+            self.bytes.lock().insert(wallet.clone(), bytes);
         }
     }
 
     #[async_trait::async_trait]
     impl SpaceAllowance for FixedAllowance {
         async fn allowance_bytes(&self, wallet: &Address) -> Result<i64, String> {
-            match self.0.lock().get(wallet) {
+            match self.bytes.lock().get(wallet) {
                 None => Ok(i64::MAX),
                 Some(Some(bytes)) => Ok(*bytes),
                 Some(None) => Err("allowance outage".to_string()),
             }
+        }
+
+        fn is_limited(&self) -> bool {
+            !self.unconfigured.load(std::sync::atomic::Ordering::SeqCst)
         }
     }
 

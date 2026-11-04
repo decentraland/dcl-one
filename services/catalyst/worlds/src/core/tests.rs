@@ -5456,6 +5456,21 @@ async fn permissions_owner_falls_back_to_the_name_holder() {
 }
 
 #[tokio::test]
+async fn permissions_answer_503_while_the_owner_is_undetermined() {
+    let Some((f, ens)) = fixture_with_ens(1 << 20).await else {
+        return;
+    };
+    ens.set_down(true);
+    let world = ens_world_name();
+    expect(
+        &f.app,
+        Case::new("get", format!("/world/{}/permissions", world.display())),
+        503,
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn worlds_listing_pages_leniently_with_millisecond_timestamps() {
     let Some(f) = fixture().await else { return };
     let (world, owner) = (world_name(), Wallet::random().address);
@@ -5656,6 +5671,9 @@ async fn world_limits_report_what_a_publish_is_checked_against() {
     ] {
         expect(app, limits_case(&world, bad), 400).await;
     }
+
+    let bare = WorldName::parse(world.label()).unwrap();
+    expect(app, limits_case(&bare, ""), 404).await;
 
     let unowned = world_name();
     expect(app, limits_case(&unowned, ""), 404).await;
@@ -6485,6 +6503,87 @@ async fn permission_edits_notify_each_address_actually_changed() {
     );
 }
 
+/// Two first publishes of one world by different holders serialize: the
+/// second sees the first's owner and reports it replaced.
+#[tokio::test]
+async fn concurrent_first_publishes_by_different_holders_report_the_replaced_owner() {
+    let Some(f) = fixture().await else { return };
+    let world = world_name();
+    let mut held = f.pool.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+        .bind(store::publish_lock_key(&world))
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let mut publishes = Vec::new();
+    for (i, base) in ["0,0", "5,5"].into_iter().enumerate() {
+        let owner = Wallet::random().address;
+        let thumb = hash_bytes_v1(b"race thumb");
+        f.storage
+            .store(&thumb, bytes::Bytes::from_static(b"race thumb"))
+            .await
+            .unwrap();
+        let entity = scene_entity(&world, &format!("Race {i}"), &thumb, base, &[base]);
+        let entity_bytes = serde_json::to_vec(&entity).unwrap();
+        let entity_id = hash_bytes_v1(&entity_bytes);
+        f.storage
+            .store(&entity_id, bytes::Bytes::from(entity_bytes))
+            .await
+            .unwrap();
+        let (pool, storage, world) = (f.pool.clone(), f.storage.clone(), world.clone());
+        publishes.push(tokio::spawn(async move {
+            store::deploy_scene(
+                &pool,
+                &storage,
+                SceneDeployment {
+                    world: &world,
+                    name_owner: Some(&owner),
+                    entity_id: &entity_id,
+                    deployer: &owner,
+                    deployment_auth_chain: &json!([]),
+                    entity: &entity,
+                    parcels: &parcels(&[base]),
+                    size: 1,
+                    replacement: &Deploy::Owner,
+                    forward_to: None,
+                    quota: None,
+                },
+            )
+            .await
+            .map(|previous| (owner, previous))
+        }));
+    }
+    // Both publishes queue on the world's lock before either reads the owner.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let waiting: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted \
+               AND ((classid::bigint << 32) | objid::bigint) = hashtextextended($1, 0)",
+        )
+        .bind(store::publish_lock_key(&world))
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+        if waiting == 2 {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "both publishes wait on the world's publish lock"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    held.commit().await.unwrap();
+    let mut outcomes = Vec::new();
+    for publish in publishes {
+        outcomes.push(publish.await.unwrap().unwrap());
+    }
+    let replaced: Vec<&Address> = outcomes.iter().filter_map(|(_, p)| p.as_ref()).collect();
+    assert_eq!(replaced.len(), 1, "{outcomes:?}");
+    let (first, _) = outcomes.iter().find(|(_, p)| p.is_none()).unwrap();
+    assert_eq!(replaced[0], first);
+}
+
 fn ens_world_name() -> WorldName {
     WorldName::parse(&format!(
         "e{}.eth",
@@ -6721,6 +6820,61 @@ async fn one_edit_notifies_at_most_the_capped_number_of_addresses() {
         .filter(|a| !notices_of(&f, PERMISSION_GRANTED, a).is_empty())
         .count();
     assert_eq!(notified, super::permissions::MAX_NOTICES_PER_EDIT);
+}
+
+#[tokio::test]
+async fn without_an_allowance_source_a_publish_is_charged_to_nobody() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random().address);
+    f.names.set(&owner, world.label());
+    f.allowance.set(&owner, Some(1));
+    f.allowance
+        .unconfigured
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let limits = f.state.policy.world_limits(&world).await.unwrap();
+    let cap = f
+        .state
+        .scene_cap(&world, &limits, Some(&owner), Some(&["0,0".to_string()]))
+        .await
+        .unwrap();
+    assert_eq!(cap.max, limits.max_size_bytes);
+    assert!(cap.charge.is_none());
+}
+
+/// A NAME's new holder is evaluated by the next pass, before the owner reconcile.
+#[tokio::test]
+async fn the_quota_pass_evaluates_the_live_name_holder() {
+    let Some(f) = fixture().await else { return };
+    let _quota = super::quota::test_support::QUOTA_DB.lock().await;
+    let (world, previous, holder) = (
+        world_name(),
+        Wallet::random().address,
+        Wallet::random().address,
+    );
+    f.names.set(&previous, world.label());
+    sized_scene(&f, &world, &previous, 'p', &["0,0"], 250).await;
+    f.names.forget(&previous);
+    f.names.set(&holder, world.label());
+    f.market.graph.names.clear();
+    f.market.graph.name_owner.clear();
+    f.allowance.set(&holder, Some(100));
+    f.state.quota_pass().await.unwrap();
+    let blocked: Option<String> =
+        sqlx::query_scalar("SELECT wallet FROM worlds.quota_blocks WHERE wallet = $1")
+            .bind(&holder)
+            .fetch_optional(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(blocked.as_deref(), Some(holder.as_str()));
+    assert_eq!(
+        stored_owner(&f.pool, &world).await.as_deref(),
+        Some(previous.as_str())
+    );
+    sqlx::query("DELETE FROM worlds.quota_blocks WHERE wallet = $1")
+        .bind(&holder)
+        .execute(&f.pool)
+        .await
+        .unwrap();
 }
 
 /// Two publishes validated against the same remaining allowance: the

@@ -566,7 +566,36 @@ pub async fn referenced_rows_among_on(
     conn: &mut sqlx::PgConnection,
     keys: &[String],
 ) -> Result<HashSet<String>, GcError> {
-    rows_among(conn, keys, true).await
+    rows_among(conn, keys, true, ALL_ROWS).await
+}
+
+/// The oldest transaction a scan started now might not see: rows it misses were written at or after it.
+async fn scene_fence(pool: &PgPool) -> Result<i64, GcError> {
+    Ok(
+        sqlx::query_scalar("SELECT pg_snapshot_xmin(pg_current_snapshot())::text::bigint")
+            .fetch_one(pool)
+            .await?,
+    )
+}
+
+/// [`referenced_among_on`], reading only scene and pending-upload rows written at or after `fence`.
+async fn referenced_since(
+    conn: &mut sqlx::PgConnection,
+    pins: Pins<'_>,
+    keys: &[String],
+    fence: i64,
+) -> Result<HashSet<String>, GcError> {
+    if keys.is_empty() {
+        return Ok(HashSet::new());
+    }
+    // Assigning this transaction an id pins `age()` to it.
+    let current: i64 = sqlx::query_scalar("SELECT pg_current_xact_id()::text::bigint")
+        .fetch_one(&mut *conn)
+        .await?;
+    let fixed = fixed_references(conn, pins).await?;
+    let mut found = rows_among(conn, keys, true, (current - fence).max(0)).await?;
+    found.extend(keys.iter().filter(|k| fixed.contains(*k)).cloned());
+    Ok(found)
 }
 
 /// [`referenced_among_on`] on a pooled connection.
@@ -600,16 +629,18 @@ async fn references_among(
         return Ok(HashSet::new());
     }
     let fixed = fixed_references(conn, pins).await?;
-    let mut found = rows_among(conn, keys, pending).await?;
+    let mut found = rows_among(conn, keys, pending, ALL_ROWS).await?;
     found.extend(keys.iter().filter(|k| fixed.contains(*k)).cloned());
     Ok(found)
 }
 
-/// The database rows' part of [`references_among`].
+/// The database rows' part of [`references_among`], counting only scene and
+/// pending-upload rows at most `max_age` transactions old.
 async fn rows_among(
     conn: &mut sqlx::PgConnection,
     keys: &[String],
     pending: bool,
+    max_age: i64,
 ) -> Result<HashSet<String>, GcError> {
     let mut found = HashSet::new();
     if keys.is_empty() {
@@ -629,14 +660,15 @@ async fn rows_among(
         found.extend(rows);
     }
     let rows: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT e ->> 'hash' FROM (SELECT entity FROM worlds.world_scenes \
-           UNION ALL SELECT entity FROM worlds.retired_world_scenes \
-           UNION ALL SELECT entity FROM worlds.pending_scenes WHERE $2) s \
+        "SELECT DISTINCT e ->> 'hash' FROM (SELECT entity FROM worlds.world_scenes WHERE age(xmin) <= $3 \
+           UNION ALL SELECT entity FROM worlds.retired_world_scenes WHERE age(xmin) <= $3 \
+           UNION ALL SELECT entity FROM worlds.pending_scenes WHERE $2 AND age(xmin) <= $3) s \
          CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(s.entity -> 'content') = 'array' THEN s.entity -> 'content' ELSE '[]'::jsonb END) e \
          WHERE e ->> 'hash' = ANY($1)",
     )
     .bind(keys)
     .bind(pending)
+    .bind(max_age)
     .fetch_all(&mut *conn)
     .await?;
     found.extend(rows);
@@ -645,6 +677,9 @@ async fn rows_among(
 
 /// The partial-upload staging sources ([`published_among`] leaves them out).
 const PENDING_PREFIX: &str = "worlds.pending_";
+
+/// A `max_age` that counts every row.
+const ALL_ROWS: i64 = i32::MAX as i64;
 
 const CHUNK: usize = 2_000;
 
@@ -696,7 +731,8 @@ pub async fn collect(
             chunk.sort();
             chunk.dedup();
             // The fixed references never enter a chunk.
-            let referenced = rows_among(&mut *pool.acquire().await?, &chunk, true).await?;
+            let referenced =
+                rows_among(&mut *pool.acquire().await?, &chunk, true, ALL_ROWS).await?;
             report.references += referenced.len();
             orphans.extend(chunk.drain(..).filter(|id| !referenced.contains(id)));
         }
@@ -725,9 +761,20 @@ async fn unlink_orphans(
     report: &mut GcReport,
 ) -> Result<(), GcError> {
     for batch in orphans.chunks(CHUNK) {
+        // The full scan runs unlocked; the lock re-checks only what was written since.
+        let fence = scene_fence(pool).await?;
+        let unlocked = referenced_among(pool, pins, batch).await?;
+        let survivors: Vec<String> = batch
+            .iter()
+            .filter(|id| !unlocked.contains(*id))
+            .cloned()
+            .collect();
+        if survivors.is_empty() {
+            continue;
+        }
         let mut lock = lock_store_exclusive(pool).await?;
-        let referenced_now = referenced_among_on(&mut lock, pins, batch).await?;
-        for id in batch.iter().filter(|id| !referenced_now.contains(*id)) {
+        let referenced_now = referenced_since(&mut lock, pins, &survivors, fence).await?;
+        for id in survivors.iter().filter(|id| !referenced_now.contains(*id)) {
             // A blob stored again since the walk is young again: keep it.
             let meta = match super::resolve_file_path(storage.root(), id) {
                 Ok(path) => tokio::fs::metadata(path).await.ok(),
@@ -864,6 +911,91 @@ mod tests {
         assert!(try_lock_run(&pool).await.unwrap().is_none());
         run.commit().await.unwrap();
         assert!(try_lock_run(&pool).await.unwrap().is_some());
+    }
+
+    /// Under the lock only scenes and pending uploads written since the fence are read; the full check sees all.
+    #[tokio::test]
+    async fn the_locked_recheck_reads_only_scenes_written_since_the_fence() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let world = format!("gc{}.dcl.eth", uuid::Uuid::new_v4().simple());
+        let (old, new) = (format!("old-{world}"), format!("new-{world}"));
+        let (old_pending, new_pending) = (format!("oldp-{world}"), format!("newp-{world}"));
+        sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let insert_scene = |entity_id: &'static str, hash: String| {
+            let (pool, world) = (pool.clone(), world.clone());
+            async move {
+                sqlx::query_scalar::<_, i64>(
+                    "INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) \
+                     VALUES ($1, $2, '[]'::json, $3, '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '{\"0,0\"}', 1) \
+                     RETURNING xmin::text::bigint",
+                )
+                .bind(&world)
+                .bind(entity_id)
+                .bind(json!({ "content": [{ "file": "a", "hash": hash }] }))
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let insert_pending = |entity_id: String, hash: String| {
+            let (pool, world) = (pool.clone(), world.clone());
+            async move {
+                sqlx::query(
+                    "INSERT INTO worlds.pending_scenes (entity_id, world_name, parcels, entity, deployer, created_at) \
+                     VALUES ($1, $2, '{\"0,0\"}', $3, '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', timezone('UTC', now()))",
+                )
+                .bind(entity_id)
+                .bind(&world)
+                .bind(json!({ "content": [{ "file": "a", "hash": hash }] }))
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        insert_pending(format!("bafyoldp{world}"), old_pending.clone()).await;
+        let written = insert_scene("bafyold", old.clone()).await;
+        assert!(scene_fence(&pool).await.unwrap() > 0);
+        let fence = written + 1;
+        insert_scene("bafynew", new.clone()).await;
+        insert_pending(format!("bafynewp{world}"), new_pending.clone()).await;
+        let keys = vec![
+            old.clone(),
+            new.clone(),
+            old_pending.clone(),
+            new_pending.clone(),
+        ];
+        let dir =
+            std::env::temp_dir().join(format!("catalyst-gc-{}", uuid::Uuid::new_v4().simple()));
+        let storage = Storage::from_config(&dir).await.unwrap();
+        let pins = Pins::new(&storage, &[]);
+
+        let mut lock = lock_store_exclusive(&pool).await.unwrap();
+        assert_eq!(
+            referenced_since(&mut lock, pins, &keys, fence)
+                .await
+                .unwrap(),
+            HashSet::from([new.clone(), new_pending.clone()])
+        );
+        assert_eq!(
+            referenced_among_on(&mut lock, pins, &keys).await.unwrap(),
+            HashSet::from([old, new, old_pending, new_pending])
+        );
+        lock.rollback().await.unwrap();
+        for table in ["worlds.world_scenes", "worlds.pending_scenes"] {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM {table} WHERE world_name = $1"
+            )))
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
     }
 
     /// A candidate stored again after the walk is young again under the lock and stays.

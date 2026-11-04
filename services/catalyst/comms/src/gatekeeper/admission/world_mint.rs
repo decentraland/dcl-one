@@ -62,6 +62,7 @@ fn window_start_cutoff(now: NaiveDateTime) -> NaiveDateTime {
 
 /// Wrong shared secrets of one caller for one world, in
 /// `social.world_secret_attempts` (a fixed window from the first failure).
+/// Admission bookkeeping, not user authority: written even with social writes off.
 struct SecretAttempts<'a> {
     pool: &'a PgPool,
     world: &'a str,
