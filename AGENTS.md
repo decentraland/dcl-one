@@ -75,7 +75,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 - Prefer the smallest readable implementation: no forwarding layers, internal HTTP hops or per-service pools; direct SQL and a passed transaction for atomic writes.
 - A new crate needs an independent consumer or a concrete build requirement.
 - Preserve external API paths and room names when code moves.
-- Shop absorbs every Marketplace feature; its UI lives in `apps/ui3/src/shop`.
+- Shop absorbs every Marketplace feature. New and migrated Shop code follows `docs/web-app-standards.md` (`apps/ui3` is transitional) and `docs/ui-standards.md`.
 - Credits are the main payment option; logged-in web3 wallets also see MANA.
 - LAND and every secondary sale are MANA-only, with guidance for web2 users.
 - Enforce eligibility in backend and settlement, including legacy routes; hiding a button is insufficient.
@@ -98,6 +98,8 @@ migrates), `library/ui/` or
 `rendering/bevy-explorer/source/react-web/`, read and follow
 [`docs/ui-standards.md`](docs/ui-standards.md). It defines component styling,
 shared foundations and components, accessibility, migration and verification.
+
+State, data fetching and structure follow [`docs/web-app-standards.md`](docs/web-app-standards.md), and tests follow [`docs/frontend-testing.md`](docs/frontend-testing.md).
 
 ## Explorer automation
 

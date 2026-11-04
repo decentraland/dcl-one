@@ -28,8 +28,7 @@ guessing. The first standard defined here is styling.
 
 ## Relation to the contributor guides
 
-The current contributor guides reflect the standards in production. This
-document defines the new standards for One.
+The current contributor guides reflect the standards in production. This document defines the new standards for One. State, data fetching and structure are in [web app architecture standards](web-app-standards.md), and tests in [frontend testing standards](frontend-testing.md).
 
 ## Styling: CSS Modules
 
