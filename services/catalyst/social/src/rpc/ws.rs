@@ -90,6 +90,15 @@ async fn handle_connection(
         return Ok(());
     };
     tracing::info!(address = %address, "social-rpc client authenticated");
+    // The slot is taken in authentication order, as the source admits at
+    // authentication: past the cap the address's oldest socket ends (3005).
+    // Attaching sends ServerReady off the server loop, so registration order
+    // is not authentication order and must not decide eviction.
+    let address_key = address.to_string();
+    state
+        .ctx
+        .admission()
+        .claim(&address_key, slot.close.clone(), Protocol::Rpc);
 
     let Some(events) = state.rpc_events() else {
         return Err(anyhow!(
@@ -107,10 +116,14 @@ async fn handle_connection(
     if let Err(e) = events.send_attach_transport(Arc::new(transport)) {
         let (code, reason) = RPC_TRANSPORT_CLOSED;
         slot.close.end(code, reason);
+        state.ctx.admission().release(&address_key, &slot.close);
         return Err(anyhow!("attach transport: {e:?}"));
     }
     // The socket keeps its place in the pool until its close frame is out.
     let _ = writer.await;
+    // The server's close handler also frees it; a transport that ended
+    // before its ServerReady was never registered there.
+    state.ctx.admission().release(&address_key, &slot.close);
     Ok(())
 }
 

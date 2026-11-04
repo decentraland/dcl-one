@@ -336,9 +336,9 @@ pub const SHUTTING_DOWN: (u16, &str) = (1001, "Server shutting down");
 /// How long shutdown waits for the sockets to close.
 const SHUTDOWN_BUDGET: Duration = Duration::from_secs(2);
 
-/// The server with its transport handlers: a connected socket registers its
-/// identity, takes its address's socket slot (displacing the oldest past the
-/// cap, `limits::Admission`) and counts the address present (across its
+/// The server with its transport handlers: a connected socket (its address
+/// slot already taken at authentication, `ws::handle_connection`) registers
+/// its identity and counts the address present (across its
 /// sockets of both protocols); a closed one forgets it, frees the slot and,
 /// when it was the address's last, ends the call it was on (#479).
 fn build_rpc_server(
@@ -355,9 +355,6 @@ fn build_rpc_server(
         let address = transport.address().to_string();
         bind_ctx.register_identity(transport_id, address.clone());
         bind_ctx.register_kill_handle(transport_id, transport.close_handle());
-        bind_ctx
-            .admission()
-            .claim(&address, transport.close_handle(), limits::Protocol::Rpc);
         bind_ctx.mark_online(&address);
     });
     let forget_ctx = ctx.clone();

@@ -361,6 +361,49 @@ async fn the_ninth_socket_of_an_address_ends_its_oldest() {
     server.jobs.shutdown(Duration::from_secs(2)).await;
 }
 
+/// RPC sockets take their address slot at authentication. With one socket
+/// admitted and the cap's worth of newer ones authenticating at once, the
+/// oldest is the one ended (3005) and every newer one keeps its slot, however
+/// their ServerReady frames interleave.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_rpc_sockets_always_end_the_oldest() {
+    let server = spawn_server(None, 5).await;
+    let me = PrivateKeySigner::random();
+    let address = format!("{:#x}", me.address());
+    let admission = server.state.ctx.admission();
+    let rpc = async |server: &Server| {
+        let mut socket = connect(server, "/social-rpc").await;
+        let (_, frame) = crate::rpc::handshake::test_support::frame_for(
+            &me,
+            "/",
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .await;
+        socket.send(WsMessage::Text(frame.into())).await.unwrap();
+        socket
+    };
+    let mut oldest = rpc(&server).await;
+    assert!(matches!(next_message(&mut oldest).await, WsMessage::Binary(_)));
+    assert!(
+        crate::shared::test_wait::until(async || admission.sockets_of(&address) == 1).await,
+        "the oldest socket holds a slot"
+    );
+    let mut newer = futures::future::join_all(
+        (0..crate::rpc::limits::DEFAULT_MAX_SOCKETS_PER_ADDRESS).map(|_| rpc(&server)),
+    )
+    .await;
+    let close = closing_frame(&mut oldest).await;
+    assert_eq!(u16::from(close.code), 3005);
+    for socket in &mut newer {
+        assert!(matches!(next_message(socket).await, WsMessage::Binary(_)));
+    }
+    for socket in &mut newer {
+        assert!(silent(socket).await, "a newer socket keeps its slot");
+    }
+    assert_eq!(admission.sockets_of(&address), 8);
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}
+
 /// Upstream `safeSend` (`src/adapters/stream-sessions/component.ts:110-131`):
 /// a frame sent while more than `WS_MAX_BACKPRESSURE` bytes wait to be
 /// written closes the socket 1008 "Slow consumer". Here a client that sends
