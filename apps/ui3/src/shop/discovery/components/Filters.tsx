@@ -180,17 +180,37 @@ export function FilterSection({
   );
 }
 
-function SwitchRow({ label, checked, onChange, testId }: { label: string; checked: boolean; onChange: (v: boolean) => void; testId: string }) {
+function TypeCheckbox({ label, checked, onChange, testId }: { label: string; checked: boolean; onChange: (v: boolean) => void; testId: string }) {
   return (
-    <div className="shop-filters__toggle">
-      <span className="shop-filters__toggleleft">
-        <span className="shop-filters__toggletitle">{label}</span>
-      </span>
-      <button type="button" role="switch" className="shop-filters__switch" aria-checked={checked} aria-label={label} data-testid={testId} onClick={() => onChange(!checked)}>
-        <span className="shop-filters__knob" />
-      </button>
+    <div className="shop-filters__typerow">
+      <label className="shop-filters__typelabel">
+        <input type="checkbox" className="shop-filters__checkbox" checked={checked} onChange={() => onChange(!checked)} data-testid={testId} />
+        <span className="shop-filters__typename">{label}</span>
+      </label>
     </div>
   );
+}
+
+type Option = readonly [value: string, label: string];
+
+/** One choice of several, in the Status filter's radios. */
+function RadioGroup({ label, value, options, onChange }: { label: string; value: string; options: readonly Option[]; onChange: (v: string) => void }) {
+  const name = useId();
+  return (
+    <div role="radiogroup" aria-label={label}>
+      {options.map(([v, text]) => (
+        <label key={v} className="shop-filters__radio">
+          <input type="radio" name={name} checked={value === v} onChange={() => onChange(v)} />
+          <span>{text}</span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+/** A section's summary: the picked option, nothing while it shows everything. */
+function optionLabel(options: readonly Option[], value: string | undefined): string {
+  return value && value !== "all" ? (options.find(([v]) => v === value)?.[1] ?? "") : "";
 }
 
 export type FiltersProps = {
@@ -246,6 +266,25 @@ export default function Filters(props: FiltersProps) {
   const [openCreators, setOpenCreators] = useState(true);
   const [openCollection, setOpenCollection] = useState(true);
   const [openType, setOpenType] = useState(true);
+  const [openBodyShape, setOpenBodyShape] = useState(true);
+  const [openSaleType, setOpenSaleType] = useState(true);
+  const [openPlayMode, setOpenPlayMode] = useState(true);
+  const bodyShapeOptions: Option[] = [
+    ["all", t("filter.statusAll")],
+    ["male", t("itemDetail.genderMale")],
+    ["female", t("itemDetail.genderFemale")],
+    ["unisex", t("itemDetail.genderUnisex")],
+  ];
+  const saleTypeOptions: Option[] = [
+    ["all", t("filter.statusAll")],
+    ["primary", t("filter.primary")],
+    ["secondary", t("filter.secondary")],
+  ];
+  const playModeOptions: Option[] = [
+    ["all", t("filter.statusAll")],
+    ["simple", t("filter.emotePlayOnce")],
+    ["loop", t("filter.emoteLoop")],
+  ];
   const statusName = useId();
   const creators = props.onCreators ? (props.creators ?? []) : [];
   const creatorNames = useCreatorNames(creators);
@@ -276,7 +315,14 @@ export default function Filters(props: FiltersProps) {
         : "";
   const priceSummary = min != null || max != null ? `${priceMin || "0"}-${priceMax || "∞"}` : "";
   const raritySummary = RARITIES.filter((r) => rarities.includes(r)).map(rarityLabel).join(", ");
-  const typeSummary = [props.onDeals && deals ? t("filter.deals") : "", smart ? t("filter.smart") : ""].filter(Boolean).join(", ");
+  const typeSummary = [
+    props.onDeals && deals ? t("filter.deals") : "",
+    smart ? t("filter.smart") : "",
+    props.onEmoteSound && props.emoteSound ? t("filter.emoteWithSound") : "",
+    props.onEmoteProps && props.emoteProps ? t("filter.emoteWithProps") : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
   const statusSummary = status === "on_sale" ? t("filter.onSale") : status === "not_for_sale" ? t("filter.notForSale") : "";
   const minPct = priceToSliderPct(sliderMin);
   const maxPct = priceToSliderPct(sliderMax);
@@ -423,6 +469,8 @@ export default function Filters(props: FiltersProps) {
             <Icon name="info" size={12} />
           </span>
         </div>
+        {props.onEmoteSound ? <TypeCheckbox label={t("filter.emoteWithSound")} checked={!!props.emoteSound} onChange={props.onEmoteSound} testId="emote-sound" /> : null}
+        {props.onEmoteProps ? <TypeCheckbox label={t("filter.emoteWithProps")} checked={!!props.emoteProps} onChange={props.onEmoteProps} testId="emote-props" /> : null}
       </FilterSection>
 
       {/* The Marketplace's filters, which decentraland.org's Shop does not have, after the ones it does. */}
@@ -443,43 +491,30 @@ export default function Filters(props: FiltersProps) {
         </>
       ) : null}
 
-      {props.onBodyShape || props.onListingType || props.onEmotePlayMode || props.onEmoteSound || props.onEmoteProps ? (
-        <hr className="shop-filters__divider" />
-      ) : null}
       {props.onBodyShape ? (
-        <label className="shop-filters__toggle shop-filters__toggle--select">
-          <span className="shop-filters__toggletitle">{t("itemDetail.bodyShape")}</span>
-          <select aria-label={t("itemDetail.bodyShape")} value={props.bodyShape} onChange={(e) => props.onBodyShape?.(e.target.value)}>
-            <option value="all">{t("filter.statusAll")}</option>
-            <option value="male">{t("itemDetail.genderMale")}</option>
-            <option value="female">{t("itemDetail.genderFemale")}</option>
-            <option value="unisex">{t("itemDetail.genderUnisex")}</option>
-          </select>
-        </label>
+        <>
+          <hr className="shop-filters__divider" />
+          <FilterSection title={t("itemDetail.bodyShape")} open={openBodyShape} onToggle={() => setOpenBodyShape((o) => !o)} summary={optionLabel(bodyShapeOptions, props.bodyShape)}>
+            <RadioGroup label={t("itemDetail.bodyShape")} value={props.bodyShape ?? "all"} options={bodyShapeOptions} onChange={props.onBodyShape} />
+          </FilterSection>
+        </>
       ) : null}
       {props.onListingType ? (
-        <label className="shop-filters__toggle shop-filters__toggle--select">
-          <span className="shop-filters__toggletitle">{t("filter.saleType")}</span>
-          <select aria-label={t("filter.saleType")} value={props.listingType} onChange={(e) => props.onListingType?.(e.target.value)}>
-            <option value="all">{t("filter.statusAll")}</option>
-            <option value="primary">{t("filter.primary")}</option>
-            <option value="secondary">{t("filter.secondary")}</option>
-          </select>
-        </label>
+        <>
+          <hr className="shop-filters__divider" />
+          <FilterSection title={t("filter.saleType")} open={openSaleType} onToggle={() => setOpenSaleType((o) => !o)} summary={optionLabel(saleTypeOptions, props.listingType)}>
+            <RadioGroup label={t("filter.saleType")} value={props.listingType ?? "all"} options={saleTypeOptions} onChange={props.onListingType} />
+          </FilterSection>
+        </>
       ) : null}
-
       {props.onEmotePlayMode ? (
-        <label className="shop-filters__toggle shop-filters__toggle--select">
-          <span className="shop-filters__toggletitle">{t("filter.emotePlayMode")}</span>
-          <select aria-label={t("filter.emotePlayMode")} value={props.emotePlayMode ?? "all"} onChange={(e) => props.onEmotePlayMode?.(e.target.value)} data-testid="emote-play-mode">
-            <option value="all">{t("filter.statusAll")}</option>
-            <option value="simple">{t("filter.emotePlayOnce")}</option>
-            <option value="loop">{t("filter.emoteLoop")}</option>
-          </select>
-        </label>
+        <>
+          <hr className="shop-filters__divider" />
+          <FilterSection title={t("filter.emotePlayMode")} open={openPlayMode} onToggle={() => setOpenPlayMode((o) => !o)} summary={optionLabel(playModeOptions, props.emotePlayMode)}>
+            <RadioGroup label={t("filter.emotePlayMode")} value={props.emotePlayMode ?? "all"} options={playModeOptions} onChange={props.onEmotePlayMode} />
+          </FilterSection>
+        </>
       ) : null}
-      {props.onEmoteSound ? <SwitchRow label={t("filter.emoteWithSound")} checked={!!props.emoteSound} onChange={props.onEmoteSound} testId="emote-sound" /> : null}
-      {props.onEmoteProps ? <SwitchRow label={t("filter.emoteWithProps")} checked={!!props.emoteProps} onChange={props.onEmoteProps} testId="emote-props" /> : null}
     </div>
   );
 }
