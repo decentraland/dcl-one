@@ -247,19 +247,20 @@
       ]
     },
     "windows-x86_64": {
-      "pending": "no binaries committed yet; built by the ci:uuav-native workflow, committed and relocked by hand",
       "runtime_dir": "library/uuav/dist/windows-x86_64",
       "rust": {
         "target": "x86_64-pc-windows-gnu",
         "profile": "release",
         "crate_version": "0.4.0",
-        "rustc": "",
-        "toolchain_comment": [
-          "Seeded by the first relock from toolchain-windows.txt."
-        ],
-        "source_digest": "",
-        "source_files": 0,
-        "repo_commit": ""
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "source_digest": "a38000ac2c10dc43f7728f87ee69cd819e83b4e4b6ca85a9c78ba64e5a554fa0",
+        "source_files": 22,
+        "repo_commit": "e7891bd9649bebc1e12ce6463cf5d309083fbaa4",
+        "toolchain": {
+          "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+          "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "gcc": "x86_64-w64-mingw32-gcc.exe (Rev6, Built by MSYS2 project) 16.2.0"
+        }
       },
       "ffmpeg": {
         "provenance": "third-party-release-asset",
@@ -280,52 +281,56 @@
           "configure_expected mirrors configure_observed by definition here:",
           "for a fetched asset the asset IS the recipe."
         ],
-        "configure_expected": [],
-        "configure_observed": [],
+        "configure_expected": [
+          "--ar=x86_64-w64-mingw32-gcc-ar --cross-prefix=x86_64-w64-mingw32- --cxx=x86_64-w64-mingw32-g++ --disable-avisynth --disable-debug --disable-frei0r --disable-libdavs2 --disable-libdrm --disable-libdvdnav --disable-libdvdread --disable-libfdk-aac --disable-libpulse --disable-librubberband --disable-libvidstab --disable-libx264 --disable-libx265 --disable-libxavs2 --disable-libxcb --disable-libxvid --disable-static --disable-w32threads --disable-whisper --disable-xlib --enable-amf --enable-chromaprint --enable-cuda-llvm --enable-ffnvcodec --enable-fontconfig --enable-gmp --enable-iconv --enable-libaom --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libdav1d --enable-libfreetype --enable-libfribidi --enable-libgme --enable-libharfbuzz --enable-libjxl --enable-libkvazaar --enable-liblcevc-dec --enable-libmp3lame --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libplacebo --enable-librav1e --enable-librist --enable-libshaderc --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libtwolame --enable-libuavs3d --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libvvenc --enable-libwebp --enable-libxml2 --enable-libzimg --enable-libzmq --enable-libzvbi --enable-lv2 --enable-lzma --enable-openal --enable-opencl --enable-pthreads --enable-schannel --enable-sdl2 --enable-shared --enable-vaapi --enable-version3 --enable-vulkan --enable-zlib --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-ldexeflags= --extra-ldflags=-pthread --extra-libs=-lgomp --extra-version=20260731 --nm=x86_64-w64-mingw32-gcc-nm --pkg-config-flags=--static --pkg-config=pkg-config --ranlib=x86_64-w64-mingw32-gcc-ranlib"
+        ],
+        "configure_observed": [
+          "--ar=x86_64-w64-mingw32-gcc-ar --cross-prefix=x86_64-w64-mingw32- --cxx=x86_64-w64-mingw32-g++ --disable-avisynth --disable-debug --disable-frei0r --disable-libdavs2 --disable-libdrm --disable-libdvdnav --disable-libdvdread --disable-libfdk-aac --disable-libpulse --disable-librubberband --disable-libvidstab --disable-libx264 --disable-libx265 --disable-libxavs2 --disable-libxcb --disable-libxvid --disable-static --disable-w32threads --disable-whisper --disable-xlib --enable-amf --enable-chromaprint --enable-cuda-llvm --enable-ffnvcodec --enable-fontconfig --enable-gmp --enable-iconv --enable-libaom --enable-libaribb24 --enable-libaribcaption --enable-libass --enable-libbluray --enable-libdav1d --enable-libfreetype --enable-libfribidi --enable-libgme --enable-libharfbuzz --enable-libjxl --enable-libkvazaar --enable-liblcevc-dec --enable-libmp3lame --enable-liboapv --enable-libopencore-amrnb --enable-libopencore-amrwb --enable-libopenh264 --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libplacebo --enable-librav1e --enable-librist --enable-libshaderc --enable-libsnappy --enable-libsoxr --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libtwolame --enable-libuavs3d --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libvvenc --enable-libwebp --enable-libxml2 --enable-libzimg --enable-libzmq --enable-libzvbi --enable-lv2 --enable-lzma --enable-openal --enable-opencl --enable-pthreads --enable-schannel --enable-sdl2 --enable-shared --enable-vaapi --enable-version3 --enable-vulkan --enable-zlib --extra-cflags=-DLIBTWOLAME_STATIC --extra-cxxflags= --extra-ldexeflags= --extra-ldflags=-pthread --extra-libs=-lgomp --extra-version=20260731 --nm=x86_64-w64-mingw32-gcc-nm --pkg-config-flags=--static --pkg-config=pkg-config --ranlib=x86_64-w64-mingw32-gcc-ranlib"
+        ],
         "drift_acknowledged": false,
         "drift_note": "Stock BtbN win64 lgpl-shared 8.1 build, consumed as-is; only the five DLLs in uuav-helper's import closure ship."
       },
       "artifacts": [
         {
           "path": "library/uuav/dist/windows-x86_64/avcodec-62.dll",
-          "sha256": "",
-          "bytes": 0,
+          "sha256": "4b9f8f2dcf6ff62f8a3136f31afdd31f90c24625ce8ea618951e356a7a5a8ce2",
+          "bytes": 70876672,
           "produced_by": "ffmpeg"
         },
         {
           "path": "library/uuav/dist/windows-x86_64/avformat-62.dll",
-          "sha256": "",
-          "bytes": 0,
+          "sha256": "148cfc25efafb0b63998740685e7789636309bb8a8304cbde3241bda66dbc77b",
+          "bytes": 22070784,
           "produced_by": "ffmpeg"
         },
         {
           "path": "library/uuav/dist/windows-x86_64/avutil-60.dll",
-          "sha256": "",
-          "bytes": 0,
+          "sha256": "93ba0919a68532a718edc8de25c5f4c48a68e5ce3609fd128602c129783fab73",
+          "bytes": 2937856,
           "produced_by": "ffmpeg"
         },
         {
           "path": "library/uuav/dist/windows-x86_64/swresample-6.dll",
-          "sha256": "",
-          "bytes": 0,
+          "sha256": "a7a66dffe5a5611ef7f7879ab4def1d9f18eaed5dafcdb0e9ac8191461f4dda5",
+          "bytes": 723968,
           "produced_by": "ffmpeg"
         },
         {
           "path": "library/uuav/dist/windows-x86_64/swscale-9.dll",
-          "sha256": "",
-          "bytes": 0,
+          "sha256": "65656f162298df89fda00ddedb5669f4233a6a1e6bd159e093168732be62d91d",
+          "bytes": 12570624,
           "produced_by": "ffmpeg"
         },
         {
           "path": "library/uuav/dist/windows-x86_64/uuav-helper.exe",
-          "sha256": "",
-          "bytes": 0,
+          "sha256": "2680478e6af2213919066b6136646d7e2a3f778b9ff49c1094bbc98b3ce37dc0",
+          "bytes": 1430528,
           "produced_by": "cargo"
         },
         {
           "path": "library/uuav/dist/windows-x86_64/LICENSE-ffmpeg.txt",
-          "sha256": "",
-          "bytes": 0,
+          "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
+          "bytes": 7651,
           "produced_by": "text"
         }
       ]
