@@ -9,6 +9,8 @@ import { setHostIdentity } from "@/data/lib/auth/session";
 import { installHostWalletProvider } from "@/data/lib/auth/wallet";
 import { installHostSignIn } from "@/features/components/auth/signin-store";
 
+import { primeDappsFlags } from "@/data/lib/feature-flags.browser";
+
 import { installSitesShopClient } from "./host";
 import { nativeShopRoutes } from "./native-routes";
 import "./native.css";
@@ -59,7 +61,10 @@ export function mountShop(container: HTMLElement, host: ShopHost): ShopMount {
     }, []);
     return <RouterProvider router={router} />;
   }
-  root.render(<NativeRoot />);
+  // The first render waits (briefly) for the flags, so what the pages read and show agrees with them from the start.
+  void primeDappsFlags().then(() => {
+    if (!closed) root.render(<NativeRoot />);
+  });
   return {
     updateIdentity(next) {
       if (closed) return;
