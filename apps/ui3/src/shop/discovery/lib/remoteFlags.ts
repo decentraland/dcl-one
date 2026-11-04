@@ -94,7 +94,16 @@ export function refreshRemoteFlags(now = Date.now()): Promise<void> {
   return read;
 }
 
-/** Hold these flags as the service's answer: a host that knows them, and tests, skip the read. Null forgets them. */
+/** Whether the flags were primed (by a server render, a host or a test) rather than read here. */
+export function remoteFlagsPrimed(): boolean {
+  return snapshot?.primed === true;
+}
+
+/**
+ * Hold these flags as the service's answer: a host that knows them, and tests, skip the read. Null forgets them. A
+ * primed answer is kept for the document's life (every server-rendered Shop page primes one): a flag switched off
+ * upstream reaches an open tab on its next full load, not within the session.
+ */
 export function primeRemoteFlags(flags: Record<string, boolean> | null): void {
   generation++;
   failedAt = null;

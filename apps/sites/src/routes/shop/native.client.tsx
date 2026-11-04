@@ -9,7 +9,7 @@ import { setHostIdentity } from "@/data/lib/auth/session";
 import { installHostWalletProvider } from "@/data/lib/auth/wallet";
 import { installHostSignIn } from "@/features/components/auth/signin-store";
 
-import { primeRemoteFlags } from "@ui/shop/discovery/lib/remoteFlags";
+import { primeDappsFlags } from "@/data/lib/feature-flags.browser";
 
 import { installSitesShopClient } from "./host";
 import { nativeShopRoutes } from "./native-routes";
@@ -18,22 +18,6 @@ import "./native.css";
 // The Explorer's native Shop (ui3/src/shop/native-contract.ts, version 1): the same ui3 Shop pages and
 // route table the website serves, in the Explorer's own document and memory router, on the identity and
 // wallet the Explorer hands over. Old /marketplace paths resolve to their Shop page here too.
-
-const FLAGS_TIMEOUT_MS = 1_500;
-
-/**
- * decentraland.org's rollout flags, as the server reads them (routes/internal.dapps-flags): the native shop has no
- * server render to carry them, and the service would tell this document's own Referer that every flag is off. A
- * missing answer leaves them off, as they are until the service says yes.
- */
-async function primeFlags(): Promise<void> {
-  try {
-    const res = await fetch("/internal/dapps-flags", { signal: AbortSignal.timeout(FLAGS_TIMEOUT_MS) });
-    if (res.ok) primeRemoteFlags((await res.json()) as Record<string, boolean>);
-  } catch {
-    // Off, as before any answer.
-  }
-}
 
 export function mountShop(container: HTMLElement, host: ShopHost): ShopMount {
   let closed = false;
@@ -78,7 +62,7 @@ export function mountShop(container: HTMLElement, host: ShopHost): ShopMount {
     return <RouterProvider router={router} />;
   }
   // The first render waits (briefly) for the flags, so what the pages read and show agrees with them from the start.
-  void primeFlags().then(() => {
+  void primeDappsFlags().then(() => {
     if (!closed) root.render(<NativeRoot />);
   });
   return {

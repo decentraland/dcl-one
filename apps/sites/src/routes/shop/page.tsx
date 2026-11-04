@@ -10,6 +10,7 @@ import { primeShopQuery, resetShopQueries } from "@ui/shop/discovery/query";
 import { primeRemoteFlags } from "@ui/shop/discovery/lib/remoteFlags";
 import type { ShopPageId } from "@ui/shop/routes";
 
+import { primeDappsFlags } from "@/data/lib/feature-flags.browser";
 import { defaultShopSeo, shopMetaDescriptors, type ShopPageData } from "@/data/lib/shop/pages";
 
 const primed = new WeakSet<object>();
@@ -66,7 +67,12 @@ export function shopHeaders({ loaderHeaders, parentHeaders }: { loaderHeaders: H
   return headers;
 }
 
-/** Client navigations never wait on the server: the ui3 page fetches its own data. */
+/**
+ * Client navigations never wait on the server: the ui3 page fetches its own data. They do wait (briefly, once per
+ * document) for the rollout flags a server render would have carried, so a Shop reached by a link takes the same
+ * branches as one loaded directly.
+ */
 export async function shopClientLoader(): Promise<null> {
+  await primeDappsFlags();
   return null;
 }
