@@ -207,6 +207,67 @@ CREATE TABLE content.forward_outbox (
     CONSTRAINT forward_outbox_upstream_status_check CHECK (upstream_status BETWEEN 100 AND 599)
 );
 
+-- Partial (multi-request) scene uploads, ADR-325 (src/content/partial_deployments.rs,
+-- upstream's pending_deployments, pending_deployment_files and
+-- partial_upload_rates). One row per upload, keyed by its entity id, from its
+-- first batch until its publication deletes it or it expires
+-- (PENDING_DEPLOYMENT_TTL, 1 h from the first batch) and the
+-- `content-partial-uploads-cleanup` job (every 5 min) reclaims it and the
+-- staged blobs it wrote that nothing else names (once past the collector's
+-- age floor). The last run's time is the `content.system_properties` key
+-- `partial_uploads_cleanup_at` (ms), read by every replica's quota 429. This node's own state: no sync, snapshot
+-- or history read sees it. Workload (expected, not measured): at most
+-- MAX_PENDING_DEPLOYMENTS_PER_DEPLOYER (10) uploads per account, each batch
+-- (the SDK sends 32 MiB) a primary-key read and a few small writes, rows
+-- living an hour, so the tables stay the size of the uploads in flight.
+-- `deployer_address` is lowercased;
+-- `reserved_bytes` is the sum of the upload's charged receipts, refreshed
+-- with them under the budget lock, so the admission totals scan uploads,
+-- not receipts; `initialized` is set once the first batch recorded the
+-- content already in the store; `batches` counts stored batches.
+CREATE TABLE content.pending_deployments (
+    entity_id text NOT NULL,
+    entity_type text NOT NULL,
+    pointers text[] NOT NULL,
+    content_hashes text[] NOT NULL,
+    deployer_address text NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    initialized boolean NOT NULL DEFAULT false,
+    reserved_bytes bigint NOT NULL DEFAULT 0,
+    batches integer NOT NULL DEFAULT 0,
+    CONSTRAINT pending_deployments_pkey PRIMARY KEY (entity_id),
+    CONSTRAINT pending_deployments_reserved_bytes_check CHECK (reserved_bytes >= 0)
+);
+
+-- The files an upload knows (its receipts): `stored` once written or found
+-- in the store, `charged` when counted against the staging budgets (all
+-- but content a published deployment already keeps; a failed write stays
+-- charged), `written` once the upload set out to write the blob itself
+-- (only those are ever unlinked by its cleanup; content it found stored
+-- is left to the collector). Deleted with its upload.
+CREATE TABLE content.pending_deployment_files (
+    entity_id text NOT NULL,
+    hash text NOT NULL,
+    size bigint NOT NULL,
+    stored boolean NOT NULL DEFAULT false,
+    charged boolean NOT NULL DEFAULT false,
+    written boolean NOT NULL DEFAULT false,
+    CONSTRAINT pending_deployment_files_pkey PRIMARY KEY (entity_id, hash),
+    CONSTRAINT pending_deployment_files_entity_id_fkey FOREIGN KEY (entity_id)
+        REFERENCES content.pending_deployments (entity_id) ON DELETE CASCADE,
+    CONSTRAINT pending_deployment_files_size_check CHECK (size >= 0)
+);
+
+-- Batch bytes per account in a fixed one-minute window
+-- (MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE), rejected batches included; the
+-- cleanup job deletes elapsed windows.
+CREATE TABLE content.partial_upload_rates (
+    deployer_address text NOT NULL,
+    window_started timestamp without time zone NOT NULL,
+    bytes bigint NOT NULL,
+    CONSTRAINT partial_upload_rates_pkey PRIMARY KEY (deployer_address)
+);
+
 -- ── content: indexes (the upstream content-server / node-pg-migrate set) ───
 
 CREATE INDEX active_pointers_entity_id_idx ON content.active_pointers USING btree (entity_id);
@@ -235,6 +296,15 @@ CREATE INDEX local_entities_tombstoned_idx ON content.local_entities (tombstoned
 -- a claim never walks the rows queued for another upstream.
 CREATE INDEX forward_outbox_due_idx ON content.forward_outbox USING btree (target, next_attempt_at, id)
     WHERE status IN ('queued', 'sending');
+-- The expiry sweep's keyset page (created_at < $cutoff ORDER BY created_at,
+-- entity_id) and the server-wide oldest upload a quota 429 waits on.
+CREATE INDEX pending_deployments_created_at_idx ON content.pending_deployments USING btree (created_at, entity_id);
+-- The per-account upload count and its oldest upload (deployer_address = $1).
+CREATE INDEX pending_deployments_deployer_idx ON content.pending_deployments USING btree (deployer_address, created_at);
+-- The per-parcel caps every new upload checks (pointers && $1).
+CREATE INDEX pending_deployments_pointers_idx ON content.pending_deployments USING gin (pointers);
+-- The blob collector's reference probe (storage::gc, hash = ANY($1)).
+CREATE INDEX pending_deployment_files_hash_idx ON content.pending_deployment_files USING btree (hash);
 
 -- ── content: cache invalidation ────────────────────────────────────────────
 
