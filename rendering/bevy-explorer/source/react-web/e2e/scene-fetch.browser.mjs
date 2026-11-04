@@ -6,32 +6,38 @@ import { chromium } from '@playwright/test'
 
 const engine = new URL('../../deploy/web/engine/', import.meta.url)
 
-// Use the real sandbox bootstrap. Substitute only the WASM scene and transport so that
-// Chromium's per-origin connection limit doesn't hide how many sends a worker admitted.
-function installTransport() {
+// Observe dispatch before Chromium applies its own per-origin connection limit.
+function observeTransport() {
   const send = self.fetch.bind(self)
-  self.held = []
-  self.sent = []
-  self.fetch = (input, init) => {
-    const url = new URL(input instanceof Request ? input.url : input, location.href)
-    if (url.pathname !== '/held') {
-      self.sent.push(init?.targetAddressSpace)
-      return send(input, init)
+  self.sends = []
+  self.peak = 0
+  let active = 0
+  self.fetch = async (input, init) => {
+    self.sends.push({ url: input.url, addressSpace: init?.targetAddressSpace })
+    self.peak = Math.max(self.peak, ++active)
+    try {
+      return await send(input, init)
+    } finally {
+      active--
     }
-    const req = new Request(input, init)
-    return new Promise((resolve, reject) => {
-      self.held.push(() => resolve(new Response('ok', { status: 206 })))
-      req.signal.addEventListener('abort', () => reject(req.signal.reason), {once:true})
-    })
   }
 }
 
 test('scene Fetch isolates workers and preserves the browser request', { timeout: 30_000 }, async t => {
+  const gates = new Map()
   const server = createServer(async (req, res) => {
     res.setHeader('Cross-Origin-Opener-Policy', 'same-origin')
     res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp')
-    const path = new URL(req.url, 'http://localhost').pathname
+    const url = new URL(req.url, 'http://localhost')
+    const path = url.pathname
     if (path === '/') return res.end('<!doctype html>')
+    if (path === '/batch') {
+      const gate = gates.get(url.searchParams.get('scene'))
+      if (gate) await gate.promise
+      return res.end(url.searchParams.get('i'))
+    }
+    if (path === '/stall') return
+    if (path === '/stream') return res.write('partial body')
     if (path === '/echo') return res.end(req.headers.referer ?? '')
     if (path === '/upload') return req.pipe(res)
     if (path.endsWith('.wasm')) {
@@ -39,7 +45,7 @@ test('scene Fetch isolates workers and preserves the browser request', { timeout
       return res.end(Buffer.from([0,97,115,109,1,0,0,0]))
     }
     res.setHeader('Content-Type', 'text/javascript')
-    if (path.endsWith('/transport.js')) return res.end(`(${installTransport})();`)
+    if (path.endsWith('/transport.js')) return res.end(`(${observeTransport})();`)
     if (path.endsWith('/sandbox_worker.bundle.js')) return res.end(`
       import '/transport.js'
       import '/engine/sandbox_worker.js'
@@ -68,129 +74,92 @@ test('scene Fetch isolates workers and preserves the browser request', { timeout
     return ready
   }
 
-  const a = await spawn('client')
-  const b = await spawn('client')
-  const globals = await a.evaluate(() => {
-    const accessible = []
-    for (let owner = self; owner; owner = Object.getPrototypeOf(owner)) {
-      if (Object.hasOwn(owner, 'fetch')) accessible.push(owner.fetch === fetch)
-    }
-    return { accessible, xhr: typeof XMLHttpRequest, events: typeof EventSource, socket: typeof WebSocket }
-  })
-  assert.ok(globals.accessible.length && globals.accessible.every(Boolean))
-  assert.deepEqual([globals.xhr, globals.events, globals.socket], ['undefined', 'undefined', 'function'])
+  const ids = Array.from({ length: 40 }, (_, i) => String(i))
+  for (const role of ['client', 'server']) {
+    await t.test(`two ${role} scenes complete independent batches of 40 in FIFO order`, async t => {
+      const gate = Promise.withResolvers()
+      gates.set(role, gate)
+      t.after(() => gate.resolve())
+      const blocked = await spawn(role)
+      const other = await spawn(role)
+      for (const [worker, scene] of [[blocked, role], [other, 'other']]) {
+        const started = await worker.evaluate(scene => {
+          self.batch = Promise.all(Array.from({ length: 40 }, async (_, i) =>
+            (await fetch(`/batch?scene=${scene}&i=${i}`)).text()))
+          self.batch.catch(() => {}) // observed below, after the other worker starts
+          return sends.length
+        }, scene)
+        assert.equal(started, 5)
+      }
+      const result = worker => worker.evaluate(async () => ({
+        bodies: await self.batch,
+        order: sends.map(({ url }) => new URL(url).searchParams.get('i')),
+        peak,
+      }))
+      assert.deepEqual(await result(other), { bodies: ids, order: ids, peak: 5 })
+      assert.equal(await blocked.evaluate(() => sends.length), 5)
+      // An uncaught callback error can be reported while its worker continues running.
+      const errorMessage = `recoverable ${role} exception`
+      await blocked.evaluate(message => { setTimeout(() => { throw new Error(message) }) }, errorMessage)
+      await page.waitForFunction(message => window.workerError?.includes(message), errorMessage)
+      gate.resolve()
+      assert.deepEqual(await result(blocked), { bodies: ids, order: ids, peak: 5 })
+    })
+  }
 
-  await t.test('client and server capacity, recoverable errors and request options', async () => {
-    const serverScene = await spawn('server')
-    const otherServerScene = await spawn('server')
-    for (const worker of [a, b, serverScene, otherServerScene]) {
-      const state = await worker.evaluate(async () => {
-        self.requests = Array.from({length: 33}, () => fetch('/held').catch(e => e.name))
-        return { admitted: held.length, excess: await Promise.race([requests[32], new Promise(r => setTimeout(() => r('pending'), 20))]) }
-      })
-      assert.deepEqual(state, { admitted: 5, excess: 'QuotaExceededError' })
-    }
-    // The sixth call starts as soon as a hosted scene receives one response's headers.
-    for (const worker of [serverScene, otherServerScene]) {
-      const dispatched = await worker.evaluate(async () => {
-        held[0]()
-        await requests[0]
-        return held.length
-      })
-      assert.equal(dispatched, 6)
-    }
-    await a.evaluate(() => { setTimeout(() => { throw new Error('recoverable exception') }) })
-    await page.waitForFunction(() => window.workerError?.includes('recoverable exception'))
-    assert.equal(await a.evaluate(() => held.length), 5)
-    const afterError = await a.evaluate(async () => {
-      held[0]()
-      await requests[0]
-      const init = {targetAddressSpace:'loopback', referrer:location.origin + '/chosen', referrerPolicy:'no-referrer'}
+  await t.test('queued calls snapshot their options and honour caller cancellation', async () => {
+    const worker = await spawn('client')
+    const result = await worker.evaluate(async () => {
+      const blocked = new AbortController()
+      const busy = Array.from({ length: 4 }, () => fetch('/stall', { signal: blocked.signal }).catch(e => e.name))
+      const active = new AbortController()
+      const fifth = fetch('/stall', { signal: active.signal }).catch(e => e.name)
+
+      const queued = new AbortController()
+      let cancelled
+      const body = new ReadableStream({ cancel(reason) { cancelled = reason } })
+      const upload = fetch('/upload', { method: 'POST', body, duplex: 'half', signal: queued.signal }).catch(e => e)
+      const timeout = fetch('/queued-timeout', { signal: AbortSignal.timeout(20) }).catch(e => e.name)
+      const init = { targetAddressSpace: 'loopback', referrer: location.origin + '/chosen', referrerPolicy: 'no-referrer' }
       const echo = fetch('/echo', init)
       init.targetAddressSpace = 'local'
-      init.referrer = ''
       init.referrerPolicy = 'unsafe-url'
-      // Release waves of headers without consuming their bodies.
-      for (let i = 1; i < 32; i++) {
-        held[i]()
-        await requests[i]
+      const request = new Request('/upload', { method: 'POST', body: 'scene payload' })
+      const post = fetch(request)
+      const used = request.bodyUsed
+
+      queued.abort('unsent upload')
+      const timeoutName = await timeout
+      active.abort()
+      const referrer = await (await echo).text()
+      const posted = await (await post).text()
+      blocked.abort()
+      return {
+        timeoutName, upload: await upload, cancelled, active: await fifth, busy: await Promise.all(busy),
+        referrer, posted, used,
+        paths: sends.map(({ url }) => new URL(url).pathname),
+        addressSpace: sends.find(({ url }) => url.endsWith('/echo')).addressSpace,
       }
-      const response = await echo
-      return { referrer: await response.text(), addressSpace: sent.at(-1), body: await (await requests[0]).text() }
     })
-    assert.deepEqual(afterError, { referrer:'', addressSpace:'loopback', body:'ok' })
-    const referrer = await a.evaluate(async () => (await fetch('/echo', {referrer:location.origin + '/chosen'})).text())
+    assert.deepEqual(result, {
+      timeoutName: 'TimeoutError', upload: 'unsent upload', cancelled: 'unsent upload',
+      active: 'AbortError', busy: Array(4).fill('AbortError'),
+      referrer: '', posted: 'scene payload', used: true,
+      paths: [...Array(5).fill('/stall'), '/echo', '/upload'], addressSpace: 'loopback',
+    })
+    const referrer = await worker.evaluate(async () => (await fetch('/echo', {referrer:location.origin + '/chosen'})).text())
     assert.equal(referrer, new URL('/chosen', page.url()).href)
-    const upload = await a.evaluate(async () => {
-      const request = new Request('/upload', {method:'POST', body:'scene payload'})
-      const response = fetch(request)
-      return { used:request.bodyUsed, body:await (await response).text() }
-    })
-    assert.deepEqual(upload, { used:true, body:'scene payload' })
-    assert.equal(await b.evaluate(() => held.length), 5)
   })
 
-  await t.test('the header deadline includes waiting for admission', async () => {
-    // Exercise short deadlines in a real worker, including the time a browser transport
-    // can take to report its abort. A queued request must expire without dispatching.
-    const deadlines = await a.evaluate(async () => {
-      const { createSceneFetch } = await import('/engine/scene_fetch.js')
-      let transfers = 0
-      let finishBody
-      const stream = createSceneFetch(async (_request, {signal}) => new Response(new ReadableStream({
-        start(controller) {
-          finishBody = () => { controller.enqueue(new TextEncoder().encode('body')); controller.close() }
-          signal.addEventListener('abort', () => controller.error(signal.reason))
-        }
-      })), false, 20)
-      const response = await stream.fetch('/stream')
-      const client = createSceneFetch((_request, {signal}) => new Promise((resolve, reject) => {
-        transfers++
-        signal.addEventListener('abort', () => setTimeout(() => reject(signal.reason), 50))
-      }), false, 20)
-      const batch = Array.from({length:6}, () => client.fetch('/slow').catch(e => e.name))
-      // Scene code shares the worker's numeric timer IDs.
-      for (let id = 1; id <= 100_000; id++) clearTimeout(id)
-      const outcomes = await Promise.race([
-        Promise.all(batch),
-        new Promise(resolve => setTimeout(() => resolve('deadline was cleared'), 2_000))
-      ])
-      finishBody()
-      return { outcomes, transfers, streamed:await response.text() }
-    })
-    assert.deepEqual(deadlines, { outcomes:Array(6).fill('TimeoutError'), transfers:5, streamed:'body' })
-  })
-
-  await t.test('cancelling queued uploads and closing active transfers use captured browser operations', async () => {
-    const cancels = await a.evaluate(async () => {
-      const { createSceneFetch } = await import('/engine/scene_fetch.js')
-      const stablePromise = Promise
-      let transfers = 0
-      const client = createSceneFetch((_request, {signal}) => new stablePromise((resolve, reject) => {
-        transfers++
-        signal.addEventListener('abort', () => reject(signal.reason))
-      }), false)
-      const held = Array.from({length:5}, () => client.fetch('/busy').catch(e => e.name))
-      const originalAdd = Set.prototype.add
-      const originalListen = EventTarget.prototype.addEventListener
+  await t.test('headers release the slot and the caller can abort the response body', async () => {
+    const worker = await spawn('server')
+    const result = await worker.evaluate(async () => {
       const controller = new AbortController()
-      let queued, uploadCancelled = false
-      const body = new ReadableStream({cancel() { uploadCancelled = true }})
-      try {
-        Set.prototype.add = function (start) { start() }
-        EventTarget.prototype.addEventListener = function (_type, listener) { listener() }
-        self.Promise = class extends stablePromise { constructor() { super(resolve => resolve()) } }
-        queued = client.fetch('/queued', {method:'POST', body, duplex:'half', signal:controller.signal})
-      } finally {
-        self.Promise = stablePromise
-        Set.prototype.add = originalAdd
-        EventTarget.prototype.addEventListener = originalListen
-      }
+      const responses = await Promise.all(Array.from({ length: 5 }, () => fetch('/stream', { signal: controller.signal })))
+      const timeout = await fetch('/stall', { signal: AbortSignal.timeout(50) }).catch(e => e.name)
       controller.abort()
-      const cancellation = await queued.catch(e => e.name)
-      client.close()
-      return { cancellation, uploadCancelled, active:await Promise.all(held), transfers, closed:await client.fetch('/after-close').catch(e => e.name) }
+      return { timeout, bodies: await Promise.all(responses.map(r => r.text().catch(e => e.name))), sent: sends.length }
     })
-    assert.deepEqual(cancels, { cancellation:'AbortError', uploadCancelled:true, active:Array(5).fill('AbortError'), transfers:5, closed:'AbortError' })
+    assert.deepEqual(result, { timeout: 'TimeoutError', bodies: Array(5).fill('AbortError'), sent: 6 })
   })
 })

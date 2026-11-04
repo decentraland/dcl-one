@@ -75,10 +75,11 @@ impl NetPermissions for NP {
 const SERVER_MAX_BODY_BYTES: u64 = 10 * 1024 * 1024;
 const SERVER_MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
 
-pub(super) fn in_flight(state: &OpState) -> u64 {
+/// Counts Fetch calls waiting for permission, queued for a slot, or transferring.
+pub(super) fn outstanding_calls(state: &OpState) -> u64 {
     state
         .try_borrow::<Rc<SceneRequestBudget>>()
-        .map_or(0, |budget| u64::from(budget.in_flight()))
+        .map_or(0, |budget| budget.outstanding())
 }
 
 // list of op declarations
@@ -339,10 +340,7 @@ async fn send_with_permission(
             preview,
         )
     };
-    // Bound outstanding operations, including permission prompts and queued uploads.
-    let _inflight = budget
-        .try_start()
-        .ok_or_else(|| anyhow::anyhow!("fetch: too many concurrent requests"))?;
+    let _call = budget.track_call();
 
     let (sx, rx) = RpcResultSender::channel();
     state
@@ -358,8 +356,6 @@ async fn send_with_permission(
         anyhow::bail!("User denied fetch request");
     }
 
-    // Human interaction has no deadline. Once granted, one clock covers DNS, upload
-    // preparation, admission, request headers and the entire response body.
     budget
         .run(send_request(state, request, is_server, preview))
         .await
@@ -772,11 +768,8 @@ mod upload_tests {
             Default::default(),
         );
         let state = runtime.op_state();
-        let budget = Rc::new(SceneRequestBudget::for_scene(true));
-        let _held: Vec<_> = (0..32).map(|_| budget.try_start().unwrap()).collect();
         {
             let mut state = state.borrow_mut();
-            state.put(budget.clone());
             state.put(CrdtContext::new(
                 SceneId(bevy::prelude::Entity::from_raw(0)),
                 "hash".into(),
@@ -796,7 +789,7 @@ mod upload_tests {
                 globalThis.cancelled = false;
                 globalThis.failure = "";
                 const body = new ReadableStream({ cancel() { globalThis.cancelled = true; } });
-                fetch("https://example.org/upload", {method: "POST", body})
+                fetch("https://example.org/upload", {method: "X".repeat(51), body})
                     .catch(e => { globalThis.failure = String(e); });
             "#,
             )
@@ -823,7 +816,7 @@ mod upload_tests {
                 "<test>",
                 deno_core::ascii_str!(
                     r#"
-            if (!failure.includes("too many concurrent requests")) throw new Error(failure);
+            if (!failure) throw new Error("expected overlong method to be rejected");
             if (!cancelled) throw new Error("upload producer was not cancelled");
         "#
                 ),

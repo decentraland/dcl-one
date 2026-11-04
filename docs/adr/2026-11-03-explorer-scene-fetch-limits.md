@@ -14,22 +14,19 @@ other scenes free to send requests.
 
 Each client or hosted scene may send five Fetch or signedFetch requests at once.
 The two APIs share those slots. Additional eligible calls wait in arrival order.
-A scene can have 32 outstanding calls in total, including the five active requests.
-The 33rd call fails immediately. The native isolate owns its counters in Deno's
-`OpState`, and each browser sandbox owns its queue for the worker's lifetime.
+Fetch imposes no cap on outstanding calls. Each native isolate owns its slots
+in Deno's `OpState`. Permission requests still use the scene's normal per-tick
+RPC queue. Each browser sandbox owns its Fetch queue for the worker's lifetime.
 
-Client requests have a 30-second deadline and hosted requests have 15 seconds.
-On native, unanswered permission prompts count toward the 32 outstanding calls
-to bound the pending requests and uploads a scene can retain. The deadline
-starts on approval and covers admission, address validation, upload, headers
-and buffering the response body. Aborting a call releases its outstanding
-count, including while awaiting permission, and any slot it holds. Rejection
-or cancellation closes the upload.
+Native scenes acquire a slot after permission is granted and hold it through the
+response body. The native authoritative server starts a 15-second deadline at
+slot acquisition. Permission and queue waits do not consume it. Native clients
+have no overall request deadline. A scene may set its own deadline with
+`AbortSignal.timeout()`. Aborting a native call withdraws its pending permission
+prompt or queue entry, or releases the slot if the transfer has started.
 
-On web the deadline starts at Fetch invocation. Both the deadline and the slot
-end when headers arrive. The caller can then read or cancel the browser stream
-independently. An open body can still occupy a browser connection shared with
-other requests to that host. The queue schedules the scene's Fetch APIs.
-Browser facilities such as module imports use the browser's own scheduling.
-A recoverable error event keeps the worker and its requests alive. Teardown aborts
-its transfers.
+Browser scenes, including hosted scenes running in a user's browser, have no
+engine-imposed deadline. The slot is released at headers, when the caller takes
+ownership of the response stream. An open body can still occupy a browser
+connection. Other browser facilities, such as module imports, use the browser's
+own scheduling.

@@ -2026,6 +2026,10 @@ pub fn handle_generic_perm(
     mut perms: Permission<RpcResultSender<bool>>,
     mut tys: Local<HashSet<PermissionType>>,
 ) {
+    // Dropping a cancelled caller's prompt receiver also dismisses it in the HUD.
+    perms
+        .pending
+        .retain(|(response, ..)| !response.is_cancelled());
     for ev in events.read() {
         if let (
             RpcOrigin::Scene { entity: scene, .. },
@@ -2036,6 +2040,9 @@ pub fn handle_generic_perm(
             },
         ) = (&ev.origin, &ev.call)
         {
+            if response.is_cancelled() {
+                continue;
+            }
             let allow_out_of_scene = matches!(
                 ty,
                 PermissionType::HideAvatarsNametags

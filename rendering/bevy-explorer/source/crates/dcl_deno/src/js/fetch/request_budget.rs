@@ -6,12 +6,11 @@ use tokio::{
 };
 
 const MAX_CONCURRENT_FETCHES: usize = 5;
-const MAX_OUTSTANDING_FETCHES: u32 = 32;
 
 pub(super) struct SceneRequestBudget {
-    outstanding: Cell<u32>,
+    outstanding: Cell<u64>,
     slots: Semaphore,
-    timeout: Duration,
+    server_timeout: Option<Duration>,
 }
 
 impl SceneRequestBudget {
@@ -19,33 +18,30 @@ impl SceneRequestBudget {
         Self {
             outstanding: Cell::new(0),
             slots: Semaphore::new(MAX_CONCURRENT_FETCHES),
-            timeout: Duration::from_secs(if is_server { 15 } else { 30 }),
+            server_timeout: is_server.then_some(Duration::from_secs(15)),
         }
     }
 
-    pub(super) fn in_flight(&self) -> u32 {
+    pub(super) fn outstanding(&self) -> u64 {
         self.outstanding.get()
     }
 
-    pub(super) fn try_start(&self) -> Option<InflightGuard<'_>> {
-        if self.in_flight() >= MAX_OUTSTANDING_FETCHES {
-            return None;
-        }
-        self.outstanding.set(self.in_flight() + 1);
-        Some(InflightGuard(&self.outstanding))
+    pub(super) fn track_call(&self) -> OutstandingCall<'_> {
+        self.outstanding.set(self.outstanding.get() + 1);
+        OutstandingCall(&self.outstanding)
     }
 
     pub(super) async fn run<F: Future>(&self, request: F) -> Result<F::Output, Elapsed> {
-        timeout(self.timeout, async {
-            let _slot = self.slots.acquire().await.expect("scene budget closed");
-            request.await
-        })
-        .await
+        let _slot = self.slots.acquire().await.expect("scene budget closed");
+        match self.server_timeout {
+            Some(limit) => timeout(limit, request).await,
+            None => Ok(request.await),
+        }
     }
 }
 
-pub(super) struct InflightGuard<'a>(&'a Cell<u32>);
-impl Drop for InflightGuard<'_> {
+pub(super) struct OutstandingCall<'a>(&'a Cell<u64>);
+impl Drop for OutstandingCall<'_> {
     fn drop(&mut self) {
         self.0.set(self.0.get() - 1);
     }
@@ -58,8 +54,8 @@ mod tests {
     use std::future::{pending, ready};
 
     async fn saturate(budget: &SceneRequestBudget, sends: &Cell<usize>) {
-        join_all((0..32).map(|_| async {
-            let _inflight = budget.try_start().unwrap();
+        join_all((0..40).map(|_| async {
+            let _call = budget.track_call();
             budget
                 .run(async {
                     sends.set(sends.get() + 1);
@@ -83,26 +79,37 @@ mod tests {
             assert!(poll!(&mut busy_a).is_pending());
             assert!(poll!(&mut busy_b).is_pending());
             assert_eq!((sends_a.get(), sends_b.get()), (5, 5));
-            assert!(a.try_start().is_none() && b.try_start().is_none());
+            assert_eq!((a.outstanding(), b.outstanding()), (40, 40));
 
             drop(busy_a);
-            assert_eq!(a.in_flight(), 0);
+            assert_eq!(a.outstanding(), 0);
             assert!(a.run(ready(())).await.is_ok());
-            assert!(b.try_start().is_none());
+            assert_eq!(b.outstanding(), 40);
         }
     }
 
     #[tokio::test]
-    async fn deadline_covers_admission_and_response_body() {
-        let mut scene = SceneRequestBudget::for_scene(false);
-        scene.timeout = Duration::from_millis(20);
-        let sends = Cell::new(0);
-        let mut busy = Box::pin(saturate(&scene, &sends));
-        assert!(poll!(&mut busy).is_pending());
-        let queued = scene.run(ready(())).await;
-        assert!(queued.is_err());
-        drop(busy);
-        assert!(scene.run(pending::<()>()).await.is_err());
-        assert!(scene.run(ready(())).await.is_ok());
+    async fn server_deadline_starts_only_after_admission() {
+        let mut scene = SceneRequestBudget::for_scene(true);
+        *scene.server_timeout.as_mut().unwrap() = Duration::from_millis(20);
+        let _four_slots = scene.slots.acquire_many(4).await.unwrap();
+        let last_slot = scene.slots.acquire().await.unwrap();
+        let started = Cell::new(false);
+        let mut queued = Box::pin(scene.run(async {
+            started.set(true);
+            pending::<()>().await
+        }));
+        let mut next = Box::pin(scene.run(ready(())));
+        assert!(poll!(&mut queued).is_pending());
+        assert!(poll!(&mut next).is_pending());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(poll!(&mut queued).is_pending());
+        assert!(!started.get());
+        drop(last_slot);
+        assert!(poll!(&mut next).is_pending(), "oldest waiter owns the slot");
+        assert!(poll!(&mut queued).is_pending());
+        assert!(started.get());
+        assert!(queued.await.is_err());
+        assert!(next.await.is_ok());
     }
 }

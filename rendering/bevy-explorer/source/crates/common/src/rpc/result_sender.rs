@@ -125,6 +125,16 @@ impl<T: Serialize + 'static> RpcResultSender<T> {
         )
     }
 
+    /// Whether the caller abandoned this pending reply, locally or across IPC.
+    pub fn is_cancelled(&self) -> bool {
+        match self {
+            Self::Local { cancel, .. } => cancel.is_cancelled(),
+            Self::Remote {
+                receiver_dropped, ..
+            } => receiver_dropped.is_cancelled(),
+        }
+    }
+
     pub fn send(&self, result: T) {
         match self {
             RpcResultSender::Local { channel, .. } => {

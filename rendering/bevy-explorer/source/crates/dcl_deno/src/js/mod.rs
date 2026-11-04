@@ -414,7 +414,7 @@ pub(crate) fn scene_thread(
                     components += component.0.len() as u64;
                 }
             }
-            let in_flight = fetch::in_flight(&guard);
+            let outstanding = fetch::outstanding_calls(&guard);
             let open = websocket::open_sockets(&guard);
             let counters = guard.borrow_mut::<SceneResourceCounters>();
             counters.heap_used = heap.used_heap_size() as u64;
@@ -423,7 +423,7 @@ pub(crate) fn scene_thread(
             counters.crdt_store_bytes = store_bytes;
             counters.crdt_entities = entities.len() as u64;
             counters.crdt_components = components;
-            counters.fetch_in_flight = in_flight;
+            counters.fetch_in_flight = outstanding;
             counters.ws_open = open;
             counters.sample_seq += 1;
             counters.sample_elapsed_us = metrics_started.elapsed().as_micros() as u64;

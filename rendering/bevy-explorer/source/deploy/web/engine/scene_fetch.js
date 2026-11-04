@@ -1,128 +1,50 @@
-// Each sandbox worker owns one queue. Capture native operations at module startup,
-// before scene code can replace globals or observe a continuation that releases a slot.
-const NativeRequest = Request;
-const NativePromise = Promise;
-const NativeController = AbortController;
-const NativeException = DOMException;
-const defineProperty = Object.defineProperty;
-const uncurry = fn => Function.call.bind(fn);
-const getter = (type, key) => uncurry(Object.getOwnPropertyDescriptor(type.prototype, key).get);
-const requestSignal = getter(Request, "signal");
-const requestBody = getter(Request, "body");
-const cancelBody = uncurry(ReadableStream.prototype.cancel);
-const referrer = getter(Request, "referrer");
-const referrerPolicy = getter(Request, "referrerPolicy");
-const controllerSignal = getter(AbortController, "signal");
-const abort = uncurry(AbortController.prototype.abort);
-const aborted = getter(AbortSignal, "aborted");
-const reason = getter(AbortSignal, "reason");
-const combine = AbortSignal.any.bind(AbortSignal);
-const listen = uncurry(EventTarget.prototype.addEventListener);
-const unlisten = uncurry(EventTarget.prototype.removeEventListener);
-const timeout = AbortSignal.timeout.bind(AbortSignal);
-const iterator = Symbol.iterator;
-const next = uncurry(Object.getPrototypeOf(new Set().values()).next);
-
-async function cancelUpload(request, error) {
-  const body = requestBody(request);
-  if (body) {
-    // Cancellation also notifies the guest stream producer. Its own rejection
-    // must not replace the reason Fetch rejected the request.
-    try { await cancelBody(body, error); } catch {}
-  }
-}
-
-export function createSceneFetch(nativeFetch, isServer, timeoutMs = isServer ? 15_000 : 30_000) {
-  const limit = 5;
-  const lifetime = new NativeController();
-  const lifetimeSignal = controllerSignal(lifetime);
+// Each sandbox worker shares five sends between fetch and signedFetch.
+export function createSceneFetch(nativeFetch) {
   const queue = new Set();
-  const enqueue = queue.add.bind(queue);
-  const dequeue = queue.delete.bind(queue);
-  const values = queue.values.bind(queue);
-  let outstanding = 0;
   let active = 0;
 
-  function fetch(input, init) {
-    return new NativePromise((resolve, reject) => {
-      if (aborted(lifetimeSignal)) throw reason(lifetimeSignal);
-      // Request snapshots the caller's URL, headers and body before a queued send.
-      // Chromium's local network annotation is only observable on RequestInit.
-      const request = new NativeRequest(input, init);
+  return function sceneFetch(input, init) {
+    return new Promise((resolve, reject) => {
+      // Snapshot caller-owned headers, body and options before waiting for a slot.
+      const request = new Request(input, init);
+      const { signal } = request;
+      // Chromium only exposes its local-network annotation on RequestInit. Passing
+      // a new init to fetch also resets the referrer unless we supply it again.
       const addressSpace = init?.targetAddressSpace;
-      const targetAddressSpace = addressSpace === undefined ? undefined : `${addressSpace}`;
-      const deadline = new NativeController();
-      // Web IDL reads a sequence via its iterator. A changed Array.prototype must
-      // not let a scene remove the timeout from a live browser transfer.
-      const signals = [requestSignal(request), controllerSignal(deadline), lifetimeSignal];
-      const signal = combine({ [iterator]() {
-        let i = 0;
-        return { next: () => i < 3 ? {done: false, value: signals[i++]} : {done: true} };
-      } });
-      function rejectUnsent(error) {
-        cancelUpload(request, error);
-        reject(error);
-      }
-      if (aborted(signal)) return rejectUnsent(reason(signal));
-      if (outstanding >= 32) {
-        return rejectUnsent(new NativeException("Too many outstanding scene fetches", "QuotaExceededError"));
-      }
-      outstanding++;
+      const options = addressSpace === undefined ? undefined : {
+        targetAddressSpace: String(addressSpace),
+        referrer: request.referrer,
+        referrerPolicy: request.referrerPolicy,
+      };
 
-      // A scene can clear any numeric worker timer. Forward the browser-owned
-      // timeout only until headers arrive so a delivered body can keep streaming.
-      const timer = timeout(timeoutMs);
-      const expire = () => abort(deadline, reason(timer));
-      listen(timer, "abort", expire);
       function cancelQueued() {
-        dequeue(start);
-        unlisten(timer, "abort", expire);
-        outstanding--;
-        rejectUnsent(reason(signal));
+        queue.delete(start);
+        // Notify an unsent upload's producer without delaying the rejection.
+        request.body?.cancel(signal.reason).catch(() => {});
+        reject(signal.reason);
       }
+
       async function start() {
-        dequeue(start);
-        unlisten(signal, "abort", cancelQueued);
+        queue.delete(start);
+        signal.removeEventListener("abort", cancelQueued);
         active++;
         try {
-          const headers = nativeFetch(request, {
-            __proto__: null, signal, targetAddressSpace,
-            referrer: referrer(request), referrerPolicy: referrerPolicy(request),
-          });
-          // Await the native promise directly even if the guest changed Promise.prototype.constructor.
-          defineProperty(headers, "constructor", {__proto__: null, value: NativePromise});
-          resolve(await headers);
+          resolve(await nativeFetch(request, options));
         } catch (error) {
           reject(error);
         } finally {
-          // The browser owns the response stream. Reading one body must never block
-          // another caller waiting for headers. Its original signal remains connected.
-          unlisten(timer, "abort", expire);
+          // Browser fetch settles at headers. The caller owns the response stream.
           active--;
-          outstanding--;
-          next(values()).value?.();
+          queue.values().next().value?.();
         }
       }
-      if (active < limit) start();
+
+      if (signal.aborted) cancelQueued();
+      else if (active < 5) start();
       else {
-        enqueue(start);
-        listen(signal, "abort", cancelQueued, {__proto__: null, once: true});
+        queue.add(start);
+        signal.addEventListener("abort", cancelQueued, { once: true });
       }
     });
-  }
-  return { fetch, close: () => abort(lifetime) };
-}
-
-// The real global and its prototypes are both reachable from the guest.
-export function installSceneFetch(scope, isServer, tearDown) {
-  const client = createSceneFetch(scope.fetch.bind(scope), isServer);
-  const defer = scope.queueMicrotask.bind(scope);
-  const close = () => { client.close(); defer(tearDown); };
-  for (let owner = scope; owner; owner = Object.getPrototypeOf(owner)) {
-    if (Object.hasOwn(owner, "fetch")) owner.fetch = client.fetch;
-    if (Object.hasOwn(owner, "close")) owner.close = close;
-    delete owner.XMLHttpRequest;
-    delete owner.EventSource;
-  }
-  return client;
+  };
 }

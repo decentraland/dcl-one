@@ -132,18 +132,6 @@ uniforms, and one extra render-graph node: the stars pass, between `DepthOfField
 `Tonemapping` in `Core3d` (`crates/visuals/src/stars.rs`). Render-world ordering follows bevy's
 conventions, not ours.
 
-## Scene Fetch
-
-Each client or hosted scene has five concurrent slots shared by Fetch and signedFetch.
-Once all five are in use, further requests wait for a slot in that scene. See the
-[scene Fetch limits ADR](../../../../docs/adr/2026-11-03-explorer-scene-fetch-limits.md)
-for queue limits, deadlines and response streaming.
-
-Native scene diagnostics count outstanding calls from the permission prompt through queueing
-and body consumption. A client has 30 seconds after permission for queueing and the entire
-transfer, so a slow response can time out while bytes are still arriving. Browser callers
-take ownership at headers and can continue reading the body afterward.
-
 ## Headless
 
 The headless server uses the same `ScenePlugin`, so the `SceneSets` chain and the scene loop
