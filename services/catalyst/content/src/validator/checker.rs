@@ -611,7 +611,7 @@ fn is_off_chain_urn(urn: &str) -> bool {
         .starts_with("urn:decentraland:off-chain:")
 }
 
-fn parse_collection_urn(urn: &str) -> Option<(String, String, BlockchainLayer)> {
+pub(super) fn parse_collection_urn(urn: &str) -> Option<(String, String, BlockchainLayer)> {
     let lower = urn.to_lowercase();
     let parts: Vec<&str> = lower.split(':').collect();
 

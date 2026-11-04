@@ -16,6 +16,9 @@ fn lazy_deployer() -> LiveSyncDeployer {
         backlog: Arc::new(Semaphore::new(DEFAULT_FLUSH_BACKLOG_MAX)),
         flush_backlog_max: DEFAULT_FLUSH_BACKLOG_MAX,
         inflight_bytes: Arc::new(ByteBudget::new(DEFAULT_INFLIGHT_BYTES_MAX)),
+        validation: SyncValidation::AuthChainOnly,
+        validations: Arc::new(Semaphore::new(1)),
+        access_passed: Arc::default(),
     }
 }
 
@@ -310,7 +313,12 @@ use crate::sync_types::AuthLink;
 
 #[test]
 fn a_failure_reason_survives_the_column_round_trip() {
-    for reason in [FailureReason::DeploymentError, FailureReason::NoEntity] {
+    for reason in [
+        FailureReason::DeploymentError,
+        FailureReason::NoEntity,
+        FailureReason::ValidationUndecided,
+        FailureReason::Rejected,
+    ] {
         let label = reason_label(&reason);
         assert_eq!(reason_from_label(label), reason);
     }
@@ -346,7 +354,7 @@ async fn the_batch_ticker_is_a_job_of_the_shared_lifecycle() {
         return;
     };
     let jobs = std::sync::Arc::new(crate::jobs::Jobs::new());
-    let deployer = LiveSyncDeployer::new(pool, 1);
+    let deployer = LiveSyncDeployer::new(pool, 1, SyncValidation::AuthChainOnly);
     let parent = jobs.spawn("sync", {
         let jobs = jobs.clone();
         move |ctx| async move {
@@ -388,7 +396,7 @@ async fn flushed_batches_write_rows_and_resolve_pointer_succession() {
         return;
     };
     let prefix = unique();
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2);
+    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let p = |n: &str| format!("{prefix}:{n}");
     let (older, newer) = (format!("{prefix}-older"), format!("{prefix}-newer"));
 
@@ -549,7 +557,7 @@ async fn an_equal_timestamp_pair_settles_on_the_lowercase_winner_in_any_batching
     let Some(pool) = test_pool(3).await else {
         return;
     };
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2);
+    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let prefix = unique();
     let batchings: [&[&[&str]]; 4] = [
         &[&["Z", "a"]],
@@ -589,7 +597,7 @@ async fn the_deleter_is_the_nearest_successor_in_any_arrival_order() {
     let Some(pool) = test_pool(3).await else {
         return;
     };
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2);
+    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let prefix = unique();
     let orders = [
         ["A", "B", "C"],
@@ -634,7 +642,7 @@ async fn a_peer_scene_arriving_after_an_unpublish_is_superseded_by_the_tombstone
     let Some(pool) = test_pool(3).await else {
         return;
     };
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2);
+    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let prefix = unique();
     let pointer = format!("{prefix}:0,0");
     let (local, peer) = (format!("{prefix}-local"), format!("{prefix}-peer"));
@@ -680,7 +688,7 @@ async fn a_flush_waits_in_byte_order_for_an_open_unpublish_of_its_successor() {
     let Some(pool) = test_pool(4).await else {
         return;
     };
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2);
+    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let prefix = unique();
     let (first, second) = (format!("{prefix}:0,-2"), format!("{prefix}:0,10"));
     assert!(first < second, "byte order");

@@ -3,6 +3,8 @@
 //! the orchestrator and the retry/prune loops on the ONE pool, ONE storage
 //! root and ONE HTTP client, and registers them with the job registry. The
 //! orchestrator owns the Bootstrapping -> Syncing transition from there.
+//! With sync off, [`start_failed_deployments`] runs the retry/prune loops for
+//! the rows the read-through records.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -27,7 +29,9 @@ use crate::sync::{
     RetryFailedDeployments, SyncOrchestrator, SyncOrchestratorConfig, SyncState, SyncStatus,
     names_a_source, parse_entity_types, parse_sync_sources,
 };
-use crate::sync_deployer::{LiveFailedDeploymentsStore, LiveSyncDeployer, SyncMemoryLimits};
+use crate::sync_deployer::{
+    LiveFailedDeploymentsStore, LiveSyncDeployer, SyncMemoryLimits, SyncValidation,
+};
 
 /// The memory limits `SyncSettings::from_config` validated, read back by [`start`]. They ride
 /// beside `SyncSettings` rather than in it: the integration tests build the settings by
@@ -57,9 +61,11 @@ pub fn memory_limits_from_config(config: &Config) -> anyhow::Result<SyncMemoryLi
 }
 
 /// The peer-sync configuration after validation: peers parsed and checked
-/// against this node's own URLs, the entity-type subset resolved. Sync needs
-/// no RPC endpoint: contract-wallet links in synced chains are the peer's
-/// verdict (`auth::PeerValidated`).
+/// against this node's own URLs, the entity-type subset resolved. Contract-wallet
+/// links in synced chains are asked of the validator's EIP-1654 RPC at the
+/// entity's block; without `ETH_RPC_URL`, or with an RPC that lacks that block's
+/// state, the entity is recorded as undecided and retried with backoff, without
+/// counting against `MAX_FAILED_DEPLOYMENT_RETRIES`, for up to a week.
 #[derive(Debug, Clone)]
 pub struct SyncSettings {
     pub peers: Vec<String>,
@@ -203,6 +209,7 @@ pub async fn start(
     storage: Arc<Storage>,
     status: Arc<SyncStatus>,
     client: reqwest::Client,
+    validation: SyncValidation,
     jobs: &Arc<Jobs>,
 ) -> anyhow::Result<SyncHandles> {
     let control = SyncControl::default();
@@ -210,6 +217,7 @@ pub async fn start(
         settings: settings.clone(),
         pool,
         storage,
+        validation,
         status,
         client,
         control: control.clone(),
@@ -315,6 +323,8 @@ struct Leader {
     settings: SyncSettings,
     pool: PgPool,
     storage: Arc<Storage>,
+    /// How synced and retried entities are judged.
+    validation: SyncValidation,
     status: Arc<SyncStatus>,
     client: reqwest::Client,
     control: SyncControl,
@@ -334,6 +344,7 @@ impl Leader {
             self.pool.clone(),
             settings.flush_concurrency,
             limits,
+            self.validation.clone(),
         ));
         deployer.spawn_flush_ticker(&self.jobs, &ctx);
         tracing::info!(
@@ -405,51 +416,146 @@ impl Leader {
         }
         tracing::info!(peers = ?settings.peers, phased_sync = settings.phased_sync, "Sync orchestrator ready");
         let peers: HashSet<String> = settings.peers.iter().cloned().collect();
-        if settings.retry_failed_enabled {
-            let retry = RetryFailedDeployments::new(
-                RetryFailedConfig {
-                    max_retries: settings.max_retries,
-                    retry_concurrency: settings.retry_concurrency,
-                    ..Default::default()
-                },
-                self.client.clone(),
-                self.storage.clone(),
+        spawn_failed_deployment_jobs(
+            &self.jobs,
+            &ctx,
+            &FailedDeploymentSettings {
+                retry_failed_enabled: settings.retry_failed_enabled,
+                max_retries: settings.max_retries,
+                retry_concurrency: settings.retry_concurrency,
+                prune_ttl_days: settings.prune_ttl_days,
+            },
+            FailedDeploymentDeps {
+                pool: self.pool.clone(),
+                storage: self.storage.clone(),
+                client: self.client.clone(),
                 deployer,
                 failed,
-                Arc::new(RwLock::new(settings.peers.clone())),
-            );
-            self.jobs
-                .spawn_scoped(&ctx, "retry-failed", move |ctx| async move {
-                    let trace = ctx.clone();
-                    retry
-                        .run(ctx.cancel.clone(), move |outcome| match outcome {
-                            Ok(stats) => trace.progress(format!("{stats:?}")),
-                            Err(e) => trace.error(e.to_string()),
-                        })
-                        .await;
-                    Ok(())
-                });
-        }
-        let ttl_days = settings.prune_ttl_days;
-        let pool = self.pool.clone();
-        self.jobs
-            .spawn_scoped(&ctx, "failed-deployments-prune", move |ctx| async move {
-                let trace = ctx.clone();
-                run_prune_loop(
-                    pool,
-                    ttl_days,
-                    Duration::from_secs(300),
-                    ctx.cancel.clone(),
-                    move |outcome| match outcome {
-                        Ok(pruned) => trace.progress(format!("pruned {pruned}")),
-                        Err(e) => trace.error(e.to_string()),
-                    },
-                )
-                .await;
-                Ok(())
-            });
+                peers: settings.peers.clone(),
+            },
+        );
         run_sync_job(orchestrator, peers, ctx).await
     }
+}
+
+/// The `RETRY_FAILED_*` settings the retry and prune loops run with.
+#[derive(Debug, Clone)]
+pub struct FailedDeploymentSettings {
+    pub retry_failed_enabled: bool,
+    pub max_retries: u32,
+    pub retry_concurrency: usize,
+    pub prune_ttl_days: i64,
+}
+
+impl FailedDeploymentSettings {
+    pub fn from_config(config: &Config) -> Self {
+        Self {
+            retry_failed_enabled: config.content.retry_failed_enabled,
+            max_retries: config.content.max_failed_deployment_retries,
+            retry_concurrency: config.content.sync_retry_concurrency,
+            prune_ttl_days: config.content.retry_failed_prune_ttl_days,
+        }
+    }
+}
+
+struct FailedDeploymentDeps {
+    pool: PgPool,
+    storage: Arc<Storage>,
+    client: reqwest::Client,
+    deployer: Arc<LiveSyncDeployer>,
+    failed: Arc<LiveFailedDeploymentsStore>,
+    peers: Vec<String>,
+}
+
+/// `retry-failed` (when enabled; it also sets [`UNDECIDED_RECORDS`](crate::sync::retry_failed::UNDECIDED_RECORDS)) and
+/// `failed-deployments-prune`, scoped to `ctx`.
+fn spawn_failed_deployment_jobs(
+    jobs: &Arc<Jobs>,
+    ctx: &JobContext,
+    settings: &FailedDeploymentSettings,
+    deps: FailedDeploymentDeps,
+) {
+    if settings.retry_failed_enabled {
+        let retry = RetryFailedDeployments::new(
+            RetryFailedConfig {
+                max_retries: settings.max_retries,
+                retry_concurrency: settings.retry_concurrency,
+                ..Default::default()
+            },
+            deps.client,
+            deps.storage,
+            deps.deployer,
+            deps.failed,
+            Arc::new(RwLock::new(deps.peers)),
+        );
+        jobs.spawn_scoped(ctx, "retry-failed", move |ctx| async move {
+            let trace = ctx.clone();
+            retry
+                .run(ctx.cancel.clone(), move |outcome| match outcome {
+                    Ok(stats) => trace.progress(format!("{stats:?}")),
+                    Err(e) => trace.error(e.to_string()),
+                })
+                .await;
+            Ok(())
+        });
+    }
+    let ttl_days = settings.prune_ttl_days;
+    let pool = deps.pool;
+    jobs.spawn_scoped(ctx, "failed-deployments-prune", move |ctx| async move {
+        let trace = ctx.clone();
+        run_prune_loop(
+            pool,
+            ttl_days,
+            Duration::from_secs(300),
+            ctx.cancel.clone(),
+            move |outcome| match outcome {
+                Ok(pruned) => trace.progress(format!("pruned {pruned}")),
+                Err(e) => trace.error(e.to_string()),
+            },
+        )
+        .await;
+        Ok(())
+    });
+}
+
+/// The retry and prune loops of a node that reads through `peers` with no sync worker: the
+/// read-through records undecided entities there. A fleet-wide job (`failed-deployments`) with
+/// its own deployer and flush ticker; it holds its lease until the process stops.
+pub fn start_failed_deployments(
+    settings: &FailedDeploymentSettings,
+    peers: Vec<String>,
+    pool: PgPool,
+    storage: Arc<Storage>,
+    client: reqwest::Client,
+    validation: SyncValidation,
+    jobs: &Arc<Jobs>,
+) {
+    let settings = settings.clone();
+    let registry = jobs.clone();
+    jobs.spawn_leased("failed-deployments", move |ctx| {
+        let settings = settings.clone();
+        let jobs = registry.clone();
+        let deployer = Arc::new(LiveSyncDeployer::with_limits(
+            pool.clone(),
+            crate::sync_deployer::DEFAULT_FLUSH_CONCURRENCY,
+            memory_limits(),
+            validation.clone(),
+        ));
+        let deps = FailedDeploymentDeps {
+            pool: pool.clone(),
+            storage: storage.clone(),
+            client: client.clone(),
+            deployer: deployer.clone(),
+            failed: Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
+            peers: peers.clone(),
+        };
+        async move {
+            deployer.spawn_flush_ticker(&jobs, &ctx);
+            spawn_failed_deployment_jobs(&jobs, &ctx, &settings, deps);
+            ctx.cancel.cancelled().await;
+            Ok(())
+        }
+    });
 }
 
 /// Marks this process the sync authority for as long as it is held.
@@ -604,5 +710,78 @@ mod tests {
         assert_eq!(settings.from_timestamp_ms, 1_788_307_200_000);
         assert_eq!(settings.snapshot_scheduling.nonscene_concurrency, 64);
         assert_eq!(settings.connections_max_idle, 25);
+    }
+
+    async fn failed_deployment_jobs(retry_failed_enabled: bool, fleet_jobs: bool) -> Vec<String> {
+        let (storage, _tmp) = crate::sync_test_support::temp_storage("failed-jobs").await;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/nowhere")
+            .unwrap();
+        let jobs = Arc::new(Jobs::new().with_fleet_jobs(fleet_jobs));
+        start_failed_deployments(
+            &FailedDeploymentSettings {
+                retry_failed_enabled,
+                ..FailedDeploymentSettings::from_config(&config(&[]))
+            },
+            vec!["https://peer.example/content".to_string()],
+            pool,
+            storage,
+            reqwest::Client::new(),
+            SyncValidation::AuthChainOnly,
+            &jobs,
+        );
+        // The leased job settles once it spawned its helpers or stood down.
+        let settled = |jobs: &Jobs| {
+            jobs.report().iter().any(|job| {
+                job.name == "failed-deployments-prune"
+                    || job.state == crate::jobs::JobState::StoodDown
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !settled(&jobs) {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let mut names: Vec<String> = jobs
+            .report()
+            .into_iter()
+            .filter(|job| job.state == crate::jobs::JobState::Running)
+            .map(|job| job.name)
+            .collect();
+        names.sort();
+        jobs.shutdown(Duration::from_secs(5)).await;
+        names
+    }
+
+    #[tokio::test]
+    async fn without_sync_the_retry_and_prune_loops_run_for_the_read_through() {
+        assert_eq!(
+            failed_deployment_jobs(true, true).await,
+            [
+                "failed-deployments",
+                "failed-deployments-prune",
+                "retry-failed",
+                "sync-batch-flush"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn without_sync_a_disabled_retry_still_prunes() {
+        assert_eq!(
+            failed_deployment_jobs(false, true).await,
+            [
+                "failed-deployments",
+                "failed-deployments-prune",
+                "sync-batch-flush"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn without_sync_a_process_without_fleet_jobs_runs_neither_loop() {
+        assert!(failed_deployment_jobs(true, false).await.is_empty());
     }
 }

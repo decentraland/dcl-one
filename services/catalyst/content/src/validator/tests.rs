@@ -1101,6 +1101,43 @@ fn a_node_taking_deploys_needs_both_rpcs_and_a_known_network() {
 }
 
 #[test]
+fn a_node_judging_peer_entities_needs_both_rpcs_and_a_known_network() {
+    let settings = |ignore: bool, network: &str, l1: Option<&str>, l2: Option<&str>| {
+        Settings::parse(ignore, false, None, network, l1.map(str::to_string), l2)
+            .unwrap()
+            .require_chain_for_peer_entities()
+            .map_err(|e| format!("{e:#}"))
+    };
+    let (l1, l2) = (
+        Some("https://l1.example/KEY"),
+        Some("https://l2.example/KEY"),
+    );
+    assert!(settings(false, "mainnet", l1, l2).is_ok());
+    assert!(settings(false, "sepolia", l1, l2).is_ok());
+    for (network, l1, l2, needle) in [
+        ("goerli", l1, l2, "ETH_NETWORK=goerli"),
+        ("mainnet", None, l2, "ETH_RPC_URL"),
+        ("mainnet", l1, None, "RPC_ENDPOINT_POLYGON"),
+        ("mainnet", l1, Some(" "), "RPC_ENDPOINT_POLYGON"),
+        (
+            "mainnet",
+            l1,
+            Some("http://l2.example/KEY"),
+            "RPC_ENDPOINT_POLYGON",
+        ),
+    ] {
+        let err = settings(false, network, l1, l2).unwrap_err();
+        assert!(err.contains(needle), "{err}");
+        assert!(err.contains("IGNORE_BLOCKCHAIN_ACCESS_CHECKS"), "{err}");
+        assert!(!err.contains("KEY"), "never the value: {err}");
+        assert!(
+            settings(true, network, l1, l2).is_ok(),
+            "ignored checks need no chain"
+        );
+    }
+}
+
+#[test]
 fn a_refusal_keeps_its_kind_in_the_deploy_failure() {
     use super::super::write_deployer::DeployFailure;
     let rejected = into_deploy_failure(vec![

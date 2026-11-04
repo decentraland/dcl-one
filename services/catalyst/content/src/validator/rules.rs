@@ -66,11 +66,27 @@ pub struct ContentValidator<'a, E: ExternalCalls, B: BlockchainChecker> {
     /// `IGNORE_BLOCKCHAIN_ACCESS_CHECKS`: only the local pointer-ownership
     /// rule of the access step runs.
     pub ignore_blockchain_access: bool,
+    /// An entity a peer serves: the item thumbnail is not checked and an
+    /// item's equivalent pointers count as one, as the reference does.
+    pub synced: bool,
+    /// The access step already passed for this entity and chain (the
+    /// read-through's check before its content was in): not asked again.
+    pub access_passed: bool,
 }
 
 impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
+    /// From the top of [`Self::validate`] to the end of the access checks: a synced entity's
+    /// whole validation budget, so it has one deadline.
+    fn access_budget(&self) -> Duration {
+        if self.synced {
+            super::synced::SYNCED_DEADLINE
+        } else {
+            ACCESS_DEADLINE
+        }
+    }
+
     pub async fn validate(&self, deployment: &Deployment<'_>) -> ValidationResponse {
-        let deadline = tokio::time::Instant::now() + ACCESS_DEADLINE;
+        let deadline = tokio::time::Instant::now() + self.access_budget();
         let result = self.validate_entity_structure(deployment);
         if !result.is_ok() {
             debug!("Validation failed at entity structure");
@@ -391,7 +407,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
     async fn validate_item_thumbnail(&self, deployment: &Deployment<'_>) -> ValidationResponse {
         let entity = &deployment.entity;
 
-        if !matches!(entity.entity_type, EntityType::Wearable | EntityType::Emote) {
+        if self.synced || !matches!(entity.entity_type, EntityType::Wearable | EntityType::Emote) {
             return ValidationResponse::Ok;
         }
         if entity.timestamp < adr_timestamps::ADR_45 {
@@ -808,6 +824,9 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         deployment: &Deployment<'_>,
         deadline: tokio::time::Instant,
     ) -> ValidationResponse {
+        if self.access_passed {
+            return ValidationResponse::Ok;
+        }
         if self.ignore_blockchain_access {
             let deployer = deployment.deployer();
             let local = super::checker::validate_local_pointer_ownership(deployment, &deployer);
@@ -855,7 +874,27 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
                 }
                 EntityType::Store => validate_store_access(deployment, &deployer),
                 EntityType::Wearable | EntityType::Emote => {
-                    validate_item_access(deployment, self.blockchain_checker, &deployer).await
+                    let single = self
+                        .synced
+                        .then(|| super::collections_v1::single_item_pointer(&entity.pointers))
+                        .flatten();
+                    match single {
+                        Some(pointer) => {
+                            let one = Entity {
+                                pointers: vec![pointer],
+                                ..(*entity).clone()
+                            };
+                            let view = Deployment {
+                                entity: &one,
+                                ..*deployment
+                            };
+                            validate_item_access(&view, self.blockchain_checker, &deployer).await
+                        }
+                        None => {
+                            validate_item_access(deployment, self.blockchain_checker, &deployer)
+                                .await
+                        }
+                    }
                 }
                 EntityType::Outfits => {
                     validate_outfits_access(deployment, self.blockchain_checker, &deployer).await
@@ -867,7 +906,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             .unwrap_or_else(|_| {
                 ValidationResponse::unavailable(format!(
                     "Error checking access: the checks did not finish within {} s",
-                    ACCESS_DEADLINE.as_secs()
+                    self.access_budget().as_secs()
                 ))
             })
     }
@@ -1298,6 +1337,8 @@ mod tests {
                 external_calls: &Calls(Duration::ZERO),
                 blockchain_checker: &SlowChecker(delay, false),
                 ignore_blockchain_access: false,
+                synced: false,
+                access_passed: false,
             }
             .validate_access(&d.view(), tokio::time::Instant::now() + ACCESS_DEADLINE)
             .await
@@ -1326,6 +1367,8 @@ mod tests {
                         external_calls: &Calls(signature),
                         blockchain_checker: &SlowChecker(ACCESS_DEADLINE / 4, false),
                         ignore_blockchain_access: false,
+                        synced: false,
+                        access_passed: false,
                     }
                     .validate(&d.view())
                     .await
@@ -1344,6 +1387,8 @@ mod tests {
                 external_calls: &Calls(Duration::ZERO),
                 blockchain_checker: &SlowChecker(Duration::ZERO, true),
                 ignore_blockchain_access: false,
+                synced: false,
+                access_passed: false,
             }
             .validate_access(&d.view(), tokio::time::Instant::now() + ACCESS_DEADLINE)
             .await;

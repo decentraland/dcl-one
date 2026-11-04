@@ -217,6 +217,7 @@ async fn node_with(
         Arc::new(LiveSyncDeployer::new(
             pool.clone(),
             DEFAULT_FLUSH_CONCURRENCY,
+            catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
         )),
         Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
         bloom,

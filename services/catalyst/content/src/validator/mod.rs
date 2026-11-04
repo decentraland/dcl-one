@@ -33,6 +33,7 @@
 
 mod chain;
 pub mod checker;
+mod collections_v1;
 pub mod entity_parser;
 pub mod erc721;
 pub mod error;
@@ -48,6 +49,7 @@ pub(crate) mod onchain;
 pub mod rules;
 mod scene_parcels;
 mod spring_bones;
+pub mod synced;
 pub mod third_party;
 pub mod types;
 
@@ -69,6 +71,7 @@ pub use chain::DECENTRALAND_ADDRESS;
 pub use error::{ValidationError, ValidationResponse, ValidatorError};
 pub use rules::{ContentValidator, ExternalCalls};
 pub use spring_bones::validate_spring_bones_metadata;
+pub use synced::{SyncedContent, validate_synced};
 pub use types::{Deployment, Entity, EntityType};
 
 /// The validator's configuration, under the old environment names.
@@ -169,6 +172,35 @@ impl Settings {
     }
 }
 
+impl Settings {
+    /// A node that judges peers' entities (sync, read-through) needs the same
+    /// chain sources as a local deploy: without them every entity with an
+    /// access check would stay undecided. An error names the variable only.
+    pub fn require_chain_for_peer_entities(&self) -> anyhow::Result<()> {
+        if self.ignore_blockchain_access {
+            return Ok(());
+        }
+        let fix = "or set IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true";
+        if !matches!(self.eth_network.as_str(), "mainnet" | "sepolia") {
+            bail!(
+                "ETH_NETWORK={} has no checker contracts (mainnet|sepolia): synced entities \
+                 could not be checked; set it {fix}",
+                self.eth_network
+            );
+        }
+        if self.l1_rpc_url.is_none() {
+            bail!("ETH_RPC_URL is unset: synced entities could not be checked; set it {fix}");
+        }
+        if self.l2_rpc_url.is_none() {
+            bail!(
+                "RPC_ENDPOINT_POLYGON is unset or not an https URL: synced entities could not \
+                 be checked; set it {fix}"
+            );
+        }
+        Ok(())
+    }
+}
+
 /// What the validator reads, built once by `serve`: the ONE pool (the
 /// `shop.usage_grants` overlay), the ONE blob store, the shared EIP-1654
 /// validator (`None` without `ETH_RPC_URL`: a contract-wallet link is then
@@ -208,7 +240,6 @@ impl Sources {
 
     /// The chain access checks, for entities this node did not validate
     /// itself (peer sync): every check takes the entity timestamp.
-    #[allow(dead_code)] // peer sync validation reads it
     pub(crate) fn access(&self) -> Arc<onchain::OnChainAccess> {
         self.access.clone()
     }
@@ -217,6 +248,10 @@ impl Sources {
     /// unreachable RPC is only logged.
     pub async fn verify_chain_ids(&self) -> anyhow::Result<()> {
         self.access.verify_chain_ids().await
+    }
+
+    fn eip1654(&self) -> Option<&dyn Eip1654Validator> {
+        self.eip1654.as_deref()
     }
 }
 
@@ -283,6 +318,8 @@ pub async fn validate(
         external_calls: ctx.sources,
         blockchain_checker: ctx.sources,
         ignore_blockchain_access: ctx.sources.ignore_blockchain_access,
+        synced: false,
+        access_passed: false,
     }
     .validate(&deployment)
     .await

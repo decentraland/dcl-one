@@ -839,7 +839,11 @@ pub async fn failed_deployments(
             entity_id: r.entity_id,
             entity_type: r.entity_type,
             failure_timestamp: r.failure_timestamp as i64,
-            reason: r.reason,
+            // The wire keeps the reference reasons; the description says which kind.
+            reason: match r.reason.as_str() {
+                "No entity" => r.reason,
+                _ => "Deployment error".to_string(),
+            },
             auth_chain: r.auth_chain,
             error_description: r.error_description,
             snapshot_hash: r.snapshot_hash,

@@ -649,6 +649,56 @@ async fn code_is_asked_address_by_address_when_batches_are_refused() {
 }
 
 #[tokio::test]
+async fn synced_caps_ask_past_the_local_ones_and_beyond_their_own_are_undecided() {
+    let v2 = "0x0002000000000000000000000000000000000001";
+    let chain = fake_chain::serve(|q, _| match q {
+        Query::BalanceOf { .. } => Reply::Revert,
+        Query::OwnerOf { .. } => Reply::Owner(addr(OWNER)),
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let a = access(None, Some(&chain.url));
+    let items = |n: usize| -> Vec<String> {
+        (0..n)
+            .map(|t| format!("urn:decentraland:matic:collections-v2:{v2}:0:{t}"))
+            .collect()
+    };
+    let third_party = |n: usize| -> Vec<String> {
+        (1..=n)
+            .map(|c| {
+                format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:matic:0x{c:040x}:1")
+            })
+            .collect()
+    };
+
+    let urns = items(MAX_ITEMS_ASKED + 3);
+    let owned = a
+        .items_capped(OWNER, &urns, TS, SYNCED_ITEM_CAPS)
+        .await
+        .unwrap();
+    assert_eq!(owned, vec![true; MAX_ITEMS_ASKED + 3]);
+    let urns = third_party(MAX_NFT_CONTRACTS_ASKED + 2);
+    let owned = a
+        .items_capped(OWNER, &urns, TS, SYNCED_ITEM_CAPS)
+        .await
+        .unwrap();
+    assert_eq!(owned, vec![true; MAX_NFT_CONTRACTS_ASKED + 2]);
+
+    chain.clear();
+    for urns in [
+        items(SYNCED_ITEM_CAPS.items + 1),
+        third_party(SYNCED_ITEM_CAPS.nft_contracts + 1),
+    ] {
+        let err = a
+            .items_capped(OWNER, &urns, TS, SYNCED_ITEM_CAPS)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ValidatorError::BlockchainQuery(_)), "{err}");
+    }
+    assert!(chain.calls().is_empty(), "nothing asked past the cap");
+}
+
+#[tokio::test]
 async fn the_rpcs_must_answer_for_the_configured_network() {
     let chain = fake_chain::serve(|_, _| Reply::Yes(true)).await;
     assert!(

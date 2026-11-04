@@ -98,6 +98,25 @@ pub async fn verify_peer_auth_chain(
     .await
 }
 
+/// The full validation of an entity a peer serves: as [`verify_peer_auth_chain`], but a
+/// contract-wallet link is asked of `eip1654_validator` (the caller binds it to the entity's
+/// block); without one it fails with [`AuthError::Eip1654NotImplemented`] (undecidable).
+pub async fn verify_synced_auth_chain(
+    chain: &AuthChain,
+    expected_address: &str,
+    entity_timestamp_ms: i64,
+    eip1654_validator: Option<&dyn Eip1654Validator>,
+) -> Result<ChainVerdict, AuthError> {
+    walk_chain(
+        chain,
+        expected_address,
+        Some(entity_timestamp_ms),
+        eip1654_validator,
+        ExpirationPolicy::TrustPeer,
+    )
+    .await
+}
+
 async fn walk_chain(
     chain: &AuthChain,
     expected_address: &str,

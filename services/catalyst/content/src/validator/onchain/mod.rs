@@ -32,8 +32,12 @@ use crate::http::jsonrpc::{
     BlockInfo, BlockSearch, BlockTag, Rpc, RpcError, hex_of, request, result_of,
 };
 
-#[allow(unused_imports)] // peer sync validation reads it
 pub use items::v1_collection_contract;
+
+/// A collection URN naming no item the ownership check can ask about.
+pub(crate) fn is_malformed_item(urn: &str) -> bool {
+    matches!(items::item_ref(urn), items::ItemRef::Malformed)
+}
 
 sol! {
     interface Checker {
@@ -66,6 +70,30 @@ pub(crate) const MAX_ITEMS_ASKED: usize = 200;
 /// Distinct third-party NFT contracts asked about per check; more refuses
 /// the check. Their standard probes are batched, so this matches the item cap.
 pub(crate) const MAX_NFT_CONTRACTS_ASKED: usize = MAX_ITEMS_ASKED;
+
+/// How many items one ownership check asks about, and what more is.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ItemCaps {
+    pub items: usize,
+    pub nft_contracts: usize,
+    /// Past a cap the check is undecided instead of [`ValidatorError::TooManyItems`].
+    pub undecided_past_cap: bool,
+}
+
+/// A local deploy: more is [`ValidatorError::TooManyItems`].
+pub(crate) const LOCAL_ITEM_CAPS: ItemCaps = ItemCaps {
+    items: MAX_ITEMS_ASKED,
+    nft_contracts: MAX_NFT_CONTRACTS_ASKED,
+    undecided_past_cap: false,
+};
+
+/// A synced entity, which the reference judged with no cap: wider caps, and
+/// past them undecided, never refused.
+pub(crate) const SYNCED_ITEM_CAPS: ItemCaps = ItemCaps {
+    items: 1000,
+    nft_contracts: 1000,
+    undecided_past_cap: true,
+};
 /// `eth_call`s per JSON-RPC batch request.
 const CALLS_PER_BATCH: usize = 100;
 /// Single calls in flight at once when an endpoint answers no batch.
@@ -613,6 +641,16 @@ impl OnChainAccess {
         Ok(())
     }
 
+    /// The last L1 block at or before `timestamp_ms`, from the same search the
+    /// access checks use; `None` before the first block.
+    pub async fn l1_block_at(&self, timestamp_ms: i64) -> Result<Option<u64>, ValidatorError> {
+        let chain = &self.l1()?.chain;
+        let block = self
+            .within_deadline("L1 block", chain.block_at(timestamp_ms.div_euclid(1000)))
+            .await?;
+        Ok(block.map(|b| b.number))
+    }
+
     /// Per parcel, whether `address` may deploy on it (owner, operator,
     /// update operator, update manager or approved, of the LAND or its estate).
     pub async fn land(
@@ -775,12 +813,24 @@ impl OnChainAccess {
     /// count as owned; a collection URN naming no askable item is never owned.
     /// More than [`MAX_ITEMS_ASKED`] distinct items or
     /// [`MAX_NFT_CONTRACTS_ASKED`] third-party contracts is
-    /// [`ValidatorError::TooManyItems`].
+    /// [`ValidatorError::TooManyItems`] ([`LOCAL_ITEM_CAPS`]).
     pub async fn items(
         &self,
         address: &str,
         urns: &[String],
         timestamp_ms: i64,
+    ) -> Result<Vec<bool>, ValidatorError> {
+        self.items_capped(address, urns, timestamp_ms, LOCAL_ITEM_CAPS)
+            .await
+    }
+
+    /// [`Self::items`] under `caps`.
+    pub(crate) async fn items_capped(
+        &self,
+        address: &str,
+        urns: &[String],
+        timestamp_ms: i64,
+        caps: ItemCaps,
     ) -> Result<Vec<bool>, ValidatorError> {
         let refs: Vec<items::ItemRef> = urns.iter().map(|u| items::item_ref(u)).collect();
         let mut owned: Vec<bool> = refs
@@ -800,13 +850,20 @@ impl OnChainAccess {
             seen.insert(r);
             asked.push(r);
         }
-        if asked.len() > MAX_ITEMS_ASKED || contracts.len() > MAX_NFT_CONTRACTS_ASKED {
-            return Err(ValidatorError::TooManyItems(format!(
-                "{} distinct items from {} NFT contracts, at most {MAX_ITEMS_ASKED} items and \
-                 {MAX_NFT_CONTRACTS_ASKED} contracts are checked",
+        if asked.len() > caps.items || contracts.len() > caps.nft_contracts {
+            let message = format!(
+                "{} distinct items from {} NFT contracts, at most {} items and {} contracts \
+                 are checked",
                 asked.len(),
-                contracts.len()
-            )));
+                contracts.len(),
+                caps.items,
+                caps.nft_contracts
+            );
+            return Err(if caps.undecided_past_cap {
+                ValidatorError::BlockchainQuery(message)
+            } else {
+                ValidatorError::TooManyItems(message)
+            });
         }
         let Ok(owner) = address.parse::<Address>() else {
             return Ok(owned);

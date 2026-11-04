@@ -1754,6 +1754,7 @@ dependencies = [
  "bytes",
  "catalyst-chain-index",
  "catalyst-config",
+ "catalyst-content",
  "catalyst-db",
  "catalyst-jobs",
  "catalyst-land-authz",

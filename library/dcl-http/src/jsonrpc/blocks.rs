@@ -226,6 +226,31 @@ mod tests {
         assert_eq!(search.block_at(10, failing).await, Err("down"));
     }
 
+    #[tokio::test]
+    async fn concurrent_searches_share_one_memo_and_each_find_their_block() {
+        let reads = AtomicUsize::new(0);
+        let search = BlockSearch::new();
+        let answers = futures::future::join_all(
+            (0..64).map(|i| search.block_at(1000 + 31 * i, chain(&reads))),
+        )
+        .await;
+        for (i, answer) in answers.into_iter().enumerate() {
+            let expected = (31 * i as u64) / 2;
+            assert_eq!(answer.unwrap().unwrap().number, expected, "search {i}");
+        }
+        reads.store(0, Ordering::SeqCst);
+        assert_eq!(
+            search
+                .block_at(1000 + 31 * 7, chain(&reads))
+                .await
+                .unwrap()
+                .unwrap()
+                .number,
+            108
+        );
+        assert_eq!(reads.load(Ordering::SeqCst), 0, "answered from the memo");
+    }
+
     #[test]
     fn the_block_answer_is_parsed() {
         assert_eq!(
