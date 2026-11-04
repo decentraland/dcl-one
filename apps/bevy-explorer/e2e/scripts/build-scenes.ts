@@ -1,5 +1,7 @@
 // Builds the visual scenes with dcl-scene-cli (apps/dcl-scene-cli): the vendored SDK toolchain
-// into each scene once, then the bundle. `DCL_SCENE_CLI` names the binary, else it is on the PATH;
+// into each scene once, then the bundle with the CLI's built-in build (`--built-in`, as each
+// scene's own `package.json` build script asks for too; the script is for a hand-run `npm run
+// build`, and the CLI refuses a script that would run the CLI again). `DCL_SCENE_CLI` names the binary, else it is on the PATH;
 // a binary named by path has its folder put on the PATH of what it runs, since a scene's own
 // `package.json` scripts call `dcl-scene-cli` by name.
 //
@@ -50,7 +52,7 @@ export async function buildScenes(ids: string[], scenesDir: string = SCENES_DIR,
     if (!(await exists(path.join(dir, 'node_modules', '@dcl', 'sdk')))) {
       await run(bin, ['init', '--dir', dir, '--node-modules-only', '--yes'], env)
     }
-    await run(bin, ['build', '--dir', dir, '--skip-install'], env)
+    await run(bin, ['build', '--dir', dir, '--built-in'], env)
   }
 }
 
