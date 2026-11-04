@@ -515,8 +515,32 @@ Its other columns take constant defaults or are nullable, and step
 `0024_social_referral_reward_receipt` adds nullable claim, response and retry
 columns, imports confirmed `reward_paid` receipts without losing notification
 completion, and quarantines older uncertain pending rewards. The backfill touches
-only paid or pending rewards. These steps run inside the writer-stopped sequence
-above. The owned upgrade test
+only paid or pending rewards.
+
+**Migration 0024 does not support a rolling deployment from a pre-0024 binary,
+even when both binaries require schema version 3.** A pre-0024 binary treats any
+non-null `reward_tier` as permission to POST and ignores the new claim and lock.
+It could issue a reward already claimed or quarantined by the new code. Before
+running `catalyst schema migrate` for 0024:
+
+1. Pause referral/login ingress and stop every SQS consumer, retry worker and
+   administrative writer. Drain or stop in-flight reward work; retain queue
+   messages for delivery after the cutover.
+2. Stop every pre-0024 binary sharing this database and disable its automatic
+   restart or rollback. A fleet lease or `FLEET_JOBS_ENABLED=false` alone is not
+   this gate: older login consumers do not honor the new reward lock.
+3. With all writers stopped and a verified backup/restore procedure, run migrate
+   and schema status using the compatible binary. Inspect imported paid receipts
+   and quarantined pending claims before resuming only compatible processes.
+
+This gate applies even when the database is already version 3; the version stamp
+cannot distinguish the two reward implementations. Schema migration does not
+automatically enforce the process shutdown. Do not roll an old binary back onto
+the migrated database; use a reviewed forward fix or a coordinated restore and
+provider reconciliation, since restoring SQL cannot undo an external reward.
+No production deployment history is assumed to waive this gate.
+
+The owned upgrade test
 `populated_main_v2_referrals_survive_the_upgrade_with_minted_ids` checks a
 populated shipped-main table keeps every value, gains unique ids and marks its
 granted rows. A database prepared at the captured version 2 also holds
@@ -830,8 +854,10 @@ transport errors, non-success statuses, malformed replies and a crash before
 response persistence leave an ambiguous receipt that is never automatically
 reissued. Operators must reconcile the outcome before restoring it to pending or
 supplying a confirmed response. Additive step `0024_social_referral_reward_receipt`
-imports previously confirmed `reward_paid` receipts and quarantines uncertain
-pending markers. This avoids automatic duplicate issuance but cannot guarantee
+imports previously confirmed object-valued `reward_paid` responses, including
+receipts with missing or invalid image metadata, and quarantines uncertain pending
+markers. A confirmed receipt with unusable image metadata remains confirmed and
+needs metadata repair for image delivery; it must not authorize another POST. This avoids automatic duplicate issuance but cannot guarantee
 exactly-once external delivery.
 
 `reward_paid` retains `{tier, reward, notified}` while downstream effects remain.

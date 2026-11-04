@@ -3,16 +3,14 @@
 ALTER TABLE social.referral_progress ADD COLUMN IF NOT EXISTS reward_requested_at timestamp without time zone;
 ALTER TABLE social.referral_progress ADD COLUMN IF NOT EXISTS reward_response jsonb;
 ALTER TABLE social.referral_progress ADD COLUMN IF NOT EXISTS reward_retry_at timestamp without time zone;
--- Retain receipts written by the paid-reward implementation, including its
--- notification completion flag. This also covers an older recorded 0023 that
--- had only reward_tier: additive migration never rewrites that step's receipt.
-ALTER TABLE social.referral_progress ADD COLUMN IF NOT EXISTS reward_paid jsonb;
+-- Preserve confirmed paid receipts and their notification completion flag.
+-- An incomplete image does not make a known payment outcome ambiguous.
 UPDATE social.referral_progress
     SET reward_tier=COALESCE(reward_tier, CASE
             WHEN pg_input_is_valid(reward_paid->>'tier', 'integer')
             THEN (reward_paid->>'tier')::integer END),
         reward_response=COALESCE(reward_response, CASE
-            WHEN jsonb_typeof(reward_paid->'reward'->'image')='string'
+            WHEN jsonb_typeof(reward_paid->'reward')='object'
             THEN reward_paid->'reward' END),
         reward_requested_at=COALESCE(reward_requested_at,timezone('UTC',now()))
     WHERE reward_paid IS NOT NULL;

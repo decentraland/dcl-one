@@ -385,8 +385,15 @@ impl Referral {
             return Ok(());
         }
         let rows: Vec<(String, String, i32)> = sqlx::query_as(
-            "SELECT referrer,invited_user,reward_tier FROM social.referral_progress              WHERE reward_tier IS NOT NULL              AND (reward_requested_at IS NULL OR reward_response IS NOT NULL)              AND (reward_retry_at IS NULL OR reward_retry_at <= timezone('UTC',now()))              ORDER BY reward_retry_at NULLS FIRST,invited_user LIMIT 64",
-        ).fetch_all(&self.pool).await.map_err(database_error)?;
+            "SELECT referrer,invited_user,reward_tier FROM social.referral_progress \
+             WHERE reward_tier IS NOT NULL \
+               AND (reward_requested_at IS NULL OR reward_response IS NOT NULL) \
+               AND (reward_retry_at IS NULL OR reward_retry_at <= timezone('UTC',now())) \
+             ORDER BY reward_retry_at NULLS FIRST,invited_user LIMIT 64",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(database_error)?;
         for (referrer, invited, tier) in rows {
             // The restore hold is live: a long batch must stop before its next
             // grant if the stamps expire or are withdrawn during the pass.
@@ -424,9 +431,18 @@ impl Referral {
         else {
             return Ok(());
         };
-        let state: Option<(Option<chrono::NaiveDateTime>, Option<Value>, Option<Value>)> = sqlx::query_as(
-            "UPDATE social.referral_progress SET reward_retry_at=timezone('UTC',now())+interval '1 minute'              WHERE invited_user=$1 AND reward_tier=$2 RETURNING reward_requested_at,reward_response,reward_paid",
-        ).bind(invited).bind(total as i32).fetch_optional(&mut *guard).await.map_err(database_error)?;
+        let state: Option<(Option<chrono::NaiveDateTime>, Option<Value>, Option<Value>)> =
+            sqlx::query_as(
+                "UPDATE social.referral_progress \
+             SET reward_retry_at=timezone('UTC',now())+interval '1 minute' \
+             WHERE invited_user=$1 AND reward_tier=$2 \
+             RETURNING reward_requested_at,reward_response,reward_paid",
+            )
+            .bind(invited)
+            .bind(total as i32)
+            .fetch_optional(&mut *guard)
+            .await
+            .map_err(database_error)?;
         let Some((requested, stored, paid)) = state else {
             return Ok(());
         };
@@ -434,10 +450,10 @@ impl Referral {
             reward
         } else {
             if requested.is_some() {
-                tracing::warn!(
-                    "referral reward request has no confirmed response; provider reconciliation required"
-                );
-                return Err(CommError::Internal);
+                // The original failed attempt reports the error. A later login
+                // cannot resolve this receipt, so leave it for reconciliation
+                // without treating every login as another provider failure.
+                return Ok(());
             }
             // Configuration failures happen before claiming and remain retryable.
             let url = self.settings.reward_server_url.as_deref().ok_or_else(|| {
@@ -1382,15 +1398,30 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let paid = json!({"tier": 10, "reward": {"image": "https://reward.example.org/paid.png"}, "notified": true});
+        let paid_receipts = [
+            (
+                "paid",
+                json!({"tier": 10, "reward": {"image": "https://reward.example.org/paid.png"}, "notified": true}),
+            ),
+            (
+                "missing_image",
+                json!({"tier": 10, "reward": {}, "notified": true}),
+            ),
+            (
+                "invalid_image",
+                json!({"tier": 10, "reward": {"image": 42}, "notified": false}),
+            ),
+        ];
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "ALTER TABLE {schema}.referral_progress ADD COLUMN reward_paid jsonb"
         )))
         .execute(&pool)
         .await
         .unwrap();
-        sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO {schema}.referral_progress(invited_user,referrer,status,reward_paid) VALUES('paid','referrer','tier_granted',$1)")))
-            .bind(&paid).execute(&pool).await.unwrap();
+        for (name, paid) in &paid_receipts {
+            sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO {schema}.referral_progress(invited_user,referrer,status,reward_paid) VALUES($1,'referrer','tier_granted',$2)")))
+                .bind(name).bind(paid).execute(&pool).await.unwrap();
+        }
         let ids: Vec<uuid::Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT id FROM {schema}.referral_progress ORDER BY invited_user"
         )))
@@ -1490,7 +1521,7 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(granted, 2);
+        assert_eq!(granted, 4);
         let receipt: (Option<i32>, bool, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT reward_tier,reward_requested_at IS NOT NULL,reward_response IS NULL FROM {schema}.referral_progress WHERE invited_user='invited'"
         ))).fetch_one(&pool).await.unwrap();
@@ -1499,14 +1530,16 @@ mod tests {
             (Some(5), true, true),
             "old pending markers have an unknown provider outcome"
         );
-        let imported: (Option<i32>, Option<Value>, Option<Value>, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT reward_tier,reward_response,reward_paid,reward_requested_at IS NOT NULL FROM {schema}.referral_progress WHERE invited_user='paid'"
-        ))).fetch_one(&pool).await.unwrap();
-        assert_eq!(
-            imported,
-            (Some(10), Some(paid["reward"].clone()), Some(paid), true),
-            "confirmed paid receipts resume without losing notification completion"
-        );
+        for (name, paid) in paid_receipts {
+            let imported: (Option<i32>, Option<Value>, Option<Value>, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "SELECT reward_tier,reward_response,reward_paid,reward_requested_at IS NOT NULL FROM {schema}.referral_progress WHERE invited_user=$1"
+            ))).bind(name).fetch_one(&pool).await.unwrap();
+            assert_eq!(
+                imported,
+                (Some(10), Some(paid["reward"].clone()), Some(paid), true),
+                "{name}: known payment and notification state survives incomplete image metadata"
+            );
+        }
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
             .execute(&pool)
             .await

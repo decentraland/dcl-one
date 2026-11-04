@@ -852,7 +852,7 @@ CREATE TABLE social.referral_progress (
 -- on the stored IP text can serve it.
 CREATE INDEX referral_progress_referrer_idx ON social.referral_progress (referrer, status);
 CREATE INDEX referral_progress_granted_idx ON social.referral_progress (referrer) WHERE tier_granted;
--- At most one receipt per milestone grant; scan only retryable pending work.
+-- drain_pending_rewards scans due retryable grants in retry-time and wallet order.
 CREATE INDEX referral_progress_reward_due_idx ON social.referral_progress (reward_retry_at NULLS FIRST, invited_user)
     WHERE reward_tier IS NOT NULL AND (reward_requested_at IS NULL OR reward_response IS NOT NULL);
 

@@ -532,6 +532,91 @@ async fn reward_drain_respects_restore_holds_before_claims_and_follow_ups() {
     database.teardown().await;
 }
 
+/// Legacy paid receipts prove payment independently of the image metadata.
+/// Repairing that metadata resumes image delivery without another reward POST.
+#[tokio::test]
+async fn imported_paid_rewards_with_incomplete_images_are_not_requested_again() {
+    let Some(database) = reward_database().await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let rewards = Arc::new(AtomicUsize::new(0));
+    let calls = rewards.clone();
+    let app = axum::Router::new().route(
+        "/api/rewards",
+        axum::routing::post(move || {
+            let calls = calls.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Json(json!({"data":[{"image":"https://reward.example.org/unexpected.png"}]}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let referral = Referral::new(
+        pool.clone(),
+        Outbound::for_tests(),
+        Settings {
+            reward_server_url: Some(url),
+            ..Settings::for_tests()
+        },
+    );
+    for reward in [json!({}), json!({"image":42})] {
+        let (referrer, invited) = (wallet(), wallet());
+        let paid = json!({"tier":5,"reward":reward,"notified":true});
+        sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,status,tier_granted,reward_paid) VALUES($1,$2,'tier_granted',true,$3)")
+            .bind(&referrer).bind(&invited).bind(&paid).execute(&pool).await.unwrap();
+        sqlx::raw_sql(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/schemas/migrations/0024_social_referral_reward_receipt.sql"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let receipt: (Option<Value>, Option<Value>) = sqlx::query_as("SELECT reward_response,reward_paid FROM social.referral_progress WHERE invited_user=$1")
+            .bind(&invited).fetch_one(&pool).await.unwrap();
+        assert_eq!(receipt, (Some(reward), Some(paid)));
+        referral.drain_pending_rewards().await.unwrap();
+        assert_eq!(rewards.load(Ordering::SeqCst), 0);
+        // Only image metadata needs reconciliation; the confirmed payment
+        // and the already-sent notification must never be replayed.
+        sqlx::query("UPDATE social.referral_progress SET reward_response=jsonb_set(reward_response,'{image}','\"https://reward.example.org/repaired.png\"'),reward_retry_at=NULL WHERE invited_user=$1")
+            .bind(&invited).execute(&pool).await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                referral.finalize_referral(invited.as_str()).await.unwrap();
+                let pending: Option<i32> = sqlx::query_scalar(
+                    "SELECT reward_tier FROM social.referral_progress WHERE invited_user=$1",
+                )
+                .bind(&invited)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+                if pending.is_none() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let image: String = sqlx::query_scalar("SELECT reward_image_url FROM social.referral_reward_images WHERE referrer=$1 AND tier=5")
+            .bind(&referrer).fetch_one(&pool).await.unwrap();
+        assert_eq!(image, "https://reward.example.org/repaired.png");
+        let notices: i64 = sqlx::query_scalar("SELECT count(*) FROM social.notifications WHERE address=$1 AND type='referral_new_tier_reached'")
+            .bind(&referrer).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            notices, 0,
+            "the imported receipt already confirms notification delivery"
+        );
+        assert_eq!(rewards.load(Ordering::SeqCst), 0);
+    }
+    server.abort();
+    database.teardown().await;
+}
+
 /// Persist the provider response before tier SNS and resume it after a restart.
 /// Concurrent logins and drainers must never repeat the provider POST.
 #[tokio::test]
@@ -680,7 +765,7 @@ async fn ambiguous_reward_responses_are_not_reissued_after_restart_or_login() {
         .await
         .unwrap();
         after.drain_pending_rewards().await.unwrap();
-        assert!(after.finalize_referral(invited.as_str()).await.is_err());
+        after.finalize_referral(invited.as_str()).await.unwrap();
         assert_eq!(rewards.load(Ordering::SeqCst), 1);
         let state: (Option<i32>, bool, bool) = sqlx::query_as("SELECT reward_tier,reward_requested_at IS NOT NULL,reward_response IS NULL FROM social.referral_progress WHERE invited_user=$1")
             .bind(&invited).fetch_one(&pool).await.unwrap();
@@ -760,7 +845,7 @@ async fn a_reward_body_timeout_is_quarantined_without_reposting() {
         .await
         .unwrap();
     after.drain_pending_rewards().await.unwrap();
-    assert!(after.finalize_referral(invited.as_str()).await.is_err());
+    after.finalize_referral(invited.as_str()).await.unwrap();
     assert_eq!(rewards.load(Ordering::SeqCst), 1);
     let state: (Option<i32>, bool, bool) = sqlx::query_as("SELECT reward_tier,reward_requested_at IS NOT NULL,reward_response IS NULL FROM social.referral_progress WHERE invited_user=$1")
         .bind(&invited).fetch_one(&pool).await.unwrap();
@@ -817,13 +902,13 @@ async fn cancelled_inflight_reward_preserves_its_claim_for_reconciliation() {
         .await
         .unwrap();
     after.drain_pending_rewards().await.unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while after.finalize_referral(invited.as_str()).await.is_ok() {
-            tokio::task::yield_now().await;
-        }
-    })
-    .await
-    .unwrap();
+    after.finalize_referral(invited.as_str()).await.unwrap();
+    let claimed: bool = sqlx::query_scalar("SELECT reward_requested_at IS NOT NULL AND reward_response IS NULL FROM social.referral_progress WHERE invited_user=$1")
+        .bind(&invited).fetch_one(&pool).await.unwrap();
+    assert!(
+        claimed,
+        "ordinary logins leave the cancelled request quarantined"
+    );
     assert_eq!(rewards.load(Ordering::SeqCst), 1);
     server.abort();
     database.teardown().await;
@@ -904,7 +989,7 @@ async fn a_failed_tier_reward_is_retried_only_after_its_provider_outcome_is_reco
         assert_eq!(images(pool.clone(), referrer.clone()).await, 0);
 
         if reward_failure {
-            assert!(referral.finalize_referral(invited.as_str()).await.is_err());
+            referral.finalize_referral(invited.as_str()).await.unwrap();
             assert_eq!(rewards.load(Ordering::SeqCst), 1);
             // An operator has confirmed that the fixture did not issue a
             // reward; only that reconciliation permits a second POST.
