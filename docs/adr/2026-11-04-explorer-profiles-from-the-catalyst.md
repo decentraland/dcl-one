@@ -46,15 +46,18 @@ an engine-side revert of a failed publish.
   most any reader has asked of it: `ProfileManager::get_compact` (and the face and name readers
   built on it, and the HUD's `getCompactProfiles` for list rows) asks compact; `get_data`, an
   announced player and our own profile ask full. A compact answer never replaces full data, full
-  data answers compact reads, and an address read compact and then full is fetched full at once.
+  data answers compact reads, and an address read compact and then full is fetched full as soon as
+  any compact fetch already in flight for it lands.
 - **A catalyst without the compact route serves compact reads from full profiles.** A compact POST
   answered 404 (Decentraland's catalysts) or 405 (a catalyst whose `/lambdas/profiles/{id}` takes
-  the path) makes every fetch full for the rest of the session.
+  the path) makes every fetch full for the rest of the session; a compact POST that fails any other
+  way has its addresses read whole.
 - **Other players only hear versions the server holds.** While an edit of our own profile deploys,
-  the version announcement, its keepalive and the answer to a peer's `ProfileRequest` carry the
-  profile from before the edit; the new version is announced once the deploy lands. A failed
-  deploy puts that profile back in the world (the player's avatar, scenes' `PLAYER` data, the
-  profile cache, the HUD's profile-changed stream) without deploying again.
+  the version announcement, its keepalive, the Pulse handshake, the ws-room's first announcement
+  and the answer to a peer's `ProfileRequest` carry the profile from before the edit; the new
+  version is announced once the deploy lands. A failed deploy puts that profile back in the world
+  (the player's avatar, scenes' `PLAYER` data, the profile cache, the HUD's profile-changed stream)
+  without deploying again.
 
 ## Rejected
 
@@ -62,8 +65,9 @@ an engine-side revert of a failed publish.
   registry, not the node's deployments, and nothing on an `island` node.
 - **Serving the node's own data from the registry routes instead of a lambdas route.** Those routes
   are unity-explorer's boot reads of Decentraland's registry; the node's profiles already live at
-  `/lambdas/profiles`, and unity-explorer's catalyst url for the compact tier is
-  `{lambdas}/profiles/metadata`.
+  `/lambdas/profiles`, and `{lambdas}/profiles/metadata` is the path unity-explorer's repository
+  builds for a catalyst's compact tier (`RealmProfileRepository.PostUrl`), though it forces the
+  full tier on catalysts today.
 - **A flag between a centralized service and a catalyst** (unity-explorer's
   `USE_CENTRALIZED_PROFILES`). The catalyst is the centralized service.
 - **The catalyst a peer announces in its LiveKit metadata.** Another player could make every

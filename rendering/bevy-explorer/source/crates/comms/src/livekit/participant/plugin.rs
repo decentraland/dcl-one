@@ -135,9 +135,8 @@ fn participant_connected(
     }
 
     // Register presence explicitly. Membership is otherwise implied by a `PlayerUpdate` arriving,
-    // and the only one this path used to emit was the metadata message below — which is skipped
-    // when the token carries no metadata, so a peer whose avatar state rides Pulse could sit in the
-    // room without ever being recorded as being in it. `PlayerLeft` on disconnect is the mirror.
+    // and a peer whose avatar state rides Pulse sends none here, so it could sit in the room without
+    // ever being recorded as being in it. `PlayerLeft` on disconnect is the mirror.
     if !is_local {
         if let Some(address) = participant.identity().as_str().as_h160() {
             let transport_id = *room_entity;

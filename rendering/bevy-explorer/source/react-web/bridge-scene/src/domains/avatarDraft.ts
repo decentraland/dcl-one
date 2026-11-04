@@ -126,13 +126,15 @@ export function registerAvatarDraft(ctx: Ctx, sendEquipped: () => Promise<void>)
       await BevyApi.setAvatar(lookDeploy(look, from, me.name))
     } catch (e) {
       if (signedOut()) return
-      // "cancelled" isn't a failure: a later setAvatar (another close, a profile save) replaced this
-      // one before it deployed, and the engine's copy that one deploys already carries this look.
+      // "cancelled" isn't a failure of its own: a later setAvatar (another close, a profile save)
+      // replaced this one before it deployed and carries this look. The server only has it once
+      // that one lands, and if that one fails the engine goes back to the look from before both,
+      // so the draft and `deployed` stay as they are for the next close or Retry.
       if (!String(e).includes('cancelled')) {
         console.error('[avatar] deploy failed', e)
         ctx.send({ kind: 'avatarSaveFailed', message: String(e) })
-        return
       }
+      return
     }
     if (signedOut()) return
     deployed = look

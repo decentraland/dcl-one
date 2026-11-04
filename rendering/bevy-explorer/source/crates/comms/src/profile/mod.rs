@@ -92,6 +92,9 @@ impl Plugin for UserProfilePlugin {
                     ("Compact POSTs", "compact"),
                     ("Compact route missing", "compactUnsupported"),
                     ("Unresolved cached profiles", "unresolved"),
+                    ("Own profile version", "ownVersion"),
+                    ("Version other players see", "peerVersion"),
+                    ("Own profile deploy pending", "deployPending"),
                 ],
                 actions: &[],
                 inputs: &[],
@@ -187,9 +190,14 @@ impl ProfileEntry {
         !self.satisfied() && self.fetching.is_none() && self.due(now)
     }
 
-    /// a cascade has concluded with nothing to show, and its retry isn't due yet
-    fn missing(&self, now: web_time::Instant) -> bool {
-        self.data.is_none() && self.compact.is_none() && self.fetching.is_none() && !self.due(now)
+    /// a cascade has concluded with nothing a reader of `tier` can use, and its retry isn't due
+    /// yet
+    fn missing(&self, tier: ProfileTier, now: web_time::Instant) -> bool {
+        let held = match tier {
+            ProfileTier::Compact => self.data.is_some() || self.compact.is_some(),
+            ProfileTier::Full => self.data.is_some(),
+        };
+        !held && self.fetching.is_none() && !self.due(now)
     }
 
     /// the POST this entry's next fetch goes in: full for everyone once the catalyst has
@@ -326,21 +334,28 @@ struct ProfileRequestCounts {
     compact: u64,
 }
 
-/// Read profile batching and outstanding fetches.
+/// Read profile batching, outstanding fetches and our own profile's deploy state.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/profile_requests")]
 struct ProfileRequestsCommand;
 
-fn profile_requests(mut input: ConsoleCommand<ProfileRequestsCommand>, cache: Res<ProfileCache>) {
+fn profile_requests(
+    mut input: ConsoleCommand<ProfileRequestsCommand>,
+    cache: Res<ProfileCache>,
+    current: Res<CurrentUserProfile>,
+) {
     if let Some(Ok(_)) = input.take() {
         let counts = &cache.requests;
         let posts = counts.single + counts.aggregated;
         input.reply_ok(serde_json::json!({"posts": posts, "single": counts.single, "aggregated": counts.aggregated,
             "lastBatch": counts.last_batch, "meanBatch": (posts > 0).then(|| counts.addresses as f64 / posts as f64),
-            "unavailable": {"meanBatch": "No profile requests yet"},
+            "unavailable": {"meanBatch": "No profile requests yet", "ownVersion": "Not signed in", "peerVersion": "Not signed in"},
             "compact": counts.compact, "compactUnsupported": cache.compact_unsupported,
             "inFlight": cache.batches.len() + cache.compact_batches.len(),
-            "unresolved": cache.entries.values().filter(|entry| entry.data.is_none() && entry.compact.is_none()).count()}).to_string());
+            "unresolved": cache.entries.values().filter(|entry| entry.data.is_none() && entry.compact.is_none()).count(),
+            "ownVersion": current.profile.as_ref().map(|profile| profile.version),
+            "peerVersion": current.peer_profile().map(|profile| profile.version),
+            "deployPending": current.revert_to.is_some()}).to_string());
     }
 }
 
@@ -359,7 +374,7 @@ impl ProfileCache {
         address: Address,
     ) -> Result<Option<CompactProfile>, ProfileMissingError> {
         let entry = self.touch(address, ProfileTier::Compact);
-        if entry.missing(web_time::Instant::now()) {
+        if entry.missing(ProfileTier::Compact, web_time::Instant::now()) {
             return Err(ProfileMissingError);
         }
         Ok(entry
@@ -408,6 +423,18 @@ impl ProfileCache {
         }
     }
 
+    /// a compact POST failed in some other way (a server error, a body that isn't the list, a
+    /// fetch the browser refused): the full route may still answer, so these addresses are read
+    /// whole from now on
+    fn compact_fetch_failed(&mut self, addresses: &[Address]) {
+        for address in addresses {
+            if let Some(entry) = self.entries.get_mut(address) {
+                entry.fetching = None;
+                entry.want(ProfileTier::Full);
+            }
+        }
+    }
+
     fn server_snapshots(&self, profile: &UserProfile) -> Option<AvatarSnapshots> {
         let address = profile.content.eth_address.as_h160()?;
         let held = self.entries.get(&address)?.profile()?;
@@ -435,7 +462,7 @@ impl ProfileManager<'_, '_> {
         address: Address,
     ) -> Result<Option<&UserProfile>, ProfileMissingError> {
         let entry = self.cache.touch(address, ProfileTier::Full);
-        if entry.missing(web_time::Instant::now()) {
+        if entry.missing(ProfileTier::Full, web_time::Instant::now()) {
             return Err(ProfileMissingError);
         }
         Ok(entry.profile())
@@ -479,7 +506,7 @@ impl ProfileManager<'_, '_> {
 
     pub fn get_name(&mut self, address: Address) -> Result<Option<&String>, ProfileMissingError> {
         let entry = self.cache.touch(address, ProfileTier::Compact);
-        if entry.missing(web_time::Instant::now()) {
+        if entry.missing(ProfileTier::Compact, web_time::Instant::now()) {
             return Err(ProfileMissingError);
         }
         Ok(entry
@@ -677,7 +704,13 @@ pub fn setup_primary_profile(
             }
             Some(Err(e)) => {
                 error!("failed to deploy profile: {e}");
-                current_profile.deploy_finished(address, false);
+                // only a profile actually put back is a change the avatar and scenes must see
+                if current_profile
+                    .bypass_change_detection()
+                    .deploy_finished(address, false)
+                {
+                    current_profile.set_changed();
+                }
                 commands.send_event(ProfileDeployedEvent {
                     version,
                     success: false,
@@ -727,20 +760,39 @@ impl CurrentUserProfile {
 
     /// The deploy of `address`' profile has finished: a success keeps the edit, a failure puts the
     /// snapshot back without deploying it again. A result for another account changes nothing.
-    pub fn deploy_finished(&mut self, address: Option<Address>, success: bool) {
+    /// Returns whether the profile was put back.
+    pub fn deploy_finished(&mut self, address: Option<Address>, success: bool) -> bool {
         let current = self
             .profile
             .as_ref()
             .and_then(|profile| profile.content.eth_address.as_h160());
         if address.is_none() || address != current {
+            return false;
+        }
+        match self.revert_to.take() {
+            Some(snapshot) if !success => {
+                self.profile = Some(snapshot);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Take the profile the server holds (a realm change reads it again), unless an edit still
+    /// deploying is newer: that edit stays, with its snapshot, until its deploy settles.
+    pub fn adopt_server_profile(&mut self, profile: UserProfile) {
+        let newer_edit_deploying = self.revert_to.is_some()
+            && self
+                .profile
+                .as_ref()
+                .is_some_and(|current| current.version > profile.version);
+        if newer_edit_deploying {
             return;
         }
-        let snapshot = self.revert_to.take();
-        if !success {
-            if let Some(snapshot) = snapshot {
-                self.profile = Some(snapshot);
-            }
-        }
+        self.profile = Some(profile);
+        self.is_deployed = true;
+        self.deploy_held = false;
+        self.revert_to = None;
     }
 
     /// The profile other players may know about: the one from before an edit still deploying,
@@ -781,12 +833,8 @@ fn drive_profile_fetches(mut manager: ProfileManager, wallet: Res<Wallet>) {
             }
             Err(CompactFetchError::Unsupported) => cache.compact_endpoint_missing(&addresses),
             Err(CompactFetchError::Failed(e)) => {
-                debug!("compact profile fetch failed: {e}");
-                for address in addresses {
-                    if let Some(entry) = cache.entries.get_mut(&address) {
-                        entry.apply_compact(None, now);
-                    }
-                }
+                debug!("compact profile fetch failed, reading those profiles whole: {e}");
+                cache.compact_fetch_failed(&addresses);
             }
         }
     }
@@ -1516,13 +1564,9 @@ async fn fetch_catalyst_profile_by_id(
             return Err(anyhow!("catalyst fetch from {url}: {e}"));
         }
     };
-    // the profile's content is on the catalyst it came from (the page's, on a web login), which
-    // need not be the realm's
-    let base_url = endpoint
-        .trim_end_matches('/')
-        .strip_suffix("/lambdas")
-        .map(|catalyst| format!("{catalyst}/content/contents/"))
-        .unwrap_or_else(|| ipfs.contents_endpoint().unwrap_or_default());
+    // the profile's content is on the catalyst it came from, which need not be the realm's
+    let base_url =
+        content_base(&endpoint).unwrap_or_else(|| ipfs.contents_endpoint().unwrap_or_default());
     Ok(content
         .avatars
         .into_iter()
@@ -1935,7 +1979,7 @@ mod tests {
         };
         absent.apply_compact(None, now);
         assert!(!absent.wants_fetch(now));
-        assert!(absent.missing(now));
+        assert!(absent.missing(ProfileTier::Compact, now));
     }
 
     #[test]
@@ -1991,7 +2035,7 @@ mod tests {
     fn failed_deploy_restores_the_pre_edit_profile() {
         let mut current = deployed(own(5, "before"));
         edit(&mut current, "rejected");
-        current.deploy_finished(own_address(), false);
+        assert!(current.deploy_finished(own_address(), false));
         assert_eq!(version_and_name(current.profile.as_ref()), (5, "before"));
         assert!(current.revert_to.is_none());
         assert!(
@@ -2014,7 +2058,7 @@ mod tests {
     fn successful_deploy_clears_the_snapshot() {
         let mut current = deployed(own(5, "before"));
         edit(&mut current, "after");
-        current.deploy_finished(own_address(), true);
+        assert!(!current.deploy_finished(own_address(), true));
         assert_eq!(version_and_name(current.profile.as_ref()), (6, "after"));
         assert!(current.revert_to.is_none());
         assert_eq!(version_and_name(current.peer_profile()), (6, "after"));
@@ -2037,8 +2081,49 @@ mod tests {
         other.content.eth_address = format!("{:#x}", Address::repeat_byte(9));
         current.profile = Some(other.clone());
 
-        current.deploy_finished(own_address(), false);
+        assert!(!current.deploy_finished(own_address(), false));
         assert_eq!(current.profile, Some(other));
+    }
+
+    #[test]
+    fn a_realm_refresh_keeps_an_edit_still_deploying() {
+        let mut current = deployed(own(5, "before"));
+        edit(&mut current, "pending");
+        current.adopt_server_profile(own(5, "server"));
+        assert_eq!(version_and_name(current.profile.as_ref()), (6, "pending"));
+        assert_eq!(version_and_name(current.peer_profile()), (5, "before"));
+
+        // once nothing is deploying, the server's profile is taken
+        current.deploy_finished(own_address(), true);
+        current.adopt_server_profile(own(6, "server"));
+        assert_eq!(version_and_name(current.profile.as_ref()), (6, "server"));
+    }
+
+    #[test]
+    fn a_full_reader_is_not_served_by_compact_data() {
+        let now = web_time::Instant::now();
+        let mut entry = ProfileEntry::default();
+        entry.apply_compact(Some(compact("row")), now);
+        entry.want(ProfileTier::Full);
+        entry.next_fetch = Some(now + PROFILE_FETCH_RETRY);
+        assert!(entry.missing(ProfileTier::Full, now));
+        assert!(!entry.missing(ProfileTier::Compact, now));
+    }
+
+    #[test]
+    fn a_failed_compact_fetch_reads_the_address_whole() {
+        let now = web_time::Instant::now();
+        let mut cache = ProfileCache::default();
+        cache.touch(Address::ZERO, ProfileTier::Compact).fetching = Some(ProfileTier::Compact);
+
+        cache.compact_fetch_failed(&[Address::ZERO]);
+        assert!(!cache.compact_unsupported);
+        let entry = &cache.entries[&Address::ZERO];
+        assert!(entry.wants_fetch(now));
+        assert_eq!(
+            entry.fetch_tier(cache.compact_unsupported),
+            ProfileTier::Full
+        );
     }
 
     #[test]

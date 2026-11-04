@@ -315,12 +315,7 @@ fn update_profile_for_realm(
 
     if let Some(mut t) = task.take() {
         match t.complete() {
-            Some(Ok(Some(profile))) => {
-                current_profile.profile = Some(profile);
-                current_profile.is_deployed = true;
-                current_profile.deploy_held = false;
-                current_profile.revert_to = None;
-            }
+            Some(Ok(Some(profile))) => current_profile.adopt_server_profile(profile),
             Some(Ok(None)) | Some(Err(_)) => {
                 // keep existing profile
             }
