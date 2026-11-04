@@ -4,6 +4,7 @@ pub mod crash_report;
 pub mod login;
 pub mod oow;
 pub mod sysinfo;
+pub mod version_check;
 
 use std::collections::BTreeMap;
 
