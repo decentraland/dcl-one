@@ -2120,6 +2120,8 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm 0.11.1",
  "alloy",
+ "alloy-primitives",
+ "alloy-sol-types",
  "anyhow",
  "async-trait",
  "axum",

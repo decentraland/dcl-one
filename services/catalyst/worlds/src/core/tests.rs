@@ -53,6 +53,26 @@ struct Fixture {
 /// owner rule are covered there.
 /// `forward_to`: the publishes are queued for that (loopback) upstream.
 async fn fixture_with(personal: PersonalWorldsPolicy, forward_to: Option<&str>) -> Option<Fixture> {
+    fixture_full(personal, forward_to, None).await
+}
+
+/// ENS worlds on, over a fake chain with an ENS cap of `ens_cap` bytes.
+async fn fixture_with_ens(ens_cap: i64) -> Option<(Fixture, crate::ens::test_support::FakeEns)> {
+    let (resolver, ens) = crate::ens::test_support::resolver().await;
+    let f = fixture_full(
+        PersonalWorldsPolicy::disabled(),
+        None,
+        Some((resolver, ens_cap)),
+    )
+    .await?;
+    Some((f, ens))
+}
+
+async fn fixture_full(
+    personal: PersonalWorldsPolicy,
+    forward_to: Option<&str>,
+    ens: Option<(Arc<crate::ens::EnsResolver>, i64)>,
+) -> Option<Fixture> {
     let pool = crate::db::scratch::pool(8).await?;
     let (market, names) = index_with_names().await;
     let dir = std::env::temp_dir().join(format!(
@@ -61,7 +81,10 @@ async fn fixture_with(personal: PersonalWorldsPolicy, forward_to: Option<&str>) 
         Uuid::new_v4().simple()
     ));
     let storage = Arc::new(Storage::from_config(&dir).await.unwrap());
-    let policy = Policy::new(pool.clone(), personal, Some(market.clone()));
+    let mut policy = Policy::new(pool.clone(), personal, Some(market.clone()));
+    if let Some((resolver, cap)) = ens {
+        policy = policy.with_ens(Some(resolver), cap);
+    }
     let forwarder = forward_to.map(|target| {
         forward::test_support::forwarder(
             pool.clone(),
@@ -5785,4 +5808,129 @@ async fn a_deploy_reusing_a_blob_the_collector_removed_is_refused_under_the_stor
         err.public_message()
     );
     assert!(entity_ids(&f, &world).await.is_empty());
+}
+
+fn ens_world_name() -> WorldName {
+    WorldName::parse(&format!(
+        "e{}.eth",
+        &Uuid::new_v4().simple().to_string()[..12]
+    ))
+    .unwrap()
+}
+
+/// The reconcile job rewrites a stale `worlds.owner` from the authority and
+/// re-decides the previous holder in the live rooms; a name the authority
+/// cannot answer for keeps its stored owner.
+#[tokio::test]
+async fn the_owner_reconcile_follows_a_name_transfer() {
+    let Some((f, ens)) = fixture_with_ens(1 << 20).await else {
+        return;
+    };
+    let recorded = Arc::new(RecordedRevocations::default());
+    f.state.add_revocation_sink(recorded.clone());
+    let world = world_name();
+    let (old, new) = (Wallet::random(), Wallet::random());
+    f.names.set(&old.address, world.label());
+    post_entity(
+        &f.app,
+        &deployment(&old, &world, "Before", "0,0", &["0,0"]).await,
+        200,
+    )
+    .await;
+    sqlx::query("UPDATE worlds.worlds SET access_type = 'allow-list' WHERE name = $1")
+        .bind(world.key())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    f.names.forget(&old.address);
+    f.names.set(&new.address, world.label());
+    f.market.graph.names.clear();
+    f.market.graph.name_owner.clear();
+
+    let unresolved = ens_world_name();
+    let ens_owner = Wallet::random();
+    sqlx::query("INSERT INTO worlds.worlds (name, owner) VALUES ($1, $2)")
+        .bind(unresolved.key())
+        .bind(ens_owner.address.as_str())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    ens.set_down(true);
+
+    let report = super::owners::reconcile_owners(&f.state).await.unwrap();
+    assert!(report.updated >= 1 && report.unresolved >= 1, "{report:?}");
+    assert_eq!(
+        stored_owner(&f.pool, &world).await.as_deref(),
+        Some(new.address.as_str())
+    );
+    assert_eq!(
+        stored_owner(&f.pool, &unresolved).await.as_deref(),
+        Some(ens_owner.address.as_str()),
+        "an unresolved name keeps its stored owner"
+    );
+    assert!(recorded.take().contains(&super::Revocation::Address {
+        world: world.clone(),
+        address: old.address.clone(),
+    }));
+
+    super::owners::reconcile_owners(&f.state).await.unwrap();
+    assert!(
+        !recorded
+            .take()
+            .iter()
+            .any(|r| matches!(r, super::Revocation::Address { world: w, .. } if *w == world)),
+        "a current row is left alone"
+    );
+}
+
+/// `ALLOW_ENS_DOMAINS`: an ENS world publishes for its registry holder under
+/// `ENS_MAX_SIZE`, which an override row replaces; off, `.eth` is refused.
+#[tokio::test]
+async fn an_ens_world_publishes_for_its_holder_under_the_ens_cap() {
+    let Some((f, ens)) = fixture_with_ens(10).await else {
+        return;
+    };
+    let (world, owner, stranger) = (ens_world_name(), Wallet::random(), Wallet::random());
+    ens.register(world.key(), &owner.address);
+    let app = &f.app;
+    assert_eq!(
+        expect(app, limits_case(&world, ""), 200).await,
+        json!({ "maxSceneSizeInBytes": "10", "maxParcels": 4 })
+    );
+    let file: &[u8] = b"twelve bytes";
+    let content = json!([{ "file": "a.bin", "hash": hash_bytes_v1(file) }]);
+    let entity = publish_entity(&world, &["0,0"], content);
+    refused(
+        app,
+        &stranger,
+        entity.clone(),
+        &[file],
+        &no_permission(world.display()),
+    )
+    .await;
+    let message = "Deployment failed: The deployment is too big. The maximum total size allowed is 10 bytes for scenes. You can upload up to 10 bytes but you tried to upload 12.";
+    refused(app, &owner, entity.clone(), &[file], message).await;
+    set_limit_override(&f.pool, &world, None, Some(1000)).await;
+    post_entity(app, &signed_deployment(&owner, &entity, &[file]).await, 200).await;
+    assert_eq!(
+        stored_owner(&f.pool, &world).await.as_deref(),
+        Some(owner.address.as_str())
+    );
+    let meta = json!({ "type": "allow-list", "wallets": [] }).to_string();
+    let path = format!("/world/{}/permissions/deployment", world.display());
+    expect(
+        app,
+        Case::new("post", &path).signed_meta(&owner, &meta).await,
+        204,
+    )
+    .await;
+
+    let Some(off) = fixture().await else { return };
+    let other = ens_world_name();
+    let entity = publish_entity(&other, &["0,0"], json!([]));
+    let message = format!(
+        "Deployment failed: Only .dcl.eth world names are supported for publishing (got \"{}\")",
+        other.display()
+    );
+    refused(&off.app, &owner, entity, &[], &message).await;
 }

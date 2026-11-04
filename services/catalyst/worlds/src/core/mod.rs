@@ -39,6 +39,7 @@ pub mod limits;
 pub mod manifest;
 pub mod metrics;
 pub mod names;
+pub mod owners;
 pub mod permissions;
 pub mod scenes;
 pub mod settings;
@@ -76,6 +77,9 @@ pub use upload_limits::UploadLimits;
 /// Rows per multi-row access-log INSERT; the drain takes whatever is queued up to this.
 const ACCESS_LOG_BATCH: usize = 256;
 
+/// `WORLDS_OWNER_RECONCILE_INTERVAL_SECS`' default.
+pub const DEFAULT_OWNER_RECONCILE_INTERVAL: std::time::Duration =
+    std::time::Duration::from_secs(3600);
 /// WCS `SCENE_EVICTION_TTL_MS` default: 7 days.
 pub const DEFAULT_SCENE_EVICTION_TTL: std::time::Duration =
     std::time::Duration::from_secs(7 * 24 * 3600);
@@ -99,6 +103,8 @@ pub struct Settings {
     pub public_url: String,
     /// `MAX_FILE_COUNT`: entries a deployed entity's `content` may list.
     pub max_file_count: usize,
+    /// `WORLDS_OWNER_RECONCILE_INTERVAL_SECS`: the `worlds-owner-reconcile` pause.
+    pub owner_reconcile_interval: std::time::Duration,
 }
 
 impl std::fmt::Debug for Settings {
@@ -124,6 +130,7 @@ impl Settings {
             scene_eviction_ttl: DEFAULT_SCENE_EVICTION_TTL,
             public_url: String::new(),
             max_file_count: deploy::DEFAULT_MAX_FILE_COUNT,
+            owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
         })
     }
 
@@ -134,6 +141,11 @@ impl Settings {
 
     pub fn with_public_url(mut self, public_url: &str) -> Self {
         self.public_url = public_url.trim_end_matches('/').to_string();
+        self
+    }
+
+    pub fn with_owner_reconcile_interval_secs(mut self, secs: u64) -> Self {
+        self.owner_reconcile_interval = std::time::Duration::from_secs(secs);
         self
     }
 
@@ -157,6 +169,7 @@ impl Settings {
             scene_eviction_ttl: DEFAULT_SCENE_EVICTION_TTL,
             public_url: "https://worlds.example".to_string(),
             max_file_count: deploy::DEFAULT_MAX_FILE_COUNT,
+            owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
         }
     }
 }
@@ -409,8 +422,25 @@ impl CoreState {
 
     /// The `worlds-access-log` job: drains the queue into `world_access_log`
     /// in batches until shutdown, flushing what is left on cancel; and the
-    /// fleet-wide hourly `worlds-scene-eviction` of expired retired scenes.
+    /// fleet-wide hourly `worlds-scene-eviction` of expired retired scenes;
+    /// and the fleet-wide `worlds-owner-reconcile` ([`owners`]).
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
+        let state = self.clone();
+        jobs.spawn_periodic_leased(
+            "worlds-owner-reconcile",
+            crate::jobs::PeriodicCfg::every(self.settings.owner_reconcile_interval)
+                .with_jitter(std::time::Duration::from_secs(60)),
+            move |_ctx| {
+                let state = state.clone();
+                async move {
+                    let report = owners::reconcile_owners(&state)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("reconciling world owners: {e:?}"))?;
+                    tracing::info!(?report, "world owners reconciled");
+                    Ok(())
+                }
+            },
+        );
         let state = self.clone();
         jobs.spawn_periodic_leased(
             "worlds-scene-eviction",

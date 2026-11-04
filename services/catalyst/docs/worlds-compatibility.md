@@ -52,6 +52,11 @@ difference not listed here is a gap, not a decision.
   `.dcl.eth` from `/about`'s `realmName` for worlds published here, so a
   stock client does not resolve them against Decentraland's registry.
   Mirrored worlds keep the suffix.
+- **Owner admission.** The owner is the name authority's current holder,
+  memoized for 30 seconds per DCL NAME (60 seconds per ENS name; upstream
+  one minute). When the authority cannot answer, nobody is admitted as
+  owner and the world's access setting still decides; only a refusal by
+  that setting answers 503 (upstream fails the whole mint).
 - **Capacity check fails closed.** When the live occupancy of a world cannot
   be recovered, the comms mint answers 503 instead of counting zero
   participants and admitting the user.
@@ -82,8 +87,15 @@ difference not listed here is a gap, not a decision.
   it (including Genesis content) without uploading it again. Upstream could
   only reuse files from its own bucket.
 - **Thumbnails** are hashed as CIDv1.
-- **Publish names.** Only `.dcl.eth` worlds (and personal worlds) accept
-  publishes and owner routes.
+- **ENS names.** With `ALLOW_ENS_DOMAINS=true` the holder is read over
+  `ETH_RPC_URL` (required then; the process refuses to start without it).
+  Only names whose labels are lowercase ASCII letters, digits, `-` and `_`
+  resolve; any other ENS name has no owner here (no ENSIP-15
+  normalization).
+- **Owner reconcile.** `worlds.owner` is rewritten from the name authority
+  every `WORLDS_OWNER_RECONCILE_INTERVAL_SECS` (default one hour; upstream
+  every 12 hours), ENS worlds included. A previous holder the world's
+  access setting no longer admits is removed from the world's live rooms.
 - **Newer-entity check** compares against the lower of the stored entity's
   timestamp and its row's update time, so a future-dated mirrored or
   imported entity cannot block redeploys.
