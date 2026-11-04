@@ -290,6 +290,15 @@ const ROWS: &[Row] = &[
         "NFT_WORKER_BASE_URL",
         "https://nfts.decentraland.org",
     ),
+    // lamb2's explorer backpack lists chain-owned tokens only: a mirror
+    // answers the same; island and journey also list this node's escrow grants.
+    row(
+        "lambdas",
+        "EXPLORER_ESCROW_GRANTS_ENABLED",
+        Is("false"),
+        Is("true"),
+        Is("true"),
+    ),
     // lamb2's LAND subgraph: parcel operators and permissions until the
     // land-authz index is published.
     upstream(

@@ -1100,6 +1100,41 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
             "{uri}"
         );
     }
+    // An active escrow grant joins the explorer's on-chain copies only where
+    // `EXPLORER_ESCROW_GRANTS_ENABLED` is on (off under the mirror posture,
+    // as lamb2 lists chain-owned tokens only).
+    sqlx::query("INSERT INTO shop.usage_grants (grantee_address, urn, token_id, category, unlock_at) VALUES ($1, $2, '99', 'wearable', timezone('UTC', now()) + interval '2 days')")
+        .bind(OWNER)
+        .bind(format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"))
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    for (grants, amount) in [(false, 2), (true, 3)] {
+        let mut settings = state.settings.clone();
+        settings.explorer_escrow_grants = grants;
+        let s = Arc::new(MarketplaceState::new(
+            db.pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings,
+        ));
+        s.test_allow_loopback
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let (status, body) = get(
+            &s,
+            &format!("/explorer/{OWNER}/wearables?collectionType=on-chain"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["elements"][0]["amount"], amount,
+            "grants={grants}: {body}"
+        );
+    }
+    sqlx::query("DELETE FROM shop.usage_grants WHERE token_id = '99'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+
     // The registry and the collections subgraphs down: lamb2's 502
     // FetcherError, never an empty list or a 503.
     let mut dark_settings = state.settings.clone();

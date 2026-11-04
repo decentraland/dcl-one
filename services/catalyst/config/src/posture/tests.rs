@@ -108,6 +108,29 @@ fn a_mirror_reads_third_party_holdings_from_the_nft_worker() {
 }
 
 #[test]
+fn a_mirror_explorer_lists_chain_owned_items_only() {
+    assert_eq!(
+        expanded(Posture::Mirror, &[])["EXPLORER_ESCROW_GRANTS_ENABLED"],
+        "false"
+    );
+    for posture in [Posture::Island, Posture::Journey] {
+        assert_eq!(
+            expanded(posture, &[])["EXPLORER_ESCROW_GRANTS_ENABLED"],
+            "true"
+        );
+    }
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert!(!c.market_upstreams.explorer_escrow_grants_enabled);
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "island")]);
+    assert!(c.market_upstreams.explorer_escrow_grants_enabled);
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst")]);
+    assert!(
+        c.market_upstreams.explorer_escrow_grants_enabled,
+        "without a posture the binary default lists them"
+    );
+}
+
+#[test]
 fn read_through_copies_a_miss_on_a_mirror_only() {
     assert_eq!(
         expanded(Posture::Mirror, &[])["READ_THROUGH_ENABLED"],
@@ -133,7 +156,12 @@ fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
     for (key, value) in &got {
         let switch = value == "true" || value == "false";
         if switch {
-            let allowed = ["SERVE_UNSYNCED", "PHASED_SYNC"];
+            // Local switches that dial no host.
+            let allowed = [
+                "SERVE_UNSYNCED",
+                "PHASED_SYNC",
+                "EXPLORER_ESCROW_GRANTS_ENABLED",
+            ];
             assert!(
                 value == "false" || allowed.contains(key),
                 "island turns {key} on"

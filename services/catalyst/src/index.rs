@@ -91,6 +91,7 @@ pub(crate) fn market_settings(
             trades_serve_partial: config.market_upstreams.trades_serve_partial,
             profile_cdn_base_url: config.market_upstreams.profile_cdn_base_url.clone(),
             nft_worker_base_url: config.market_upstreams.nft_worker_base_url.clone(),
+            explorer_escrow_grants_enabled: config.market_upstreams.explorer_escrow_grants_enabled,
         },
     )?
     .with_market(

@@ -155,6 +155,8 @@ pub struct Upstreams {
     /// `NFT_WORKER_BASE_URL`: the NFT ownership indexer the old lambdas asked
     /// for an owner's third-party holdings; unset, they are read from the chain.
     pub nft_worker_base_url: Option<String>,
+    /// `EXPLORER_ESCROW_GRANTS_ENABLED`: the explorer lists escrow grants.
+    pub explorer_escrow_grants_enabled: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -179,6 +181,10 @@ pub struct Settings {
     pub third_party_registry_subgraph_url: Option<String>,
     /// `NFT_WORKER_BASE_URL`: the owner's third-party holdings (`third_party`).
     pub nft_worker_base_url: Option<String>,
+    /// `EXPLORER_ESCROW_GRANTS_ENABLED`: the explorer backpack's on-chain
+    /// items include this node's active escrow grants (`shop.usage_grants`);
+    /// off under the mirror posture, where lamb2 lists chain-owned tokens only.
+    pub explorer_escrow_grants: bool,
     /// `LAND_IMAGE_BASE_URL`: the map service `/lambdas/users/{a}/lands` points its images at.
     pub land_image_base_url: String,
     pub trades_sync_upstream_url: Option<String>,
@@ -377,6 +383,7 @@ impl Settings {
             })
             .transpose()?,
             nft_worker_base_url: checked("NFT_WORKER_BASE_URL", &upstreams.nft_worker_base_url)?,
+            explorer_escrow_grants: upstreams.explorer_escrow_grants_enabled,
             land_image_base_url: config.map_urls().land_image_base,
             trades_sync_upstream_url: checked(
                 "TRADES_SYNC_UPSTREAM_URL",
@@ -435,6 +442,7 @@ impl Settings {
             polygon_rpc_url: None,
             third_party_registry_subgraph_url: None,
             nft_worker_base_url: None,
+            explorer_escrow_grants: true,
             land_image_base_url: "https://api.decentraland.org".to_string(),
             trades_sync_upstream_url: None,
             trades_sync_interval: Duration::from_secs(900),

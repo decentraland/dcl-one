@@ -57,6 +57,12 @@ pub struct MarketUpstreamsConfig {
     /// network's JSON-RPC (`TRADE_RPC_URLS`, `ETH_RPC_URL`, `RPC_ENDPOINT_POLYGON`).
     #[arg(long, env = "NFT_WORKER_BASE_URL")]
     pub nft_worker_base_url: Option<String>,
+
+    /// Merge this node's active escrow grants (`shop.usage_grants`) into the
+    /// explorer backpack's on-chain items. lamb2 lists chain-owned tokens
+    /// only, so the mirror posture turns it off.
+    #[arg(long, env = "EXPLORER_ESCROW_GRANTS_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
+    pub explorer_escrow_grants_enabled: bool,
 }
 
 /// The marketplace: the collections and items mirrors, the trade ownership RPCs, the
