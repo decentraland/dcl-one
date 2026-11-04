@@ -290,29 +290,80 @@ pub(crate) async fn recalculate_ids(
 /// The events producer counts event-attendee rows (events 6a5f33a1,
 /// Event/model.ts#getEventsEndingInRangeWithAttendeeCount). Local going rows are
 /// authoritative here; a mirrored attendee preview never enters this count.
-pub async fn scan_ended(pool: &PgPool, now: NaiveDateTime) -> anyhow::Result<u64> {
+/// A catalogue cycle revisits edits and newly inserted backdated rows. The
+/// recurrence window rotates only after every source-event page has had a turn.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct EndedScan {
+    after_event: String,
+    occurrence_offset: i32,
+    maximum_occurrences: i32,
+}
+
+const ENDED_EVENT_PAGE_SQL: &str = "WITH page AS MATERIALIZED (
+    SELECT id FROM explore.event WHERE id>$1 ORDER BY id LIMIT 100)
+    SELECT e.id,CASE WHEN e.origin='local' AND jsonb_typeof(e.raw->'recurrent_dates')='array'
+        THEN GREATEST(jsonb_array_length(e.raw->'recurrent_dates'),1) ELSE 1 END
+    FROM page JOIN explore.event e ON e.id=page.id ORDER BY e.id";
+
+const ENDED_OCCURRENCES_SQL: &str = "WITH schedules AS MATERIALIZED (
+    SELECT c.id AS community_id,e.id AS event_id,e.duration_ms,c.ranking_tracking_since,
+        CASE WHEN jsonb_typeof(e.raw->'recurrent_dates')='array'
+        AND e.raw->'recurrent_dates'<>'[]'::jsonb THEN e.raw->'recurrent_dates'
+        ELSE jsonb_build_array(e.raw->'start_at') END AS dates
+    FROM explore.event e JOIN social.communities c ON c.id=CASE WHEN pg_input_is_valid(e.community_id,'uuid') THEN e.community_id::uuid END
+    WHERE e.id=ANY($2) AND e.origin='local' AND c.origin='local' AND e.approved AND e.duration_ms>=0
+    AND e.finish_at>=c.ranking_tracking_since AND e.start_at<=$1
+    AND COALESCE(e.raw->>'rejected','false')<>'true'
+    AND COALESCE(e.raw->>'deleted_by_user','false')<>'true' AND COALESCE(e.raw->>'deleted_by_admin','false')<>'true'),
+    occurrences AS MATERIALIZED (
+        SELECT s.community_id,s.event_id,s.duration_ms,s.ranking_tracking_since,o.ordinal,
+            CASE WHEN pg_input_is_valid(s.dates->>o.ordinal,'timestamp with time zone')
+                THEN (s.dates->>o.ordinal)::timestamptz AT TIME ZONE 'UTC' END AS starts_at
+        FROM schedules s CROSS JOIN LATERAL generate_series($3::int,LEAST(jsonb_array_length(s.dates)-1,$3::bigint+99)::int) o(ordinal)),
+    candidates AS MATERIALIZED (
+    SELECT community_id,event_id,event_id||':'||starts_at::text AS event_key,
+        starts_at+duration_ms*interval '1 millisecond' AS ends_at
+    FROM occurrences o
+    WHERE starts_at+duration_ms*interval '1 millisecond'>=ranking_tracking_since
+    AND starts_at+duration_ms*interval '1 millisecond'<$1
+    AND NOT EXISTS(SELECT 1 FROM social.community_ranking_events r WHERE r.kind='event'
+        AND r.event_key=o.event_id||':'||o.starts_at::text AND r.community_id=o.community_id)
+    ORDER BY event_id,ordinal LIMIT $4)
+    SELECT community_id,event_key,ends_at,
+        (SELECT count(*) FROM explore.event_attendance_local a WHERE a.event_id=candidates.event_id AND a.action='going')
+    FROM candidates";
+
+async fn scan_ended_page(
+    pool: &PgPool,
+    now: NaiveDateTime,
+    cursor: &mut EndedScan,
+    limit: i64,
+) -> anyhow::Result<u64> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET LOCAL statement_timeout='2s'")
         .execute(&mut *tx)
         .await?;
-    let rows: Vec<(Uuid,String,NaiveDateTime,i64)> = sqlx::query_as("SELECT c.id,e.id||':'||d.starts_at::text,
-        d.starts_at+e.duration_ms*interval '1 millisecond' AS ends_at,
-        (SELECT count(*) FROM explore.event_attendance_local a WHERE a.event_id=e.id AND a.action='going')
-        FROM explore.event e JOIN social.communities c ON c.id=CASE WHEN pg_input_is_valid(e.community_id,'uuid') THEN e.community_id::uuid END
-        CROSS JOIN LATERAL (SELECT CASE WHEN pg_input_is_valid(value,'timestamp with time zone')
-            THEN value::timestamptz AT TIME ZONE 'UTC' END AS starts_at
-            FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(e.raw->'recurrent_dates')='array'
-                AND e.raw->'recurrent_dates'<>'[]'::jsonb THEN e.raw->'recurrent_dates' ELSE jsonb_build_array(e.raw->'start_at') END)) d
-        WHERE e.origin='local' AND c.origin='local' AND e.approved AND e.duration_ms>=0
-        AND e.finish_at>=c.ranking_tracking_since AND e.start_at<=$1
-        AND COALESCE(e.raw->>'rejected','false')<>'true'
-        AND COALESCE(e.raw->>'deleted_by_user','false')<>'true' AND COALESCE(e.raw->>'deleted_by_admin','false')<>'true'
-        AND d.starts_at+e.duration_ms*interval '1 millisecond'>=c.ranking_tracking_since
-        AND d.starts_at+e.duration_ms*interval '1 millisecond'<$1
-        AND NOT EXISTS(SELECT 1 FROM social.community_ranking_events r WHERE r.kind='event'
-            AND r.event_key=e.id||':'||d.starts_at::text AND r.community_id=c.id)
-        ORDER BY ends_at,e.id,d.starts_at LIMIT 100")
-        .bind(now).fetch_all(&mut *tx).await?;
+    // Bound source keys before reading schedules, probing receipts or counting
+    // attendance. Completed history cannot grow the work of this page.
+    let page: Vec<(String, i32)> = sqlx::query_as(ENDED_EVENT_PAGE_SQL)
+        .bind(&cursor.after_event)
+        .fetch_all(&mut *tx)
+        .await?;
+    let ids: Vec<&str> = page.iter().map(|(id, _)| id.as_str()).collect();
+    let rows: Vec<(Uuid, String, NaiveDateTime, i64)> = if page
+        .iter()
+        .all(|(_, length)| *length <= cursor.occurrence_offset)
+    {
+        Vec::new()
+    } else {
+        sqlx::query_as(ENDED_OCCURRENCES_SQL)
+            .bind(now)
+            .bind(&ids)
+            .bind(cursor.occurrence_offset)
+            .bind(limit)
+            .fetch_all(&mut *tx)
+            .await?
+    };
     for (community, key, end, attendees) in &rows {
         local_delta(
             &mut tx,
@@ -325,23 +376,85 @@ pub async fn scan_ended(pool: &PgPool, now: NaiveDateTime) -> anyhow::Result<u64
         .await?;
     }
     tx.commit().await?;
+    // A failed/cancelled transaction leaves the cursor unchanged; committed
+    // receipts make replay after a process or lease restart harmless.
+    if let Some((last, _)) = page.last() {
+        cursor.after_event.clone_from(last);
+        cursor.maximum_occurrences = page
+            .iter()
+            .map(|(_, length)| *length)
+            .max()
+            .unwrap_or(0)
+            .max(cursor.maximum_occurrences);
+    } else {
+        cursor.after_event.clear();
+        let next_window = cursor.occurrence_offset.saturating_add(100);
+        cursor.occurrence_offset = if next_window < cursor.maximum_occurrences {
+            next_window
+        } else {
+            0
+        };
+        // Carry the maximum across ordinal windows; otherwise an empty page
+        // could prematurely reset before the longest recurrence is visited.
+        if cursor.occurrence_offset == 0 {
+            cursor.maximum_occurrences = 0;
+        }
+    }
     Ok(rows.len() as u64)
+}
+
+/// Share one time and receipt budget across pages. A full ordinary 100k-event
+/// catalogue fits the page cap; a slow/long schedule resumes next minute.
+pub async fn scan_ended(
+    pool: &PgPool,
+    now: NaiveDateTime,
+    cursor: &mut EndedScan,
+) -> anyhow::Result<u64> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    let mut collected = 0;
+    for _ in 0..1024 {
+        match tokio::time::timeout_at(
+            deadline,
+            scan_ended_page(pool, now, cursor, 100 - collected as i64),
+        )
+        .await
+        {
+            Ok(result) => collected += result?,
+            Err(_) => break,
+        }
+        if collected == 100 || (cursor.after_event.is_empty() && cursor.occurrence_offset == 0) {
+            break;
+        }
+    }
+    Ok(collected)
 }
 
 pub fn spawn_jobs(state: &Arc<super::State>, jobs: &crate::jobs::Jobs) {
     let pool = state.pool.clone();
-    jobs.spawn_periodic_leased(
-        "community-ranking-events",
-        crate::jobs::PeriodicCfg::every(Duration::from_secs(60)),
-        move |ctx| {
-            let pool = pool.clone();
-            async move {
-                let count = scan_ended(&pool, Utc::now().naive_utc()).await?;
-                ctx.progress(format!("{count} local event occurrences ended"));
-                Ok(())
+    jobs.spawn_leased("community-ranking-events", move |ctx| {
+        let pool = pool.clone();
+        async move {
+            let mut cursor = EndedScan::default();
+            loop {
+                let result = tokio::select! {
+                    _=ctx.cancel.cancelled()=>return Ok(()),
+                    result=scan_ended(&pool, Utc::now().naive_utc(), &mut cursor)=>result,
+                };
+                match result {
+                    Ok(count) => ctx.progress(format!("{count} local event occurrences ended")),
+                    Err(error) => {
+                        ctx.error(error.to_string());
+                        tracing::error!(%error, "community ranking event scan failed");
+                    }
+                }
+                ctx.pass_done();
+                tokio::select! {
+                    _=ctx.cancel.cancelled()=>return Ok(()),
+                    _=tokio::time::sleep(Duration::from_secs(60))=>{}
+                }
             }
-        },
-    );
+        }
+    });
     let pool = state.pool.clone();
     jobs.spawn_leased("community-ranking", move |ctx| { let pool = pool.clone(); async move {
         tokio::select! { _=ctx.cancel.cancelled()=>return Ok(()), _=tokio::time::sleep(Duration::from_secs(1800))=>{} }
@@ -355,3 +468,10 @@ pub fn spawn_jobs(state: &Arc<super::State>, jobs: &crate::jobs::Jobs) {
         }
     }});
 }
+
+#[cfg(test)]
+pub(crate) static ENDED_SCAN_TESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[cfg(test)]
+#[path = "ranking_scan_tests.rs"]
+mod scan_tests;

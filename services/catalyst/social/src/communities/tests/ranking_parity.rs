@@ -141,6 +141,7 @@ async fn ranking_event_handlers_preserve_clamps_receipts_fanout_and_atomic_retri
 
 #[tokio::test]
 async fn local_event_ends_use_occurrence_receipts_local_attendees_and_the_tracking_boundary() {
+    let _serial = ranking::ENDED_SCAN_TESTS.lock().await;
     use chrono::Duration;
     let Some(rig) = Rig::new(Settings::for_tests()).await else {
         return;
@@ -171,8 +172,11 @@ async fn local_event_ends_use_occurrence_receipts_local_attendees_and_the_tracki
         .await
         .unwrap();
     }
+    let mut cursor = ranking::EndedScan::default();
     for _ in 0..2 {
-        ranking::scan_ended(&rig.pool, now).await.unwrap();
+        ranking::scan_ended(&rig.pool, now, &mut cursor)
+            .await
+            .unwrap();
     }
     assert_eq!(
         counters(&rig, id).await,
@@ -180,7 +184,9 @@ async fn local_event_ends_use_occurrence_receipts_local_attendees_and_the_tracki
         "one eligible occurrence; local going rows supply attendees"
     );
     let future = now + Duration::hours(10);
-    ranking::scan_ended(&rig.pool, future).await.unwrap();
+    ranking::scan_ended(&rig.pool, future, &mut cursor)
+        .await
+        .unwrap();
     assert_eq!(
         counters(&rig, id).await.0,
         1,
