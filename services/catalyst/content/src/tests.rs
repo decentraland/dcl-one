@@ -350,6 +350,12 @@ async fn about_and_status_report_the_sync_state_honestly() {
     let (status, body) = get_json(node.router(), "/about").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["healthy"], true);
+    let (lambdas_status, lambdas_body) = get_json(node.router(), "/lambdas/about").await;
+    assert_eq!(
+        (lambdas_status, lambdas_body),
+        (status, body),
+        "/lambdas/about is the root /about"
+    );
     let (_, body) = get_json(node.router(), "/status").await;
     assert_eq!(body["synchronizationStatus"]["up"], true);
     assert_eq!(body["synchronizationStatus"]["syncFrontier"], 42);
