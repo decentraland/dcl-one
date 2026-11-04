@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { configure } from "@testing-library/react";
 import { afterEach, beforeEach, expect, vi } from "vitest";
+import { resetProfileCache } from "../shop/discovery/lib/profileCache";
 import { primeRemoteFlags } from "../shop/discovery/lib/remoteFlags";
 import { FIXTURE_NOW } from "../shop/market/fixtureNow";
 
@@ -18,3 +19,13 @@ afterEach(() => {
 // The shop reads rollout flags from Decentraland's live feature-flags service; every test starts with all
 // of them off and primed, so none reaches the service and none changes when a flag is turned on there.
 beforeEach(() => primeRemoteFlags({}));
+
+// Profiles resolved by one test are kept by the browser profile cache; every test starts with none known.
+beforeEach(() => {
+  try {
+    localStorage.removeItem("dcl:shop:profiles:v1");
+  } catch {
+    // No storage in this environment: nothing to clear.
+  }
+  resetProfileCache();
+});
