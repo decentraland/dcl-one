@@ -64,6 +64,12 @@ function chromeCandidates(env) {
 
 const isFile = (file) => statSync(file, { throwIfNoEntry: false })?.isFile() === true;
 
+/** How much of the page's console is kept. */
+const CONSOLE_KEEP = 300;
+
+/** A console argument as text: a primitive's value, else what DevTools would show. */
+const argumentText = (arg) => (arg.value !== undefined ? String(arg.value) : (arg.description ?? arg.type));
+
 /** The Chrome to run: `CHROME_PATH` when set (null when nothing is there, as the benchmark
  *  runner refuses it rather than choosing another), else the first install it knows of. */
 export function findChrome(env = process.env) {
@@ -181,6 +187,7 @@ class Driver {
   #app = null;
   #held = new Set();
   #shown = new WeakSet();
+  #console = [];
   #queue = Promise.resolve();
   #closing = null;
   /** Chrome's own name and version, once launched, e.g. `Chrome/156.0.8078.48`. */
@@ -248,6 +255,8 @@ class Driver {
       send('Runtime.addBinding', { name: BINDING }),
       send('Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }),
       send('Page.enable'),
+      // the browser's own log: a request that failed, a worker that would not register
+      send('Log.enable'),
       // without it a headless or background window has no focused frame, and keys go nowhere
       send('Emulation.setFocusEmulationEnabled', { enabled: true })
     ]);
@@ -287,6 +296,19 @@ class Driver {
           if (context.session.id === sessionId) this.#contexts.delete(key);
         }
         break;
+      case 'Runtime.consoleAPICalled':
+        this.#log(sessionId, params.type, params.args.map(argumentText).join(' '));
+        break;
+      case 'Runtime.exceptionThrown': {
+        const details = params.exceptionDetails;
+        this.#log(sessionId, 'exception', details.exception?.description ?? details.text);
+        break;
+      }
+      case 'Log.entryAdded': {
+        const { level, source, text, url } = params.entry;
+        this.#log(sessionId, level, `${source}: ${text}${url ? ` (${url})` : ''}`);
+        break;
+      }
       case 'Runtime.bindingCalled': {
         if (params.name !== BINDING) break;
         const session = this.#sessions.get(sessionId);
@@ -330,6 +352,25 @@ class Driver {
     return [...this.#sessions.values()]
       .filter((session) => FRAME_TARGETS.has(session.type))
       .map(({ type, targetId }) => ({ type, targetId }));
+  }
+
+  #log(sessionId, kind, text) {
+    const target = this.#sessions.get(sessionId)?.type ?? 'page';
+    this.#console.push({ at: Date.now(), target, kind, text: String(text).slice(0, 2000) });
+    if (this.#console.length > CONSOLE_KEEP) this.#console.splice(0, this.#console.length - CONSOLE_KEEP);
+  }
+
+  /** What the page said so far, every frame's: `console.*` calls, uncaught exceptions and the
+   *  browser's own log entries (a request that failed, a worker that would not register), oldest
+   *  first, the last CONSOLE_KEEP of them. For a boot that does not become ready. */
+  consoleMessages() {
+    return this.#console.map((message) => ({ ...message }));
+  }
+
+  /** The page as a JPEG, for a boot that does not become ready. */
+  async screenshot() {
+    const { data } = await this.#send('Page.captureScreenshot', { format: 'jpeg', quality: 80 }, this.#page);
+    return Buffer.from(data, 'base64');
   }
 
   // --- the app frame: ready and console commands ---

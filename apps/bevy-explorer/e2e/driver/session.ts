@@ -3,6 +3,8 @@
 // waits for the world and reaches the realm and the parcel; every later scenario shares it, as
 // explorer-automation keeps one client for a whole run. `--test-isolation=none` keeps the spec
 // files in one process.
+import { mkdir, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import { chromeArgs } from './chrome.ts'
 import type { Console } from './console.ts'
 import { Explorer, type WorldState } from './explorer.ts'
@@ -11,7 +13,8 @@ import { NativeConsole, spawnNative } from './native.ts'
 import { serveWebApp, type StaticServer } from './serve.ts'
 import { accountKey, describeTarget, readTarget, type Target } from './target.ts'
 import { until } from './wait.ts'
-import { WebConsole } from './web.ts'
+import { BootError, WebConsole } from './web.ts'
+import { REPORT_DIR } from './paths.ts'
 
 export type SignIn = 'account' | 'guest' | 'none'
 
@@ -60,12 +63,13 @@ export function openSession(options: OpenOptions = {}, target: Target = readTarg
     if (failed && failed.count >= MAX_BOOTS) {
       return Promise.reject(new Error(`the client failed to boot ${failed.count} times; not booting it again in this run: ${message(failed.error)}`))
     }
-    session = boot(options, target).catch((error: unknown) => {
+    session = boot(options, target).catch(async (error: unknown) => {
       sessions.delete(id)
       const count = (bootFailures.get(id)?.count ?? 0) + 1
       bootFailures.set(id, { count, error })
       // Said at once: the run's own failure summary comes at its end, which a step timeout cuts off.
       console.error(`[e2e] boot ${count} of ${MAX_BOOTS} failed: ${message(error)}`)
+      if (error instanceof BootError) await keepBootFailure(count, error).catch((problem: unknown) => console.error(`[e2e] could not keep the boot's evidence: ${message(problem)}`))
       throw error
     })
     sessions.set(id, session)
@@ -98,6 +102,18 @@ export async function closeSessions(): Promise<void> {
       // a server that never came up
     }
   }
+}
+
+/** A failed boot's evidence in the report: what the page said (`boot-<n>.console.txt`) and how it
+ *  looked (`boot-<n>.jpg`), under `report/boot-failures/`; the console's last lines go to the log
+ *  as well, where a step timeout can still cut the run off before the report is uploaded. */
+export async function keepBootFailure(boot: number, error: BootError): Promise<void> {
+  const dir = path.join(REPORT_DIR, 'boot-failures')
+  await mkdir(dir, { recursive: true })
+  await writeFile(path.join(dir, `boot-${boot}.console.txt`), `${error.message}\n\n${error.console.join('\n')}\n`)
+  if (error.screenshot) await writeFile(path.join(dir, `boot-${boot}.jpg`), error.screenshot)
+  const tail = error.console.slice(-20)
+  console.error(`[e2e] the page's console, the last ${tail.length} of ${error.console.length} lines (all of them in ${dir}):\n${tail.join('\n')}`)
 }
 
 /** How long a boot may take, the sum of its waits: the web transport's `ready` (300 s), the

@@ -44,6 +44,11 @@ a frame of the page's origin with both `window.engine_console_command` and
 `window.__dclTrustedInput`. `frameTargets()` lists the page and the out-of-process iframes.
 `DCL_WEB_DRIVER_DEBUG=1` logs what the driver ignores or cannot answer.
 
+`consoleMessages()` is what the page said so far, every frame's: `console.*` calls, uncaught
+exceptions and the browser's own log entries (a request that failed, a worker that would not
+register), oldest first, the last 300. `screenshot()` is the page as a JPEG. Both are for a boot
+that does not become ready: what `ready()`'s timeout cannot say.
+
 ## Wire protocol
 
 The page's side of this is a stable contract, documented in `docs/guidelines/running.md` ("Test
