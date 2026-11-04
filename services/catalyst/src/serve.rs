@@ -1622,11 +1622,12 @@ async fn worlds_states(
             eip1654.clone(),
         )
         .with_presence(presence)
-        .with_allowance(Arc::new(worlds::core::quota::AccountHoldings::new(
+        .with_allowance(worlds::core::holdings::configured(
             http_client.clone(),
-            config.worlds.dcl_name_stats_url.as_deref(),
-            Duration::from_millis(config.worlds.dcl_name_stats_timeout_ms),
-        )))
+            config.content.eth_rpc_url()?.as_deref(),
+            non_empty(&config.economy.rpc_endpoint_polygon).as_deref(),
+            &config.node.eth_network,
+        ))
         // World notices persist through social's directory, as comms' do.
         .with_notices(worlds::core::notices::Notices::new(
             Some(Arc::new(social::comms_directory::Directory::new(

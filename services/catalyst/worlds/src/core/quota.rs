@@ -2,9 +2,9 @@
 //! service's `limits-manager`, `wallet-stats` and `blocking`.
 //!
 //! A DCL NAME world's publish may use what is left of its owner's allowance
-//! (`DCL_NAME_STATS_URL/account-holdings/<wallet>` `spaceAllowance`, MiB)
-//! after the owner's other DCL worlds, crediting back only the scenes the
-//! publish replaces, capped per scene; the publish transaction re-checks it
+//! (computed from its holdings, [`super::holdings`]) after the owner's other
+//! DCL worlds, crediting back only the scenes the publish replaces, capped
+//! per scene; the publish transaction re-checks it
 //! under the wallet's quota lock. A wallet's DCL worlds are the NAMEs it
 //! holds now (the stored owner without a names reader). Personal and ENS
 //! worlds, and worlds with a size override, have a fixed cap and stay
@@ -17,11 +17,9 @@
 use std::time::Duration;
 
 use chrono::NaiveDateTime;
-use serde_json::Value;
 use sqlx::Row;
 
 use crate::comms::world_identity::WorldName;
-use crate::http::Outbound;
 use crate::policy::WorldLimits;
 use crate::shared::identity::Address;
 
@@ -31,10 +29,6 @@ use super::CoreState;
 use crate::comms::access::QUOTA_BLOCK_GRACE;
 
 pub const MIB: i64 = 1024 * 1024;
-/// WCS `DCL_NAME_STATS_TIMEOUT_MS`' default.
-pub const DEFAULT_STATS_TIMEOUT: Duration = Duration::from_millis(3_000);
-const STATS_ATTEMPTS: u32 = 3;
-const STATS_BASE_DELAY: Duration = Duration::from_millis(300);
 /// The quota pass runs as often as the old update-owner job.
 pub const QUOTA_PASS_INTERVAL: Duration = Duration::from_secs(12 * 3600);
 /// Failures in a row after which a pass stops asking and keeps every block.
@@ -78,146 +72,6 @@ impl SpaceAllowance for Unlimited {
 
     fn is_limited(&self) -> bool {
         false
-    }
-}
-
-/// How long an answered allowance is reused.
-const ALLOWANCE_CACHE_TTL: Duration = Duration::from_secs(60);
-/// How long a failed lookup is answered from memory.
-const ALLOWANCE_FAILURE_TTL: Duration = Duration::from_secs(15);
-const ALLOWANCE_CACHE_MAX: usize = 10_000;
-/// Account-holdings requests in flight at once, node-wide.
-const ALLOWANCE_MAX_IN_FLIGHT: usize = 8;
-
-type CachedAllowance = (std::time::Instant, Result<i64, String>);
-
-/// The account-holdings service; no URL is an unlimited allowance.
-pub struct AccountHoldings {
-    http: Outbound,
-    url: Option<String>,
-    timeout: Duration,
-    cache: dashmap::DashMap<Address, CachedAllowance>,
-    in_flight: tokio::sync::Semaphore,
-}
-
-impl AccountHoldings {
-    pub fn new(http: Outbound, url: Option<&str>, timeout: Duration) -> Self {
-        Self {
-            http,
-            url: url
-                .map(|u| u.trim().trim_end_matches('/').to_string())
-                .filter(|u| !u.is_empty()),
-            timeout,
-            cache: dashmap::DashMap::new(),
-            in_flight: tokio::sync::Semaphore::new(ALLOWANCE_MAX_IN_FLIGHT),
-        }
-    }
-
-    fn fresh(entry: &CachedAllowance) -> bool {
-        let ttl = match entry.1 {
-            Ok(_) => ALLOWANCE_CACHE_TTL,
-            Err(_) => ALLOWANCE_FAILURE_TTL,
-        };
-        entry.0.elapsed() < ttl
-    }
-
-    fn cached(&self, wallet: &Address) -> Option<Result<i64, String>> {
-        self.cache
-            .get(wallet)
-            .filter(|e| Self::fresh(e))
-            .map(|e| e.1.clone())
-    }
-
-    /// Full of fresh entries, a new answer is not kept (no wholesale clear).
-    fn remember(&self, wallet: &Address, answer: Result<i64, String>) {
-        if self.cache.len() >= ALLOWANCE_CACHE_MAX && !self.cache.contains_key(wallet) {
-            self.cache.retain(|_, e| Self::fresh(e));
-            if self.cache.len() >= ALLOWANCE_CACHE_MAX {
-                return;
-            }
-        }
-        self.cache
-            .insert(wallet.clone(), (std::time::Instant::now(), answer));
-    }
-
-    async fn fetch(&self, wallet: &Address, base: &str) -> Result<i64, String> {
-        let url = format!("{base}/account-holdings/{}", wallet.as_str());
-        let mut attempt = 0;
-        loop {
-            match self.attempt(&url).await {
-                Ok(bytes) => return Ok(bytes),
-                Err(e) if attempt + 1 >= STATS_ATTEMPTS => return Err(e),
-                Err(e) => {
-                    let delay = STATS_BASE_DELAY * 2u32.pow(attempt);
-                    tracing::warn!(error = %e, attempt = attempt + 1, ?delay, "account holdings failed, retrying");
-                    tokio::time::sleep(delay).await;
-                    attempt += 1;
-                }
-            }
-        }
-    }
-
-    async fn attempt(&self, url: &str) -> Result<i64, String> {
-        let resp = self
-            .http
-            .post(url)
-            .timeout(self.timeout)
-            .send()
-            .await
-            .map_err(|e| format!("account holdings request failed: {e}"))?;
-        if !resp.status().is_success() {
-            return Err(format!(
-                "account holdings answered HTTP {}",
-                resp.status().as_u16()
-            ));
-        }
-        let body: Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("account holdings bad body: {e}"))?;
-        let mib = body
-            .pointer("/data/spaceAllowance")
-            .and_then(allowance_mib)
-            .ok_or("account holdings answered no integer data.spaceAllowance")?;
-        Ok(mib.saturating_mul(MIB))
-    }
-}
-
-/// `spaceAllowance` as a JSON integer or an integer string (a serialized BigInt).
-fn allowance_mib(v: &Value) -> Option<i64> {
-    match v {
-        Value::String(s) => s.trim().parse::<i64>().ok(),
-        _ => v
-            .as_i64()
-            .or_else(|| v.as_f64().filter(|f| f.fract() == 0.0).map(|f| f as i64)),
-    }
-}
-
-#[async_trait::async_trait]
-impl SpaceAllowance for AccountHoldings {
-    async fn allowance_bytes(&self, wallet: &Address) -> Result<i64, String> {
-        let Some(base) = &self.url else {
-            return Ok(i64::MAX);
-        };
-        if let Some(answer) = self.cached(wallet) {
-            return answer;
-        }
-        let _permit = self
-            .in_flight
-            .acquire()
-            .await
-            .map_err(|_| "account holdings closed".to_string())?;
-        // A caller queued behind the same wallet's lookup reuses its answer.
-        if let Some(answer) = self.cached(wallet) {
-            return answer;
-        }
-        let answer = self.fetch(wallet, base).await;
-        self.remember(wallet, answer.clone());
-        answer
-    }
-
-    fn is_limited(&self) -> bool {
-        self.url.is_some()
     }
 }
 
@@ -683,75 +537,5 @@ pub(crate) mod test_support {
     #[test]
     fn the_grace_is_the_old_two_days() {
         assert_eq!(QUOTA_BLOCK_GRACE, chrono::TimeDelta::hours(48));
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    /// An account-holdings stub failing its first `failures` requests.
-    async fn holdings(failures: usize, body: Value) -> (String, Arc<AtomicUsize>) {
-        let hits = Arc::new(AtomicUsize::new(0));
-        let counter = hits.clone();
-        let app = axum::Router::new().route(
-            "/account-holdings/{wallet}",
-            axum::routing::post(move || {
-                let counter = counter.clone();
-                let body = body.clone();
-                async move {
-                    if counter.fetch_add(1, Ordering::SeqCst) < failures {
-                        (axum::http::StatusCode::BAD_GATEWAY, axum::Json(Value::Null))
-                    } else {
-                        (axum::http::StatusCode::OK, axum::Json(body))
-                    }
-                }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        (url, hits)
-    }
-
-    fn wallet() -> Address {
-        Address::parse("0x1111111111111111111111111111111111111111").unwrap()
-    }
-
-    #[tokio::test]
-    async fn the_allowance_is_retried_three_times_then_fails() {
-        let body = serde_json::json!({ "data": { "spaceAllowance": 5 } });
-        let (url, hits) = holdings(2, body.clone()).await;
-        let source = AccountHoldings::new(Outbound::for_tests(), Some(&url), DEFAULT_STATS_TIMEOUT);
-        assert_eq!(source.allowance_bytes(&wallet()).await, Ok(5 * MIB));
-        assert_eq!(hits.load(Ordering::SeqCst), 3);
-
-        let (url, hits) = holdings(3, body).await;
-        let source = AccountHoldings::new(Outbound::for_tests(), Some(&url), DEFAULT_STATS_TIMEOUT);
-        assert!(source.allowance_bytes(&wallet()).await.is_err());
-        assert_eq!(hits.load(Ordering::SeqCst), 3);
-        // A failure is answered from memory for a while.
-        assert!(source.allowance_bytes(&wallet()).await.is_err());
-        assert_eq!(hits.load(Ordering::SeqCst), 3);
-
-        let (url, _) = holdings(0, serde_json::json!({ "data": {} })).await;
-        let source = AccountHoldings::new(Outbound::for_tests(), Some(&url), DEFAULT_STATS_TIMEOUT);
-        assert!(source.allowance_bytes(&wallet()).await.is_err());
-
-        let unset = AccountHoldings::new(Outbound::for_tests(), None, DEFAULT_STATS_TIMEOUT);
-        assert_eq!(unset.allowance_bytes(&wallet()).await, Ok(i64::MAX));
-    }
-
-    #[tokio::test]
-    async fn a_string_allowance_is_read_and_an_answer_is_reused() {
-        let body = serde_json::json!({ "data": { "spaceAllowance": "7" } });
-        let (url, hits) = holdings(0, body).await;
-        let source = AccountHoldings::new(Outbound::for_tests(), Some(&url), DEFAULT_STATS_TIMEOUT);
-        assert_eq!(source.allowance_bytes(&wallet()).await, Ok(7 * MIB));
-        assert_eq!(source.allowance_bytes(&wallet()).await, Ok(7 * MIB));
-        assert_eq!(hits.load(Ordering::SeqCst), 1);
-        assert_eq!(allowance_mib(&serde_json::json!("1.5")), None);
     }
 }
