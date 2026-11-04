@@ -134,9 +134,9 @@
           "-C",
           "link-arg=-Wl,-rpath,@loader_path"
         ],
-        "source_digest": "641a33d0e2a9186df9dab579ccabb2884417305393547bf94c11e87b81ad2d70",
+        "source_digest": "a405a48a1ca94fafe65d22cbfc6668fc4d1149d12d6b87d6a83b7639f0f26837",
         "source_files": 22,
-        "repo_commit": "abd73adf363fb1010bdf13966bda182ce9900c3e",
+        "repo_commit": "7cce91b9feb1b76ecef3e473ac73172da77bf28b",
         "toolchain": {
           "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
           "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
@@ -228,7 +228,7 @@
         },
         {
           "path": "library/uuav/dist/macos-universal/uuav-helper",
-          "sha256": "88d6e256ff2c7c841b480084532de9ea96e6fc8767eaae64ed7ab453b6722a5f",
+          "sha256": "3263dd38bb9809f8c771a060800a60ce749e3c6a0d8e1a9b9383851af25871d5",
           "bytes": 1758768,
           "produced_by": "cargo"
         },
