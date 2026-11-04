@@ -1,0 +1,85 @@
+{
+  "source": "decentraland/social-service-ea",
+  "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+  "adapter": "@dcl/http-server/dist/cors.js",
+  "cases": [
+    {
+      "name": "preflight-reflected",
+      "method": "OPTIONS",
+      "path": "/unknown",
+      "headers": {
+        "origin": "https://decentraland.org",
+        "access-control-request-headers": "authorization,x-custom"
+      },
+      "status": 204,
+      "body": "",
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,x-custom",
+        "access-control-allow-methods": "GET,HEAD,OPTIONS,DELETE,POST,PUT,PATCH",
+        "access-control-allow-origin": "*",
+        "access-control-max-age": "86400",
+        "vary": "Access-Control-Request-Headers"
+      }
+    },
+    {
+      "name": "preflight-without-origin",
+      "method": "OPTIONS",
+      "path": "/unknown",
+      "headers": {
+        "access-control-request-headers": "x-a"
+      },
+      "status": 204,
+      "body": "",
+      "responseHeaders": {
+        "access-control-allow-headers": "x-a",
+        "access-control-allow-methods": "GET,HEAD,OPTIONS,DELETE,POST,PUT,PATCH",
+        "access-control-allow-origin": "*",
+        "access-control-max-age": "86400",
+        "vary": "Access-Control-Request-Headers"
+      }
+    },
+    {
+      "name": "preflight-without-requested-headers",
+      "method": "OPTIONS",
+      "path": "/v1/communities",
+      "headers": {
+        "origin": "null"
+      },
+      "status": 204,
+      "body": "",
+      "responseHeaders": {
+        "access-control-allow-methods": "GET,HEAD,OPTIONS,DELETE,POST,PUT,PATCH",
+        "access-control-allow-origin": "*",
+        "access-control-max-age": "86400",
+        "vary": "Access-Control-Request-Headers"
+      }
+    },
+    {
+      "name": "actual-origin",
+      "method": "GET",
+      "path": "/unknown",
+      "headers": {
+        "origin": "https://decentraland.org"
+      },
+      "status": 404,
+      "body": "Not found",
+      "responseHeaders": {
+        "access-control-allow-origin": "*",
+        "content-length": "9",
+        "content-type": "text/plain; charset=utf-8"
+      }
+    },
+    {
+      "name": "actual-without-origin",
+      "method": "GET",
+      "path": "/unknown",
+      "headers": {},
+      "status": 404,
+      "body": "Not found",
+      "responseHeaders": {
+        "content-length": "9",
+        "content-type": "text/plain; charset=utf-8"
+      }
+    }
+  ]
+}

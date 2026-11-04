@@ -1,0 +1,133 @@
+{
+  "source": "decentraland/social-service-ea",
+  "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+  "path": "src/controllers/routes/http.routes.ts",
+  "transport": "@dcl/http-server/dist/server.js on loopback ephemeral test listener",
+  "cases": [
+    {
+      "method": "TRACE",
+      "path": "/v1/communities",
+      "status": 500,
+      "body": "",
+      "headers": {
+        "content-length": "0"
+      }
+    },
+    {
+      "method": "TRACK",
+      "path": "/unknown",
+      "status": 400,
+      "body": "",
+      "headers": {}
+    },
+    {
+      "method": "PROPFIND",
+      "path": "/v1/communities",
+      "status": 501,
+      "body": "",
+      "headers": {
+        "access-control-allow-origin": "*",
+        "allow": "HEAD, GET, POST",
+        "content-length": "0"
+      }
+    },
+    {
+      "method": "PURGE",
+      "path": "/unknown",
+      "status": 501,
+      "body": "",
+      "headers": {
+        "access-control-allow-origin": "*",
+        "allow": "",
+        "content-length": "0"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/communities",
+      "status": 405,
+      "body": "",
+      "headers": {
+        "access-control-allow-origin": "*",
+        "allow": "HEAD, GET, POST",
+        "content-length": "0"
+      }
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/communities/abc/members",
+      "status": 405,
+      "body": "",
+      "headers": {
+        "access-control-allow-origin": "*",
+        "allow": "HEAD, GET, POST",
+        "content-length": "0"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/v1/communities/abc/members/xyz",
+      "status": 405,
+      "body": "",
+      "headers": {
+        "access-control-allow-origin": "*",
+        "allow": "DELETE, PATCH",
+        "content-length": "0"
+      }
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/referral-progress",
+      "status": 405,
+      "body": "",
+      "headers": {
+        "access-control-allow-origin": "*",
+        "allow": "POST, PATCH, HEAD, GET",
+        "content-length": "0"
+      }
+    },
+    {
+      "method": "GET",
+      "path": "/v1/community-voice-chats/abc/speakers/xyz",
+      "status": 405,
+      "body": "",
+      "headers": {
+        "access-control-allow-origin": "*",
+        "allow": "PUT, PATCH, DELETE",
+        "content-length": "0"
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/unknown",
+      "status": 404,
+      "body": "Not found",
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-length": "9",
+        "content-type": "text/plain; charset=utf-8"
+      }
+    },
+    {
+      "method": "HEAD",
+      "path": "/unknown",
+      "status": 404,
+      "body": "",
+      "headers": {
+        "access-control-allow-origin": "*"
+      }
+    },
+    {
+      "method": "OPTIONS",
+      "path": "/unknown",
+      "status": 204,
+      "body": "",
+      "headers": {
+        "access-control-allow-methods": "GET,HEAD,OPTIONS,DELETE,POST,PUT,PATCH",
+        "access-control-allow-origin": "*",
+        "access-control-max-age": "86400",
+        "vary": "Access-Control-Request-Headers"
+      }
+    }
+  ]
+}
