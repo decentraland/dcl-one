@@ -112,6 +112,7 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
         }
     };
     // Moves every record back by `extra` minutes past its wait: its wait served and then some.
+    // The extra second keeps it due against the worker's millisecond clock.
     let elapse = |extra: i32| {
         let pool = pool.clone();
         async move {
@@ -119,7 +120,7 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
                 "UPDATE content.failed_deployments \
                  SET failure_time = failure_time - (next_retry_at - timezone('UTC', now())) \
                                     - make_interval(mins => $1), \
-                     next_retry_at = timezone('UTC', now()) - make_interval(mins => $1)",
+                     next_retry_at = timezone('UTC', now()) - make_interval(mins => $1, secs => 1)",
             )
             .bind(extra)
             .execute(&pool)
