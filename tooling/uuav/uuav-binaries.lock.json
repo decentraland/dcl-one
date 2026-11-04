@@ -85,7 +85,7 @@
       "suffix": [
         ".rs"
       ],
-      "sha256": "e0d34544f96011ceddc4aa89171cd622fd71dfd05c5f6723fd7e94a3001682cd",
+      "sha256": "ce4baedf94ed7613e4dffd69c3681df369dc50a8b4b40b888620376789c4eabd",
       "entries": 12
     },
     "server_source": {
@@ -105,7 +105,7 @@
         "target",
         ".target"
       ],
-      "sha256": "70517fb55566236a057c892eb08300288208ceca241bccc62eb0251f6e788934",
+      "sha256": "8cf7d0b91031370be2fb19405956f86ee5dc82520302f89b3d08672bc26c563b",
       "entries": 15
     },
     "ipc_source": {
@@ -134,9 +134,9 @@
           "-C",
           "link-arg=-Wl,-rpath,@loader_path"
         ],
-        "source_digest": "a38000ac2c10dc43f7728f87ee69cd819e83b4e4b6ca85a9c78ba64e5a554fa0",
+        "source_digest": "0c1354d3c20a4a28b92dd1ebab880b4f76907ebba7357b2b00f888e2aaba1d26",
         "source_files": 22,
-        "repo_commit": "b0004c2bee3f129f17f91424485b36b145c23c1b",
+        "repo_commit": "41d0737759e4c440bd6d2c90d8a897ce2e33bc30",
         "toolchain": {
           "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
           "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
@@ -228,7 +228,7 @@
         },
         {
           "path": "library/uuav/dist/macos-universal/uuav-helper",
-          "sha256": "3263dd38bb9809f8c771a060800a60ce749e3c6a0d8e1a9b9383851af25871d5",
+          "sha256": "2f0e37d78640faea2382b13da83808d39b41cc75524eaf919be65d573a73752e",
           "bytes": 1758768,
           "produced_by": "cargo"
         },
