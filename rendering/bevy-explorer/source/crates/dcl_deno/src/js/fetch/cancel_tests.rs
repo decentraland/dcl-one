@@ -57,11 +57,85 @@ async fn accept(listener: &TcpListener) -> (String, TcpStream) {
 fn assert_released(runtime: &mut JsRuntime) {
     let state = runtime.op_state();
     let state = state.borrow();
-    assert_eq!(in_flight(&state), 0);
+    assert_eq!(outstanding_calls(&state), 0);
     assert!(!state
         .resource_table
         .names()
         .any(|(_, name)| name == "fetchCancelHandle" || name == "readableStream"));
+}
+
+#[tokio::test]
+async fn all_forty_fetch_and_signed_fetch_calls_complete() {
+    let mut runtime = client_runtime();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    runtime
+        .execute_script(
+            "<test>",
+            format!(
+                r#"
+        const origin = {origin:?};
+        const signed = require('~system/SignedFetch').signedFetch({{url: origin + '/signed'}});
+    "#
+            ),
+        )
+        .unwrap();
+    let calls = std::mem::take(runtime.op_state().borrow_mut().borrow_mut::<RpcCalls>());
+    let Some(RpcCall::SignRequest { response, .. }) = calls.into_iter().next() else {
+        panic!("signedFetch should request a signature");
+    };
+    tokio::task::spawn_blocking(move || {
+        response.send(Ok(vec![("X-Test".into(), "signed".into())]))
+    })
+    .await
+    .unwrap();
+    timeout(
+        Duration::from_secs(2),
+        std::future::poll_fn(|cx| {
+            assert!(runtime.poll_event_loop(cx, Default::default()).is_pending());
+            if runtime.op_state().borrow().borrow::<RpcCalls>().is_empty() {
+                Poll::Pending
+            } else {
+                Poll::Ready(())
+            }
+        }),
+    )
+    .await
+    .expect("signedFetch should queue its Fetch permission");
+    runtime
+        .execute_script(
+            "<test>",
+            r#"
+        const calls = Array.from({length: 39}, (_, i) =>
+            fetch(origin + '/' + i).then(response => response.text()));
+        calls.push(signed.then(response => response.body));
+        Promise.all(calls).then(bodies => globalThis.success = bodies.every(b => b === 'ok'));
+    "#,
+        )
+        .unwrap();
+    grant(permissions(&mut runtime, 40)).await;
+    let serve = async {
+        for _ in 0..40 {
+            let (_, mut socket) = accept(&listener).await;
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .await
+                .unwrap();
+        }
+    };
+    let (result, ()) = timeout(Duration::from_secs(5), async {
+        tokio::join!(runtime.run_event_loop(Default::default()), serve)
+    })
+    .await
+    .expect("all forty Fetch calls should settle");
+    result.unwrap();
+    runtime
+        .execute_script(
+            "<test>",
+            "if (!globalThis.success) throw Error('expected 40 responses')",
+        )
+        .unwrap();
+    assert_released(&mut runtime);
 }
 
 #[tokio::test]
@@ -85,7 +159,7 @@ async fn abort_while_awaiting_permission_releases_the_call_before_a_reply() {
         .unwrap();
     let evaluated = runtime.mod_evaluate(script);
     let waiting = permissions(&mut runtime, 1);
-    assert_eq!(in_flight(&runtime.op_state().borrow()), 1);
+    assert_eq!(outstanding_calls(&runtime.op_state().borrow()), 1);
     runtime
         .execute_script("<test>", "controller.abort()")
         .unwrap();
@@ -113,7 +187,7 @@ async fn abort_while_awaiting_permission_releases_the_call_before_a_reply() {
 }
 
 #[tokio::test]
-async fn abort_during_body_read_admits_the_next_fetch() {
+async fn abort_skips_a_queued_fetch_and_releases_an_active_body_read() {
     let mut runtime = client_runtime();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -148,14 +222,34 @@ async fn abort_during_body_read_admits_the_next_fetch() {
         result = timeout(Duration::from_secs(5), hold_five) => result.expect("five requests should reach the server"),
     }
     runtime.execute_script("<test>", r#"
+        const queued = new AbortController();
+        const cancelled = fetch(origin + '/cancelled', {signal: queued.signal}).then(
+            () => { throw Error('queued fetch reached the server'); },
+            error => { if (error.name !== 'AbortError') throw error; });
         fetch(origin + '/next').then(async response => {
             if (await response.text() !== 'ok') throw Error('unexpected body');
             for (const c of controllers) c.abort();
             if (!(await Promise.all(held)).every(e => e === 'AbortError')) throw Error('expected five aborts');
         });
     "#).unwrap();
-    grant(permissions(&mut runtime, 1)).await;
-    assert_eq!(in_flight(&runtime.op_state().borrow()), 6);
+    grant(permissions(&mut runtime, 2)).await;
+    assert!(runtime
+        .run_event_loop(Default::default())
+        .now_or_never()
+        .is_none());
+    assert_eq!(outstanding_calls(&runtime.op_state().borrow()), 7);
+    let aborted = runtime
+        .execute_script("<test>", "queued.abort(); cancelled")
+        .unwrap();
+    let aborted = runtime.resolve(aborted);
+    timeout(
+        Duration::from_secs(2),
+        runtime.with_event_loop_promise(aborted, Default::default()),
+    )
+    .await
+    .expect("queued abort must settle while all five slots are held")
+    .unwrap();
+    assert_eq!(outstanding_calls(&runtime.op_state().borrow()), 6);
     runtime
         .execute_script("<test>", "controllers[0].abort()")
         .unwrap();
@@ -171,7 +265,7 @@ async fn abort_during_body_read_admits_the_next_fetch() {
         tokio::join!(runtime.run_event_loop(Default::default()), serve_next)
     })
     .await
-    .expect("the sixth Fetch must proceed before the held bodies or scene deadline complete");
+    .expect("the next Fetch must proceed while the other four bodies are still held");
     result.unwrap();
     assert_released(&mut runtime);
 }
