@@ -213,7 +213,9 @@ CREATE TABLE content.forward_outbox (
 -- first batch until its publication deletes it or it expires
 -- (PENDING_DEPLOYMENT_TTL, 1 h from the first batch) and the
 -- `content-partial-uploads-cleanup` job (every 5 min) reclaims it and the
--- staged blobs nothing else names. This node's own state: no sync, snapshot
+-- staged blobs it wrote that nothing else names (once past the collector's
+-- age floor). The last run's time is the `content.system_properties` key
+-- `partial_uploads_cleanup_at` (ms), read by every replica's quota 429. This node's own state: no sync, snapshot
 -- or history read sees it. Workload (expected, not measured): at most
 -- MAX_PENDING_DEPLOYMENTS_PER_DEPLOYER (10) uploads per account, each batch
 -- (the SDK sends 32 MiB) a primary-key read and a few small writes, rows
@@ -240,13 +242,16 @@ CREATE TABLE content.pending_deployments (
 -- The files an upload knows (its receipts): `stored` once written or found
 -- in the store, `charged` when counted against the staging budgets (all
 -- but content a published deployment already keeps; a failed write stays
--- charged). Deleted with its upload.
+-- charged), `written` once the upload set out to write the blob itself
+-- (only those are ever unlinked by its cleanup; content it found stored
+-- is left to the collector). Deleted with its upload.
 CREATE TABLE content.pending_deployment_files (
     entity_id text NOT NULL,
     hash text NOT NULL,
     size bigint NOT NULL,
     stored boolean NOT NULL DEFAULT false,
     charged boolean NOT NULL DEFAULT false,
+    written boolean NOT NULL DEFAULT false,
     CONSTRAINT pending_deployment_files_pkey PRIMARY KEY (entity_id, hash),
     CONSTRAINT pending_deployment_files_entity_id_fkey FOREIGN KEY (entity_id)
         REFERENCES content.pending_deployments (entity_id) ON DELETE CASCADE,

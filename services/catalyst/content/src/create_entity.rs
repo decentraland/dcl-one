@@ -30,7 +30,11 @@
 //! ([`super::partial_deployments`]): 202 `{missing}` until the upload is
 //! complete, then 200. `?partial=true` declares it before the body, so the
 //! quota is not counted on admission but once the form is read (the upload
-//! once, when created); the query flag on a form without the field is a 400.
+//! once, when created, and a batch refused with a 400 before joining it);
+//! the query flag on a form without the field is a 400. Once the fields
+//! before the first file are read, a batch from a source that spent its
+//! quota and not resuming its signer's own upload, or from an account over
+//! its byte rate, is turned away (429) before any file is buffered.
 
 use std::collections::BTreeMap;
 
@@ -160,17 +164,27 @@ fn is_file_part(file_name: Option<&str>, content_type: Option<&str>) -> bool {
         || content_type.is_some_and(|t| !t.trim_start().to_ascii_lowercase().starts_with("text/"))
 }
 
+/// A form as read, or turned away before its files were buffered.
+enum Form {
+    Read(BTreeMap<String, String>, Vec<(String, Bytes)>),
+    Refused(Response),
+}
+
 /// Reads the whole form: text fields by name, at most `max_fields` of up to
 /// `max_field_bytes` each, and file parts in order with their field names,
 /// each under [`MAX_DEPLOY_FILE_BYTES`], at most [`MAX_DEPLOY_FILES`] of them.
+/// `before_files` sees the fields read before the first file part (the
+/// clients send theirs first) and may refuse the form there.
 async fn read_form(
     multipart: &mut Multipart,
     max_fields: usize,
     max_field_bytes: usize,
-) -> AppResult<(BTreeMap<String, String>, Vec<(String, Bytes)>)> {
+    before_files: impl AsyncFnOnce(&BTreeMap<String, String>) -> Option<Response>,
+) -> AppResult<Form> {
     let mut fields: BTreeMap<String, String> = BTreeMap::new();
     let mut files: Vec<(String, Bytes)> = Vec::new();
     let mut field_count = 0usize;
+    let mut before_files = Some(before_files);
 
     while let Some(mut field) = multipart
         .next_field()
@@ -180,6 +194,11 @@ async fn read_form(
         let name = field.name().unwrap_or("").to_string();
 
         if is_file_part(field.file_name(), field.content_type()) {
+            if let Some(gate) = before_files.take()
+                && let Some(refused) = gate(&fields).await
+            {
+                return Ok(Form::Refused(refused));
+            }
             if files.len() >= MAX_DEPLOY_FILES {
                 return Err(invalid(format!(
                     "deployment exceeds maximum of {MAX_DEPLOY_FILES} files"
@@ -225,7 +244,7 @@ async fn read_form(
             fields.insert(name, value);
         }
     }
-    Ok((fields, files))
+    Ok(Form::Read(fields, files))
 }
 
 /// The `type` of the uploaded entity file (the JSON upload hashing to
@@ -334,6 +353,12 @@ pub async fn create_entity(
         headers: &headers,
         client_ip: &client_ip,
         declared_partial,
+        // Undeclared, the source was admitted under its quota above.
+        quota_exhausted: if declared_partial {
+            state.deploy_quota.exhausted(&client_ip)
+        } else {
+            None
+        },
         started: request_started,
     };
     Ok(
@@ -355,6 +380,8 @@ struct Request<'a> {
     headers: &'a HeaderMap,
     client_ip: &'a str,
     declared_partial: bool,
+    /// The daily quota's Retry-After when the source had spent it on arrival.
+    quota_exhausted: Option<u64>,
     started: std::time::Instant,
 }
 
@@ -377,19 +404,45 @@ async fn deploy_form(
     let headers = request.headers;
     let request_started = request.started;
     let settings = &state.settings;
-    let (fields, files) = read_form(
+    let is_partial = |fields: &BTreeMap<String, String>| {
+        fields.get("partial").map(String::as_str) == Some("true")
+    };
+    let form = read_form(
         &mut multipart,
         settings.max_upload_field_count,
         settings.max_upload_field_bytes,
+        async |fields: &BTreeMap<String, String>| {
+            if !request.declared_partial && !is_partial(fields) {
+                return None;
+            }
+            let entity_id = fields.get("entityId")?;
+            let chain = auth_chain_of(fields, entity_id).ok()?;
+            let signer = chain.get(0)?.get("payload")?.as_str()?;
+            partial_deployments::admit_before_files(
+                &deployer,
+                &settings.partial_uploads,
+                entity_id,
+                signer,
+                request.quota_exhausted,
+            )
+            .await
+        },
     )
     .await?;
+    let (fields, files) = match form {
+        Form::Read(fields, files) => (fields, files),
+        Form::Refused(response) => return Ok(Answer::Partial(response)),
+    };
+    if is_partial(&fields) {
+        let answer = partial_batch(state, &deployer, request, fields, files).await;
+        return Ok(Answer::Partial(
+            answer.unwrap_or_else(IntoResponse::into_response),
+        ));
+    }
     let entity_id = fields
         .get("entityId")
         .ok_or_else(|| invalid("Missing entityId field"))?
         .clone();
-    if fields.get("partial").map(String::as_str) == Some("true") {
-        return partial_batch(state, &deployer, request, fields, files, entity_id).await;
-    }
     // Otherwise the query flag would carry a regular deploy past the quota.
     if request.declared_partial {
         return Err(invalid(
@@ -463,17 +516,18 @@ async fn deploy_form(
     }
 }
 
-/// A batch of a partial upload. The daily quota counts the upload once,
-/// when its first batch creates it, and a batch refused with a 400 before
-/// joining its upload; a spent source may only resume the signer's own.
+/// A batch of a partial upload. As upstream's `withDeploymentQuota`, the
+/// daily quota counts the upload once, when its first batch creates it, and
+/// a batch refused with a 400 before joining its upload (a missing
+/// `entityId` or a bad chain included); its 429s, 503s and replays are not
+/// counted. A spent source may only resume the signer's own upload.
 async fn partial_batch(
     state: &SharedState,
     deployer: &super::write_deployer::WriteDeployer,
     request: &Request<'_>,
     fields: BTreeMap<String, String>,
     files: Vec<(String, Bytes)>,
-    entity_id: String,
-) -> AppResult<Answer> {
+) -> AppResult<Response> {
     if !state.sync.takes_deploys_of("scene") {
         return Err(AppError::ServiceUnavailable(
             writes::BOOTSTRAPPING_MESSAGE.to_string(),
@@ -482,6 +536,10 @@ async fn partial_batch(
     // Counted for good: the charge is never refunded.
     let count = || {
         let _ = state.deploy_quota.try_consume(request.client_ip);
+    };
+    let Some(entity_id) = fields.get("entityId").cloned() else {
+        count();
+        return Err(invalid("Missing entityId field"));
     };
     let auth_chain = match auth_chain_of(&fields, &entity_id) {
         Ok(chain) => chain,
@@ -507,7 +565,7 @@ async fn partial_batch(
         deployer,
         &state.settings.partial_uploads,
         batch,
-        state.deploy_quota.exhausted(request.client_ip),
+        request.quota_exhausted,
         &mut admission,
     )
     .await;
@@ -517,7 +575,7 @@ async fn partial_batch(
     if response.status() == StatusCode::OK {
         state.deployments_cache.clear();
     }
-    Ok(Answer::Partial(response))
+    Ok(response)
 }
 
 #[cfg(test)]

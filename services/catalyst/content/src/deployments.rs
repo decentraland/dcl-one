@@ -85,7 +85,11 @@ async fn fetch_deployments_response(state: &SharedState, query_string: &str) -> 
     })??;
 
     // Upstream drops denylisted entities from the page after `moreData` is
-    // computed, so a page can be short and still carry `next`.
+    // computed, so a page can be short and still carry `next`. Inherited
+    // quirk: a page that is entirely denylisted answers `moreData: true`
+    // with no `next` (built from the page's last kept deployment), so a
+    // client paging by `next` stops there (`logic/deployments/component.ts`
+    // and `get-deployments-handler.ts` at `decentraland/catalyst` a416565).
     let deployments: Vec<ControllerDeployment> = result
         .deployments
         .into_iter()

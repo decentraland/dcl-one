@@ -26,17 +26,24 @@ impl Node {
     /// A node taking local writes over the scratch database, with the test
     /// deployer (the chain and content checks, no chain sources).
     async fn new(tag: &str, limits: Limits) -> Option<Self> {
-        let pool = crate::db::scratch::pool(4).await?;
+        Self::with_settings(
+            tag,
+            Settings {
+                partial_uploads: limits,
+                ..Settings::for_tests()
+            },
+        )
+        .await
+    }
+
+    async fn with_settings(tag: &str, settings: Settings) -> Option<Self> {
+        let pool = crate::db::scratch::pool(6).await?;
         let tmp = std::env::temp_dir().join(format!(
             "catalyst-partial-{tag}-{}-{}",
             std::process::id(),
             uuid::Uuid::new_v4().simple()
         ));
         let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
-        let settings = Settings {
-            partial_uploads: limits,
-            ..Settings::for_tests()
-        };
         let state = Arc::new(ContentState::new(pool.clone(), settings, storage.clone()));
         state.sync.set_state(SyncState::Syncing);
         let deployer = WriteDeployer::with_optional_eip1654(pool, storage, None)
@@ -95,6 +102,53 @@ async fn make_scene(signer: &PrivateKeySigner, files: &[&[u8]], entity_type: &st
     }
 }
 
+/// A scene whose content lists `extra` hashes beside its own `files`
+/// (content it does not send: already in the store).
+async fn make_scene_listing(signer: &PrivateKeySigner, files: &[&[u8]], extra: &[&str]) -> Scene {
+    let mut scene = make_scene(signer, files, "scene").await;
+    let mut entity: Value = serde_json::from_slice(&scene.bytes).unwrap();
+    let content = entity["content"].as_array_mut().unwrap();
+    for (i, hash) in extra.iter().enumerate() {
+        content.push(json!({"file": format!("extra{i}.bin"), "hash": hash}));
+    }
+    scene.bytes = Bytes::from(serde_json::to_vec(&entity).unwrap());
+    scene.id = hash_bytes_v1(&scene.bytes);
+    scene.chain = chain_for(signer, &scene.id).await;
+    scene
+}
+
+/// Backdates a stored blob past the collector's age floor.
+async fn age_blob(storage: &Storage, hash: &str) {
+    let path = storage.file_path(hash).await.unwrap().expect("stored");
+    let past = std::time::SystemTime::now() - Duration::from_secs(3 * 3600);
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(past)
+        .unwrap();
+}
+
+/// Moves an upload past its TTL.
+async fn expire(pool: &PgPool, entity_id: &str) {
+    sqlx::query(
+        "UPDATE content.pending_deployments SET created_at = created_at - interval '2 hours'
+         WHERE entity_id = $1",
+    )
+    .bind(entity_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn pending_rows(pool: &PgPool, entity_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM content.pending_deployments WHERE entity_id = $1")
+        .bind(entity_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
 fn rand_u16() -> u16 {
     uuid::Uuid::new_v4().as_bytes()[0] as u16 * 256 + uuid::Uuid::new_v4().as_bytes()[1] as u16
 }
@@ -135,7 +189,9 @@ fn batch_request(
         body.extend_from_slice(value);
         body.extend_from_slice(b"\r\n");
     };
-    field("entityId", entity_id.as_bytes(), false);
+    if !entity_id.is_empty() {
+        field("entityId", entity_id.as_bytes(), false);
+    }
     field("authChain", chain.to_string().as_bytes(), false);
     if form_partial {
         field("partial", b"true", false);
@@ -399,14 +455,7 @@ async fn an_expired_upload_is_refused_and_reclaimed() {
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED);
-    sqlx::query(
-        "UPDATE content.pending_deployments SET created_at = created_at - interval '2 hours'
-         WHERE entity_id = $1",
-    )
-    .bind(&scene.id)
-    .execute(&node.state.pool)
-    .await
-    .unwrap();
+    expire(&node.state.pool, &scene.id).await;
     let (status, _, body) = send(
         &router,
         &scene,
@@ -420,18 +469,372 @@ async fn an_expired_upload_is_refused_and_reclaimed() {
         "This upload expired. Create a new entity with a fresh timestamp."
     );
 
-    cleanup_expired(&node.state.pool, &node.state.storage, &Limits::default())
+    // Younger than the collector's floor, the staged blobs are left to it.
+    let storage = &node.state.storage;
+    cleanup_expired(&node.state.pool, storage, &Limits::default())
         .await
         .unwrap();
-    let rows: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM content.pending_deployments WHERE entity_id = $1")
-            .bind(&scene.id)
-            .fetch_one(&node.state.pool)
+    assert_eq!(pending_rows(&node.state.pool, &scene.id).await, 0);
+    assert!(storage.exist(&scene.files[0].0).await.unwrap());
+    assert!(storage.exist(&scene.id).await.unwrap());
+
+    // Past it, the next expired upload's blobs go.
+    let scene = make_scene(&signer, &[b"expiry-c", b"expiry-d"], "scene").await;
+    let (status, _, _) = send(
+        &router,
+        &scene,
+        &scene.chain,
+        vec![entity_file(&scene), scene.files[0].clone()],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    // Aged first: another test's cleanup may take it once expired.
+    age_blob(storage, &scene.files[0].0).await;
+    age_blob(storage, &scene.id).await;
+    expire(&node.state.pool, &scene.id).await;
+    cleanup_expired(&node.state.pool, storage, &Limits::default())
+        .await
+        .unwrap();
+    assert_eq!(pending_rows(&node.state.pool, &scene.id).await, 0);
+    assert!(!storage.exist(&scene.files[0].0).await.unwrap());
+    assert!(!storage.exist(&scene.id).await.unwrap());
+}
+
+/// Cleanup unlinks only what an upload wrote, and never what the collector
+/// keeps: an upload listing a global scene's content (found stored, so not
+/// written by it) leaves it alone when it expires, as it leaves a blob some
+/// other writer stored; and a receipt that claims the global scene's blob
+/// as written is still kept by the collector's fixed references.
+#[tokio::test]
+async fn cleanup_leaves_blobs_the_upload_did_not_write_and_the_collectors_fixed_set() {
+    require_test_db!(Some(node) = Node::new("fixed-set", Limits::default()).await);
+    let router = node.router();
+    let pool = &node.state.pool;
+    let storage = &node.state.storage;
+    let global_content = Bytes::from(format!("global-scene-asset-{}", uuid::Uuid::new_v4()));
+    let global_hash = hash_bytes_v1(&global_content);
+    storage.store(&global_hash, global_content).await.unwrap();
+    let global_entity = Bytes::from(
+        json!({"type": "scene", "pointers": ["0,0"], "timestamp": 1,
+               "content": [{"file": "main.glb", "hash": global_hash}]})
+        .to_string(),
+    );
+    let global_id = hash_bytes_v1(&global_entity);
+    storage.store(&global_id, global_entity).await.unwrap();
+    let other_content = Bytes::from(format!("another-writers-blob-{}", uuid::Uuid::new_v4()));
+    let other_hash = hash_bytes_v1(&other_content);
+    storage.store(&other_hash, other_content).await.unwrap();
+    let limits = Limits {
+        global_scenes_urn: vec![format!("urn:decentraland:entity:{global_id}?=&baseUrl=x")],
+        ..Limits::default()
+    };
+
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene_listing(
+        &signer,
+        &[b"fixed-own", b"fixed-missing"],
+        &[&global_hash, &other_hash],
+    )
+    .await;
+    let (status, _, body) = send(
+        &router,
+        &scene,
+        &scene.chain,
+        vec![entity_file(&scene), scene.files[0].clone()],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let written: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT hash, written FROM content.pending_deployment_files WHERE entity_id = $1 ORDER BY hash",
+    )
+    .bind(&scene.id)
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    for (hash, written) in &written {
+        let ours = *hash == scene.id || *hash == scene.files[0].0;
+        assert_eq!(*written, ours, "{hash}");
+    }
+    for hash in [
+        &global_hash,
+        &global_id,
+        &other_hash,
+        &scene.files[0].0,
+        &scene.id,
+    ] {
+        age_blob(storage, hash).await;
+    }
+    expire(pool, &scene.id).await;
+    cleanup_expired(pool, storage, &limits).await.unwrap();
+    assert_eq!(pending_rows(pool, &scene.id).await, 0);
+    assert!(
+        !storage.exist(&scene.files[0].0).await.unwrap(),
+        "its own blob goes"
+    );
+    for kept in [&global_hash, &global_id, &other_hash] {
+        assert!(storage.exist(kept).await.unwrap(), "{kept} is kept");
+    }
+
+    // Defence in depth: a receipt claiming the global scene's blob as
+    // written, released (live, so no other test's cleanup takes it).
+    let scene = make_scene_listing(
+        &signer,
+        &[b"fixed-own-2", b"fixed-missing-2"],
+        &[&global_hash],
+    )
+    .await;
+    let (status, _, _) = send(
+        &router,
+        &scene,
+        &scene.chain,
+        vec![entity_file(&scene), scene.files[0].clone()],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    sqlx::query("UPDATE content.pending_deployment_files SET written = true WHERE entity_id = $1")
+        .bind(&scene.id)
+        .execute(pool)
+        .await
+        .unwrap();
+    age_blob(storage, &scene.files[0].0).await;
+    let lock = EntityLock::try_acquire(pool, &scene.id)
+        .await
+        .unwrap()
+        .expect("free");
+    release_upload(pool, storage, &limits, &scene.id).await;
+    lock.release().await;
+    assert_eq!(pending_rows(pool, &scene.id).await, 0);
+    assert!(!storage.exist(&scene.files[0].0).await.unwrap());
+    assert!(
+        storage.exist(&global_hash).await.unwrap(),
+        "the collector's fixed set is kept"
+    );
+}
+
+/// While a batch holds the entity's lock (committing or publishing the
+/// upload, on any replica), cleanup skips the upload even once it expired,
+/// and reclaims it on a later run.
+#[tokio::test]
+async fn cleanup_skips_an_upload_whose_lock_is_held() {
+    require_test_db!(Some(node) = Node::new("locked", Limits::default()).await);
+    let router = node.router();
+    let pool = &node.state.pool;
+    let storage = &node.state.storage;
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"locked-a", b"locked-b"], "scene").await;
+    let (status, _, _) = send(
+        &router,
+        &scene,
+        &scene.chain,
+        vec![entity_file(&scene), scene.files[0].clone()],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let lock = EntityLock::try_acquire(pool, &scene.id)
+        .await
+        .unwrap()
+        .expect("free");
+    expire(pool, &scene.id).await;
+    age_blob(storage, &scene.files[0].0).await;
+    assert!(
+        EntityLock::try_acquire(pool, &scene.id)
             .await
-            .unwrap();
-    assert_eq!(rows, 0);
-    assert!(!node.state.storage.exist(&scene.files[0].0).await.unwrap());
-    assert!(!node.state.storage.exist(&scene.id).await.unwrap());
+            .unwrap()
+            .is_none(),
+        "the lock is the database's: another session cannot take it"
+    );
+    cleanup_expired(pool, storage, &Limits::default())
+        .await
+        .unwrap();
+    assert_eq!(
+        pending_rows(pool, &scene.id).await,
+        1,
+        "a locked upload stays"
+    );
+    assert!(storage.exist(&scene.files[0].0).await.unwrap());
+
+    lock.release().await;
+    cleanup_expired(pool, storage, &Limits::default())
+        .await
+        .unwrap();
+    assert_eq!(pending_rows(pool, &scene.id).await, 0);
+    assert!(!storage.exist(&scene.files[0].0).await.unwrap());
+}
+
+/// A dropped lock guard (a cancelled request) frees the lock with its
+/// session.
+#[tokio::test]
+async fn a_dropped_entity_lock_is_freed() {
+    require_test_db!(Some(node) = Node::new("lock-drop", Limits::default()).await);
+    let pool = &node.state.pool;
+    let id = format!("lock-drop-{}", uuid::Uuid::new_v4());
+    let lock = EntityLock::try_acquire(pool, &id)
+        .await
+        .unwrap()
+        .expect("free");
+    drop(lock);
+    let again = EntityLock::acquire(pool, &id).await.unwrap();
+    assert!(again.is_some(), "the closed session released it");
+    again.unwrap().release().await;
+}
+
+/// Batches of one upload sent at once are serialized by the entity's lock:
+/// the scene is published once, each answer is a 202 naming what the other
+/// still had to send or the publication's 200, and nothing stays pending.
+#[tokio::test]
+async fn concurrent_batches_of_one_upload_publish_it_once() {
+    require_test_db!(Some(node) = Node::new("concurrent", Limits::default()).await);
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"conc-a", b"conc-b", b"conc-c"], "scene").await;
+    let (a, b, c) = (
+        scene.files[0].clone(),
+        scene.files[1].clone(),
+        scene.files[2].clone(),
+    );
+    let (status, _, _) = send(&router, &scene, &scene.chain, vec![entity_file(&scene), a]).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let (first, second) = tokio::join!(
+        send(&router, &scene, &scene.chain, vec![b.clone()]),
+        send(&router, &scene, &scene.chain, vec![c.clone()]),
+    );
+    let answers = [(first, &c.0), (second, &b.0)];
+    let mut published = Vec::new();
+    for ((status, _, body), others) in &answers {
+        match *status {
+            StatusCode::OK => published.push(body["creationTimestamp"].as_i64().unwrap()),
+            StatusCode::ACCEPTED => assert_eq!(body, &json!({"missing": [others]})),
+            other => panic!("unexpected {other}: {body}"),
+        }
+    }
+    assert!(!published.is_empty(), "one of them completes the upload");
+    published.dedup();
+    assert_eq!(published.len(), 1, "one publication");
+    assert_eq!(pending_rows(&node.state.pool, &scene.id).await, 0);
+}
+
+/// The daily quota on the partial path, as upstream's `withDeploymentQuota`:
+/// a 400 before joining an upload counts (a bad chain, a missing
+/// `entityId`), creating an upload counts once, a resume and a replay do
+/// not; a spent source may only resume its signer's own live upload, and
+/// is turned away before its files are read otherwise.
+#[tokio::test]
+async fn the_daily_quota_counts_partial_batches_as_upstream() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 3,
+        ..Settings::for_tests()
+    };
+    require_test_db!(Some(node) = Node::with_settings("quota", settings).await);
+    let router = node.router();
+    let ip = "203.0.113.7";
+    let quota = &node.state.deploy_quota;
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"quota-a", b"quota-b"], "scene").await;
+
+    let stranger = PrivateKeySigner::random();
+    let forged = chain_for(&stranger, &scene.id).await;
+    let mut forged = forged;
+    forged[0]["payload"] = json!(format!("{:#x}", signer.address()));
+    let (status, _, _) = send(&router, &scene, &forged, vec![entity_file(&scene)]).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(quota.counted_for(ip), 1, "a refused new batch counts");
+
+    let (status, _, _) = call(
+        &router,
+        batch_request("?partial=true", "", &scene.chain, &[], true),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(quota.counted_for(ip), 2, "a missing entityId counts");
+
+    let (status, _, _) = send(
+        &router,
+        &scene,
+        &scene.chain,
+        vec![entity_file(&scene), scene.files[0].clone()],
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(
+        quota.counted_for(ip),
+        3,
+        "the upload counts once, when created"
+    );
+
+    // Spent: another upload is turned away, the signer's own goes on.
+    let other = make_scene(&signer, &[b"quota-c"], "scene").await;
+    let (status, headers, body) =
+        send(&router, &other, &other.chain, vec![entity_file(&other)]).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        body["errors"][0],
+        "The daily deployment quota for this client is exhausted. Only uploads in progress can continue."
+    );
+    assert!(headers.contains_key(header::RETRY_AFTER));
+    assert_eq!(pending_rows(&node.state.pool, &other.id).await, 0);
+    let (status, _, body) = send(&router, &scene, &scene.chain, vec![scene.files[1].clone()]).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _, _) = send(&router, &scene, &scene.chain, vec![]).await;
+    assert_eq!(status, StatusCode::OK, "a replay answers");
+    assert_eq!(
+        quota.counted_for(ip),
+        3,
+        "resumes, 429s and replays are not counted"
+    );
+}
+
+/// An account whose byte-rate window is over its limit is turned away
+/// before its next batch's files are read.
+#[tokio::test]
+async fn an_account_over_its_byte_rate_waits() {
+    let limits = Limits {
+        bytes_per_minute: 64,
+        ..Limits::default()
+    };
+    require_test_db!(Some(node) = Node::new("byte-rate", limits).await);
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let scene = make_scene(&signer, &[b"rate-a"], "scene").await;
+    let (status, _, body) = send(&router, &scene, &scene.chain, vec![entity_file(&scene)]).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body["errors"][0],
+        format!(
+            "This batch is {} bytes, over the partial upload byte rate limit of 64 bytes per minute. Send it in smaller batches.",
+            scene.bytes.len()
+        )
+    );
+    let (status, headers, body) =
+        send(&router, &scene, &scene.chain, vec![entity_file(&scene)]).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        body["errors"][0]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!(
+                "Partial upload byte rate exceeded for this account: {} bytes in the current one-minute window, max 64.",
+                scene.bytes.len()
+            )),
+        "{body}"
+    );
+    assert!(headers.contains_key(header::RETRY_AFTER));
+}
+
+/// Every replica reads the last cleanup run from the database.
+#[tokio::test]
+async fn the_last_cleanup_run_is_shared() {
+    require_test_db!(Some(node) = Node::new("cleanup-at", Limits::default()).await);
+    let pool = &node.state.pool;
+    let before = now_ms();
+    cleanup_expired(pool, &node.state.storage, &Limits::default())
+        .await
+        .unwrap();
+    // Another test's run may land meanwhile: any recent run will do.
+    let last = last_cleanup_at(pool).await.unwrap().expect("recorded");
+    assert!(
+        last >= before - 60_000 && last <= now_ms(),
+        "{last} vs {before}"
+    );
 }
 
 #[test]
