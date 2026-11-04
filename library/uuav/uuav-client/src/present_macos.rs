@@ -259,13 +259,12 @@ fn wrap_generation(unity: &UnityDevice, pending: &PendingGen) -> Result<ActiveGe
     let (width, height) = pending
         .dims
         .ok_or_else(|| anyhow!("generation has no dims"))?;
+    // the macOS helper announces the stream's size unrounded (the Linux one
+    // rounds it, video_linux.rs); NV12 presents the even extent the surfaces hold
+    let (width, height) = (width & !1, height & !1);
     ensure!(
-        (1..=MAX_DIMENSION).contains(&width) && (1..=MAX_DIMENSION).contains(&height),
+        (2..=MAX_DIMENSION).contains(&width) && (2..=MAX_DIMENSION).contains(&height),
         "helper announced an unpresentable size {width}x{height}"
-    );
-    ensure!(
-        width % 2 == 0 && height % 2 == 0,
-        "helper announced odd NV12 dimensions {width}x{height}"
     );
     ensure!(
         u64::from(width).saturating_mul(u64::from(height)) <= MAX_PIXELS,
@@ -280,22 +279,10 @@ fn wrap_generation(unity: &UnityDevice, pending: &PendingGen) -> Result<ActiveGe
             let uv = slot[1]
                 .as_ref()
                 .ok_or_else(|| anyhow!("missing UV surface"))?;
-            // the surfaces must hold the frame the dims describe: the blit reads the
-            // announced extent out of them
-            ensure!(
-                y.width() >= width as usize && y.height() >= height as usize,
-                "Y surface {}x{} is smaller than the announced {width}x{height}",
-                y.width(),
-                y.height()
-            );
-            ensure!(
-                uv.width() >= (width / 2) as usize && uv.height() >= (height / 2) as usize,
-                "UV surface {}x{} is smaller than the announced {}x{}",
-                uv.width(),
-                uv.height(),
-                width / 2,
-                height / 2
-            );
+            // the surfaces must hold the frame the dims describe, in the plane's own
+            // layout: the blit reads the announced extent out of them
+            check_surface("Y", y, width as usize, height as usize, 1)?;
+            check_surface("UV", uv, (width / 2) as usize, (height / 2) as usize, 2)?;
             Ok([
                 wrap_surface(unity, y, MTLPixelFormat::R8Unorm)?,
                 wrap_surface(unity, uv, MTLPixelFormat::RG8Unorm)?,
@@ -312,6 +299,43 @@ fn wrap_generation(unity: &UnityDevice, pending: &PendingGen) -> Result<ActiveGe
             wrap_slot(&pending.surfaces[2])?,
         ],
     })
+}
+
+/// Refuses a surface that does not hold `width` x `height` elements of
+/// `bytes_per_element` bytes: the helper is the untrusted side, and a
+/// surface with enough pixels in another layout, or a short row or
+/// allocation, would be read past by the blit.
+fn check_surface(
+    plane: &str,
+    surface: &IOSurfaceRef,
+    width: usize,
+    height: usize,
+    bytes_per_element: usize,
+) -> Result<()> {
+    ensure!(
+        surface.width() >= width && surface.height() >= height,
+        "{plane} surface {}x{} is smaller than the announced {width}x{height}",
+        surface.width(),
+        surface.height()
+    );
+    ensure!(
+        surface.bytes_per_element() == bytes_per_element,
+        "{plane} surface has {} bytes per element, not {bytes_per_element}",
+        surface.bytes_per_element()
+    );
+    let row = width.saturating_mul(bytes_per_element);
+    ensure!(
+        surface.bytes_per_row() >= row,
+        "{plane} surface rows of {} bytes are shorter than {row}",
+        surface.bytes_per_row()
+    );
+    let needed = surface.bytes_per_row().saturating_mul(height);
+    ensure!(
+        surface.alloc_size() >= needed,
+        "{plane} surface allocation of {} bytes is shorter than {needed}",
+        surface.alloc_size()
+    );
+    Ok(())
 }
 
 /// Client-side `MTLTexture` view over a whole single-plane shared surface.

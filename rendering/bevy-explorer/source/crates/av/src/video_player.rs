@@ -260,11 +260,16 @@ fn update_av_volume<T: AVPlayer>(
                 audio: _,
             video: _,
             command_sender,
-            rejected_commands: _,
+            rejected_commands,
             rate: _,
             sent_volume,
             _phantom,
         } = sinks.as_mut();
+
+        // a rejected source's commands go nowhere; the queue is emptied here so it stays small
+        if let Some(rejected) = rejected_commands {
+            while rejected.try_recv().is_ok() {}
+        }
 
         let volume = if containing_scenes.contains(&scene.root) {
             config.volume() * audio_settings.scene()
