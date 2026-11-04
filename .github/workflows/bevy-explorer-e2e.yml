@@ -28,7 +28,7 @@
 # one per worker). Until the variable is set the scenarios job is skipped; the Inputs job's summary
 # says what would have run. That image carries MinGit alone, so the job runs its steps in
 # PowerShell, puts a pinned git-lfs on PATH before the checkout (the scenes' assets), and drives
-# Chrome where the image has it, else Edge, the same Chromium. The scenes' CLI is built on a
+# Chrome where the image has it, else a pinned Chrome for Testing build. The scenes' CLI is built on a
 # hosted Windows runner and handed over, so the image needs no Rust toolchain, MSVC or bash.
 #
 # GitHub starts `workflow_run`, `schedule` and `workflow_dispatch` only from the workflow file on
