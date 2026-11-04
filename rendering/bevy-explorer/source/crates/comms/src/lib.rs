@@ -2,6 +2,7 @@ pub mod archipelago;
 mod automation;
 pub mod broadcast_position;
 pub mod chat_reaction;
+pub mod community_chat;
 pub mod global_crdt;
 #[cfg(feature = "livekit")]
 pub mod livekit;
@@ -185,6 +186,9 @@ pub enum NetworkMessageRecipient {
     All,
     Peer(Address),
     AuthServer,
+    /// The server's message router on the private chat room, which fans community chat out to
+    /// the community's members (see [`community_chat`]).
+    MessageRouter,
 }
 
 /// A queued broadcast that carries its own per-transport encodings rather than pre-resolved bytes,

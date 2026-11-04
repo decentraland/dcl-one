@@ -1,9 +1,13 @@
-//! The private chat (DM) room: one LiveKit room per environment that every DM-capable client joins
+//! The private chat room: one LiveKit room per environment that every DM-capable client joins
 //! at login and stays in across realm changes. DMs are addressed by data-packet topic and
-//! destination identity on it; its participant list is the DM presence list.
+//! destination identity on it; its participant list is the DM presence list. Community chat
+//! rides the same room (see [`crate::community_chat`]): a community's channel is its topic, and
+//! the packets go through the server's message router instead of to a peer.
 //!
 //! The room is deliberately not a [`Transport`](crate::Transport): nothing broadcast to the
 //! realm's transports can reach it, and its participants never touch the avatar store.
+
+use std::collections::HashSet;
 
 use alloy_core::primitives::Address;
 use bevy::{
@@ -17,12 +21,13 @@ use common::{
     structs::{AppConfig, DmPrivacy, PrimaryUser},
     util::{AsH160, TaskCompat, TaskExt},
 };
-use console::DoAddConsoleCommand;
+use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use dcl_component::proto_components::kernel::comms::rfc4;
 use http::Uri;
 use ipfs::IpfsAssetServer;
 use prost::Message as _;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use system_bridge::SystemApi;
 use tokio::sync::mpsc::Sender;
 use wallet::Wallet;
@@ -31,6 +36,10 @@ use crate::{
     chat_reaction::{
         canonical_message_id, emoji_to_atlas_index, encode_wire_index, received_emoji,
         ChatReactionEvent,
+    },
+    community_chat::{
+        channel_for, community_id, message_router_identity, resolve_author, PrivateChatTarget,
+        CHANNEL_PREFIX,
     },
     global_crdt::{ChannelControl, ChatEvent},
     livekit::{
@@ -46,16 +55,22 @@ use crate::{
     NetworkMessageRecipient,
 };
 
+/// Unity rejects reaction message ids longer than this (`MultiplayerReactionMessageBus`).
+const MAX_REACTION_MESSAGE_ID_LEN: usize = 96;
+
 pub struct PrivateChatPlugin;
 
 impl Plugin for PrivateChatPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<PrivateChatReceived>();
         app.add_event::<PrivateChatPresenceChanged>();
+        app.add_event::<CommunityChatReceived>();
+        app.init_resource::<CommunityChannels>();
         app.add_systems(
             Update,
             (
                 connect_private_chat_room,
+                apply_community_channels,
                 send_private_chats,
                 send_private_reactions,
             ),
@@ -66,6 +81,33 @@ impl Plugin for PrivateChatPlugin {
         app.add_observer(participant_payload);
         app.add_console_command::<DmRoomCommand, _>(dm_room);
         app.add_console_command::<DmCommand, _>(dm);
+        app.add_console_command::<CommunityChatCommand, _>(community_chat);
+        app.add_console_command::<CommunityChannelsCommand, _>(community_channels);
+        app.add_console_command::<CommunityStateCommand, _>(community_state);
+        app.add_debug_section(DebugSection {
+            title: "Community chat",
+            query: "/community_state",
+            fields: &[
+                ("Router identity", "routerIdentity"),
+                ("Router in room", "routerInRoom"),
+                ("Channels joined", "channels"),
+                ("Messages sent", "sent"),
+                ("Messages received", "received"),
+                ("Reactions sent", "reactionsSent"),
+                ("Reactions received", "reactionsReceived"),
+                ("Dropped: not a member", "dropped.notMember"),
+                ("Dropped: no author", "dropped.unattributed"),
+                ("Dropped: rate limited", "dropped.rateLimited"),
+                ("Last error", "lastError"),
+            ],
+            actions: &[],
+            inputs: &[DebugInput {
+                label: "Add channel (community id)",
+                field: "",
+                command: "/community_channels add {value}",
+                kind: DebugInputKind::Text,
+            }],
+        });
     }
 }
 
@@ -75,6 +117,41 @@ pub struct PrivateChatRoom {
     pub sender: Sender<NetworkMessage>,
     // keeps the room's control channel open; the room has no voice, so nothing is ever sent
     _control: Sender<ChannelControl>,
+}
+
+/// Community chat counters on the private chat room, for `/community_state`. No message bodies.
+#[derive(Component, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommunityChatStats {
+    sent: u64,
+    received: u64,
+    reactions_sent: u64,
+    reactions_received: u64,
+    dropped: DroppedCommunityPackets,
+    last_error: Option<String>,
+}
+
+#[derive(Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DroppedCommunityPackets {
+    /// On a community channel the local user is not in (or has closed).
+    not_member: u64,
+    /// From the router without a wallet in the stamped author, or from a non-wallet identity.
+    unattributed: u64,
+    rate_limited: u64,
+}
+
+/// The community channels the local user listens to: the communities they are a member of,
+/// minus those whose chat they closed, as lowercased ids. Pushed by the HUD
+/// (`SystemApi::SetCommunityChannels`); packets on any other community channel are dropped
+/// before they are recorded, as unity-explorer drops them. Cleared with the identity.
+#[derive(Resource, Default)]
+pub struct CommunityChannels(pub HashSet<String>);
+
+impl CommunityChannels {
+    pub fn contains(&self, community_id: &str) -> bool {
+        self.0.contains(&community_id.to_ascii_lowercase())
+    }
 }
 
 /// On a private chat room participant: the DM privacy the server stamped into their participant
@@ -94,6 +171,18 @@ pub struct PrivateChatReceived {
     pub from: Address,
     pub message: String,
     /// The sender's rfc4 timestamp, which names the message for reactions.
+    pub timestamp: f64,
+}
+
+/// A community message relayed by the router on a channel the local user listens to, after the
+/// author and rate checks.
+#[derive(Event, Debug)]
+pub struct CommunityChatReceived {
+    /// Lowercased.
+    pub community_id: String,
+    pub from: Address,
+    pub message: String,
+    /// The author's rfc4 timestamp, which names the message for reactions.
     pub timestamp: f64,
 }
 
@@ -124,6 +213,7 @@ fn connect_private_chat_room(
     ipfs: IpfsAssetServer,
     time: Res<Time>,
     rooms: Query<Entity, With<PrivateChatRoom>>,
+    mut channels: ResMut<CommunityChannels>,
     mut gatekeeper_task: Local<Option<Task<Result<String, anyhow::Error>>>>,
     mut retry: Local<Option<(f64, u32)>>,
     disable_realm_comms: Option<Res<DisableRealmComms>>,
@@ -142,6 +232,8 @@ fn connect_private_chat_room(
         }
         *gatekeeper_task = None;
         *retry = None;
+        // the next account's channels are its own
+        channels.0.clear();
 
         if wallet.address().is_none() {
             info!("private chat: no identity, not connecting");
@@ -194,10 +286,35 @@ fn connect_private_chat_room(
                         sender,
                         _control: control,
                     },
+                    CommunityChatStats::default(),
                 ));
                 info!("private chat: connecting");
             }
         }
+    }
+}
+
+/// The HUD's community channel set replaces the current one. Ids that could not be a channel
+/// are dropped with a warning.
+fn apply_community_channels(
+    mut requests: EventReader<SystemApi>,
+    mut channels: ResMut<CommunityChannels>,
+) {
+    for request in requests.read() {
+        let SystemApi::SetCommunityChannels(ids) = request else {
+            continue;
+        };
+        let mut next = HashSet::new();
+        for id in ids {
+            match community_id(&channel_for(id)) {
+                Some(id) => {
+                    next.insert(id.to_owned());
+                }
+                None => warn!(target: "comms::private_chat", "ignoring community channel `{id}`"),
+            }
+        }
+        debug!(target: "comms::private_chat", "community channels: {next:?}");
+        channels.0 = next;
     }
 }
 
@@ -264,15 +381,19 @@ fn participant_metadata_changed(
     }
 }
 
-/// A DM or a reaction to one on the private chat room. The sender is the LiveKit-authenticated
-/// identity; the topic must name us, so a packet addressed elsewhere (or to nobody) is dropped.
+/// A packet on the private chat room: a DM or a reaction to one, addressed to us by topic and
+/// sent by the partner themselves; or a community message or reaction, on a community channel's
+/// topic, relayed by the router with the author stamped in. Anything else is dropped.
+#[allow(clippy::too_many_arguments)]
 fn participant_payload(
     trigger: Trigger<ParticipantPayload>,
-    rooms: Query<(), With<PrivateChatRoom>>,
+    mut rooms: Query<&mut CommunityChatStats, With<PrivateChatRoom>>,
+    channels: Res<CommunityChannels>,
     wallet: Res<Wallet>,
     time: Res<Time>,
     mut rate_limiter: ResMut<InboundRateLimiter>,
     mut received: EventWriter<PrivateChatReceived>,
+    mut community_received: EventWriter<CommunityChatReceived>,
     mut reactions: EventWriter<ChatReactionEvent>,
 ) {
     let ParticipantPayload {
@@ -281,17 +402,111 @@ fn participant_payload(
         payload,
         topic,
     } = trigger.event();
-    if !rooms.contains(*room) {
-        return;
-    }
-    let identity = identity.to_string();
-    let Some(from) = identity.as_h160() else {
+    let Ok(mut stats) = rooms.get_mut(*room) else {
         return;
     };
-    if !rate_limiter.allow(*room, &identity, time.elapsed_secs_f64()) {
+    let identity = identity.to_string();
+    let now = time.elapsed_secs_f64();
+    if !rate_limiter.allow(*room, &identity, now) {
+        stats.dropped.rate_limited += 1;
         return;
     }
     let Some(me) = wallet.address() else {
+        return;
+    };
+    let message = match rfc4::Packet::decode(payload.as_slice()) {
+        Ok(rfc4::Packet {
+            message: Some(message),
+            ..
+        }) => message,
+        Ok(_) => {
+            debug!(target: "comms::private_chat", "empty packet from {identity}");
+            return;
+        }
+        Err(e) => {
+            warn!(target: "comms::private_chat", "undecodable packet from {identity}: {e}");
+            return;
+        }
+    };
+
+    if let Some(id) = topic.as_deref().and_then(community_id) {
+        let id = id.to_ascii_lowercase();
+        let router = message_router_identity();
+        match message {
+            rfc4::packet::Message::Chat(chat) => {
+                let Some(from) = resolve_author(&identity, &router, chat.forwarded_from.as_deref())
+                else {
+                    stats.dropped.unattributed += 1;
+                    debug!(target: "comms::private_chat", "dropping community message from {identity} ({:?})", chat.forwarded_from);
+                    return;
+                };
+                if !channels.contains(&id) {
+                    stats.dropped.not_member += 1;
+                    debug!(target: "comms::private_chat", "dropping message on community {id}, not listening");
+                    return;
+                }
+                // the router's window above is shared by every community message; this one is
+                // the author's own, as unity-explorer limits
+                if !rate_limiter.allow(*room, &format!("{CHANNEL_PREFIX}{from:#x}"), now) {
+                    stats.dropped.rate_limited += 1;
+                    return;
+                }
+                if !chat.timestamp.is_finite() {
+                    warn!(target: "comms::private_chat", "dropping community message from {from:#x} with timestamp {}", chat.timestamp);
+                    return;
+                }
+                debug!(target: "comms::private_chat", "community {id} message from {from:#x}: {}", chat.message);
+                stats.received += 1;
+                community_received.write(CommunityChatReceived {
+                    community_id: id,
+                    from,
+                    message: chat.message,
+                    timestamp: chat.timestamp,
+                });
+            }
+            rfc4::packet::Message::ChatReaction(reaction) => {
+                let Some(from) = resolve_author(&identity, &router, Some(&reaction.address))
+                else {
+                    stats.dropped.unattributed += 1;
+                    debug!(target: "comms::private_chat", "dropping community reaction from {identity} ({})", reaction.address);
+                    return;
+                };
+                if !channels.contains(&id) {
+                    stats.dropped.not_member += 1;
+                    return;
+                }
+                if reaction.message_id.is_empty()
+                    || reaction.message_id.len() > MAX_REACTION_MESSAGE_ID_LEN
+                {
+                    return;
+                }
+                debug!(target: "comms::private_chat", "community {id} reaction from {from:#x}: {reaction:?}");
+                if let (Some(message_id), Some((emoji, remove))) = (
+                    canonical_message_id(&reaction.message_id),
+                    received_emoji(&reaction.emoji, reaction.emoji_index, reaction.remove),
+                ) {
+                    stats.reactions_received += 1;
+                    reactions.write(ChatReactionEvent {
+                        channel: channel_for(&id),
+                        message_id,
+                        emoji,
+                        from,
+                        remove,
+                    });
+                }
+            }
+            other => {
+                debug!(target: "comms::private_chat", "ignoring non-chat packet on community {id} from {identity}: {other:?}");
+            }
+        }
+        return;
+    }
+
+    // a DM: the topic must name us, and the sender is the LiveKit-authenticated partner, so a
+    // packet addressed elsewhere (or to nobody), or relayed, is dropped
+    let Some(from) = identity.as_h160() else {
+        stats.dropped.unattributed += 1;
+        debug!(target: "comms::private_chat", "dropping packet from {identity} with topic {topic:?}");
         return;
     };
     if topic
@@ -301,15 +516,9 @@ fn participant_payload(
         warn!(target: "comms::private_chat", "dropping packet from {from:#x} with topic {topic:?}");
         return;
     }
-    let message = match rfc4::Packet::decode(payload.as_slice()) {
-        Ok(rfc4::Packet {
-            message: Some(rfc4::packet::Message::Chat(chat)),
-            ..
-        }) => chat,
-        Ok(rfc4::Packet {
-            message: Some(rfc4::packet::Message::ChatReaction(reaction)),
-            ..
-        }) => {
+    let message = match message {
+        rfc4::packet::Message::Chat(chat) => chat,
+        rfc4::packet::Message::ChatReaction(reaction) => {
             debug!(target: "comms::private_chat", "dm reaction from {from:#x}: {reaction:?}");
             if let (Some(message_id), Some((emoji, remove))) = (
                 canonical_message_id(&reaction.message_id),
@@ -325,12 +534,8 @@ fn participant_payload(
             }
             return;
         }
-        Ok(other) => {
+        other => {
             debug!(target: "comms::private_chat", "ignoring non-chat packet from {from:#x}: {other:?}");
-            return;
-        }
-        Err(e) => {
-            warn!(target: "comms::private_chat", "undecodable packet from {from:#x}: {e}");
             return;
         }
     };
@@ -346,24 +551,42 @@ fn participant_payload(
     });
 }
 
+/// The topic and recipient a target's packets carry: a DM goes to the partner by identity, a
+/// community message to the router, on the community's channel.
+fn route(target: &PrivateChatTarget) -> (String, NetworkMessageRecipient) {
+    match target {
+        PrivateChatTarget::Dm(to) => (format!("{to:#x}"), NetworkMessageRecipient::Peer(*to)),
+        PrivateChatTarget::Community(id) => {
+            (channel_for(id), NetworkMessageRecipient::MessageRouter)
+        }
+    }
+}
+
 /// The local player's chat events whose channel is a wallet address go out as DMs on the private
-/// chat room, addressed to that wallet by topic and destination identity.
+/// chat room, addressed to that wallet by topic and destination identity; those on a community
+/// channel go to the router on the community's topic.
 fn send_private_chats(
     mut chats: EventReader<ChatEvent>,
     player: Query<Entity, With<PrimaryUser>>,
-    room: Query<&PrivateChatRoom>,
+    mut room: Query<(&PrivateChatRoom, &mut CommunityChatStats)>,
+    channels: Res<CommunityChannels>,
 ) {
     let Ok(player) = player.single() else {
         return;
     };
     for ev in chats.read().filter(|ev| ev.sender == player) {
-        let Some(to) = ev.channel.as_h160() else {
+        let Some(target) = PrivateChatTarget::parse(&ev.channel) else {
             continue;
         };
-        let Ok(room) = room.single() else {
-            warn!(target: "comms::private_chat", "no private chat room, dropping dm to {to:#x}");
+        let Ok((room, mut stats)) = room.single_mut() else {
+            warn!(target: "comms::private_chat", "no private chat room, dropping message to {target:?}");
             continue;
         };
+        if let PrivateChatTarget::Community(id) = &target {
+            if !channels.contains(id) {
+                warn!(target: "comms::private_chat", "sending to community {id}, which is not a listened channel");
+            }
+        }
         let packet = rfc4::Packet {
             message: Some(rfc4::packet::Message::Chat(rfc4::Chat {
                 message: ev.message.clone(),
@@ -373,33 +596,45 @@ fn send_private_chats(
             })),
             protocol_version: 100,
         };
+        let (topic, recipient) = route(&target);
         let message = NetworkMessage {
-            topic: Some(format!("{to:#x}")),
-            ..NetworkMessage::targetted_reliable(&packet, NetworkMessageRecipient::Peer(to))
+            topic: Some(topic),
+            ..NetworkMessage::targetted_reliable(&packet, recipient)
         };
         match room.sender.try_send(message) {
-            Ok(()) => debug!(target: "comms::private_chat", "dm to {to:#x}: {}", ev.message),
-            Err(e) => warn!(target: "comms::private_chat", "failed to queue dm to {to:#x}: {e}"),
+            Ok(()) => {
+                debug!(target: "comms::private_chat", "to {target:?}: {}", ev.message);
+                if matches!(target, PrivateChatTarget::Community(_)) {
+                    stats.sent += 1;
+                }
+            }
+            Err(e) => {
+                warn!(target: "comms::private_chat", "failed to queue message to {target:?}: {e}");
+                if matches!(target, PrivateChatTarget::Community(_)) {
+                    stats.last_error = Some(format!("queue: {e}"));
+                }
+            }
         }
     }
 }
 
-/// The local user's reactions to DMs go to the partner the same way the DMs do.
+/// The local user's reactions to DMs go to the partner the same way the DMs do, and those to
+/// community messages to the router.
 fn send_private_reactions(
     mut reactions: EventReader<ChatReactionEvent>,
     wallet: Res<Wallet>,
-    room: Query<&PrivateChatRoom>,
+    mut room: Query<(&PrivateChatRoom, &mut CommunityChatStats)>,
 ) {
     let Some(me) = wallet.address() else {
         reactions.clear();
         return;
     };
     for ev in reactions.read().filter(|ev| ev.from == me) {
-        let Some(to) = ev.channel.as_h160() else {
+        let Some(target) = PrivateChatTarget::parse(&ev.channel) else {
             continue;
         };
-        let Ok(room) = room.single() else {
-            warn!(target: "comms::private_chat", "no private chat room, dropping reaction to {to:#x}");
+        let Ok((room, mut stats)) = room.single_mut() else {
+            warn!(target: "comms::private_chat", "no private chat room, dropping reaction to {target:?}");
             continue;
         };
         let packet = rfc4::Packet {
@@ -412,12 +647,20 @@ fn send_private_reactions(
             })),
             protocol_version: 100,
         };
+        let (topic, recipient) = route(&target);
         let message = NetworkMessage {
-            topic: Some(format!("{to:#x}")),
-            ..NetworkMessage::targetted_reliable(&packet, NetworkMessageRecipient::Peer(to))
+            topic: Some(topic),
+            ..NetworkMessage::targetted_reliable(&packet, recipient)
         };
-        if let Err(e) = room.sender.try_send(message) {
-            warn!(target: "comms::private_chat", "failed to queue reaction to {to:#x}: {e}");
+        match room.sender.try_send(message) {
+            Ok(()) => {
+                if matches!(target, PrivateChatTarget::Community(_)) {
+                    stats.reactions_sent += 1;
+                }
+            }
+            Err(e) => {
+                warn!(target: "comms::private_chat", "failed to queue reaction to {target:?}: {e}");
+            }
         }
     }
 }
@@ -445,6 +688,117 @@ fn dm(mut input: ConsoleCommand<DmCommand>, mut events: EventWriter<SystemApi>) 
         command.address.clone(),
     ));
     input.reply_ok(format!("dm to {}: {message}", command.address));
+}
+
+/// `/community_chat <community id> <message>` sends a community message, the same way the HUD
+/// does. The HUD must have listed the community (`/community_channels`) for replies to arrive.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/community_chat")]
+struct CommunityChatCommand {
+    community_id: String,
+    #[arg(trailing_var_arg = true, required = true)]
+    message: Vec<String>,
+}
+
+fn community_chat(
+    mut input: ConsoleCommand<CommunityChatCommand>,
+    mut events: EventWriter<SystemApi>,
+) {
+    let Some(Ok(command)) = input.take() else {
+        return;
+    };
+    let channel = channel_for(&command.community_id);
+    if community_id(&channel).is_none() {
+        input.reply_failed(format!(
+            "`{}` is not a community id",
+            command.community_id
+        ));
+        return;
+    }
+    let message = command.message.join(" ");
+    events.write(SystemApi::SendChat(message.clone(), channel.clone()));
+    input.reply_ok(format!("[{channel}] {message}"));
+}
+
+/// `/community_channels [add <id> | remove <id> | clear]` lists or edits the community channels
+/// listened to, as the HUD sets them.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/community_channels")]
+struct CommunityChannelsCommand {
+    action: Option<String>,
+    community_id: Option<String>,
+}
+
+fn community_channels(
+    mut input: ConsoleCommand<CommunityChannelsCommand>,
+    mut channels: ResMut<CommunityChannels>,
+) {
+    let Some(Ok(command)) = input.take() else {
+        return;
+    };
+    let id = command
+        .community_id
+        .as_deref()
+        .map(|id| (channel_for(id), id));
+    match (command.action.as_deref(), id) {
+        (None, _) => (),
+        (Some("clear"), _) => channels.0.clear(),
+        (Some(action @ ("add" | "remove")), Some((channel, id))) => {
+            let Some(valid) = community_id(&channel) else {
+                input.reply_failed(format!("`{id}` is not a community id"));
+                return;
+            };
+            if action == "add" {
+                channels.0.insert(valid.to_owned());
+            } else {
+                channels.0.remove(valid);
+            }
+        }
+        (Some(action), _) => {
+            input.reply_failed(format!(
+                "`{action}` is not `add <id>`, `remove <id>` or `clear`"
+            ));
+            return;
+        }
+    }
+    let mut listed: Vec<_> = channels.0.iter().cloned().collect();
+    listed.sort();
+    input.reply_ok(format!("community channels: {listed:?}"));
+}
+
+/// `/community_state` prints community chat's routing and counters as JSON.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/community_state")]
+struct CommunityStateCommand;
+
+fn community_state(
+    mut input: ConsoleCommand<CommunityStateCommand>,
+    rooms: Query<(&ParticipantIndex, &CommunityChatStats), With<PrivateChatRoom>>,
+    channels: Res<CommunityChannels>,
+) {
+    if input.take().is_none() {
+        return;
+    }
+    let router = message_router_identity();
+    let room = rooms.single().ok();
+    let router_in_room = room.is_some_and(|(index, _)| index.contains_key(&ParticipantIndex::key(&router)));
+    let mut listed: Vec<_> = channels.0.iter().cloned().collect();
+    listed.sort();
+    let mut state = json!({
+        "routerIdentity": router,
+        "routerInRoom": router_in_room,
+        "channels": listed,
+        "channelCount": channels.0.len(),
+        "roomSpawned": room.is_some(),
+    });
+    if let Some((_, stats)) = room {
+        if let (serde_json::Value::Object(state), Ok(serde_json::Value::Object(stats))) =
+            (&mut state, serde_json::to_value(stats))
+        {
+            state.extend(stats);
+        }
+    }
+    input.reply_ok(state.to_string());
 }
 
 /// `/dm_room` prints the private chat room's connection state and who is in it.

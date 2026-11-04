@@ -11,6 +11,7 @@ import type {
   BlockingStatusData,
   ChatMessage,
   ChatReactionData,
+  CommunityMemberConnectivityData,
   DmHistoryEntryData,
   DmUserStateData,
   VoiceMessage,
@@ -63,8 +64,14 @@ export type SocialApi = {
   unblockUser: (address: string) => Promise<void>
   /** One stream per address; `close()` ends it. */
   getDmUserStateStream: (address: string) => AsyncIterable<DmUserStateData> & { close: () => void }
+  /** The stored lines of a conversation: a partner's wallet or `community:<id>`. */
   getDmHistory: (address: string) => Promise<DmHistoryEntryData[]>
   deleteDmHistory: (address: string) => void
+  /** Community members coming online or going offline (never away); the local user's own
+   *  updates say which communities they are in. */
+  getCommunityConnectivityStream: () => Promise<AsyncIterable<CommunityMemberConnectivityData>>
+  /** The community channels the local user listens to, as community ids; replaces the set. */
+  setCommunityChannels: (ids: string[]) => void
 }
 
 export type ChatStreamMessage = ChatMessage
@@ -201,6 +208,8 @@ export type BevyApiInterface = {
   loginCancel: () => void
   logout: () => void
   social: SocialApi
+  /** Play one of the engine's embedded UI sounds (`sounds/ui/<name>`). */
+  playUiSound: (name: string) => void
 }
 
 const globalRequire = (globalThis as { require?: (module: string) => unknown }).require

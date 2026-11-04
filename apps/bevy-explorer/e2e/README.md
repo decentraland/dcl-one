@@ -107,6 +107,12 @@ test is in the spec file's header. Port 40, Partial 32, Gap 15, Drop 2.
 | ViewSignalSmoke (2) | `view-signal` | | | | 2 | A Unity harness self-test |
 | Visual (17) | `visual/visual` | 17 | | | | The scenes at their own parcels; references recorded anew |
 
+Beyond explorer-automation, `specs/community-chat.test.ts` covers community text chat, which
+Unity's suite does not: a member's community card opens its chat (`Open chat`), the rail shows a
+pressed `Chat in <name>` tab and the title bar its `Conversation options`, and a message typed there
+counts in `/community_state` and lands in `/dm_history community:<id>`. It needs an automation
+account that is a member of a community in the browse grid, and fails saying so otherwise.
+
 What the HUD would need for more Ports, found while porting: roles or labels on the minimap's
 name and coordinates, the chat message text, the communities titles and counts, the passport
 header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed` readable through

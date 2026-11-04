@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import { Avatar, Button, Tabs, openPopup, type TabItem } from '../../design'
 import { nameColor } from '../../lib/identity'
 import { knownUserColor } from '../session/profileStore'
+import { isMemberRole, roleLabel } from './roles'
 import { useSession } from '../session/SessionContext'
 import type {
   Community,
@@ -27,18 +28,10 @@ const TABS: TabItem<Tab>[] = [
   { id: 'photos', label: 'PHOTOS' }
 ]
 
-function isMemberRole(role: string): boolean {
-  return role === 'owner' || role === 'moderator' || role === 'member'
-}
 function compact(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`
   return String(n)
-}
-function roleLabel(role: string): string | null {
-  if (role === 'owner') return 'Owner'
-  if (role === 'moderator') return 'Moderator'
-  return null
 }
 function postDate(ts: number): string {
   return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' })
@@ -331,12 +324,17 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
   const { communities, friends, chat } = session
   const { loadDetail } = communities
 
-  useEffect(() => {
-    loadDetail(communityId)
-  }, [loadDetail, communityId])
-
+  const { fetch } = communities
   const community = communities.list.find((c) => c.id === communityId)
-  if (!community) return null // e.g. the community disappeared from the list while open
+  const listed = community != null
+  useEffect(() => {
+    // the browse list only holds what the Communities page fetched; a card opened from
+    // elsewhere (the chat's "View Community") asks for its community by id
+    if (!listed) fetch(communityId)
+    loadDetail(communityId)
+  }, [listed, fetch, loadDetail, communityId])
+
+  if (!community) return null // not fetched yet, or gone from the list while open
 
   const detail = communities.detail != null && communities.detail.id === communityId ? communities.detail : null
 
@@ -352,7 +350,7 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
       onAddFriend={(address) => friends.act('request', address)}
       onOpenChat={() => {
         onClose()
-        chat.toggle()
+        chat.openCommunity({ id: community.id, name: community.name, thumbnail: community.thumbnail ?? '', role: community.role })
       }}
       onClose={onClose}
     />

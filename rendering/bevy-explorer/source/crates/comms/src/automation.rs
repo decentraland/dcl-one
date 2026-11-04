@@ -142,7 +142,8 @@ impl ChatLog {
 /// Whether a chat event is a message from a player, as the HUD's chat stream takes it: not a
 /// console or system line (no sender), the local player's own command, an emote marker, or a DM
 /// (its channel is the partner's wallet; `/dm_history` has those, and a received DM is not a chat
-/// event at all). Another player's text that starts with `/` is chat: the HUD shows it.
+/// event at all), or a community message (`community:<id>`, likewise in `/dm_history`). Another
+/// player's text that starts with `/` is chat: the HUD shows it.
 fn is_chat_message(event: &ChatEvent, me: Option<Entity>) -> bool {
     event.sender != Entity::PLACEHOLDER
         && !(Some(event.sender) == me && event.message.starts_with('/'))
@@ -150,6 +151,7 @@ fn is_chat_message(event: &ChatEvent, me: Option<Entity>) -> bool {
             .iter()
             .any(|marker| event.message.starts_with(*marker))
         && event.channel.as_h160().is_none()
+        && crate::community_chat::community_id(&event.channel).is_none()
 }
 
 /// The sender's address: the local player's own, or a foreign player's.
@@ -449,6 +451,8 @@ mod tests {
         let player = Entity::from_raw(7);
         assert!(is_chat_message(&event(player, "Nearby", "hello"), me));
         assert!(is_chat_message(&event(player, "some scene", "hello"), me));
+        // a community message: in `/dm_history community:<id>`
+        assert!(!is_chat_message(&event(player, "community:abc-1", "hello"), me));
         // no sender: a console or system line
         assert!(!is_chat_message(
             &event(Entity::PLACEHOLDER, "Nearby", "[ok]"),

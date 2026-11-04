@@ -4,6 +4,7 @@ pub mod crash_report;
 pub mod login;
 pub mod oow;
 pub mod sysinfo;
+pub mod ui_sound;
 pub mod version_check;
 
 use std::collections::BTreeMap;
@@ -49,6 +50,7 @@ impl Plugin for SystemUiPlugin {
         app.add_plugins((
             SysInfoPanelPlugin,
             ChatPanelPlugin,
+            ui_sound::UiSoundPlugin,
             LoginPlugin,
             ChangeRealmPlugin,
             OowUiPlugin,

@@ -78,6 +78,13 @@ enum FriendData {
         address: Address,
         status: ConnectivityStatus,
     },
+    /// A member of a community the local user is in came online or went offline (from
+    /// SubscribeToCommunityMemberConnectivityUpdates); never `Away`.
+    CommunityConnectivityEvent {
+        community_id: String,
+        address: Address,
+        status: ConnectivityStatus,
+    },
     OwnRequestSent {
         address: Address,
         req: FriendshipRequestResponse,
@@ -120,6 +127,9 @@ pub type BlockingStatusResult = Result<BlockingStatus, String>;
 
 /// Callback invoked when someone blocks / unblocks the local user.
 type BlockUpdateCallback = Box<dyn Fn(&str, bool) + Send + Sync + 'static>;
+/// Called with a community's id when one of its members comes online or goes offline.
+type CommunityConnectivityCallback =
+    Box<dyn Fn(&str, Address, ConnectivityStatus) + Send + Sync + 'static>;
 
 pub struct SocialClientHandler {
     sender: UnboundedSender<UpsertFriendshipRequest>,
@@ -143,6 +153,7 @@ pub struct SocialClientHandler {
     friend_event_callback: Box<dyn Fn(&friendship_update::Update) + Send + Sync + 'static>,
     connectivity_callback: Box<dyn Fn(Address, ConnectivityStatus) + Send + Sync + 'static>,
     block_update_callback: BlockUpdateCallback,
+    community_connectivity_callback: CommunityConnectivityCallback,
     #[allow(dead_code)]
     chat_event_callback: Box<dyn Fn(DirectChatMessage) + Send + Sync + 'static>,
 }
@@ -155,6 +166,10 @@ impl SocialClientHandler {
         connectivity_callback: impl Fn(Address, ConnectivityStatus) + Send + Sync + 'static,
         block_update_callback: impl Fn(&str, bool) + Send + Sync + 'static,
         chat_callback: impl Fn(DirectChatMessage) + Send + Sync + 'static,
+        community_connectivity_callback: impl Fn(&str, Address, ConnectivityStatus)
+            + Send
+            + Sync
+            + 'static,
     ) -> Option<Self> {
         let (event_sx, event_rx) = mpsc::unbounded_channel();
         let (response_sx, response_rx) = mpsc::unbounded_channel();
@@ -187,6 +202,7 @@ impl SocialClientHandler {
             connectivity_callback: Box::new(connectivity_callback),
             block_update_callback: Box::new(block_update_callback),
             chat_event_callback: Box::new(chat_callback),
+            community_connectivity_callback: Box::new(community_connectivity_callback),
         })
     }
 
@@ -506,6 +522,13 @@ impl SocialClientHandler {
                         self.friend_status.insert(address, status);
                         (self.connectivity_callback)(address, status);
                     }
+                }
+                FriendData::CommunityConnectivityEvent {
+                    community_id,
+                    address,
+                    status,
+                } => {
+                    (self.community_connectivity_callback)(&community_id, address, status);
                 }
                 FriendData::OwnRequestSent { address, req } => {
                     self.sent_requests.insert(address, req);
@@ -831,6 +854,14 @@ async fn run_one_connection(
         .await
         .map_err(dbgerr)?;
     debug!("[social] Subscribed to block updates");
+
+    // Subscribe to community member connectivity updates (community chat presence)
+    debug!("[social] Subscribing to community member connectivity updates...");
+    let mut community_connectivity_updates = service_module
+        .subscribe_to_community_member_connectivity_updates()
+        .await
+        .map_err(dbgerr)?;
+    debug!("[social] Subscribed to community member connectivity updates");
 
     // Outbound: send friendship actions + handle queries
     let response_sx_write = response_sx.clone();
@@ -1195,6 +1226,42 @@ async fn run_one_connection(
     }
     .fuse();
 
+    // Inbound: receive community member connectivity updates. `Away` is not a presence change
+    // for community chat (unity-explorer ignores it too). A server-closed stream ends the
+    // connection, so every subscription is made again on reconnect.
+    let sx_community = response_sx.clone();
+    let f_community_connectivity_read = async move {
+        while let Some(update) = community_connectivity_updates.next().await {
+            debug!("[social] Received community connectivity update: {update:?}");
+            if let Some(closed) = &update.stream_closed {
+                return Err(anyhow!(
+                    "[social] community connectivity stream closed by the server: {closed:?}"
+                ));
+            }
+            let status = match update.status {
+                0 => ConnectivityStatus::Online,
+                1 => ConnectivityStatus::Offline,
+                _ => continue,
+            };
+            let Some(address) = update
+                .member
+                .as_ref()
+                .and_then(|member| member.address.as_h160())
+            else {
+                continue;
+            };
+            sx_community
+                .send(FriendData::CommunityConnectivityEvent {
+                    community_id: update.community_id,
+                    address,
+                    status,
+                })
+                .map_err(dbgerr)?;
+        }
+        Err(anyhow!("[social] community connectivity update stream ended"))
+    }
+    .fuse();
+
     // Inbound: receive block updates (someone blocked / unblocked the local user)
     let sx_block = response_sx.clone();
     let f_block_read = async move {
@@ -1265,6 +1332,7 @@ async fn run_one_connection(
         f_service_read,
         f_service_write,
         f_connectivity_read,
+        f_community_connectivity_read,
         f_block_read,
         f_keepalive,
         f_ws_closed
@@ -1273,6 +1341,7 @@ async fn run_one_connection(
         r = f_service_read => r,
         r = f_service_write => r,
         r = f_connectivity_read => r,
+        r = f_community_connectivity_read => r,
         r = f_block_read => r,
         r = f_keepalive => r,
         r = f_ws_closed => r,

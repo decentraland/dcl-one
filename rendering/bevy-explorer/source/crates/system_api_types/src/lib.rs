@@ -396,6 +396,20 @@ pub struct DmReactionData {
     pub from: Vec<String>,
 }
 
+/// A community member came online or went offline (the social service's
+/// `SubscribeToCommunityMemberConnectivityUpdates`; `away` is never relayed). The local user's own
+/// updates tell which communities they are in.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct CommunityMemberConnectivityData {
+    pub community_id: String,
+    pub address: String,
+    /// "online" or "offline"
+    pub status: String,
+}
+
 /// Whether the local user can DM `address`, and why not; emitted for the watched recipient.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

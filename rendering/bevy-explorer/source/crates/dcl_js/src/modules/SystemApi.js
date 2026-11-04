@@ -688,7 +688,34 @@ module.exports.social = {
   },
   deleteDmHistory: function(address) {
     Deno.core.ops.op_delete_dm_history(address);
+  },
+
+  // community member presence as a stream: `away` is never sent. The local user's own updates
+  // say which communities they are in.
+  // type CommunityMemberConnectivityData = { communityId: string, address: string, status: "online" | "offline" }
+  getCommunityConnectivityStream: async function() {
+    const rid = await Deno.core.ops.op_get_community_connectivity_stream();
+
+    async function* streamGenerator() {
+      while (true) {
+        const next = await Deno.core.ops.op_read_community_connectivity_stream(rid);
+        if (next === null) break;
+        yield next;
+      }
+    }
+
+    return streamGenerator();
+  },
+
+  // the community channels the local user listens to (community ids); replaces the previous set
+  setCommunityChannels: function(ids) {
+    Deno.core.ops.op_set_community_channels(ids);
   }
+}
+
+// play one of the engine's embedded UI sounds (`sounds/ui/<name>`)
+module.exports.playUiSound = function(name) {
+  Deno.core.ops.op_play_ui_sound(name);
 }
 
 // get scene loading UI state as a stream
