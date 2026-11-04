@@ -1,19 +1,33 @@
-//! The multipart form of `POST /entities`: fields and file parts, accounted
-//! against the process-wide upload budgets as they are parsed.
+//! The multipart form of `POST /entities`: fields in memory, file parts
+//! spooled to disk ([`super::upload_spool`]), both accounted against the
+//! process-wide upload budgets as they are parsed.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use axum::extract::Multipart;
 use axum::response::{IntoResponse, Response};
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 
 use super::deploy::{MAX_UPLOAD_SIZE_BYTES, err_one};
 use super::deploy_validate::{MAX_DEPLOY_FILE_BYTES, MAX_DEPLOY_FILES};
+use super::metrics::{ENTITIES_ROUTE, upload_rejected};
 use super::upload_limits;
+use super::upload_spool::{SpooledFile, UploadSpool};
+
+pub const SPOOL_FAILED_MESSAGE: &str = "Server could not buffer the upload, please retry shortly.";
 
 pub(super) struct DeployForm {
     pub(super) fields: BTreeMap<String, String>,
-    pub(super) files: Vec<Bytes>,
+    pub(super) files: Vec<SpooledFile>,
+    /// Owns the spooled parts: they live until the form is dropped.
+    pub(super) spool: Option<UploadSpool>,
+}
+
+fn spool_failed(error: std::io::Error) -> Box<Response> {
+    tracing::error!(%error, "POST /entities: could not spool an upload part to disk");
+    upload_rejected(ENTITIES_ROUTE, "storage");
+    Box::new(upload_limits::shed_response(SPOOL_FAILED_MESSAGE))
 }
 
 fn account_deploy_bytes(
@@ -30,10 +44,14 @@ fn account_deploy_bytes(
         max_in_flight_bytes,
     ) {
         Ok(()) => Ok(()),
-        Err(upload_limits::PayloadAccountError::PayloadTooLarge) => Err(Box::new(
-            err_one(upload_limits::PAYLOAD_TOO_LARGE_MESSAGE).into_response(),
-        )),
+        Err(upload_limits::PayloadAccountError::PayloadTooLarge) => {
+            upload_rejected(ENTITIES_ROUTE, "payload_size");
+            Err(Box::new(
+                err_one(upload_limits::PAYLOAD_TOO_LARGE_MESSAGE).into_response(),
+            ))
+        }
         Err(upload_limits::PayloadAccountError::BudgetExhausted) => {
+            upload_rejected(ENTITIES_ROUTE, "bytes");
             tracing::warn!(
                 total_bytes,
                 in_flight = upload_limits::in_flight_upload_bytes(),
@@ -53,9 +71,11 @@ pub(super) async fn read_deploy_form(
     files_lease: &mut upload_limits::InFlightFilesGuard,
     max_in_flight_bytes: u64,
     max_in_flight_files: u64,
+    spool_root: &Path,
 ) -> Result<DeployForm, Box<Response>> {
     let mut fields: BTreeMap<String, String> = BTreeMap::new();
-    let mut files: Vec<Bytes> = Vec::new();
+    let mut files: Vec<SpooledFile> = Vec::new();
+    let mut spool: Option<UploadSpool> = None;
     let mut total_bytes: usize = 0;
     let mut part_count: usize = 0;
     let mut field_count: usize = 0;
@@ -89,6 +109,7 @@ pub(super) async fn read_deploy_form(
                 ));
             }
             if !files_lease.try_resize(files.len() as u64 + 1, max_in_flight_files) {
+                upload_rejected(ENTITIES_ROUTE, "files");
                 tracing::warn!(
                     request_files = files.len() + 1,
                     in_flight = upload_limits::in_flight_upload_files(),
@@ -99,11 +120,23 @@ pub(super) async fn read_deploy_form(
                     upload_limits::FILES_SHED_MESSAGE,
                 )));
             }
-            let mut buf = BytesMut::new();
+            if spool.is_none() {
+                spool = Some(
+                    UploadSpool::create(spool_root)
+                        .await
+                        .map_err(spool_failed)?,
+                );
+            }
+            let mut part = spool
+                .as_mut()
+                .expect("created above")
+                .part()
+                .await
+                .map_err(spool_failed)?;
             loop {
                 match field.chunk().await {
                     Ok(Some(chunk)) => {
-                        if buf.len().saturating_add(chunk.len()) > MAX_DEPLOY_FILE_BYTES {
+                        if part.len().saturating_add(chunk.len()) > MAX_DEPLOY_FILE_BYTES {
                             return Err(Box::new(
                                 err_one("An uploaded file exceeds the maximum allowed size.")
                                     .into_response(),
@@ -115,7 +148,7 @@ pub(super) async fn read_deploy_form(
                             bytes_lease,
                             max_in_flight_bytes,
                         )?;
-                        buf.extend_from_slice(&chunk);
+                        part.write(&chunk).await.map_err(spool_failed)?;
                     }
                     Ok(None) => break,
                     Err(e) => {
@@ -125,7 +158,7 @@ pub(super) async fn read_deploy_form(
                     }
                 }
             }
-            files.push(buf.freeze());
+            files.push(part.finish().await.map_err(spool_failed)?);
         } else {
             field_count += 1;
             if field_count > upload_limits::MAX_MULTIPART_FIELDS {
@@ -164,7 +197,11 @@ pub(super) async fn read_deploy_form(
         }
     }
 
-    Ok(DeployForm { fields, files })
+    Ok(DeployForm {
+        fields,
+        files,
+        spool,
+    })
 }
 
 #[cfg(test)]
@@ -213,6 +250,10 @@ mod tests {
     use axum::http::StatusCode;
     use serde_json::{Value, json};
 
+    fn test_root() -> std::path::PathBuf {
+        std::env::temp_dir().join("catalyst-deploy-form-tests")
+    }
+
     async fn response_json(resp: Response) -> (StatusCode, Value) {
         let status = resp.status();
         let body = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
@@ -236,6 +277,7 @@ mod tests {
             &mut files_lease,
             u64::MAX,
             u64::MAX,
+            &test_root(),
         )
         .await
         .expect("form parses");
@@ -256,6 +298,7 @@ mod tests {
             &mut files_lease,
             0,
             u64::MAX,
+            &test_root(),
         )
         .await
         {
@@ -286,6 +329,7 @@ mod tests {
             &mut files_lease,
             u64::MAX,
             0,
+            &test_root(),
         )
         .await
         {
@@ -313,6 +357,7 @@ mod tests {
             &mut files_lease,
             u64::MAX,
             u64::MAX,
+            &test_root(),
         )
         .await
         {
@@ -337,6 +382,7 @@ mod tests {
             &mut files_lease,
             u64::MAX,
             u64::MAX,
+            &test_root(),
         )
         .await
         .expect("1 MB field parses");
@@ -362,6 +408,7 @@ mod tests {
             &mut files_lease,
             u64::MAX,
             u64::MAX,
+            &test_root(),
         )
         .await
         {
@@ -374,5 +421,65 @@ mod tests {
             body,
             json!({ "errors": ["The multipart request has too many fields."] })
         );
+    }
+
+    async fn empty_after_drop(root: &std::path::Path) -> bool {
+        for _ in 0..200 {
+            if std::fs::read_dir(root).map_or(true, |mut d| d.next().is_none()) {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn spooled_parts_go_when_the_form_or_a_failed_read_is_dropped() {
+        let root = std::env::temp_dir().join(format!("catalyst-form-{}", uuid::Uuid::new_v4()));
+        let multipart = multipart_from(&[
+            ("entityId", None, "bafy123"),
+            ("file1", Some("a.txt"), "hello world"),
+        ])
+        .await;
+        let mut bytes_lease = upload_limits::reserve_in_flight();
+        let mut files_lease = upload_limits::reserve_in_flight_files();
+        let form = read_deploy_form(
+            multipart,
+            &mut bytes_lease,
+            &mut files_lease,
+            u64::MAX,
+            u64::MAX,
+            &root,
+        )
+        .await
+        .expect("form parses");
+        let file = &form.files[0];
+        assert_eq!(file.hash, crate::auth::hash_bytes_v1(b"hello world"));
+        assert_eq!(file.read().await.unwrap(), b"hello world");
+        assert!(file.path.starts_with(&root));
+        drop(form);
+        assert!(
+            empty_after_drop(&root).await,
+            "the spool goes with the form"
+        );
+
+        let multipart = multipart_from(&[("file1", Some("a.txt"), "hello world")]).await;
+        let mut bytes_lease = upload_limits::reserve_in_flight();
+        let mut files_lease = upload_limits::reserve_in_flight_files();
+        let shed = read_deploy_form(
+            multipart,
+            &mut bytes_lease,
+            &mut files_lease,
+            5,
+            u64::MAX,
+            &root,
+        )
+        .await;
+        assert!(shed.is_err(), "the byte budget sheds mid-part");
+        assert!(
+            empty_after_drop(&root).await,
+            "a failed read leaves nothing"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

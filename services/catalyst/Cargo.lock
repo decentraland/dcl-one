@@ -2143,6 +2143,7 @@ dependencies = [
  "flate2",
  "futures",
  "hex",
+ "metrics",
  "parking_lot",
  "proptest",
  "rand 0.10.3",

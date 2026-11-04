@@ -490,6 +490,38 @@ pub async fn permission_records(
 /// the world row's `mirror_source` is cleared in the same transaction, so
 /// the row says what its scenes are (the mirror refuses to write a world
 /// with a local scene from then on, `worlds::mirror`).
+/// The refusal for the first key the scene names that the store no longer holds.
+async fn missing_stored_file(
+    storage: &Storage,
+    entity_id: &str,
+    entity: &Value,
+) -> Result<Option<ApiError>, ApiError> {
+    let mut named: Vec<(String, String)> = vec![(entity_id.to_string(), entity_id.to_string())];
+    if let Some(Value::Array(items)) = entity.get("content") {
+        for item in items {
+            if let Some(hash) = item.get("hash").and_then(Value::as_str) {
+                let file = item.get("file").and_then(Value::as_str).unwrap_or("");
+                named.push((file.to_string(), hash.to_string()));
+            }
+        }
+    }
+    // Only a canonical CID can be a stored (and so collectable) key.
+    named.retain(|(_, hash)| crate::auth::is_canonical_cid(hash));
+    let hashes: Vec<&str> = named.iter().map(|(_, h)| h.as_str()).collect();
+    let present = storage
+        .exist_multiple(&hashes)
+        .await
+        .map_err(|e| ApiError::internal(format!("checking stored content: {e}")))?;
+    Ok(named
+        .iter()
+        .find(|(_, hash)| !present.get(hash).copied().unwrap_or(false))
+        .map(|(file, hash)| {
+            ApiError::bad_request(format!(
+                "The file {file} ({hash}) was not uploaded or its hash does not match its content"
+            ))
+        }))
+}
+
 pub async fn deploy_scene(
     pool: &PgPool,
     storage: &Storage,
@@ -514,6 +546,12 @@ pub async fn deploy_scene(
     let parcels = parcels.canonical();
 
     let mut tx = pool.begin().await?;
+
+    // The collector unlinks under the exclusive side: every key named here exists until commit.
+    catalyst_storage::gc::lock_store_shared(&mut tx).await?;
+    if let Some(error) = missing_stored_file(storage, entity_id, entity).await? {
+        return Err(error);
+    }
 
     let (is_insert, disabled): (bool, bool) = sqlx::query_as(
         r#"INSERT INTO worlds.worlds AS w (
