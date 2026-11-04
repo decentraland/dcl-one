@@ -22,7 +22,8 @@ or empty). `suite-changed` writes `changed` (true or false) instead.
 - `workflow_run` of Bevy Explorer / CI: a successful push to main, with the web app that run
   built. A pull request's CI run is skipped here: its scenarios run from its own event.
 - `schedule`: main's newest web app and the commit that built it.
-- `workflow_dispatch`: `inputs.sha`'s CI run and web app, else main's newest.
+- `workflow_dispatch`: `inputs.sha`'s suite, with the web app its CI run built, or main's newest
+  when that run built none (a commit that changes the suite alone); else main's newest.
 """
 import importlib.util
 import json
@@ -215,7 +216,11 @@ def resolve(event_name, event, repo, wait=None):
             if state == 'expired':
                 return skip(f"CI run {run['id']} of {sha} built a web app that has expired: re-run that CI run")
             if state == 'none':
-                return skip(f"CI run {run['id']} of {sha} built no web app")
+                main = newest_main(repo)
+                if not main:
+                    return skip(f"CI run {run['id']} of {sha} built no web app and no main run still has one")
+                name, newest = main
+                return chosen(sha, name, newest['id'], '', f"{sha} (CI run {run['id']} built no web app) against main's web app from {newest['head_sha']}")
             return chosen(sha, web, run['id'], '', f"{sha}: the web app CI run {run['id']} built")
         main = newest_main(repo)
         if not main:

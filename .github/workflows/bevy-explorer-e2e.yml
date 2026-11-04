@@ -55,7 +55,7 @@ name: Bevy Explorer / E2E
   workflow_dispatch:
     inputs:
       sha:
-        description: Commit whose Bevy CI web app and suite to run (empty = main's newest)
+        description: Commit whose suite to run, with the web app its Bevy CI run built, else main's newest (empty = main's newest)
         required: false
         default: ''
       group:
