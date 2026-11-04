@@ -16,7 +16,6 @@ const auth = vi.hoisted(() => ({
   inAppAvailable: true,
   startEmailSignIn: vi.fn(async (_email: string) => {}),
   verifyEmailSignIn: vi.fn(async (_email: string, _code: string) => ({ signer: "0xabc" }) as unknown),
-  startSocialSignIn: vi.fn(),
   connectWalletConnect: vi.fn(),
 }));
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => auth }));

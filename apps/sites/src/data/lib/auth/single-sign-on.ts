@@ -6,8 +6,6 @@
 // own record (`dcl:auth:identity:v1`) stays its source of truth: this one mirrors it, and the freshest entry is
 // adopted only while the own record is empty.
 
-import { privateKeyToAccount } from "viem/accounts";
-
 import type { AuthIdentity, AuthLink } from "./types";
 
 export const SINGLE_SIGN_ON_PREFIX = "single-sign-on-";
@@ -32,12 +30,14 @@ function storage(): Storage | null {
   }
 }
 
-/** This site's identity in the shape decentraland.org's dapps share. */
-export function toShared(identity: AuthIdentity): SharedIdentity {
+const HEX_KEY = /^0x[0-9a-fA-F]+$/;
+
+/** This site's identity in the shape decentraland.org's dapps share, with the ephemeral key's public half. */
+export function toShared(identity: AuthIdentity, publicKey: string): SharedIdentity {
   return {
     ephemeralIdentity: {
       address: identity.ephemeral.address,
-      publicKey: privateKeyToAccount(identity.ephemeral.privateKey).publicKey,
+      publicKey,
       privateKey: identity.ephemeral.privateKey,
     },
     expiration: identity.expiration,
@@ -51,6 +51,7 @@ export function fromShared(raw: unknown, now = Date.now()): AuthIdentity | null 
   const shared = raw as Partial<SharedIdentity>;
   const privateKey = shared.ephemeralIdentity?.privateKey;
   const address = shared.ephemeralIdentity?.address;
+  const publicKey = shared.ephemeralIdentity?.publicKey;
   if (typeof privateKey !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(privateKey) || typeof address !== "string") return null;
   if (!Array.isArray(shared.authChain)) return null;
   const signer = shared.authChain.find((link) => link?.type === "SIGNER")?.payload?.trim();
@@ -59,26 +60,48 @@ export function fromShared(raw: unknown, now = Date.now()): AuthIdentity | null 
   if (Number.isNaN(expiration.getTime()) || expiration.getTime() <= now) return null;
   return {
     signer: signer.toLowerCase(),
-    ephemeral: { address: address.toLowerCase(), privateKey: privateKey as `0x${string}` },
+    ephemeral: {
+      address: address.toLowerCase(),
+      privateKey: privateKey as `0x${string}`,
+      ...(typeof publicKey === "string" && HEX_KEY.test(publicKey) ? { publicKey: publicKey as `0x${string}` } : {}),
+    },
     expiration: expiration.toISOString(),
     authChain: shared.authChain,
   };
 }
 
-/** Mirrors a session under its account's shared key (an expired one is not written, as upstream). */
+// Bumped by every write and clear, so a write still deriving its public key never lands after a later change.
+let generation = 0;
+
+/**
+ * Mirrors a session under its account's shared key (an expired one is not written, as upstream). A session made here
+ * carries its public key and is written at once; one without it (kept before it was recorded) derives it first.
+ */
 export function storeShared(identity: AuthIdentity): void {
   const k = key(identity.signer);
   const store = storage();
   if (!k || !store || new Date(identity.expiration).getTime() <= Date.now()) return;
-  try {
-    store.setItem(k, JSON.stringify(toShared(identity)));
-  } catch {
-    // Storage full or blocked: this site's own record still holds the session.
+  const mine = ++generation;
+  const write = (publicKey: string) => {
+    if (mine !== generation) return;
+    try {
+      store.setItem(k, JSON.stringify(toShared(identity, publicKey)));
+    } catch {
+      // Storage full or blocked: this site's own record still holds the session.
+    }
+  };
+  if (identity.ephemeral.publicKey) {
+    write(identity.ephemeral.publicKey);
+    return;
   }
+  void import("viem/accounts")
+    .then(({ privateKeyToAccount }) => write(privateKeyToAccount(identity.ephemeral.privateKey).publicKey))
+    .catch(() => {});
 }
 
 /** Ends an account's shared session, here and in every dapp on this origin. */
 export function clearShared(address: string): void {
+  generation++;
   const k = key(address);
   try {
     if (k) storage()?.removeItem(k);
@@ -89,6 +112,7 @@ export function clearShared(address: string): void {
 
 /** Ends every shared session on this origin: a sign-out here signs the reader out of every dapp. */
 export function clearAllShared(): void {
+  generation++;
   const store = storage();
   if (!store) return;
   try {

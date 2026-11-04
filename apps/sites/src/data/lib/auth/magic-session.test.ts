@@ -36,10 +36,13 @@ describe("ending Magic's session on sign-out", () => {
     expect(sdk.created).not.toHaveBeenCalled();
   });
 
-  it("still signs out when Magic cannot be reached", async () => {
+  it("tries again on the next sign-out when Magic could not be reached", async () => {
     markMagicSession();
     sdk.logout.mockRejectedValueOnce(new Error("offline"));
     await expect(endMagicSession()).resolves.toBeUndefined();
+    expect(localStorage.getItem("dcl:auth:magic-session")).toBe("1");
+    await endMagicSession();
+    expect(sdk.logout).toHaveBeenCalledTimes(2);
     expect(localStorage.getItem("dcl:auth:magic-session")).toBeNull();
   });
 });

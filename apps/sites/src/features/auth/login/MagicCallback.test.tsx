@@ -20,7 +20,9 @@ const replace = vi.fn();
 function at(search: string) {
   vi.stubGlobal("location", { href: `http://localhost:3000/auth/callback${search}`, origin: "http://localhost:3000", search, assign, replace });
 }
-const state = (redirectTo: string) => btoa(JSON.stringify({ customData: JSON.stringify({ redirectTo }) }));
+const NONCE = "ab".repeat(16);
+const PENDING = "dcl:auth:magic-return";
+const state = (redirectTo: string) => btoa(JSON.stringify({ customData: JSON.stringify({ redirectTo, nonce: NONCE }) }));
 const IDENTITY: AuthIdentity = {
   signer: SIGNER,
   ephemeral: { address: `0x${"c".repeat(40)}`, privateKey: `0x${"12".repeat(32)}` },
@@ -31,6 +33,8 @@ const IDENTITY: AuthIdentity = {
 beforeEach(() => {
   localStorage.clear();
   setIdentity(null);
+  // The sign-in this tab started (startMagicSignIn).
+  sessionStorage.setItem(PENDING, NONCE);
 });
 afterEach(() => {
   cleanup();
@@ -70,6 +74,7 @@ describe("returning from Magic", () => {
     cleanup();
 
     finish.mockRejectedValueOnce(Object.assign(new Error("used"), { code: "MISSING_PKCE_METADATA" }));
+    sessionStorage.setItem(PENDING, NONCE);
     at(`?state=${encodeURIComponent(state("/shop"))}`);
     await act(async () => {
       render(<MagicCallback magicApiKey="pk_example123" />);
@@ -85,6 +90,32 @@ describe("returning from Magic", () => {
     expect(finish).not.toHaveBeenCalled();
     expect(getIdentity()).toBeNull();
     expect(replace).toHaveBeenCalledWith("/auth/login?redirectTo=%2F");
+  });
+
+  it("finishes no sign-in this tab did not start: a replay from the history, another tab, a crafted link", async () => {
+    at(`?state=${encodeURIComponent(state("/shop"))}`);
+    await act(async () => {
+      render(<MagicCallback magicApiKey="pk_example123" />);
+    });
+    expect(finish).toHaveBeenCalledOnce();
+    cleanup();
+
+    // The same return again: its sign-in is used up.
+    at(`?state=${encodeURIComponent(state("/shop"))}`);
+    await act(async () => {
+      render(<MagicCallback magicApiKey="pk_example123" />);
+    });
+    expect(finish).toHaveBeenCalledOnce();
+    expect(replace).toHaveBeenCalledWith("/auth/login?redirectTo=%2Fshop");
+  });
+
+  it("shows a provider failure other than a cancel, without finishing", async () => {
+    at(`?error=server_error&error_description=${encodeURIComponent("Provider unavailable")}&state=${encodeURIComponent(state("/shop"))}`);
+    await act(async () => {
+      render(<MagicCallback magicApiKey="pk_example123" />);
+    });
+    expect(finish).not.toHaveBeenCalled();
+    expect(screen.getByTestId("connection-error-detail").textContent).toBe("Provider unavailable");
   });
 
   it("says social sign-in is not configured where the site has no Magic key", async () => {

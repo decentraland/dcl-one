@@ -12,22 +12,17 @@ import { magicClient, markMagicSession } from "@/data/lib/auth/magic-session";
 import type { AuthIdentity } from "@/data/lib/auth/types";
 
 import type { ConnectionOption } from "./options";
+import { MAGIC_USER_EMAIL_KEY, SESSION_MS, THIRDWEB_USER_EMAIL_KEY } from "./remember";
 
-/** Upstream's session length: one month. */
-export const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+export { MAGIC_USER_EMAIL_KEY, rememberEmail, SESSION_MS, THIRDWEB_USER_EMAIL_KEY } from "./remember";
 
-export const MAGIC_USER_EMAIL_KEY = "dcl_magic_user_email";
-export const THIRDWEB_USER_EMAIL_KEY = "dcl_thirdweb_user_email";
+// The sign-in this tab started, also carried through the provider in Magic's state. /auth/callback finishes only a
+// return that matches it, once: never a Magic session some earlier sign-in left behind.
+const PENDING_RETURN = "dcl:auth:magic-return";
 
-/** Upstream keeps the email a reader signed in with for their profile setup; a wallet sign-in has none. */
-export function rememberEmail(email: string | null): void {
-  try {
-    localStorage.removeItem(MAGIC_USER_EMAIL_KEY);
-    if (email) localStorage.setItem(THIRDWEB_USER_EMAIL_KEY, email);
-    else localStorage.removeItem(THIRDWEB_USER_EMAIL_KEY);
-  } catch {
-    // Only the profile setup's prefill needs it.
-  }
+function newNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function forget(key: string): void {
@@ -45,23 +40,44 @@ export async function startMagicSignIn(apiKey: string, option: ConnectionOption,
   // A previous account's email must not follow this one into its profile setup.
   forget(MAGIC_USER_EMAIL_KEY);
   forget(THIRDWEB_USER_EMAIL_KEY);
+  const nonce = newNonce();
+  // Without session storage the return could not be matched, so it would be refused: say so now, not after the provider.
+  sessionStorage.setItem(PENDING_RETURN, nonce);
   await client.oauth2.loginWithRedirect({
     provider: option === "x" ? "twitter" : option,
     redirectURI: `${window.location.origin}/auth/callback`,
-    customData: JSON.stringify({ redirectTo: returnTo }),
+    customData: JSON.stringify({ redirectTo: returnTo, nonce }),
   });
 }
 
-/** The return target Magic carried through the provider, from the callback's `state` (base64 JSON, then customData). */
-export function returnFromState(state: string | null): string | null {
+/** The customData Magic carried through the provider, from the callback's `state` (base64 JSON, then customData). */
+function customData(state: string | null): { redirectTo?: unknown; nonce?: unknown } | null {
   if (!state) return null;
   try {
     const decoded = JSON.parse(atob(state)) as { customData?: unknown };
-    const custom = typeof decoded.customData === "string" ? (JSON.parse(decoded.customData) as { redirectTo?: unknown }) : null;
-    return typeof custom?.redirectTo === "string" ? custom.redirectTo : null;
+    return typeof decoded.customData === "string" ? (JSON.parse(decoded.customData) as { redirectTo?: unknown }) : null;
   } catch {
     return null;
   }
+}
+
+/** The return target Magic carried through the provider. */
+export function returnFromState(state: string | null): string | null {
+  const redirectTo = customData(state)?.redirectTo;
+  return typeof redirectTo === "string" ? redirectTo : null;
+}
+
+/** Whether this return answers the sign-in this tab started; either way that sign-in is used up. */
+export function claimMagicReturn(state: string | null): boolean {
+  let pending: string | null = null;
+  try {
+    pending = sessionStorage.getItem(PENDING_RETURN);
+    sessionStorage.removeItem(PENDING_RETURN);
+  } catch {
+    return false;
+  }
+  const nonce = customData(state)?.nonce;
+  return pending !== null && typeof nonce === "string" && nonce === pending;
 }
 
 type MagicFailure = { code?: unknown };
@@ -98,6 +114,9 @@ export async function finishMagicSignIn(apiKey: string): Promise<AuthIdentity> {
     // Magic skips the OAuth check when its own session already exists; that session is the one to use.
     if (!isAlreadySignedIn(err)) throw err;
   }
+  // Magic now holds a session, whether or not signing below succeeds: sign-out must end it
+  // (data/lib/auth/magic-session.ts).
+  markMagicSession();
   const accounts = (await client.rpcProvider.request({ method: "eth_accounts" })) as string[] | undefined;
   const signer = accounts?.[0]?.toLowerCase();
   if (!signer) throw new Error("Could not connect to your account. Please try again.");
@@ -110,7 +129,5 @@ export async function finishMagicSignIn(apiKey: string): Promise<AuthIdentity> {
     },
     { expirationMs: SESSION_MS },
   );
-  // Sign-out must also end Magic's own session (data/lib/auth/magic-session.ts).
-  markMagicSession();
   return identity;
 }

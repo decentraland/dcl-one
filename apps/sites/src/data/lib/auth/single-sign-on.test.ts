@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { privateKeyToAccount } from "viem/accounts";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { clearShared, freshestShared, fromShared, storeShared, toShared } from "./single-sign-on";
 import type { AuthIdentity } from "./types";
@@ -9,12 +9,13 @@ const SIGNER = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
 const OTHER = "0x1111111111111111111111111111111111111111";
 const KEY = `0x${"12".repeat(32)}` as const;
 const EPHEMERAL = privateKeyToAccount(KEY).address.toLowerCase();
+const PUB = privateKeyToAccount(KEY).publicKey;
 
 function identity(signer = SIGNER, daysLeft = 30): AuthIdentity {
   const expiration = new Date(Date.now() + daysLeft * 86_400_000).toISOString();
   return {
     signer,
-    ephemeral: { address: EPHEMERAL, privateKey: KEY },
+    ephemeral: { address: EPHEMERAL, privateKey: KEY, publicKey: PUB },
     expiration,
     authChain: [
       { type: "SIGNER", payload: signer, signature: "" },
@@ -36,18 +37,18 @@ describe("the session decentraland.org's dapps share", () => {
 
   it("reads back as the same session", () => {
     const original = identity();
-    expect(fromShared(toShared(original))).toEqual(original);
+    expect(fromShared(toShared(original, PUB))).toEqual(original);
   });
 
   it("skips an expired, malformed or misfiled entry", () => {
-    expect(fromShared(toShared(identity(SIGNER, -1)))).toBeNull();
-    expect(fromShared({ ...toShared(identity()), authChain: [] })).toBeNull();
-    expect(fromShared({ ...toShared(identity()), ephemeralIdentity: { address: EPHEMERAL, publicKey: "0x04" } })).toBeNull();
+    expect(fromShared(toShared(identity(SIGNER, -1), PUB))).toBeNull();
+    expect(fromShared({ ...toShared(identity(), PUB), authChain: [] })).toBeNull();
+    expect(fromShared({ ...toShared(identity(), PUB), ephemeralIdentity: { address: EPHEMERAL, publicKey: "0x04" } })).toBeNull();
     expect(fromShared("nonsense")).toBeNull();
     storeShared(identity(SIGNER, -1));
     expect(localStorage.length).toBe(0);
     // An entry filed under another account's key is not that account's session.
-    localStorage.setItem(`single-sign-on-${OTHER}`, JSON.stringify(toShared(identity(SIGNER))));
+    localStorage.setItem(`single-sign-on-${OTHER}`, JSON.stringify(toShared(identity(SIGNER), PUB)));
     expect(freshestShared()).toBeNull();
   });
 
@@ -58,5 +59,21 @@ describe("the session decentraland.org's dapps share", () => {
     expect(freshestShared()?.signer).toBe(OTHER);
     clearShared(OTHER);
     expect(freshestShared()?.signer).toBe(SIGNER);
+  });
+
+  it("derives the public key for a session kept before it was recorded", async () => {
+    const { publicKey: _, ...ephemeral } = identity().ephemeral;
+    storeShared({ ...identity(), ephemeral });
+    await vi.waitFor(() => expect(localStorage.getItem(`single-sign-on-${SIGNER}`)).not.toBeNull());
+    expect(JSON.parse(localStorage.getItem(`single-sign-on-${SIGNER}`)!).ephemeralIdentity.publicKey).toBe(PUB);
+  });
+
+  it("never writes a session back after a sign-out that came while its key was derived", async () => {
+    const { publicKey: _, ...ephemeral } = identity().ephemeral;
+    storeShared({ ...identity(), ephemeral });
+    clearShared(SIGNER);
+    await import("viem/accounts");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(localStorage.getItem(`single-sign-on-${SIGNER}`)).toBeNull();
   });
 });

@@ -12,7 +12,8 @@ const auth = vi.hoisted(() => ({
   verifyEmailSignIn: vi.fn(async () => ({ signer: "0x0000000000000000000000000000000000000001" })),
 }));
 vi.mock("@/data/lib/auth/magic-config", () => ({ magicApiKey: () => magic.key }));
-vi.mock("../../auth/login/magic", () => ({ startMagicSignIn: magic.start, rememberEmail: magic.remember, SESSION_MS: 2_592_000_000 }));
+vi.mock("../../auth/login/magic", () => ({ startMagicSignIn: magic.start }));
+vi.mock("../../auth/login/remember", () => ({ rememberEmail: magic.remember, SESSION_MS: 2_592_000_000 }));
 vi.mock("@/data/lib/auth/index", () => ({
   useAuth: () => ({
     isConnected: false,
@@ -20,7 +21,6 @@ vi.mock("@/data/lib/auth/index", () => ({
     walletAvailable: true,
     detectedWallets: [],
     error: null,
-    startSocialSignIn: vi.fn(),
     startEmailSignIn: vi.fn(async () => {}),
     connect: auth.connect,
     verifyEmailSignIn: auth.verifyEmailSignIn,
@@ -56,16 +56,44 @@ describe("the in-place sign-in modal", () => {
   it("signs in with Google through Magic, back to this page, as /auth/login does", async () => {
     await openModal();
     fireEvent.click(await screen.findByRole("button", { name: "Continue with Google" }));
-    expect(magic.start).toHaveBeenCalledWith("pk_example123", "google", "/create/storage?step=edit");
+    await vi.waitFor(() => expect(magic.start).toHaveBeenCalledWith("pk_example123", "google", "/create/storage?step=edit"));
   });
 
   it("starts one social sign-in however often it is pressed", async () => {
     magic.start.mockImplementation(() => new Promise(() => {}));
     await openModal();
     const google = await screen.findByRole("button", { name: "Continue with Google" });
-    fireEvent.click(google);
-    fireEvent.click(google);
+    await act(async () => {
+      fireEvent.click(google);
+      fireEvent.click(google);
+    });
     expect(magic.start).toHaveBeenCalledOnce();
+  });
+
+  it("starts each opening clean: no earlier failure, social sign-in available again", async () => {
+    magic.start.mockRejectedValueOnce(new Error("Magic is unreachable"));
+    await openModal();
+    await act(async () => {
+      fireEvent.click(await screen.findByRole("button", { name: "Continue with Google" }));
+    });
+    expect(await screen.findByText("Magic is unreachable")).toBeTruthy();
+    await act(async () => closeSignIn());
+    await act(async () => openSignIn({ inPlace: true }));
+    expect(screen.queryByText("Magic is unreachable")).toBeNull();
+
+    magic.start.mockImplementationOnce(() => new Promise(() => {}));
+    await act(async () => {
+      fireEvent.click(await screen.findByRole("button", { name: "Continue with Google" }));
+    });
+    expect(magic.start).toHaveBeenCalledTimes(2);
+    // Back from the provider through the back/forward cache: the start in flight no longer counts.
+    await act(async () => {
+      window.dispatchEvent(Object.assign(new Event("pageshow"), { persisted: true }));
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Continue with Google" }));
+    });
+    expect(magic.start).toHaveBeenCalledTimes(3);
   });
 
   it("says when social sign-in cannot start, keeps the page to return to, and lets the reader try again", async () => {

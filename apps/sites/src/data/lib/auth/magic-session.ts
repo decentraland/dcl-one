@@ -1,9 +1,11 @@
 // from: auth@e081cc6:src/shared/utils/magicSdk.ts (createMagicInstance), src/components/Pages/LoginPage/utils.ts (a new
 //       social sign-in logs out of Magic first)
 // decentraland/auth is Apache-2.0.
-// Magic's client and the session it keeps in its own iframe. Signing out here must end that session too: otherwise
-// Magic still answers "already signed in" and /auth/callback would sign the previous account back in. A sign-in through
-// Magic leaves a marker, so a wallet user's sign-out never loads the SDK.
+// Magic's client and the session it keeps in its own iframe. Signing out here must end that session too, so a shared
+// device is not left signed in to the account through Magic (/auth/callback refuses a return this tab did not start,
+// see claimMagicReturn in features/auth/login/magic.ts). A sign-in through Magic leaves a marker as soon as Magic holds a session, so a wallet user's
+// sign-out never loads the SDK; the marker goes only once Magic confirms the logout, so a failed or interrupted one is
+// retried by the next sign-out.
 //
 // The SDK versions are upstream's exact pins (decentraland/auth package.json): magic-sdk 27.0.0 and the
 // @magic-ext/oauth2 canary that backs the PKCE verifier up to localStorage (auth#304). Move to a stable
@@ -42,7 +44,6 @@ export async function endMagicSession(): Promise<void> {
   let marked = false;
   try {
     marked = localStorage.getItem(MARKER) !== null;
-    localStorage.removeItem(MARKER);
   } catch {
     return;
   }
@@ -51,6 +52,12 @@ export async function endMagicSession(): Promise<void> {
   try {
     await (await magicClient(key)).user.logout();
   } catch {
-    // Magic unreachable: its session expires on its own; this site's is already gone.
+    // Magic unreachable: the marker stays, so the next sign-out tries again; this site's session is already gone.
+    return;
+  }
+  try {
+    localStorage.removeItem(MARKER);
+  } catch {
+    // Blocked storage: the next sign-out logs out of Magic again, which is harmless.
   }
 }

@@ -1,5 +1,6 @@
 import type { Hex } from "viem";
 import { createIdentityWith, type AuthIdentity } from "./identity";
+import { walletConnectProjectId } from "./walletconnect-config";
 
 export type WalletConnectSession<T = AuthIdentity> = {
   uri: string;
@@ -8,28 +9,7 @@ export type WalletConnectSession<T = AuthIdentity> = {
   cancel: () => void;
 };
 
-export function hasWalletConnect(): boolean {
-  return walletConnectProjectId().length > 0;
-}
-
-/** The explorer is served as a static document, outside the sites root loader. */
-export async function loadWalletConnectConfig(): Promise<boolean> {
-  if (hasWalletConnect()) return true;
-  const response = await fetch("/internal/auth-config");
-  if (!response.ok) throw new Error("Couldn't load wallet sign-in configuration.");
-  const config: unknown = await response.json();
-  if (!config || typeof config !== "object" || !("walletConnectProjectId" in config)
-    || typeof config.walletConnectProjectId !== "string") {
-    throw new Error("Invalid wallet sign-in configuration.");
-  }
-  window.__DCL_PUBLIC__ = { ...window.__DCL_PUBLIC__, walletConnectProjectId: config.walletConnectProjectId };
-  return hasWalletConnect();
-}
-
-function walletConnectProjectId(): string {
-  return (typeof window !== "undefined" && window.__DCL_PUBLIC__?.walletConnectProjectId)
-    || import.meta.env?.VITE_DCL_WALLETCONNECT_PROJECT_ID || "";
-}
+export { hasWalletConnect, loadWalletConnectConfig } from "./walletconnect-config";
 
 let clientPromise: Promise<import("@walletconnect/sign-client").default> | undefined;
 async function signingClient(projectId: string) {

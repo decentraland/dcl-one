@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { recoverMessageAddress } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
-import { finishMagicSignIn, isConsumedSession, returnFromState, startMagicSignIn } from "./magic";
+import { claimMagicReturn, finishMagicSignIn, isConsumedSession, returnFromState, startMagicSignIn } from "./magic";
 
 // A made-up account standing in for the wallet Magic holds, so its signatures can be checked for real.
 const ACCOUNT = privateKeyToAccount(`0x${"56".repeat(32)}`);
@@ -52,6 +52,7 @@ vi.mock("@magic-ext/oauth2", () => ({ OAuthExtension: class {} }));
 
 beforeEach(() => {
   localStorage.clear();
+  sessionStorage.clear();
   sdk.calls.length = 0;
   Object.assign(sdk.state, { loggedIn: false, accounts: [SIGNER], keys: [], logout: 0, loginWithRedirect: [] });
   sdk.state.redirectResult = async () => ({ oauth: { userInfo: { email: "jane.doe@example.com" } } });
@@ -67,9 +68,27 @@ describe("social sign-in through Magic", () => {
     expect(sdk.state.keys).toEqual(["pk_example123"]);
     expect(sdk.state.logout).toBe(1);
     expect(localStorage.length).toBe(0);
+    const nonce = sessionStorage.getItem("dcl:auth:magic-return");
+    expect(nonce).toMatch(/^[0-9a-f]{32}$/);
     expect(sdk.state.loginWithRedirect).toEqual([
-      { provider: "twitter", redirectURI: `${window.location.origin}/auth/callback`, customData: JSON.stringify({ redirectTo: "/shop?a=1" }) },
+      { provider: "twitter", redirectURI: `${window.location.origin}/auth/callback`, customData: JSON.stringify({ redirectTo: "/shop?a=1", nonce }) },
     ]);
+  });
+
+  it("accepts the return of the sign-in this tab started, once, and no other", async () => {
+    await startMagicSignIn("pk_example123", "google", "/shop");
+    const customData = (sdk.state.loginWithRedirect[0] as { customData: string }).customData;
+    const state = btoa(JSON.stringify({ customData }));
+    const forged = btoa(JSON.stringify({ customData: JSON.stringify({ redirectTo: "/shop", nonce: "0".repeat(32) }) }));
+    expect(claimMagicReturn(forged)).toBe(false);
+    // A wrong guess uses the pending sign-in up too: it cannot be retried until it matches.
+    expect(claimMagicReturn(state)).toBe(false);
+
+    await startMagicSignIn("pk_example123", "google", "/shop");
+    const fresh = btoa(JSON.stringify({ customData: (sdk.state.loginWithRedirect[1] as { customData: string }).customData }));
+    expect(claimMagicReturn(fresh)).toBe(true);
+    expect(claimMagicReturn(fresh)).toBe(false);
+    expect(claimMagicReturn(null)).toBe(false);
   });
 
   it("recovers the return path from the callback's state, and nothing from a broken one", () => {
@@ -105,7 +124,10 @@ describe("social sign-in through Magic", () => {
     expect((await finishMagicSignIn("pk_example123")).signer).toBe(SIGNER.toLowerCase());
 
     sdk.state.accounts = [];
+    localStorage.clear();
     await expect(finishMagicSignIn("pk_example123")).rejects.toThrow("Could not connect to your account");
+    // Magic holds a session even though nothing was signed: sign-out must still end it.
+    expect(localStorage.getItem("dcl:auth:magic-session")).toBe("1");
   });
 
   it("passes any other provider failure on, and recognises a consumed OAuth session", async () => {
