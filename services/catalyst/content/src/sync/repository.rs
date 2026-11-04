@@ -197,7 +197,7 @@ impl LiveDeploymentRepository {
                 WHERE ap.entity_id = s.entity_id
                 RETURNING ap.pointer
             ), outdated AS (
-                -- a generation stamped before its window began is regenerated on the next pass
+                -- a generation stamped at the epoch is regenerated at the generator's next tick
                 UPDATE content.snapshots sn
                 SET generation_time = 'epoch'::timestamp
                 WHERE EXISTS (

@@ -1538,6 +1538,65 @@ async fn the_job_regenerates_a_marked_window_at_the_next_tick() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// A pass stamps a window with the oldest open transaction's start, which can
+/// precede the window when a transaction stays open for days. That stamp is
+/// not the deleter repair's mark: the job waits for its interval, and the
+/// window is only outdated when a row in it changed since.
+#[tokio::test]
+async fn a_window_stamped_before_it_began_is_not_rewritten_at_every_tick() {
+    let Some((db_a, root, node, _, _)) = restored_scene_database("early-stamp").await else {
+        return;
+    };
+    let generator = SnapshotGenerator::new(
+        node.clone(),
+        false,
+        snapshot_gen::Settings {
+            interval: Duration::from_secs(6 * 3600),
+            tick: Duration::from_millis(100),
+        },
+    );
+    let jobs = Jobs::new();
+    generator.spawn_job(&jobs);
+    wait_until("the first pass", 20, || {
+        generator
+            .report()
+            .last_summary
+            .is_some_and(|s| s.windows > 0)
+    })
+    .await;
+    let first = generator.report().last_finished_ms;
+
+    let (init, end): (chrono::NaiveDateTime, chrono::NaiveDateTime) = sqlx::query_as(
+        "UPDATE content.snapshots SET generation_time = init_timestamp - interval '1 day'
+         WHERE hash = (SELECT hash FROM content.snapshots
+                       WHERE number_of_entities = 0 ORDER BY init_timestamp DESC LIMIT 1)
+         RETURNING init_timestamp, end_timestamp",
+    )
+    .fetch_one(&db_a.pool)
+    .await
+    .unwrap();
+    let window = TimeRange {
+        init_timestamp: init.and_utc().timestamp_millis(),
+        end_timestamp: end.and_utc().timestamp_millis(),
+    };
+    assert!(
+        !snapshot_is_outdated(&db_a.pool, &window, window.init_timestamp - 86_400_000)
+            .await
+            .unwrap(),
+        "an unchanged window is current"
+    );
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        generator.report().last_finished_ms,
+        first,
+        "no pass ran before the interval"
+    );
+
+    jobs.shutdown(Duration::from_secs(5)).await;
+    db_a.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// A pass over a populated database. Not a contract: run by hand with
 /// CATALYST_SNAPSHOT_BENCH_DATABASE_URL naming a disposable database (it
 /// writes content.snapshots and a temporary store). Prints each pass's wall
