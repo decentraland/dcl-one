@@ -29,7 +29,10 @@ async function load(origin: string): Promise<string | null> {
   try {
     return await withDeadline(async (signal) => {
       const res = await fetch(`${service()}/dapps.json`, { headers: { Referer: `${origin}/` }, signal });
-      if (!res.ok) throw new Error(`feature flags answered ${res.status}`);
+      if (!res.ok) {
+        await res.body?.cancel().catch(() => {});
+        throw new Error(`feature flags answered ${res.status}`);
+      }
       const variant = ((await res.json()) as FlagsFile).variants?.[SIGN_IN_PRIMARY_OPTION];
       return variant?.enabled === true && typeof variant.name === "string" ? variant.name : null;
     }, TIMEOUT_MS);

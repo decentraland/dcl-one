@@ -51,6 +51,13 @@ describe("the sign-in layout rollout", () => {
     }
   });
 
+  it("releases a failed answer's body", async () => {
+    const cancel = vi.fn(async () => {});
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503, body: { cancel } } as unknown as Response);
+    expect(await signInLayoutVariant()).toBeNull();
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
   it("keeps a failure for its minute, then asks again", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     answer({}, 503);

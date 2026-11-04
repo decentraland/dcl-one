@@ -31,6 +31,7 @@ vi.mock("@/data/lib/auth/thirdweb/api", async (original) => ({
 
 const SIGNER = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
 const assign = vi.fn();
+const replace = vi.fn();
 
 type Request = { method: string; params?: unknown[] };
 function installWallet(answer: (req: Request) => unknown) {
@@ -57,6 +58,7 @@ beforeEach(() => {
     search: "",
     hash: "",
     assign,
+    replace,
   });
   localStorage.clear();
   setIdentity(null);
@@ -69,7 +71,94 @@ afterEach(() => {
   social.fail = false;
 });
 
+async function openCodeModal() {
+  fireEvent.change(screen.getByPlaceholderText("Enter Your Email"), { target: { value: "jane.doe@example.com" } });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "NEXT" }));
+  });
+}
+
 describe("the sign-in page", () => {
+  it("sends a reader who is already signed in straight on", async () => {
+    setIdentity({
+      signer: SIGNER,
+      ephemeral: { address: `0x${"c".repeat(40)}`, privateKey: `0x${"12".repeat(32)}` },
+      expiration: new Date(Date.now() + 86_400_000).toISOString(),
+      authChain: [],
+    });
+    await act(async () => {
+      page("https://evil.example/x");
+    });
+    expect(replace).toHaveBeenCalledWith("/");
+  });
+
+  it("stays put for a reader whose session expired", async () => {
+    setIdentity({
+      signer: SIGNER,
+      ephemeral: { address: `0x${"c".repeat(40)}`, privateKey: `0x${"12".repeat(32)}` },
+      expiration: new Date(Date.now() - 1000).toISOString(),
+      authChain: [],
+    });
+    await act(async () => {
+      page();
+    });
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("takes a phone's autofilled code in one box, and words a network failure as one", async () => {
+    let refuse: (err: unknown) => void = () => {};
+    auth.verifyEmailSignIn.mockImplementationOnce(() => new Promise((_resolve, reject) => (refuse = reject)));
+    page();
+    await openCodeModal();
+    await act(async () => {
+      fireEvent.change(screen.getByTestId("otp-input-0"), { target: { value: "654321" } });
+    });
+    // A browser drops the focus of a box that is disabled while the code is checked (jsdom keeps it, so move it away).
+    screen.getByPlaceholderText("Enter Your Email").focus();
+    expect(document.activeElement).not.toBe(screen.getByTestId("otp-input-5"));
+    await act(async () => refuse(new TypeError("Failed to fetch")));
+    expect(auth.verifyEmailSignIn).toHaveBeenCalledWith("jane.doe@example.com", "654321", { rethrow: true });
+    expect(screen.getByRole("alert").textContent).toBe("Unable to connect. Please check your internet connection and try again.");
+    // The boxes come back to the reader, focused, to correct the code.
+    expect(document.activeElement).toBe(screen.getByTestId("otp-input-5"));
+  });
+
+  it("replaces a digit typed over a filled box rather than spilling it into the next", async () => {
+    auth.verifyEmailSignIn.mockRejectedValueOnce(new Error("The code is wrong"));
+    page();
+    await openCodeModal();
+    await act(async () => {
+      fireEvent.paste(screen.getByTestId("otp-input-0"), { clipboardData: { getData: () => "111111" } });
+    });
+    await act(async () => {
+      fireEvent.change(screen.getByTestId("otp-input-2"), { target: { value: "17" } });
+    });
+    expect(auth.verifyEmailSignIn).toHaveBeenLastCalledWith("jane.doe@example.com", "117111", { rethrow: true });
+  });
+
+  it("moves focus into the wallet modal and keeps Tab inside it", async () => {
+    installWallet((req) => {
+      if (req.method === "eth_accounts") return [];
+      throw new Error("window.ethereum.enable is not a function");
+    });
+    page();
+    const opener = screen.getByRole("button", { name: "Continue with MetaMask" });
+    opener.focus();
+    await act(async () => {
+      fireEvent.click(opener);
+    });
+    const close = screen.getByRole("button", { name: "close" });
+    const tryAgain = screen.getByRole("button", { name: "Try Again" });
+    expect(document.activeElement).toBe(close);
+    tryAgain.focus();
+    fireEvent.keyDown(tryAgain, { key: "Tab" });
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(tryAgain);
+    fireEvent.click(close);
+    expect(document.activeElement).toBe(opener);
+  });
+
   it("lays out decentraland.org's live options: the email box, Google, and the rest behind More Options", () => {
     page();
     expect(screen.getByRole("heading", { name: "Log in or Sign up to Jump In" })).toBeTruthy();
@@ -182,7 +271,7 @@ describe("the sign-in page", () => {
     await act(async () => {
       fireEvent.paste(screen.getByTestId("otp-input-0"), { clipboardData: { getData: () => "12 34 56" } });
     });
-    expect(auth.verifyEmailSignIn).toHaveBeenCalledWith("jane.doe@example.com", "123456");
+    expect(auth.verifyEmailSignIn).toHaveBeenCalledWith("jane.doe@example.com", "123456", { rethrow: true });
     expect(assign).toHaveBeenCalledWith("/shop/items?sortBy=newest");
   });
 
@@ -290,7 +379,7 @@ describe("the sign-in page", () => {
     await act(async () => {
       fireEvent.change(screen.getByTestId("otp-input-1"), { target: { value: "9" } });
     });
-    expect(auth.verifyEmailSignIn).toHaveBeenLastCalledWith("jane.doe@example.com", "193456");
+    expect(auth.verifyEmailSignIn).toHaveBeenLastCalledWith("jane.doe@example.com", "193456", { rethrow: true });
     expect(assign).toHaveBeenCalledWith("/shop/items?sortBy=newest");
   });
 });

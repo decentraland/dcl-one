@@ -48,8 +48,12 @@ function message(err: unknown): string | null {
   return typeof m === "string" && m ? m : null;
 }
 
+/** What a wallet with a request still open (EIP-1193 -32002, often one the reader closed this page's modal on) needs. */
+export const PENDING_REQUEST_HINT = "A request is already open in your wallet. Open your wallet to finish or dismiss it, then try again.";
+
 /** The modal state, and the detail it quotes, for a failure; `askedToSign` is whether the signature was requested. */
 export function failureState(err: unknown, askedToSign: boolean): { state: ConnectionState; detail: string | null } {
+  if (failure(err).code === -32002) return { state: "error-connection-failed", detail: PENDING_REQUEST_HINT };
   if (askedToSign && isSignatureUnsupported(err)) return { state: "error-signature-unsupported", detail: null };
   if (failure(err).name === "ErrorUnlockingWallet") return { state: "error-locked", detail: null };
   if (!askedToSign) return { state: "error-connection-failed", detail: isExpectedWalletError(err) ? null : message(err) };

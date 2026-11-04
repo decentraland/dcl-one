@@ -9,7 +9,8 @@ import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 
 import { useAuth } from "@/data/lib/auth/context";
-import { setIdentity } from "@/data/lib/auth/session";
+import { isIdentityExpired } from "@/data/lib/auth/expiry";
+import { getIdentity, setIdentity } from "@/data/lib/auth/session";
 import { socialLoginUrl, type ThirdwebSocialProvider } from "@/data/lib/auth/thirdweb/api";
 
 import appleIcon from "./assets/apple.svg?url";
@@ -237,6 +238,15 @@ export default function LoginPage({ redirectTo, layoutVariant }: LoginPageProps)
     });
   }, []);
   useEffect(() => () => walletConnect.current?.abort(), []);
+  // A reader who is already signed in goes straight on, as upstream sends them.
+  // The store is read directly: during hydration `useAuth` still reports the server's empty session.
+  useEffect(() => {
+    const identity = getIdentity();
+    if (identity && !isIdentityExpired(identity)) {
+      window.location.replace(safeRedirectTarget(redirectTo, new URL(window.location.href)));
+    }
+    // Only the session the page opens with counts: a sign-in made here navigates on its own.
+  }, []);
 
   const layout = useMemo(
     () =>
@@ -358,7 +368,8 @@ export default function LoginPage({ redirectTo, layoutVariant }: LoginPageProps)
   const verifyCode = useCallback(
     async (code: string) => {
       if (!otpEmail) return;
-      const identity = await auth.verifyEmailSignIn(otpEmail, code);
+      // The failure itself reaches the modal, which words a network drop or a refused code apart.
+      const identity = await auth.verifyEmailSignIn(otpEmail, code, { rethrow: true });
       if (!identity) throw new Error(t("email_login_modal.invalid_or_expired"));
       setOtpEmail(null);
       finish();

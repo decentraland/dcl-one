@@ -20,11 +20,12 @@ function emit(): void {
 /**
  * Asks the reader to sign in. A host (the Explorer) signs in its own way, and the desktop shell hands sign-in to the
  * system browser from the modal; everywhere else the reader goes to /auth/login, as on decentraland.org, and comes
- * back to `redirectTo` (this page when absent).
+ * back to `redirectTo` (this page when absent). `inPlace` keeps the reader on the page, in the sign-in modal: for a
+ * caller asking mid-task, whose unsaved input a navigation would lose.
  */
-export function openSignIn(opts?: { redirectTo?: string }): void {
+export function openSignIn(opts?: { redirectTo?: string; inPlace?: boolean }): void {
   if (hostSignIn) { hostSignIn(); return; }
-  if (typeof window !== "undefined" && !isDesktopShell()) {
+  if (typeof window !== "undefined" && !isDesktopShell() && !opts?.inPlace) {
     const here = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     window.location.assign(loginPath(opts?.redirectTo ?? here));
     return;

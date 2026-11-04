@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { failureState, isExpectedWalletError, isRejection } from "./flow";
+import { failureState, isExpectedWalletError, isRejection, PENDING_REQUEST_HINT } from "./flow";
 
 const rejected = Object.assign(new Error("User rejected the request."), { code: 4001 });
 const pending = Object.assign(new Error("Request already pending"), { code: -32002 });
@@ -19,7 +19,9 @@ describe("what a wallet failure tells the reader", () => {
 
   it("never says the reader failed to confirm before the wallet asked them anything", () => {
     expect(failureState(rejected, false)).toEqual({ state: "error-connection-failed", detail: null });
-    expect(failureState(pending, false)).toEqual({ state: "error-connection-failed", detail: null });
+    // A request still open in the wallet says what the reader can do about it.
+    expect(failureState(pending, false)).toEqual({ state: "error-connection-failed", detail: PENDING_REQUEST_HINT });
+    expect(failureState(pending, true)).toEqual({ state: "error-connection-failed", detail: PENDING_REQUEST_HINT });
     expect(failureState(broken, false)).toEqual({ state: "error-connection-failed", detail: broken.message });
   });
 

@@ -31,13 +31,42 @@ function useEscape(onEscape: () => void) {
   }, [onEscape]);
 }
 
-/** The dimmed backdrop: a press outside the dialog, or Escape, dismisses it. The child is the dialog itself. */
+const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])';
+
+/**
+ * The dimmed backdrop: a press outside the dialog, or Escape, dismisses it. The child is the dialog itself. Focus moves
+ * into the dialog when it opens (unless something inside already took it), Tab cycles within it, and focus returns to
+ * where it was when the dialog closes.
+ */
 function Overlay({ className, onDismiss, children }: { className?: string; onDismiss: () => void; children: ReactNode }) {
   useEscape(onDismiss);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    const box = root.current;
+    if (box && !box.contains(document.activeElement)) box.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+    return () => opener?.focus?.();
+  }, []);
+  const trap = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Tab" || !root.current) return;
+    const items = [...root.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
+    if (items.length === 0) return;
+    const first = items[0]!;
+    const last = items[items.length - 1]!;
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
   return (
     <div
+      ref={root}
       className={`${styles.overlay} ${className ?? ""}`}
       role="presentation"
+      onKeyDown={trap}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onDismiss();
       }}
@@ -169,6 +198,14 @@ export function EmailLoginModal({
   const [shake, setShake] = useState(false);
   const [cooldown, setCooldown] = useState(RESEND_COOLDOWN_SECONDS);
   const inputs = useRef<(HTMLInputElement | null)[]>([]);
+  // The boxes are disabled while a code is checked, which drops the focus; a refused code hands it back.
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (!busy && refocus.current) {
+      refocus.current = false;
+      inputs.current[OTP_LENGTH - 1]?.focus();
+    }
+  }, [busy]);
 
   useEffect(() => {
     const timer = setTimeout(() => inputs.current[0]?.focus(), 100);
@@ -194,6 +231,7 @@ export function EmailLoginModal({
       } catch (err) {
         setError(apiError(err, "email_login_modal.invalid_or_expired", [["failed to verify", "email_login_modal.failed_verify"]]));
         setShake(true);
+        refocus.current = true;
       } finally {
         setBusy(false);
       }
@@ -201,8 +239,28 @@ export function EmailLoginModal({
     [verify],
   );
 
+  /** Puts digits into the boxes from `start` on, and submits once all six are there. */
+  const fill = (start: number, digits: string) => {
+    const next = start === 0 && digits.length >= OTP_LENGTH ? Array<string>(OTP_LENGTH).fill("") : [...otp];
+    for (let i = 0; i < digits.length && start + i < OTP_LENGTH; i++) next[start + i] = digits[i]!;
+    setOtp(next);
+    setError(null);
+    setShake(false);
+    inputs.current[Math.min(start + digits.length, OTP_LENGTH - 1)]?.focus();
+    if (next.every(Boolean)) void submit(next.join(""));
+  };
+
   const change = (index: number, value: string) => {
-    const digit = value.replace(/\D/g, "").slice(-1);
+    let typed = value.replace(/\D/g, "");
+    // A digit typed over the box's own replaces it, wherever the caret was.
+    const own = otp[index];
+    if (own && typed.length === 2 && typed.includes(own)) typed = typed.startsWith(own) ? typed[1]! : typed[0]!;
+    // A phone's one-time-code autofill puts the whole code into one box.
+    if (typed.length > 1) {
+      fill(index, typed.length > OTP_LENGTH ? typed.slice(-OTP_LENGTH) : typed);
+      return;
+    }
+    const digit = typed.slice(-1);
     const next = [...otp];
     next[index] = digit;
     setOtp(next);
@@ -292,7 +350,6 @@ export function EmailLoginModal({
                   aria-label={`Digit ${index + 1} of ${OTP_LENGTH}`}
                   type="text"
                   inputMode="numeric"
-                  maxLength={1}
                   value={digit}
                   onChange={(e) => change(index, e.target.value)}
                   onKeyDown={(e) => keyDown(index, e)}
