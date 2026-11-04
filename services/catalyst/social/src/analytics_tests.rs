@@ -279,32 +279,46 @@ async fn analytics_deadline_spans_the_entire_redirect_chain_until_headers() {
         .unwrap()
         .unwrap();
     let weak = Arc::downgrade(&analytics.0);
-    let started = tokio::time::Instant::now();
+    // Controlled Tokio time from the first request: real HTTP progresses while
+    // the test yields, and virtual time moves only on explicit advances.
+    tokio::time::pause();
     analytics.fire_event("DEADLINE_FIXTURE", json!({}));
     drop(analytics);
-    assert_eq!(entries.recv().await, Some(true));
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(yield_until(&mut entries).await, "the first hop");
+    // The first hop holds 600 ms of the one-second deadline.
+    tokio::time::advance(Duration::from_millis(600)).await;
     release.notify_one();
-    assert_eq!(entries.recv().await, Some(false));
-    let elapsed = started.elapsed();
-    assert!(elapsed < Duration::from_millis(900));
-    // Real HTTP establishes the second hop; controlled Tokio time then crosses
-    // the original deadline while staying before a restarted per-hop deadline.
-    tokio::time::pause();
-    tokio::time::advance(Duration::from_secs(1) - elapsed + elapsed / 2).await;
-    for _ in 0..64 {
+    assert!(!yield_until(&mut entries).await, "the redirected hop");
+    assert!(weak.upgrade().is_some(), "the chain is within its deadline");
+    // 1,100 ms since the event crosses the deadline; 500 ms into the second
+    // hop is still inside a deadline that a hop would have restarted.
+    tokio::time::advance(Duration::from_millis(500)).await;
+    let mut released = false;
+    for _ in 0..10_000 {
         if weak.upgrade().is_none() {
+            released = true;
             break;
         }
         tokio::task::yield_now().await;
     }
-    let released = weak.upgrade().is_none();
     tokio::time::resume();
     server.abort();
     assert!(
         released,
         "the second redirect hop cannot restart the timeout"
     );
+}
+
+/// Yields (keeping paused time still) until the server reports a request.
+async fn yield_until(entries: &mut mpsc::UnboundedReceiver<bool>) -> bool {
+    for _ in 0..1_000_000 {
+        match entries.try_recv() {
+            Ok(first) => return first,
+            Err(mpsc::error::TryRecvError::Empty) => tokio::task::yield_now().await,
+            Err(error) => panic!("{error}"),
+        }
+    }
+    panic!("the request did not reach the server");
 }
 
 #[tokio::test]

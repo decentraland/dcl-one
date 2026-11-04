@@ -120,6 +120,12 @@ pub(crate) fn request_body(model: &str, content: Content<'_>) -> Value {
     json!({"model":model,"instructions":SYSTEM_PROMPT,"input":input,"text":{"format":{"type":"json_schema","name":"ComplianceValidationResult","schema":serde_json::from_str::<Value>(SCHEMA).unwrap()}}})
 }
 
+// Operational bound on the whole provider effect, as `referral_slack`'s
+// EFFECT_TIMEOUT: the check runs inside POST/PATCH /v1/communities, and the
+// source SDK's 3 attempts × 600 s with Retry-After waits have no total cap.
+// Above the shared readers' 25 s so a slow but valid answer still lands.
+pub(crate) const EFFECT_TIMEOUT: Duration = Duration::from_secs(60);
+
 pub(crate) struct Adapter {
     http: crate::http::Outbound,
     settings: Settings,
@@ -142,6 +148,14 @@ impl Adapter {
         .map_err(|e| e.to_string())?
         .allowing_configured_provider_hosts();
         Ok(Self { http, settings })
+    }
+    /// [`Self::validate`] within [`EFFECT_TIMEOUT`]; past it, the provider is unavailable.
+    async fn validate_bounded(&self, content: Content<'_>) -> Result<ResultValue, String> {
+        tokio::time::timeout(EFFECT_TIMEOUT, self.validate(content))
+            .await
+            .unwrap_or_else(|_| {
+                Err("Unexpected error during compliance validation: Request timed out.".into())
+            })
     }
     async fn validate(&self, content: Content<'_>) -> Result<ResultValue, String> {
         let Some(key) = self.settings.api_key.as_deref() else {
@@ -477,7 +491,7 @@ impl super::State {
                     "Unexpected error during compliance validation: {error}"
                 ))
             })?;
-            let result = adapter.validate(content).await.map_err(|error| {
+            let result = adapter.validate_bounded(content).await.map_err(|error| {
                 metrics::counter!("ai_compliance_validation_total", "result" => "failed")
                     .increment(1);
                 unavailable(error)

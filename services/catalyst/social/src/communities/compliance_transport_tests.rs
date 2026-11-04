@@ -80,19 +80,25 @@ async fn streaming_body(finish: bool) {
     let (chunks, receiver) = mpsc::unbounded_channel::<bytes::Bytes>();
     let receiver = Arc::new(tokio::sync::Mutex::new(Some(receiver)));
     let (entered, mut entries) = mpsc::unbounded_channel();
+    let (polled, mut polls) = mpsc::unbounded_channel();
     let app = Router::new().route(
         "/responses",
         post(move || {
             let receiver = receiver.clone();
             let entered = entered.clone();
+            let polled = polled.clone();
             async move {
                 let receiver = receiver.lock().await.take().unwrap();
                 entered.send(()).unwrap();
-                let stream = futures::stream::unfold(receiver, |mut receiver| async move {
-                    receiver
-                        .recv()
-                        .await
-                        .map(|chunk| (Ok::<_, std::io::Error>(chunk), receiver))
+                let stream = futures::stream::unfold(receiver, move |mut receiver| {
+                    let polled = polled.clone();
+                    async move {
+                        let _ = polled.send(());
+                        receiver
+                            .recv()
+                            .await
+                            .map(|chunk| (Ok::<_, std::io::Error>(chunk), receiver))
+                    }
                 });
                 (
                     [("content-type", "application/json")],
@@ -118,8 +124,10 @@ async fn streaming_body(finish: bool) {
             .await
     });
     entries.recv().await.unwrap();
-    // The first body byte passes through the local socket before clock control.
-    tokio::time::sleep(Duration::from_millis(20)).await;
+    // The server asks for the second chunk once the first is written to the
+    // socket; clock control starts after that, not after a wall-clock wait.
+    polls.recv().await.unwrap();
+    polls.recv().await.unwrap();
     tokio::time::pause();
     for chunk in 0..3 {
         tokio::time::advance(Duration::from_secs(240)).await;
@@ -178,6 +186,55 @@ async fn streaming_body(finish: bool) {
     assert_eq!(
         serde_json::to_value(result).unwrap(),
         fixture["sdk_body_phase"]["result"]
+    );
+    server.abort();
+}
+
+/// The whole provider effect is bounded: a provider that never answers fails
+/// as unavailable at EFFECT_TIMEOUT, before any of the source's per-attempt
+/// 600 s deadlines.
+#[tokio::test]
+async fn the_whole_provider_effect_is_bounded() {
+    let (entered, mut entries) = mpsc::unbounded_channel();
+    let app = Router::new().route(
+        "/responses",
+        post(move || {
+            let entered = entered.clone();
+            async move {
+                entered.send(()).unwrap();
+                std::future::pending::<()>().await;
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let pending = tokio::spawn(async move {
+        adapter(url)
+            .validate_bounded(Content {
+                name: Some("Fixture"),
+                description: None,
+                thumbnail: None,
+            })
+            .await
+    });
+    // The request reached the provider; from here only controlled time moves.
+    entries.recv().await.unwrap();
+    tokio::time::pause();
+    tokio::time::advance(EFFECT_TIMEOUT - Duration::from_secs(1)).await;
+    for _ in 0..128 {
+        tokio::task::yield_now().await;
+    }
+    assert!(!pending.is_finished(), "inside the bound the call waits");
+    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::time::resume();
+    // Its deadline has passed: only scheduling remains, not provider time.
+    let result = tokio::time::timeout(Duration::from_secs(10), pending)
+        .await
+        .expect("the bound ends the effect");
+    assert_eq!(
+        result.unwrap().unwrap_err(),
+        "Unexpected error during compliance validation: Request timed out."
     );
     server.abort();
 }
