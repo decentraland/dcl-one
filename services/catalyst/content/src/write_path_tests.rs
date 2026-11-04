@@ -438,7 +438,7 @@ async fn an_unsynced_copy_takes_the_deploy_types_it_names() {
         (status, json_of(&body)),
         (
             StatusCode::BAD_REQUEST,
-            json!({"error": "The entity file was not part of the uploaded files or has no type."})
+            json!({"errors": ["The entity file was not part of the uploaded files or has no type."]})
         ),
         "no entity file, no type: refused"
     );
@@ -1280,7 +1280,7 @@ async fn an_unsynced_copys_refusals_count_toward_the_quota() {
         (status, json_of(&body)),
         (
             StatusCode::BAD_REQUEST,
-            json!({"error": "The entity file was not part of the uploaded files or has no type."})
+            json!({"errors": ["The entity file was not part of the uploaded files or has no type."]})
         )
     );
     let file = Bytes::from(

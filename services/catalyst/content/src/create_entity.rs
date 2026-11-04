@@ -355,9 +355,14 @@ async fn deploy_form(
         .ok_or_else(|| invalid("Missing entityId field"))?
         .clone();
     if !state.sync.takes_deploys() {
-        let entity_type = entity_type_of(&files, &entity_id).ok_or_else(|| {
-            invalid("The entity file was not part of the uploaded files or has no type.")
-        })?;
+        let Some(entity_type) = entity_type_of(&files, &entity_id) else {
+            return Ok(Answer::Decided(deployment_failure_response(
+                DeployFailure::Rejected(vec![
+                    "The entity file was not part of the uploaded files or has no type."
+                        .to_string(),
+                ]),
+            )));
+        };
         if !state.sync.takes_deploys_of(&entity_type) {
             return Err(AppError::ServiceUnavailable(
                 writes::BOOTSTRAPPING_MESSAGE.to_string(),
