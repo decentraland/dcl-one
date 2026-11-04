@@ -5786,3 +5786,5 @@ async fn a_deploy_reusing_a_blob_the_collector_removed_is_refused_under_the_stor
     );
     assert!(entity_ids(&f, &world).await.is_empty());
 }
+
+mod partial_uploads;

@@ -544,6 +544,32 @@ pub async fn deploy_scene(
     storage: &Storage,
     deployment: SceneDeployment<'_>,
 ) -> Result<(), ApiError> {
+    deploy_scene_with(pool, storage, deployment, None)
+        .await
+        .map(|_| ())
+}
+
+/// The partial upload a publish completes: its pending row must still be live (database clock)
+/// and its completion receipt commits with the scene.
+pub struct PartialCompletion<'a> {
+    pub ttl_ms: u64,
+    /// The world and parcels the receipt's message names, as the first answer did.
+    pub world_name: &'a str,
+    pub scene_parcels: &'a [String],
+}
+
+/// The refusal of a publish whose partial upload expired (or is gone) before it committed.
+pub const PARTIAL_UPLOAD_EXPIRED: &str =
+    "This upload expired. Create a new entity with a fresh timestamp.";
+
+/// [`deploy_scene`] that answers the scene row's creation time (ms) and, with `completion`,
+/// consumes the entity's partial upload; any other publish drops the entity's staging state.
+pub async fn deploy_scene_with(
+    pool: &PgPool,
+    storage: &Storage,
+    deployment: SceneDeployment<'_>,
+    completion: Option<&PartialCompletion<'_>>,
+) -> Result<i64, ApiError> {
     let SceneDeployment {
         world,
         name_owner,
@@ -608,23 +634,13 @@ pub async fn deploy_scene(
     // Under the world row's lock, so a concurrent publish cannot slip past.
     // A stored timestamp counts no later than the row's write (a future-dated
     // entity cannot lock the parcels); a non-numeric one never blocks.
-    let newer_deployed: bool = sqlx::query_scalar(
-        r#"WITH stored AS (
-             SELECT entity_id,
-                    CASE WHEN jsonb_typeof(entity->'timestamp') = 'number'
-                         THEN LEAST((entity->>'timestamp')::numeric,
-                                    extract(epoch FROM updated_at) * 1000)
-                    END AS ts
-             FROM worlds.world_scenes
-             WHERE world_name = $1 AND parcels && $2::text[] AND entity_id <> $3)
-           SELECT EXISTS (SELECT 1 FROM stored
-             WHERE ts > $4::bigint OR (ts = $4::bigint AND entity_id COLLATE "C" > $3))"#,
+    let newer_deployed = newer_scene_deployed(
+        &mut tx,
+        world,
+        &parcels,
+        entity_id,
+        entity_timestamp(entity)?,
     )
-    .bind(world.key())
-    .bind(&parcels)
-    .bind(entity_id)
-    .bind(entity_timestamp(entity)?)
-    .fetch_one(&mut *tx)
     .await?;
     if newer_deployed {
         return Err(ApiError::bad_request(
@@ -721,7 +737,7 @@ pub async fn deploy_scene(
 
     let auth_chain_text = serde_json::to_string(deployment_auth_chain)
         .map_err(|e| ApiError::internal(format!("auth chain: {e}")))?;
-    sqlx::query(
+    let created_ms: i64 = sqlx::query_scalar(
         r#"INSERT INTO worlds.world_scenes
              (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size, mirror_source)
            VALUES ($1, $2, $3::json, $4, $5, $6::text[], $7, NULL)
@@ -732,7 +748,8 @@ pub async fn deploy_scene(
                  parcels = EXCLUDED.parcels,
                  size = EXCLUDED.size,
                  mirror_source = NULL,
-                 updated_at = timezone('UTC', now())"#,
+                 updated_at = timezone('UTC', now())
+           RETURNING (extract(epoch FROM created_at) * 1000)::bigint"#,
     )
     .bind(world.key())
     .bind(entity_id)
@@ -741,7 +758,7 @@ pub async fn deploy_scene(
     .bind(deployer)
     .bind(&parcels)
     .bind(size)
-    .execute(&mut *tx)
+    .fetch_one(&mut *tx)
     .await?;
     // Active again: a (world, entity) is active or retired, never both.
     sqlx::query("DELETE FROM worlds.retired_world_scenes WHERE world_name = $1 AND entity_id = $2")
@@ -773,8 +790,77 @@ pub async fn deploy_scene(
         .await?;
     }
 
+    // Any publish of the entity supersedes its partial upload; only the completing one keeps a receipt.
+    let pending_live: Option<bool> = sqlx::query_scalar(
+        "DELETE FROM worlds.pending_scenes WHERE entity_id = $1 \
+         RETURNING created_at > timezone('UTC', now()) - make_interval(secs => $2::float8 / 1000)",
+    )
+    .bind(entity_id)
+    .bind(completion.map_or(0.0, |c| c.ttl_ms as f64))
+    .fetch_optional(&mut *tx)
+    .await?;
+    match completion {
+        Some(completion) => {
+            if pending_live != Some(true) {
+                return Err(ApiError::bad_request(PARTIAL_UPLOAD_EXPIRED));
+            }
+            sqlx::query(
+                "INSERT INTO worlds.completed_scene_uploads \
+                   (entity_id, deployer, world_name, parcels, creation_timestamp) \
+                 VALUES ($1, $2, $3, $4::text[], $5) \
+                 ON CONFLICT (entity_id) DO UPDATE SET deployer = EXCLUDED.deployer, \
+                   world_name = EXCLUDED.world_name, parcels = EXCLUDED.parcels, \
+                   creation_timestamp = EXCLUDED.creation_timestamp, \
+                   completed_at = timezone('UTC', now())",
+            )
+            .bind(entity_id)
+            .bind(deployer)
+            .bind(completion.world_name)
+            .bind(completion.scene_parcels)
+            .bind(created_ms)
+            .execute(&mut *tx)
+            .await?;
+        }
+        None => {
+            sqlx::query("DELETE FROM worlds.completed_scene_uploads WHERE entity_id = $1")
+                .bind(entity_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+
     tx.commit().await?;
-    Ok(())
+    Ok(created_ms)
+}
+
+/// Whether a scene of `world` overlapping `parcels` is newer than this entity: a stored
+/// timestamp counts no later than its row's write (a future-dated entity cannot lock the
+/// parcels), ties break by byte-wise greater entity id, a non-numeric one never blocks.
+pub async fn newer_scene_deployed(
+    conn: &mut sqlx::PgConnection,
+    world: &WorldName,
+    parcels: &[String],
+    entity_id: &str,
+    timestamp: i64,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"WITH stored AS (
+             SELECT entity_id,
+                    CASE WHEN jsonb_typeof(entity->'timestamp') = 'number'
+                         THEN LEAST((entity->>'timestamp')::numeric,
+                                    extract(epoch FROM updated_at) * 1000)
+                    END AS ts
+             FROM worlds.world_scenes
+             WHERE world_name = $1 AND parcels && $2::text[] AND entity_id <> $3)
+           SELECT EXISTS (SELECT 1 FROM stored
+             WHERE ts > $4::bigint OR (ts = $4::bigint AND entity_id COLLATE "C" > $3))"#,
+    )
+    .bind(world.key())
+    .bind(parcels)
+    .bind(entity_id)
+    .bind(timestamp)
+    .fetch_one(conn)
+    .await
 }
 
 /// Refused publish to a world the operator disabled (`/admin/worlds/{w}/disable`).
@@ -795,7 +881,7 @@ pub async fn is_world_disabled(pool: &PgPool, world: &WorldName) -> Result<bool,
 }
 
 /// The entity's integer `timestamp`; the deploy route already required it.
-fn entity_timestamp(entity: &Value) -> Result<i64, ApiError> {
+pub(super) fn entity_timestamp(entity: &Value) -> Result<i64, ApiError> {
     entity
         .get("timestamp")
         .and_then(Value::as_i64)

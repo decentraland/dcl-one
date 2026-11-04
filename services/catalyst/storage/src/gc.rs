@@ -9,7 +9,7 @@
 //! blob and committing the row that names it) are checked in chunks
 //! against every [`REFERENCE_SOURCES`] column (`= ANY`, index-served on the
 //! large tables) and the JSON documents that embed keys (the world scenes'
-//! content lists, the asset-pack catalogue) plus the global scenes the
+//! and pending partial uploads' content lists, the asset-pack catalogue) plus the global scenes the
 //! configuration names, so memory holds a chunk, never the corpus. A scene
 //! whose content list cannot be read exactly aborts the run, a candidate
 //! is re-checked right before it is unlinked, under the exclusive store
@@ -105,6 +105,8 @@ pub const REFERENCE_SOURCES: &[&str] = &[
     "worlds.federation_worlds.thumbnail_hash",
     "worlds.world_scenes.entity_id",
     "worlds.retired_world_scenes.entity_id",
+    "worlds.pending_scenes.entity_id",
+    "worlds.pending_scene_files.hash",
     "social.community_thumbnails.thumbnail_hash",
     "social.community_contents.cid",
     "social.player_report_evidence.content_hash",
@@ -159,6 +161,14 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "worlds.forward_outbox.entity_id",
         "a forwarding record: worlds.world_scenes holds the reference, and a scene gone from \
          it is superseded, never sent",
+    ),
+    (
+        "worlds.pending_scene_files.entity_id",
+        "the upload a file belongs to: worlds.pending_scenes.entity_id holds the reference",
+    ),
+    (
+        "worlds.completed_scene_uploads.entity_id",
+        "a completion receipt: worlds.world_scenes holds the reference while the scene is live",
     ),
     ("explore.place_reports.entity_id", "a place id"),
     ("explore.user_favorites.entity_id", "a place id"),
@@ -277,11 +287,12 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
 ];
 
 /// JSON documents that embed store keys, read by [`reference_set`] beside
-/// the plain sources: the world scene entities' `content[].hash` and the
-/// asset-pack catalogue's thumbnails and asset contents.
+/// the plain sources: the world scene and pending upload entities'
+/// `content[].hash` and the asset-pack catalogue's thumbnails and asset contents.
 pub const JSON_SOURCES: &[&str] = &[
     "worlds.world_scenes.entity",
     "worlds.retired_world_scenes.entity",
+    "worlds.pending_scenes.entity",
     "builder.asset_catalog.packs",
 ];
 
@@ -515,8 +526,29 @@ pub async fn referenced_among_on(
     conn: &mut sqlx::PgConnection,
     keys: &[String],
 ) -> Result<HashSet<String>, GcError> {
+    references_among(conn, keys, true).await
+}
+
+/// The keys among `keys` published content names: [`referenced_among`] without the pending
+/// partial uploads, which charge for content only they keep.
+pub async fn published_among(pool: &PgPool, keys: &[String]) -> Result<HashSet<String>, GcError> {
+    let mut conn = pool.acquire().await?;
+    references_among(&mut conn, keys, false).await
+}
+
+async fn references_among(
+    conn: &mut sqlx::PgConnection,
+    keys: &[String],
+    pending: bool,
+) -> Result<HashSet<String>, GcError> {
     let mut found = HashSet::new();
+    if keys.is_empty() {
+        return Ok(found);
+    }
     for source in REFERENCE_SOURCES {
+        if !pending && source.starts_with(PENDING_PREFIX) {
+            continue;
+        }
         let (table, column) = split_source(source);
         let rows: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT DISTINCT {column} FROM {table} WHERE {column} = ANY($1)"
@@ -528,16 +560,21 @@ pub async fn referenced_among_on(
     }
     let rows: Vec<String> = sqlx::query_scalar(
         "SELECT DISTINCT e ->> 'hash' FROM (SELECT entity FROM worlds.world_scenes \
-           UNION ALL SELECT entity FROM worlds.retired_world_scenes) s \
+           UNION ALL SELECT entity FROM worlds.retired_world_scenes \
+           UNION ALL SELECT entity FROM worlds.pending_scenes WHERE $2) s \
          CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(s.entity -> 'content') = 'array' THEN s.entity -> 'content' ELSE '[]'::jsonb END) e \
          WHERE e ->> 'hash' = ANY($1)",
     )
     .bind(keys)
+    .bind(pending)
     .fetch_all(&mut *conn)
     .await?;
     found.extend(rows);
     Ok(found)
 }
+
+/// The partial-upload staging sources ([`published_among`] leaves them out).
+const PENDING_PREFIX: &str = "worlds.pending_";
 
 const CHUNK: usize = 2_000;
 

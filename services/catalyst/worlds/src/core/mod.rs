@@ -39,6 +39,7 @@ pub mod limits;
 pub mod manifest;
 pub mod metrics;
 pub mod names;
+pub mod partial;
 pub mod permissions;
 pub mod scenes;
 pub mod settings;
@@ -71,6 +72,7 @@ use crate::shared::identity::Address;
 use crate::shared::nul_guard;
 use catalyst_storage::Storage;
 
+pub use partial::PartialUploadLimits;
 pub use upload_limits::UploadLimits;
 
 /// Rows per multi-row access-log INSERT; the drain takes whatever is queued up to this.
@@ -99,6 +101,8 @@ pub struct Settings {
     pub public_url: String,
     /// `MAX_FILE_COUNT`: entries a deployed entity's `content` may list.
     pub max_file_count: usize,
+    /// The partial (multi-request) upload limits (`PENDING_DEPLOYMENT_TTL`, `MAX_PENDING_*`, ...).
+    pub partial_uploads: PartialUploadLimits,
 }
 
 impl std::fmt::Debug for Settings {
@@ -124,7 +128,14 @@ impl Settings {
             scene_eviction_ttl: DEFAULT_SCENE_EVICTION_TTL,
             public_url: String::new(),
             max_file_count: deploy::DEFAULT_MAX_FILE_COUNT,
+            partial_uploads: PartialUploadLimits::default(),
         })
+    }
+
+    /// The partial upload limits, validated against the world size cap.
+    pub fn with_partial_uploads(mut self, limits: PartialUploadLimits) -> anyhow::Result<Self> {
+        self.partial_uploads = limits.validate(crate::policy::MAX_WORLD_SIZE_BYTES)?;
+        Ok(self)
     }
 
     pub fn with_scene_eviction_ttl_ms(mut self, ms: u64) -> Self {
@@ -157,6 +168,7 @@ impl Settings {
             scene_eviction_ttl: DEFAULT_SCENE_EVICTION_TTL,
             public_url: "https://worlds.example".to_string(),
             max_file_count: deploy::DEFAULT_MAX_FILE_COUNT,
+            partial_uploads: PartialUploadLimits::default(),
         }
     }
 }
@@ -408,9 +420,25 @@ impl CoreState {
     }
 
     /// The `worlds-access-log` job: drains the queue into `world_access_log`
-    /// in batches until shutdown, flushing what is left on cancel; and the
-    /// fleet-wide hourly `worlds-scene-eviction` of expired retired scenes.
+    /// in batches until shutdown, flushing what is left on cancel; the
+    /// fleet-wide hourly `worlds-scene-eviction` of expired retired scenes; and
+    /// the fleet-wide `worlds-partial-upload-cleanup` of expired partial uploads.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
+        let state = self.clone();
+        jobs.spawn_periodic_leased(
+            "worlds-partial-upload-cleanup",
+            crate::jobs::PeriodicCfg::every(std::time::Duration::from_millis(
+                self.settings.partial_uploads.cleanup_interval_ms,
+            )),
+            move |_ctx| {
+                let state = state.clone();
+                async move {
+                    partial::delete_expired_uploads(&state).await;
+                    Ok(())
+                }
+            },
+        );
+        metrics::partial_capacity(self.settings.partial_uploads.max_pending_bytes);
         let state = self.clone();
         jobs.spawn_periodic_leased(
             "worlds-scene-eviction",

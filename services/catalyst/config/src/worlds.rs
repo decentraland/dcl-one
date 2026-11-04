@@ -159,6 +159,58 @@ pub struct WorldsConfig {
     )]
     pub deployment_processing_timeout_ms: u64,
 
+    /// How long a partial (multi-request) upload stays pending from its first batch, ms.
+    #[arg(long, env = "PENDING_DEPLOYMENT_TTL", default_value_t = 3_600_000)]
+    pub pending_deployment_ttl: u64,
+
+    /// How often expired partial uploads are cleaned up, ms.
+    #[arg(
+        long,
+        env = "PARTIAL_UPLOAD_CLEANUP_INTERVAL_MS",
+        default_value_t = 300_000
+    )]
+    pub partial_upload_cleanup_interval_ms: u64,
+
+    /// Partial uploads one deployer may hold, expired ones awaiting cleanup included.
+    #[arg(
+        long,
+        env = "MAX_PENDING_DEPLOYMENTS_PER_DEPLOYER",
+        default_value_t = 10
+    )]
+    pub max_pending_deployments_per_deployer: u64,
+
+    /// Live partial uploads per world; one deployer may hold all but one of them.
+    #[arg(long, env = "MAX_PENDING_DEPLOYMENTS_PER_WORLD", default_value_t = 4)]
+    pub max_pending_deployments_per_world: u64,
+
+    /// Staged content bytes per world, as a multiple of the world's scene size cap.
+    #[arg(long, env = "PENDING_BYTES_PER_WORLD_FACTOR", default_value_t = 2)]
+    pub pending_bytes_per_world_factor: u64,
+
+    /// Staged bytes one deployer may hold (>= the world size cap).
+    #[arg(
+        long,
+        env = "MAX_PENDING_BYTES_PER_DEPLOYER",
+        default_value_t = 1_073_741_824
+    )]
+    pub max_pending_bytes_per_deployer: u64,
+
+    /// Staged bytes across the node (>= MAX_PENDING_BYTES_PER_DEPLOYER).
+    #[arg(long, env = "MAX_PENDING_BYTES", default_value_t = 53_687_091_200)]
+    pub max_pending_bytes: u64,
+
+    /// Partial batch bytes one deployer may send per fixed one-minute window.
+    #[arg(
+        long,
+        env = "MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE",
+        default_value_t = 536_870_912
+    )]
+    pub max_partial_upload_bytes_per_minute: u64,
+
+    /// How long a completed partial upload answers its retried final batch, ms.
+    #[arg(long, env = "COMPLETED_UPLOAD_TTL", default_value_t = 86_400_000)]
+    pub completed_upload_ttl: u64,
+
     /// 64 hex characters (or ENCRYPTION_KEY_FILE): the AES-256-GCM key of the
     /// env values; unset, the `/env` routes answer 503 and the rest serve.
     #[arg(long, env = "ENCRYPTION_KEY", hide_env_values = true)]
@@ -495,6 +547,32 @@ mod tests {
                 c.worlds.deployment_processing_timeout_ms
             ),
             (4_294_967_296, 40, 40_000, 300_000, 300_000)
+        );
+        let w = &c.worlds;
+        assert_eq!(
+            (
+                w.pending_deployment_ttl,
+                w.partial_upload_cleanup_interval_ms,
+                w.max_pending_deployments_per_deployer,
+                w.max_pending_deployments_per_world,
+                w.pending_bytes_per_world_factor,
+                w.max_pending_bytes_per_deployer,
+                w.max_pending_bytes,
+                w.max_partial_upload_bytes_per_minute,
+                w.completed_upload_ttl
+            ),
+            (
+                3_600_000,
+                300_000,
+                10,
+                4,
+                2,
+                1_073_741_824,
+                53_687_091_200,
+                536_870_912,
+                86_400_000
+            ),
+            "worlds-content-server's .env.default"
         );
         assert!(c.worlds.encryption_key.is_none());
         assert_eq!(c.worlds.authorized_addresses, "");

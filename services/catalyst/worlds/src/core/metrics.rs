@@ -82,13 +82,13 @@ pub fn upload_capacity(limits: &upload_limits::UploadLimits) {
         .set(limits.max_in_flight_upload_bytes as f64);
 }
 
-/// Processing after the body was parsed, as upstream's `total` stage of a regular deploy.
-pub fn deployment_processed(status: StatusCode, elapsed: Duration) {
+/// Processing after the body was parsed, as upstream's `total` stage; `mode` is `regular` or `partial`.
+pub fn deployment_processed(mode: &'static str, status: StatusCode, elapsed: Duration) {
     let outcome = outcome(status);
     metrics::histogram!(
         DEPLOYMENT_PROCESSING_STAGE_DURATION_SECONDS,
         "stage" => "total",
-        "mode" => "regular",
+        "mode" => mode,
         "outcome" => outcome
     )
     .record(elapsed.as_secs_f64());
@@ -96,10 +96,113 @@ pub fn deployment_processed(status: StatusCode, elapsed: Duration) {
         metrics::counter!(
             DEPLOYMENT_PROCESSING_FAILURES,
             "stage" => "total",
-            "mode" => "regular",
+            "mode" => mode,
             "outcome" => outcome
         )
         .increment(1);
+    }
+    if mode == PARTIAL_MODE {
+        metrics::counter!(PARTIAL_UPLOAD_REQUESTS, "outcome" => partial_outcome(status))
+            .increment(1);
+    }
+}
+
+pub const REGULAR_MODE: &str = "regular";
+pub const PARTIAL_MODE: &str = "partial";
+
+/// `partial_upload_requests`' outcome label of a partial batch's answer, as upstream.
+pub fn partial_outcome(status: StatusCode) -> &'static str {
+    match status.as_u16() {
+        200 => "finalized",
+        202 => "accepted",
+        408 => "timeout",
+        429 => "throttled",
+        499 => "aborted",
+        400..=499 => "validation_error",
+        _ => "error",
+    }
+}
+
+pub const PARTIAL_UPLOAD_METADATA_CHECKS: &str = "partial_upload_metadata_checks";
+pub const PARTIAL_UPLOAD_BATCHES: &str = "partial_upload_batches";
+pub const PARTIAL_UPLOAD_RESERVED_BYTES: &str = "partial_upload_reserved_bytes";
+pub const PARTIAL_UPLOAD_CLEANUP_BACKLOG_BYTES: &str = "partial_upload_cleanup_backlog_bytes";
+pub const PARTIAL_UPLOAD_CAPACITY_BYTES: &str = "partial_upload_capacity_bytes";
+pub const PARTIAL_UPLOAD_REQUESTS: &str = "partial_upload_requests";
+pub const PARTIAL_UPLOAD_THROTTLED: &str = "partial_upload_throttled";
+pub const PARTIAL_UPLOADS_STARTED: &str = "partial_uploads_started";
+pub const PARTIAL_UPLOADS_COMPLETED: &str = "partial_uploads_completed";
+pub const PARTIAL_UPLOADS_PENDING: &str = "partial_uploads_pending";
+pub const PARTIAL_UPLOAD_DURATION_SECONDS: &str = "partial_upload_duration_seconds";
+pub const PARTIAL_UPLOAD_BATCHES_PER_UPLOAD: &str = "partial_upload_batches_per_upload";
+pub const PARTIAL_UPLOAD_EXPIRED_UPLOADS: &str = "partial_upload_expired_uploads";
+pub const PARTIAL_UPLOAD_CLEANUP_FAILED_UPLOADS: &str = "partial_upload_cleanup_failed_uploads";
+pub const PARTIAL_UPLOAD_CLEANUP_RUNS: &str = "partial_upload_cleanup_runs";
+pub const PARTIAL_UPLOAD_CLEANUP_DURATION_SECONDS: &str = "partial_upload_cleanup_duration_seconds";
+pub const PARTIAL_UPLOAD_CLEANUP_LAST_SUCCESS: &str =
+    "partial_upload_cleanup_last_success_timestamp_seconds";
+
+fn unix_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |d| d.as_secs_f64())
+}
+
+pub fn partial_metadata_checks(hashes: usize) {
+    metrics::counter!(PARTIAL_UPLOAD_METADATA_CHECKS).increment(hashes as u64);
+}
+
+/// A stored batch: `incomplete` (202) or `finalizing`.
+pub fn partial_batch(complete: bool) {
+    let outcome = if complete { "finalizing" } else { "incomplete" };
+    metrics::counter!(PARTIAL_UPLOAD_BATCHES, "outcome" => outcome).increment(1);
+}
+
+pub fn partial_throttled(reason: &'static str) {
+    metrics::counter!(PARTIAL_UPLOAD_THROTTLED, "reason" => reason).increment(1);
+}
+
+pub fn partial_started() {
+    metrics::counter!(PARTIAL_UPLOADS_STARTED).increment(1);
+}
+
+/// A published upload: its age since the first batch and its stored batches.
+pub fn partial_completed(age: Duration, batches: i32) {
+    metrics::counter!(PARTIAL_UPLOADS_COMPLETED).increment(1);
+    metrics::histogram!(PARTIAL_UPLOAD_DURATION_SECONDS).record(age.as_secs_f64());
+    metrics::histogram!(PARTIAL_UPLOAD_BATCHES_PER_UPLOAD).record(f64::from(batches));
+}
+
+pub fn partial_reserved_bytes(bytes: i64) {
+    metrics::gauge!(PARTIAL_UPLOAD_RESERVED_BYTES).set(bytes as f64);
+}
+
+pub fn partial_capacity(bytes: u64) {
+    metrics::gauge!(PARTIAL_UPLOAD_CAPACITY_BYTES).set(bytes as f64);
+}
+
+/// The database snapshot a cleanup run reports: charged and expired bytes, live and expired uploads.
+pub fn partial_snapshot(charged: i64, expired_bytes: i64, live: i64, expired: i64) {
+    partial_reserved_bytes(charged);
+    metrics::gauge!(PARTIAL_UPLOAD_CLEANUP_BACKLOG_BYTES).set(expired_bytes as f64);
+    metrics::gauge!(PARTIAL_UPLOADS_PENDING, "state" => "live").set(live as f64);
+    metrics::gauge!(PARTIAL_UPLOADS_PENDING, "state" => "expired").set(expired as f64);
+}
+
+pub fn partial_expired_reclaimed() {
+    metrics::counter!(PARTIAL_UPLOAD_EXPIRED_UPLOADS).increment(1);
+}
+
+pub fn partial_cleanup_failed() {
+    metrics::counter!(PARTIAL_UPLOAD_CLEANUP_FAILED_UPLOADS).increment(1);
+}
+
+/// One cleanup run: `success`, `deferred` (the store lock stayed busy) or `error`.
+pub fn partial_cleanup_run(outcome: &'static str, elapsed: Duration) {
+    metrics::counter!(PARTIAL_UPLOAD_CLEANUP_RUNS, "outcome" => outcome).increment(1);
+    metrics::histogram!(PARTIAL_UPLOAD_CLEANUP_DURATION_SECONDS).record(elapsed.as_secs_f64());
+    if outcome == "success" {
+        metrics::gauge!(PARTIAL_UPLOAD_CLEANUP_LAST_SUCCESS).set(unix_now());
     }
 }
 
@@ -123,10 +226,7 @@ pub fn gc_run(outcome: &'static str, elapsed: Duration, removed: usize, removed_
     if outcome == "success" {
         metrics::counter!(GARBAGE_COLLECTION_REMOVED_KEYS).increment(removed as u64);
         metrics::counter!(GARBAGE_COLLECTION_REMOVED_BYTES).increment(removed_bytes);
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0.0, |d| d.as_secs_f64());
-        metrics::gauge!(GARBAGE_COLLECTION_LAST_SUCCESS).set(now);
+        metrics::gauge!(GARBAGE_COLLECTION_LAST_SUCCESS).set(unix_now());
     }
     if outcome == "deferred" {
         metrics::counter!(CONTENT_LOCK_WRITER_TIMEOUTS).increment(1);

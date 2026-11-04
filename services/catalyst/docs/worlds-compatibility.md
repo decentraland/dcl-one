@@ -98,8 +98,25 @@ difference not listed here is a gap, not a decision.
 - **Retired scenes.** Replaced and undeployed scenes are kept for
   `SCENE_EVICTION_TTL_MS` and removed by an hourly sweep. Scenes a mirror
   pass retires are deleted at once.
-- **`/gc`** reports `removedBytes` and has no `expiredUploads`. Every
-  `/admin/*` route answers 401 for a missing or wrong token.
+- **`/gc`** reports `removedBytes`. A dry run reclaims no expired partial
+  upload and reports `expiredUploads: null`. Every `/admin/*` route answers
+  401 for a missing or wrong token.
+- **Partial uploads** follow the upstream contract and limits, with these
+  differences:
+  - Files are keyed by the hash of their bytes. A batch carrying the same
+    file twice answers 400 `Duplicate form field '<hash>'`; upstream
+    refuses a repeated form field name.
+  - A stored file is free of staging charges when any domain of the shared
+    blob store names it, not only world scenes and thumbnails.
+  - The collector keeps every file a pending upload names, expired uploads
+    included, until the cleanup removes the upload. The cleanup leaves a
+    file written after the upload expired to the collector.
+  - Batches of one entity are serialized by a database advisory lock held
+    on a pool connection. There is no `CONTENT_LOCK_CONNECTIONS`.
+  - The cleanup runs as a fleet-wide leased job. Its `Retry-After` estimate
+    uses the last run this process finished.
+  - Partial batches record only the `total` processing stage, labelled
+    `mode="partial"`.
 - **`GET /worlds` search** adds trigram similarity only when the `pg_trgm`
   extension is installed. `%` and `_` in the query match literally.
 

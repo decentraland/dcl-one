@@ -1169,6 +1169,16 @@
               }
             }
           },
+          "202": {
+            "description": "A partial batch was stored; the listed files are still missing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PartialDeployPending"
+                }
+              }
+            }
+          },
           "400": {
             "description": "",
             "content": {
@@ -1229,6 +1239,16 @@
               }
             }
           },
+          "429": {
+            "description": "A partial upload staging budget is full; retry after Retry-After seconds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployRejection"
+                }
+              }
+            }
+          },
           "500": {
             "description": "",
             "content": {
@@ -1249,7 +1269,19 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "partial",
+            "in": "query",
+            "description": "Declares a partial (multi-request) batch; requires the `partial=true` form field",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "description": "A world publish. With the multipart field `partial=true` the scene's files may arrive over several batches keyed by the signed entity id: a batch answers 202 with the content hashes still missing, and the batch that completes the content publishes (200). A batch of an already published entity answers 200 with its publication; 429 with Retry-After means a staging budget is full for now."
       }
     },
     "/entities/active": {
@@ -4209,6 +4241,35 @@
           }
         }
       },
+      "ExpiredUploadsCleanup": {
+        "type": "object",
+        "description": "One expired-upload cleanup run, as `/gc` reports it under `expiredUploads`.",
+        "required": [
+          "outcome",
+          "removed",
+          "failed"
+        ],
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "success",
+              "deferred",
+              "error"
+            ]
+          },
+          "removed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
       "FederationMirrorResponse": {
         "type": "object",
         "required": [
@@ -4594,6 +4655,17 @@
             "type": "integer",
             "format": "int64",
             "minimum": 0
+          },
+          "expiredUploads": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExpiredUploadsCleanup"
+              }
+            ],
+            "description": "The expired partial upload cleanup the run did; null for a dry run"
           }
         }
       },
@@ -4716,6 +4788,22 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "PartialDeployPending": {
+        "type": "object",
+        "description": "`202` of a batch that left files outstanding.",
+        "required": [
+          "missing"
+        ],
+        "properties": {
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The content hashes still to send, in the manifest's order."
           }
         }
       },

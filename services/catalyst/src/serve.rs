@@ -1595,11 +1595,28 @@ async fn worlds_states(
                         .max_in_flight_upload_bytes_per_source,
                 },
             )
-            .map(|s| {
+            .and_then(|s| {
                 s.with_global_scenes_urn(config.worlds_content.global_scenes_urn.as_deref())
                     .with_scene_eviction_ttl_ms(config.worlds.scene_eviction_ttl_ms)
                     .with_public_url(&worlds::Settings::from_config(config).public_url)
                     .with_max_file_count(config.worlds.max_file_count)
+                    .with_partial_uploads(worlds::core::PartialUploadLimits {
+                        pending_deployment_ttl_ms: config.worlds.pending_deployment_ttl,
+                        cleanup_interval_ms: config.worlds.partial_upload_cleanup_interval_ms,
+                        max_pending_per_deployer: config
+                            .worlds
+                            .max_pending_deployments_per_deployer,
+                        max_pending_per_world: config.worlds.max_pending_deployments_per_world,
+                        pending_bytes_per_world_factor: config
+                            .worlds
+                            .pending_bytes_per_world_factor,
+                        max_pending_bytes_per_deployer: config
+                            .worlds
+                            .max_pending_bytes_per_deployer,
+                        max_pending_bytes: config.worlds.max_pending_bytes,
+                        max_bytes_per_minute: config.worlds.max_partial_upload_bytes_per_minute,
+                        completed_upload_ttl_ms: config.worlds.completed_upload_ttl,
+                    })
             })
             .context(
                 "MAX_IN_FLIGHT_UPLOAD_* / MAX_CONCURRENT_UPLOADS / *_TIMEOUT_MS configuration",

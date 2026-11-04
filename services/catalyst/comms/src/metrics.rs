@@ -11,7 +11,7 @@ const SOCIAL_SOCKET_DURATION_BUCKETS: [f64; 11] = [
 
 /// The worlds histograms' buckets, as worlds-content-server's `src/metrics.ts` and the
 /// default HTTP metrics (prom-client's defaults) declare them.
-const WORLDS_BUCKETS: [(&str, &[f64]); 5] = [
+const WORLDS_BUCKETS: [(&str, &[f64]); 8] = [
     (
         "http_request_duration_seconds",
         &[
@@ -43,6 +43,20 @@ const WORLDS_BUCKETS: [(&str, &[f64]); 5] = [
     (
         "garbage_collection_duration_seconds",
         &[1.0, 5.0, 15.0, 60.0, 300.0, 900.0, 1800.0, 3600.0, 7200.0],
+    ),
+    (
+        "partial_upload_duration_seconds",
+        &[
+            5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 900.0, 1800.0, 2700.0, 3600.0,
+        ],
+    ),
+    (
+        "partial_upload_batches_per_upload",
+        &[1.0, 2.0, 3.0, 5.0, 10.0, 20.0, 50.0, 100.0, 250.0],
+    ),
+    (
+        "partial_upload_cleanup_duration_seconds",
+        &[0.1, 0.5, 1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0],
     ),
 ];
 
