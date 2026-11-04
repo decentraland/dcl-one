@@ -478,7 +478,7 @@ async fn item_calls_go_out_in_one_batch_per_block() {
 }
 
 #[tokio::test]
-async fn items_past_the_cap_are_not_owned_and_not_asked() {
+async fn items_past_the_cap_refuse_the_check_without_asking() {
     let v2 = "0x0002000000000000000000000000000000000001";
     let chain = fake_chain::serve(|q, _| match q {
         Query::OwnerOf { .. } => Reply::Owner(addr(OWNER)),
@@ -486,20 +486,20 @@ async fn items_past_the_cap_are_not_owned_and_not_asked() {
     })
     .await;
     let a = access(None, Some(&chain.url));
-    let mut urns: Vec<String> = (0..MAX_ITEMS_ASKED + 3)
+    let mut urns: Vec<String> = (0..MAX_ITEMS_ASKED)
         .map(|t| format!("urn:decentraland:matic:collections-v2:{v2}:0:{t}"))
         .collect();
-    // A repeated URN is asked once.
+    // A repeated URN counts once.
     urns.insert(1, urns[0].clone());
     let owned = a.items(OWNER, &urns, TS).await.unwrap();
-    assert_eq!(owned.iter().filter(|o| **o).count(), MAX_ITEMS_ASKED + 1);
-    assert_eq!(owned[MAX_ITEMS_ASKED + 1..], [false, false, false]);
-    let asked = chain
-        .calls()
-        .iter()
-        .filter(|c| c.starts_with("eth_call"))
-        .count();
-    assert_eq!(asked, MAX_ITEMS_ASKED);
+    assert_eq!(owned, vec![true; MAX_ITEMS_ASKED + 1]);
+    chain.clear();
+    urns.push(format!(
+        "urn:decentraland:matic:collections-v2:{v2}:0:{MAX_ITEMS_ASKED}"
+    ));
+    let err = a.items(OWNER, &urns, TS).await.unwrap_err();
+    assert!(matches!(err, ValidatorError::TooManyItems(_)), "{err}");
+    assert_eq!(chain.requests(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -572,7 +572,7 @@ async fn the_standards_are_probed_in_one_batch_each() {
 }
 
 #[tokio::test]
-async fn items_of_contracts_past_the_cap_are_not_owned_and_not_probed() {
+async fn items_of_contracts_past_the_cap_refuse_the_check_without_probing() {
     let chain = fake_chain::serve(|q, _| match q {
         Query::BalanceOf { .. } => Reply::Revert,
         Query::OwnerOf { .. } => Reply::Owner(addr(OWNER)),
@@ -580,26 +580,45 @@ async fn items_of_contracts_past_the_cap_are_not_owned_and_not_probed() {
     })
     .await;
     let a = access(None, Some(&chain.url));
-    let urns: Vec<String> = (1..=MAX_NFT_CONTRACTS_ASKED + 2)
-        .flat_map(|c| {
-            (1..=2).map(move |t| {
-                format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:matic:0x{c:040x}:{t}")
-            })
-        })
-        .collect();
-    let owned = a.items(OWNER, &urns, TS).await.unwrap();
+    let tp = |c: usize| {
+        format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:matic:0x{c:040x}:1")
+    };
+    let mut urns: Vec<String> = (1..=MAX_NFT_CONTRACTS_ASKED).map(tp).collect();
     assert_eq!(
-        owned[..2 * MAX_NFT_CONTRACTS_ASKED],
-        vec![true; 2 * MAX_NFT_CONTRACTS_ASKED]
+        a.items(OWNER, &urns, TS).await.unwrap(),
+        vec![true; MAX_NFT_CONTRACTS_ASKED]
     );
-    assert_eq!(owned[2 * MAX_NFT_CONTRACTS_ASKED..], [false; 4]);
-    let at = format!("eth_call@{}", at_deployment(TS));
-    let probed = chain
-        .calls()
-        .iter()
-        .filter(|c| c.starts_with("eth_call") && **c != at)
-        .count();
-    assert_eq!(probed, 2 * MAX_NFT_CONTRACTS_ASKED);
+    chain.clear();
+    urns.push(tp(MAX_NFT_CONTRACTS_ASKED + 1));
+    let err = a.items(OWNER, &urns, TS).await.unwrap_err();
+    assert!(matches!(err, ValidatorError::TooManyItems(_)), "{err}");
+    assert_eq!(chain.requests(), 0);
+}
+
+#[tokio::test]
+async fn a_contract_without_code_is_not_remembered_as_of_no_standard() {
+    let not_yet = "0x0000000000000000000000000000000000000bad";
+    let probes = Arc::new(AtomicUsize::new(0));
+    let seen = probes.clone();
+    let chain = fake_chain::serve(move |q, _| {
+        seen.fetch_add(1, Ordering::SeqCst);
+        match q {
+            Query::OwnerOf { .. } | Query::BalanceOf { .. } => Reply::Empty,
+            other => panic!("{other:?}"),
+        }
+    })
+    .await;
+    chain.set_no_code(true);
+    let a = access(None, Some(&chain.url));
+    let urns = vec![format!(
+        "urn:decentraland:matic:collections-thirdparty:tp:c:i:matic:{not_yet}:1"
+    )];
+    assert_eq!(a.items(OWNER, &urns, TS).await.unwrap(), vec![false]);
+    assert_eq!(probes.load(Ordering::SeqCst), 2);
+    assert!(chain.calls().iter().any(|c| c == "eth_getCode"));
+    // Probed again on the next check: nothing was kept.
+    assert_eq!(a.items(OWNER, &urns, TS).await.unwrap(), vec![false]);
+    assert_eq!(probes.load(Ordering::SeqCst), 4);
 }
 
 #[tokio::test]

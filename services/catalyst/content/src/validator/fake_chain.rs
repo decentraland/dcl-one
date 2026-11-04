@@ -98,6 +98,8 @@ struct Switches {
     no_batch: Arc<AtomicBool>,
     chain_id: Arc<AtomicU64>,
     requests: Arc<AtomicUsize>,
+    /// `eth_getCode` answers empty while set.
+    no_code: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
@@ -123,6 +125,11 @@ impl FakeChain {
     /// endpoint without batches does.
     pub fn set_no_batch(&self, no_batch: bool) {
         self.switches.no_batch.store(no_batch, Ordering::SeqCst);
+    }
+
+    /// Every address holds no code while set (`eth_getCode` answers `0x`).
+    pub fn set_no_code(&self, no_code: bool) {
+        self.switches.no_code.store(no_code, Ordering::SeqCst);
     }
 
     /// The `eth_chainId` this chain answers (1 by default).
@@ -299,6 +306,14 @@ fn answer_one(fake: &Fake, body: &Value) -> Value {
                 block_param(&params[1]).unwrap_or_default()
             ));
             eth_call(fake, params).map(|out| json!(Bytes::from(out)))
+        }
+        "eth_getCode" => {
+            fake.log.lock().unwrap().push(method.clone());
+            Ok(json!(if fake.switches.no_code.load(Ordering::SeqCst) {
+                "0x"
+            } else {
+                "0x6001"
+            }))
         }
         "eth_chainId" => Ok(json!(format!(
             "0x{:x}",

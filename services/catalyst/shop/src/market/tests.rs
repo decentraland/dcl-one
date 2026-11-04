@@ -1882,3 +1882,27 @@ mod data_plane_shared_types {
         );
     }
 }
+
+#[tokio::test]
+async fn the_venues_read_eth_rpc_url_on_mainnet_only() {
+    let settings = |network: &str, trade: Option<&str>| {
+        let mut s = Settings::for_tests();
+        s.eth_network = network.to_string();
+        s.eth_rpc_url = Some("https://eth.example/".into());
+        s.market.trade_rpc_urls = super::listings::RpcEndpoints::from_env(trade);
+        support::state_without_db_settings(s)
+    };
+    let mainnet = settings("mainnet", None);
+    assert_eq!(
+        mainnet.venue_rpc_url(1).as_deref(),
+        Some("https://eth.example/")
+    );
+    assert_eq!(mainnet.venue_rpc_url(137), None);
+    let sepolia = settings("sepolia", None);
+    assert_eq!(sepolia.venue_rpc_url(1), None);
+    let sepolia = settings("sepolia", Some("1=https://mainnet.example/"));
+    assert_eq!(
+        sepolia.venue_rpc_url(1).as_deref(),
+        Some("https://mainnet.example/")
+    );
+}

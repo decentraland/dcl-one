@@ -1,5 +1,7 @@
 use clap::Args;
 
+use crate::posture::Posture::Mirror;
+
 pub use crate::{
     content::{AboutCommsConfig, ContentConfig, ValidatorConfig},
     create::CreateConfig,
@@ -22,6 +24,20 @@ pub const DEFAULT_MANA_PRICE_MAX_STALENESS_SECS: i64 = 900;
 /// The legacy `secondary`/`auto` values fulfilled a credits debit from resale
 /// listings; they run as `primary` and say so at startup.
 pub const DEFAULT_CHECKOUT_FULFILLMENT_MODE: &str = "primary";
+
+/// The L1 and L2 RPCs a node reads unless the operator names others
+/// (`L1_HTTP_PROVIDER_URL` and `L2_HTTP_PROVIDER_URL` in the reference): mainnet
+/// with polygon on mainnet, sepolia with amoy on any other `ETH_NETWORK`.
+pub fn default_rpc_urls(eth_network: &str) -> (String, String) {
+    let (l1, l2) = if eth_network.trim() == "mainnet" {
+        ("mainnet", "polygon")
+    } else {
+        ("sepolia", "amoy")
+    };
+    let url =
+        |chain: &str| format!("https://rpc.decentraland.org/{chain}?project=catalyst-content");
+    (url(l1), url(l2))
+}
 
 /// See [`Config::map_urls`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,8 +119,34 @@ impl Config {
             Self::refuse_plain_signing_key(name, slot.as_deref(), from_file)?;
             Self::read_secret_file(name, slot)?;
         }
+        self.default_rpc_urls();
         self.derive_trade_rpc_urls();
         crate::posture::refuse_remote_secrets(self)
+    }
+
+    /// `ETH_RPC_URL` and `RPC_ENDPOINT_POLYGON` left unset or empty read
+    /// Decentraland's public RPCs for `ETH_NETWORK`, as the reference catalyst
+    /// does ([`default_rpc_urls`]). Under island and journey, which dial no
+    /// outside host, they stay unset. Runs once the secret files are read, so
+    /// `RPC_ENDPOINT_POLYGON_FILE` still wins.
+    pub fn default_rpc_urls(&mut self) {
+        let posture = self
+            .node
+            .node_posture
+            .as_deref()
+            .filter(|p| !p.trim().is_empty());
+        if posture.is_some_and(|p| crate::posture::Posture::parse(p).ok() != Some(Mirror)) {
+            return;
+        }
+        let (l1, l2) = default_rpc_urls(&self.node.eth_network);
+        for (slot, url) in [
+            (&mut self.content.eth_rpc_url, l1),
+            (&mut self.economy.rpc_endpoint_polygon, l2),
+        ] {
+            if Self::non_empty(slot).is_none() {
+                *slot = Some(url);
+            }
+        }
     }
 
     /// A mirror's `TRADE_RPC_URLS` is this node's own two endpoints,

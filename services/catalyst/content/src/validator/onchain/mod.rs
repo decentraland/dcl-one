@@ -63,24 +63,24 @@ pub fn checker_bytecode() -> &'static str {
     CHECKER_BYTECODE.trim()
 }
 
-/// Distinct item URNs asked about per check; the rest are not owned. An
+/// Distinct item URNs asked about per check; more refuses the check. An
 /// avatar wears at most 18 wearable categories and 10 emotes, an outfits
 /// entity about ten avatars of those; `@dcl/schemas` caps neither list.
 pub(crate) const MAX_ITEMS_ASKED: usize = 200;
-/// Distinct third-party NFT contracts asked about per check; items of the
-/// rest are not owned.
-pub(crate) const MAX_NFT_CONTRACTS_ASKED: usize = 32;
+/// Distinct third-party NFT contracts asked about per check; more refuses
+/// the check. Their standard probes are batched, so this matches the item cap.
+pub(crate) const MAX_NFT_CONTRACTS_ASKED: usize = MAX_ITEMS_ASKED;
 
-/// How many items one ownership check asks about, and what the rest are.
+/// How many items one ownership check asks about, and what more is.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ItemCaps {
     pub items: usize,
     pub nft_contracts: usize,
-    /// Past a cap the check is undecided instead of the rest not owned.
+    /// Past a cap the check is undecided instead of [`ValidatorError::TooManyItems`].
     pub undecided_past_cap: bool,
 }
 
-/// A local deploy: the rest are not owned.
+/// A local deploy: more is [`ValidatorError::TooManyItems`].
 pub(crate) const LOCAL_ITEM_CAPS: ItemCaps = ItemCaps {
     items: MAX_ITEMS_ASKED,
     nft_contracts: MAX_NFT_CONTRACTS_ASKED,
@@ -91,7 +91,7 @@ pub(crate) const LOCAL_ITEM_CAPS: ItemCaps = ItemCaps {
 /// past them undecided, never refused.
 pub(crate) const SYNCED_ITEM_CAPS: ItemCaps = ItemCaps {
     items: 1000,
-    nft_contracts: 128,
+    nft_contracts: 1000,
     undecided_past_cap: true,
 };
 /// `eth_call`s per JSON-RPC batch request.
@@ -369,6 +369,41 @@ impl Chain {
             out.extend(answers);
         }
         Ok(out)
+    }
+
+    /// Whether each address holds code at the head, in JSON-RPC batches; an
+    /// address the endpoint does not answer for counts as holding none.
+    async fn has_code(&self, addresses: &[Address]) -> Vec<bool> {
+        let mut out = Vec::with_capacity(addresses.len());
+        for chunk in addresses.chunks(CALLS_PER_BATCH) {
+            let requests: Vec<Value> = chunk
+                .iter()
+                .enumerate()
+                .map(|(i, a)| {
+                    request(
+                        i as u64,
+                        "eth_getCode",
+                        json!([a.to_string(), BlockTag::Latest.param()]),
+                    )
+                })
+                .collect();
+            let mut code = vec![false; chunk.len()];
+            for envelope in self.rpc().batch(&requests).await.unwrap_or_default() {
+                let Some(slot) = envelope
+                    .get("id")
+                    .and_then(Value::as_u64)
+                    .and_then(|id| usize::try_from(id).ok())
+                    .filter(|id| *id < chunk.len())
+                else {
+                    continue;
+                };
+                code[slot] = result_of(envelope)
+                    .and_then(hex_of)
+                    .is_ok_and(|hex| !hex.trim_start_matches("0x").is_empty());
+            }
+            out.extend(code);
+        }
+        out
     }
 
     /// The Checker's `multicall` over `calls` at `block`; all false when it reverts.
@@ -770,10 +805,10 @@ impl OnChainAccess {
     /// (`ownerOf`), a third-party item's linked NFT (`ownerOf` or
     /// `balanceOf`), the items of each chain all at one block. Assets without
     /// a token and URNs that are not collection items are not asked about and
-    /// count as owned; a collection URN naming no askable item, every
-    /// distinct item past [`MAX_ITEMS_ASKED`] and every third-party item of a
-    /// contract past [`MAX_NFT_CONTRACTS_ASKED`] is never owned
-    /// ([`LOCAL_ITEM_CAPS`]).
+    /// count as owned; a collection URN naming no askable item is never owned.
+    /// More than [`MAX_ITEMS_ASKED`] distinct items or
+    /// [`MAX_NFT_CONTRACTS_ASKED`] third-party contracts is
+    /// [`ValidatorError::TooManyItems`] ([`LOCAL_ITEM_CAPS`]).
     pub async fn items(
         &self,
         address: &str,
@@ -800,32 +835,30 @@ impl OnChainAccess {
         let mut asked: Vec<&items::ItemRef> = Vec::new();
         let mut seen = HashSet::new();
         let mut contracts = HashSet::new();
-        let mut past_cap = false;
         for r in &refs {
             if r.on_l1().is_none() || seen.contains(r) {
                 continue;
             }
-            if asked.len() >= caps.items {
-                past_cap = true;
-                continue;
-            }
-            if let items::ItemRef::ThirdParty { l1, contract, .. } = r
-                && !contracts.contains(&(*l1, *contract))
-            {
-                if contracts.len() >= caps.nft_contracts {
-                    past_cap = true;
-                    continue;
-                }
+            if let items::ItemRef::ThirdParty { l1, contract, .. } = r {
                 contracts.insert((*l1, *contract));
             }
             seen.insert(r);
             asked.push(r);
         }
-        if past_cap && caps.undecided_past_cap {
-            return Err(ValidatorError::BlockchainQuery(format!(
-                "more than {} items or {} NFT contracts to ask about",
-                caps.items, caps.nft_contracts
-            )));
+        if asked.len() > caps.items || contracts.len() > caps.nft_contracts {
+            let message = format!(
+                "{} distinct items from {} NFT contracts, at most {} items and {} contracts \
+                 are checked",
+                asked.len(),
+                contracts.len(),
+                caps.items,
+                caps.nft_contracts
+            );
+            return Err(if caps.undecided_past_cap {
+                ValidatorError::BlockchainQuery(message)
+            } else {
+                ValidatorError::TooManyItems(message)
+            });
         }
         let Ok(owner) = address.parse::<Address>() else {
             return Ok(owned);
@@ -1019,13 +1052,23 @@ impl OnChainAccess {
             }
         }
         let answers = chain.call_each(&erc721, BlockTag::Latest).await?;
+        let mut unknown = Vec::new();
         for ((c, _), answer) in erc721.iter().zip(answers) {
-            let kind = match answer {
-                None => NftKind::Erc721,
-                Some(out) if out.len() >= 32 => NftKind::Erc721,
-                Some(_) => NftKind::Unknown,
-            };
-            found.push((*c, kind));
+            match answer {
+                None => found.push((*c, NftKind::Erc721)),
+                Some(out) if out.len() >= 32 => found.push((*c, NftKind::Erc721)),
+                Some(_) => unknown.push(*c),
+            }
+        }
+        // An address without code may be a contract a lagging node has not
+        // seen yet: it stays unknown for this check only.
+        let deployed = chain.has_code(&unknown).await;
+        for (c, has_code) in unknown.into_iter().zip(deployed) {
+            if has_code {
+                found.push((c, NftKind::Unknown));
+            } else {
+                kinds.insert(c, NftKind::Unknown);
+            }
         }
         let now = Instant::now();
         let mut memo = self.nft_kinds.lock();

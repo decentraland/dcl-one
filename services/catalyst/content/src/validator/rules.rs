@@ -25,8 +25,9 @@ use super::spring_bones::validate_spring_bones_metadata;
 use super::types::*;
 use crate::auth::{AuthChain, AuthError};
 
-/// The longest an entity's access checks take together before the deploy
-/// is undecided, well under the usual client and proxy timeouts.
+/// The longest an entity's validation, from the signature step to the end of
+/// its access checks, takes before the deploy is undecided, well under the
+/// usual client and proxy timeouts.
 const ACCESS_DEADLINE: Duration = Duration::from_secs(30);
 
 /// What the rules read from this node: its blob store and the auth-chain
@@ -73,7 +74,18 @@ pub struct ContentValidator<'a, E: ExternalCalls, B: BlockchainChecker> {
 }
 
 impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
+    /// From the top of [`Self::validate`] to the end of the access checks: a synced entity's
+    /// whole validation budget, so it has one deadline.
+    fn access_budget(&self) -> Duration {
+        if self.synced {
+            super::synced::SYNCED_DEADLINE
+        } else {
+            ACCESS_DEADLINE
+        }
+    }
+
     pub async fn validate(&self, deployment: &Deployment<'_>) -> ValidationResponse {
+        let deadline = tokio::time::Instant::now() + self.access_budget();
         let result = self.validate_entity_structure(deployment);
         if !result.is_ok() {
             debug!("Validation failed at entity structure");
@@ -164,7 +176,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             return result;
         }
 
-        let result = self.validate_access(deployment).await;
+        let result = self.validate_access(deployment, deadline).await;
         if !result.is_ok() {
             debug!("Validation failed at access check");
             return result;
@@ -847,7 +859,11 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         ValidationResponse::Ok
     }
 
-    async fn validate_access(&self, deployment: &Deployment<'_>) -> ValidationResponse {
+    async fn validate_access(
+        &self,
+        deployment: &Deployment<'_>,
+        deadline: tokio::time::Instant,
+    ) -> ValidationResponse {
         if self.access_passed {
             return ValidationResponse::Ok;
         }
@@ -925,12 +941,12 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
                 }
             }
         };
-        tokio::time::timeout(ACCESS_DEADLINE, checks)
+        tokio::time::timeout_at(deadline, checks)
             .await
             .unwrap_or_else(|_| {
                 ValidationResponse::unavailable(format!(
                     "Error checking access: the checks did not finish within {} s",
-                    ACCESS_DEADLINE.as_secs()
+                    self.access_budget().as_secs()
                 ))
             })
     }
@@ -1089,19 +1105,20 @@ mod tests {
 
         const OWNER: &str = "0xaaaa000000000000000000000000000000000001";
 
-        struct NoCalls;
+        /// Answers the signature step after its delay; holds no content.
+        struct Calls(Duration);
 
         #[async_trait]
-        impl ExternalCalls for NoCalls {
+        impl ExternalCalls for Calls {
             async fn is_content_stored_already(
                 &self,
-                _hashes: &[String],
+                hashes: &[String],
             ) -> Result<HashMap<String, bool>, String> {
-                unreachable!()
+                Ok(hashes.iter().map(|h| (h.clone(), false)).collect())
             }
 
             async fn fetch_content_file_size(&self, _hash: &str) -> Result<Option<usize>, String> {
-                unreachable!()
+                Ok(None)
             }
 
             async fn validate_signature(
@@ -1110,12 +1127,14 @@ mod tests {
                 _auth_chain: &AuthChain,
                 _timestamp: Timestamp,
             ) -> Result<(), AuthError> {
-                unreachable!()
+                tokio::time::sleep(self.0).await;
+                Ok(())
             }
         }
 
-        /// Grants every name and item after `0`.
-        struct SlowChecker(Duration);
+        /// Grants every name and item after `0`; with `1` set, the items are
+        /// too many to check.
+        struct SlowChecker(Duration, bool);
 
         #[async_trait]
         impl BlockchainChecker for SlowChecker {
@@ -1145,6 +1164,9 @@ mod tests {
                 _timestamp: Timestamp,
             ) -> Result<PermissionResult, ValidatorError> {
                 tokio::time::sleep(self.0).await;
+                if self.1 {
+                    return Err(ValidatorError::TooManyItems("201 distinct items".into()));
+                }
                 Ok(PermissionResult::ok())
             }
 
@@ -1175,17 +1197,18 @@ mod tests {
             }
         }
 
-        async fn access_with(delay: Duration) -> ValidationResponse {
+        fn profile() -> OwnedDeployment {
             let mut d = OwnedDeployment::new(Entity {
                 id: "bafkreiprofile".into(),
                 entity_type: EntityType::Profile,
                 pointers: vec![OWNER.to_string()],
-                timestamp: 1_700_000_000_000,
+                // No face thumbnail is required in this window.
+                timestamp: adr_timestamps::ADR_290_OPTIONAL + 1000,
                 content: vec![],
                 version: "v3".into(),
                 metadata: Some(serde_json::json!({ "avatars": [{
                     "name": "alice", "hasClaimedName": true,
-                    "avatar": { "wearables": [
+                    "avatar": { "emotes": [], "wearables": [
                         "urn:decentraland:matic:collections-v2:0x0002000000000000000000000000000000000001:0:1"
                     ] }
                 }]})),
@@ -1195,15 +1218,25 @@ mod tests {
                 payload: OWNER.into(),
                 signature: None,
             }];
+            d
+        }
+
+        async fn access_with(delay: Duration) -> ValidationResponse {
+            let d = profile();
             ContentValidator {
-                external_calls: &NoCalls,
-                blockchain_checker: &SlowChecker(delay),
+                external_calls: &Calls(Duration::ZERO),
+                blockchain_checker: &SlowChecker(delay, false),
                 ignore_blockchain_access: false,
                 synced: false,
                 access_passed: false,
             }
-            .validate_access(&d.view())
+            .validate_access(&d.view(), tokio::time::Instant::now() + ACCESS_DEADLINE)
             .await
+        }
+
+        fn timed_out(response: &ValidationResponse) -> bool {
+            matches!(response, ValidationResponse::Unavailable { errors }
+                if errors == &["Error checking access: the checks did not finish within 30 s"])
         }
 
         #[tokio::test(start_paused = true)]
@@ -1211,10 +1244,48 @@ mod tests {
             assert!(access_with(Duration::from_secs(10)).await.is_ok());
             // Names and items each within the deadline, together past it.
             let late = access_with(ACCESS_DEADLINE * 2 / 3).await;
+            assert!(timed_out(&late), "{late:?}");
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn the_deadline_starts_before_the_signature_step() {
+            let d = profile();
+            let validate = |signature: Duration| {
+                let d = &d;
+                async move {
+                    ContentValidator {
+                        external_calls: &Calls(signature),
+                        blockchain_checker: &SlowChecker(ACCESS_DEADLINE / 4, false),
+                        ignore_blockchain_access: false,
+                        synced: false,
+                        access_passed: false,
+                    }
+                    .validate(&d.view())
+                    .await
+                }
+            };
+            let quick = validate(Duration::from_secs(1)).await;
+            assert!(quick.is_ok(), "{quick:?}");
+            let late = validate(ACCESS_DEADLINE * 2 / 3).await;
+            assert!(timed_out(&late), "{late:?}");
+        }
+
+        #[tokio::test]
+        async fn too_many_items_refuse_the_deploy() {
+            let d = profile();
+            let response = ContentValidator {
+                external_calls: &Calls(Duration::ZERO),
+                blockchain_checker: &SlowChecker(Duration::ZERO, true),
+                ignore_blockchain_access: false,
+                synced: false,
+                access_passed: false,
+            }
+            .validate_access(&d.view(), tokio::time::Instant::now() + ACCESS_DEADLINE)
+            .await;
             assert!(
-                matches!(&late, ValidationResponse::Unavailable { errors }
-                    if errors == &["Error checking access: the checks did not finish within 30 s"]),
-                "{late:?}"
+                matches!(&response, ValidationResponse::Failed { errors }
+                    if errors == &["Error checking item ownership: too many items to check: 201 distinct items"]),
+                "{response:?}"
             );
         }
     }

@@ -20,23 +20,41 @@ The content validator asks the chain the way the reference does, over `ETH_RPC_U
 (mainnet with polygon, sepolia with amoy). Blocks come from a binary search over the RPC that
 remembers the blocks it read.
 
+- Every node has both RPCs, as the reference does with `L1_HTTP_PROVIDER_URL` and
+  `L2_HTTP_PROVIDER_URL`: left unset or empty, they are
+  `https://rpc.decentraland.org/{mainnet,polygon}?project=catalyst-content` on mainnet and
+  `.../{sepolia,amoy}?project=catalyst-content` on any other network. The island and journey
+  postures dial no outside host, so they get no default.
+
 - LAND is granted per parcel at either block. Names, and the items of each chain, must all pass
   at one block.
-- A check the RPC cannot answer, or an entity whose checks together run past 30 s, is undecided:
-  the deploy gets 503 with `Retry-After`, never a grant. A call the chain reverts is a refusal.
-- Item ownership calls and the probes of third-party NFT standards go out as JSON-RPC batches,
-  with caps on the distinct items (200) and third-party contracts (32) asked per check; a
-  contract of no known standard is not probed again for five minutes.
+- A check the RPC cannot answer, or an entity whose validation runs past 30 s from its
+  signature step to the end of its access checks, is undecided: the deploy gets 503 with
+  `Retry-After`, never a grant. A call the chain reverts is a refusal. The deadline bounds the
+  validation, not the whole request (the upload and the store write come around it).
+- Item ownership calls and the probes of third-party NFT standards go out as JSON-RPC batches.
+  One check asks about at most 200 distinct items from at most 200 third-party contracts; an
+  entity naming more is refused as too many to check, never reported as not owned. A contract
+  that holds code but answers no known standard is not probed again for five minutes; an
+  address without code is probed again on the next check.
 - A node with `CONTENT_WRITES_ENABLED` refuses to start without both https RPCs and a known
   network, unless `IGNORE_BLOCKCHAIN_ACCESS_CHECKS` is set; an RPC answering another chain id is
-  refused. The journey posture sets `IGNORE_BLOCKCHAIN_ACCESS_CHECKS`, since it reads no chain.
+  refused. Outside island and journey the defaults satisfy this. The journey posture sets
+  `IGNORE_BLOCKCHAIN_ACCESS_CHECKS`, since it reads no chain; an island taking deploys needs it
+  too, or loopback https RPCs.
 - The escrow leases in `shop.usage_grants` still count as ownership of the leased item.
 
 ## Consequences
 
 - Local deploys depend on two external RPCs being up and able to answer for past blocks; an
-  outage or a pruned node turns deploys into 503s until it recovers. Operators should point
-  both variables at archive-capable endpoints.
+  outage or a pruned node turns deploys into 503s until it recovers. The defaults are
+  Decentraland's public RPCs; operators can point both variables at their own archive-capable
+  endpoints.
+- With the RPCs always present, the request-time readers that answered empty or skipped a check
+  without them now ask the chain: contract-wallet (EIP-1654) signatures, `/lambdas/contracts/*`,
+  third-party ownership, the relay's collection-code and meta-transaction signature checks. The
+  chain indexes keep their own `*_ENABLED` switches; only the light `executions-track` poller
+  starts on the L1 RPC alone, and only on mainnet.
 - Each deploy costs a few RPC calls: two block searches per chain when the timestamp is new,
   then one Checker multicall or one item batch per block, plus two probe batches the first time
   a third-party contract is seen.

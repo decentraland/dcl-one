@@ -30,7 +30,9 @@ pub struct ContentConfig {
     /// https L1 JSON-RPC endpoint: the EIP-1654 (contract wallet) signature
     /// check and the L1 deploy access checks (LAND, names, v1 items) of local
     /// deployments; the L2 checks use RPC_ENDPOINT_POLYGON. Plaintext http://
-    /// is refused at startup.
+    /// is refused at startup. Unset or empty:
+    /// https://rpc.decentraland.org/<mainnet|sepolia>?project=catalyst-content
+    /// by ETH_NETWORK, except under NODE_POSTURE island and journey.
     #[arg(long, env = "ETH_RPC_URL")]
     pub eth_rpc_url: Option<String>,
 
@@ -139,7 +141,8 @@ pub struct ContentConfig {
 }
 
 impl ContentConfig {
-    /// `ETH_RPC_URL` trimmed, `None` when unset or blank. A plaintext endpoint is refused:
+    /// `ETH_RPC_URL` trimmed, `None` when unset or blank (after
+    /// `Config::default_rpc_urls`, only under island and journey). A plaintext endpoint is refused:
     /// the contract's answer decides who may deploy, so it must come over TLS. The error names
     /// the host only; the URL commonly carries an API key.
     pub fn eth_rpc_url(&self) -> anyhow::Result<Option<String>> {

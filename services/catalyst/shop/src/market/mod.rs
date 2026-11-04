@@ -609,6 +609,26 @@ impl MarketplaceState {
         self.rpc_url_for(net, net.chain_id())
     }
 
+    /// The endpoint the settlement venues of `chain_id` (1 or 137) are read
+    /// over. Their addresses are mainnet's, so off mainnet `ETH_RPC_URL`,
+    /// which serves `ETH_NETWORK`, does not stand in for chain 1.
+    pub fn venue_rpc_url(&self, chain_id: u64) -> Option<String> {
+        let net = match chain_id {
+            1 => chain_walk::ChainNet::Ethereum,
+            137 => chain_walk::ChainNet::Matic,
+            _ => return None,
+        };
+        if self.settings.eth_network.trim() != "mainnet" {
+            return self
+                .settings
+                .market
+                .trade_rpc_urls
+                .for_chain(chain_id as i64)
+                .map(str::to_string);
+        }
+        self.chain_rpc_url(net)
+    }
+
     /// The endpoint the trade-events walk of `net` reads: the
     /// `TRADE_RPC_URLS` entry of the chain it indexes
     /// (`MARKETPLACE_INDEX_CHAIN_ID_*`), and for Ethereum `ETH_RPC_URL`.

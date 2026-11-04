@@ -79,6 +79,9 @@ enum Value {
     Is(&'static str),
     /// Left unset: the binary derives this node's own URL (the text says which).
     Own(&'static str),
+    /// Left unset: the binary's default for every posture that dials outside
+    /// hosts (the text says which).
+    Default(&'static str),
     /// Computed from the environment (and the keys expanded before it); the
     /// text is what `show` prints. `None` leaves the key unset.
     From(&'static str, fn(&Lookup) -> Option<String>),
@@ -132,10 +135,9 @@ const fn same(family: &'static str, key: &'static str, value: &'static str) -> R
     row(family, key, Is(value), Is(value), Is(value))
 }
 
-use Value::{From, Is, Own};
+use Value::{Default, From, Is, Own};
 
 const DCL_PEERS: &str = "https://peer.decentraland.org/content,https://peer-eu1.decentraland.org/content,https://peer.dclnodes.io/content";
-const DCL_RPC: &str = "https://rpc.decentraland.org";
 /// The Polygon CreditsManager the credits usage index reads (mainnet).
 const CREDITS_MANAGER_MAINNET: &str = "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5";
 const PROFILE_IMAGES_CACHE_BYTES: &str = "5368709120";
@@ -147,14 +149,6 @@ fn set(lookup: &Lookup, key: &str) -> Option<String> {
 /// The chain endpoints and contracts the mirror preset knows are mainnet's.
 fn mainnet(lookup: &Lookup) -> bool {
     lookup("ETH_NETWORK").is_none_or(|n| n.trim().is_empty() || n.trim() == "mainnet")
-}
-
-fn eth_rpc(lookup: &Lookup) -> Option<String> {
-    mainnet(lookup).then(|| format!("{DCL_RPC}/mainnet"))
-}
-
-fn polygon_rpc(lookup: &Lookup) -> Option<String> {
-    mainnet(lookup).then(|| format!("{DCL_RPC}/polygon"))
 }
 
 fn credits_manager(lookup: &Lookup) -> Option<String> {
@@ -307,25 +301,28 @@ const ROWS: &[Row] = &[
         "PRICE_FALLBACK_SOURCES",
         "coinbase=https://api.coinbase.com,binance=https://api.binance.com,kraken=https://api.kraken.com",
     ),
+    // The binary's default for every node outside island and journey
+    // (`Config::default_rpc_urls`).
     row(
         "upstreams",
         "ETH_RPC_URL",
-        From("https://rpc.decentraland.org/mainnet on mainnet", eth_rpc),
+        Default(
+            "https://rpc.decentraland.org/<mainnet|sepolia>?project=catalyst-content by ETH_NETWORK",
+        ),
         Is(""),
         Is(""),
     ),
     row(
         "upstreams",
         "RPC_ENDPOINT_POLYGON",
-        From(
-            "https://rpc.decentraland.org/polygon on mainnet",
-            polygon_rpc,
+        Default(
+            "https://rpc.decentraland.org/<polygon|amoy>?project=catalyst-content by ETH_NETWORK",
         ),
         Is(""),
         Is(""),
     ),
     // Derived once the secret files are read (RPC_ENDPOINT_POLYGON_FILE):
-    // `derive_after_secret_files`.
+    // `Config::derive_trade_rpc_urls`.
     row(
         "upstreams",
         "TRADE_RPC_URLS",
@@ -497,7 +494,7 @@ pub fn expand(posture: Posture, env: &Lookup) -> Expansion {
         };
         let value = match row.value(posture) {
             Is(v) => Some(v.to_string()),
-            Own(_) => None,
+            Own(_) | Default(_) => None,
             From(_, f) => f(&seen),
         };
         if let Some(value) = value {
@@ -508,7 +505,8 @@ pub fn expand(posture: Posture, env: &Lookup) -> Expansion {
 }
 
 /// Reads `NODE_POSTURE` and returns it with the variables it adds; `None`
-/// when unset (the binary's own defaults, every upstream and write off).
+/// when unset (the binary's own defaults: every write and every upstream but
+/// the chain RPCs off).
 pub fn resolve(env: &Lookup) -> anyhow::Result<Option<(Posture, Expansion)>> {
     let Some(raw) = env(ENV).filter(|v| !v.trim().is_empty()) else {
         return Ok(None);
@@ -549,6 +547,7 @@ pub fn show(posture: Posture) -> String {
         let _ = match row.value(posture) {
             Is(v) => writeln!(out, "{}={v}", row.key),
             Own(how) => writeln!(out, "# {} unset: this node's own {how}", row.key),
+            Default(how) => writeln!(out, "# {} unset: the binary's default, {how}", row.key),
             From(how, _) => writeln!(out, "{}=<{how}>", row.key),
         };
     }
@@ -584,7 +583,7 @@ pub fn startup_line(config: &Config) -> String {
         .map(Posture::parse)
     {
         None => format!(
-            "{ENV} is unset: no preset, so every upstream is off unless set explicitly \
+            "{ENV} is unset: no preset, so every upstream but the chain RPCs is off unless set explicitly \
              (`catalyst posture show mirror` lists them)"
         ),
         Some(Ok(posture)) => format!("{ENV}={}: {}", posture.name(), posture.summary()),

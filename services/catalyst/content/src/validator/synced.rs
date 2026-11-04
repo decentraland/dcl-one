@@ -272,8 +272,8 @@ fn not_fetched_hashes(entity: &Entity) -> HashSet<String> {
 const MAX_FUTURE_MS: i64 = 24 * 60 * 60 * 1000;
 
 /// The longest one synced entity's validation (signature and access) takes
-/// before it is undecided.
-const SYNCED_DEADLINE: Duration = Duration::from_secs(60);
+/// before it is undecided; the access step's deadline too.
+pub(crate) const SYNCED_DEADLINE: Duration = Duration::from_secs(60);
 
 /// Validates the entity file `entity_bytes` (already proven to hash to
 /// `entity_id`) under `auth_chain`. `Ok` carries the expirations kept on the
