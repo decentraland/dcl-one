@@ -35,7 +35,7 @@ impl Plugin for FootIkPlugin {
     }
 }
 
-#[derive(Resource)]
+#[derive(Resource, serde::Serialize, serde::Deserialize)]
 pub struct FootIkConfig {
     pub enabled: bool,
     /// Local-space Y of the foot bone when planted on flat ground.

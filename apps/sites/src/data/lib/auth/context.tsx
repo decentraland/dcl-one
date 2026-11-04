@@ -55,10 +55,11 @@ type UseAuth = {
     expirationMs?: number;
   }) => Promise<WalletConnectSession>;
   startEmailSignIn: (email: string) => Promise<void>;
+  /** Null when the code fails (the reason in `error`); with `rethrow`, the failure itself is thrown instead. */
   verifyEmailSignIn: (
     email: string,
     code: string,
-    opts?: { expirationMs?: number },
+    opts?: { expirationMs?: number; rethrow?: boolean },
   ) => Promise<AuthIdentity | null>;
   startSocialSignIn: (
     provider: ThirdwebSocialProvider,
@@ -166,7 +167,7 @@ export function useAuth(): UseAuth {
   );
 
   const verifyEmailSignIn = useCallback(
-    async (email: string, code: string, opts?: { expirationMs?: number }) => {
+    async (email: string, code: string, opts?: { expirationMs?: number; rethrow?: boolean }) => {
       setError(null);
       setConnecting(true);
       try {
@@ -177,6 +178,7 @@ export function useAuth(): UseAuth {
         return next;
       } catch (err) {
         setError((err as Error)?.message ?? "That code didn't work.");
+        if (opts?.rethrow) throw err;
         return null;
       } finally {
         setConnecting(false);
