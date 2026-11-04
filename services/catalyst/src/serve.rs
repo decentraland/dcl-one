@@ -1292,7 +1292,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let shutdown_jobs = jobs.clone();
     axum::serve(
         listener,
-        axum::ServiceExt::<axum::extract::Request>::into_make_service(app),
+        axum::ServiceExt::<axum::extract::Request>::into_make_service_with_connect_info::<
+            std::net::SocketAddr,
+        >(app),
     )
     .with_graceful_shutdown(async move {
         shutdown_signal().await;
@@ -1947,6 +1949,7 @@ fn social_states(
                 config.social.communities_mirror_interval_secs.max(1),
             ),
             referral: communities::referral::Settings {
+                trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
                 max_ip_matches: config.social.referral_max_ip_matches,
                 suspicious_window_ms: config.social.referral_suspicious_window_ms,
                 slack: communities::referral::SlackSettings {

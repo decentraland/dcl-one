@@ -1,11 +1,17 @@
 //! Referral-only Slack effects at social-service-ea b6b2cef. The installed
-//! source SDK's form fields/retries are retained over the existing Outbound.
-//! Its one lazy transport profile preserves the source SDK's unbounded timeout;
-//! the fixed Slack endpoint still passes through the outbound host guard.
+//! source SDK's payloads and failure classifications use the existing Outbound.
+//! Awaited effects have a finite budget, including admission and retries, so a
+//! Slack outage cannot hold referral HTTP requests or the SQS consumer forever.
 use crate::http::Outbound;
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::time::Instant;
+
+// Operational safety bounds, not a delivery SLO. Keep each effect well below
+// the legacy queue's 60-second visibility and do not detach persisted effects.
+const EFFECT_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(2);
+const MAX_ATTEMPTS: usize = 3;
 
 #[derive(Clone, Default)]
 pub struct Settings {
@@ -25,7 +31,6 @@ impl std::fmt::Debug for Settings {
 
 pub(super) struct Adapter {
     http: Outbound,
-    transport: std::sync::OnceLock<Result<Outbound, String>>,
     settings: Settings,
     endpoint: String,
     slots: tokio::sync::Semaphore,
@@ -35,7 +40,6 @@ impl Adapter {
     pub fn new(http: Outbound, settings: Settings) -> Self {
         Self {
             http,
-            transport: std::sync::OnceLock::new(),
             settings,
             endpoint: "https://slack.com/api/chat.postMessage".into(),
             slots: tokio::sync::Semaphore::new(100),
@@ -72,17 +76,18 @@ impl Adapter {
         let Some(token) = self.settings.token.as_deref() else {
             return Ok(());
         };
-        let http = self
-            .transport
-            .get_or_init(|| {
-                self.http
-                    .provider_profile(None, None)
-                    .map_err(|error| error.to_string())
-            })
-            .as_ref()
-            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        tokio::time::timeout(EFFECT_TIMEOUT, self.send_attempts(token, message, delays))
+            .await
+            .map_err(|_| anyhow::anyhow!("Slack effect exceeded its time budget"))?
+    }
+    async fn send_attempts(
+        &self,
+        token: &str,
+        message: Value,
+        delays: &[Duration],
+    ) -> anyhow::Result<()> {
         let body = form_body(&message);
-        for attempt in 0..=delays.len() {
+        for attempt in 0..MAX_ATTEMPTS {
             let permit = self.slots.acquire().await?;
             loop {
                 let remaining = self
@@ -96,7 +101,8 @@ impl Adapter {
                     break;
                 }
             }
-            let mut request = http
+            let mut request = self
+                .http
                 .post(&self.endpoint)
                 .max_redirects(0)
                 .header("content-type", "application/x-www-form-urlencoded")
@@ -141,7 +147,7 @@ impl Adapter {
                 Ok(response) => format!("Slack returned HTTP {}", response.status().as_u16()),
             };
             drop(permit);
-            let Some(delay) = delays.get(attempt) else {
+            let Some(delay) = delays.get(attempt).filter(|_| attempt + 1 < MAX_ATTEMPTS) else {
                 anyhow::bail!("{failure}")
             };
             tokio::time::sleep(*delay).await;
@@ -159,10 +165,10 @@ fn js_truthy(value: &Value) -> bool {
     }
 }
 fn retry_delays(mut random: impl FnMut() -> f64) -> Vec<Duration> {
-    let mut delays = (0..10)
+    let mut delays = (0..MAX_ATTEMPTS - 1)
         .map(|attempt| {
             Duration::from_millis(
-                ((random() + 1.0) * 1000.0 * 1.96821_f64.powi(attempt)).round() as u64,
+                ((random() + 1.0) * 1000.0 * 1.96821_f64.powi(attempt as i32)).round() as u64,
             )
         })
         .collect::<Vec<_>>();
@@ -170,7 +176,8 @@ fn retry_delays(mut random: impl FnMut() -> f64) -> Vec<Duration> {
     delays
 }
 fn retry_after(raw: Option<&str>) -> Option<Duration> {
-    // SDK parseInt without a radix, then Node's setTimeout normalization.
+    // Retain SDK parseInt syntax; cap positive waits instead of allowing its
+    // long sleeps or overflow-dependent timer behavior.
     let raw = raw?.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
     let (negative, raw) = match raw.as_bytes().first() {
         Some(b'-') => (true, &raw[1..]),
@@ -192,13 +199,11 @@ fn retry_after(raw: Option<&str>) -> Option<Duration> {
         return None;
     }
     let millis = if negative { -number } else { number } * 1000.0;
-    Some(Duration::from_millis(
-        if (1.0..=i32::MAX as f64).contains(&millis) {
-            millis as u64
-        } else {
-            1
-        },
-    ))
+    Some(if millis.is_sign_positive() && millis > 0.0 {
+        Duration::from_secs_f64((millis / 1000.0).min(MAX_RETRY_AFTER.as_secs_f64()))
+    } else {
+        Duration::from_millis(1)
+    })
 }
 fn encode(raw: &str) -> String {
     let mut result = String::new();
@@ -362,7 +367,9 @@ mod tests {
                     );
                     requests.len()
                 };
-                if scenario == "transport-then-success" && number == 1 {
+                if scenario == "transport-exhausted"
+                    || (scenario == "transport-then-success" && number == 1)
+                {
                     continue;
                 }
                 let status = if scenario == "redirect" {
@@ -379,6 +386,8 @@ mod tests {
                 let body = json!({"ok": scenario != "platform-error"}).to_string();
                 let extra = if scenario == "rate-then-success" && number == 1 {
                     "retry-after: 0\r\n"
+                } else if scenario == "rate-huge" && number == 1 {
+                    "retry-after: 999999999\r\n"
                 } else if scenario == "redirect" {
                     "location: /must-not-follow\r\n"
                 } else {
@@ -450,12 +459,17 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             serde_json::to_value(actual).unwrap(),
-            fixture["retry_timeout_ms_at_random_half"]
+            Value::Array(
+                fixture["retry_timeout_ms_at_random_half"]
+                    .as_array()
+                    .unwrap()[..MAX_ATTEMPTS - 1]
+                    .to_vec()
+            )
         );
         server.abort();
     }
     #[tokio::test]
-    async fn referral_slack_transport_matches_the_executed_sdk_retry_classifications() {
+    async fn referral_slack_keeps_source_failure_classifications_with_bounded_attempts() {
         let fixture = fixture();
         for case in fixture["transport"].as_array().unwrap() {
             let (endpoint, requests, server) = stub(case["scenario"].as_str().unwrap()).await;
@@ -486,7 +500,7 @@ mod tests {
             let requests = requests.lock().await;
             assert_eq!(
                 requests.len(),
-                case["attempts"].as_u64().unwrap() as usize,
+                (case["attempts"].as_u64().unwrap() as usize).min(MAX_ATTEMPTS),
                 "{}",
                 case["scenario"]
             );
@@ -498,6 +512,39 @@ mod tests {
             server.abort();
         }
     }
+    #[tokio::test]
+    async fn slack_large_retry_after_and_repeated_transport_failure_finish_within_budget() {
+        for (scenario, attempts, succeeds) in [
+            ("rate-huge", 2, true),
+            ("transport-exhausted", MAX_ATTEMPTS, false),
+        ] {
+            let (endpoint, requests, server) = stub(scenario).await;
+            let mut adapter = Adapter::new(
+                Outbound::for_tests(),
+                Settings {
+                    token: Some("fixture-token".into()),
+                    ..Default::default()
+                },
+            );
+            adapter.set_test_endpoint(endpoint);
+            let started = Instant::now();
+            let result = adapter
+                .send_with_delays(
+                    json!({"channel":"fixture","text":"hello"}),
+                    &[Duration::ZERO; 10],
+                )
+                .await;
+            assert_eq!(result.is_ok(), succeeds, "{scenario}");
+            assert_eq!(requests.lock().await.len(), attempts, "{scenario}");
+            assert!(started.elapsed() < EFFECT_TIMEOUT);
+            if scenario == "rate-huge" {
+                assert!(started.elapsed() >= MAX_RETRY_AFTER);
+            }
+            assert_eq!(adapter.slots.available_permits(), 100);
+            server.abort();
+        }
+    }
+
     #[tokio::test]
     async fn an_explicit_empty_slack_token_sends_without_authorization_like_the_source() {
         let source: Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"), "/services/catalyst/tests/fixtures/conformance/social/provider-boundary-source-cases.json"))).unwrap();
@@ -527,60 +574,101 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn slack_zero_timeout_keeps_a_response_body_pending_past_the_shared_deadline() {
-        let fixture: Value = serde_json::from_str(include_str!(concat!(
-            env!("DCL_ONE_ROOT"),
-            "/services/catalyst/tests/fixtures/conformance/social/provider-boundary-source-cases.json"
-        ))).unwrap();
+    async fn slack_effect_budget_cancels_stalled_headers_and_bodies_and_releases_permits() {
+        let fixture: Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/conformance/social/provider-boundary-source-cases.json"))).unwrap();
+        // This source capture remains unchanged: our finite budget is deliberate.
         assert_eq!(fixture["slack"]["axios_timeout_ms"], 0);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let endpoint = format!("http://{}/chat.postMessage", listener.local_addr().unwrap());
-        let (entered, received) = tokio::sync::oneshot::channel();
-        let (release, released) = tokio::sync::oneshot::channel();
-        let server = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buffer = [0; 4096];
-            socket.read(&mut buffer).await.unwrap();
-            socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 11\r\nconnection: close\r\n\r\n{\"ok\":").await.unwrap();
-            entered.send(()).unwrap();
-            released.await.unwrap();
-            socket.write_all(b"true}").await.unwrap();
-        });
-        let shared = Outbound::new(crate::http::HttpClientCfg::serve(16))
-            .unwrap()
-            .allowing_private_hosts();
-        let mut adapter = Adapter::new(
-            shared,
-            Settings {
-                token: Some("fixture-token".into()),
-                ..Default::default()
-            },
-        );
-        adapter.set_test_endpoint(endpoint);
-        let pending = tokio::spawn(async move {
-            adapter
-                .send_with_delays(json!({"channel":"fixture","text":"hello"}), &[])
-                .await
-        });
-        received.await.unwrap();
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        tokio::time::pause();
-        tokio::time::advance(Duration::from_secs(26)).await;
-        for _ in 0..64 {
-            tokio::task::yield_now().await;
+        for stalled_body in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}/chat.postMessage", listener.local_addr().unwrap());
+            let (entered, received) = tokio::sync::oneshot::channel();
+            let (release, released) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut buffer = [0; 4096];
+                socket.read(&mut buffer).await.unwrap();
+                if stalled_body {
+                    socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 11\r\nconnection: close\r\n\r\n{\"ok\":").await.unwrap();
+                }
+                entered.send(()).unwrap();
+                released.await.unwrap();
+            });
+            let mut adapter = Adapter::new(
+                Outbound::for_tests(),
+                Settings {
+                    token: Some("fixture-token".into()),
+                    ..Default::default()
+                },
+            );
+            adapter.set_test_endpoint(endpoint);
+            let adapter = Arc::new(adapter);
+            let running = adapter.clone();
+            let pending = tokio::spawn(async move {
+                running
+                    .send_with_delays(
+                        json!({"channel":"fixture","text":"hello"}),
+                        &[Duration::ZERO; 10],
+                    )
+                    .await
+            });
+            received.await.unwrap();
+            tokio::time::pause();
+            tokio::time::advance(EFFECT_TIMEOUT).await;
+            for _ in 0..64 {
+                tokio::task::yield_now().await;
+            }
+            assert!(
+                pending.is_finished(),
+                "the effect deadline includes response headers and body"
+            );
+            assert!(pending.await.unwrap().is_err());
+            assert_eq!(adapter.slots.available_permits(), 100);
+            tokio::time::resume();
+            release.send(()).unwrap();
+            server.await.unwrap();
         }
-        assert!(
-            !pending.is_finished(),
-            "Slack has no shared 25s response deadline"
-        );
-        tokio::time::resume();
-        release.send(()).unwrap();
-        tokio::time::timeout(Duration::from_secs(2), pending)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
-        server.await.unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slack_effect_budget_includes_permit_wait_and_shared_rate_limit_pause() {
+        for wait_for_permit in [false, true] {
+            let adapter = Arc::new(Adapter::new(
+                Outbound::for_tests(),
+                Settings {
+                    token: Some("fixture-token".into()),
+                    ..Default::default()
+                },
+            ));
+            let held = if wait_for_permit {
+                Some(adapter.slots.acquire_many(100).await.unwrap())
+            } else {
+                *adapter.paused_until.lock().await =
+                    Some(Instant::now() + Duration::from_secs(3600));
+                None
+            };
+            let started = Instant::now();
+            let result = adapter
+                .send_with_delays(json!({"channel":"fixture","text":"hello"}), &[])
+                .await;
+            assert!(result.unwrap_err().to_string().contains("time budget"));
+            assert_eq!(started.elapsed(), EFFECT_TIMEOUT);
+            drop(held);
+            assert_eq!(adapter.slots.available_permits(), 100);
+        }
+    }
+
+    #[test]
+    fn slack_retry_after_cannot_extend_the_effect_with_large_or_overflowing_values() {
+        for raw in [
+            "2",
+            "999999999",
+            "99999999999999999999999999999999999999999999999999999999999999999999999999",
+        ] {
+            assert_eq!(retry_after(Some(raw)), Some(MAX_RETRY_AFTER));
+        }
+        assert_eq!(retry_after(Some("-1")), Some(Duration::from_millis(1)));
+        assert_eq!(retry_after(Some("not-a-number")), None);
     }
 
     #[tokio::test]

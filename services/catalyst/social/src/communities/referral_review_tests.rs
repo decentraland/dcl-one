@@ -407,3 +407,95 @@ async fn committed_grant_remains_a_retry_receipt_after_initial_sns_or_reward_fai
         server.abort();
     }
 }
+
+#[tokio::test]
+async fn historical_ipv6_aliases_and_mapped_ipv4_keep_their_quota_and_new_writers_share_the_canonical_lock()
+ {
+    let Some(pool) = crate::db::scratch::pool(12).await else {
+        return;
+    };
+    let referral = Arc::new(Referral::new(
+        repeatable_read_writers(&pool).await,
+        Outbound::for_tests(),
+        Settings {
+            max_ip_matches: 3.0,
+            suspicious_window_ms: 0.0,
+            ..Settings::for_tests()
+        },
+    ));
+    for (historical, canonical, variants) in [
+        (
+            ["2001:0DB8:0:0:0:0:0:1", "2001:db8::1"],
+            "2001:db8::1",
+            ["2001:0db8::0001", "2001:db8:0:0::1"],
+        ),
+        (
+            ["::ffff:c000:201", "::ffff:192.0.2.1"],
+            "192.0.2.1",
+            ["192.0.2.1", "::FFFF:192.0.2.1"],
+        ),
+    ] {
+        let referrer = wallet();
+        for ip in historical.into_iter().chain(["invalid historical IP"]) {
+            sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,invited_user_ip,status) VALUES($1,$2,$3,'pending')")
+                .bind(&referrer).bind(wallet()).bind(ip).execute(&pool).await.unwrap();
+        }
+        let key = advisory_key(&pool, &format!("social-referral-ip:{referrer}:{canonical}")).await;
+        let mut held = pool.begin().await.unwrap();
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(key)
+            .execute(&mut *held)
+            .await
+            .unwrap();
+        let invited = [wallet(), wallet()];
+        let mut tasks = tokio::task::JoinSet::new();
+        for (user, ip) in invited.iter().cloned().zip(variants) {
+            let referral = referral.clone();
+            let referrer = referrer.clone();
+            tasks.spawn(async move { referral.create(&referrer, &user, ip).await });
+        }
+        wait_for_locks(&pool, &[key], 2).await;
+        held.commit().await.unwrap();
+        let mut accepted = 0;
+        while let Some(result) = tasks.join_next().await {
+            accepted += usize::from(result.unwrap().is_ok());
+        }
+        assert_eq!(
+            accepted, 1,
+            "two historical aliases already consume two of the three slots"
+        );
+        let rows: Vec<(String, String)> = sqlx::query_as("SELECT invited_user_ip,status FROM social.referral_progress WHERE invited_user=ANY($1)")
+            .bind(invited.iter().map(ToString::to_string).collect::<Vec<_>>()).fetch_all(&pool).await.unwrap();
+        assert!(rows.iter().all(|(ip, _)| ip == canonical));
+        assert_eq!(
+            rows.iter()
+                .filter(|(_, status)| status == "pending")
+                .count(),
+            1
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|(_, status)| status == "rejected_ip_match")
+                .count(),
+            1
+        );
+        let retained: i64 = sqlx::query_scalar("SELECT count(*) FROM social.referral_progress WHERE referrer=$1 AND invited_user_ip='invalid historical IP'")
+            .bind(&referrer).fetch_one(&pool).await.unwrap();
+        assert_eq!(retained, 1);
+    }
+    let referrer = wallet();
+    assert!(referral.create(&referrer, &wallet(), "").await.is_err());
+    assert!(
+        referral
+            .create(&referrer, &wallet(), "not-an-IP")
+            .await
+            .is_err()
+    );
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM social.referral_progress WHERE referrer=$1")
+            .bind(&referrer)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
+}

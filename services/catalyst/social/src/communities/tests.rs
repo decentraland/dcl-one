@@ -112,6 +112,7 @@ struct Case {
     path: String,
     headers: Vec<(String, String)>,
     body: Option<(Vec<u8>, String)>,
+    peer: Option<std::net::SocketAddr>,
 }
 
 impl Case {
@@ -121,7 +122,12 @@ impl Case {
             path: path.into(),
             headers: Vec::new(),
             body: None,
+            peer: None,
         }
+    }
+    fn peer(mut self, ip: &str) -> Self {
+        self.peer = Some(std::net::SocketAddr::new(ip.parse().unwrap(), 12345));
+        self
     }
     async fn signed(mut self, w: &Wallet) -> Self {
         let path = self.path.split('?').next().unwrap().to_string();
@@ -161,6 +167,9 @@ async fn hit(app: &Router, case: Case) -> (StatusCode, Value) {
     let mut builder = Request::builder()
         .method(case.method.to_uppercase().as_str())
         .uri(&case.path);
+    if let Some(peer) = case.peer {
+        builder = builder.extension(axum::extract::ConnectInfo(peer));
+    }
     for (k, v) in &case.headers {
         builder = builder.header(k, v);
     }
@@ -634,7 +643,7 @@ async fn referral_zero_shape_gate_and_flow() {
     let (status, _) = hit(
         app,
         Case::new("post", path)
-            .header("cf-connecting-ip", "192.0.2.1")
+            .peer("192.0.2.1")
             .signed(&invited)
             .await
             .json(&refer),
@@ -644,7 +653,7 @@ async fn referral_zero_shape_gate_and_flow() {
     let (status, _) = hit(
         app,
         Case::new("post", path)
-            .header("cf-connecting-ip", "192.0.2.1")
+            .peer("192.0.2.1")
             .signed(&invited)
             .await
             .json(&refer),
@@ -658,7 +667,7 @@ async fn referral_zero_shape_gate_and_flow() {
     let (status, v) = hit(
         app,
         Case::new("post", path)
-            .header("cf-connecting-ip", "192.0.2.1")
+            .peer("192.0.2.1")
             .signed(&invited)
             .await
             .json(&json!({ "referrer": other.address.as_str() })),
@@ -672,7 +681,7 @@ async fn referral_zero_shape_gate_and_flow() {
     let (status, v) = hit(
         app,
         Case::new("post", path)
-            .header("cf-connecting-ip", "192.0.2.1")
+            .peer("192.0.2.1")
             .signed(&referrer)
             .await
             .json(&refer),
@@ -689,7 +698,7 @@ async fn referral_zero_shape_gate_and_flow() {
     let (status, _) = hit(
         app,
         Case::new("post", path)
-            .header("cf-connecting-ip", "192.0.2.1")
+            .peer("192.0.2.1")
             .signed(&other)
             .await
             .json(&json!({ "referrer": "not-an-address" })),

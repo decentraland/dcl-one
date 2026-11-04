@@ -87,7 +87,7 @@ async fn referral_and_privacy_errors_match_executed_source_handler_boundaries() 
                     request.json(&json!({"referrer":referrer.address.as_str()}))
                 };
             }
-            request.header("cf-connecting-ip", "192.0.2.1")
+            request.peer("192.0.2.1")
         };
         let (status, body) = hit(if privacy { &rpc } else { &api }, request).await;
         assert_eq!(

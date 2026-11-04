@@ -8,7 +8,7 @@
 
 use crate::http::Outbound;
 use axum::Json;
-use axum::extract::{Extension, OriginalUri, State};
+use axum::extract::{ConnectInfo, Extension, OriginalUri, State};
 use axum::http::{HeaderMap, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -63,6 +63,9 @@ fn source_number_text(number: f64) -> String {
 /// Source referral settings; external operations use the process outbound client.
 #[derive(Clone, Debug)]
 pub struct Settings {
+    /// Only direct socket peers in these networks may supply X-Real-IP.
+    /// Such proxies must overwrite that header from their validated client IP.
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
     pub max_ip_matches: f64,
     pub min_login_days: f64,
     pub suspicious_window_ms: f64,
@@ -75,6 +78,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            trusted_proxy_cidrs: Vec::new(),
             max_ip_matches: 2.0,
             min_login_days: 3.0,
             suspicious_window_ms: 300_000.0,
@@ -197,6 +201,18 @@ impl Referral {
             resolve_existing(&existing, referrer, invited)?;
             return Ok(());
         }
+        let ip = ip
+            .parse::<std::net::IpAddr>()
+            .map_err(|_| CommError::bad_request("Unable to determine client IP address"))?
+            .to_canonical();
+        // Historical source rows may retain other IPv6 spellings, including
+        // IPv4-mapped IPv6. Count those facts without rewriting stored history.
+        let alternate_ip = match ip {
+            std::net::IpAddr::V4(ip) => format!("::ffff:{ip}"),
+            std::net::IpAddr::V6(ip) => ip.to_string(),
+        };
+        let ip = ip.to_string();
+        let ip = ip.as_str();
         self.assert_not_banned(referrer.as_str(), Some(ip)).await?;
         let mut tx = self.pool.begin().await.map_err(database_error)?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
@@ -211,8 +227,8 @@ impl Referral {
             .execute(&mut *tx)
             .await
             .map_err(database_error)?;
-        let status: Option<String> = sqlx::query_scalar("WITH other_users_invited AS (SELECT count(*) AS count FROM social.referral_progress WHERE referrer=$1 AND invited_user_ip=$3) INSERT INTO social.referral_progress(referrer,invited_user,invited_user_ip,status) SELECT $1,$2,$3,CASE WHEN count < $4::text::bigint THEN 'pending' ELSE 'rejected_ip_match' END FROM other_users_invited ON CONFLICT(invited_user) DO NOTHING RETURNING status")
-            .bind(referrer).bind(invited).bind(ip).bind(source_number_text(self.settings.max_ip_matches)).fetch_optional(&mut *tx).await.map_err(database_error)?;
+        let status: Option<String> = sqlx::query_scalar("WITH other_users_invited AS (SELECT count(*) AS count FROM social.referral_progress WHERE referrer=$1 AND CASE WHEN pg_input_is_valid(invited_user_ip,'inet') THEN invited_user_ip::inet IN ($3::text::inet,$5::text::inet) ELSE false END) INSERT INTO social.referral_progress(referrer,invited_user,invited_user_ip,status) SELECT $1,$2,$3,CASE WHEN count < $4::text::bigint THEN 'pending' ELSE 'rejected_ip_match' END FROM other_users_invited ON CONFLICT(invited_user) DO NOTHING RETURNING status")
+            .bind(referrer).bind(invited).bind(ip).bind(source_number_text(self.settings.max_ip_matches)).bind(alternate_ip).fetch_optional(&mut *tx).await.map_err(database_error)?;
         tx.commit().await.map_err(database_error)?;
         let status = match status {
             Some(status) => status,
@@ -469,33 +485,29 @@ impl Referral {
     }
 }
 
-/// Preserve the original header value; a malformed highest-priority header
-/// does not fall through to a less trusted source.
-fn client_ip(headers: &HeaderMap) -> Option<String> {
-    let header = |name| {
-        headers
-            .get(name)
-            .and_then(|value| value.to_str().ok())
-            .filter(|value| !value.is_empty())
+/// The socket identifies the trust boundary. Direct clients cannot choose their
+/// quota bucket with forwarding headers. A configured backend proxy overwrites
+/// X-Real-IP; CDN and forwarding-chain headers never authorize that value here.
+fn client_ip(
+    headers: &HeaderMap,
+    peer: Option<std::net::SocketAddr>,
+    trusted_proxies: &[ipnet::IpNet],
+) -> Option<String> {
+    let peer = peer?.ip().to_canonical();
+    let ip = if trusted_proxies
+        .iter()
+        .any(|network| network.contains(&peer))
+    {
+        let mut values = headers.get_all("x-real-ip").iter();
+        let candidate = values.next()?.to_str().ok()?;
+        if values.next().is_some() {
+            return None;
+        }
+        candidate.parse::<std::net::IpAddr>().ok()?.to_canonical()
+    } else {
+        peer
     };
-    let candidate = header("cf-connecting-ip")
-        .map(str::to_string)
-        .or_else(|| {
-            header("x-forwarded-for")
-                .and_then(|value| {
-                    value
-                        .split(',')
-                        .map(str::trim)
-                        .filter(|value| !value.is_empty())
-                        .next_back()
-                })
-                .map(str::to_string)
-        })
-        .or_else(|| header("x-real-ip").map(str::to_string))?;
-    candidate
-        .parse::<std::net::IpAddr>()
-        .ok()
-        .map(|_| candidate)
+    Some(ip.to_string())
 }
 
 #[derive(Serialize)]
@@ -613,6 +625,7 @@ fn resolve_existing(
 
 pub async fn create_referral(
     State(state): State<SharedState>,
+    peer: Option<Extension<ConnectInfo<std::net::SocketAddr>>>,
     headers: HeaderMap,
     original: OriginalUri,
     body: super::http::DeferredBody,
@@ -644,8 +657,12 @@ pub async fn create_referral(
             json!({"error":"Service Unavailable","message":"Referral registration is temporarily disabled"}),
         ));
     }
-    let ip = client_ip(&headers)
-        .ok_or_else(|| CommError::bad_request("Unable to determine client IP address"))?;
+    let ip = client_ip(
+        &headers,
+        peer.map(|Extension(ConnectInfo(peer))| peer),
+        &state.referral.settings.trusted_proxy_cidrs,
+    )
+    .ok_or_else(|| CommError::bad_request("Unable to determine client IP address"))?;
     let raw_referrer = body["referrer"].as_str().unwrap();
     if !crate::auth::is_eth_address(raw_referrer) {
         return Err(CommError::bad_request("Invalid referrer address"));
@@ -816,50 +833,94 @@ pub async fn add_referral_email(
 mod tests {
     use super::*;
 
+    fn headers(pairs: &[(&str, &str)]) -> HeaderMap {
+        pairs
+            .iter()
+            .map(|(name, value)| {
+                (
+                    axum::http::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                    value.parse().unwrap(),
+                )
+            })
+            .collect()
+    }
+    fn peer(ip: &str) -> Option<std::net::SocketAddr> {
+        Some(std::net::SocketAddr::new(ip.parse().unwrap(), 12345))
+    }
     #[test]
-    fn client_ip_keeps_source_priority_and_rejects_malformed_high_priority_values() {
-        let headers = |pairs: &[(&str, &str)]| {
-            pairs
-                .iter()
-                .map(|(name, value)| {
-                    (
-                        axum::http::HeaderName::from_bytes(name.as_bytes()).unwrap(),
-                        value.parse().unwrap(),
-                    )
-                })
-                .collect::<HeaderMap>()
-        };
+    fn client_ip_uses_the_untrusted_socket_peer_despite_all_forged_headers() {
+        for spoofed in ["192.0.2.1", "192.0.2.2", "invalid"] {
+            let headers = headers(&[
+                ("cf-connecting-ip", spoofed),
+                ("x-forwarded-for", spoofed),
+                ("x-real-ip", spoofed),
+            ]);
+            assert_eq!(
+                client_ip(&headers, peer("198.51.100.9"), &[]),
+                Some("198.51.100.9".into())
+            );
+            assert_eq!(client_ip(&headers, None, &[]), None);
+        }
         assert_eq!(
-            client_ip(&headers(&[
-                ("cf-connecting-ip", "192.0.2.9"),
-                ("x-forwarded-for", "192.0.2.1, 192.0.2.2"),
-                ("x-real-ip", "192.0.2.3")
-            ])),
-            Some("192.0.2.9".into())
+            client_ip(&HeaderMap::new(), peer("::ffff:198.51.100.9"), &[]),
+            Some("198.51.100.9".into())
         );
         assert_eq!(
-            client_ip(&headers(&[
-                ("x-forwarded-for", "192.0.2.1, , 2001:db8::2, "),
-                ("x-real-ip", "192.0.2.3")
-            ])),
-            Some("2001:db8::2".into())
+            client_ip(&HeaderMap::new(), peer("2001:0DB8:0:0:0:0:0:0001"), &[]),
+            Some("2001:db8::1".into())
         );
+    }
+    #[test]
+    fn only_an_explicit_trusted_proxy_may_supply_a_single_valid_real_ip() {
+        let proxies = [
+            "192.0.2.0/24".parse().unwrap(),
+            "2001:db8:1::/48".parse().unwrap(),
+        ];
+        let headers = headers(&[
+            ("cf-connecting-ip", "198.51.100.77"),
+            ("x-forwarded-for", "198.51.100.1, 198.51.100.2"),
+            ("x-real-ip", "2001:0DB8:0:0:0:0:0:0002"),
+        ]);
+        for peer in [
+            peer("192.0.2.9"),
+            peer("::ffff:192.0.2.9"),
+            peer("2001:db8:1::9"),
+        ] {
+            assert_eq!(
+                client_ip(&headers, peer, &proxies),
+                Some("2001:db8::2".into())
+            );
+        }
+        assert_eq!(
+            client_ip(&headers, peer("198.51.100.9"), &proxies),
+            Some("198.51.100.9".into())
+        );
+        assert_eq!(client_ip(&headers, None, &proxies), None);
         for raw in [
             "invalid",
             " 192.0.2.1",
             "192.168.001.1",
             "[2001:db8::1]",
             "192.0.2.1:123",
+            "192.0.2.1,192.0.2.2",
         ] {
             assert_eq!(
-                client_ip(&headers(&[
-                    ("cf-connecting-ip", raw),
-                    ("x-real-ip", "192.0.2.3")
-                ])),
+                client_ip(
+                    &self::headers(&[("x-real-ip", raw), ("cf-connecting-ip", "198.51.100.9")]),
+                    peer("192.0.2.9"),
+                    &proxies
+                ),
                 None,
                 "{raw}"
             );
         }
+        assert_eq!(
+            client_ip(&HeaderMap::new(), peer("192.0.2.9"), &proxies),
+            None
+        );
+        let mut duplicate = self::headers(&[("x-real-ip", "198.51.100.1")]);
+        duplicate.append("x-real-ip", "198.51.100.2".parse().unwrap());
+        assert_eq!(client_ip(&duplicate, peer("192.0.2.9"), &proxies), None);
     }
 
     #[tokio::test]

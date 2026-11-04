@@ -76,6 +76,7 @@ clap = { version = "4", features = ["derive", "env"] }
 futures = "0.3"
 async-trait = "0.1"
 bytes = "1"
+ipnet = "2"
 uuid = { version = "1", features = ["serde", "v4", "v5"] }
 tokio-util = { version = "0.7", features = ["io"] }
 dashmap = "6"

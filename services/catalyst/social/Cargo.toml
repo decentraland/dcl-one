@@ -6,6 +6,7 @@ description = "Social: friends, communities, notifications, badges, profiles and
 publish = false
 
 [dependencies]
+ipnet.workspace = true
 dcl-http = { workspace = true, features = ["db"] }
 dcl-auth.workspace = true
 catalyst-fed = { path = "../fed" }

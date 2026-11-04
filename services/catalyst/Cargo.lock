@@ -2125,6 +2125,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "ipnet",
  "serde_json",
  "tracing-subscriber",
  "url",
@@ -2445,6 +2446,7 @@ dependencies = [
  "hex",
  "icu_properties",
  "image",
+ "ipnet",
  "libc",
  "metrics",
  "multer",

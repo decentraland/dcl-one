@@ -542,6 +542,101 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn queue_acknowledges_committed_milestone_and_processes_next_login_after_slack_stalls() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        struct Acks(parking_lot::Mutex<Vec<String>>);
+        #[async_trait::async_trait]
+        impl Queue for Acks {
+            async fn receive(&self) -> anyhow::Result<Vec<QueueMessage>> {
+                unreachable!()
+            }
+            async fn delete(&self, receipt: &str) -> anyhow::Result<()> {
+                self.0.lock().push(receipt.into());
+                Ok(())
+            }
+            async fn release(&self, _: &str) -> anyhow::Result<()> {
+                unreachable!()
+            }
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/chat.postMessage", listener.local_addr().unwrap());
+        let (entered, received) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut bytes = [0; 8192];
+            socket.read(&mut bytes).await.unwrap();
+            socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 11\r\nconnection: close\r\n\r\n{\"ok\":").await.unwrap();
+            entered.send(()).unwrap();
+            released.await.unwrap();
+        });
+        let dir =
+            std::env::temp_dir().join(format!("referral-queue-budget-{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let mut settings = communities::Settings::for_tests();
+        settings.referral.min_login_days = 0.0;
+        settings.referral.suspicious_window_ms = 0.0;
+        settings.referral.slack.token = Some("fixture-token".into());
+        let mut state = communities::State::new(
+            pool.clone(),
+            storage,
+            settings,
+            None,
+            &crate::http::Outbound::for_tests(),
+            communities::State::explore_for_tests(&pool),
+        );
+        state.referral.set_test_slack_endpoint(endpoint);
+        let address = || {
+            crate::Address::parse(&format!("0x{}00000000", uuid::Uuid::new_v4().simple())).unwrap()
+        };
+        let (referrer, first, second) = (address(), address(), address());
+        sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,status,tier_granted) SELECT $1,'0x'||replace(gen_random_uuid()::text,'-','')||'00000000','tier_granted',true FROM generate_series(1,99)")
+            .bind(&referrer).execute(&pool).await.unwrap();
+        let addresses = vec![first.to_string(), second.to_string()];
+        sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,invited_user_ip,status) SELECT $1,invited,'192.0.2.1','pending' FROM unnest($2::text[]) AS invited")
+            .bind(&referrer).bind(&addresses).execute(&pool).await.unwrap();
+        let queue = Arc::new(Acks(Default::default()));
+        let acks = queue.clone();
+        let running = tokio::spawn(async move {
+            // The production consumer awaits process_message in this order.
+            for (user, receipt) in [(first, "first"), (second, "second")] {
+                process_message(&*acks, &state, &QueueMessage {
+                    body: Some(serde_json::json!({"type":"client","subType":"logged-in","metadata":{"userAddress":user}}).to_string()),
+                    receipt: Some(receipt.into()),
+                }).await;
+            }
+        });
+        received.await.unwrap();
+        assert!(
+            queue.0.lock().is_empty(),
+            "the milestone stays awaited before its acknowledgement"
+        );
+        let granted: i64 = sqlx::query_scalar("SELECT count(*) FROM social.referral_progress WHERE invited_user=ANY($1) AND tier_granted")
+            .bind(&addresses).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            granted, 1,
+            "the first tier commits before Slack and the next message waits"
+        );
+        tokio::time::timeout(Duration::from_secs(15), running)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(*queue.0.lock(), ["first", "second"]);
+        let granted: i64 = sqlx::query_scalar("SELECT count(*) FROM social.referral_progress WHERE invited_user=ANY($1) AND tier_granted")
+            .bind(&addresses).fetch_one(&pool).await.unwrap();
+        assert_eq!(granted, 2);
+        let notices: i64 = sqlx::query_scalar("SELECT count(*) FROM social.notifications WHERE address=$1 AND type='referral_invited_users_accepted'")
+            .bind(&referrer).fetch_one(&pool).await.unwrap();
+        assert_eq!(notices, 2);
+        release.send(()).unwrap();
+        server.await.unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
     async fn queue_dispatch_updates_all_three_source_ranking_kinds_before_acknowledgement() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
