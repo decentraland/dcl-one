@@ -712,11 +712,16 @@ pub async fn get_pointer_changes(
     }
     // A scene this node unpublished is not history a peer should replay:
     // the catalyst protocol has no unpublish, so a peer that synced it would
-    // serve it as active. Leaving it out (as the snapshot windows do) makes a
-    // fresh peer converge on this node's active set, the older scenes the
-    // unpublish restored included; a peer that synced it before keeps it.
+    // serve it as active. Leaving it out (as the snapshot windows do), and
+    // the older scenes it superseded with it, makes a fresh peer converge on
+    // this node's active set, its parcels empty; a peer that synced it
+    // before keeps it.
     conditions.push(
         "NOT EXISTS (SELECT 1 FROM content.local_entities le WHERE le.entity_id = dep1.entity_id AND le.tombstoned_at IS NOT NULL)"
+            .to_string(),
+    );
+    conditions.push(
+        "NOT EXISTS (SELECT 1 FROM content.deployments del JOIN content.local_entities le ON le.entity_id = del.entity_id AND le.tombstoned_at IS NOT NULL WHERE del.id = dep1.deleter_deployment)"
             .to_string(),
     );
     if !conditions.is_empty() {

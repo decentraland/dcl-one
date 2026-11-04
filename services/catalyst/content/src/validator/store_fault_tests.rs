@@ -155,7 +155,7 @@ fn deployment(
         version: "v3".to_string(),
         metadata,
     });
-    d.files = files;
+    d.files = files.into_iter().map(|(k, v)| (k, v.into())).collect();
     d
 }
 

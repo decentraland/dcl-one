@@ -324,7 +324,10 @@ async fn validate_synced_within(
             entity.timestamp
         ))]);
     }
-    let files = HashMap::from([(entity_id.to_string(), entity_bytes.to_vec())]);
+    let files = HashMap::from([(
+        entity_id.to_string(),
+        bytes::Bytes::copy_from_slice(entity_bytes),
+    )]);
     let synced = Synced {
         sources,
         not_fetched: not_fetched_hashes(&entity),
@@ -386,19 +389,46 @@ mod tests {
         "urn:decentraland:ethereum:collections-v1:0xc1f4b0eea2bd6690930e6c66efd3e197d620b9c2:hat";
     const MASK_BY_NAME: &str = "urn:decentraland:ethereum:collections-v1:halloween_2019:mask";
 
-    /// A signed wearable with no thumbnail on `pointers`, and the sources over a temp store.
+    const MODEL: &[u8] = b"glTF";
+
+    /// A wearable file on `pointers` whose thumbnail is not among its content.
+    fn wearable_file(pointers: &[&str], timestamp: i64) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "version": "v3", "type": "wearable", "pointers": pointers,
+            "timestamp": timestamp,
+            "content": [{"file": "male/hat.glb", "hash": crate::auth::hash_bytes_v1(MODEL)}],
+            "metadata": {
+                "id": pointers[0], "name": "hat", "description": "",
+                "i18n": [{"code": "en", "text": "Hat"}],
+                "thumbnail": "thumbnail.png", "image": "image.png",
+                "collectionAddress": "0xc1f4b0eea2bd6690930e6c66efd3e197d620b9c2",
+                "rarity": "epic",
+                "data": {
+                    "replaces": [], "hides": [], "tags": ["hat"], "category": "hat",
+                    "representations": [{
+                        "bodyShapes": ["urn:decentraland:off-chain:base-avatars:BaseMale"],
+                        "mainFile": "male/hat.glb", "contents": ["male/hat.glb"],
+                        "overrideHides": [], "overrideReplaces": []
+                    }]
+                }
+            }
+        }))
+        .unwrap()
+    }
+
+    /// A signed wearable with no thumbnail on `pointers`, and the sources over
+    /// a temp store holding its model.
     async fn wearable(
         pointers: &[&str],
     ) -> (Vec<u8>, String, AuthChain, Sources, std::path::PathBuf) {
-        let bytes = serde_json::to_vec(&serde_json::json!({
-            "version": "v3", "type": "wearable", "pointers": pointers,
-            "timestamp": 1_700_000_000_000i64, "content": [],
-            "metadata": { "data": { "representations": [] } }
-        }))
-        .unwrap();
+        let bytes = wearable_file(pointers, 1_700_000_000_000);
         let id = crate::auth::hash_bytes_v1(&bytes);
         let chain = crate::sync_test_support::signed_chain(&id).await;
         let (storage, tmp) = crate::sync_test_support::temp_storage("synced-item").await;
+        storage
+            .store(&crate::auth::hash_bytes_v1(MODEL), MODEL.into())
+            .await
+            .unwrap();
         let sources = Sources::new(
             sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
             storage,
@@ -423,7 +453,7 @@ mod tests {
             .expect("no thumbnail check on a synced item");
 
         let entity = entity_parser::parse_entity_from_bytes(&bytes, &id).unwrap();
-        let files = HashMap::from([(id.clone(), bytes)]);
+        let files = HashMap::from([(id.clone(), bytes::Bytes::from(bytes))]);
         let local = super::super::validate(
             &entity,
             &files,
@@ -608,12 +638,7 @@ mod tests {
     async fn an_entity_from_the_future_waits_for_the_clock_and_past_a_day_is_refused() {
         let (_, _, _, sources, tmp) = wearable(&[HAT_BY_NAME]).await;
         let at = |timestamp: i64| {
-            let bytes = serde_json::to_vec(&serde_json::json!({
-                "version": "v3", "type": "wearable", "pointers": [HAT_BY_NAME],
-                "timestamp": timestamp, "content": [],
-                "metadata": { "data": { "representations": [] } }
-            }))
-            .unwrap();
+            let bytes = wearable_file(&[HAT_BY_NAME], timestamp);
             let id = crate::auth::hash_bytes_v1(&bytes);
             (bytes, id)
         };
@@ -717,7 +742,8 @@ mod tests {
             let parcel = format!("{},{}", i % 150, i / 150);
             let bytes = serde_json::to_vec(&serde_json::json!({
                 "version": "v3", "type": "scene", "pointers": [parcel], "timestamp": timestamp,
-                "content": [], "metadata": {"scene": {"base": parcel, "parcels": [parcel]}}
+                "content": [],
+                "metadata": {"main": "bin/index.js", "scene": {"base": parcel, "parcels": [parcel]}}
             }))
             .unwrap();
             let id = crate::auth::hash_bytes_v1(&bytes);

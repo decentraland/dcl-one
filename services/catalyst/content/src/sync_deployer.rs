@@ -191,7 +191,7 @@ fn parse_entity_for_deploy(
     let version = entity
         .get("version")
         .and_then(|v| v.as_str())
-        .unwrap_or("v3")
+        .unwrap_or(crate::entity::DEFAULT_ENTITY_VERSION)
         .to_string();
 
     let deployer = auth_chain
@@ -270,11 +270,16 @@ async fn verify_entity_auth_chain(
 
 /// A refused validation as the callers record it: undecided when any error is.
 fn validation_failure(entity_id: &str, errors: Vec<ValidationError>) -> SyncError {
-    let undecided = errors.iter().any(ValidationError::is_unavailable);
+    // A contract wallet this node could not check is undecided too, never a refusal.
+    let undecided = errors
+        .iter()
+        .any(|e| e.is_unavailable() || e.is_unverifiable());
     let messages = errors
         .into_iter()
         .map(|e| match e {
-            ValidationError::Rejected(m) | ValidationError::Unavailable(m) => m,
+            ValidationError::Rejected(m)
+            | ValidationError::Unavailable(m)
+            | ValidationError::Unverifiable(m) => m,
         })
         .collect::<Vec<_>>()
         .join("; ");
@@ -838,12 +843,9 @@ async fn flush_batch(pool: &PgPool, entities: &[ParsedEntity]) -> Result<(), Syn
                                    AND lower(d2.entity_id) > lower(nr.entity_id)))
                         OFFSET 0
                     ) c
+                    -- An unpublished local scene still succeeds older ones:
+                    -- its parcels stay empty.
                     WHERE c.entity_type = nr.entity_type
-                      -- An unpublished local scene succeeds nothing: an older
-                      -- peer scene arriving after the unpublish takes the pointer.
-                      AND NOT EXISTS (
-                          SELECT 1 FROM content.local_entities le
-                          WHERE le.entity_id = c.entity_id AND le.tombstoned_at IS NOT NULL)
                     ORDER BY c.entity_timestamp, lower(c.entity_id)
                     LIMIT 1) AS newer_id
             FROM content.deployments nr

@@ -86,7 +86,7 @@ async fn signed(
     uploads: &[Vec<u8>],
 ) -> (
     Entity,
-    HashMap<String, Vec<u8>>,
+    HashMap<String, bytes::Bytes>,
     crate::auth::AuthChain,
     String,
 ) {
@@ -104,9 +104,9 @@ async fn signed(
     ]))
     .unwrap();
     let parsed = entity_parser::parse_entity_from_bytes(&bytes, &id).unwrap();
-    let mut files = HashMap::from([(id.clone(), bytes)]);
+    let mut files = HashMap::from([(id.clone(), bytes.into())]);
     for upload in uploads {
-        files.insert(hash_bytes_v1(upload), upload.clone());
+        files.insert(hash_bytes_v1(upload), upload.clone().into());
     }
     (parsed, files, chain, signer)
 }
@@ -118,7 +118,7 @@ fn scene(parcels: &[&str], model: &[u8]) -> Value {
         "pointers": parcels,
         "timestamp": chrono::Utc::now().timestamp_millis(),
         "content": [{"file": "model.glb", "hash": hash_bytes_v1(model)}],
-        "metadata": {"scene": {"base": parcels[0], "parcels": parcels}}
+        "metadata": {"main": "bin/index.js", "scene": {"base": parcels[0], "parcels": parcels}}
     })
 }
 
@@ -201,7 +201,7 @@ async fn a_signed_scene_validates_end_to_end_and_its_land_leg_decides() {
     let referencing_stored = json!({
         "version": "v3", "type": "scene", "pointers": ["5,5"], "timestamp": chrono::Utc::now().timestamp_millis(),
         "content": [{"file": "stored.bin", "hash": STORED_HASH}],
-        "metadata": {"scene": {"base": "5,5", "parcels": ["5,5"]}}
+        "metadata": {"main": "bin/index.js", "scene": {"base": "5,5", "parcels": ["5,5"]}}
     });
     let (entity, files, chain, _) = signed(referencing_stored.clone(), &[]).await;
     let ctx = Context {
@@ -331,7 +331,7 @@ async fn the_structure_signature_and_size_steps_answer_the_old_sentences() {
         json!({
             "version": "v3", "type": "scene", "pointers": ["1,1"], "timestamp": chrono::Utc::now().timestamp_millis(),
             "content": [{"file": "model.glb", "hash": hash_bytes_v1(&model)}],
-            "metadata": {"scene": {"base": "1,1", "parcels": ["1,1"]}, "worldConfiguration": {"name": "x.dcl.eth"}}
+            "metadata": {"main": "bin/index.js", "scene": {"base": "1,1", "parcels": ["1,1"]}, "worldConfiguration": {"name": "x.dcl.eth"}}
         }),
         std::slice::from_ref(&model),
     )
@@ -345,6 +345,54 @@ async fn the_structure_signature_and_size_steps_answer_the_old_sentences() {
         rejected(&[
             "The scene.json contains a worldConfiguration section, which is not allowed for Genesis City scenes (see ADR-173: http://adr.decentraland.org/adr/ADR-173). Please remove it and try again."
         ])
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// The metadata schema of the type runs before the signature: a scene
+/// without its entry point is the depositor's fault, and so is an entity
+/// without a version only when it names another one.
+#[tokio::test]
+async fn the_metadata_schema_and_version_steps_answer_the_reference_sentences() {
+    let (storage, tmp) = temp_storage("metadata").await;
+    let s = sources(
+        lazy_pool(),
+        storage,
+        Settings {
+            ignore_blockchain_access: true,
+            ..Settings::default()
+        },
+    );
+    let model = b"glb".to_vec();
+
+    let mut no_main = scene(&["1,1"], &model);
+    no_main["metadata"].as_object_mut().unwrap().remove("main");
+    let (entity, files, chain, _) = signed(no_main, std::slice::from_ref(&model)).await;
+    let ctx = Context {
+        sources: &s,
+        auth_chain: &chain,
+    };
+    assert_eq!(
+        validate(&entity, &files, &ctx).await,
+        rejected(&[
+            "The metadata for this entity type (scene) is not valid.",
+            "metadata must have required property 'main'"
+        ])
+    );
+
+    let mut unversioned = scene(&["1,1"], &model);
+    unversioned.as_object_mut().unwrap().remove("version");
+    let (_, files, chain, _) = signed(unversioned.clone(), std::slice::from_ref(&model)).await;
+    let mut entity: Entity = serde_json::from_value(unversioned).unwrap();
+    entity.id = chain[1].payload.clone();
+    let ctx = Context {
+        sources: &s,
+        auth_chain: &chain,
+    };
+    assert_eq!(
+        validate(&entity, &files, &ctx).await,
+        Ok(()),
+        "a missing version is v3"
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -376,7 +424,7 @@ async fn a_contract_wallet_chain_without_an_rpc_validator_is_unavailable() {
     };
     let verdict = validate(&entity, &files, &ctx).await.unwrap_err();
     assert!(
-        matches!(&verdict[..], [ValidationError::Unavailable(m)] if m.starts_with("The signature is invalid. EIP-1654")),
+        matches!(&verdict[..], [ValidationError::Unverifiable(m)] if m.starts_with("The signature is invalid. EIP-1654")),
         "{verdict:?}"
     );
     let _ = std::fs::remove_dir_all(&tmp);
@@ -681,7 +729,7 @@ fn pinned_wearable(name: &str) -> OwnedDeployment {
     let id = hash_bytes_v1(file.as_bytes());
     let mut d =
         OwnedDeployment::new(entity_parser::parse_entity_from_bytes(file.as_bytes(), &id).unwrap());
-    d.files.insert(id, file.into_bytes());
+    d.files.insert(id, file.into_bytes().into());
     d
 }
 
@@ -883,7 +931,8 @@ async fn third_party_items_are_proven_against_the_registry_at_the_deploy_block()
     let root = merkle::generate_root(proof.index, &proof.entity_hash, &decoded);
     let timestamp = entity.timestamp;
     let mut d = OwnedDeployment::new(entity);
-    d.files.insert(d.entity.id.clone(), WOODIE_0.to_vec());
+    d.files
+        .insert(d.entity.id.clone(), WOODIE_0.to_vec().into());
     let pointer = d.entity.pointers[0].clone();
 
     let registry = |approved: Option<[u8; 32]>| {
@@ -1100,6 +1149,8 @@ fn a_refusal_keeps_its_kind_in_the_deploy_failure() {
     );
     let unavailable = into_deploy_failure(vec![ValidationError::Unavailable("store".into())]);
     assert!(matches!(&unavailable, DeployFailure::Unavailable(e) if e == &["store".to_string()]));
+    let unverifiable = into_deploy_failure(vec![ValidationError::Unverifiable("rpc".into())]);
+    assert!(matches!(&unverifiable, DeployFailure::Unverifiable(e) if e == &["rpc".to_string()]));
 }
 
 /// `GET /queries/erc721/...` over the content database: the active entity

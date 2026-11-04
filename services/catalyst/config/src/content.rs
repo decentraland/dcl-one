@@ -110,8 +110,7 @@ pub struct ContentConfig {
     // drops the deployments no pointer is served by any more (superseded or
     // unpublished), their content_files and the blobs nothing else names.
     // Off by default, and never beside CONTENT_WRITES_ENABLED: an
-    // authoritative node keeps its history (an unpublish there restores the
-    // scene a local deployment superseded).
+    // authoritative node keeps its history.
     #[arg(long, env = "CONTENT_HISTORY_PRUNE_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub content_history_prune_enabled: bool,
 
@@ -139,6 +138,33 @@ pub struct ContentConfig {
     /// (`content::read_through`). Off: a miss answers what it always did.
     #[arg(long, env = "READ_THROUGH_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub read_through_enabled: bool,
+
+    /// Non-file fields a `POST /entities` form may carry: `entityId` and the
+    /// `type`/`payload`/`signature` of up to ten auth-chain links, and one spare.
+    #[arg(long, env = "MAX_UPLOAD_FIELD_COUNT", default_value_t = 2 + 3 * 10)]
+    pub max_upload_field_count: usize,
+
+    /// Bytes one non-file `POST /entities` field may hold.
+    #[arg(long, env = "MAX_UPLOAD_FIELD_SIZE", default_value_t = 32 * 1024)]
+    pub max_upload_field_size: usize,
+
+    /// Bytes of `POST /entities` bodies held in memory at once across every
+    /// request, each holding at least 16 MiB; never below one maximum-size
+    /// deployment. A request that does not fit answers 503 unread.
+    #[arg(
+        long,
+        env = "MAX_IN_MEMORY_DEPLOYMENT_BYTES",
+        default_value_t = 2 * 1024 * 1024 * 1024
+    )]
+    pub max_in_memory_deployment_bytes: u64,
+
+    /// `POST /entities` requests one client address (IPv6 by /64) may make per
+    /// 24 hours, counted on admission and given back when the deployer answers 503
+    /// for this node's own state (not for an unchecked contract-wallet signature);
+    /// 0 turns the quota off. Kept per process: N upstreams admit N times it,
+    /// and a restart resets it.
+    #[arg(long, env = "POST_ENTITIES_DAILY_QUOTA_MAX", default_value_t = 300)]
+    pub post_entities_daily_quota_max: u32,
 }
 
 impl ContentConfig {
@@ -305,6 +331,15 @@ mod tests {
         assert_eq!(c.content.bloom_filter_expected_elements, 10_000_000);
         assert_eq!(c.content.sync_profile_max_age_days, 365);
         assert!(!c.content.read_through_enabled);
+        assert_eq!(
+            (
+                c.content.max_upload_field_count,
+                c.content.max_upload_field_size,
+                c.content.max_in_memory_deployment_bytes,
+                c.content.post_entities_daily_quota_max
+            ),
+            (32, 32 * 1024, 2 * 1024 * 1024 * 1024, 300)
+        );
         assert!(c.content.retry_failed_enabled);
         assert_eq!(c.content.max_failed_deployment_retries, 10);
         assert_eq!(c.content.sync_retry_concurrency, 10);

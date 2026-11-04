@@ -16,6 +16,12 @@ pub enum ValidationResponse {
     Unavailable {
         errors: Vec<String>,
     },
+    /// A contract-wallet signature this node could not check (no RPC, or the
+    /// call failed without a revert): retryable like `Unavailable`, but the
+    /// caller's auth chain chose it.
+    Unverifiable {
+        errors: Vec<String>,
+    },
 }
 
 impl ValidationResponse {
@@ -45,6 +51,12 @@ impl ValidationResponse {
         }
     }
 
+    pub fn unverifiable(msg: impl Into<String>) -> Self {
+        ValidationResponse::Unverifiable {
+            errors: vec![msg.into()],
+        }
+    }
+
     pub fn from_errors(errors: Vec<String>) -> Self {
         if errors.is_empty() {
             ValidationResponse::Ok
@@ -57,7 +69,8 @@ impl ValidationResponse {
         match self {
             ValidationResponse::Ok => None,
             ValidationResponse::Failed { errors } => Some(errors),
-            ValidationResponse::Unavailable { errors } => Some(errors),
+            ValidationResponse::Unavailable { errors }
+            | ValidationResponse::Unverifiable { errors } => Some(errors),
         }
     }
 
@@ -71,6 +84,10 @@ impl ValidationResponse {
                 .into_iter()
                 .map(ValidationError::Unavailable)
                 .collect()),
+            ValidationResponse::Unverifiable { errors } => Err(errors
+                .into_iter()
+                .map(ValidationError::Unverifiable)
+                .collect()),
         }
     }
 }
@@ -82,7 +99,8 @@ impl fmt::Display for ValidationResponse {
             ValidationResponse::Failed { errors } => {
                 write!(f, "validation failed: {}", errors.join("; "))
             }
-            ValidationResponse::Unavailable { errors } => {
+            ValidationResponse::Unavailable { errors }
+            | ValidationResponse::Unverifiable { errors } => {
                 write!(
                     f,
                     "validation could not be completed: {}",
@@ -96,22 +114,30 @@ impl fmt::Display for ValidationResponse {
 /// One error of a refused deployment, carrying the old validator's text.
 /// `Rejected`: the deployment is at fault (answer 400 with the text).
 /// `Unavailable`: this node could not decide (answer 503 with `Retry-After`).
-/// One verdict never mixes the two kinds.
+/// `Unverifiable`: a 503 too, for a contract-wallet signature not checked here.
+/// One verdict never mixes the kinds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationError {
     Rejected(String),
     Unavailable(String),
+    Unverifiable(String),
 }
 
 impl ValidationError {
     pub fn message(&self) -> &str {
         match self {
-            ValidationError::Rejected(m) | ValidationError::Unavailable(m) => m,
+            ValidationError::Rejected(m)
+            | ValidationError::Unavailable(m)
+            | ValidationError::Unverifiable(m) => m,
         }
     }
 
     pub fn is_unavailable(&self) -> bool {
         matches!(self, ValidationError::Unavailable(_))
+    }
+
+    pub fn is_unverifiable(&self) -> bool {
+        matches!(self, ValidationError::Unverifiable(_))
     }
 }
 

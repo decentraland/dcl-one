@@ -423,7 +423,7 @@ async fn an_unsynced_copy_takes_the_deploy_types_it_names() {
         }
     }
     let other = Bytes::from_static(b"{}");
-    let (status, _, _) = call(
+    let (status, _, body) = call(
         &node.router(),
         deploy_request(
             "/content/entities",
@@ -434,9 +434,41 @@ async fn an_unsynced_copy_takes_the_deploy_types_it_names() {
     )
     .await;
     assert_eq!(
-        status,
-        StatusCode::SERVICE_UNAVAILABLE,
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"errors": ["The entity file was not part of the uploaded files or has no type."]})
+        ),
         "no entity file, no type: refused"
+    );
+}
+
+/// Pointers are lowercased as the entity file is read, so two that differ
+/// only by case are the same pointer twice.
+#[tokio::test]
+async fn pointers_differing_only_by_case_are_repeated() {
+    let node = TestNode::without_db("case-pointers").await;
+    attach(&node.state, true, None, None);
+    node.state.sync.set_state(SyncState::Syncing);
+    let pointer =
+        "urn:decentraland:matic:collections-v2:0xAbC0000000000000000000000000000000000001:0";
+    let file = Bytes::from(
+        json!({"version": "v3", "type": "wearable", "pointers": [pointer, pointer.to_lowercase()],
+               "timestamp": chrono::Utc::now().timestamp_millis(), "content": [], "metadata": {}})
+        .to_string(),
+    );
+    let id = crate::auth::hash_bytes_v1(&file);
+    let (status, _, body) = call(
+        &node.router(),
+        deploy_request("/content/entities", &id, &json!([]), &[(&id, &file)]),
+    )
+    .await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"errors": ["There are repeated pointers in your request."]})
+        )
     );
 }
 
@@ -588,23 +620,37 @@ fn land_token(x: i32, y: i32) -> String {
 
 /// Folds `owner`'s LAND at `parcels` into the index and publishes the fold.
 async fn index_land(pool: &PgPool, owner: &str, parcels: &[(i32, i32)]) {
+    let grants: Vec<_> = parcels
+        .iter()
+        .map(|&p| (crate::land_authz::KIND_TRANSFER, p, owner))
+        .collect();
+    index_land_events(pool, &grants).await;
+}
+
+/// Folds LAND registry events `(kind, parcel, address)` into the index and
+/// publishes the fold: a transfer's address is the new owner, an update
+/// operator's the operator.
+async fn index_land_events(pool: &PgPool, grants: &[(&'static str, (i32, i32), &str)]) {
     let settings = crate::land_authz::Settings::for_tests();
     let start = settings.start_block as i64;
     indexer::ensure_cursor(pool, &settings).await.unwrap();
-    let events: Vec<AuthzEvent> = parcels
+    let events: Vec<AuthzEvent> = grants
         .iter()
         .enumerate()
-        .map(|(i, (x, y))| AuthzEvent {
-            block_number: start + 10,
-            log_index: i as i32,
-            block_time: (start + 10) * 12,
-            token_address: crate::land_authz::LAND_REGISTRY_MAINNET.to_string(),
-            kind: crate::land_authz::KIND_TRANSFER,
-            token_id: Some(land_token(*x, *y)),
-            estate_id: None,
-            account: Some(owner.to_string()),
-            operator: None,
-            approved: None,
+        .map(|(i, &(kind, (x, y), address))| {
+            let transfer = kind == crate::land_authz::KIND_TRANSFER;
+            AuthzEvent {
+                block_number: start + 10,
+                log_index: i as i32,
+                block_time: (start + 10) * 12,
+                token_address: crate::land_authz::LAND_REGISTRY_MAINNET.to_string(),
+                kind,
+                token_id: Some(land_token(x, y)),
+                estate_id: None,
+                account: transfer.then(|| address.to_string()),
+                operator: (!transfer).then(|| address.to_string()),
+                approved: None,
+            }
         })
         .collect();
     let mut conn = pool.acquire().await.unwrap();
@@ -736,6 +782,10 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
         errors.to_string().contains("does not have access"),
         "{errors}"
     );
+    assert!(
+        !deployer.is_rate_limited("scene", &parcel),
+        "a rejected deploy does not hold the pointer"
+    );
 
     // The denylist: a listed hash is not served and cannot be deployed
     // again; a listed entity drops out of the reads.
@@ -841,6 +891,335 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
     db.drop_now().await;
 }
 
+/// A scene on two parcels goes only for a signer with LAND rights on both:
+/// the holder of one of them is refused and the scene stays; the holder of
+/// both takes it down, and both parcels are left empty although an older
+/// scene occupied one of them before.
+#[tokio::test]
+async fn unpublishing_a_scene_needs_rights_on_every_parcel_and_empties_them() {
+    require_test_db!(Some(db) = OwnDb::create("contentu").await);
+    let (owner, neighbour) = (key(OWNER_KEY), key(STRANGER_KEY));
+    let (x, y) = (41, -13);
+    let (a, b) = (format!("{x},{y}"), format!("{},{y}", x + 1));
+    // The owner holds (x, y) and operates (x + 1, y), which the neighbour owns.
+    index_land_events(
+        &db.pool,
+        &[
+            (crate::land_authz::KIND_TRANSFER, (x, y), &address(&owner)),
+            (
+                crate::land_authz::KIND_TRANSFER,
+                (x + 1, y),
+                &address(&neighbour),
+            ),
+            (
+                crate::land_authz::KIND_UPDATE_OPERATOR,
+                (x + 1, y),
+                &address(&owner),
+            ),
+        ],
+    )
+    .await;
+
+    let tmp = std::env::temp_dir().join(format!(
+        "catalyst-write-path-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
+    let state = Arc::new(ContentState::new(
+        db.pool.clone(),
+        Settings::for_tests(),
+        storage.clone(),
+    ));
+    state.sync.set_state(SyncState::Syncing);
+    let land = Arc::new(LandAuthzState::new(
+        db.pool.clone(),
+        Outbound::for_tests(),
+        crate::land_authz::Settings::for_tests(),
+        None,
+    ));
+    // Deploys ask the chain; the unpublish route reads the LAND index.
+    let fake = fake_chain::serve(fake_chain::land_owners(vec![
+        (address(&neighbour), (x + 1).into(), y.into()),
+        (address(&owner), x.into(), y.into()),
+        (address(&owner), (x + 1).into(), y.into()),
+    ]))
+    .await;
+    attach(&state, true, Some(land), Some(&fake));
+    let router = build_router(state.clone());
+    let deployer = state.deployer().unwrap().clone();
+
+    // The neighbour's older scene on (x + 1, y), then the owner's over both.
+    let (old_bytes, old_id, old_chain) = signed_entity(&neighbour, scene(&[&b], &[])).await;
+    let (status, _, body) = call(
+        &router,
+        deploy_request("/entities", &old_id, &old_chain, &[(&old_id, &old_bytes)]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", json_of(&body));
+    deployer.clear_rate_limits();
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let (bytes, entity_id, chain) = signed_entity(&owner, scene(&[&a, &b], &[])).await;
+    let (status, _, body) = call(
+        &router,
+        deploy_request("/entities", &entity_id, &chain, &[(&entity_id, &bytes)]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", json_of(&body));
+    let active = active_by_pointers(&router, &[&a, &b]).await;
+    assert_eq!(active.as_array().unwrap().len(), 1, "{active}");
+    assert_eq!(active[0]["id"], entity_id);
+
+    // The neighbour holds (x + 1, y) only: refused on either coordinate.
+    for coord in [&a, &b] {
+        let path = format!("/content/scenes/{coord}");
+        let (status, _, body) = call(&router, signed_delete(&neighbour, &path).await).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{}", json_of(&body));
+        assert_eq!(
+            json_of(&body),
+            json!({"error": format!("The provided Eth Address does not have access to the following parcel: ({x},{y})")})
+        );
+    }
+    let active = active_by_pointers(&router, &[&a, &b]).await;
+    assert_eq!(active.as_array().unwrap().len(), 1, "{active}");
+    assert_eq!(active[0]["id"], entity_id, "the scene is still active");
+
+    // The owner holds both: the scene goes and neither parcel has a scene.
+    let path = format!("/content/scenes/{b}");
+    let (status, _, body) = call(&router, signed_delete(&owner, &path).await).await;
+    assert_eq!(status, StatusCode::OK, "{}", json_of(&body));
+    let mut parcels = vec![a.clone(), b.clone()];
+    parcels.sort();
+    assert_eq!(
+        json_of(&body),
+        json!({"entityId": entity_id, "unpublished": true, "parcels": parcels})
+    );
+    assert_eq!(active_by_pointers(&router, &[&a, &b]).await, json!([]));
+    let (_, _, audit) = call(
+        &router,
+        Request::get(format!("/audit/scene/{old_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        json_of(&audit)["localProvenance"]["status"],
+        "superseded",
+        "the older scene is not restored"
+    );
+
+    drop((router, deployer, state));
+    let _ = std::fs::remove_dir_all(&tmp);
+    db.drop_now().await;
+}
+
+/// What the LAND check's subgraph does before it answers, standing in for a
+/// write that lands between the route's lookup and its unpublish.
+enum Race {
+    /// A peer scene replaces the local one on the parcel.
+    PeerReplaces {
+        local: String,
+        peer: String,
+        pointer: String,
+    },
+    /// A concurrent DELETE takes the local scene down first.
+    Unpublished { local: String, pointer: String },
+}
+
+/// The marketplace subgraph on the loopback: `owner` owns every parcel asked
+/// for, and each request first runs the armed [`Race`] against `pool`.
+async fn serve_racing_land_subgraph(
+    pool: PgPool,
+    owner: String,
+    race: Arc<parking_lot::Mutex<Option<Race>>>,
+) -> String {
+    use axum::extract::State;
+    type Shared = (PgPool, String, Arc<parking_lot::Mutex<Option<Race>>>);
+    async fn graphql(
+        State(shared): State<Arc<Shared>>,
+        axum::Json(body): axum::Json<Value>,
+    ) -> axum::Json<Value> {
+        let (pool, owner, race) = &*shared;
+        let armed = race.lock().take();
+        match armed {
+            Some(Race::PeerReplaces {
+                local,
+                peer,
+                pointer,
+            }) => {
+                let id: i32 = sqlx::query_scalar(
+                    "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id,
+                         entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain)
+                     VALUES ('0xpeer', 'v3', 'scene', $1, NULL, timezone('UTC', now()), ARRAY[$2],
+                             timezone('UTC', now()), '[]'::json)
+                     RETURNING id",
+                )
+                .bind(&peer)
+                .bind(&pointer)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+                sqlx::query(
+                    "UPDATE content.deployments SET deleter_deployment = $2 WHERE entity_id = $1",
+                )
+                .bind(&local)
+                .bind(id)
+                .execute(pool)
+                .await
+                .unwrap();
+                sqlx::query("UPDATE content.active_pointers SET entity_id = $2 WHERE pointer = $1")
+                    .bind(&pointer)
+                    .bind(&peer)
+                    .execute(pool)
+                    .await
+                    .unwrap();
+            }
+            Some(Race::Unpublished { local, pointer }) => {
+                super::land_publish::unpublish_local_scene(pool, &pointer, &local)
+                    .await
+                    .unwrap();
+            }
+            None => {}
+        }
+        let xs: Vec<String> = serde_json::from_value(body["variables"]["xs"].clone()).unwrap();
+        let ys: Vec<String> = serde_json::from_value(body["variables"]["ys"].clone()).unwrap();
+        let nfts: Vec<Value> = xs
+            .iter()
+            .flat_map(|x| ys.iter().map(move |y| (x, y)))
+            .map(|(x, y)| {
+                json!({"id": format!("0xland-{x}-{y}"), "searchParcelX": x, "searchParcelY": y,
+                       "owner": {"id": owner}, "parcel": {"estate": null}})
+            })
+            .collect();
+        axum::Json(json!({"data": {"nfts": nfts}}))
+    }
+    let app = Router::new()
+        .route("/", axum::routing::post(graphql))
+        .with_state(Arc::new((pool, owner, race)));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://{addr}/")
+}
+
+/// A local scene on `pointer`, as the deploy function leaves it.
+async fn seed_local_scene(pool: &PgPool, entity_id: &str, pointer: &str) {
+    sqlx::query(
+        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id,
+             entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain)
+         VALUES ('0xowner', 'v3', 'scene', $1, NULL, timezone('UTC', now()) - interval '1 day',
+                 ARRAY[$2], timezone('UTC', now()), '[]'::json)",
+    )
+    .bind(entity_id)
+    .bind(pointer)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ($1, $2, 'scene')")
+        .bind(pointer)
+        .bind(entity_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO content.local_entities (entity_id, signer) VALUES ($1, '0xowner')")
+        .bind(entity_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// A write between the route's lookup and its unpublish: a peer scene that
+/// replaced the local one answers 409 and stays; a concurrent DELETE that took
+/// the scene down first leaves this one a 404.
+#[tokio::test]
+async fn an_unpublish_raced_by_another_write_answers_409_or_404() {
+    require_test_db!(Some(db) = OwnDb::create("contentr").await);
+    let owner = key(OWNER_KEY);
+    let race = Arc::new(parking_lot::Mutex::new(None));
+    let subgraph = serve_racing_land_subgraph(db.pool.clone(), address(&owner), race.clone()).await;
+    let market = Arc::new(crate::chain_index::ChainIndex::new(
+        Outbound::for_tests(),
+        crate::chain_index::IndexSettings {
+            marketplace_subgraph_url: Some(subgraph),
+            ..crate::chain_index::IndexSettings::for_tests()
+        },
+    ));
+    market.allow_loopback_for_tests();
+
+    let tmp = std::env::temp_dir().join(format!(
+        "catalyst-write-path-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
+    let state = Arc::new(ContentState::new(
+        db.pool.clone(),
+        Settings::for_tests(),
+        storage.clone(),
+    ));
+    state.sync.set_state(SyncState::Syncing);
+    let land = Arc::new(LandAuthzState::new(
+        db.pool.clone(),
+        Outbound::for_tests(),
+        crate::land_authz::Settings::for_tests(),
+        Some(market),
+    ));
+    attach(&state, true, Some(land), None);
+    let router = build_router(state.clone());
+
+    let (replaced, gone) = ("23,-7", "29,-7");
+    seed_local_scene(&db.pool, "bafylocalreplaced", replaced).await;
+    seed_local_scene(&db.pool, "bafylocalgone", gone).await;
+
+    *race.lock() = Some(Race::PeerReplaces {
+        local: "bafylocalreplaced".into(),
+        peer: "bafypeerreplacing".into(),
+        pointer: replaced.into(),
+    });
+    let path = format!("/content/scenes/{replaced}");
+    let (status, _, body) = call(&router, signed_delete(&owner, &path).await).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{}", json_of(&body));
+    assert!(
+        race.lock().is_none(),
+        "the race ran during the rights check"
+    );
+    let tombstoned: Option<chrono::NaiveDateTime> = sqlx::query_scalar(
+        "SELECT tombstoned_at FROM content.local_entities WHERE entity_id = 'bafylocalreplaced'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        tombstoned, None,
+        "the replaced local scene is not tombstoned"
+    );
+    let holder: String =
+        sqlx::query_scalar("SELECT entity_id FROM content.active_pointers WHERE pointer = $1")
+            .bind(replaced)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(holder, "bafypeerreplacing");
+
+    *race.lock() = Some(Race::Unpublished {
+        local: "bafylocalgone".into(),
+        pointer: gone.into(),
+    });
+    let path = format!("/content/scenes/{gone}");
+    let (status, _, body) = call(&router, signed_delete(&owner, &path).await).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::NOT_FOUND,
+            json!({"error": format!("No locally published scene at {gone}.")})
+        )
+    );
+
+    drop((router, state));
+    let _ = std::fs::remove_dir_all(&tmp);
+    db.drop_now().await;
+}
+
 fn profile(owner: &str, wearables: &[&str]) -> Value {
     json!({
         "version": "v3",
@@ -850,14 +1229,20 @@ fn profile(owner: &str, wearables: &[&str]) -> Value {
         "content": [],
         "metadata": {"avatars": [{
             "name": "writepath", "hasClaimedName": false, "description": "",
+            "ethAddress": owner, "version": 1, "tutorialStep": 0,
             "avatar": {
                 "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+                "eyes": {"color": {"r": 0.1, "g": 0.2, "b": 0.3}},
+                "hair": {"color": {"r": 0.1, "g": 0.2, "b": 0.3}},
+                "skin": {"color": {"r": 0.1, "g": 0.2, "b": 0.3}},
                 "wearables": wearables,
                 "emotes": [{"slot": 0, "urn": "urn:decentraland:off-chain:base-emotes:wave"}]
             }
         }]},
     })
 }
+
+const PROFILE_CLIENT_IP: &str = "203.0.113.30";
 
 /// The old `profile_batch_no_overlay` contract on the write path: with no
 /// escrow lease anywhere, a worn item counts for the wallet that holds that
@@ -929,11 +1314,10 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
             let refs: Vec<&str> = wearables.iter().map(String::as_str).collect();
             let (bytes, id, chain) =
                 signed_entity(&signer, profile(&address(&signer), &refs)).await;
-            let (status, _, body) = call(
-                &router,
-                deploy_request("/content/entities", &id, &chain, &[(&id, &bytes)]),
-            )
-            .await;
+            let mut req = deploy_request("/content/entities", &id, &chain, &[(&id, &bytes)]);
+            req.headers_mut()
+                .insert("x-real-ip", HeaderValue::from_static(PROFILE_CLIENT_IP));
+            let (status, _, body) = call(&router, req).await;
             (status, json_of(&body), id)
         }
     };
@@ -981,6 +1365,11 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(chain.calls().is_empty(), "base items are never asked about");
+    assert_eq!(
+        state.deploy_quota.counted_for(PROFILE_CLIENT_IP),
+        6,
+        "the 400s and 200s all count"
+    );
 
     let mut scope: HashMap<String, String> = HashMap::new();
     for (id, who) in [(&alice_id, &alice), (&bob_id, &bob), (&carol_id, &carol)] {
@@ -1011,4 +1400,380 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
     }
     let _ = std::fs::remove_dir_all(&tmp);
     pool.close().await;
+}
+
+/// A deploy form of the given text fields from `ip`, as the gateway stamps it.
+fn form_request(ip: &str, fields: &[(String, String)]) -> Request<Body> {
+    let boundary = "catalyst-admission-boundary";
+    let mut body = String::new();
+    for (name, value) in fields {
+        body.push_str(&format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+        ));
+    }
+    body.push_str(&format!("--{boundary}--\r\n"));
+    Request::post("/content/entities")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .header(header::CONTENT_LENGTH, body.len())
+        .header("x-real-ip", ip)
+        .body(Body::from(body))
+        .unwrap()
+}
+
+/// A form that passes admission and is then refused by the deployer (400).
+fn entity_form() -> Vec<(String, String)> {
+    vec![
+        ("entityId".to_string(), "bafy".to_string()),
+        ("ethAddress".to_string(), "0xabc".to_string()),
+        ("signature".to_string(), "0xsig".to_string()),
+    ]
+}
+
+async fn deploying_node(tag: &str, settings: Settings) -> TestNode {
+    let node = TestNode::without_db_settings(tag, settings).await;
+    attach(&node.state, true, None, None);
+    node.state.sync.set_state(SyncState::Syncing);
+    node
+}
+
+#[tokio::test]
+async fn a_form_over_its_field_limits_is_refused() {
+    let node = deploying_node("field-limits", Settings::for_tests()).await;
+    let router = node.router();
+
+    let mut many = entity_form();
+    many.extend((0..30).map(|i| (format!("extra{i}"), "x".to_string())));
+    let (status, _, body) = call(&router, form_request("203.0.113.1", &many)).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"error": "Too many form fields in the request. The maximum allowed is 32."})
+        )
+    );
+
+    let mut large = entity_form();
+    large.push(("big".to_string(), "x".repeat(32 * 1024 + 1)));
+    let (status, _, body) = call(&router, form_request("203.0.113.1", &large)).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"error": "Field 'big' is too large. The maximum allowed size per field is 32768 bytes."})
+        )
+    );
+
+    let mut fits = entity_form();
+    fits.push(("big".to_string(), "x".repeat(32 * 1024)));
+    let (status, _, body) = call(&router, form_request("203.0.113.1", &fits)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_of(&body),
+        json!({"errors": ["The entity file was not part of the uploaded files."]}),
+        "a form at the limits reaches the deployer"
+    );
+}
+
+#[tokio::test]
+async fn a_client_past_its_daily_quota_is_turned_away() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 2,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("daily-quota", settings).await;
+    let router = node.router();
+    for _ in 0..2 {
+        let (status, _, _) = call(&router, form_request("203.0.113.7", &entity_form())).await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "refused deploys still count"
+        );
+    }
+    let (status, headers, body) = call(&router, form_request("203.0.113.7", &entity_form())).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({"error": "Too many requests"})
+        )
+    );
+    let retry: u64 = headers[header::RETRY_AFTER]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(retry > 0 && retry <= 24 * 60 * 60, "{retry}");
+
+    let (status, _, _) = call(&router, form_request("203.0.113.8", &entity_form())).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "another address has its own quota"
+    );
+}
+
+#[tokio::test]
+async fn a_body_past_the_upload_budget_is_shed_with_retry_after() {
+    let capacity = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let settings = Settings {
+        max_in_memory_deployment_bytes: capacity,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("upload-budget", settings).await;
+    let router = node.router();
+
+    let held = node.state.upload_budget.try_reserve(capacity).unwrap();
+    let (status, headers, body) = call(&router, form_request("203.0.113.9", &entity_form())).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"error": super::upload_admission::BUDGET_EXHAUSTED_MESSAGE})
+        )
+    );
+    assert_eq!(headers[header::RETRY_AFTER], "30");
+
+    drop(held);
+    let (status, _, _) = call(&router, form_request("203.0.113.9", &entity_form())).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "admitted once the budget frees"
+    );
+    assert!(
+        node.state.upload_budget.try_reserve(capacity).is_some(),
+        "a finished request returns its reservation"
+    );
+}
+
+#[tokio::test]
+async fn repeated_field_names_count_toward_the_field_limit() {
+    let node = deploying_node("field-repeats", Settings::for_tests()).await;
+    let mut repeated = entity_form();
+    repeated.extend((0..30).map(|_| ("extra".to_string(), "x".to_string())));
+    let (status, _, body) = call(&node.router(), form_request("203.0.113.1", &repeated)).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"error": "Too many form fields in the request. The maximum allowed is 32."})
+        )
+    );
+}
+
+#[tokio::test]
+async fn forms_refused_for_their_field_limits_count_toward_the_quota() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 2,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-parse-failures", settings).await;
+    let router = node.router();
+    let mut large = entity_form();
+    large.push(("big".to_string(), "x".repeat(32 * 1024 + 1)));
+    for _ in 0..2 {
+        let (status, _, _) = call(&router, form_request("203.0.113.10", &large)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    let (status, _, _) = call(&router, form_request("203.0.113.10", &entity_form())).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+/// An unsynced copy taking only scenes: a form with no typed entity file is
+/// 400 and a profile 503, and both count, since the client chose them.
+#[tokio::test]
+async fn an_unsynced_copys_refusals_count_toward_the_quota() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 2,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-copy", settings).await;
+    node.state.sync.set_unsynced_copy(true);
+    node.state
+        .sync
+        .set_copy_deploy_types(vec!["scene".to_string()]);
+    let router = node.router();
+    let (status, _, body) = call(&router, form_request("203.0.113.11", &entity_form())).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"errors": ["The entity file was not part of the uploaded files or has no type."]})
+        )
+    );
+    let file = Bytes::from(
+        json!({"version": "v3", "type": "profile", "pointers": ["0x00000000000000000000000000000000000000aa"],
+               "timestamp": chrono::Utc::now().timestamp_millis(), "content": [], "metadata": {}})
+        .to_string(),
+    );
+    let id = hash_bytes_v1(&file);
+    let profile = || {
+        let mut req = deploy_request("/content/entities", &id, &json!([]), &[(&id, &file)]);
+        req.headers_mut()
+            .insert("x-real-ip", HeaderValue::from_static("203.0.113.11"));
+        req
+    };
+    let (status, _, _) = call(&router, profile()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let (status, _, _) = call(&router, profile()).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+/// A contract-wallet chain this node cannot check (no `ETH_RPC_URL`) is a 503
+/// the client chose: it counts toward the quota.
+#[tokio::test]
+async fn deploys_with_an_unverifiable_signature_count_toward_the_quota() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 2,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-unverifiable", settings).await;
+    let router = node.router();
+    let file = Bytes::from(profile("0x0000000000000000000000000000000000000002", &[]).to_string());
+    let id = hash_bytes_v1(&file);
+    let chain = serde_json::to_value(
+        crate::sync_test_support::signed_chain_behind_contract(
+            &id,
+            &(chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339(),
+        )
+        .await,
+    )
+    .unwrap();
+    for _ in 0..2 {
+        node.state.deployer().unwrap().clear_rate_limits();
+        let mut req = deploy_request("/content/entities", &id, &chain, &[(&id, &file)]);
+        req.headers_mut()
+            .insert("x-real-ip", HeaderValue::from_static("203.0.113.13"));
+        let (status, headers, body) = call(&router, req).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body:?}");
+        assert!(json_of(&body)["errors"].is_array(), "{body:?}");
+        assert!(headers.contains_key(header::RETRY_AFTER));
+    }
+    assert_eq!(node.state.deploy_quota.counted_for("203.0.113.13"), 2);
+    let (status, _, _) = call(&router, form_request("203.0.113.13", &entity_form())).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+/// The deployer's 503 for this node's own state (here no LAND rights source)
+/// is given back to the client's quota.
+#[tokio::test]
+async fn deploys_the_node_cannot_decide_are_given_back() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 1,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-refund", settings).await;
+    let router = node.router();
+    let signer = PrivateKeySigner::random();
+    let (file, id, chain) = signed_entity(&signer, scene(&["0,0"], &[])).await;
+    for _ in 0..3 {
+        node.state.deployer().unwrap().clear_rate_limits();
+        let mut req = deploy_request("/content/entities", &id, &chain, &[(&id, &file)]);
+        req.headers_mut()
+            .insert("x-real-ip", HeaderValue::from_static("203.0.113.14"));
+        let (status, headers, body) = call(&router, req).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body:?}");
+        assert!(
+            json_of(&body)["errors"][0]
+                .as_str()
+                .is_some_and(|e| e.starts_with("Error checking parcel access")),
+            "{body:?}"
+        );
+        assert!(headers.contains_key(header::RETRY_AFTER));
+    }
+    assert_eq!(node.state.deploy_quota.counted_for("203.0.113.14"), 0);
+    let (status, _, _) = call(&router, form_request("203.0.113.14", &entity_form())).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "the quota is untouched");
+    let (status, _, _) = call(&router, form_request("203.0.113.14", &entity_form())).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "a 400 is kept");
+}
+
+#[tokio::test]
+async fn a_request_without_a_client_address_skips_the_quota() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 1,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-no-address", settings).await;
+    let router = node.router();
+    for _ in 0..3 {
+        let mut req = form_request("", &entity_form());
+        req.headers_mut().remove("x-real-ip");
+        let (status, _, _) = call(&router, req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
+async fn a_chunked_body_reserves_the_whole_body_cap() {
+    let cap = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let settings = Settings {
+        max_in_memory_deployment_bytes: 2 * cap,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("upload-budget-chunked", settings).await;
+    let router = node.router();
+    let _held = node.state.upload_budget.try_reserve(cap + 1).unwrap();
+
+    let mut chunked = form_request("203.0.113.12", &entity_form());
+    chunked.headers_mut().remove(header::CONTENT_LENGTH);
+    let (status, _, _) = call(&router, chunked).await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the cap does not fit"
+    );
+
+    let (status, _, _) = call(&router, form_request("203.0.113.12", &entity_form())).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a declared small body fits"
+    );
+}
+
+#[tokio::test]
+async fn a_cancelled_request_returns_its_reservation() {
+    let cap = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let settings = Settings {
+        max_in_memory_deployment_bytes: cap,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("upload-budget-cancel", settings).await;
+    let router = node.router();
+
+    let (mut tx, rx) = futures::channel::mpsc::channel::<Result<Bytes, std::io::Error>>(1);
+    let boundary = "catalyst-admission-boundary";
+    tx.try_send(Ok(Bytes::from(format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"entityId\"\r\n\r\nba"
+    ))))
+    .unwrap();
+    let req = Request::post("/content/entities")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .header("x-real-ip", "203.0.113.13")
+        .body(Body::from_stream(rx))
+        .unwrap();
+    let pending = tokio::spawn(router.clone().oneshot(req));
+
+    let budget = &node.state.upload_budget;
+    let mut waited = 0;
+    while budget.try_reserve(1).is_some() {
+        assert!(waited < 500, "the request never reserved");
+        waited += 1;
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    pending.abort();
+    let _ = pending.await;
+    drop(tx);
+    assert!(
+        budget.try_reserve(cap).is_some(),
+        "the aborted request gave its reservation back"
+    );
 }

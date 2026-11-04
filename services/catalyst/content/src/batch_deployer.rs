@@ -715,8 +715,12 @@ mod tests {
         sync_one(entity, chain, eip1654, over(&blocks)).await
     }
 
+    /// The one content file an entity of these tests may name, already in the store.
+    const MODEL: &[u8] = b"glTF";
+
     /// Syncs `entity` (its first pointer the one checked), signed as `chain` says, through a
-    /// deployer with the content validator over `settings` attached.
+    /// deployer with the content validator over `settings` attached. The peer serves only
+    /// the entity file; [`MODEL`] is already stored.
     async fn sync_one(
         entity: serde_json::Value,
         chain: Chain,
@@ -742,6 +746,10 @@ mod tests {
             .unwrap();
         let (base, server) = spawn_content_server(body, None).await;
         let (storage, tmp) = temp_storage("validated").await;
+        storage
+            .store(&hash_bytes_v1(MODEL), MODEL.into())
+            .await
+            .unwrap();
         let deployer = Arc::new(LiveSyncDeployer::new(
             pool.clone(),
             2,
@@ -926,7 +934,8 @@ mod tests {
         let pointer = format!("{},{}", parcel.0, parcel.1);
         let entity = serde_json::json!({
             "version": "v3", "type": "scene", "pointers": [pointer], "timestamp": timestamp,
-            "content": [], "metadata": {"scene": {"base": pointer, "parcels": [pointer]}, "tag": unique()}
+            "content": [],
+            "metadata": {"main": "bin/index.js", "scene": {"base": pointer, "parcels": [pointer]}, "tag": unique()}
         });
         (entity, parcel)
     }
@@ -1050,7 +1059,22 @@ mod tests {
             let pointer = format!("urn:decentraland:matic:collections-v2:{collection}:3");
             serde_json::json!({
                 "version": "v3", "type": "wearable", "pointers": [pointer], "timestamp": timestamp,
-                "content": [], "metadata": {"id": pointer, "data": {"representations": []}, "tag": unique()}
+                "content": [{"file": "male/hat.glb", "hash": hash_bytes_v1(MODEL)}],
+                "metadata": {
+                    "id": pointer, "name": "hat", "description": "",
+                    "i18n": [{"code": "en", "text": "Hat"}],
+                    "thumbnail": "thumbnail.png", "image": "image.png",
+                    "collectionAddress": collection, "rarity": "epic",
+                    "data": {
+                        "replaces": [], "hides": [], "tags": ["hat"], "category": "hat",
+                        "representations": [{
+                            "bodyShapes": ["urn:decentraland:off-chain:base-avatars:BaseMale"],
+                            "mainFile": "male/hat.glb", "contents": ["male/hat.glb"],
+                            "overrideHides": [], "overrideReplaces": []
+                        }]
+                    },
+                    "tag": unique()
+                }
             })
         };
         let editor_until = |until: Option<u64>| {

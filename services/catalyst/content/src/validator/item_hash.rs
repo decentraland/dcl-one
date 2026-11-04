@@ -110,7 +110,10 @@ mod tests {
             ),
         ] {
             let entity = super::super::entity_parser::parse_entity_from_bytes(file, id).unwrap();
-            let files = std::collections::HashMap::from([(id.to_string(), file.to_vec())]);
+            let files = std::collections::HashMap::from([(
+                id.to_string(),
+                bytes::Bytes::copy_from_slice(file),
+            )]);
             let auth_chain = Default::default();
             let deployment = Deployment {
                 entity: &entity,

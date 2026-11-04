@@ -1,7 +1,8 @@
 //! The content validator of the local write path: the port of
 //! `catalyrst-validator` (itself the Rust port of `@dcl/content-validator`).
 //! [`validate`] runs the old `ContentValidator` over one deployment in the
-//! old order ([`rules`]): entity structure, IPFS hashing and ADR-45, the auth
+//! old order ([`rules`]): entity structure, IPFS hashing, the metadata
+//! schema of the type ([`metadata_schema`]) and ADR-45, the auth
 //! chain, the size cap of the entity type (skins 9 MB), wearable and emote
 //! representations and spring bones, the profile rules (ADR-74/75/232/244/290,
 //! emote slots), the item and face256 thumbnails ([`image_metadata`]), the
@@ -43,6 +44,7 @@ pub mod image_metadata;
 mod item_hash;
 mod jsjson;
 pub mod merkle;
+mod metadata_schema;
 pub(crate) mod onchain;
 pub mod rules;
 mod scene_parcels;
@@ -304,7 +306,7 @@ pub struct Context<'a> {
 /// kind.
 pub async fn validate(
     entity: &Entity,
-    files: &HashMap<String, Vec<u8>>,
+    files: &HashMap<String, bytes::Bytes>,
     ctx: &Context<'_>,
 ) -> Result<(), Vec<ValidationError>> {
     let deployment = Deployment {
@@ -325,18 +327,17 @@ pub async fn validate(
 }
 
 /// The write deployer's failure for a refused validation: `Unavailable`
-/// (503) when this node could not decide, `Rejected` (400) otherwise.
+/// (503) when this node could not decide, `Unverifiable` (503) for a
+/// contract-wallet signature not checked here, `Rejected` (400) otherwise.
 pub fn into_deploy_failure(errors: Vec<ValidationError>) -> super::write_deployer::DeployFailure {
     use super::write_deployer::DeployFailure;
     let unavailable = errors.iter().any(ValidationError::is_unavailable);
-    let messages: Vec<String> = errors
-        .into_iter()
-        .map(|e| match e {
-            ValidationError::Rejected(m) | ValidationError::Unavailable(m) => m,
-        })
-        .collect();
+    let unverifiable = errors.iter().any(ValidationError::is_unverifiable);
+    let messages: Vec<String> = errors.iter().map(|e| e.message().to_string()).collect();
     if unavailable {
         DeployFailure::Unavailable(messages)
+    } else if unverifiable {
+        DeployFailure::Unverifiable(messages)
     } else {
         DeployFailure::Rejected(messages)
     }

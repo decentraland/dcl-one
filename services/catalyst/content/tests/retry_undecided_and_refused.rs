@@ -85,7 +85,8 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
     let timestamp = chrono::Utc::now().timestamp_millis() - 86_400_000;
     let undecided = serde_json::to_vec(&serde_json::json!({
         "version": "v3", "type": "scene", "pointers": ["40,-40"], "timestamp": timestamp,
-        "content": [], "metadata": {"scene": {"base": "40,-40", "parcels": ["40,-40"]}}
+        "content": [],
+        "metadata": {"main": "bin/index.js", "scene": {"base": "40,-40", "parcels": ["40,-40"]}}
     }))
     .unwrap();
     let refused = serde_json::to_vec(&serde_json::json!({
@@ -250,6 +251,13 @@ async fn an_undecided_entity_outlives_the_cap_and_a_refused_one_is_never_retried
             assert_eq!(stats.still_failing, 1);
             let record = read(entity_id.clone()).await.expect("recorded");
             assert_eq!(record.reason, "Deployment rejected");
+            assert!(
+                record
+                    .error_description
+                    .contains("You can only alter your own outfits"),
+                "{}",
+                record.error_description
+            );
             sqlx::query(
                 "UPDATE content.failed_deployments SET next_retry_at = '1970-01-01' \
                  WHERE entity_id = $1",

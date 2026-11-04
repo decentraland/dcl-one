@@ -5,16 +5,15 @@
 use alloy_primitives::Address;
 
 use super::chain::urn_key;
-use super::checker::{ItemUrnType, classify_item_urn, parse_collection_urn};
+use super::checker::{ItemAssetType, item_asset_urn_type, parse_collection_urn};
 
 /// `(contract, item)` for a mainnet collections-v1 asset URN, by address or
 /// by a listed name; `None` for anything else.
 fn v1_asset_key(pointer: &str) -> Option<(Address, String)> {
-    if classify_item_urn(pointer) != ItemUrnType::CollectionV1 {
-        return None;
-    }
     let key = urn_key(pointer);
-    if !key.starts_with("urn:decentraland:ethereum:") {
+    if item_asset_urn_type(&key) != Some(ItemAssetType::CollectionV1)
+        || !key.starts_with("urn:decentraland:ethereum:")
+    {
         return None;
     }
     let (collection, item, _) = parse_collection_urn(&key)?;
