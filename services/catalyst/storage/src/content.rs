@@ -102,6 +102,40 @@ impl Storage {
         Ok(())
     }
 
+    /// A directory beside the blob tree (`<STORAGE_ROOT_FOLDER>/tmp`): same filesystem, never walked as content.
+    pub fn scratch_dir(&self) -> PathBuf {
+        self.root.parent().unwrap_or(&self.root).join("tmp")
+    }
+
+    /// Stores the bytes of `src` under `hash` without reading them into memory; `src` is left in place.
+    /// A hard link when `src` shares the filesystem (see [`scratch_dir`](Self::scratch_dir)), else a copy.
+    /// Runs detached on the blocking pool, so a dropped caller never leaks a staging file.
+    pub async fn store_file(&self, hash: &str, src: &Path) -> Result<(), StorageError> {
+        let path = ensure_file_path(&self.root, hash, &self.known_shards).await?;
+        let seq = TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+        let staging_target = staging_path(&path, self.kind, seq);
+        let src = src.to_path_buf();
+        tokio::task::spawn_blocking(move || -> std::io::Result<()> {
+            let mut staging = super::StagingGuard::new(staging_target.clone());
+            if std::fs::hard_link(&src, &staging_target).is_err() {
+                std::fs::copy(&src, &staging_target)?;
+            }
+            std::fs::File::open(&staging_target)?.sync_all()?;
+            std::fs::rename(&staging_target, &path)?;
+            staging.disarm();
+            if let Some(parent) = path.parent()
+                && let Ok(dir) = std::fs::File::open(parent)
+            {
+                let _ = dir.sync_all();
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))??;
+        debug!(kind = self.kind, hash, "stored from file");
+        Ok(())
+    }
+
     pub async fn retrieve(&self, hash: &str) -> Result<Option<Bytes>, StorageError> {
         if self.withholds(hash) {
             return Ok(None);

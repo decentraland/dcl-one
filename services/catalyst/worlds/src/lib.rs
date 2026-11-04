@@ -422,7 +422,7 @@ pub fn app_router(
     if let Some(host) = &s.scene_host {
         app = app.nest(scene_state::ROUTE_PREFIX, scene_state::router(host.clone()));
     }
-    app
+    app.layer(axum::middleware::from_fn(core::metrics::http_metrics))
 }
 
 #[cfg(test)]

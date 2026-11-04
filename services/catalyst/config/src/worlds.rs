@@ -137,6 +137,18 @@ pub struct WorldsConfig {
     #[arg(long, env = "SCENE_EVICTION_TTL_MS", default_value_t = 604_800_000)]
     pub scene_eviction_ttl_ms: u64,
 
+    /// Multipart uploads one client address (IPv6 by /64) may have in flight.
+    #[arg(long, env = "MAX_CONCURRENT_UPLOADS_PER_SOURCE", default_value_t = 4)]
+    pub max_concurrent_uploads_per_source: u64,
+
+    /// Declared upload bytes one client address may have in flight (>= one 350 MiB deploy).
+    #[arg(
+        long,
+        env = "MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE",
+        default_value_t = 367_001_600
+    )]
+    pub max_in_flight_upload_bytes_per_source: u64,
+
     #[arg(long, env = "MULTIPART_UPLOAD_TIMEOUT_MS", default_value_t = 300_000)]
     pub multipart_upload_timeout_ms: u64,
 

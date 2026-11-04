@@ -369,6 +369,13 @@ async fn deploy(
     footprint: &[&str],
     replacement: &Deploy,
 ) -> Result<(), super::http::ApiError> {
+    // deploy_scene requires the entity blob; seed it for canonical ids.
+    if crate::auth::is_canonical_cid(entity_id) {
+        f.storage
+            .store(entity_id, bytes::Bytes::from(entity.to_string()))
+            .await
+            .unwrap();
+    }
     store::deploy_scene(
         &f.pool,
         &f.storage,
@@ -3966,8 +3973,8 @@ async fn every_route_answers_its_contract() {
         200,
     )
     .await;
-    expect(app, Case::new("get", "/admin/worlds"), 403).await;
-    expect(app, Case::new("post", "/admin/gc?dry_run=true"), 403).await;
+    expect(app, Case::new("get", "/admin/worlds"), 401).await;
+    expect(app, Case::new("post", "/admin/gc?dry_run=true"), 401).await;
     let gc = expect(
         app,
         Case::new("post", "/gc?dry_run=true").bearer(ADMIN_TOKEN),
@@ -3983,6 +3990,28 @@ async fn every_route_answers_its_contract() {
         gc["minAgeSeconds"].as_u64().unwrap() >= 3600,
         "the floor holds"
     );
+    assert!(
+        gc["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Garbage collection")
+    );
+    let unauthorized = expect(app, Case::new("post", "/gc").bearer("wrong"), 401).await;
+    assert_eq!(unauthorized["message"], "Invalid authorization header");
+    let running = catalyst_storage::gc::try_lock_run(&f.pool)
+        .await
+        .unwrap()
+        .expect("no other run");
+    let request = Request::builder()
+        .method("POST")
+        .uri("/gc?dry_run=true")
+        .header(header::AUTHORIZATION, format!("Bearer {ADMIN_TOKEN}"))
+        .body(Body::empty())
+        .unwrap();
+    let busy = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(busy.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(busy.headers()[header::RETRY_AFTER], "60");
+    running.commit().await.unwrap();
     let detail = expect(
         app,
         Case::new("get", format!("/admin/worlds/{w}")).bearer(ADMIN_TOKEN),
@@ -4023,7 +4052,7 @@ async fn every_route_answers_its_contract() {
             "get",
             format!("/admin/worlds/{w}/ban-status?address={}", owner.display()),
         ),
-        403,
+        401,
     )
     .await;
     expect(
@@ -4057,7 +4086,7 @@ async fn every_route_answers_its_contract() {
         200,
     )
     .await;
-    expect(app, Case::new("post", &blocked_path), 403).await;
+    expect(app, Case::new("post", &blocked_path), 401).await;
     assert_eq!(
         f.state
             .policy
@@ -4094,7 +4123,7 @@ async fn every_route_answers_its_contract() {
             .iter()
             .any(|b| b["wallet"] == stranger.address.as_str())
     );
-    expect(app, Case::new("get", "/admin/blocked"), 403).await;
+    expect(app, Case::new("get", "/admin/blocked"), 401).await;
     expect(
         app,
         Case::new("delete", &blocked_path).bearer(ADMIN_TOKEN),
@@ -4126,7 +4155,7 @@ async fn every_route_answers_its_contract() {
     )
     .await;
     assert_eq!(log["entries"][0]["worldName"], world.key());
-    expect(app, Case::new("get", "/admin/access-log"), 403).await;
+    expect(app, Case::new("get", "/admin/access-log"), 401).await;
 
     expect(
         app,
@@ -4503,7 +4532,7 @@ async fn local_publishes_are_forwarded_unchanged_and_replaced_ones_superseded() 
     expect(
         &f.app,
         Case::new("get", format!("/admin/forwarding/{}", first.entity_id)),
-        403,
+        401,
     )
     .await;
     expect(
@@ -4554,7 +4583,7 @@ async fn local_publishes_are_forwarded_unchanged_and_replaced_ones_superseded() 
     let report = forwarder.run_pass(&CancellationToken::new()).await.unwrap();
     assert_eq!((report.rejected, report.total()), (1, 1));
     let retry = format!("/admin/forwarding/{}/retry", other.entity_id);
-    expect(&f.app, Case::new("post", retry.clone()), 403).await;
+    expect(&f.app, Case::new("post", retry.clone()), 401).await;
     let record = expect(&f.app, Case::new("post", retry).bearer(ADMIN_TOKEN), 200).await;
     assert_eq!(
         (&record["status"], &record["attempts"], &record["worldName"]),
@@ -5608,4 +5637,152 @@ async fn an_oversized_deploy_body_answers_413() {
         body,
         json!({ "error": "Payload Too Large", "message": "The multipart request is too large." })
     );
+}
+
+async fn wait_spool_empty(f: &Fixture) {
+    let root = super::upload_spool::spool_root(&f.storage);
+    for _ in 0..200 {
+        let empty = match std::fs::read_dir(&root) {
+            Ok(mut entries) => entries.next().is_none(),
+            Err(_) => true,
+        };
+        if empty {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!(
+        "the upload spool under {} was not cleaned up",
+        root.display()
+    );
+}
+
+#[tokio::test]
+async fn deploy_parts_are_spooled_to_disk_and_removed_after_success_and_failure() {
+    let Some(f) = fixture().await else { return };
+    let world = world_name();
+    let owner = Wallet::random();
+    f.names.set(&owner.address, world.label());
+
+    let d = deployment(&owner, &world, "Spooled", "0,0", &["0,0"]).await;
+    post_entity(&f.app, &d, 200).await;
+    assert!(f.storage.exist(&d.entity_id).await.unwrap());
+    assert!(f.storage.exist(&d.thumb_hash).await.unwrap());
+    wait_spool_empty(&f).await;
+
+    let stranger = Wallet::random();
+    let refused = deployment(&stranger, &world, "Refused", "0,0", &["0,0"]).await;
+    let (status, _) = hit(
+        &f.app,
+        Case::new("post", "/entities").body(refused.body.clone(), &refused.content_type),
+    )
+    .await;
+    assert!(status.is_client_error(), "{status}");
+    assert!(!f.storage.exist(&refused.entity_id).await.unwrap());
+    wait_spool_empty(&f).await;
+}
+
+#[tokio::test]
+async fn a_source_past_its_concurrent_uploads_gets_429() {
+    let Some(f) = fixture().await else { return };
+    let world = world_name();
+    let owner = Wallet::random();
+    f.names.set(&owner.address, world.label());
+    let ip = format!("198.51.100.{}", rand::random::<u8>());
+    let limits = &f.state.settings.upload_limits;
+    let held: Vec<_> = (0..limits.max_concurrent_uploads_per_source)
+        .map(|_| {
+            super::upload_limits::try_acquire_source(
+                &ip,
+                1,
+                limits.max_concurrent_uploads_per_source,
+                limits.max_in_flight_upload_bytes_per_source,
+            )
+            .expect("under the source cap")
+        })
+        .collect();
+
+    let d = deployment(&owner, &world, "Throttled", "0,0", &["0,0"]).await;
+    let case = || {
+        Case::new("post", "/entities")
+            .body(d.body.clone(), &d.content_type)
+            .header("x-real-ip", &ip)
+    };
+    let body = expect(&f.app, case(), 429).await;
+    assert_eq!(
+        body,
+        json!({ "error": "Too Many Requests", "message": "Too many uploads in progress from this client, please retry shortly." })
+    );
+    drop(held);
+    expect(&f.app, case(), 200).await;
+}
+
+#[tokio::test]
+async fn a_deploy_reusing_a_blob_the_collector_removed_is_refused_under_the_store_lock() {
+    let Some(f) = fixture().await else { return };
+    let world = world_name();
+    let owner = Wallet::random();
+    f.names.set(&owner.address, world.label());
+    let reused = hash_bytes_v1(b"an aged, unreferenced blob");
+    f.storage
+        .store(
+            &reused,
+            bytes::Bytes::from_static(b"an aged, unreferenced blob"),
+        )
+        .await
+        .unwrap();
+    let entity = scene_entity(&world, "Reuse", &reused, "0,0", &["0,0"]);
+    let entity_bytes = serde_json::to_vec(&entity).unwrap();
+    let entity_id = hash_bytes_v1(&entity_bytes);
+    f.storage
+        .store(&entity_id, bytes::Bytes::from(entity_bytes))
+        .await
+        .unwrap();
+
+    // The collector's batch holds the exclusive side; the publish waits on the shared side.
+    let batch = catalyst_storage::gc::lock_store_exclusive(&f.pool)
+        .await
+        .unwrap();
+    let publish = tokio::spawn({
+        let (pool, storage, world, owner, entity, entity_id) = (
+            f.pool.clone(),
+            f.storage.clone(),
+            world.clone(),
+            owner.address.clone(),
+            entity.clone(),
+            entity_id.clone(),
+        );
+        async move {
+            store::deploy_scene(
+                &pool,
+                &storage,
+                SceneDeployment {
+                    world: &world,
+                    name_owner: Some(&owner),
+                    entity_id: &entity_id,
+                    deployer: &owner,
+                    deployment_auth_chain: &json!([]),
+                    entity: &entity,
+                    parcels: &parcels(&["0,0"]),
+                    size: 1,
+                    replacement: &Deploy::Owner,
+                    forward_to: None,
+                },
+            )
+            .await
+        }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(!publish.is_finished(), "the publish waits for the batch");
+    f.storage.delete_strict(&reused).await.unwrap();
+    batch.commit().await.unwrap();
+
+    let err = publish.await.unwrap().expect_err("the blob is gone");
+    assert!(err.is_bad_request(), "{err:?}");
+    assert!(
+        err.public_message().contains(&reused),
+        "{}",
+        err.public_message()
+    );
+    assert!(entity_ids(&f, &world).await.is_empty());
 }

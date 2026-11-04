@@ -1045,6 +1045,8 @@ export interface components {
             /** Format: int64 */
             minAgeSeconds: number;
             removed: number;
+            /** Format: int64 */
+            removedBytes: number;
             scanned: number;
         };
         IndexResponse: {
@@ -1276,7 +1278,7 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            403: {
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1311,7 +1313,7 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            403: {
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1356,7 +1358,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            403: {
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1393,7 +1395,7 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            403: {
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1544,7 +1546,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            403: {
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1581,7 +1583,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForwardRecord"];
                 };
             };
-            403: {
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1626,7 +1628,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForwardRecord"];
                 };
             };
-            403: {
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1700,7 +1702,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            403: {
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1714,6 +1716,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployRejection"];
                 };
             };
         };
@@ -1739,7 +1749,7 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            403: {
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1776,7 +1786,7 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            403: {
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1823,7 +1833,7 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            403: {
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1868,7 +1878,7 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            403: {
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1913,7 +1923,7 @@ export interface operations {
                     "application/json": unknown;
                 };
             };
-            403: {
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2341,7 +2351,7 @@ export interface operations {
                     "application/json": components["schemas"]["ApiErrorBody"];
                 };
             };
-            403: {
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2355,6 +2365,14 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployRejection"];
                 };
             };
         };

@@ -20,17 +20,16 @@
 //! ingredients (hashing, chain verification, the blob store), not its rows.
 
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::extract::{Multipart, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use bytes::Bytes;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::auth::{AuthChain, hash_bytes_v1};
+use crate::auth::AuthChain;
 use crate::comms::world_identity::{DCL_ETH_SUFFIX, ParcelSet, WorldName};
 use crate::policy::Deploy;
 use crate::shared::identity::{Address, AuthorityNotEstablished};
@@ -42,8 +41,10 @@ use super::deploy_validate::{
     missing_minimap_images, missing_skybox_textures, validate_navmap_thumbnail,
     validate_parcel_in_bounds,
 };
+use super::metrics as worlds_metrics;
 use super::store::{self, SceneDeployment};
 use super::upload_limits::DeployRejection;
+use super::upload_spool::{self, SpooledFile};
 use super::{SharedState, upload_limits};
 
 /// Payload cap for a deployment: every file chunk and field value, multipart framing excluded.
@@ -168,7 +169,18 @@ pub async fn deploy_entity(
         return err_one(upload_limits::PAYLOAD_TOO_LARGE_MESSAGE);
     }
 
+    let _source = match upload_limits::admit_source(
+        &headers,
+        limits,
+        worlds_metrics::ENTITIES_ROUTE,
+        MAX_UPLOAD_SIZE_BYTES as u64,
+    ) {
+        Ok(lease) => lease,
+        Err(_) => return upload_limits::source_limit_response(),
+    };
+
     let Some(_slot) = upload_limits::try_acquire_upload_slot(limits.max_concurrent_uploads) else {
+        worlds_metrics::upload_rejected(worlds_metrics::ENTITIES_ROUTE, "concurrency");
         tracing::warn!(
             active = upload_limits::active_uploads(),
             max = limits.max_concurrent_uploads,
@@ -179,6 +191,17 @@ pub async fn deploy_entity(
 
     let mut bytes_lease = upload_limits::reserve_in_flight();
     let mut files_lease = upload_limits::reserve_in_flight_files();
+    let spool_root = upload_spool::spool_root(&state.storage);
+    let receiving = Instant::now();
+    let received = |outcome: &'static str, bytes: u64| {
+        worlds_metrics::upload_received(
+            worlds_metrics::ENTITIES_ROUTE,
+            declared.is_some(),
+            outcome,
+            receiving.elapsed(),
+            bytes,
+        )
+    };
 
     let form = match tokio::time::timeout(
         Duration::from_millis(limits.multipart_upload_timeout_ms),
@@ -188,13 +211,22 @@ pub async fn deploy_entity(
             &mut files_lease,
             limits.max_in_flight_upload_bytes,
             limits.max_in_flight_upload_files,
+            &spool_root,
         ),
     )
     .await
     {
-        Ok(Ok(form)) => form,
-        Ok(Err(resp)) => return *resp,
+        Ok(Ok(form)) => {
+            received("completed", bytes_lease.reserved());
+            form
+        }
+        Ok(Err(resp)) => {
+            received("rejected", bytes_lease.reserved());
+            return *resp;
+        }
         Err(_) => {
+            received("timeout", bytes_lease.reserved());
+            worlds_metrics::upload_rejected(worlds_metrics::ENTITIES_ROUTE, "timeout");
             tracing::warn!(
                 timeout_ms = limits.multipart_upload_timeout_ms,
                 "POST /entities: multipart upload timed out"
@@ -204,7 +236,8 @@ pub async fn deploy_entity(
     };
 
     let timeout_ms = limits.deployment_processing_timeout_ms;
-    match tokio::time::timeout(
+    let processing = Instant::now();
+    let resp = match tokio::time::timeout(
         Duration::from_millis(timeout_ms),
         deploy_entity_inner(&state, &headers, form),
     )
@@ -220,7 +253,9 @@ pub async fn deploy_entity(
                 "Deployment processing exceeded the {timeout_ms}ms deadline."
             ))
         }
-    }
+    };
+    worlds_metrics::deployment_processed(resp.status(), processing.elapsed());
+    resp
 }
 
 fn present_truthy(v: &Value, key: &str) -> bool {
@@ -373,16 +408,16 @@ fn deprecated_config_error(entity: &Value) -> Option<&'static str> {
 /// The uploaded files, each once in upload order, keyed by their CIDv1.
 struct Uploads {
     order: Vec<String>,
-    by_hash: HashMap<String, Bytes>,
+    by_hash: HashMap<String, SpooledFile>,
 }
 
 impl Uploads {
-    fn new(files: &[Bytes]) -> Self {
+    fn new(files: &[SpooledFile]) -> Self {
         let mut order = Vec::new();
         let mut by_hash = HashMap::new();
         for blob in files {
-            let hash = hash_bytes_v1(blob);
-            if let std::collections::hash_map::Entry::Vacant(slot) = by_hash.entry(hash) {
+            if let std::collections::hash_map::Entry::Vacant(slot) = by_hash.entry(blob.hash.clone())
+            {
                 order.push(slot.key().clone());
                 slot.insert(blob.clone());
             }
@@ -618,7 +653,12 @@ async fn deploy_entity_inner(
     headers: &HeaderMap,
     form: DeployForm,
 ) -> Response {
-    let DeployForm { fields, files } = form;
+    // `_spool` keeps the spooled parts on disk until this deploy has stored them.
+    let DeployForm {
+        fields,
+        files,
+        spool: _spool,
+    } = form;
 
     let entity_id = match fields.get("entityId") {
         Some(id) if !id.is_empty() => id.clone(),
@@ -638,14 +678,21 @@ async fn deploy_entity_inner(
     };
 
     let uploads = Uploads::new(&files);
-    let Some(entity_bytes) = uploads.by_hash.get(&entity_id).cloned() else {
+    let Some(entity_file) = uploads.by_hash.get(&entity_id) else {
         return err_one(format!(
             "Entity file \"{entity_id}\" is missing from the request."
         ));
     };
-    if entity_bytes.len() > MAX_ENTITY_FILE_SIZE_BYTES {
+    if entity_file.len() > MAX_ENTITY_FILE_SIZE_BYTES {
         return err_one(entity_file_too_large_error());
     }
+    let entity_bytes = match entity_file.read().await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::error!(error = %e, "deploy failed: could not read the spooled entity file");
+            return internal("Failed to read the uploaded entity file").into_response();
+        }
+    };
     let entity: Value = match serde_json::from_slice(&entity_bytes) {
         Ok(v) => v,
         Err(_) => return err_one("The entity file is not valid JSON."),
@@ -683,8 +730,9 @@ async fn deploy_entity_inner(
     };
     let name_owner = Some(&name_owner);
 
-    for (hash, bytes) in &uploads.by_hash {
-        if let Err(e) = state.storage.store(hash, bytes.clone()).await {
+    // Extra files are refused in validation, so every upload is referenced.
+    for (hash, blob) in &uploads.by_hash {
+        if let Err(e) = state.storage.store_file(hash, &blob.path).await {
             tracing::error!(error = %e, hash = %hash, "deploy failed: could not store blob");
             return internal("Failed to persist deployment content").into_response();
         }
@@ -736,6 +784,7 @@ async fn deploy_entity_inner(
         forwarded = state.forwarder.is_some(),
         "POST /entities - deployed (validated + authorized + persisted)"
     );
+    worlds_metrics::world_deployed(world.key());
     if let Some(forwarder) = &state.forwarder {
         forwarder.kick();
     }
@@ -913,9 +962,14 @@ mod tests {
 
     #[test]
     fn uploads_keep_the_first_copy_in_upload_order() {
-        let (a, b) = (Bytes::from_static(b"a"), Bytes::from_static(b"b"));
+        let spooled = |hash: &str| SpooledFile {
+            hash: hash.to_string(),
+            len: 1,
+            path: std::path::PathBuf::from(hash),
+        };
+        let (a, b) = (spooled("a"), spooled("b"));
         let uploads = Uploads::new(&[b.clone(), a.clone(), b.clone()]);
-        assert_eq!(uploads.order, vec![hash_bytes_v1(&b), hash_bytes_v1(&a)]);
+        assert_eq!(uploads.order, vec!["b".to_string(), "a".to_string()]);
         assert_eq!(uploads.by_hash.len(), 2);
     }
 }

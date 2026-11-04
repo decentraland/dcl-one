@@ -37,6 +37,7 @@ pub mod forwarding;
 pub mod http;
 pub mod limits;
 pub mod manifest;
+pub mod metrics;
 pub mod names;
 pub mod permissions;
 pub mod scenes;
@@ -45,6 +46,7 @@ pub mod settings_policy;
 pub mod store;
 pub mod upload_limits;
 pub mod wallet;
+pub mod upload_spool;
 
 #[cfg(test)]
 mod tests;
@@ -85,7 +87,8 @@ pub struct Settings {
     pub admin_token: Option<String>,
     /// `MAX_IN_FLIGHT_UPLOAD_BYTES`, `MAX_CONCURRENT_UPLOADS`,
     /// `MAX_IN_FLIGHT_UPLOAD_FILES`, `MULTIPART_UPLOAD_TIMEOUT_MS`,
-    /// `DEPLOYMENT_PROCESSING_TIMEOUT_MS`.
+    /// `DEPLOYMENT_PROCESSING_TIMEOUT_MS`, `MAX_CONCURRENT_UPLOADS_PER_SOURCE`,
+    /// `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE`.
     pub upload_limits: UploadLimits,
     /// `GLOBAL_SCENES_URN`: scenes the configuration names, kept by the blob
     /// store collector (`/admin/gc`).
@@ -424,6 +427,17 @@ impl CoreState {
                 }
             },
         );
+        let limits = &self.settings.upload_limits;
+        metrics::upload_capacity(limits);
+        let spool_root = upload_spool::spool_root(&self.storage);
+        // Older than any live upload: left by a process that died mid-request.
+        let stale_after = catalyst_storage::gc::orphan_age_floor(
+            limits.multipart_upload_timeout_ms,
+            limits.deployment_processing_timeout_ms,
+        );
+        tokio::spawn(async move {
+            upload_spool::sweep_stale(&spool_root, stale_after).await;
+        });
         let Some(mut rx) = self.access_log_rx.lock().take() else {
             return;
         };

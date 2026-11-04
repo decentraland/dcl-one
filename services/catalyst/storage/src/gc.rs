@@ -12,8 +12,8 @@
 //! content lists, the asset-pack catalogue) plus the global scenes the
 //! configuration names, so memory holds a chunk, never the corpus. A scene
 //! whose content list cannot be read exactly aborts the run, a candidate
-//! is re-checked right before it is unlinked (a deployment may reuse a
-//! stored blob), an empty reference set with candidates is refused unless
+//! is re-checked right before it is unlinked, under the exclusive store
+//! lock a publish reusing a stored blob takes shared, an empty reference set with candidates is refused unless
 //! asked for, and the dry run reports without deleting.
 //!
 //! `catalog_is_complete` (the test below) walks the schema: every column
@@ -31,6 +31,61 @@ use sqlx::PgPool;
 use super::{Storage, StorageError};
 
 pub const MIN_ORPHAN_AGE: Duration = Duration::from_secs(3600);
+
+/// Advisory lock key shared by publishes (shared) and unlink batches (exclusive).
+pub const STORE_LOCK_KEY: i64 = 0x5354_4f52_455f_4743;
+
+/// Advisory lock key held for the length of one collector run.
+pub const GC_RUN_LOCK_KEY: i64 = 0x5354_4f52_455f_5255;
+
+/// How long an unlink batch waits for in-flight publishes before deferring.
+pub const STORE_LOCK_TIMEOUT: &str = "30s";
+
+/// Taken in a publish transaction before it checks that the keys it names exist: an unlink batch
+/// re-checks references and unlinks under the exclusive lock, so either the publish sees the file
+/// gone or the batch sees the committed reference.
+pub async fn lock_store_shared(conn: &mut sqlx::PgConnection) -> Result<(), sqlx::Error> {
+    sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
+        .bind(STORE_LOCK_KEY)
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+/// The exclusive side of [`lock_store_shared`], held by the returned transaction until it ends.
+pub async fn lock_store_exclusive(
+    pool: &PgPool,
+) -> Result<sqlx::Transaction<'static, sqlx::Postgres>, GcError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SET LOCAL lock_timeout = '{STORE_LOCK_TIMEOUT}'"
+    )))
+    .execute(&mut *tx)
+    .await?;
+    match sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(STORE_LOCK_KEY)
+        .execute(&mut *tx)
+        .await
+    {
+        Ok(_) => Ok(tx),
+        Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("55P03") => {
+            Err(GcError::LockTimeout)
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// One run at a time across the fleet: `None` while another run holds it.
+pub async fn try_lock_run(
+    pool: &PgPool,
+) -> Result<Option<sqlx::Transaction<'static, sqlx::Postgres>>, GcError> {
+    let mut tx = pool.begin().await?;
+    let held: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock($1)")
+        .bind(GC_RUN_LOCK_KEY)
+        .fetch_one(&mut *tx)
+        .await?;
+    Ok(held.then_some(tx))
+}
 
 /// Every plain column (`schema.table.column`) holding store keys. A chunk
 /// of candidates is checked against each with `column = ANY($1)`.
@@ -256,6 +311,8 @@ pub enum GcError {
         "refusing to collect: no domain names any stored key, which usually means the database is empty or misconfigured; re-run with allow_empty_reference_set to collect anyway"
     )]
     EmptyReferenceSet,
+    #[error("publishes kept the store lock busy; retry later")]
+    LockTimeout,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -272,6 +329,7 @@ pub struct GcReport {
     pub scanned: usize,
     pub candidates: usize,
     pub removed: usize,
+    pub removed_bytes: u64,
     pub failed: usize,
     /// Aged files kept because a domain names them.
     pub references: usize,
@@ -448,6 +506,15 @@ async fn any_reference(pool: &PgPool) -> Result<bool, GcError> {
 /// (index-served on the large tables) and the world scenes' content lists,
 /// retired ones included until evicted.
 pub async fn referenced_among(pool: &PgPool, keys: &[String]) -> Result<HashSet<String>, GcError> {
+    let mut conn = pool.acquire().await?;
+    referenced_among_on(&mut conn, keys).await
+}
+
+/// [`referenced_among`] on one connection (the unlink batch's, under its lock).
+pub async fn referenced_among_on(
+    conn: &mut sqlx::PgConnection,
+    keys: &[String],
+) -> Result<HashSet<String>, GcError> {
     let mut found = HashSet::new();
     for source in REFERENCE_SOURCES {
         let (table, column) = split_source(source);
@@ -455,7 +522,7 @@ pub async fn referenced_among(pool: &PgPool, keys: &[String]) -> Result<HashSet<
             "SELECT DISTINCT {column} FROM {table} WHERE {column} = ANY($1)"
         )))
         .bind(keys)
-        .fetch_all(pool)
+        .fetch_all(&mut *conn)
         .await?;
         found.extend(rows);
     }
@@ -466,7 +533,7 @@ pub async fn referenced_among(pool: &PgPool, keys: &[String]) -> Result<HashSet<
          WHERE e ->> 'hash' = ANY($1)",
     )
     .bind(keys)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
     found.extend(rows);
     Ok(found)
@@ -534,16 +601,25 @@ pub async fn collect(
     }
     if !options.dry_run {
         for batch in orphans.chunks(CHUNK) {
-            let referenced_now = referenced_among(pool, batch).await?;
+            let mut lock = lock_store_exclusive(pool).await?;
+            let referenced_now = referenced_among_on(&mut lock, batch).await?;
             for id in batch.iter().filter(|id| !referenced_now.contains(*id)) {
+                let size = match super::resolve_file_path(storage.root(), id) {
+                    Ok(path) => tokio::fs::metadata(path).await.map_or(0, |m| m.len()),
+                    Err(_) => 0,
+                };
                 match storage.delete_strict(id).await {
-                    Ok(()) => report.removed += 1,
+                    Ok(()) => {
+                        report.removed += 1;
+                        report.removed_bytes += size;
+                    }
                     Err(e) => {
                         report.failed += 1;
                         tracing::warn!(key = %id, error = %e, "blob store collector: could not remove an unreferenced file");
                     }
                 }
             }
+            lock.commit().await?;
         }
     }
     tracing::info!(?report, "blob store collection finished");
@@ -624,6 +700,33 @@ mod tests {
         referenced_among(&pool, &["none".to_string()])
             .await
             .expect("every source statement runs against the schema");
+    }
+
+    /// An unlink batch waits for a publish holding the shared lock, and only one run holds the run lock.
+    #[tokio::test]
+    async fn unlink_batches_wait_for_publishes_and_runs_are_exclusive() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let mut publish = pool.begin().await.unwrap();
+        lock_store_shared(&mut publish).await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), lock_store_exclusive(&pool))
+                .await
+                .is_err(),
+            "the batch waits while a publish holds the shared lock"
+        );
+        publish.commit().await.unwrap();
+        let batch = tokio::time::timeout(Duration::from_secs(5), lock_store_exclusive(&pool))
+            .await
+            .expect("the batch proceeds once the publish ends")
+            .unwrap();
+        batch.commit().await.unwrap();
+
+        let run = try_lock_run(&pool).await.unwrap().expect("first run");
+        assert!(try_lock_run(&pool).await.unwrap().is_none());
+        run.commit().await.unwrap();
+        assert!(try_lock_run(&pool).await.unwrap().is_some());
     }
 
     /// On a database of its own: an aged unreferenced file goes, a

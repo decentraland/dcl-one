@@ -1587,6 +1587,12 @@ async fn worlds_states(
                     deployment_processing_timeout_ms: config
                         .worlds
                         .deployment_processing_timeout_ms,
+                    max_concurrent_uploads_per_source: config
+                        .worlds
+                        .max_concurrent_uploads_per_source,
+                    max_in_flight_upload_bytes_per_source: config
+                        .worlds
+                        .max_in_flight_upload_bytes_per_source,
                 },
             )
             .map(|s| {

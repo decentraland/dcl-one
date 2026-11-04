@@ -56,7 +56,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -94,7 +94,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -152,7 +152,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -198,7 +198,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -431,7 +431,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -482,7 +482,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -544,7 +544,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -655,7 +655,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -671,6 +671,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A run is already in progress, or deployments kept the content lock busy; retry after Retry-After seconds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployRejection"
                 }
               }
             }
@@ -721,7 +731,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -769,7 +779,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -835,7 +845,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -893,7 +903,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -951,7 +961,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -1548,7 +1558,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -1564,6 +1574,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A run is already in progress, or deployments kept the content lock busy; retry after Retry-After seconds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployRejection"
                 }
               }
             }
@@ -4528,14 +4548,15 @@
       "GcResponse": {
         "type": "object",
         "required": [
-          "message",
-          "dryRun",
-          "removed",
-          "failed",
-          "candidates",
-          "scanned",
           "activeKeys",
-          "minAgeSeconds"
+          "candidates",
+          "dryRun",
+          "failed",
+          "message",
+          "minAgeSeconds",
+          "removed",
+          "removedBytes",
+          "scanned"
         ],
         "properties": {
           "activeKeys": {
@@ -4567,6 +4588,11 @@
           },
           "scanned": {
             "type": "integer",
+            "minimum": 0
+          },
+          "removedBytes": {
+            "type": "integer",
+            "format": "int64",
             "minimum": 0
           }
         }
