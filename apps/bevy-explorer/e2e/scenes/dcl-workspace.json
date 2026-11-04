@@ -50,6 +50,9 @@
     },
     {
       "path": "ui"
+    },
+    {
+      "path": "smart-wearable"
     }
   ]
 }

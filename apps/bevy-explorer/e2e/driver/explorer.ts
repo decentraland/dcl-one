@@ -125,6 +125,67 @@ export interface Position {
   z: number
 }
 
+export interface LiveScene {
+  title: string
+  hash: string
+  portable: boolean
+  smartWearable: boolean
+  broken: boolean
+}
+
+export type SmartWearableState = 'loading' | 'awaitingAuthorization' | 'running' | 'blocked' | 'killed' | 'denied' | 'notSmart' | 'failed'
+
+export interface SmartWearableEntry {
+  urn: string
+  state: SmartWearableState
+  reason?: string
+}
+
+export interface SmartWearables {
+  /** Whether the parcel scene the player stands in allows portable experiences; null when there
+   *  are no smart wearables (the reply then has no header). */
+  currentSceneAllows: boolean | null
+  entries: SmartWearableEntry[]
+}
+
+export type SmartWearableAction = 'run' | 'kill' | 'restart'
+
+const SMART_WEARABLE_STATES: readonly SmartWearableState[] = ['loading', 'awaitingAuthorization', 'running', 'blocked', 'killed', 'denied', 'notSmart', 'failed']
+
+/** `/live_scenes`: `<title> [<hash>, portable, smart wearable, broken]` per line, the flags
+ *  optional, or `no scenes loaded`. */
+export function parseLiveScenes(reply: string): LiveScene[] {
+  if (reply.trim() === 'no scenes loaded') return []
+  return reply
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => {
+      const match = /^(.*) \[([^,\]]+)((?:, [a-z ]+)*)\]$/.exec(line.trim())
+      if (!match) throw new Error(`unparseable live_scenes line: ${line}`)
+      const flags = match[3]!.split(',').map((flag) => flag.trim()).filter(Boolean)
+      return { title: match[1]!, hash: match[2]!, portable: flags.includes('portable'), smartWearable: flags.includes('smart wearable'), broken: flags.includes('broken') }
+    })
+}
+
+/** `/smart_wearables`: `current scene allows: <bool>`, then `<urn> <state> [<reason>]` per entry,
+ *  or `no smart wearables`. */
+export function parseSmartWearables(reply: string): SmartWearables {
+  const lines = reply.split('\n').map((line) => line.trim()).filter(Boolean)
+  if (lines.length === 1 && lines[0] === 'no smart wearables') return { currentSceneAllows: null, entries: [] }
+  const header = /^current scene allows: (true|false)$/.exec(lines[0] ?? '')
+  if (!header) throw new Error(`unparseable smart_wearables header: ${reply.slice(0, 200)}`)
+  const entries = lines.slice(1).map((line): SmartWearableEntry => {
+    const match = /^(\S+) (\S+)(?: (.+))?$/.exec(line)
+    const state = match?.[2] as SmartWearableState | undefined
+    if (!match || !state || !SMART_WEARABLE_STATES.includes(state)) throw new Error(`unparseable smart_wearables line: ${line}`)
+    const reason = match[3]?.replace(/^\[(.*)\]$/, '$1')
+    return reason ? { urn: match[1]!, state, reason } : { urn: match[1]!, state }
+  })
+  return { currentSceneAllows: header[1] === 'true', entries }
+}
+
+const SMART_WEARABLE_REPLIES: Record<SmartWearableAction, string> = { run: 'running', kill: 'killed', restart: 'restarted' }
+
 export interface CommandRecord {
   /** The line as sent, with `/login_identity`'s payload redacted. */
   line: string
@@ -365,6 +426,55 @@ export class Explorer {
   async sceneEntities(component?: string): Promise<string[]> {
     const reply = await this.run(component ? `/scene_entities ${component}` : '/scene_entities')
     return reply === '(no entities)' ? [] : reply.split('\n')
+  }
+
+  /** Point the scene commands (`/scene_entities`, `/inspect_component`, `/scene_logs`) at a scene
+   *  by hash or title; without one they follow the player's parcel again. */
+  async setScene(hashOrTitle?: string): Promise<void> {
+    await this.run(hashOrTitle ? `/set_scene ${hashOrTitle}` : '/set_scene')
+  }
+
+  /** The target scene's recent log messages, oldest first, without their time and level. */
+  async sceneLogs(count = 20): Promise<string[]> {
+    const reply = await this.run(`/scene_logs ${count}`)
+    if (reply === '(no logs)') return []
+    return reply
+      .split('\n')
+      .filter((line) => !line.startsWith('(+'))
+      .map((line) => line.replace(/^\[[\d.]+\] \w+: /, ''))
+  }
+
+  /** The `value` of every `UiText` in the target scene: what its screen-space UI shows. */
+  async uiTexts(): Promise<string[]> {
+    const entities = await this.sceneEntities('UiText')
+    const texts: string[] = []
+    for (const entity of entities) {
+      const id = /\((\d+)\)$/.exec(entity)?.[1] ?? entity
+      const text = await this.inspect<{ value?: string }>(id, 'UiText')
+      if (typeof text.value === 'string') texts.push(text.value)
+    }
+    return texts
+  }
+
+  /** The scenes running: parcel scenes and portable experiences. */
+  async liveScenes(): Promise<LiveScene[]> {
+    return parseLiveScenes(await this.run('/live_scenes'))
+  }
+
+  async smartWearables(): Promise<SmartWearables> {
+    return parseSmartWearables(await this.run('/smart_wearables'))
+  }
+
+  /** A smart wearable's entry, or undefined when the engine does not track it. */
+  async smartWearable(urn: string): Promise<SmartWearableEntry | undefined> {
+    return (await this.smartWearables()).entries.find((entry) => entry.urn === urn)
+  }
+
+  /** `/smart_wearable run|kill|restart <urn>`; a reply other than `<running|killed|restarted>
+   *  <urn>` is an error. */
+  async smartWearableAction(action: SmartWearableAction, urn: string): Promise<void> {
+    const reply = (await this.run(`/smart_wearable ${action} ${urn}`)).trim()
+    if (reply !== `${SMART_WEARABLE_REPLIES[action]} ${urn}`) throw new Error(`/smart_wearable ${action} ${urn} replied: ${reply}`)
   }
 
   async inspect<T = unknown>(entity: string | number, component: string): Promise<T> {
