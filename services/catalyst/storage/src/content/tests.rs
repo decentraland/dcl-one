@@ -839,6 +839,15 @@ async fn store_file_links_a_spooled_file_and_leaves_the_source() {
         Bytes::from_static(b"spooled bytes")
     );
     assert!(src.is_file(), "the caller owns the spooled source");
+    {
+        use std::os::unix::fs::MetadataExt;
+        let stored = storage.file_path(HASH).await.unwrap().unwrap();
+        assert_eq!(
+            std::fs::metadata(&stored).unwrap().ino(),
+            std::fs::metadata(&src).unwrap().ino(),
+            "same filesystem: linked, not copied"
+        );
+    }
     let mut ids = storage.all_file_ids(None);
     let mut listed = Vec::new();
     while let Some(id) = ids.next().await.unwrap() {

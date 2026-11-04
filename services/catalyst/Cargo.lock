@@ -2091,6 +2091,7 @@ dependencies = [
  "dcl-auth",
  "futures",
  "libc",
+ "metrics",
  "parking_lot",
  "serde",
  "serde_json",
