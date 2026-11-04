@@ -119,7 +119,9 @@ mod tests {
         let node = TestNode::without_db("available-dup").await;
         node.store(TEST_CID, Bytes::from_static(b"x")).await;
         let request = Request::builder()
-            .uri(format!("/available-content?cid={TEST_CID}&cid=other&cid={TEST_CID}"))
+            .uri(format!(
+                "/available-content?cid={TEST_CID}&cid=other&cid={TEST_CID}"
+            ))
             .body(axum::body::Body::empty())
             .unwrap();
         let response = get_available_content(State(node.state.clone()), request)

@@ -83,6 +83,7 @@ pub mod about_comms;
 mod active_entities;
 mod audit;
 pub mod available_content;
+pub mod content_get_limit;
 mod deployments;
 pub mod entity_thumbnail;
 mod failed_deployments;
@@ -156,6 +157,9 @@ pub struct Settings {
     pub max_in_memory_deployment_bytes: u64,
     /// `POST_ENTITIES_DAILY_QUOTA_MAX`; 0 is off.
     pub post_entities_daily_quota_max: u32,
+    /// The `GET`/`HEAD /contents/{hash}` rate limit (`CONTENT_GET_*`,
+    /// `TRUSTED_SYNC_PEER_IPS`, `TRUSTED_CLIENT_IP_HEADER`).
+    pub content_get_limit: content_get_limit::Config,
     /// The partial-upload limits (`PENDING_DEPLOYMENT_TTL`, ...).
     pub partial_uploads: partial_deployments::Limits,
 }
@@ -241,6 +245,17 @@ impl Settings {
             max_upload_field_bytes: config.content.max_upload_field_size,
             max_in_memory_deployment_bytes: config.content.max_in_memory_deployment_bytes,
             post_entities_daily_quota_max: config.content.post_entities_daily_quota_max,
+            content_get_limit: content_get_limit::Config {
+                burst_max: config.content.content_get_rate_limit_max,
+                burst_window: Duration::from_secs(u64::from(
+                    config.content.content_get_rate_limit_window_seconds,
+                )),
+                hourly_max: config.content.content_get_hourly_quota_max,
+                daily_max: config.content.content_get_daily_quota_max,
+                ipv6_prefix_length: config.content.content_get_rate_limit_ipv6_prefix_length,
+                trusted_sync_peer_ips: config.content.trusted_sync_peer_ips.clone(),
+                trusted_client_ip_header: config.content.trusted_client_ip_header.clone(),
+            },
             partial_uploads: partial_deployments::Limits::from_config(config),
         }
     }
@@ -272,6 +287,7 @@ impl Settings {
             max_upload_field_bytes: 32 * 1024,
             max_in_memory_deployment_bytes: 2 * 1024 * 1024 * 1024,
             post_entities_daily_quota_max: 300,
+            content_get_limit: content_get_limit::Config::default(),
             partial_uploads: partial_deployments::Limits::default(),
         }
     }
@@ -490,6 +506,8 @@ pub struct ContentState {
     pub upload_budget: upload_admission::UploadBudget,
     /// `POST /entities` requests per client address and day.
     pub deploy_quota: upload_admission::DailyQuota,
+    /// The `/contents/{hash}` burst and quotas per client, this process's.
+    pub content_get_limit: content_get_limit::ContentGetLimit,
     /// The `/challenge` text: one bare UUID per process, as upstream's
     /// peer cluster keeps it; the console's `challenge/refresh` replaces it.
     challenge: RwLock<String>,
@@ -520,6 +538,8 @@ impl ContentState {
         );
         let deploy_quota =
             upload_admission::DailyQuota::new(settings.post_entities_daily_quota_max);
+        let content_get_limit =
+            content_get_limit::ContentGetLimit::new(&settings.content_get_limit);
         Self {
             pool,
             settings,
@@ -539,6 +559,7 @@ impl ContentState {
             upload_budget,
             deploy_quota,
             challenge: RwLock::new(challenge_text()),
+            content_get_limit,
         }
     }
 
@@ -639,7 +660,7 @@ async fn not_found() -> impl IntoResponse {
     (StatusCode::NOT_FOUND, "Not found")
 }
 
-fn content_routes() -> Router<SharedState> {
+fn content_routes(state: &SharedState) -> Router<SharedState> {
     Router::new()
         .route("/challenge", get(status::get_challenge))
         .route("/entities/{type}", get(active_entities::get_entities))
@@ -653,7 +674,12 @@ fn content_routes() -> Router<SharedState> {
         )
         .route(
             "/contents/{hashId}",
-            get(get_content::get_content).head(get_content::get_content),
+            get(get_content::get_content)
+                .head(get_content::get_content)
+                .route_layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    content_get_limit::limit,
+                )),
         )
         .route(
             "/contents/{hashId}/active-entities",
@@ -722,8 +748,8 @@ pub fn build_router(state: SharedState) -> Router {
             "/lambdas/collections/contents/{pointer}/image",
             get(entity_thumbnail::get_entity_image).head(entity_thumbnail::get_entity_image),
         )
-        .merge(content_routes())
-        .nest("/content", content_routes())
+        .merge(content_routes(&state))
+        .nest("/content", content_routes(&state))
         .fallback(not_found)
         .layer(
             TraceLayer::new_for_http()
