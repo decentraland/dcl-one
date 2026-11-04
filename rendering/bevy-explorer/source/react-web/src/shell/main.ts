@@ -7,6 +7,7 @@ import { authLoginUrl, authReturnUrl } from '../features/auth/sso'
 import { ANALYTICS_SESSION_PARAM, ANON_USER_ID_PARAM, dropAttributionParams } from '../lib/analytics'
 import { AUTH_RETURN_PARAM } from '../lib/entryParams'
 import { migratePrefs } from '../lib/prefs'
+import { connectShellHttp } from '../lib/http'
 import { request } from './login'
 import { onInWorld } from './googleTag'
 
@@ -87,6 +88,9 @@ addEventListener('message', async (e: MessageEvent) => {
   const m = e.data as { type?: unknown; [key: string]: unknown } | null
   if (!m || typeof m !== 'object') return
   switch (m.type) {
+    case 'bevy-shell:http':
+      if (e.ports[0]) connectShellHttp(e.ports[0])
+      break
     case 'bevy-shell:request': {
       let reply: { result?: unknown; error?: string }
       try {

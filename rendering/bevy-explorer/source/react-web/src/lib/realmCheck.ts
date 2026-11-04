@@ -1,3 +1,4 @@
+import { hudFetch } from './http'
 // Probe a realm's /about before booting the engine there (a ?realm= launch on web): launching
 // against an unreachable realm strands the engine in a cryptic login failure. In-world travel needs
 // no probe: the engine validates the destination before leaving the current realm.
@@ -16,7 +17,7 @@ export function realmAboutUrl(realm: string): string {
 export async function checkRealm(realm: string): Promise<RealmCheck> {
   const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), TIMEOUT_MS))
   try {
-    const r = await Promise.race([fetch(realmAboutUrl(realm)), timeout])
+    const r = await Promise.race([hudFetch(realmAboutUrl(realm), undefined, r => ({ ok: r.ok, status: r.status })), timeout])
     if (r?.ok) return 'ok'
     return r?.status === 404 ? 'not-found' : 'unreachable'
   } catch {

@@ -37,5 +37,6 @@ pub struct DmHistoryReaction {
     pub remove: bool,
 }
 
+pub mod core_http;
 pub mod http;
 pub use http::{fetch, FetchError, FetchedResponse};

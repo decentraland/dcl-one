@@ -1,3 +1,4 @@
+import { hudFetch } from '../../lib/http'
 // The stored account's name + full-body snapshot, for the screens shown before the engine draws
 // the live avatar, and the look itself for the stage to wear. The by-address image redirects to a
 // broken S3 path, so we resolve the real (hash-based) body URL from the profile (lambdas send CORS
@@ -38,10 +39,12 @@ export async function fetchStoredProfile(address: string): Promise<StoredProfile
   if (!/^(0x[0-9a-fA-F]{40}|default\d+)$/.test(address)) return undefined
   try {
     // bounded: a stored sign-in waits for this answer (useEngineSession)
-    const r = await fetch(`${serviceUrl('catalyst')}/lambdas/profiles/${address}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
-    if (r.status === 404) return { exists: false }
-    if (!r.ok) throw new Error(`profile fetch failed: ${r.status}`)
-    const j = (await r.json()) as ProfileResponse
+    const j = await hudFetch(`${serviceUrl('catalyst')}/lambdas/profiles/${address}`, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) }, async (r) => {
+      if (r.status === 404) return undefined
+      if (!r.ok) throw new Error(`profile fetch failed: ${r.status}`)
+      return (await r.json()) as ProfileResponse
+    })
+    if (j === undefined) return { exists: false }
     const a = j.avatars?.[0]
     const look: AvatarLook | undefined =
       a?.avatar?.bodyShape == null

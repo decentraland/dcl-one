@@ -82,6 +82,7 @@ fn change_realm_dialog(
     let client = ipfas.ipfs().client();
     let task: Task<Result<Vec<ServerDesc>, anyhow::Error>> =
         IoTaskPool::get().spawn_compat(async move {
+            let _transfer = platform::core_http::begin();
             let response = client
                 .get(target_url)
                 .send()

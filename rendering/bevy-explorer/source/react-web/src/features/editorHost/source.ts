@@ -1,3 +1,4 @@
+import { hudFetch } from '../../lib/http'
 // Where the editor package comes from and which services it talks to (README "Releasing the
 // editor"). Read by the Create page's chunk only; config.ts holds what the HUD itself needs.
 
@@ -28,9 +29,10 @@ const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 /** The pin a release resolves to now. The CDN caches a tag for days, so the registry (never
  *  cached) names the version and the CDN serves that immutable directory. */
 export async function releasedPin(release: EditorRelease): Promise<EditorPin> {
-  const res = await fetch(`${REGISTRY}/${release.package}/${release.tag}`, { cache: 'no-cache' })
-  if (!res.ok) throw new Error(`the npm registry answered ${res.status} for ${release.package}@${release.tag}`)
-  const { version } = (await res.json()) as { version?: unknown }
+  const { version } = await hudFetch(`${REGISTRY}/${release.package}/${release.tag}`, { cache: 'no-cache' }, async (res) => {
+    if (!res.ok) throw new Error(`the npm registry answered ${res.status} for ${release.package}@${release.tag}`)
+    return (await res.json()) as { version?: unknown }
+  })
   if (typeof version !== 'string' || !VERSION.test(version)) throw new Error(`${release.package}@${release.tag} names no version`)
   return { base: `${CDN}/${release.package}@${version}/`, editorJsIntegrity: null, editorSceneEntity: null }
 }

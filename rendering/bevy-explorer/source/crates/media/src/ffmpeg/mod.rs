@@ -78,8 +78,10 @@ pub fn ffmpeg_worker(
         let local_path = local_folder.join(Path::new(urlencoding::encode(url).as_ref()));
 
         if std::fs::File::open(&local_path).is_err() {
+            let transfer = common::util::core_http::begin();
             let resp = reqwest::blocking::get(url)?;
             let data = resp.bytes()?;
+            drop(transfer);
             std::fs::create_dir_all(&local_folder)?;
             std::fs::write(&local_path, data)?;
         }

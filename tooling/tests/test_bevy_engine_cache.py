@@ -24,7 +24,7 @@ class EngineCacheTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.cache = self.root / '.cache/bevy-engine'
         self.source = self.root / artifact.SOURCE
-        for name in (*artifact.INPUTS, 'rust-toolchain.toml', 'apps/bevy-explorer/build-headless.py',
+        for name in (*artifact.INPUTS, *artifact.HUD_SHARED, 'rust-toolchain.toml', 'apps/bevy-explorer/build-headless.py',
                      artifact.SOURCE + 'src/lib.rs', artifact.SOURCE + 'Cargo.lock',
                      artifact.PROTO + 'decentraland/example.proto',
                      artifact.SOURCE + 'deploy/web/engine/gpu_cache.js',
@@ -53,6 +53,12 @@ class EngineCacheTests(unittest.TestCase):
 
     def pack(self, optimized=True):
         return artifact.pack_engine(self.cache, self.root, optimized=optimized, revision=SHA)
+
+    def test_shared_http_sources_invalidate_hud_pin(self):
+        for path in artifact.HUD_SHARED:
+            before = artifact.hud_inputs(self.root)
+            self.write(path, 'changed shared code')
+            self.assertNotEqual(before, artifact.hud_inputs(self.root), path)
 
     def test_hud_and_bridge_edits_reuse_engine_but_compiler_inputs_invalidate_it(self):
         engine_key = artifact.engine_inputs(self.root)
@@ -156,7 +162,7 @@ class EngineCacheTests(unittest.TestCase):
     def test_warm_build_skips_rust_but_runs_current_web_tests_and_preserves_provenance(self):
         app = self.root / 'apps/bevy-explorer'
         calls = []
-        for name in ('index.html', 'app.html', 'engine/headless.html',
+        for name in ('index.html', 'app.html', 'engine/headless.html', 'engine/core_http.js',
                      'bridge-scene/static/BevyExplorerUI/about', 'service_worker.js', 'preview_realm.js'):
             self.write(artifact.SOURCE + 'deploy/web/' + name, 'fixture')
         self.write(artifact.SOURCE + 'LICENSE', 'fixture')
@@ -189,6 +195,7 @@ class EngineCacheTests(unittest.TestCase):
         self.assertIn(('npm', 'run', 'build', '--prefix', 'react-web'), calls)
         self.assertIn(('npm', 'run', 'bundle', '--prefix', 'react-web/bridge-scene'), calls)
         self.assertTrue(any(c[0] == 'npx' for c in calls))
+        self.assertEqual((app / 'dist/web/engine/core_http.js').read_text(), 'fixture')
         meta = artifact.verify(app / 'dist/web', self.root, allow_unoptimized=False)
         self.assertEqual(meta['engine']['revision'], SHA)
         self.assertEqual(meta['build_revision'], 'b' * 40)

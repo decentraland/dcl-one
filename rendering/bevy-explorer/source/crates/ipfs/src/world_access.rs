@@ -110,6 +110,7 @@ pub async fn check_world_access(
     superseded: &mut Superseded,
 ) -> Result<Option<String>, String> {
     let worlds = base_domain::service(Service::WorldsServer);
+    let transfer = platform::core_http::begin();
     let permissions = client
         .get(format!("{worlds}/world/{world}/permissions"))
         .timeout(Duration::from_secs(10))
@@ -121,6 +122,7 @@ pub async fn check_world_access(
         .await
         .map_err(|e| format!("couldn't check who may enter: {e}"))?;
 
+    drop(transfer);
     let address = wallet
         .address()
         .map(|address| format!("{address:#x}"))
@@ -208,6 +210,7 @@ async fn is_community_member(community: &str, wallet: &Wallet, client: &reqwest:
         for (key, value) in headers {
             request = request.header(key, value);
         }
+        let _transfer = platform::core_http::begin();
         Ok(request.send().await?.error_for_status()?.json().await?)
     }
     .await;
@@ -246,6 +249,7 @@ async fn validate_password(
     for (key, value) in headers {
         request = request.header(key, value);
     }
+    let _transfer = platform::core_http::begin();
     let response = request.send().await.map_err(|e| e.to_string())?;
     let status = response.status();
     if status.is_success() {

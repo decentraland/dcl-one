@@ -244,7 +244,8 @@ export default defineConfig({
     host: process.env.HOST || "127.0.0.1",
     port: Number(process.env.PORT) || 5212,
     strictPort: true,
-    fs: { allow: [".", "../ui3", "../../library/catalyst-api"] },
+    // The Play HUD imports this runtime from outside the two web applications.
+    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../rendering/bevy-explorer/source/deploy/web/engine/core_http.js"] },
     proxy: nodeProxy(),
   },
   resolve: {

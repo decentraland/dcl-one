@@ -5,6 +5,7 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { keccak_256 } from '@noble/hashes/sha3.js'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
+import { observeCoreHttp } from '../../lib/http'
 import { personalSign } from '../../shell/sign'
 import type { AuthIdentity } from './sso'
 import { GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from './thirdweb'
@@ -21,9 +22,9 @@ export interface GuestBackend {
 export const webGuestBackend: GuestBackend = {
   login(sessionId) {
     localStorage.setItem(GUEST_SESSION_KEY, sessionId)
-    return guestLogin(sessionId)
+    return observeCoreHttp(() => guestLogin(sessionId))
   },
-  sign: guestSign
+  sign: (token, message) => observeCoreHttp(() => guestSign(token, message))
 }
 
 // thirdweb only serves the guest wallet to the origins it allowlists, Decentraland's own.

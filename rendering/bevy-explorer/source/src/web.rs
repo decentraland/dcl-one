@@ -424,11 +424,15 @@ thread_local! {
 /// (`engine_render_setup`: the gpu cache's precache) runs while the user is still choosing
 /// where to go; `__gpuCacheReady` reports when it is done. `engine_start` attaches the rest.
 #[wasm_bindgen]
-pub fn engine_prepare_render(canvas: HtmlCanvasElement, glue_url: String) -> Result<(), JsValue> {
+pub fn engine_prepare_render(
+    canvas: HtmlCanvasElement,
+    glue_url: String,
+) -> Result<web_sys::Worker, JsValue> {
     let render =
         bevy::web_worker::start_render(canvas, &web_worker_config(glue_url, JsValue::NULL, 0))?;
+    let worker = render.worker.clone();
     RENDER_WORKER.with(|slot| *slot.borrow_mut() = Some(render));
-    Ok(())
+    Ok(worker)
 }
 
 /// Page side: starts the engine on `canvas`. `options` is the `engine_run` options object,

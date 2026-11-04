@@ -102,6 +102,7 @@ fn asset_catalog_cmd(
         IoTaskPool::get()
             .spawn(async move {
                 let result: Result<String, String> = async {
+                    let transfer = platform::core_http::begin();
                     let resp = client
                         .get(CATALOG_URL)
                         .timeout(std::time::Duration::from_secs(30))
@@ -109,6 +110,7 @@ fn asset_catalog_cmd(
                         .await
                         .map_err(|e| e.to_string())?;
                     let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+                    drop(transfer);
                     let packs = json
                         .get("assetPacks")
                         .and_then(|v| v.as_array())

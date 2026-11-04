@@ -5,6 +5,7 @@ import { App } from './App'
 import { registerCoiServiceWorker } from './lib/coiServiceWorker'
 import { installCefNativeBridge } from './lib/cefNativeBridge'
 import { installHudAutomation } from './lib/hudAutomation'
+import { installHudHttp } from './lib/http'
 import { installLocalNetworkFetch } from './lib/localNetworkFetch'
 import { installHudScale } from './lib/hudScale'
 import { countLaunch } from './lib/launchCount'
@@ -22,6 +23,7 @@ export async function mountPlayApp(container: HTMLElement): Promise<() => void> 
   // Before anything fetches: annotate loopback/local-network requests so Chrome's Local Network
   // Access permission (142+) prompts instead of silently blocking — preview realms live on localhost.
   installLocalNetworkFetch()
+  installHudHttp(inShell)
 
   // Keep --ui-scale in sync with the viewport (DPI-correct, like Unity's CanvasScaler).
   installHudScale()

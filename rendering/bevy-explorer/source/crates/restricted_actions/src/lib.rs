@@ -800,6 +800,7 @@ pub async fn lookup_portable(
     super_user: bool,
     ipfs: Arc<IpfsIo>,
 ) -> Result<(String, PortableSource), String> {
+    let transfer = common::util::core_http::begin();
     let about = ipfs
         .client()
         .get(format!("{url}/about"))
@@ -814,6 +815,7 @@ pub async fn lookup_portable(
         .json::<ServerAbout>()
         .await
         .map_err(|e| e.to_string())?;
+    drop(transfer);
     about.trim_public_urls();
     let Some(config) = about.configurations else {
         return Err("No configurations on server/about".to_owned());

@@ -1,3 +1,4 @@
+import { hudFetch } from '../../../lib/http'
 // The page's side of the editor host contract (v1.2): the object the editor package finds at
 // window.__dclEditorHost, the element it mounts into, and the script tag that loads it.
 
@@ -243,9 +244,7 @@ export function guardUrlSync(pageDir: string, flag: string | boolean): void {
 
 /** Whether the preview realm's scene runs its own server (scene.json `authoritativeMultiplayer`). */
 async function authoritative(realm: string): Promise<boolean> {
-  const res = await fetch(`${realm}/scene.json`)
-  if (!res.ok) return false
-  const scene: unknown = await res.json()
+  const scene: unknown = await hudFetch(`${realm}/scene.json`, undefined, (res) => res.ok ? res.json() : null)
   return typeof scene === 'object' && scene != null && 'authoritativeMultiplayer' in scene && scene.authoritativeMultiplayer === true
 }
 
@@ -435,9 +434,10 @@ function publishHost(source: EditorSource, pageDir: string, deps: EditorHostDeps
         let hash = source.editorSceneEntity
         if (hash == null) {
           // a dev package: the scene its realm lists
-          const about = await fetch(`${packageScene}/about`)
-          if (!about.ok) throw new Error(`the editor scene realm answered ${about.status}`)
-          hash = sceneIdFromAbout(await about.json())
+          hash = await hudFetch(`${packageScene}/about`, undefined, async (about) => {
+            if (!about.ok) throw new Error(`the editor scene realm answered ${about.status}`)
+            return sceneIdFromAbout(await about.json())
+          })
         }
         const realm = await stageEditorScene(packageScene, hash, pageDir)
         await deps.scene('spawn', realm, hash)
@@ -474,7 +474,7 @@ function publishHost(source: EditorSource, pageDir: string, deps: EditorHostDeps
       const own = Object.entries(init?.headers ?? {}).filter(([name]) => SIGNED_FETCH_HEADERS.has(name.toLowerCase()))
       const loaded = await loadSigner()
       const signed = await loaded.signFetch(identity, method, target, signerFor(loaded, identity), metadata)
-      return fetch(target, { method, body: init?.body, signal, headers: { ...Object.fromEntries(own), ...signed } })
+      return hudFetch(target, { method, body: init?.body, signal, headers: { ...Object.fromEntries(own), ...signed } })
     },
     previewStorageFetch(path, init) {
       if (previewing == null) return Promise.reject(new Error('not-allowed'))
@@ -482,7 +482,7 @@ function publishHost(source: EditorSource, pageDir: string, deps: EditorHostDeps
       const target = new URL(path.replace(/^\/+/, ''), base)
       const route = target.href.startsWith(base.href) ? target.pathname.slice(base.pathname.length) : ''
       if (!PREVIEW_STORAGE_PATH.test(route)) return Promise.reject(new Error('not-allowed'))
-      return fetch(target.href, { method: init?.method ?? 'GET', headers: init?.headers, body: init?.body })
+      return hudFetch(target.href, { method: init?.method ?? 'GET', headers: init?.headers, body: init?.body })
     },
     previewChanged() {
       // builds land in bursts: one restart waits behind the switch in progress, with the latest content

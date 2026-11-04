@@ -1164,6 +1164,7 @@ fn start_preview_mint(
         for (k, v) in headers {
             request = request.header(k, v);
         }
+        let _transfer = platform::core_http::begin();
         let response = request.send().await?;
         if !response.status().is_success() {
             anyhow::bail!("gatekeeper status {}", response.status());

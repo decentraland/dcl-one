@@ -66,6 +66,7 @@ pub async fn fetch<E>(
     headers_timeout: Duration,
     idle_timeout: Duration,
 ) -> Result<FetchedResponse, FetchError<E>> {
+    let _transfer = crate::core_http::begin();
     fetch_observed(send, headers_timeout, idle_timeout, |_| {}).await
 }
 

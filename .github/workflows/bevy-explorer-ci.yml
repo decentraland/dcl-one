@@ -611,6 +611,8 @@ jobs:
           # Multi-GB Cargo/Nix caches retain their main-only save policy.
           path: .cache/bevy-engine
           key: ${{ steps.engine-cache.outputs.cache-primary-key }}
+      - name: Test trusted HTTP pressure in Node and Chromium
+        run: CHROME_BIN="$(command -v google-chrome)" node --test react-web/src/test/core_http.{node,browser}.mjs
       - name: Upload the complete web app
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

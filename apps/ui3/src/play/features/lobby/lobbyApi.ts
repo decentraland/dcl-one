@@ -1,3 +1,4 @@
+import { hudFetchJson } from '../../lib/http'
 // The lobby's data: the curated destinations, the live events and busiest places, the landing
 // place for the home destination, and the places visited most recently.
 
@@ -26,9 +27,7 @@ function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
 }
 
 async function placesData(url: string, init?: RequestInit): Promise<DiscoverPlace[]> {
-  const res = await fetch(url, init)
-  if (!res.ok) throw new Error(`places API failed: ${res.status}`)
-  const json = (await res.json()) as { ok?: boolean; data?: DiscoverPlace[] }
+  const json = await hudFetchJson<{ ok?: boolean; data?: DiscoverPlace[] }>(url, init, 'places API failed:')
   if (json.ok === false || !Array.isArray(json.data)) throw new Error('places API returned not-ok')
   return json.data
 }
@@ -56,9 +55,11 @@ export function eventPeople(e: LiveEvent): number {
 /** The live events, busiest first. */
 export function fetchLiveEvents(): Promise<LiveEvent[]> {
   return cached('liveEvents', async () => {
-    const res = await fetch(`${EVENTS_API}?with_connected_users=true`)
-    if (!res.ok) throw new Error(`Events service returned ${res.status}`)
-    const body = (await res.json()) as { ok?: boolean; data?: LiveEvent[] }
+    const body = await hudFetchJson<{ ok?: boolean; data?: LiveEvent[] }>(
+      `${EVENTS_API}?with_connected_users=true`,
+      undefined,
+      'Events service returned',
+    )
     if (body.ok === false || !Array.isArray(body.data)) throw new Error('Events service returned an unexpected response')
     return body.data.filter((e) => e.live).sort((a, b) => eventPeople(b) - eventPeople(a))
   })

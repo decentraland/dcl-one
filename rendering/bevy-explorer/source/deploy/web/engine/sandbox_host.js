@@ -1,3 +1,5 @@
+import { coreFetch } from './core_http.js';
+
 // The scene sandbox workers of one engine instance: spawning them over that instance's module and
 // memory, and the kill escalation. The page functions `spawn_and_init_sandbox` and
 // `terminate_sandbox` (crates/dcl_wasm) are `spawn` and `terminate` of the host made here.
@@ -6,8 +8,8 @@
 // failed fetch or compile isn't kept, so the next spawn tries again
 let sceneRuntimeModule;
 const compileSceneRuntime = () =>
-  (sceneRuntimeModule ??= WebAssembly.compileStreaming(
-    fetch(new URL("./pkg-scene/dcl_scene_wasm_bg.wasm", import.meta.url))
+  (sceneRuntimeModule ??= coreFetch(new URL("./pkg-scene/dcl_scene_wasm_bg.wasm", import.meta.url), undefined,
+    response => WebAssembly.compileStreaming(response)
   ).catch((e) => {
     sceneRuntimeModule = undefined;
     throw e;

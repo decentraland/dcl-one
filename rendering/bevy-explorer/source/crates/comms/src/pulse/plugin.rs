@@ -1583,6 +1583,7 @@ fn fetch_preview_scene_id(ipfs: Arc<IpfsIo>, base_url: String) -> Task<Result<St
 
     IoTaskPool::get().spawn_compat(async move {
         let url = format!("{base_url}/scene.json");
+        let transfer = platform::core_http::begin();
         let scene_json: SceneJson = ipfs
             .client()
             .get(&url)
@@ -1593,6 +1594,7 @@ fn fetch_preview_scene_id(ipfs: Arc<IpfsIo>, base_url: String) -> Task<Result<St
             .json()
             .await
             .map_err(|e| format!("{url}: {e}"))?;
+        drop(transfer);
         let base = scene_json.scene.base;
 
         let entities = ipfs

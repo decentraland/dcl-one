@@ -97,6 +97,7 @@ fn load_collections(
             let client = ipfs.ipfs().client();
             let t: Task<Result<Collections, anyhow::Error>> =
                 IoTaskPool::get().spawn_compat(async move {
+                    let _transfer = common::util::core_http::begin();
                     let response = client
                         .get(common::base_domain::url(
                             common::base_domain::Service::Catalyst,

@@ -1,3 +1,4 @@
+import { hudFetchJson } from '../../lib/http'
 // Client for the public Decentraland events API (events.<base domain>/api/events).
 
 import { useEffect, useState } from 'react'
@@ -25,9 +26,11 @@ export interface DclEvent {
 }
 
 export async function fetchEvents(list: EventsList, signal?: AbortSignal): Promise<DclEvent[]> {
-  const res = await fetch(`${EVENTS_API}?list=${list}`, { signal })
-  if (!res.ok) throw new Error(`Events service returned ${res.status}`)
-  const body = (await res.json()) as { ok?: boolean; data?: DclEvent[] }
+  const body = await hudFetchJson<{ ok?: boolean; data?: DclEvent[] }>(
+    `${EVENTS_API}?list=${list}`,
+    { signal },
+    'Events service returned',
+  )
   if (body.ok === false || !Array.isArray(body.data)) throw new Error('Events service returned an unexpected response')
   return body.data
 }
@@ -46,8 +49,7 @@ type WorldsLiveData = { data?: { perWorld?: { worldName: string; users: number }
 
 // Presence is optional: a failed, non-JSON or malformed reply means "no counts", never an error.
 function json(url: string, signal?: AbortSignal): Promise<unknown> {
-  return fetch(url, { signal })
-    .then((res) => (res.ok ? (res.json() as Promise<unknown>) : null))
+  return hudFetchJson(url, { signal })
     .catch(() => null)
 }
 

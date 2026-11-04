@@ -551,6 +551,7 @@ pub(crate) async fn mint_gatekeeper_adapter(
     for (k, v) in headers {
         request = request.header(k, v);
     }
+    let _transfer = platform::core_http::begin();
     let response = request.send().await?;
 
     if response.status() != StatusCode::OK {
