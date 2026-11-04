@@ -106,6 +106,57 @@ fn source_required_strings_and_node_timeout_buckets_are_preserved() {
     assert!(!format!("{:?}", settings(String::new())).contains("fixture-token"));
 }
 
+#[test]
+fn shared_environment_alone_does_not_activate_analytics_but_partial_settings_fail() {
+    let http = crate::http::Outbound::for_tests();
+    for environment in ["", "prd", "dev"] {
+        for api_url in [None, Some(String::new())] {
+            assert!(
+                Analytics::new(
+                    &http,
+                    Settings {
+                        environment: Some(environment.into()),
+                        api_url,
+                        ..Default::default()
+                    }
+                )
+                .unwrap()
+                .is_none()
+            );
+        }
+    }
+    for partial in [
+        Settings {
+            context: Some(String::new()),
+            ..Default::default()
+        },
+        Settings {
+            api_token: Some(String::new()),
+            ..Default::default()
+        },
+        Settings {
+            api_url: Some("https://analytics.example/events".into()),
+            ..Default::default()
+        },
+        Settings {
+            request_timeout_ms: Some(1000.0),
+            ..Default::default()
+        },
+    ] {
+        assert!(
+            Analytics::new(
+                &http,
+                Settings {
+                    environment: Some("prd".into()),
+                    ..partial
+                }
+            )
+            .is_err(),
+            "partial analytics settings must fail startup"
+        );
+    }
+}
+
 struct UnreadBody(Arc<AtomicBool>);
 impl Stream for UnreadBody {
     type Item = Result<bytes::Bytes, std::io::Error>;
