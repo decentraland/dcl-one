@@ -341,11 +341,21 @@ async fn handle(State(fake): State<Fake>, Json(body): Json<Value>) -> axum::resp
             "error": { "code": -32600, "message": "batch requests are not supported" }
         }))
         .into_response(),
-        Value::Array(requests) => Json(Value::Array(
-            requests.iter().map(|r| answer_one(&fake, r)).collect(),
-        ))
-        .into_response(),
-        single => Json(answer_one(&fake, &single)).into_response(),
+        // Answers run off the runtime, so a slow `answer` never stalls the client's timers.
+        Value::Array(requests) => {
+            let answers = tokio::task::spawn_blocking(move || {
+                requests.iter().map(|r| answer_one(&fake, r)).collect()
+            })
+            .await
+            .unwrap();
+            Json(Value::Array(answers)).into_response()
+        }
+        single => {
+            let answer = tokio::task::spawn_blocking(move || answer_one(&fake, &single))
+                .await
+                .unwrap();
+            Json(answer).into_response()
+        }
     }
 }
 
