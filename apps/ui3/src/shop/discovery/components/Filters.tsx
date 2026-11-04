@@ -263,12 +263,13 @@ export default function Filters(props: FiltersProps) {
   const [openPrice, setOpenPrice] = useState(true);
   const [openRarity, setOpenRarity] = useState(false);
   const [openStatus, setOpenStatus] = useState(true);
-  const [openCreators, setOpenCreators] = useState(true);
-  const [openCollection, setOpenCollection] = useState(true);
+  // The Marketplace's filters start folded, so the sidebar opens as decentraland.org's; one already in use opens.
+  const [openCreators, setOpenCreators] = useState(() => (props.creators?.length ?? 0) > 0);
+  const [openCollection, setOpenCollection] = useState(() => !!props.collection);
   const [openType, setOpenType] = useState(true);
-  const [openBodyShape, setOpenBodyShape] = useState(true);
-  const [openSaleType, setOpenSaleType] = useState(true);
-  const [openPlayMode, setOpenPlayMode] = useState(true);
+  const [openBodyShape, setOpenBodyShape] = useState(() => !!props.bodyShape && props.bodyShape !== "all");
+  const [openSaleType, setOpenSaleType] = useState(() => !!props.listingType && props.listingType !== "all");
+  const [openPlayMode, setOpenPlayMode] = useState(() => !!props.emotePlayMode && props.emotePlayMode !== "all");
   const bodyShapeOptions: Option[] = [
     ["all", t("filter.statusAll")],
     ["male", t("itemDetail.genderMale")],

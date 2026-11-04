@@ -121,6 +121,21 @@ describe("the collectibles grid", () => {
     expect(order(/^collection/i)).toBeGreaterThan(order(/^creators/i));
   });
 
+  it("starts the Marketplace's filters folded, and opens one already in use", async () => {
+    const head = (name: RegExp) => screen.getAllByRole("button").find((b) => name.test(b.textContent ?? ""))!;
+    const view = items("/shop/items?category=wearable");
+    await screen.findAllByTestId("card");
+    for (const name of [/^Creators/, /^Collection/, /^Body shape/, /^Sale type/]) expect(head(name)).toHaveAttribute("aria-expanded", "false");
+    expect(head(/^Filter by type/)).toHaveAttribute("aria-expanded", "true");
+    view.unmount();
+
+    items(`/shop/items?category=wearable&bodyShape=female&creators=${CREATOR}`);
+    await screen.findAllByTestId("card");
+    expect(head(/^Body shape/)).toHaveAttribute("aria-expanded", "true");
+    expect(head(/^Creators/)).toHaveAttribute("aria-expanded", "true");
+    expect(head(/^Sale type/)).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("Not for Sale reads the catalogue as view cards with no purchase", async () => {
     const client = catalogClient();
     items("/shop/items?status=not_for_sale&priceMin=5", { client });
