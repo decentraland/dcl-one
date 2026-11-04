@@ -94,6 +94,7 @@ impl Plugin for SceneLifecyclePlugin {
         app.init_resource::<LiveScenes>();
         app.init_resource::<ScenePointers>();
         app.init_resource::<PortableScenes>();
+        app.init_resource::<KilledSmartWearables>();
         app.init_asset::<SerializedCrdtStore>();
         app.init_asset_loader::<CrdtLoader>();
         app.add_plugins(MaterialPlugin::<LoadingMaterial>::default());
@@ -916,6 +917,11 @@ impl PortableScenes {
         }
     }
 }
+
+/// Urns of smart wearables a scene killed or that exited themselves while still equipped, so
+/// they are not started again until whoever reconciles the equipped set clears them.
+#[derive(Resource, Default)]
+pub struct KilledSmartWearables(pub HashSet<String>);
 
 pub use common::partition::PARCEL_SIZE;
 

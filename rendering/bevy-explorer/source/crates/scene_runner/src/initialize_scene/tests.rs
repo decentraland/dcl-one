@@ -95,6 +95,50 @@ fn loading_current_scene_defers_other_scenes() {
 }
 
 #[test]
+fn a_smart_wearable_loads_its_in_process_definition_while_the_current_scene_loads() {
+    let mut world = lifecycle_world();
+    spawn_current_scene(&mut world, SceneLoading::SceneEntity);
+    let definition = world
+        .get_resource_or_init::<Assets<EntityDefinition>>()
+        .add(EntityDefinition {
+            id: "wearable-sw-male".to_owned(),
+            ..Default::default()
+        });
+    world.resource_mut::<PortableScenes>().insert(
+        "wearable-sw-male".to_owned(),
+        PortableSource {
+            pid: "urn:decentraland:matic:collections-v2:0xabc:0".to_owned(),
+            parent_scene: None,
+            ens: None,
+            super_user: false,
+            kind: PortableKind::SmartWearable {
+                urn: "urn:decentraland:matic:collections-v2:0xabc:0".to_owned(),
+                name: "wearable".to_owned(),
+                definition: definition.clone(),
+            },
+        },
+    );
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+
+    // the current scene still defers its neighbour, but not the wearable
+    assert!(world.resource::<CurrentSceneLoading>().0);
+    let events = world.resource::<Events<LoadSceneEvent>>();
+    let locations = events
+        .iter_current_update_events()
+        .map(|ev| &ev.location)
+        .collect::<Vec<_>>();
+    assert!(
+        matches!(locations.as_slice(), [SceneIpfsLocation::Asset(handle)] if *handle == definition),
+        "{locations:?}"
+    );
+    assert!(world
+        .resource::<LiveScenes>()
+        .scenes
+        .contains_key("wearable-sw-male"));
+}
+
+#[test]
 fn empty_definition_is_kept_without_deferring_and_despawned_out_of_range() {
     use std::path::Path;
 

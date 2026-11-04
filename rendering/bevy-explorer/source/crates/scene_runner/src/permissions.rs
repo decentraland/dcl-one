@@ -1,14 +1,14 @@
 use std::collections::VecDeque;
 
 use crate::{renderer_context::RendererSceneContext, ContainingScene};
-use bevy::{ecs::system::SystemParam, prelude::*};
+use bevy::{ecs::system::SystemParam, platform::collections::HashSet, prelude::*};
 use common::{
     autopilot::Autopilot,
     dynamics::PLAYER_COLLIDER_RADIUS,
     rpc::{RpcResultReceiver, RpcResultSender},
     structs::{
         AppConfig, CurrentRealm, PermissionType, PermissionUsed, PermissionValue, PrimaryPlayerRes,
-        StartupScenes,
+        StartupScenes, SMART_WEARABLE_GATED_PERMISSIONS,
     },
 };
 use tokio::sync::oneshot::error::TryRecvError;
@@ -80,6 +80,11 @@ pub struct Permission<'w, 's, T: Send + Sync + 'static> {
 /// about a scene the player is not in (`ask_out_of_scene`) it denies: the table's allowances are
 /// for the scene the player stands in, so a neighbour or a portable cannot lock, animate or
 /// otherwise act on the player.
+///
+/// `declared` is a smart wearable's declared permission set: the user authorized those when
+/// equipping it, so of the gated types a declared one is allowed and any other refused, before
+/// any of the above.
+#[allow(clippy::too_many_arguments)]
 fn resolve(
     autopilot: bool,
     config: &AppConfig,
@@ -88,8 +93,11 @@ fn resolve(
     scene_hash: &str,
     is_portable: bool,
     ask_out_of_scene: bool,
+    declared: Option<&HashSet<PermissionType>>,
 ) -> PermissionValue {
-    if autopilot {
+    if let Some(value) = declared_gate(declared, ty) {
+        value
+    } else if autopilot {
         if ask_out_of_scene {
             PermissionValue::Deny
         } else {
@@ -102,16 +110,42 @@ fn resolve(
     }
 }
 
+/// A smart wearable's answer for a gated type: allowed if declared, refused otherwise. `None`
+/// for any other scene or type.
+fn declared_gate(
+    declared: Option<&HashSet<PermissionType>>,
+    ty: PermissionType,
+) -> Option<PermissionValue> {
+    let declared = declared.filter(|_| SMART_WEARABLE_GATED_PERMISSIONS.contains(&ty))?;
+    Some(if declared.contains(&ty) {
+        PermissionValue::Allow
+    } else {
+        PermissionValue::Deny
+    })
+}
+
 impl<T: Send + Sync + 'static> Permission<'_, '_, T> {
-    // in scene, hash, title, is_portable
-    fn get_scene_info(&self, scene: Entity) -> Option<(bool, &str, &str, bool)> {
+    // in scene, hash, title, is_portable, declared (smart wearable) permissions
+    #[allow(clippy::type_complexity)]
+    fn get_scene_info(
+        &self,
+        scene: Entity,
+    ) -> Option<(bool, &str, &str, bool, Option<&HashSet<PermissionType>>)> {
         let in_scene = self
             .containing_scenes
             .get_area(self.player.0, PLAYER_COLLIDER_RADIUS)
             .contains(&scene);
         self.scenes
             .get(scene)
-            .map(|ctx| (in_scene, &*ctx.hash, ctx.title.as_str(), ctx.is_portable))
+            .map(|ctx| {
+                (
+                    in_scene,
+                    &*ctx.hash,
+                    ctx.title.as_str(),
+                    ctx.is_portable,
+                    ctx.restricted_permissions.as_ref(),
+                )
+            })
             .ok()
     }
 
@@ -131,7 +165,7 @@ impl<T: Send + Sync + 'static> Permission<'_, '_, T> {
         additional: Option<String>,
         allow_out_of_scene: bool,
     ) {
-        let Some((in_scene, hash, _, is_portable)) = self.get_scene_info(scene) else {
+        let Some((in_scene, hash, _, is_portable, declared)) = self.get_scene_info(scene) else {
             self.fail.push((value, ty, scene));
             return;
         };
@@ -150,6 +184,7 @@ impl<T: Send + Sync + 'static> Permission<'_, '_, T> {
             hash,
             is_portable,
             !allow_out_of_scene && !in_scene,
+            declared,
         );
 
         debug!(
@@ -215,7 +250,18 @@ impl<T: Send + Sync + 'static> Permission<'_, '_, T> {
                         None
                     }
                     Err(TryRecvError::Closed) => {
-                        let (_, _, _, is_portable) = self.get_scene_info(scene)?;
+                        let (_, _, _, is_portable, declared) = self.get_scene_info(scene)?;
+                        match declared_gate(declared, ty) {
+                            Some(PermissionValue::Allow) => {
+                                self.success.push((value, ty, additional, scene));
+                                return None;
+                            }
+                            Some(_) => {
+                                self.fail.push((value, ty, scene));
+                                return None;
+                            }
+                            None => (),
+                        }
                         warn!("unexpected close of channel, re-requesting");
                         Some((
                             value,
@@ -249,7 +295,7 @@ impl<T: Send + Sync + 'static> Permission<'_, '_, T> {
         for item in matching.iter() {
             let (_, _, additional, scene) = item;
             let scene = *scene;
-            if let Some((_, hash, _, _)) = self.get_scene_info(scene) {
+            if let Some((_, hash, ..)) = self.get_scene_info(scene) {
                 if !self.is_system_scene(hash) {
                     let used = PermissionUsed {
                         ty,
@@ -274,7 +320,7 @@ impl<T: Send + Sync + 'static> Permission<'_, '_, T> {
         for item in matching.iter() {
             let (_, _, scene) = item;
             let scene = *scene;
-            if let Some((_, hash, _, _)) = self.get_scene_info(scene) {
+            if let Some((_, hash, ..)) = self.get_scene_info(scene) {
                 if !self.is_system_scene(hash) {
                     let used = PermissionUsed {
                         ty,
@@ -315,8 +361,18 @@ mod tests {
         config: &AppConfig,
         ty: PermissionType,
         out_of_scene: bool,
+        declared: Option<&HashSet<PermissionType>>,
     ) -> PermissionValue {
-        resolve(autopilot, config, ty, "realm", "scene", false, out_of_scene)
+        resolve(
+            autopilot,
+            config,
+            ty,
+            "realm",
+            "scene",
+            declared.is_some(),
+            out_of_scene,
+            declared,
+        )
     }
 
     #[test]
@@ -335,11 +391,11 @@ mod tests {
             })
             .collect();
         let config = config_with(&stored);
-        let allowed = |ty| answer(true, &config, ty, false) == PermissionValue::Allow;
+        let allowed = |ty| answer(true, &config, ty, false, None) == PermissionValue::Allow;
         assert!(allowed(Fetch) && allowed(Websocket) && allowed(MovePlayer));
         assert!(!allowed(Teleport) && !allowed(ChangeRealm));
         assert_ne!(
-            answer(true, &AppConfig::default(), OpenUrl, false),
+            answer(true, &AppConfig::default(), OpenUrl, false, None),
             PermissionValue::Ask
         );
     }
@@ -363,12 +419,12 @@ mod tests {
         let allow_all = config_with(&types.map(|ty| (ty, PermissionValue::Allow)));
         for ty in types {
             assert_eq!(
-                answer(true, &allow_all, ty, true),
+                answer(true, &allow_all, ty, true, None),
                 PermissionValue::Deny,
                 "{ty:?}"
             );
             assert_eq!(
-                answer(true, &AppConfig::default(), ty, true),
+                answer(true, &AppConfig::default(), ty, true, None),
                 PermissionValue::Deny,
                 "{ty:?}"
             );
@@ -379,9 +435,117 @@ mod tests {
     fn without_the_autopilot_the_stored_rules_and_the_user_decide() {
         let config = config_with(&[(PermissionType::Fetch, PermissionValue::Deny)]);
         let fetch =
-            |config, out_of_scene| answer(false, config, PermissionType::Fetch, out_of_scene);
+            |config, out_of_scene| answer(false, config, PermissionType::Fetch, out_of_scene, None);
         assert_eq!(fetch(&config, false), PermissionValue::Deny);
         assert_eq!(fetch(&config, true), PermissionValue::Ask);
         assert_eq!(fetch(&AppConfig::default(), false), PermissionValue::Ask);
+    }
+
+    #[test]
+    fn a_smart_wearable_gets_a_declared_gated_permission_whatever_is_stored() {
+        let declared: HashSet<_> = [PermissionType::Fetch].into_iter().collect();
+        for stored in [PermissionValue::Ask, PermissionValue::Deny] {
+            let config = config_with(&[(PermissionType::Fetch, stored)]);
+            for (autopilot, out_of_scene) in [(false, false), (false, true), (true, true)] {
+                assert_eq!(
+                    answer(
+                        autopilot,
+                        &config,
+                        PermissionType::Fetch,
+                        out_of_scene,
+                        Some(&declared)
+                    ),
+                    PermissionValue::Allow,
+                    "{stored:?} autopilot={autopilot} out_of_scene={out_of_scene}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_smart_wearable_is_refused_an_undeclared_gated_permission() {
+        let declared: HashSet<_> = [PermissionType::Fetch].into_iter().collect();
+        let config = config_with(&[(PermissionType::Websocket, PermissionValue::Allow)]);
+        for ty in [
+            PermissionType::Websocket,
+            PermissionType::Web3,
+            PermissionType::OpenUrl,
+        ] {
+            assert_eq!(
+                answer(false, &config, ty, false, Some(&declared)),
+                PermissionValue::Deny,
+                "{ty:?}"
+            );
+        }
+        assert_eq!(
+            answer(
+                false,
+                &config,
+                PermissionType::Websocket,
+                false,
+                Some(&HashSet::new())
+            ),
+            PermissionValue::Deny
+        );
+    }
+
+    #[test]
+    fn a_smart_wearable_asks_for_ungated_types_as_any_portable_does() {
+        let declared: HashSet<_> = [PermissionType::Fetch].into_iter().collect();
+        for stored in [
+            PermissionValue::Allow,
+            PermissionValue::Deny,
+            PermissionValue::Ask,
+        ] {
+            let config = config_with(&[(PermissionType::MovePlayer, stored)]);
+            for (autopilot, out_of_scene) in [(false, false), (false, true), (true, false)] {
+                assert_eq!(
+                    answer(
+                        autopilot,
+                        &config,
+                        PermissionType::MovePlayer,
+                        out_of_scene,
+                        Some(&declared)
+                    ),
+                    resolve(
+                        autopilot,
+                        &config,
+                        PermissionType::MovePlayer,
+                        "realm",
+                        "scene",
+                        true,
+                        out_of_scene,
+                        None
+                    ),
+                    "{stored:?} autopilot={autopilot} out_of_scene={out_of_scene}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn other_scenes_resolve_gated_types_from_the_config() {
+        let config = config_with(&[
+            (PermissionType::Fetch, PermissionValue::Deny),
+            (PermissionType::Websocket, PermissionValue::Allow),
+        ]);
+        assert_eq!(
+            answer(false, &config, PermissionType::Fetch, false, None),
+            PermissionValue::Deny
+        );
+        assert_eq!(
+            answer(false, &config, PermissionType::Websocket, false, None),
+            PermissionValue::Allow
+        );
+        assert_eq!(
+            answer(
+                false,
+                &AppConfig::default(),
+                PermissionType::Fetch,
+                false,
+                None
+            ),
+            PermissionValue::Ask
+        );
     }
 }

@@ -36,7 +36,7 @@ use crate::{
 use common::{
     asset_cache::{clean_asset_cache, AssetCache},
     rpc::{RpcCall, RpcCallEvent, RpcOrigin, RpcUiFocusAction},
-    structs::{AppConfig, PrimaryPlayerRes, PrimaryUser, ZOrder},
+    structs::{AppConfig, PortableExperiencesToggle, PrimaryPlayerRes, PrimaryUser, ZOrder},
     util::{DespawnWith, ModifyComponentExt},
 };
 use dcl_component::{
@@ -631,6 +631,31 @@ pub struct SceneUiRoot {
     canvas: Entity,
 }
 
+/// The scenes whose UI shows: those the player is in, less any portable (other than a super-user
+/// one) while the parcel scene the player stands in sets `portableExperiences: hideUi`.
+fn ui_scenes(
+    player: Option<Entity>,
+    containing_scene: &ContainingScene,
+    contexts: &Query<(&RendererSceneContext, Has<SuperUserScene>)>,
+) -> HashSet<Entity> {
+    let Some(player) = player else {
+        return HashSet::default();
+    };
+    let mut scenes = containing_scene.get(player);
+    let hide_portables = containing_scene
+        .get_parcel(player)
+        .and_then(|parcel| contexts.get(parcel).ok())
+        .is_some_and(|(ctx, _)| ctx.portable_experiences == PortableExperiencesToggle::HideUi);
+    if hide_portables {
+        scenes.retain(|scene| {
+            contexts
+                .get(*scene)
+                .is_ok_and(|(ctx, is_super)| !ctx.is_portable || is_super)
+        });
+    }
+    scenes
+}
+
 fn create_ui_roots(
     mut commands: Commands,
     mut scene_uis: Query<(
@@ -642,6 +667,7 @@ fn create_ui_roots(
     )>,
     player: Query<Entity, With<PrimaryUser>>,
     containing_scene: ContainingScene,
+    contexts: Query<(&RendererSceneContext, Has<SuperUserScene>)>,
     current_uis: Query<(Entity, &SceneUiRoot)>,
     config: Res<AppConfig>,
     canvas_infos: Query<(Entity, &ContainerEntity, Ref<UiCanvas>, Option<&UiLink>)>,
@@ -670,11 +696,7 @@ fn create_ui_roots(
         ..Default::default()
     };
 
-    let current_scenes = player
-        .single()
-        .ok()
-        .map(|p| containing_scene.get(p))
-        .unwrap_or_default();
+    let current_scenes = ui_scenes(player.single().ok(), &containing_scene, &contexts);
 
     // remove any non-current uis
     for (ent, ui_root) in &current_uis {
@@ -1018,16 +1040,13 @@ fn layout_scene_ui(
     mut scene_uis: Query<(Entity, &mut SceneUiData)>,
     player: Query<Entity, With<PrimaryUser>>,
     containing_scene: ContainingScene,
+    contexts: Query<(&RendererSceneContext, Has<SuperUserScene>)>,
     ui_nodes: Query<(&SceneEntity, Ref<UiTransform>, &ChildOf)>,
     mut removed_transforms: RemovedComponents<UiTransform>,
     ui_links: Query<&UiLink>,
     dui: Res<DuiRegistry>,
 ) {
-    let current_scenes = player
-        .single()
-        .ok()
-        .map(|p| containing_scene.get(p))
-        .unwrap_or_default();
+    let current_scenes = ui_scenes(player.single().ok(), &containing_scene, &contexts);
 
     let removed_transforms = removed_transforms.read().collect::<Vec<_>>();
 
@@ -1627,6 +1646,130 @@ fn set_ui_focus(
                 }
 
                 response.send(Ok(None));
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::system::RunSystemOnce;
+    use dcl_types::SceneId;
+
+    use super::*;
+    use crate::initialize_scene::{PointerResult, PortableScenes, PortableSource, ScenePointers};
+
+    fn context(
+        hash: &str,
+        is_portable: bool,
+        toggle: PortableExperiencesToggle,
+    ) -> RendererSceneContext {
+        let mut ctx = RendererSceneContext::new(
+            SceneId(Entity::PLACEHOLDER),
+            hash.to_owned(),
+            String::new(),
+            is_portable,
+            0,
+            hash.to_owned(),
+            IVec2::ZERO,
+            HashSet::from_iter([IVec2::ZERO]),
+            vec![],
+            Default::default(),
+            vec![],
+            Entity::PLACEHOLDER,
+            0.,
+            false,
+            "sdk_version",
+            false,
+            false,
+        );
+        ctx.portable_experiences = toggle;
+        ctx
+    }
+
+    /// The scenes showing UI with the player standing in a parcel scene with `toggle`, beside
+    /// a portable and a super-user portable.
+    fn shown(toggle: PortableExperiencesToggle) -> (HashSet<Entity>, [Entity; 3]) {
+        let mut world = World::new();
+        world.init_resource::<LiveScenes>();
+        world.init_resource::<PortableScenes>();
+        let mut pointers = ScenePointers::default();
+        pointers.insert(
+            IVec2::ZERO,
+            PointerResult::Exists {
+                hash: "parcel".to_owned(),
+                urn: None,
+            },
+        );
+        world.insert_resource(pointers);
+
+        let parcel = world.spawn(context("parcel", false, toggle)).id();
+        let portable = world
+            .spawn(context("portable", true, Default::default()))
+            .id();
+        let system = world
+            .spawn((context("system", true, Default::default()), SuperUserScene))
+            .id();
+        for (hash, entity) in [
+            ("parcel", parcel),
+            ("portable", portable),
+            ("system", system),
+        ] {
+            world
+                .resource_mut::<LiveScenes>()
+                .scenes
+                .insert(hash.to_owned(), entity);
+        }
+        let mut portables = world.resource_mut::<PortableScenes>();
+        portables.insert(
+            "portable".to_owned(),
+            PortableSource::new(
+                "portable".to_owned(),
+                Some("parcel".to_owned()),
+                None,
+                false,
+            ),
+        );
+        portables.insert(
+            "system".to_owned(),
+            PortableSource::new("system".to_owned(), None, None, true),
+        );
+
+        // stand in the middle of parcel (0,0)
+        world.spawn((
+            PrimaryUser::default(),
+            GlobalTransform::from_translation(Vec3::new(8.0, 0.0, -8.0)),
+        ));
+
+        let scenes = world
+            .run_system_once(
+                |player: Query<Entity, With<PrimaryUser>>,
+                 containing_scene: ContainingScene,
+                 contexts: Query<(&RendererSceneContext, Has<SuperUserScene>)>| {
+                    ui_scenes(player.single().ok(), &containing_scene, &contexts)
+                },
+            )
+            .unwrap();
+        (scenes, [parcel, portable, system])
+    }
+
+    #[test]
+    fn a_hide_ui_scene_hides_the_ui_of_portables_but_not_of_system_scenes() {
+        let (scenes, [parcel, portable, system]) = shown(PortableExperiencesToggle::HideUi);
+        assert!(scenes.contains(&parcel));
+        assert!(!scenes.contains(&portable));
+        assert!(scenes.contains(&system));
+    }
+
+    #[test]
+    fn portables_show_their_ui_under_any_other_toggle() {
+        for toggle in [
+            PortableExperiencesToggle::Enabled,
+            PortableExperiencesToggle::Disabled,
+        ] {
+            let (scenes, entities) = shown(toggle);
+            for entity in entities {
+                assert!(scenes.contains(&entity), "{toggle:?}");
             }
         }
     }

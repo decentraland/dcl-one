@@ -16,6 +16,7 @@ use bevy::{
 };
 use bevy_console::{ConsoleCommand, ConsoleResponder, PrintConsoleLine};
 use bevy_dui::{DuiEntityCommandsExt, DuiProps, DuiRegistry};
+use collectibles::wearables::WearableUrn;
 use common::{
     profile::SerializedProfile,
     rpc::{
@@ -49,7 +50,8 @@ use nft::asset_source::Nft;
 use reqwest::StatusCode;
 use scene_runner::{
     initialize_scene::{
-        LiveScenes, PortableScenes, PortableSource, SceneLoading, SuperUserScene, PARCEL_SIZE,
+        KilledSmartWearables, LiveScenes, PortableKind, PortableScenes, PortableSource,
+        SceneLoading, SuperUserScene, PARCEL_SIZE,
     },
     permissions::Permission,
     realm_base_url_and_name,
@@ -82,6 +84,7 @@ impl Plugin for RestrictedActionsPlugin {
                     external_url,
                     spawn_portable,
                     kill_portable,
+                    exit_portable,
                     list_portables,
                     get_user_data,
                 ),
@@ -1045,6 +1048,15 @@ fn spawn_portable(
     }
 }
 
+/// The wearable a `kill` urn names, if it names one. Entity urns are excluded up front so they
+/// do not log as invalid collectible urns.
+fn smart_wearable_urn(urn: &str) -> Option<WearableUrn> {
+    if !urn.starts_with("urn:decentraland:") || urn.starts_with("urn:decentraland:entity:") {
+        return None;
+    }
+    WearableUrn::new(urn).ok()
+}
+
 fn portable_matches_location(
     hash: &str,
     source: &PortableSource,
@@ -1052,6 +1064,14 @@ fn portable_matches_location(
 ) -> bool {
     match location {
         PortableLocation::Urn(urn) => {
+            if let Some(wearable) = smart_wearable_urn(urn) {
+                return match &source.kind {
+                    PortableKind::SmartWearable { urn, .. } => {
+                        WearableUrn::new(urn).is_ok_and(|urn| urn == wearable)
+                    }
+                    _ => false,
+                };
+            }
             let hacked_urn = urn.replace('?', "?=&");
             IpfsPath::new_from_urn::<EntityDefinition>(&hacked_urn)
                 .ok()
@@ -1061,6 +1081,20 @@ fn portable_matches_location(
         }
         PortableLocation::Ens(ens) => source.ens.as_deref() == Some(ens.as_str()),
     }
+}
+
+/// The smart wearables among `killed` (portable hashes), by urn.
+fn killed_smart_wearables<'a>(
+    portables: &PortableScenes,
+    killed: impl IntoIterator<Item = &'a String>,
+) -> HashSet<String> {
+    killed
+        .into_iter()
+        .filter_map(|hash| match &portables.get(hash)?.kind {
+            PortableKind::SmartWearable { urn, .. } => Some(urn.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 fn kill_portable(
@@ -1081,9 +1115,9 @@ fn kill_portable(
         _ => None,
     }) {
         // requesting scene may kill a portable only if it spawned the portable,
-        // or if some other scene spawned it and the player is currently within
-        // the requesting scene's bounds. startup / system portables (no parent
-        // scene) are never killable by scenes.
+        // or if some other scene spawned it (or it is a smart wearable) and the player
+        // is currently within the requesting scene's bounds. startup / system portables
+        // are never killable by scenes.
         let is_parent = scenes.get(*scene).is_ok_and(|ctx| {
             portables
                 .by_parent(&ctx.hash)
@@ -1096,7 +1130,7 @@ fn kill_portable(
                 .is_some_and(|p| containing_scene.get(p).contains(scene));
             player_in_scene
                 && portables.iter().any(|(hash, src)| {
-                    src.parent_scene.is_some() && portable_matches_location(hash, src, location)
+                    !src.is_startup() && portable_matches_location(hash, src, location)
                 })
         };
         if !is_parent && !containing_other_owned {
@@ -1115,7 +1149,21 @@ fn kill_portable(
 
     for (location, response) in perms.drain_success(PermissionType::KillPortables) {
         match location {
-            PortableLocation::Urn(urn) => {
+            PortableLocation::Urn(ref urn) => {
+                if smart_wearable_urn(urn).is_some() {
+                    match portables
+                        .iter()
+                        .find(|(hash, src)| portable_matches_location(hash, src, &location))
+                    {
+                        Some((hash, _)) => {
+                            response.send(true);
+                            kill_portables.insert(hash.clone());
+                        }
+                        None => response.send(false),
+                    }
+                    continue;
+                }
+
                 let hacked_urn = urn.replace('?', "?=&");
 
                 let Ok(path) = IpfsPath::new_from_urn::<EntityDefinition>(&hacked_urn) else {
@@ -1148,11 +1196,52 @@ fn kill_portable(
 
     // deferred write to avoid resource conflict
     if !kill_portables.is_empty() {
+        let killed_wearables = killed_smart_wearables(&portables, &kill_portables);
         commands.queue(|world: &mut World| {
             let mut portables = world.resource_mut::<PortableScenes>();
             for killed in kill_portables {
                 portables.remove(&killed);
             }
+            world
+                .resource_mut::<KilledSmartWearables>()
+                .0
+                .extend(killed_wearables);
+        })
+    }
+}
+
+/// `PortableExperiences.exit`: the calling scene unloads itself if it is a portable.
+fn exit_portable(
+    mut commands: Commands,
+    portables: Res<PortableScenes>,
+    mut events: EventReader<RpcCallEvent>,
+) {
+    let mut exiting = HashSet::new();
+    for (hash, response) in events.read().filter_map(|ev| match (&ev.origin, &ev.call) {
+        (RpcOrigin::Scene { hash, .. }, RpcCall::ExitPortable { response }) => {
+            Some((hash, response))
+        }
+        _ => None,
+    }) {
+        let is_portable = portables.contains_key(hash);
+        if is_portable {
+            exiting.insert(hash.to_string());
+        }
+        response.send(is_portable);
+    }
+
+    // deferred write to avoid resource conflict
+    if !exiting.is_empty() {
+        let killed_wearables = killed_smart_wearables(&portables, &exiting);
+        commands.queue(|world: &mut World| {
+            let mut portables = world.resource_mut::<PortableScenes>();
+            for hash in exiting {
+                portables.remove(&hash);
+            }
+            world
+                .resource_mut::<KilledSmartWearables>()
+                .0
+                .extend(killed_wearables);
         })
     }
 }
@@ -1168,21 +1257,28 @@ fn list_portables(
         _ => None,
     }) {
         debug!("listing portables");
-        // hide startup / system portables (parent_scene = None) from scenes
+        // hide startup / system portables from scenes
         let portables = portables
             .iter()
-            .filter(|(_, source)| source.parent_scene.is_some())
+            .filter(|(_, source)| !source.is_startup())
             .map(|(hash, source)| {
                 let context = live_scenes
                     .scenes
                     .get(hash)
                     .and_then(|ent| contexts.get(*ent).ok());
 
+                let (parent_cid, ens) = match source.kind {
+                    PortableKind::SmartWearable { .. } => ("avatar".to_owned(), None),
+                    _ => (
+                        source.parent_scene.clone().unwrap_or_default(),
+                        source.ens.clone(),
+                    ),
+                };
                 SpawnResponse {
                     pid: source.pid.clone(),
                     name: context.map_or(String::default(), |c| c.title.to_owned()),
-                    parent_cid: source.parent_scene.clone().unwrap_or_default(),
-                    ens: source.ens.clone(),
+                    parent_cid,
+                    ens,
                 }
             })
             .collect();
