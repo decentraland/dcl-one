@@ -512,7 +512,11 @@ default: PostgreSQL rewrites the table and builds its unique index under ACCESS
 EXCLUSIVE and mints one id per existing row (see METRICS.md for a measured size).
 Its other columns take constant defaults or are nullable, and step
 `0023_social_referral_pending_reward` adds two nullable columns without a rewrite.
-Both run inside the writer-stopped sequence above. The owned upgrade test
+`0024_social_referral_reward_receipt` adds nullable claim, response and retry
+columns, imports confirmed `reward_paid` receipts without losing notification
+completion, and quarantines older uncertain pending rewards. The backfill touches
+only paid or pending rewards. These steps run inside the writer-stopped sequence
+above. The owned upgrade test
 `populated_main_v2_referrals_survive_the_upgrade_with_minted_ids` checks a
 populated shipped-main table keeps every value, gains unique ids and marks its
 granted rows. A database prepared at the captured version 2 also holds
@@ -813,18 +817,31 @@ stored IP text serves this inet comparison, so the schema defines none. Finalizi
 a referral serializes its referrer and counts the milestone before committing
 the grant. A grant that reaches a reward tier records it in the nullable
 `referral_progress.reward_tier` in the same transaction. External Slack, SNS and
-reward requests occur after commit. A failed notification or reward request
-retains the committed tier as the pinned source does. `reward_tier` marks the
-rewards request as owed; its success replaces it, in one statement, with
-`reward_paid` (`{tier, reward, notified}`), so a later failure never requests the
-reward again. The next finalize of the same invited user, such as a redelivered
-login, resumes from whichever marker is set: an owed request, or the paid
-reward's notification (recorded in `notified` once sent) and image (stored once
-per referrer and tier); `reward_paid` clears when both are done. A missing tier
-campaign key leaves the request owed without sending it. The source's rewards
-API takes no idempotency key, so only a lost response, or a failed
-`reward_paid` write right after a successful request, can repeat a request. Tier image persistence and its notification start
-independently, so either may finish after the other has already failed. SNS publishing admits at most eight ten-entry requests per
+reward requests occur after commit. One nullable receipt per milestone stores a
+pre-POST `reward_requested_at`, confirmed provider `reward_response` and
+`reward_retry_at`. The expected workload is at most one receipt per milestone,
+with a 64-row due batch every minute; this bound is not a throughput measurement.
+The partial due index excludes completed and ambiguous requests. A session
+advisory guard serializes attempts without an open transaction across HTTP; its
+connection closes on cancellation.
+
+Configuration failures leave the request unclaimed. After the POST claim commits,
+transport errors, non-success statuses, malformed replies and a crash before
+response persistence leave an ambiguous receipt that is never automatically
+reissued. Operators must reconcile the outcome before restoring it to pending or
+supplying a confirmed response. Additive step `0024_social_referral_reward_receipt`
+imports previously confirmed `reward_paid` receipts and quarantines uncertain
+pending markers. This avoids automatic duplicate issuance but cannot guarantee
+exactly-once external delivery.
+
+`reward_paid` retains `{tier, reward, notified}` while downstream effects remain.
+A stored response permits later logins and the worker to retry only outstanding
+notification and image delivery. A known successful notification is not resent
+when image persistence fails; notifications remain at least once across a crash
+after publishing but before its receipt is stored. Completion clears `reward_tier`
+and `reward_paid`. Image persistence and notification start independently, and
+the guard remains held until both finish after an early error. Images are stored
+once per referrer and tier. SNS publishing admits at most eight ten-entry requests per
 invocation; it awaits every admitted delivery and retains input result order.
 
 Community SNS recipient pages order role, join time and member address. This

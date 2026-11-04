@@ -1,8 +1,8 @@
 //! Shared pieces of the client write paths: the multipart create/update
 //! body, the standing loads that render a fault as a 500 (never as "not a
 //! member"), the ban pre-check that renders a fault as a 500 (never as "not
-//! banned"), and the write authority proven against `community_members`
-//! plus `community_bans`.
+//! banned"), and the write authority proven against `community_members`.
+//! Handlers apply the ban checks with their route-specific refusal contracts.
 
 use std::sync::{
     Arc,
@@ -284,13 +284,13 @@ pub async fn is_banned(
     map_db(super::queries::banned(&state.pool, community_id, wallet).await)
 }
 
-/// Proven against `community_members` plus `community_bans`.
+/// Proves a capability against the active community's membership projection.
 #[derive(Debug)]
 pub struct ClientCommunityWriteAuthority(());
 
 impl ClientCommunityWriteAuthority {
-    /// `community_bans` pre-check refuses with a 403; a missing capability
-    /// with a 401.
+    /// A missing capability refuses with a 401. Handlers apply any separate
+    /// ban check using their route's response contract.
     pub async fn resolve_requiring_capability(
         state: &State,
         community_id: CommunityId,

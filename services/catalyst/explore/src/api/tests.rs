@@ -1422,6 +1422,126 @@ async fn denylist_mirror_keeps_upstream_casing_and_the_overlay_wins() {
 }
 
 #[tokio::test]
+async fn denylist_refresh_reaches_every_replica_without_mirrors_or_fleet_jobs() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let mock = mock();
+    let addr = serve_mock(mock.clone()).await;
+    let mut settings = Settings::for_tests(sources_at(addr));
+    settings.mirrors_enabled = false;
+    settings.ab_cdn_enabled = false;
+    let first = node_with_db(settings.clone(), db.pool.clone()).await;
+    let second = node_with_db(settings, db.pool.clone()).await;
+    let snapshots = [&first.state.denylist, &second.state.denylist];
+    assert!(!Arc::ptr_eq(snapshots[0], snapshots[1]));
+    // Each replica's social referral readers retain this same Arc.
+    let referral_readers = [snapshots[0].clone(), snapshots[1].clone()];
+    let first_jobs = Jobs::new().with_fleet_jobs(false);
+    let second_jobs = Jobs::new().with_fleet_jobs(false);
+    first.state.spawn_jobs(&first_jobs);
+    second.state.spawn_jobs(&second_jobs);
+    for jobs in [&first_jobs, &second_jobs] {
+        assert!(
+            jobs.report()
+                .iter()
+                .any(|j| j.name == "explorer-denylist-reload")
+        );
+        assert!(jobs.report().iter().all(|j| !j.name.ends_with("-mirror")));
+    }
+
+    async fn refresh(jobs: [&Jobs; 2], expected_passes: u64) {
+        // Advance only the between-pass sleep, then allow real PostgreSQL IO
+        // with normal time so no query budget can auto-expire in paused time.
+        tokio::task::yield_now().await;
+        tokio::time::pause();
+        tokio::time::advance(denylist::RELOAD_INTERVAL + Duration::from_millis(1)).await;
+        tokio::time::resume();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if jobs.iter().all(|jobs| {
+                    jobs.report().iter().any(|job| {
+                        job.name == "explorer-denylist-reload"
+                            && job.passes >= expected_passes
+                            && job.last_error.is_none()
+                    })
+                }) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("every replica must refresh without a fleet lease");
+    }
+
+    // A mirror's transaction and an admin's overlay write are shared facts;
+    // neither writer refreshes either process's snapshot in this test.
+    denylist::replace(
+        &db.pool,
+        &[denylist::UserEntry {
+            wallet: "0xMirrored".into(),
+        }],
+    )
+    .await
+    .unwrap();
+    denylist::set_local(&db.pool, "0xLocal", true)
+        .await
+        .unwrap();
+    assert!(referral_readers.iter().all(|s| !s.contains("0xlocal")));
+    refresh([&first_jobs, &second_jobs], 1).await;
+    for snapshot in &referral_readers {
+        assert!(snapshot.contains("0xmirrored"));
+        assert!(snapshot.contains("0xlocal"));
+    }
+
+    denylist::set_local(&db.pool, "0xMirrored", false)
+        .await
+        .unwrap();
+    denylist::clear_local(&db.pool, "0xLocal").await.unwrap();
+    denylist::replace(
+        &db.pool,
+        &[
+            denylist::UserEntry {
+                wallet: "0xMirrored".into(),
+            },
+            denylist::UserEntry {
+                wallet: "0xNew".into(),
+            },
+        ],
+    )
+    .await
+    .unwrap();
+    refresh([&first_jobs, &second_jobs], 2).await;
+    for snapshot in &referral_readers {
+        assert!(!snapshot.contains("0xmirrored"), "local removal wins");
+        assert!(
+            !snapshot.contains("0xlocal"),
+            "cleared local addition disappears"
+        );
+        assert!(snapshot.contains("0xnew"), "new mirror rows become visible");
+    }
+    for state in [&first.state, &second.state] {
+        let (_, doc) =
+            call_json(&router(state.clone()), "GET", "/config/denylist.json", None).await;
+        assert_eq!(doc, json!({"users": [{"wallet": "0xNew"}]}));
+    }
+    assert_eq!(
+        mock.hits("denylist"),
+        0,
+        "refresh only reads the shared database"
+    );
+    assert!(first_jobs.shutdown(Duration::from_secs(1)).await.is_empty());
+    assert!(
+        second_jobs
+            .shutdown(Duration::from_secs(1))
+            .await
+            .is_empty()
+    );
+    db.teardown().await;
+}
+
+#[tokio::test]
 async fn feature_flags_mirror_sends_the_referer_applies_overrides_and_uses_the_etag() {
     let Some(db) = scratch_database().await else {
         return;
@@ -1878,6 +1998,7 @@ async fn spawn_jobs_registers_every_explorer_job_and_stops_with_the_registry() {
             "ab-cdn-maintenance",
             "auth-api-identity-sweep",
             "explorer-denylist-mirror",
+            "explorer-denylist-reload",
             "explorer-flags-mirror",
             "explorer-lists-mirror",
             "explorer-map-mirror",

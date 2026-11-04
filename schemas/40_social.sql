@@ -825,12 +825,14 @@ CREATE TABLE social.referral_progress (
     signed_up_at timestamp without time zone,
     tier_granted boolean NOT NULL DEFAULT false,
     tier_granted_at timestamp without time zone,
-    -- The reward tier this grant reached while its rewards request is owed:
-    -- set with the grant, cleared when the request succeeds.
+    -- Set with the milestone grant; cleared once its reward and downstream
+    -- effects finish. Claims without a response require provider reconciliation.
     reward_tier integer,
-    -- The paid reward ({tier, reward, notified}) while its notification or
-    -- image is not done. A later finalize of the same invited user resumes
-    -- them without requesting the reward again.
+    reward_requested_at timestamp without time zone,
+    reward_response jsonb,
+    reward_retry_at timestamp without time zone,
+    -- Confirmed reward ({tier, reward, notified}) while notification or image
+    -- delivery remains pending. Known successful notifications are not resent.
     reward_paid jsonb,
     -- The source's no-TTL login-day set; whole-value reads, at most the
     -- configured minimum distinct UTC dates before the next login grants.
@@ -850,6 +852,9 @@ CREATE TABLE social.referral_progress (
 -- on the stored IP text can serve it.
 CREATE INDEX referral_progress_referrer_idx ON social.referral_progress (referrer, status);
 CREATE INDEX referral_progress_granted_idx ON social.referral_progress (referrer) WHERE tier_granted;
+-- At most one receipt per milestone grant; scan only retryable pending work.
+CREATE INDEX referral_progress_reward_due_idx ON social.referral_progress (reward_retry_at NULLS FIRST, invited_user)
+    WHERE reward_tier IS NOT NULL AND (reward_requested_at IS NULL OR reward_response IS NOT NULL);
 
 -- Reward art returned by the rewards API after a tier's guarded transition;
 -- source IDs and all historical snapshots survive imports and later updates.
