@@ -387,7 +387,7 @@ impl ProfileCache {
     fn update(&mut self, profile: UserProfile) {
         if let Some(address) = profile.content.eth_address.as_h160() {
             let entry = self.touch(address, ProfileTier::Full);
-            entry.announced = entry.announced.max(profile.version);
+            entry.announced = profile.version;
             entry.data = Some((Box::new(profile), ProfileSource::Catalyst));
             entry.compact = None;
         }
@@ -490,7 +490,9 @@ impl ProfileManager<'_, '_> {
     }
 
     /// Record an authoritative profile (our own, which we deploy ourselves).
-    /// Unconditional: even a same-version edit replaces what the cache holds.
+    /// Unconditional: even a same-version edit replaces what the cache holds, and its version
+    /// is the one awaited, so a profile put back after a failed deploy doesn't wait for the
+    /// version that failed.
     pub fn update(&mut self, profile: UserProfile) {
         self.cache.update(profile);
     }
@@ -535,6 +537,7 @@ pub fn setup_primary_profile(
     mut contexts: Query<&mut GlobalCrdtState>,
     mut cache: ProfileManager,
     mut last_announce: Local<f64>,
+    mut announced: Local<Option<u32>>,
     time: Res<Time>,
 ) {
     // gather any event receivers
@@ -600,20 +603,13 @@ pub fn setup_primary_profile(
             // answered on the byte transports (that request/response pair is what resolves a guest,
             // who has no catalyst presence). No byte transport carries the unsolicited announcement:
             // a peer that sees one over LiveKit answers it with LiveKit movement, which is exactly
-            // the traffic Pulse replaces.
+            // the traffic Pulse replaces. While an edit deploys, peers hear the version from before
+            // it (`peer_profile`); the new one goes out below once the deploy lands.
             // Reset the keepalive timer so the periodic re-announce below doesn't immediately fire
             // again.
-            debug!("announcing profile new version {:?}", profile.version);
-            broadcast(
-                transports.iter(),
-                BroadcastTarget::PULSE,
-                false,
-                ProfileUpdate {
-                    serialized_profile: serde_json::to_string(&profile.content).unwrap(),
-                    base_url: profile.base_url.clone(),
-                    version: profile.version,
-                },
-            );
+            let peer = current_profile.peer_profile().unwrap_or(profile);
+            announce_version(&transports, peer);
+            *announced = Some(peer.version);
             *last_announce = time.elapsed_secs_f64();
 
             // send to event receivers
@@ -639,10 +635,15 @@ pub fn setup_primary_profile(
                 ));
                 current_profile.is_deployed = true;
             }
-        } else if let Some(current_profile) = current_profile.profile.as_ref() {
+        } else if let Some(peer) = current_profile.peer_profile() {
             let now = time.elapsed_secs_f64();
-            if now > *last_announce + 5.0 {
-                debug!("announcing profile v {}", current_profile.version);
+            if *announced != Some(peer.version) {
+                // the deploy that held this version back has landed
+                announce_version(&transports, peer);
+                *announced = Some(peer.version);
+                *last_announce = now;
+            } else if now > *last_announce + 5.0 {
+                debug!("announcing profile v {}", peer.version);
                 // The keepalive re-announce goes the same way as the version bump above: Pulse
                 // only, converted to a `ProfileVersionAnnouncement`.
                 broadcast(
@@ -650,7 +651,7 @@ pub fn setup_primary_profile(
                     BroadcastTarget::PULSE,
                     false,
                     rfc4::AnnounceProfileVersion {
-                        profile_version: current_profile.version,
+                        profile_version: peer.version,
                     },
                 );
                 *last_announce = now;
@@ -665,6 +666,10 @@ pub fn setup_primary_profile(
                 if let Some(address) = address {
                     cache.refetch_deployed(address, version);
                 }
+                // the profile itself is unchanged: only what peers may be told moves on
+                current_profile
+                    .bypass_change_detection()
+                    .deploy_finished(address, true);
                 commands.send_event(ProfileDeployedEvent {
                     version,
                     success: true,
@@ -672,6 +677,7 @@ pub fn setup_primary_profile(
             }
             Some(Err(e)) => {
                 error!("failed to deploy profile: {e}");
+                current_profile.deploy_finished(address, false);
                 commands.send_event(ProfileDeployedEvent {
                     version,
                     success: false,
@@ -683,6 +689,21 @@ pub fn setup_primary_profile(
     }
 }
 
+/// Announce `profile`'s version over Pulse, converted to a `ProfileVersionAnnouncement`.
+fn announce_version(transports: &Query<&Transport>, profile: &UserProfile) {
+    debug!("announcing profile new version {:?}", profile.version);
+    broadcast(
+        transports.iter(),
+        BroadcastTarget::PULSE,
+        false,
+        ProfileUpdate {
+            serialized_profile: serde_json::to_string(&profile.content).unwrap(),
+            base_url: profile.base_url.clone(),
+            version: profile.version,
+        },
+    );
+}
+
 #[derive(Resource, Default)]
 pub struct CurrentUserProfile {
     pub profile: Option<UserProfile>,
@@ -690,6 +711,43 @@ pub struct CurrentUserProfile {
     /// A new profile made while the world is held: the host's welcome page deploys it, with its
     /// save after the terms are accepted.
     pub deploy_held: bool,
+    /// The profile from before the first edit still deploying: what other players are told
+    /// about meanwhile, and what a failed deploy puts back (Unity's `SelfProfile` revert).
+    pub revert_to: Option<UserProfile>,
+}
+
+impl CurrentUserProfile {
+    /// Keep the profile as it is before an edit that will deploy; an older edit still deploying
+    /// keeps the snapshot it took.
+    pub fn snapshot_for_revert(&mut self) {
+        if self.revert_to.is_none() {
+            self.revert_to = self.profile.clone();
+        }
+    }
+
+    /// The deploy of `address`' profile has finished: a success keeps the edit, a failure puts the
+    /// snapshot back without deploying it again. A result for another account changes nothing.
+    pub fn deploy_finished(&mut self, address: Option<Address>, success: bool) {
+        let current = self
+            .profile
+            .as_ref()
+            .and_then(|profile| profile.content.eth_address.as_h160());
+        if address.is_none() || address != current {
+            return;
+        }
+        let snapshot = self.revert_to.take();
+        if !success {
+            if let Some(snapshot) = snapshot {
+                self.profile = Some(snapshot);
+            }
+        }
+    }
+
+    /// The profile other players may know about: the one from before an edit still deploying,
+    /// as they only hear versions the server holds.
+    pub fn peer_profile(&self) -> Option<&UserProfile> {
+        self.revert_to.as_ref().or(self.profile.as_ref())
+    }
 }
 
 /// Run the fetch cascade for every entry that wants one: catalyst batches of the tier its
@@ -1046,7 +1104,8 @@ pub fn process_profile_events(
                             continue;
                         }
 
-                        let Some(current_profile) = current_profile.profile.as_ref() else {
+                        // what peers may know about: not an edit still deploying
+                        let Some(current_profile) = current_profile.peer_profile() else {
                             return;
                         };
 
@@ -1524,6 +1583,15 @@ fn process_profile(
             current_profile.deploy_held = false;
         }
 
+        // an edit that will deploy keeps the profile from before it until the deploy settles
+        if current_profile
+            .profile
+            .as_ref()
+            .is_some_and(|profile| profile.content.has_connected_web3.unwrap_or_default())
+        {
+            current_profile.snapshot_for_revert();
+        }
+
         let Some(profile) = current_profile.profile.as_mut() else {
             error!("can't amend missing profile");
             return;
@@ -1886,6 +1954,102 @@ mod tests {
             entry.fetch_tier(cache.compact_unsupported),
             ProfileTier::Full
         );
+    }
+
+    fn own(version: u32, name: &str) -> UserProfile {
+        let mut profile = profile(version, name);
+        profile.content.eth_address = format!("{:#x}", Address::repeat_byte(7));
+        profile
+    }
+
+    fn own_address() -> Option<Address> {
+        Some(Address::repeat_byte(7))
+    }
+
+    /// as `process_profile` amends a profile that will deploy
+    fn edit(current: &mut CurrentUserProfile, name: &str) {
+        current.snapshot_for_revert();
+        let profile = current.profile.as_mut().unwrap();
+        profile.version += 1;
+        profile.content.name = name.to_owned();
+    }
+
+    fn deployed(profile: UserProfile) -> CurrentUserProfile {
+        CurrentUserProfile {
+            profile: Some(profile),
+            is_deployed: true,
+            ..Default::default()
+        }
+    }
+
+    fn version_and_name(profile: Option<&UserProfile>) -> (u32, &str) {
+        let profile = profile.unwrap();
+        (profile.version, profile.content.name.as_str())
+    }
+
+    #[test]
+    fn failed_deploy_restores_the_pre_edit_profile() {
+        let mut current = deployed(own(5, "before"));
+        edit(&mut current, "rejected");
+        current.deploy_finished(own_address(), false);
+        assert_eq!(version_and_name(current.profile.as_ref()), (5, "before"));
+        assert!(current.revert_to.is_none());
+        assert!(
+            current.is_deployed,
+            "the restored profile is not deployed again"
+        );
+    }
+
+    #[test]
+    fn overlapping_edits_revert_to_the_oldest_snapshot() {
+        let mut current = deployed(own(5, "before"));
+        edit(&mut current, "first");
+        edit(&mut current, "second");
+        assert_eq!(version_and_name(current.profile.as_ref()), (7, "second"));
+        current.deploy_finished(own_address(), false);
+        assert_eq!(version_and_name(current.profile.as_ref()), (5, "before"));
+    }
+
+    #[test]
+    fn successful_deploy_clears_the_snapshot() {
+        let mut current = deployed(own(5, "before"));
+        edit(&mut current, "after");
+        current.deploy_finished(own_address(), true);
+        assert_eq!(version_and_name(current.profile.as_ref()), (6, "after"));
+        assert!(current.revert_to.is_none());
+        assert_eq!(version_and_name(current.peer_profile()), (6, "after"));
+    }
+
+    #[test]
+    fn peers_see_the_snapshot_while_a_deploy_is_pending() {
+        let mut current = deployed(own(5, "before"));
+        assert_eq!(version_and_name(current.peer_profile()), (5, "before"));
+        edit(&mut current, "pending");
+        assert_eq!(version_and_name(current.profile.as_ref()), (6, "pending"));
+        assert_eq!(version_and_name(current.peer_profile()), (5, "before"));
+    }
+
+    #[test]
+    fn a_result_for_another_account_changes_nothing() {
+        let mut current = deployed(own(5, "before"));
+        edit(&mut current, "rejected");
+        let mut other = profile(2, "other");
+        other.content.eth_address = format!("{:#x}", Address::repeat_byte(9));
+        current.profile = Some(other.clone());
+
+        current.deploy_finished(own_address(), false);
+        assert_eq!(current.profile, Some(other));
+    }
+
+    #[test]
+    fn restored_own_profile_is_not_left_waiting() {
+        let mut cache = ProfileCache::default();
+        cache.update(own(6, "rejected"));
+        cache.update(own(5, "before"));
+        let entry = &cache.entries[&Address::repeat_byte(7)];
+        assert_eq!(entry.announced, 5);
+        assert!(entry.satisfied());
+        assert_eq!(held_name(entry), "before");
     }
 
     #[test]

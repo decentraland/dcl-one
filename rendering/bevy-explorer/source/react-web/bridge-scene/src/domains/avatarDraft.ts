@@ -17,8 +17,8 @@ import { identity } from '../identity'
 
 let draft: AvatarLook | null = null
 // The look last known to be on the server: the draft's seed, then each successful deploy. A failed
-// deploy leaves it behind so the next close retries — the engine keeps the change locally but won't
-// redeploy it by itself.
+// deploy keeps the draft, so the next close (or Retry) deploys it again; the engine has already put
+// the deployed look back on the player.
 let deployed: AvatarLook | null = null
 // The look the stage wears before there is a player: the guest start page's pick, which the
 // sign-in then carries, so the player arrives already wearing it.
@@ -140,18 +140,10 @@ export function registerAvatarDraft(ctx: Ctx, sendEquipped: () => Promise<void>)
     if (dropped) await sendEquipped()
   })
 
-  // Give up on a look the server keeps rejecting (a bad item, say) and put the last deployed one back.
-  // The server still has that one; redeploying it resets the engine's copy, which holds the rejected
-  // look and would carry it into every later save. It shows straight away, before the deploy lands.
-  ctx.on('revertAvatar', async () => {
-    const rejected = draft
-    const from = deployed
-    const me = getPlayer()
-    if (rejected == null || from == null || me == null) return
-    draft = from
-    await BevyApi.setAvatar(lookDeploy(from, rejected, me.name)).catch((e: unknown) => {
-      console.error('[avatar] revert failed', e)
-    })
-    if (draft === from) draft = null
+  // Give up on a look the server keeps rejecting (a bad item, say): drop the draft, so the stage shows
+  // the player again. The engine put the deployed look back on the player when the deploy failed, so
+  // nothing deploys; the page re-reads the equipped sets straight after sending this.
+  ctx.on('revertAvatar', () => {
+    draft = null
   })
 }
