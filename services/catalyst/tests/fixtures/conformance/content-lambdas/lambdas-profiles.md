@@ -3,7 +3,7 @@
 - Area: lamb2 `/profiles`, `/profile`, `/outfits`, `/status`, `/about`, `/contracts/*`, `/crypto/validate-signature`.
 - Upstream lambdas: `decentraland/lamb2` @ `02a37f5d88fb895339c20e84c2470be68cdf3f57` (2026-10-21), served at `/lambdas/*` in production.
 - Upstream content server (it backs `content.fetchEntitiesByPointers`): `decentraland/catalyst` @ `a416565db1e705cff9523540a2578af642598a29` (2026-10-21).
-- dcl-one: `dcl-one-conformance` @ `f2f04942` (origin/main, 2026-11-04), workspace `services/catalyst`.
+- dcl-one: `dcl-one-conformance` @ `37e91aed` (origin/main, 2026-11-04), workspace `services/catalyst`.
 - Method: static reading only. Nothing in this file was run. "read" means the source was read; "not vendored" means the behaviour lives in an npm package missing from the upstream clone (`@dcl/crypto`, `@dcl/schemas`, `@dcl/catalyst-contracts`, `@dcl/schema-validator-component`, `@well-known-components/http-server`). Those rows need a live capture before anyone acts on them.
 
 Files read (upstream lamb2): `src/controllers/routes.ts`, `src/controllers/handlers/{profiles-handler,errorHandler,status-handler,about-handler,outfits-handler,catalyst-servers-handler,get-pois-handler,get-name-denylist-handler,validate-signature-handler}.ts`, `src/adapters/{profiles,elements-fetcher,status,resource-status,catalysts-fetcher,pois-fetcher,name-denylist-fetcher,marketplace-api-fetcher}.ts`, `src/logic/{outfits,utils,api-with-fallback,pagination-constants}.ts`, `src/logic/fetch-elements/{fetch-elements,fetch-items,fetch-names}.ts`, `src/ports/ownership-checker/{tpw-ownership-checker,contract-helpers,third-party-item-checker}.ts`, `src/components.ts`, `src/service.ts`, `src/types.ts`, `test/unit/{profile-handlers,validate-signature-handler}.spec.ts`, `test/integration/profile-adapter.spec.ts`.
@@ -15,18 +15,18 @@ Files read (dcl-one): `shop/src/market/{mod,profiles,contracts,lambdas_crypto,la
 
 | method | upstream path | production prefix | dcl-one route(s) | status |
 |---|---|---|---|---|
-| POST | `/profiles` | `/lambdas` | `/lambdas/profiles` `services/catalyst/shop/src/market/mod.rs:878` | DIVERGENT |
-| GET | `/profiles/:id` | `/lambdas` | `/lambdas/profiles/{id}` `services/catalyst/shop/src/market/mod.rs:882` | DIVERGENT |
-| GET | `/profile/:id` | `/lambdas` | `/lambdas/profile/{id}` `services/catalyst/shop/src/market/mod.rs:883` | DIVERGENT |
-| GET | `/outfits/:id` | `/lambdas` | `/lambdas/outfits/{id}` and root `/outfits/{id}` `services/catalyst/shop/src/market/mod.rs:950-951` | GAP |
-| GET | `/status` | `/lambdas` | `/lambdas/status` `services/catalyst/shop/src/market/mod.rs:972` | MATCH |
+| POST | `/profiles` | `/lambdas` | `/lambdas/profiles` `services/catalyst/shop/src/market/mod.rs:885` | DIVERGENT |
+| GET | `/profiles/:id` | `/lambdas` | `/lambdas/profiles/{id}` `services/catalyst/shop/src/market/mod.rs:889` | DIVERGENT |
+| GET | `/profile/:id` | `/lambdas` | `/lambdas/profile/{id}` `services/catalyst/shop/src/market/mod.rs:890` | DIVERGENT |
+| GET | `/outfits/:id` | `/lambdas` | `/lambdas/outfits/{id}` and root `/outfits/{id}` `services/catalyst/shop/src/market/mod.rs:957-958` | DIVERGENT |
+| GET | `/status` | `/lambdas` | `/lambdas/status` `services/catalyst/shop/src/market/mod.rs:979` | MATCH |
 | GET | `/about` | `/lambdas` (the root `/about` of a production node is this same handler) | root `/about` only `services/catalyst/content/src/lib.rs:693`; no `/lambdas/about` | MISSING (`/lambdas/about`); root `/about` DIVERGENT |
-| GET | `/contracts/servers` | `/lambdas` | `/lambdas/contracts/servers` `services/catalyst/shop/src/market/mod.rs:904` | DIVERGENT |
-| GET | `/contracts/pois` | `/lambdas` | `/lambdas/contracts/pois` `services/catalyst/shop/src/market/mod.rs:908` | DIVERGENT |
-| GET | `/contracts/denylisted-names` | `/lambdas` | `/lambdas/contracts/denylisted-names` `services/catalyst/shop/src/market/mod.rs:909` | DIVERGENT |
-| POST | `/crypto/validate-signature` | `/lambdas` | `/lambdas/crypto/validate-signature` `services/catalyst/shop/src/market/mod.rs:968` | DIVERGENT |
+| GET | `/contracts/servers` | `/lambdas` | `/lambdas/contracts/servers` `services/catalyst/shop/src/market/mod.rs:911` | DIVERGENT |
+| GET | `/contracts/pois` | `/lambdas` | `/lambdas/contracts/pois` `services/catalyst/shop/src/market/mod.rs:915` | DIVERGENT |
+| GET | `/contracts/denylisted-names` | `/lambdas` | `/lambdas/contracts/denylisted-names` `services/catalyst/shop/src/market/mod.rs:916` | DIVERGENT |
+| POST | `/crypto/validate-signature` | `/lambdas` | `/lambdas/crypto/validate-signature` `services/catalyst/shop/src/market/mod.rs:975` | DIVERGENT |
 
-Counts: 10 endpoints. MATCH 1, GAP 1, DIVERGENT 7, MISSING 1.
+Counts: 10 endpoints. MATCH 1, GAP 0, DIVERGENT 8, MISSING 1.
 
 Upstream routes: `decentraland/lamb2:src/controllers/routes.ts:41-73`.
 
@@ -37,12 +37,12 @@ Upstream routes: `decentraland/lamb2:src/controllers/routes.ts:41-73`.
 | 400 body | `{"error":"Bad request","message":<msg>}` `decentraland/lamb2:src/controllers/handlers/errorHandler.ts:7-14` | same `services/catalyst/shared/src/http_util.rs:14-16` | MATCH |
 | 404 body | `{"error":"Not Found","message":<msg>}` `decentraland/lamb2:src/controllers/handlers/errorHandler.ts:37-45` | same `services/catalyst/shared/src/http_util.rs:18-20` | MATCH |
 | 503 body | `{"error":"Service overloaded, retry shortly","message":<msg>}` for `ServiceOverloadedError` (marketplace API bulkhead full, `decentraland/lamb2:src/adapters/marketplace-api-fetcher.ts:136-141`) `decentraland/lamb2:src/controllers/handlers/errorHandler.ts:17-25` | `{"error":"Service Unavailable","message":<msg>}` `services/catalyst/shared/src/http_util.rs:22-28` | DIVERGENT: `error` label |
-| 502 body | `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}` (`FetcherError`) `decentraland/lamb2:src/controllers/handlers/errorHandler.ts:27-35`, `decentraland/lamb2:src/adapters/elements-fetcher.ts:265-274` | never produced in this area | DIVERGENT (see outfits) |
+| 502 body | `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}` (`FetcherError`) `decentraland/lamb2:src/controllers/handlers/errorHandler.ts:27-35`, `decentraland/lamb2:src/adapters/elements-fetcher.ts:265-274` | the same body, from `third_party::fetch_error` `services/catalyst/shop/src/market/third_party.rs:1645-1656`; produced only by outfits in this area | MATCH (body); the triggers differ per route (see outfits and the profiles failure rows) |
 | 500 body | `{"error":"Internal Server Error"}`, no `message` `decentraland/lamb2:src/controllers/handlers/errorHandler.ts:66-77` | `{"error":"Internal Server Error","message":"Internal Server Error"}` `services/catalyst/shared/src/http_util.rs:30-36` | DIVERGENT: extra `message` |
 | 405 | `router.allowedMethods()` `decentraland/lamb2:src/service.ts:15` (library not vendored) | axum method router 405 | not compared (needs capture) |
 | CORS | http-server `cors: { maxAge: 36000 }` `decentraland/lamb2:src/components.ts:62-69` (header set not vendored) | hand-rolled: reflects `Origin`, `Access-Control-Allow-Credentials: true`, `Access-Control-Max-Age: 86400`, `Access-Control-Expose-Headers: *`, `X-Content-Type-Options: nosniff` `services/catalyst/shared/src/cors.rs:15-86` | DIVERGENT: max-age 36000 vs 86400; other headers need capture |
-| Rate limits | none in lamb2 for this area | none; body limit 256 KiB on the two POST routes (413 above it) `services/catalyst/shop/src/market/mod.rs:880,970` | DIVERGENT (413 only on huge bodies) |
-| Request timeout | none | `TimeoutLayer` → 408 when `request_timeout` is set `services/catalyst/shop/src/market/mod.rs:979-984` | DIVERGENT (config-dependent) |
+| Rate limits | none in lamb2 for this area | none; body limit 256 KiB on the two POST routes (413 above it) `services/catalyst/shop/src/market/mod.rs:887,977` | DIVERGENT (413 only on huge bodies) |
+| Request timeout | none | `TimeoutLayer` → 408 when `request_timeout` is set `services/catalyst/shop/src/market/mod.rs:986-991` | DIVERGENT (config-dependent) |
 | Path case / trailing slash | `@well-known-components/http-server` router (not vendored) | axum: case-sensitive, no trailing-slash match; misses fall to the content 404 | not compared (needs capture) |
 | Content-Type of JSON answers | `application/json` | `application/json` | MATCH |
 
@@ -57,48 +57,49 @@ Upstream routes: `decentraland/lamb2:src/controllers/routes.ts:41-73`.
 - Ids are passed to the content server as given (no lowercasing in lamb2). The content server matches pointers case-insensitively: its pointer cache key is lowercased, `decentraland/catalyst:src/logic/active-entities/component.ts:67`. Duplicates are removed with a `Set` `decentraland/catalyst:src/logic/active-entities/component.ts:323-324`.
 - Content-server limits that apply through `POST /entities/active`: every id must be a non-empty string; at most 1000 ids `decentraland/catalyst:src/controllers/handlers/active-entities-handler.ts:8-23`. If that call fails, lamb2 answers `200 []` (see responses).
 
-dcl-one: `ids` must deserialize as `Option<Vec<String>>`. Every id is lowercased before the lookup. Lookups of ≤50 ids without `If-Modified-Since` go through a per-id 10 s cache and come back in request order, deduplicated. Other lookups query the DB directly. `services/catalyst/shop/src/market/profiles.rs:590-649`.
+dcl-one: `ids` must deserialize as `Option<Vec<String>>`. Every id is lowercased before the lookup. Lookups of ≤50 ids without `If-Modified-Since` go through a per-id 10 s cache and come back in request order, deduplicated. Other lookups query the DB directly. `services/catalyst/shop/src/market/profiles.rs:665-724`.
 
-**Profile assembly (upstream `decentraland/lamb2:src/adapters/profiles.ts:165-282`, dcl-one `services/catalyst/shop/src/market/profiles.rs:301-393`)**
+**Profile assembly (upstream `decentraland/lamb2:src/adapters/profiles.ts:165-282`, dcl-one `services/catalyst/shop/src/market/profiles.rs:344-468`)**
 
 | step | upstream | dcl-one | verdict |
 |---|---|---|---|
-| entities without metadata | filtered out `profiles.ts:350` | `None`, skipped `profiles.rs:313` | MATCH |
-| `timestamp` | always overwritten with `entity.timestamp` `profiles.ts:175` | set only when metadata has no `timestamp` `profiles.rs:269-275` | DIVERGENT: a deployed `metadata.timestamp` wins in dcl-one |
+| entities without metadata | filtered out `profiles.ts:350` | `None`, skipped `profiles.rs:356` | MATCH |
+| `timestamp` | always overwritten with `entity.timestamp` `profiles.ts:175` | set only when metadata has no `timestamp` `profiles.rs:312-318` | DIVERGENT: a deployed `metadata.timestamp` wins in dcl-one |
 | top-level shape | only `{ timestamp, avatars }`; every other metadata key is dropped `profiles.ts:276-279` | the whole deployed metadata plus fixes | DIVERGENT: extra keys leak through |
-| missing `avatars` | `metadata.avatars.flatMap` throws, caught; the whole batch answers `[]` `profiles.ts:157-158,381-389` | `avatars: []` inserted `profiles.rs:276-278` | DIVERGENT (edge) |
-| `userId`/`ethAddress` | set to `entity.pointers[0]` unless the pointer starts with `default` `profiles.ts:171-172,259` | same, lowercased pointer `profiles.rs:280-295,329-331` | MATCH |
-| `links` | each url kept if `LinkUrl.validate` passes, else `decodeURIComponent` and revalidate, else dropped; `undefined`/`[]` returned as is `profiles.ts:84-106` | regex `(?i)^(?:https?)://[^\s/$.?#].[^\s]*$` **and** `is_safe_http_url` (rejects loopback, private and single-label hosts) `profiles.rs:229-266` | DIVERGENT: dcl-one also drops links to private/single-label hosts. Whether the regex equals `LinkUrl` is not verified (package not vendored) |
-| `hasClaimedName` | always set: `ownedNames.has(avatar.name)`; `false` for default profiles `profiles.ts:197,261` | set only when `MARKETPLACE_SUBGRAPH_URL` is configured and the profile is not a default; otherwise the deployed value stays `profiles.rs:137-150,375-382` | DIVERGENT |
+| missing `avatars` | `metadata.avatars.flatMap` throws, caught; the whole batch answers `[]` `profiles.ts:157-158,381-389` | `avatars: []` inserted `profiles.rs:319-321` | DIVERGENT (edge) |
+| `userId`/`ethAddress` | set to `entity.pointers[0]` unless the pointer starts with `default` `profiles.ts:171-172,259` | same, lowercased pointer `profiles.rs:323-338,372-374` | MATCH |
+| `links` | each url kept if `LinkUrl.validate` passes, else `decodeURIComponent` and revalidate, else dropped; `undefined`/`[]` returned as is `profiles.ts:84-106` | regex `(?i)^(?:https?)://[^\s/$.?#].[^\s]*$` **and** `is_safe_http_url` (rejects loopback, private and single-label hosts) `profiles.rs:272-309` | DIVERGENT: dcl-one also drops links to private/single-label hosts. Whether the regex equals `LinkUrl` is not verified (package not vendored) |
+| `hasClaimedName` | always set: `ownedNames.has(avatar.name)`; `false` for default profiles `profiles.ts:197,261` | set only when `MARKETPLACE_SUBGRAPH_URL` is configured and the profile is not a default; otherwise the deployed value stays `profiles.rs:180-193,450-457` | DIVERGENT |
 | `bodyShape` | legacy `dcl://` ids translated to URN; `?? ''` `profiles.ts:55-62,265` | untouched | DIVERGENT (legacy ids only) |
-| snapshots | `face256` and `body` overwritten with `<PROFILE_CDN_BASE_URL>/entities/<entityId>/{face,body}.png`; default base `https://profile-images.decentraland.org`; other snapshot keys kept; a missing object becomes `{face256:'',body:''}` and is then overwritten `profiles.ts:73-82,142,266-270` | with `PROFILE_CDN_BASE_URL`: the snapshots object is **replaced** by `{face256, body}` (other keys dropped). Without it (the default): `face256`/`body` → `<this node's profile-images>/entities/<id>/{face,body}.png`, other hash values → `<content>/contents/<hash>`, and external URLs not under the content base are kept `profiles.rs:161-227` | DIVERGENT: default host differs; extra keys are dropped (CDN mode) or rewritten (default mode); external URLs are kept |
-| wearables, base | `includes('base-avatars')` → kept as is `profiles.ts:47-49,207-210` | same `profiles.rs:36-38` | MATCH |
-| wearables, on-chain | `splitUrnAndTokenId` (7 segments and not `collections-thirdparty` → urn + tokenId) `decentraland/lamb2:src/logic/utils.ts:51-61`. The URN must equal an owned inventory URN **exactly**. If a tokenId is given it must be one of the owned tokens. Output (`ENSURE_ERC_721` default on, `profiles.ts:141`) is `<ownedUrn>:<tokenId or first owned tokenId>` `profiles.ts:212-229` | same split. Ownership = `(owner, urn)` found in the collections subgraph by `urn_in`, after `:mainnet:`→`:ethereum:` normalization. The tokenId is **ignored** (a specific token is not checked) and the **original string** is returned unchanged; no tokenId is appended `profiles.rs:93-117`, `services/catalyst/chain-index/src/graph.rs:159-161,402-450` | DIVERGENT: no token check, no `:tokenId` suffix, `mainnet` spelling accepted |
-| wearables, third-party | Not in the owned inventory, so dropped from the validated list. Then appended at the **end**: v1 `collections-thirdparty` URNs unchecked; linked (v2) items checked through the content-server mapping + on-chain `ownerOf`/`balanceOf` `profiles.ts:178,199-201,271`, `decentraland/lamb2:src/ports/ownership-checker/tpw-ownership-checker.ts:65-95`, `decentraland/lamb2:src/ports/ownership-checker/contract-helpers.ts:57-91`, `decentraland/lamb2:src/ports/ownership-checker/third-party-item-checker.ts:33-100` | `Network::of_urn` → matic/ethereum, then asked of the collections subgraph by `urn_in`. That never matches a third-party URN, so **every third-party wearable is dropped** `services/catalyst/chain-index/src/graph.rs:71-77,402-405` | DIVERGENT (P0) |
+| snapshots | `face256` and `body` overwritten with `<PROFILE_CDN_BASE_URL>/entities/<entityId>/{face,body}.png`; default base `https://profile-images.decentraland.org`; other snapshot keys kept; a missing object becomes `{face256:'',body:''}` and is then overwritten `profiles.ts:73-82,142,266-270` | with `PROFILE_CDN_BASE_URL`: the snapshots object is **replaced** by `{face256, body}` (other keys dropped). Without it (the default): `face256`/`body` → `<this node's profile-images>/entities/<id>/{face,body}.png`, other hash values → `<content>/contents/<hash>`, and external URLs not under the content base are kept `profiles.rs:204-270` | DIVERGENT: default host differs; extra keys are dropped (CDN mode) or rewritten (default mode); external URLs are kept |
+| wearables, base | `includes('base-avatars')` → kept as is `profiles.ts:47-49,207-210` | same `profiles.rs:43-45` | MATCH |
+| wearables, on-chain | `splitUrnAndTokenId` (7 segments and not `collections-thirdparty` → urn + tokenId) `decentraland/lamb2:src/logic/utils.ts:51-61`. The URN must equal an owned inventory URN **exactly**. If a tokenId is given it must be one of the owned tokens. Output (`ENSURE_ERC_721` default on, `profiles.ts:141`) is `<ownedUrn>:<tokenId or first owned tokenId>` `profiles.ts:212-229` | same split. Ownership = `(owner, urn)` found in the collections subgraph by `urn_in`, after `:mainnet:`→`:ethereum:` normalization. The tokenId is **ignored** (a specific token is not checked) and the **original string** is returned unchanged; no tokenId is appended `profiles.rs:101-125`, `services/catalyst/chain-index/src/graph.rs:162-164,407-455` | DIVERGENT: no token check, no `:tokenId` suffix, `mainnet` spelling accepted |
+| wearables, third-party | Not in the owned inventory, so dropped from the validated list. Then appended at the **end**: v1 `collections-thirdparty` URNs of an L2 collection unchecked; linked (v2) items checked through the content-server mapping + on-chain `ownerOf`/`balanceOf`; order v1, then the NFTs on L1, then those on L2 `profiles.ts:178,199-201,271`, `decentraland/lamb2:src/ports/ownership-checker/tpw-ownership-checker.ts:65-95`, `decentraland/lamb2:src/ports/ownership-checker/contract-helpers.ts:57-91`, `decentraland/lamb2:src/ports/ownership-checker/third-party-item-checker.ts:33-100` | the same split, checks and order: `third_party::sanitize_third_party_urns` over every avatar's non-base wearables, appended after the validated wearables of each avatar `profiles.rs:146-180,379-447`, `services/catalyst/shop/src/market/third_party.rs:1446-1643`. Runs only when a collections subgraph is configured. A linked item on a network with no RPC endpoint reads as not owned | MATCH |
 | wearables, other off-chain | dropped (not owned) | dropped (`of_urn` → `None`) | MATCH |
-| wearables, dedup | `Array.from(new Set(...))` `profiles.ts:271` | none | DIVERGENT |
-| emotes, base | kept as the deployed object if `!urn.includes(':')` or `urn.includes('urn:decentraland:off-chain:base-emotes')` `profiles.ts:51-53,234-237` | kept if no `:` or a 5-segment `…:base-emotes:x` / `…:base-scene-emotes:x` `profiles.rs:41-46,124-126` | DIVERGENT: `base-scene-emotes` is base only in dcl-one (upstream requires ownership → dropped) |
-| emotes, on-chain | same token logic as wearables; output object is exactly `{ urn: "<ownedUrn>:<tokenId>", slot }` `profiles.ts:239-253` | object kept unchanged when the URN is owned (tokenId ignored) `profiles.rs:118-132` | DIVERGENT: no token suffix, extra keys kept |
-| emotes, absent | `emotes: []` always present `profiles.ts:233,264` | absent stays absent `profiles.rs:118` | DIVERGENT |
+| wearables, dedup | `Array.from(new Set(...))` `profiles.ts:271` | the merged list is deduplicated `profiles.rs:162-180` | MATCH |
+| third-party check fails (RPC or entity read) | the error propagates; `getProfiles` catches it and the whole batch answers `[]` `profiles.ts:187,381-389` | that profile keeps its v1 third-party items only, logged; the rest of the batch is served `profiles.rs:401-411` | DIVERGENT (P2) |
+| emotes, base | kept as the deployed object if `!urn.includes(':')` or `urn.includes('urn:decentraland:off-chain:base-emotes')` `profiles.ts:51-53,234-237` | kept if no `:` or a 5-segment `…:base-emotes:x` / `…:base-scene-emotes:x` `profiles.rs:48-53,132-134` | DIVERGENT: `base-scene-emotes` is base only in dcl-one (upstream requires ownership → dropped) |
+| emotes, on-chain | same token logic as wearables; output object is exactly `{ urn: "<ownedUrn>:<tokenId>", slot }` `profiles.ts:239-253` | object kept unchanged when the URN is owned (tokenId ignored) `profiles.rs:126-140` | DIVERGENT: no token suffix, extra keys kept |
+| emotes, absent | `emotes: []` always present `profiles.ts:233,264` | absent stays absent `profiles.rs:126` | DIVERGENT |
 | emote without `urn` | `emote.urn.includes` throws → whole batch `[]` | kept | DIVERGENT (edge) |
-| default profiles (`pointer` starts with `default`) | nothing owned: every non-base wearable and emote dropped; no TP; `hasClaimedName:false`; no `userId` override `profiles.ts:172,285-294` | ownership and names skipped entirely; items kept as deployed `profiles.rs:339,366-368` | DIVERGENT |
-| no ownership reader configured | n/a (the marketplace API or subgraph is always configured) | the profile is served **unfiltered** when no collections subgraph and no marketplace subgraph are set `profiles.rs:305-306,334` | DIVERGENT (config) |
-| result order | content-server order: pointer-cache hits first (in request order), then DB misses in DB order `decentraland/catalyst:src/logic/active-entities/component.ts:323-356`, `profiles.ts:375-380` | ≤50 ids, no IMS: request order `profiles.rs:452-489`; otherwise byte order of each entity's smallest matching pointer `services/catalyst/content/src/queries.rs:179-211` | DIVERGENT (neither is request order upstream) |
+| default profiles (`pointer` starts with `default`) | nothing owned: every non-base wearable and emote dropped; no TP; `hasClaimedName:false`; no `userId` override `profiles.ts:172,285-294` | ownership and names skipped entirely; items kept as deployed `profiles.rs:384,434-436` | DIVERGENT |
+| no ownership reader configured | n/a (the marketplace API or subgraph is always configured) | the profile is served **unfiltered** when no collections subgraph and no marketplace subgraph are set `profiles.rs:348-349,377` | DIVERGENT (config) |
+| result order | content-server order: pointer-cache hits first (in request order), then DB misses in DB order `decentraland/catalyst:src/logic/active-entities/component.ts:323-356`, `profiles.ts:375-380` | ≤50 ids, no IMS: request order `profiles.rs:527-564`; otherwise byte order of each entity's smallest matching pointer `services/catalyst/content/src/queries.rs:179-211` | DIVERGENT (neither is request order upstream) |
 
 **Responses**
 
 | trigger | status | body | headers | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
-| `ids` missing, not an array, or `[]` | 400 | `{"error":"Bad request","message":"No profile ids were specified. Expected ids:string[] in body"}` | | `profiles-handler.ts:12-14` | `profiles.rs:33-34,572-588` (missing or `[]`) | MATCH for missing/`[]`. DIVERGENT for a non-array `ids` (e.g. `"ids":"0x…"`): dcl-one answers 400 `Failed to parse the request body as JSON: …` `profiles.rs:597` |
-| `ids.length > 1000` | 400 | `{"error":"Bad request","message":"Too many profile ids were specified. Maximum allowed is 1000"}` | | `profiles-handler.ts:20-24` | `profiles.rs:574-585` | MATCH |
-| body is not JSON, or is `null` | 500 | `{"error":"Internal Server Error"}` (`request.json()` / `body.ids` throws, not mapped) | | `profiles-handler.ts:10`, `errorHandler.ts:66-77` | 400 `Failed to parse the request body as JSON: <serde error>` `profiles.rs:595-598` | DIVERGENT |
+| `ids` missing, not an array, or `[]` | 400 | `{"error":"Bad request","message":"No profile ids were specified. Expected ids:string[] in body"}` | | `profiles-handler.ts:12-14` | `profiles.rs:40-41,647-663` (missing or `[]`) | MATCH for missing/`[]`. DIVERGENT for a non-array `ids` (e.g. `"ids":"0x…"`): dcl-one answers 400 `Failed to parse the request body as JSON: …` `profiles.rs:672` |
+| `ids.length > 1000` | 400 | `{"error":"Bad request","message":"Too many profile ids were specified. Maximum allowed is 1000"}` | | `profiles-handler.ts:20-24` | `profiles.rs:649-660` | MATCH |
+| body is not JSON, or is `null` | 500 | `{"error":"Internal Server Error"}` (`request.json()` / `body.ids` throws, not mapped) | | `profiles-handler.ts:10`, `errorHandler.ts:66-77` | 400 `Failed to parse the request body as JSON: <serde error>` `profiles.rs:670-673` | DIVERGENT |
 | `ids` contains a non-string or `""` | 200 `[]` (content server 400s the batch, lamb2 catches it) | `[]` | | `active-entities-handler.ts:8-23`, `profiles.ts:381-389` | non-string: 400 parse error; `""`: looked up, other ids answered | DIVERGENT (edge) |
-| `If-Modified-Since` parses and every found entity has `floor(ts/1000)*1000 <= ims` (also true when **no** entity is found) | 304 | empty | | `profiles.ts:64-67,342-348` | only RFC 2822 dates are parsed. Compares raw ms `ts <= ims` (no rounding) and requires at least one entity `profiles.rs:606-640` | DIVERGENT: ISO-8601 dates are ignored; sub-second timestamps never 304; no 304 for an empty match |
+| `If-Modified-Since` parses and every found entity has `floor(ts/1000)*1000 <= ims` (also true when **no** entity is found) | 304 | empty | | `profiles.ts:64-67,342-348` | only RFC 2822 dates are parsed. Compares raw ms `ts <= ims` (no rounding) and requires at least one entity `profiles.rs:681-715` | DIVERGENT: ISO-8601 dates are ignored; sub-second timestamps never 304; no 304 for an empty match |
 | `If-Modified-Since` = epoch 0 | IMS ignored (`0` is falsy) | | | `profiles.ts:344` | parsed as 0; 304 only if every ts ≤ 0 | MATCH in effect |
-| success | 200 | `Profile[]` (example below) | `Content-Type: application/json` | `profiles-handler.ts:50-53` | `profiles.rs:619-647` | DIVERGENT (assembly table above) |
+| success | 200 | `Profile[]` (example below) | `Content-Type: application/json` | `profiles-handler.ts:50-53` | `profiles.rs:694-722` | DIVERGENT (assembly table above) |
 | unknown ids | 200 | `[]` | | | fixture `services/catalyst/shop/src/market/fixtures/profiles-post-200-unknown-id.json` | MATCH |
-| content server unreachable / errors | 200 | `[]` | | `profiles.ts:381-389` | 500 `{"error":"Internal Server Error","message":"Internal Server Error"}` `profiles.rs:396-405,624-627` | DIVERGENT |
-| ownership/names fetch fails (non-overload) | 200 | `[]` (`FetcherError` is caught inside `getProfiles`) | | `profiles.ts:381-389` | 503 `{"error":"Service Unavailable","message":"ownership readers unavailable"}` `profiles.rs:432-450` | DIVERGENT (dcl-one fails closed) |
+| content server unreachable / errors | 200 | `[]` | | `profiles.ts:381-389` | 500 `{"error":"Internal Server Error","message":"Internal Server Error"}` `profiles.rs:471-480,699-702` | DIVERGENT |
+| ownership/names fetch fails (non-overload) | 200 | `[]` (`FetcherError` is caught inside `getProfiles`) | | `profiles.ts:381-389` | 503 `{"error":"Service Unavailable","message":"ownership readers unavailable"}` `profiles.rs:507-525` | DIVERGENT (dcl-one fails closed) |
 | marketplace API bulkhead full | 503 | `{"error":"Service overloaded, retry shortly","message":<msg>}` | | `profiles.ts:383-385`, `errorHandler.ts:17-25` | no equivalent | MISSING (not applicable: no bulkhead) |
 | body > 256 KiB | n/a | | | | 413 | DIVERGENT (edge) |
 
@@ -143,13 +144,13 @@ Success example (upstream shape, `ENSURE_ERC_721` on, default CDN):
 ]
 ```
 
-dcl-one returns the same object with these differences: the deployed wearable/emote strings without a `:tokenId` suffix, no third-party entries, no `emotes` key if the deployment had none, any extra metadata keys, and (default configuration) snapshot URLs on this node's `profile-images` host.
+dcl-one returns the same object with these differences: the deployed wearable/emote strings without a `:tokenId` suffix, no `emotes` key if the deployment had none, any extra metadata keys, and (default configuration) snapshot URLs on this node's `profile-images` host.
 
 **Data dependency**
-- Profile entities: upstream reads its content server. dcl-one reads `content.deployments`/`active_pointers` (peer sync), or the read-through when one is configured `profiles.rs:396-405`. Present.
-- Owned wearables/emotes with token ids: upstream uses the marketplace API `/v1/users/<addr>/{wearables,emotes}/grouped`, falling back to the collections subgraphs `decentraland/lamb2:src/logic/api-with-fallback.ts:8-47`. dcl-one uses the collections subgraphs (`ETH_/MATIC_COLLECTIONS_SUBGRAPH_URL`), URN only. `graph::owned_copies` (`services/catalyst/chain-index/src/graph.rs:347`) already returns token ids but profiles does not use it.
-- Names: upstream uses the marketplace API `/v1/users/<addr>/names`, falling back to the subgraph. dcl-one uses `MARKETPLACE_SUBGRAPH_URL` `services/catalyst/chain-index/src/graph.rs:486-520`. Present.
-- Third-party ownership: upstream uses content-server item entities (`metadata.mappings`) plus L1/L2 RPC. dcl-one has the same data in `third_party.rs` (`mappings_includes_nft` `services/catalyst/shop/src/market/third_party.rs:186`, `owned_via_rpc` `:323`), but profiles does not call it.
+- Profile entities: upstream reads its content server. dcl-one reads `content.deployments`/`active_pointers` (peer sync), or the read-through when one is configured `profiles.rs:471-480`. Present.
+- Owned wearables/emotes with token ids: upstream uses the marketplace API `/v1/users/<addr>/{wearables,emotes}/grouped`, falling back to the collections subgraphs `decentraland/lamb2:src/logic/api-with-fallback.ts:8-47`. dcl-one uses the collections subgraphs (`ETH_/MATIC_COLLECTIONS_SUBGRAPH_URL`), URN only. `graph::owned_copies` (`services/catalyst/chain-index/src/graph.rs:352`) already returns token ids but profiles does not use it.
+- Names: upstream uses the marketplace API `/v1/users/<addr>/names`, falling back to the subgraph. dcl-one uses `MARKETPLACE_SUBGRAPH_URL` `services/catalyst/chain-index/src/graph.rs:491-525`. Present.
+- Third-party ownership: upstream uses content-server item entities (`metadata.mappings`) plus L1/L2 RPC. dcl-one uses its content DB's item entities and each network's RPC endpoint (`TRADE_RPC_URLS`, `ETH_RPC_URL`, `RPC_ENDPOINT_POLYGON`) through `sanitize_third_party_urns` `services/catalyst/shop/src/market/third_party.rs:1501-1643`. Present when those endpoints are configured.
 
 ## 3. GET /lambdas/profiles/:id
 
@@ -157,11 +158,11 @@ dcl-one returns the same object with these differences: the deployed wearable/em
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| profile found | 200 | one `Profile` object (shape as in §2) | `decentraland/lamb2:src/controllers/handlers/profiles-handler.ts:56-68`, `profiles.ts:392-395` | `services/catalyst/shop/src/market/profiles.rs:529-555,651-657` | DIVERGENT (assembly differences of §2) |
-| not found / no metadata | 404 | `{"error":"Not Found","message":"Profile not found"}` | `profiles-handler.ts:60-62` | `profiles.rs:654`; fixture `fixtures/profile-by-id-404-unknown-address.json` | MATCH |
+| profile found | 200 | one `Profile` object (shape as in §2) | `decentraland/lamb2:src/controllers/handlers/profiles-handler.ts:56-68`, `profiles.ts:392-395` | `services/catalyst/shop/src/market/profiles.rs:604-630,726-732` | DIVERGENT (assembly differences of §2) |
+| not found / no metadata | 404 | `{"error":"Not Found","message":"Profile not found"}` | `profiles-handler.ts:60-62` | `profiles.rs:729`; fixture `fixtures/profile-by-id-404-unknown-address.json` | MATCH |
 | content server or ownership fetch fails | 404 (the `[]` from `getProfiles` → `undefined`) | as above | `profiles.ts:381-394` | DB: 500; reader: 503 `ownership readers unavailable` | DIVERGENT |
 | overload | 503 `Service overloaded, retry shortly` | | `profiles.ts:383-385` | n/a | MISSING (no bulkhead) |
-| `id` = `default` or `default<digits>` | the deployed default-profile entity if the content server holds one, else 404 | | | a **synthetic** profile `{avatars:[{userId:id,name:id,…,snapshots:{face256:"",body:""}}],timestamp:0}` `profiles.rs:491-527,533-535` | DIVERGENT |
+| `id` = `default` or `default<digits>` | the deployed default-profile entity if the content server holds one, else 404 | | | a **synthetic** profile `{avatars:[{userId:id,name:id,…,snapshots:{face256:"",body:""}}],timestamp:0}` `profiles.rs:566-602,608-610` | DIVERGENT |
 
 Data dependency: as §2.
 
@@ -171,8 +172,8 @@ Documented divergence (upstream comment `decentraland/lamb2:src/controllers/hand
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| found | 200 | `Profile` | `profiles-handler.ts:79-83` | `services/catalyst/shop/src/market/profiles.rs:660-665` | DIVERGENT (assembly, §2) |
-| not found | 200 | `{"avatars":[],"timestamp":0}` | `profiles-handler.ts:80-81` | `profiles.rs:663`; fixture `fixtures/profile-alias-200-unknown-address.json` | MATCH |
+| found | 200 | `Profile` | `profiles-handler.ts:79-83` | `services/catalyst/shop/src/market/profiles.rs:735-740` | DIVERGENT (assembly, §2) |
+| not found | 200 | `{"avatars":[],"timestamp":0}` | `profiles-handler.ts:80-81` | `profiles.rs:738`; fixture `fixtures/profile-alias-200-unknown-address.json` | MATCH |
 | content server or ownership fetch fails | 200 stub | `{"avatars":[],"timestamp":0}` | `profiles.ts:381-394` | 500 / 503 | DIVERGENT |
 | overload | 503 | | `profiles.ts:383-385` | n/a | MISSING (no bulkhead) |
 | `default*` id | deployed entity or stub | | | synthetic default profile | DIVERGENT |
@@ -181,28 +182,29 @@ Documented divergence (upstream comment `decentraland/lamb2:src/controllers/hand
 
 **Request**: path `id`, the address. Not validated or lowercased by lamb2; the content server matches the pointer `<id>:outfits` case-insensitively. No auth.
 
-**Logic** (`decentraland/lamb2:src/logic/outfits.ts:26-125`; dcl-one `services/catalyst/shop/src/market/lambdas_catalog.rs:1101-1153`)
+**Logic** (`decentraland/lamb2:src/logic/outfits.ts:26-125`; dcl-one `services/catalyst/shop/src/market/lambdas_catalog.rs:1102-1284`)
 
 | step | upstream | dcl-one | verdict |
 |---|---|---|---|
-| entity lookup | `content.fetchEntitiesByPointers(['<id>:outfits'])` `outfits.ts:31` | `active_entity_docs_by_pointers(pool, ['<lower id>:outfits'])`. Local DB only, **no read-through** (profiles has one) `lambdas_catalog.rs:1108,1125-1128` | DIVERGENT: entities not yet synced 404 here |
-| entity without metadata, or `outfits: []` | the raw entity is returned unchanged (no `namesForExtraSlots`) `outfits.ts:37-40` | `namesForExtraSlots` is added whenever `metadata` is an object `lambdas_catalog.rs:1141-1153` | DIVERGENT |
-| wearable ownership per outfit | Kept as is if it contains `off-chain` or `base-avatars`. `collections-thirdparty` items are checked through the TP ownership checker. Every other item must be owned (tokenId-aware); otherwise the **whole outfit is dropped** `outfits.ts:50-98` | **no ownership check**: every outfit is served as deployed | GAP (P0) |
-| owned wearable string | `<ownedUrn>:<tokenId or first owned tokenId>` (`ENSURE_ERC_721`) `outfits.ts:73-78` | the deployed string | DIVERGENT |
-| wearables case | lowercased `outfits.ts:108-116` | as deployed | DIVERGENT |
-| third-party quirk | A missing regular wearable `break`s the loop. The TP check that follows then **overwrites** `allWearablesOwned` with the result for the TP items seen before the break, so an outfit `[tp(owned), unowned]` is kept with a truncated wearable list `outfits.ts:79-93` | n/a | note for implementers |
-| extra slots | slots `<= 4` always kept; slots `> 4` only if the address owns ≥1 name. Output order: all `<=4` outfits first, then `>4` `outfits.ts:104-108` | without names: `retain(slot <= 4 or slot missing)`; original order kept `lambdas_catalog.rs:1142-1150` | DIVERGENT: order; an outfit without `slot` is dropped upstream (`undefined <= 4` and `undefined > 4` are both false) but kept in dcl-one |
+| entity lookup | `content.fetchEntitiesByPointers(['<id>:outfits'])` `outfits.ts:31` | `active_entity_docs_by_pointers(pool, ['<lower id>:outfits'])`. Local DB only, **no read-through** (profiles has one) `lambdas_catalog.rs:1110,1127-1130` | DIVERGENT: entities not yet synced 404 here |
+| entity without metadata, or `outfits: []` | the raw entity is returned unchanged (no `namesForExtraSlots`) `outfits.ts:37-40` | `namesForExtraSlots` is added whenever `metadata` is an object `lambdas_catalog.rs:1271-1283` | DIVERGENT |
+| wearable ownership per outfit | Kept as is if it contains `off-chain` or `base-avatars`. `collections-thirdparty` items are checked through the TP ownership checker. Every other item must be owned (tokenId-aware); otherwise the **whole outfit is dropped** `outfits.ts:50-98` | the same rule: base and off-chain pass, third-party items go through `sanitize_third_party_urns`, any other must be an owned copy (and, given a token id, that token) from `graph::owned_copies` `lambdas_catalog.rs:1155-1268`. With no collections subgraph configured nothing is checked and the wearables are only lowercased `lambdas_catalog.rs:1170-1184` | MATCH (configured); the owned copies stop at 10,000 per network (see the items area, LI-17) |
+| owned wearable string | `<ownedUrn>:<tokenId or first owned tokenId>` (`ENSURE_ERC_721`) `outfits.ts:73-78` | the same `lambdas_catalog.rs:1219-1225` | MATCH |
+| wearables case | lowercased `outfits.ts:108-116` | lowercased `lambdas_catalog.rs:1260-1263` | MATCH |
+| third-party quirk | A missing regular wearable `break`s the loop. The TP check that follows then **overwrites** `allWearablesOwned` with the result for the TP items seen before the break, so an outfit `[tp(owned), unowned]` is kept with a truncated wearable list `outfits.ts:79-93` | kept: the walk breaks and the TP result decides alone `lambdas_catalog.rs:1226-1229, 1252-1256` | MATCH |
+| extra slots | slots `<= 4` always kept; slots `> 4` only if the address owns ≥1 name. Output order: all `<=4` outfits first, then `>4` `outfits.ts:104-108` | without names: `retain(slot <= 4 or slot missing)`; original order kept `lambdas_catalog.rs:1272-1280` | DIVERGENT: order; an outfit without `slot` is dropped upstream (`undefined <= 4` and `undefined > 4` are both false) but kept in dcl-one |
 | metadata shape | `{ outfits, namesForExtraSlots }` only (other keys dropped) `outfits.ts:118-124` | the deployed metadata plus `namesForExtraSlots` | DIVERGENT |
-| `namesForExtraSlots` | owned names, in fetcher order `outfits.ts:101-102,122` | `graph::owned_names` (subgraph id order); `[]` without `MARKETPLACE_SUBGRAPH_URL` or when `id` is not a hex address `lambdas_catalog.rs:1110-1123` | MATCH when configured |
+| `namesForExtraSlots` | owned names, in fetcher order `outfits.ts:101-102,122` | `graph::owned_names` (subgraph id order); `[]` without `MARKETPLACE_SUBGRAPH_URL` or when `id` is not a hex address `lambdas_catalog.rs:1112-1125` | MATCH when configured |
 
 **Responses**
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| found | 200 | entity `{version,id,type,pointers,timestamp,content,metadata:{outfits:[{slot,outfit:{bodyShape,eyes,hair,skin,wearables}}],namesForExtraSlots:[string]}}` | `outfits-handler.ts:25-33` | `lambdas_catalog.rs:1136-1137` | GAP (no ownership filter) |
-| no entity | 404 | `{"error":"Not Found","message":"Outfits not found"}` | `outfits-handler.ts:26-28` | `lambdas_catalog.rs:1138` | MATCH |
+| found | 200 | entity `{version,id,type,pointers,timestamp,content,metadata:{outfits:[{slot,outfit:{bodyShape,eyes,hair,skin,wearables}}],namesForExtraSlots:[string]}}` | `outfits-handler.ts:25-33` | `lambdas_catalog.rs:1136-1140` | DIVERGENT (shape details, LP-23) |
+| no entity | 404 | `{"error":"Not Found","message":"Outfits not found"}` | `outfits-handler.ts:26-28` | `lambdas_catalog.rs:1140` | MATCH |
 | content server fails | 500 `{"error":"Internal Server Error"}` (content client throws, not mapped) | | `outfits.ts:31` | DB error → `Value::Null` cached 10 s → 404 `Outfits not found` `lambdas_catalog.rs:1129-1131` | DIVERGENT |
-| wearables/names fetch fails | 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <id>"}` | | `outfits.ts:45,101`, `elements-fetcher.ts:265-274` | names failure → `[]`, logged `lambdas_catalog.rs:1117-1121` | DIVERGENT |
+| wearables/names fetch fails | 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <id>"}` | | `outfits.ts:45,101`, `elements-fetcher.ts:265-274` | owned wearables failure: the same 502 `lambdas_catalog.rs:1184-1186`; names failure → `[]`, logged `lambdas_catalog.rs:1117-1123` | MATCH for wearables; DIVERGENT for names |
+| third-party check fails (RPC or entity read) | 500 `{"error":"Internal Server Error"}` (the checker's error is not a `FetcherError`) | | `outfits.ts:85-88`, `errorHandler.ts:66-77` | 502 `Cannot fetch elements for <id>` `lambdas_catalog.rs:1242-1244` | DIVERGENT (P2) |
 | overload | 503 `Service overloaded, retry shortly` | | | n/a | MISSING (no bulkhead) |
 
 Example (upstream, one owned outfit, one name):
@@ -234,7 +236,7 @@ Example (upstream, one owned outfit, one name):
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| always | 200 | `{"version":string,"currentTime":number(ms),"commitHash":string}`; `""` when `CURRENT_VERSION`/`COMMIT_HASH` are unset | `decentraland/lamb2:src/controllers/handlers/status-handler.ts:3-19` | `services/catalyst/shop/src/market/mod.rs:862-870`; fixture `fixtures/lambdas-status-200-shape.json` | MATCH (the JSON key order differs, which has no meaning) |
+| always | 200 | `{"version":string,"currentTime":number(ms),"commitHash":string}`; `""` when `CURRENT_VERSION`/`COMMIT_HASH` are unset | `decentraland/lamb2:src/controllers/handlers/status-handler.ts:3-19` | `services/catalyst/shop/src/market/mod.rs:869-877`; fixture `fixtures/lambdas-status-200-shape.json` | MATCH (the JSON key order differs, which has no meaning) |
 
 Data dependency: none. The fixture's `captured_from` names `lambdas.rs::lambdas_status`; the handler is in `mod.rs`.
 
@@ -345,76 +347,76 @@ Data dependency: L1 RPC for EIP-1654 (`ETH_RPC_URL`).
 
 ## 12. Backlog
 
-LP-01. **POST/GET profiles: third-party wearables are dropped.**
-- Gap: every `collections-thirdparty` wearable is removed, because ownership is asked of the collections subgraph.
-- Expected: v1 TP URNs kept unchecked. Linked TP items kept when the content-server mapping includes the NFT and `ownerOf`/`balanceOf` confirms it. Owned TP items appended **after** the validated wearables, deduplicated. `decentraland/lamb2:src/adapters/profiles.ts:178,199-201,271`, `decentraland/lamb2:src/ports/ownership-checker/tpw-ownership-checker.ts:65-95`, `decentraland/lamb2:src/ports/ownership-checker/contract-helpers.ts:57-91`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:59-135,335-383`; reuse `services/catalyst/shop/src/market/third_party.rs:186,323`.
-- Severity: P0.
+LP-01. **POST/GET profiles: owned third-party wearables are kept and appended.**
+- Status: MATCH, no work.
+- Upstream: v1 TP URNs of an L2 collection kept unchecked; linked TP items kept when the content-server mapping includes the NFT and `ownerOf`/`balanceOf` confirms it; the kept items appended **after** the validated wearables (v1, then L1 NFTs, then L2 NFTs), deduplicated. `decentraland/lamb2:src/adapters/profiles.ts:178,199-201,271`, `decentraland/lamb2:src/ports/ownership-checker/tpw-ownership-checker.ts:65-95`, `decentraland/lamb2:src/ports/ownership-checker/contract-helpers.ts:57-91`.
+- dcl-one: the same, through `third_party::sanitize_third_party_urns` `services/catalyst/shop/src/market/profiles.rs:146-180,379-447`, `services/catalyst/shop/src/market/third_party.rs:1501-1643`. The failure path differs and is a P2 row of §2 (a failed check keeps that profile's v1 items; upstream answers `[]` for the batch).
+- Severity: none (closed).
 
-LP-02. **Outfits: no ownership filtering.**
-- Gap: outfits are served exactly as deployed.
-- Expected: drop an outfit when any non-base, non-off-chain wearable is not owned (tokenId-aware) or a TP item is not owned. Rewrite owned wearables to `<ownedUrn>:<tokenId>` and lowercase every wearable. Keep the upstream `break` quirk if byte parity is wanted. `decentraland/lamb2:src/logic/outfits.ts:45-116`.
-- Place: `services/catalyst/shop/src/market/lambdas_catalog.rs:1101-1153`, using `graph::owned_copies` (`services/catalyst/chain-index/src/graph.rs:347`) and `third_party.rs`.
-- Severity: P0.
+LP-02. **Outfits: failure codes after the ownership filter.**
+- The ownership filter matches upstream: an outfit with a non-base, non-off-chain wearable not owned (tokenId-aware) or a TP item not owned is dropped; owned wearables become `<ownedUrn>:<tokenId>`; every kept wearable is lowercased; the `break` quirk is kept. `decentraland/lamb2:src/logic/outfits.ts:45-116`; `services/catalyst/shop/src/market/lambdas_catalog.rs:1155-1268`.
+- Gap: a failed third-party check answers 502 `Cannot fetch elements for <id>`; upstream's checker error is unmapped, so 500 `{"error":"Internal Server Error"}`. Without a collections subgraph nothing is checked (as LP-07).
+- Place: `services/catalyst/shop/src/market/lambdas_catalog.rs:1242-1244`.
+- Severity: P2.
 
 LP-03. **Profiles: ERC-721 token handling.**
 - Gap: the tokenId in a wearable/emote URN is ignored, and owned items are returned without a token suffix.
 - Expected: when a tokenId is given it must be among the owned tokens, else drop the item. Output `<ownedUrn>:<tokenId or first owned tokenId>` (`ENSURE_ERC_721` default true). Emotes are re-emitted as exactly `{urn, slot}`. `decentraland/lamb2:src/adapters/profiles.ts:141,212-229,239-253`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:93-135`; switch from `graph::owned_urns` to owned copies with token ids.
+- Place: `services/catalyst/shop/src/market/profiles.rs:101-143`; switch from `graph::owned_urns` to owned copies with token ids.
 - Severity: P1.
 
 LP-04. **Profiles: `emotes` is always present.**
 - Gap: a deployment without `emotes` has none in dcl-one.
 - Expected: `avatar.emotes = []` when absent. `decentraland/lamb2:src/adapters/profiles.ts:233,264`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:118`.
+- Place: `services/catalyst/shop/src/market/profiles.rs:126`.
 - Severity: P1.
 
 LP-05. **Profiles: response is `{timestamp, avatars}` with the entity timestamp.**
 - Gap: the deployed `metadata.timestamp` is kept, and the other metadata keys leak through.
 - Expected: `timestamp = entity.timestamp` always, and only `timestamp` and `avatars` at the top level. `decentraland/lamb2:src/adapters/profiles.ts:175,276-279`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:269-278`.
+- Place: `services/catalyst/shop/src/market/profiles.rs:312-321`.
 - Severity: P1.
 
 LP-06. **Profiles: `hasClaimedName` is always computed.**
 - Gap: without `MARKETPLACE_SUBGRAPH_URL`, and for default profiles, the deployed value is kept.
 - Expected: `hasClaimedName = ownedNames.has(avatar.name)`, `false` for default profiles. `decentraland/lamb2:src/adapters/profiles.ts:197,261`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:366-382`. Also refuse to start without a names reader where profiles are public.
+- Place: `services/catalyst/shop/src/market/profiles.rs:434-457`. Also refuse to start without a names reader where profiles are public.
 - Severity: P1.
 
 LP-07. **Profiles: serving without ownership readers.**
 - Gap: with no collections or marketplace subgraph configured, profiles are served unfiltered.
 - Expected: upstream always filters.
-- Place: `services/catalyst/shop/src/market/profiles.rs:305-306` and the posture checks in `services/catalyst/config/src/posture.rs`. Make the readers mandatory on a public node.
+- Place: `services/catalyst/shop/src/market/profiles.rs:348-349` and the posture checks in `services/catalyst/config/src/posture.rs`. Make the readers mandatory on a public node.
 - Severity: P1.
 
 LP-08. **Profiles: snapshot URLs.**
 - Gap: by default dcl-one points `face256`/`body` at this node's `profile-images`. In CDN mode it replaces the snapshots object. In default mode it rewrites other hashes to `contents/` URLs and keeps external URLs.
 - Expected: `face256 = <PROFILE_CDN_BASE_URL or https://profile-images.decentraland.org>/entities/<entityId>/face.png`, `body = …/body.png`, every other snapshot key untouched, a missing object created. `decentraland/lamb2:src/adapters/profiles.ts:73-82,142,266-270`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:161-227`. At least keep the other keys in CDN mode, and document that parity needs `PROFILE_CDN_BASE_URL`.
+- Place: `services/catalyst/shop/src/market/profiles.rs:204-270`. At least keep the other keys in CDN mode, and document that parity needs `PROFILE_CDN_BASE_URL`.
 - Severity: P1.
 
 LP-09. **POST /profiles: `If-Modified-Since`.**
 - Gap: only RFC 2822 is parsed, there is no rounding, and an empty match gives 200.
 - Expected: parse like `Date.parse` (ISO 8601 accepted; upstream tests send `toISOString()`). Compare `floor(entity.timestamp/1000)*1000 <= ims`. Answer 304 when every found entity passes, including when none is found. `decentraland/lamb2:src/controllers/handlers/profiles-handler.ts:26-48`, `decentraland/lamb2:src/adapters/profiles.ts:64-67,342-348`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:606-640`.
+- Place: `services/catalyst/shop/src/market/profiles.rs:681-715`.
 - Severity: P1.
 
 LP-10. **Profiles: failure semantics.**
 - Gap: on a DB failure dcl-one answers 500; on a reader failure, 503 `{"error":"Service Unavailable","message":"ownership readers unavailable"}`.
 - Expected: upstream answers `200 []` (POST), 404 (`/profiles/:id`) or the stub (`/profile/:id`) for any failure except overload. Overload is 503 with `"error":"Service overloaded, retry shortly"`. `decentraland/lamb2:src/adapters/profiles.ts:381-389`, `decentraland/lamb2:src/controllers/handlers/errorHandler.ts:17-25`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:426-450`. Decide whether to keep failing closed; at minimum, change the 503 `error` label.
+- Place: `services/catalyst/shop/src/market/profiles.rs:501-525`. Decide whether to keep failing closed; at minimum, change the 503 `error` label.
 - Severity: P1.
 
 LP-11. **GET /profiles/:id and /profile/:id: synthetic default profiles.**
 - Gap: `default`/`default<n>` ids answer a built-in profile.
 - Expected: the deployed entity for that pointer, assembled with "nothing owned", else 404 (or the stub on the alias). `decentraland/lamb2:src/adapters/profiles.ts:172,285-294`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:491-535`.
+- Place: `services/catalyst/shop/src/market/profiles.rs:566-610`.
 - Severity: P1.
 
 LP-12. **/lambdas/about not routed.**
 - Gap: only the root `/about` exists.
 - Expected: `GET /lambdas/about` with the same body as the root `/about`. `decentraland/lamb2:src/controllers/routes.ts:42`.
-- Place: `services/catalyst/content/src/lib.rs:693` (add the route) or `services/catalyst/shop/src/market/mod.rs:972`.
+- Place: `services/catalyst/content/src/lib.rs:693` (add the route) or `services/catalyst/shop/src/market/mod.rs:979`.
 - Severity: P1.
 
 LP-13. **/about: map views.**
@@ -430,33 +432,33 @@ LP-14. **/about: comms block.**
 - Severity: P1.
 
 LP-15. **Profiles: wearable dedup.**
-- Gap: duplicates survive.
-- Expected: `Array.from(new Set(validated.concat(thirdParty)))`. `decentraland/lamb2:src/adapters/profiles.ts:271`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:93-117`.
-- Severity: P2.
+- Status: MATCH, no work.
+- Upstream: `Array.from(new Set(validated.concat(thirdParty)))`. `decentraland/lamb2:src/adapters/profiles.ts:271`.
+- dcl-one: `append_third_party` deduplicates each avatar's merged list `services/catalyst/shop/src/market/profiles.rs:162-180`.
+- Severity: none (closed).
 
 LP-16. **Profiles: `base-scene-emotes` and `mainnet` URNs.**
 - Gap: dcl-one treats `…:base-scene-emotes:x` as base, and accepts a `:mainnet:` URN as owned.
 - Expected: base emote = `includes('urn:decentraland:off-chain:base-emotes')`. Ownership is exact URN equality with the inventory (`ethereum` spelling). `decentraland/lamb2:src/adapters/profiles.ts:51-53,214`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:41-46`, `services/catalyst/chain-index/src/graph.rs:159-161`.
+- Place: `services/catalyst/shop/src/market/profiles.rs:48-53`, `services/catalyst/chain-index/src/graph.rs:162-164`.
 - Severity: P2.
 
 LP-17. **Profiles: default-profile processing in POST.**
 - Gap: entities whose pointer starts with `default` skip ownership, so items and `hasClaimedName` stay as deployed.
 - Expected: nothing owned, so non-base wearables and emotes are dropped and `hasClaimedName:false`. `decentraland/lamb2:src/adapters/profiles.ts:285-294`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:339,366-368`.
+- Place: `services/catalyst/shop/src/market/profiles.rs:384,434-436`.
 - Severity: P2.
 
 LP-18. **Profiles: link sanitizing.**
 - Gap: `is_safe_http_url` also drops links to loopback, private and single-label hosts.
 - Expected: `LinkUrl.validate` only, then a decoded retry. `decentraland/lamb2:src/adapters/profiles.ts:84-106`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:236-266`. Confirm the regex against `@dcl/schemas` by capture.
+- Place: `services/catalyst/shop/src/market/profiles.rs:279-309`. Confirm the regex against `@dcl/schemas` by capture.
 - Severity: P2.
 
 LP-19. **Profiles: legacy `dcl://` bodyShape.**
 - Gap: not translated.
 - Expected: `parseUrn(...).uri`. `decentraland/lamb2:src/adapters/profiles.ts:55-62,265`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:301-332`.
+- Place: `services/catalyst/shop/src/market/profiles.rs:344-375`.
 - Severity: P2.
 
 LP-20. **POST /profiles: result order.**
@@ -468,19 +470,19 @@ LP-20. **POST /profiles: result order.**
 LP-21. **POST /profiles: malformed bodies.**
 - Gap: non-JSON and `null` bodies give 400 (upstream 500). A non-array `ids` gives the parse message (upstream: the "No profile ids…" message). Non-string ids give 400 (upstream `200 []`).
 - Expected: `decentraland/lamb2:src/controllers/handlers/profiles-handler.ts:10-14`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:595-598`. At least map a non-array `ids` to `MISSING_PROFILE_IDS_MSG`.
+- Place: `services/catalyst/shop/src/market/profiles.rs:670-673`. At least map a non-array `ids` to `MISSING_PROFILE_IDS_MSG`.
 - Severity: P2.
 
 LP-22. **Outfits: read-through and failure paths.**
-- Gap: the lookup is DB-only, so an unsynced address gives 404. A DB error gives a 404 that is cached 10 s. A names failure gives `[]`.
+- Gap: the lookup is DB-only, so an unsynced address gives 404. A DB error gives a 404 that is cached 10 s. A names failure gives `[]`. (An owned-wearables failure already answers the 502.)
 - Expected: the content lookup reaches the node's full view; a content failure is 500; a wearables/names failure is 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <id>"}`. `decentraland/lamb2:src/logic/outfits.ts:31,45,101`, `decentraland/lamb2:src/adapters/elements-fetcher.ts:265-274`.
-- Place: `services/catalyst/shop/src/market/lambdas_catalog.rs:1101-1139`. Use `state.read_through` as `profiles.rs:396-405` does.
+- Place: `services/catalyst/shop/src/market/lambdas_catalog.rs:1102-1142`. Use `state.read_through` as `profiles.rs:471-480` does.
 - Severity: P1 for the read-through, P2 for the error codes.
 
 LP-23. **Outfits: shape details.**
 - Gap: extra metadata keys kept; `namesForExtraSlots` added to an entity with no metadata or empty outfits; slot order not regrouped; an outfit without `slot` kept.
 - Expected: metadata `{outfits, namesForExtraSlots}` only; the raw entity when `metadata` is missing or `outfits` is empty; `<=4` outfits first, then `>4`; an outfit without `slot` dropped. `decentraland/lamb2:src/logic/outfits.ts:37-40,104-124`.
-- Place: `services/catalyst/shop/src/market/lambdas_catalog.rs:1141-1153`.
+- Place: `services/catalyst/shop/src/market/lambdas_catalog.rs:1271-1283`.
 - Severity: P2.
 
 LP-24. **/about: health and capacity inputs.**
@@ -539,6 +541,6 @@ LP-32. **Replay fixtures.**
 
 ## 13. Endpoints dcl-one serves in this area that upstream does not
 
-- `GET /outfits/{id}` at the root (`services/catalyst/shop/src/market/mod.rs:951`), an alias of `/lambdas/outfits/{id}`.
+- `GET /outfits/{id}` at the root (`services/catalyst/shop/src/market/mod.rs:958`), an alias of `/lambdas/outfits/{id}`.
 - `GET /lambdas/explore/realms` (`services/catalyst/content/src/lib.rs:694`, `services/catalyst/content/src/about.rs:255-282`): not a route in lamb2 at the pinned revision.
 - The root `GET /about` (`services/catalyst/content/src/lib.rs:693`) is not an upstream lamb2 path. It corresponds to the production node's root `/about`, which is lamb2's `/about` behind the gateway.

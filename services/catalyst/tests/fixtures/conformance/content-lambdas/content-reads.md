@@ -6,7 +6,7 @@ cross-cutting HTTP behaviour of the upstream router (404, 405, CORS, trailing sl
 ## Pinned revisions
 
 - Upstream content server: `decentraland/catalyst` @ `a416565db1e705cff9523540a2578af642598a29` (2026-10-21).
-- dcl-one: `dcl-one-conformance` @ `f2f04942` (origin/main, 2026-11-04), Rust workspace `services/catalyst`.
+- dcl-one: `dcl-one-conformance` @ `37e91aed` (origin/main, 2026-11-04), Rust workspace `services/catalyst`.
 - This tree's gateway, for the rate limits in front of the content routes: `infra/gateway/gateway.py`.
 
 All verdicts below are from reading code (static). Nothing was built, run or captured; no item is
@@ -43,19 +43,19 @@ dcl-one (`services/catalyst/`):
 
 Upstream production serves every route below under `/content/*` (nginx strips the prefix). dcl-one
 serves the same router at the root and under `/content`
-(`services/catalyst/content/src/lib.rs:705-706`).
+(`services/catalyst/content/src/lib.rs:710-711`).
 
 | # | method | upstream path | prod prefix | dcl-one route(s) | status |
 |---|---|---|---|---|---|
-| 1 | GET (and implicit HEAD) | `/entities/:type` | `/content` | `services/catalyst/content/src/lib.rs:625` -> `active_entities.rs:129` | DIVERGENT |
-| 2 | GET | `/entities/active/collections/:collectionUrn` | `/content` | `services/catalyst/content/src/lib.rs:626-629` -> `active_entities.rs:258` | DIVERGENT |
-| 3 | POST | `/entities/active` | `/content` | `services/catalyst/content/src/lib.rs:630-633` -> `active_entities.rs:104` | DIVERGENT |
-| 4 | GET | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:634-637` -> `get_content.rs:90` | GAP |
-| 5 | HEAD | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:636` -> `get_content.rs:90` | GAP |
-| 6 | GET | `/contents/:hashId/active-entities` | `/content` | `services/catalyst/content/src/lib.rs:638-641` -> `active_entities.rs:175` | MATCH |
-| 7 | GET | `/available-content` | `/content` | `services/catalyst/content/src/lib.rs:642-645` -> `available_content.rs:14` | DIVERGENT |
-| 8 | GET | `/audit/:type/:entityId` | `/content` | `services/catalyst/content/src/lib.rs:646` -> `audit.rs:13` | DIVERGENT |
-| X1 | any | unknown path (router miss) | `/content` | `services/catalyst/content/src/lib.rs:618-620,707` | DIVERGENT |
+| 1 | GET (and implicit HEAD) | `/entities/:type` | `/content` | `services/catalyst/content/src/lib.rs:630` -> `active_entities.rs:123` | DIVERGENT |
+| 2 | GET | `/entities/active/collections/:collectionUrn` | `/content` | `services/catalyst/content/src/lib.rs:631-634` -> `active_entities.rs:252` | DIVERGENT |
+| 3 | POST | `/entities/active` | `/content` | `services/catalyst/content/src/lib.rs:635-638` -> `active_entities.rs:98` | DIVERGENT |
+| 4 | GET | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:639-642` -> `get_content.rs:90` | GAP |
+| 5 | HEAD | `/contents/:hashId` | `/content` | `services/catalyst/content/src/lib.rs:641` -> `get_content.rs:90` | GAP |
+| 6 | GET | `/contents/:hashId/active-entities` | `/content` | `services/catalyst/content/src/lib.rs:643-646` -> `active_entities.rs:169` | MATCH |
+| 7 | GET | `/available-content` | `/content` | `services/catalyst/content/src/lib.rs:647-650` -> `available_content.rs:14` | DIVERGENT |
+| 8 | GET | `/audit/:type/:entityId` | `/content` | `services/catalyst/content/src/lib.rs:651` -> `audit.rs:13` | DIVERGENT |
+| X1 | any | unknown path (router miss) | `/content` | `services/catalyst/content/src/lib.rs:623-625,712` | DIVERGENT |
 | X2 | wrong method on a known path | any | `/content` | axum `MethodRouter` default | DIVERGENT |
 | X3 | OPTIONS (preflight) and CORS on every response | any | `/content` | `services/catalyst/shared/src/cors.rs:20-70` | DIVERGENT |
 
@@ -88,12 +88,12 @@ Deprecated upstream in favour of `POST /entities/active` (comment at `decentrala
 
 | trigger | status | body | headers | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
-| type not recognised | 400 | `{"error":"Unrecognized type: <raw :type>"}` | `Content-Type: application/json` | `get-entities-handler.ts:37-42` | `active_entities.rs:136-140` | DIVERGENT: dcl-one rejects `outfits` (`services/catalyst/shared/src/query_params.rs:18,66-72`); upstream accepts it |
-| both or neither of id/pointer | 400 | `{"error":"ids or pointers must be present, but not both"}` | json | `get-entities-handler.ts:45-50` | `active_entities.rs:148-153`, `validation.rs:12` | MATCH, except a multi-value list containing an empty element (`?pointer=a&pointer=`): upstream 200, dcl-one 400 (`validation.rs:38-44`) |
-| > 1000 ids or pointers | 400 | `{"error":"Too many ids or pointers; the maximum allowed is 1000"}` | json | `get-entities-handler.ts:52-57` | `validation.rs:24-26,47-49` | MATCH |
-| success, no `fields` | 200 | `Entity[]` (example below); unknown ids/pointers are omitted; denylisted ids dropped | `Cache-Control: public, max-age=<ENTITIES_CACHE_CONTROL_MAX_AGE>` (default 10; 0 omits the header) | `get-entities-handler.ts:66-77`, `Environment.ts:713-717` | `active_entities.rs:157-170`, `config/src/node.rs:71-72` | MATCH on fields and values; object key order differs (see CR-14) |
+| type not recognised | 400 | `{"error":"Unrecognized type: <raw :type>"}` | `Content-Type: application/json` | `get-entities-handler.ts:37-42` | `active_entities.rs:130-134` | DIVERGENT: dcl-one rejects `outfits` (`services/catalyst/shared/src/query_params.rs:18,66-72`); upstream accepts it |
+| both or neither of id/pointer | 400 | `{"error":"ids or pointers must be present, but not both"}` | json | `get-entities-handler.ts:45-50` | `active_entities.rs:142-147`, `validation.rs:14` | MATCH, except a multi-value list containing an empty element (`?pointer=a&pointer=`): upstream 200, dcl-one 400 (`validation.rs:40-46`) |
+| > 1000 ids or pointers | 400 | `{"error":"Too many ids or pointers; the maximum allowed is 1000"}` | json | `get-entities-handler.ts:52-57` | `validation.rs:26-28,49-51` | MATCH |
+| success, no `fields` | 200 | `Entity[]` (example below); unknown ids/pointers are omitted; denylisted ids dropped | `Cache-Control: public, max-age=<ENTITIES_CACHE_CONTROL_MAX_AGE>` (default 10; 0 omits the header) | `get-entities-handler.ts:66-77`, `Environment.ts:713-717` | `active_entities.rs:151-164`, `config/src/node.rs:71-72` | MATCH on fields and values; object key order differs (see CR-14) |
 | success, `fields=<list>` | 200 | `[{version,id,type,timestamp,pointers,content,metadata?}]`: unselected `pointers`/`content` are `[]`, unselected `metadata` key absent | same | `get-entities-handler.ts:80-95` | `formatters.rs:122-170` | MATCH |
-| `fields=` (empty) | 200 | upstream: unmasked entities | | `get-entities-handler.ts:61` (`if (fields)`) | `active_entities.rs:71-77` (`Some("")` -> mask everything) | DIVERGENT: dcl-one returns `pointers: []`, `content: []`, no `metadata` |
+| `fields=` (empty) | 200 | upstream: unmasked entities | | `get-entities-handler.ts:61` (`if (fields)`) | `active_entities.rs:64-70` (`Some("")` -> mask everything) | DIVERGENT: dcl-one returns `pointers: []`, `content: []`, no `metadata` |
 | `fields` repeated (`fields=a&fields=b`) | 500 upstream (`.split` on an array) | `{"error":"Internal Server Error"}` | | `get-entities-handler.ts:34,62` | first value used | DIVERGENT (upstream bug; no backlog item) |
 | DB error | 500 | `{"error":"Internal Server Error"}` | | `middlewares.ts:72-81` | `errors.rs:52-57,64-72` | MATCH |
 
@@ -147,11 +147,11 @@ that does not sync a type answers `[]` for it (upstream full nodes hold every ty
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| `parseUrn` throws (e.g. `not-a-real-urn`) | 400 | `{"error":"Invalid URN format: <urn>"}` | `filter-by-urn-handler.ts:16-20` | `active_entities.rs:193-223` (scheme heuristic) | MATCH on the pinned test inputs (`test/unit/controllers/filter-by-urn-handler.spec.ts:102-110`, fixture `tests/fixtures/content/entities-by-collection-400-invalid-urn.json`) |
-| parsed but not a collection (LAND, ESTATE, `collections-thirdparty:<tp>:<collection>`, off-chain other registry) | 400 | `{"error":"Invalid collection urn param, it must be a valid urn prefix of a collection or a third party id, instead: '<urn>'"}` | `filter-by-urn-handler.ts:22-35` | `active_entities.rs:197-201,235-255` | MATCH on the pinned cases (`filter-by-urn-handler.spec.ts:33-77`); the hand-written grammar (`KNOWN_NETWORKS`, `collections-v1` only on `ethereum` unless hex) is not proven equal to `@dcl/urn-resolver` for other inputs |
+| `parseUrn` throws (e.g. `not-a-real-urn`) | 400 | `{"error":"Invalid URN format: <urn>"}` | `filter-by-urn-handler.ts:16-20` | `active_entities.rs:187-217` (scheme heuristic) | MATCH on the pinned test inputs (`test/unit/controllers/filter-by-urn-handler.spec.ts:102-110`, fixture `tests/fixtures/content/entities-by-collection-400-invalid-urn.json`) |
+| parsed but not a collection (LAND, ESTATE, `collections-thirdparty:<tp>:<collection>`, off-chain other registry) | 400 | `{"error":"Invalid collection urn param, it must be a valid urn prefix of a collection or a third party id, instead: '<urn>'"}` | `filter-by-urn-handler.ts:22-35` | `active_entities.rs:191-195,229-249` | MATCH on the pinned cases (`filter-by-urn-handler.spec.ts:33-77`); the hand-written grammar (`KNOWN_NETWORKS`, `collections-v1` only on `ethereum` unless hex) is not proven equal to `@dcl/urn-resolver` for other inputs |
 | `pageSize`/`pageNum` not a positive integer | 400 | `{"error":"pageSize must be a positive integer"}` / `{"error":"pageNum must be a positive integer"}` | `utils.ts:11-17` | `shared/src/query_params.rs:136-146` | DIVERGENT: an unparseable or empty value (`pageSize=abc`, `pageSize=`) is NaN -> 400 upstream; dcl-one falls back to the default (`query_params.rs:48-50,136-137`) and answers 200. `pageSize=10abc` is 10 upstream (`parseInt`), default 100 in dcl-one |
 | `pageSize` > 1000 | 400 | `{"error":"max allowed pageSize is 1000"}` | `utils.ts:19-21` | `query_params.rs:159-163` | MATCH |
-| success | 200 | `{"total": number, "entities": Entity[]}`; `total` counts matching pointers before the denylist filter | `filter-by-urn-handler.ts:40-55` | `active_entities.rs:270-287`, `queries.rs:277-310` | MATCH (entity shape as section 1) |
+| success | 200 | `{"total": number, "entities": Entity[]}`; `total` counts matching pointers before the denylist filter | `filter-by-urn-handler.ts:40-55` | `active_entities.rs:264-281`, `queries.rs:277-310` | MATCH (entity shape as section 1) |
 | no match | 200 | `{"total":0,"entities":[]}` | `logic/active-entities/component.ts:373-375` | `queries.rs:284-290` | MATCH |
 
 Order: upstream pages the id list in `active_pointers` scan order and then re-orders by cache
@@ -179,12 +179,13 @@ emote types synced.
 
 | trigger | status | body | headers | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
-| body larger than the cap | 413 | from `@dcl/http-server` (needs a capture) | | `routes.ts:92` | `lib.rs:632` (256 KiB, axum `DefaultBodyLimit`): `text/plain` "Failed to buffer the request body: length limit exceeded" | DIVERGENT: cap 256 KiB vs 10 MiB; body shape |
-| body not JSON | 400 | `{"ok":false,"message":"Invalid JSON body",...}` (shape of the validator component) | json | `routes.ts:93` | axum `Json` rejection: 400 `text/plain` "Failed to parse the request body as JSON: ..." | DIVERGENT |
-| `Content-Type` not `application/json` (e.g. `text/plain` from a bare `fetch`) | 200 (validated normally) | | | `routes.ts:38-41` | axum `Json`: 415 `text/plain` "Expected request with `Content-Type: application/json`" (`active_entities.rs:107`) | DIVERGENT |
-| `{}`; both keys; empty array; empty string element; extra property; non-string element; `null` value; non-object body; > 1000 items | 400 | `{"ok":false,"message":"Invalid JSON body","data":<ajv errors>}` (`ok`/`message` pinned by `test/integration/controller/active-entities.spec.ts:28-54`; `data` not asserted) | json | `active-entities-handler.ts:8-23` | `{}`/both/empty/empty element: 400 `{"error":"ids or pointers must be present, but not both. They must be arrays and contain at least one element. None of the elements can be empty."}` (`validation.rs:7-9`); > 1000: 400 `{"error":"Too many ids or pointers; the maximum allowed is 1000"}`; extra property or `"pointers":null` beside valid `ids`: 200; non-string element or non-object body: 422 `text/plain` (axum) | DIVERGENT: dcl-one keeps the older `{error}` sentence (fixtures `tests/fixtures/content/active-entities-400-*.json` pin it) |
-| success | 200 | `Entity[]` as section 1; unknown ids/pointers omitted; denylisted dropped; duplicates collapsed | no `Cache-Control` | `active-entities-handler.ts:34-47` | `active_entities.rs:104-126` | DIVERGENT: dcl-one adds `Cache-Control: public, max-age=10` (`active_entities.rs:125`) |
-| success with `?fields=` | 200 | upstream ignores the query: full entities | | `active-entities-handler.ts:34-42` | `active_entities.rs:118-122` masks | DIVERGENT |
+| body larger than the cap | 413 | from `@dcl/http-server` (needs a capture) | | `routes.ts:92` | `lib.rs:637` (256 KiB, axum `DefaultBodyLimit`): `text/plain` "Failed to buffer the request body: length limit exceeded" | DIVERGENT: cap 256 KiB vs 10 MiB; body shape |
+| body not JSON | 400 | the validator component's parse failure (not vendored; needs a capture) | json | `routes.ts:93` | 400 `{"ok":false,"message":<text>}`, no `data`: `"Unexpected end of JSON input"` for an empty body, otherwise serde's parse message (`validation.rs:74-84`) | DIVERGENT (P2): the empty-body text follows V8; any other parse message is serde's wording, not V8's |
+| `Content-Type` not `application/json` (e.g. `text/plain` from a bare `fetch`) | 200 (validated normally) | | | `routes.ts:38-41` | the body is read as `Bytes` and parsed whatever the header (`active_entities.rs:98-110`) | MATCH |
+| `{}`; both keys; empty array; empty string element; extra property; non-string element; `null` value; non-object body; > 1000 items | 400 | `{"ok":false,"message":"Invalid JSON body","data":<ajv errors>}` (`ok`/`message` pinned by `test/integration/controller/active-entities.spec.ts:28-54`; `data` not asserted) | json | `active-entities-handler.ts:8-23` | the same `ok`/`message`, with `data` built as AJV's first error per `oneOf` branch plus the `oneOf` error (`validation.rs:74-215`; fixtures `tests/fixtures/content/active-entities-400-*.json`) | MATCH on `ok`/`message`; `data` is a reconstruction of AJV, not confirmed by a capture (CR-2) |
+| element containing NUL | 500 (Postgres rejects the parameter; not traced further) | | | | 400 `{"error":"ids or pointers must be present, but not both. ..."}` (`validation.rs:103-107`) | DIVERGENT (P2) |
+| success | 200 | `Entity[]` as section 1; unknown ids/pointers omitted; denylisted dropped; duplicates collapsed | no `Cache-Control` | `active-entities-handler.ts:34-47` | `active_entities.rs:98-120` | DIVERGENT: dcl-one adds `Cache-Control: public, max-age=10` (`active_entities.rs:119`) |
+| success with `?fields=` | 200 | upstream ignores the query: full entities | | `active-entities-handler.ts:34-42` | `active_entities.rs:112-116` masks | DIVERGENT |
 | DB error | 500 | `{"error":"Internal Server Error"}` | | `middlewares.ts:72-81` | `errors.rs:52-57` | MATCH |
 
 Order and duplicates: upstream cache-first then DB order; a pointer answered from cache and another
@@ -192,7 +193,7 @@ pointer of the same entity answered from the DB can return that entity twice
 (`logic/active-entities/component.ts:323-351`). dcl-one returns each entity once. No item.
 
 **Data dependency**: as section 1. Read-through applies to the unmasked path only
-(`active_entities.rs:55-69`); the masked path reads the DB directly (`active_entities.rs:79-100`).
+(`active_entities.rs:48-62`); the masked path reads the DB directly (`active_entities.rs:72-93`).
 
 ---
 
@@ -251,7 +252,7 @@ outside `SYNC_ENTITY_TYPES` is absent unless read-through fills it.
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| no active deployment references the hash (or all are denylisted) | 404 | `{"error":"The entity was not found"}` | `decentraland/catalyst:src/controllers/handlers/get-active-entities-by-deployment-hash-handler.ts:21-23` | `active_entities.rs:182-184` | MATCH (fixture `contents-active-entities-404-unknown-hash.json`) |
+| no active deployment references the hash (or all are denylisted) | 404 | `{"error":"The entity was not found"}` | `decentraland/catalyst:src/controllers/handlers/get-active-entities-by-deployment-hash-handler.ts:21-23` | `active_entities.rs:176-178` | MATCH (fixture `contents-active-entities-404-unknown-hash.json`) |
 | found | 200 | `string[]` of entity ids, unordered, at most 15000 | `adapters/deployments-repository/component.ts:16,243-254` | `queries.rs:313-331` | MATCH |
 | DB error | 500 | `{"error":"Internal Server Error"}` | `middlewares.ts:72-81` | `errors.rs:84-93` | MATCH |
 
@@ -298,7 +299,7 @@ time this node stored the deployment, so it differs between any two nodes (upstr
 
 - Upstream: no route matches -> `router.allowedMethods()` and then the `@dcl/http-server` default
   answer (`decentraland/catalyst:src/service.ts:63-65`); the 404 body is library-defined and needs a capture.
-- dcl-one: `404 text/plain "Not found"` (`services/catalyst/content/src/lib.rs:618-620,707`), with the
+- dcl-one: `404 text/plain "Not found"` (`services/catalyst/content/src/lib.rs:623-625,712`), with the
   CORS and `X-Content-Type-Options: nosniff` headers.
 - Verdict: DIVERGENT until a capture shows the upstream body (CR-13).
 
@@ -310,7 +311,7 @@ time this node stored the deployment, so it differs between any two nodes (upstr
 - dcl-one: axum answers 405 with `Allow` and an empty body for any method.
 - Path shadowing: upstream `GET /entities/active` matches `/entities/:type` and answers 400
   `{"error":"Unrecognized type: active"}`; in dcl-one the static `/entities/active` route (POST only)
-  wins and answers 405 (`services/catalyst/content/src/lib.rs:625-633`).
+  wins and answers 405 (`services/catalyst/content/src/lib.rs:630-638`).
 - Verdict: DIVERGENT (CR-12).
 
 ## X3. CORS
@@ -333,11 +334,11 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
 
 - Trailing slash: upstream's router (path-to-regexp, `strict: false` in the koa-router port it uses)
   matches `/entities/scenes/`; dcl-one trims a trailing slash before routing
-  (`services/catalyst/src/serve.rs:1294`). MATCH (library default; confirm with a capture).
+  (`services/catalyst/src/serve.rs:1304`). MATCH (library default; confirm with a capture).
 - Case: the same router port defaults to `sensitive: false`, so `/Contents/<hash>` matches upstream;
   axum is case-sensitive (404). DIVERGENT, library default not in the pinned tree (CR-16).
 - Prefix: upstream production serves only `/content/*`; dcl-one answers the same routes at the root
-  and under `/content` (`services/catalyst/content/src/lib.rs:705-706`). A superset.
+  and under `/content` (`services/catalyst/content/src/lib.rs:710-711`). A superset.
 - NUL bytes: dcl-one answers any path or query containing a NUL (raw or `%00`) with
   `400 {"error":"request path or query contains a NUL byte"}` (`services/catalyst/shared/src/nul_guard.rs:12-22`);
   upstream lets it reach the handler (404 on `/contents`, a DB error elsewhere).
@@ -346,23 +347,22 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
 
 ## Backlog
 
-1. **CR-1** POST /entities/active: accept any `Content-Type`.
-   - Gap: axum `Json` answers 415 to a body sent as `text/plain` (a bare `fetch` with a string body).
-   - Expected: the body is parsed as JSON whatever the header (`ensureJsonContentType: false`,
+1. **CR-1** POST /entities/active: any `Content-Type` is parsed as JSON. Status: MATCH, no work.
+   - Upstream: the body is parsed as JSON whatever the header (`ensureJsonContentType: false`,
      `decentraland/catalyst:src/controllers/routes.ts:38-41`).
-   - Place: `services/catalyst/content/src/active_entities.rs:104-107` (read `Bytes`, parse with serde).
-   - Severity: P0.
+   - dcl-one: the handler takes `Bytes` and parses them itself (`services/catalyst/content/src/active_entities.rs:98-110`).
+   - Severity: none (closed).
 
-2. **CR-2** POST /entities/active: answer validation failures in the schema-validator shape.
-   - Gap: dcl-one answers `{"error":"ids or pointers must be present, ..."}`, `{"error":"Too many ids..."}`,
-     axum 400/422 text, or 200 (extra property, `null` sibling).
-   - Expected: 400 `{"ok":false,"message":"Invalid JSON body","data":[...ajv errors]}` for unparseable JSON
-     and for every schema violation: not an object, `{}`, both keys, empty array, empty string, non-string
-     item, > 1000 items, any extra property (`decentraland/catalyst:src/controllers/handlers/active-entities-handler.ts:8-23`,
-     `test/integration/controller/active-entities.spec.ts:28-54`). Capture `data` from a live node before pinning it.
-   - Place: `services/catalyst/content/src/active_entities.rs:104-115`, `content/src/validation.rs:7-9`;
-     update `tests/fixtures/content/active-entities-400-missing-body.json`, `-empty-pointers.json`, `-both-present.json`.
-   - Severity: P1.
+2. **CR-2** POST /entities/active: confirm the schema-validator `data` array and parse messages.
+   - Gap: dcl-one answers `{"ok":false,"message":"Invalid JSON body","data":[...]}` for every schema violation, with
+     `data` rebuilt from AJV's rules (first error per `oneOf` branch, then the `oneOf` error). That array is not
+     confirmed by a capture. A body that is not JSON answers `{"ok":false,"message":<serde text>}` (V8's text only for an
+     empty body), and an element containing NUL answers the older `{"error":...}` sentence.
+   - Expected: the validator component's output (`decentraland/catalyst:src/controllers/handlers/active-entities-handler.ts:8-23`,
+     `test/integration/controller/active-entities.spec.ts:28-54`). Capture `data` and the parse-failure body from a live
+     node, then pin them in `tests/fixtures/content/active-entities-400-*.json`.
+   - Place: `services/catalyst/content/src/validation.rs:74-215`.
+   - Severity: P2.
 
 3. **CR-3** GET/HEAD /contents/:hashId: add the content-get rate limit.
    - Gap: no limit in the app. The gateway applies `limit_req` per client IP to every path: 100 r/s with burst
@@ -373,7 +373,7 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
      client IP from `TRUSTED_CLIENT_IP_HEADER` (rightmost) else the socket; every knob an env var with the
      upstream name (`decentraland/catalyst:src/controllers/content-get-rate-limit.ts:86-121`,
      `src/Environment.ts:106-125`).
-   - Place: a layer on the two routes at `services/catalyst/content/src/lib.rs:634-637`; client IP via
+   - Place: a layer on the two routes at `services/catalyst/content/src/lib.rs:639-642`; client IP via
      `services/catalyst/shared/src/client_ip.rs`.
    - Severity: P1.
 
@@ -398,7 +398,7 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
      type names plus `<type>s` for each type that does not end in `s`, as upstream builds `ENTITY_TYPES_BY_NAME`.
      `parse_entity_type` (`query_params.rs:58-62`) is not that table: it strips one trailing `s` from any value, so
      it accepts `outfitss`; fix it the same way, since `/deployments` and `/pointer-changes` use it;
-     `content/src/active_entities.rs:136`, `content/src/audit.rs:17`; replace fixtures
+     `content/src/active_entities.rs:130`, `content/src/audit.rs:17`; replace fixtures
      `tests/fixtures/content/entities-400-outfits-rejected.json`, `audit-400-outfits-plural-rejected.json`.
    - Severity: P1.
 
@@ -421,7 +421,7 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
    - Gap: dcl-one adds `Cache-Control: public, max-age=10` and honours `?fields=`.
    - Expected: no `Cache-Control` header; the query string ignored, full entities returned
      (`decentraland/catalyst:src/controllers/handlers/active-entities-handler.ts:36-47`).
-   - Place: `services/catalyst/content/src/active_entities.rs:118-125`.
+   - Place: `services/catalyst/content/src/active_entities.rs:112-119`.
    - Severity: P2.
 
 9. **CR-9** GET /entities/:type: `fields` and empty elements.
@@ -430,7 +430,7 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
      missing key or a single empty value (`?pointer=`) as absent; empty strings inside a multi-value list are
      kept and simply match nothing. The 400 comes only when both `id` and `pointer` are absent in that sense,
      or both are present (`decentraland/catalyst:src/logic/query-params/component.ts:21-31`).
-   - Place: `services/catalyst/content/src/active_entities.rs:71-77,142-153`.
+   - Place: `services/catalyst/content/src/active_entities.rs:64-70,136-147`.
    - Severity: P2.
 
 10. **CR-10** GET /entities/active/collections/:collectionUrn: `parseInt` pagination.
@@ -453,14 +453,14 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
     - Gap: `GET /entities/active` is 405 (upstream 400 `Unrecognized type: active`); unknown methods are 405 (upstream 501).
     - Expected: `GET /entities/active` handled by the `/entities/:type` handler; 405 with `Allow` only for
       methods the router knows (`decentraland/catalyst:src/controllers/routes.ts:86-95`, `src/service.ts:64-65`).
-    - Place: `services/catalyst/content/src/lib.rs:625-633` (add `.get(active_entities::get_entities)` on
+    - Place: `services/catalyst/content/src/lib.rs:630-638` (add `.get(active_entities::get_entities)` on
       `/entities/active` with `type = "active"`).
     - Severity: P2.
 
 13. **CR-13** Unknown-route 404 body.
     - Gap: dcl-one `text/plain "Not found"`; upstream body unknown from the pinned tree.
     - Expected: the `@dcl/http-server` default answer, taken from a capture of `GET /content/nope` on a peer.
-    - Place: `services/catalyst/content/src/lib.rs:618-620`.
+    - Place: `services/catalyst/content/src/lib.rs:623-625`.
     - Severity: P2.
 
 14. **CR-14** Entity JSON key order.
@@ -484,14 +484,14 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
     - Gap: axum matches paths case-sensitively.
     - Expected: the upstream router's case-insensitive match (library default; confirm with a capture of
       `GET /content/Contents/<hash>` first).
-    - Place: a path-lowercasing layer for the static segments in `services/catalyst/content/src/lib.rs:690-722`.
+    - Place: a path-lowercasing layer for the static segments in `services/catalyst/content/src/lib.rs:695-727`.
     - Severity: P2.
 
 17. **CR-17** POST /entities/active body cap.
     - Gap: 256 KiB, axum text 413.
     - Expected: `MAX_ACTIVE_ENTITIES_BODY_SIZE`, default 10 MiB, `@dcl/http-server` 413 body (capture)
       (`decentraland/catalyst:src/Environment.ts:79`, `src/controllers/routes.ts:92`).
-    - Place: `services/catalyst/content/src/lib.rs:632`.
+    - Place: `services/catalyst/content/src/lib.rs:637`.
     - Severity: P2.
 
 18. **CR-18** GET /contents/:hashId gzip passthrough.
@@ -515,18 +515,18 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
       `IPFSv1/IPFSv2`; equality is shown only for the upstream test inputs.
     - Expected: the same accept/reject and message for a corpus of URNs (networks, `collections-v1` names
       on non-ethereum networks, upper case) and hashes (`bafy`/`bafk`/other `ba` prefixes, lengths).
-    - Place: `services/catalyst/content/src/active_entities.rs:189-255`, `library/dcl-auth/src/hash.rs:176-192`; fixtures
+    - Place: `services/catalyst/content/src/active_entities.rs:183-249`, `library/dcl-auth/src/hash.rs:176-192`; fixtures
       under `services/catalyst/tests/fixtures/content/` captured from a peer.
     - Severity: P2.
 
 ## dcl-one routes in this area that upstream does not serve
 
-- The whole content router at the root as well as under `/content` (`services/catalyst/content/src/lib.rs:705-706`).
-- `POST /entities/active?fields=...` masking (`services/catalyst/content/src/active_entities.rs:118-122`).
+- The whole content router at the root as well as under `/content` (`services/catalyst/content/src/lib.rs:710-711`).
+- `POST /entities/active?fields=...` masking (`services/catalyst/content/src/active_entities.rs:112-116`).
 - Read-through fills on entity and content misses (`READ_THROUGH_ENABLED`, `services/catalyst/content/src/read_through.rs:466-521`).
 - `localProvenance` in `/audit` for entities published to this node (`services/catalyst/content/src/queries.rs:919-923`).
 - `X-Content-Type-Options: nosniff`, `Connection: keep-alive` / `Keep-Alive: timeout=70`
   (`services/catalyst/shared/src/cors.rs:81-86`, `content/src/connection.rs:16-30`), the NUL-byte 400
   (`services/catalyst/shared/src/nul_guard.rs:12-22`), and a 408 when `request_timeout` is configured
-  (`services/catalyst/content/src/lib.rs:715-720`).
+  (`services/catalyst/content/src/lib.rs:720-725`).
 - `X-Accel-Redirect` delivery when `STORAGE_X_ACCEL_BASE` is set (`services/catalyst/content/src/get_content.rs:177-191`).

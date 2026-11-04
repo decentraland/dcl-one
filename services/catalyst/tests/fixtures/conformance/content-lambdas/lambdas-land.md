@@ -3,7 +3,7 @@
 Conformance backlog for the lambdas names, LAND and parcel-permission endpoints.
 
 - Upstream lambdas: `decentraland/lamb2` @ `02a37f5d88fb895339c20e84c2470be68cdf3f57` (2026-10-21), served in production under `/lambdas/*`.
-- dcl-one: `dcl-one-conformance` @ `f2f04942` (origin/main, 2026-11-04), Rust workspace `services/catalyst`.
+- dcl-one: `dcl-one-conformance` @ `37e91aed` (origin/main, 2026-11-04), Rust workspace `services/catalyst`.
 - Method: static reading only. Nothing was built or run, so nothing in this file is verified. Every verdict is "read".
 - `@dcl/schemas` `Parcel.validate` comes from a local `@dcl/schemas` 23.1.0 copy (`dist/core/parcel-validation.js`, `dist/core/parcel-exceptions.js`). lamb2 pins `^26.5.0`. The exception blocks are assumed to still exist in 26.x; this was not read in 26.x. dcl-one's `services/catalyst/shared/src/parcel.rs:1-13` states the same four ranges for 26.5.0.
 
@@ -30,15 +30,15 @@ dcl-one files read:
 
 | Data | Upstream source | dcl-one source |
 |---|---|---|
-| Names owned (`/users/:a/names`) | Primary: marketplace-server API `/v1/users/:a/names`. Fallback: marketplace subgraph `nfts(category: ens)`. Defaults point at the production URLs (`decentraland/lamb2:src/ports/the-graph.ts:19`). | Only the marketplace subgraph reader (`MARKETPLACE_SUBGRAPH_URL`, set by `NODE_POSTURE=mirror` and unset otherwise; `services/catalyst/config/src/posture.rs:272-276`, `services/catalyst/chain-index/src/graph.rs:486`). The nft chain index (`shop.nft`) is never consulted for this route. |
+| Names owned (`/users/:a/names`) | Primary: marketplace-server API `/v1/users/:a/names`. Fallback: marketplace subgraph `nfts(category: ens)`. Defaults point at the production URLs (`decentraland/lamb2:src/ports/the-graph.ts:19`). | Only the marketplace subgraph reader (`MARKETPLACE_SUBGRAPH_URL`, set by `NODE_POSTURE=mirror` and unset otherwise; `services/catalyst/config/src/posture.rs:272-276`, `services/catalyst/chain-index/src/graph.rs:491`). The nft chain index (`shop.nft`) is never consulted for this route. |
 | Name owner | Marketplace subgraph `searchText` lookup | Own nft chain index (`shop.nft` rows of the DCLRegistrar, from `eth_getLogs` over `ETH_RPC_URL`) once `INDEXER_NFT`/ethereum is published. Before that, the marketplace subgraph if configured, else 503 (`services/catalyst/shop/src/market/lambdas_land.rs:349`). |
 | LAND and estates owned | Marketplace subgraph `nfts(category_in:[parcel,estate])` | Own land-authz index (`land_authz.token_right`) plus the nft index (`shop.land_data` for names and descriptions, `shop.nft_order` for prices) once both are published. Before that, the marketplace subgraph if configured, else 503 (`services/catalyst/shop/src/market/lambdas_land.rs:174`). |
-| Parcel operators, update operators, update managers, approved-for-all | LAND (land-manager) subgraph `parcels`/`estates`/`authorizations` | Own land-authz index, folded from LAND and Estate registry logs (`UpdateOperator`, `UpdateManager`, `ApprovalForAll`, `Approval`, `Transfer`, `AddLand`, `RemoveLand`; `services/catalyst/land-authz/src/events.rs:1`), once published. Before that: the land-manager subgraph (`LAND_SUBGRAPH_URL`, set by `NODE_POSTURE=mirror` and unset otherwise; `services/catalyst/config/src/posture.rs:277-283`) for `/operators`, `/lands-permissions` and `/permissions`. |
+| Parcel operators, update operators, update managers, approved-for-all | LAND (land-manager) subgraph `parcels`/`estates`/`authorizations` | Own land-authz index, folded from LAND and Estate registry logs (`UpdateOperator`, `UpdateManager`, `ApprovalForAll`, `Approval`, `Transfer`, `AddLand`, `RemoveLand`; `services/catalyst/land-authz/src/events.rs:1`), once published. Before that: the land-manager subgraph (`LAND_SUBGRAPH_URL`, set by `NODE_POSTURE=mirror` and unset otherwise; `services/catalyst/config/src/posture.rs:282-288`) for `/operators`, `/lands-permissions` and `/permissions`. |
 | Rentals | Not read by any of these upstream routes. A rented LAND's owner is the Rentals contract and the tenant is its `updateOperator`/`operator`, both on chain. | Not read either. The same on-chain facts come through `Transfer` and `UpdateOperator` logs, so both trees treat a tenant as `updateOperator` or `operator`. Neither tree reads the rentals API or subgraph for these routes. |
 
 **What a node answers, by posture** (`NODE_POSTURE`, `services/catalyst/config/src/posture.rs`). Content sync feeds none of these routes.
 
-- `NODE_POSTURE=mirror` sets `MARKETPLACE_SUBGRAPH_URL` and `LAND_SUBGRAPH_URL` to the marketplace and land-manager subgraphs lamb2 defaults to, and turns on `LAND_AUTHZ_INDEX_ENABLED` and `MARKETPLACE_NFT_INDEX_ENABLED` (`services/catalyst/config/src/posture.rs:272-292`).
+- `NODE_POSTURE=mirror` sets `MARKETPLACE_SUBGRAPH_URL` and `LAND_SUBGRAPH_URL` to the marketplace and land-manager subgraphs lamb2 defaults to, and turns on `LAND_AUTHZ_INDEX_ENABLED` and `MARKETPLACE_NFT_INDEX_ENABLED` (`services/catalyst/config/src/posture.rs:272-297`).
   - Until the indexes publish, names, name owner, lands, operators, lands-permissions and permissions come from the same subgraphs upstream reads, with the divergences listed below. After that they come from the indexes.
 - With `NODE_POSTURE` unset (the binary's defaults), `island` or `journey`, no subgraph URL is set and `LAND_AUTHZ_INDEX_ENABLED` is false (`services/catalyst/config/src/land_authz.rs:10`, `services/catalyst/land-authz/src/lib.rs:173-174`).
   - Every route answers the 503 `unavailable` envelope, except `/permissions`, which answers lamb2's bare 500.
@@ -49,9 +49,9 @@ dcl-one files read:
 
 | Method | Upstream path | Prod prefix | dcl-one route | Status |
 |---|---|---|---|---|
-| GET | `/users/:address/names` | `/lambdas` | `/lambdas/users/{address}/names`: `services/catalyst/shop/src/market/mod.rs:893` → `services/catalyst/shop/src/market/user_items.rs:339` | DIVERGENT |
-| GET | `/names/:name/owner` | `/lambdas` | `/lambdas/names/{name}/owner`: `services/catalyst/shop/src/market/mod.rs:933` → `services/catalyst/shop/src/market/lambdas_land.rs:328` | DIVERGENT |
-| GET | `/users/:address/lands` | `/lambdas` | `/lambdas/users/{address}/lands`: `services/catalyst/shop/src/market/mod.rs:926` → `services/catalyst/shop/src/market/lambdas_land.rs:174` | DIVERGENT |
+| GET | `/users/:address/names` | `/lambdas` | `/lambdas/users/{address}/names`: `services/catalyst/shop/src/market/mod.rs:900` → `services/catalyst/shop/src/market/user_items.rs:339` | DIVERGENT |
+| GET | `/names/:name/owner` | `/lambdas` | `/lambdas/names/{name}/owner`: `services/catalyst/shop/src/market/mod.rs:940` → `services/catalyst/shop/src/market/lambdas_land.rs:328` | DIVERGENT |
+| GET | `/users/:address/lands` | `/lambdas` | `/lambdas/users/{address}/lands`: `services/catalyst/shop/src/market/mod.rs:933` → `services/catalyst/shop/src/market/lambdas_land.rs:174` | DIVERGENT |
 | GET | `/users/:address/lands-permissions` | `/lambdas` | `services/catalyst/land-authz/src/routes.rs:47` → `services/catalyst/land-authz/src/routes.rs:180` | DIVERGENT |
 | GET | `/users/:address/parcels/:x/:y/permissions` | `/lambdas` | `services/catalyst/land-authz/src/routes.rs:51` → `services/catalyst/land-authz/src/routes.rs:280` | DIVERGENT |
 | GET | `/parcels/:x/:y/operators` | `/lambdas` | `services/catalyst/land-authz/src/routes.rs:45` → `services/catalyst/land-authz/src/routes.rs:135` | DIVERGENT |
@@ -63,10 +63,10 @@ Counts: 6 endpoints. MATCH 0, GAP 0, DIVERGENT 6, MISSING 0.
 | Aspect | Upstream | dcl-one | Verdict |
 |---|---|---|---|
 | Error envelope | `{error, message}`. Handled errors map as follows (`decentraland/lamb2:src/controllers/handlers/errorHandler.ts:6`): `InvalidRequestError` → 400 `"Bad request"`, `ServiceOverloadedError` → 503 `"Service overloaded, retry shortly"`, `FetcherError` → 502 `"The requested items cannot be fetched right now"`, `NotFoundError` → 404 `"Not Found"`, `ParcelOrStateNotFoundError` → 404 `"Bad Request"`. Anything else → 500 `{"error":"Internal Server Error"}` with **no** `message` (`errorHandler.ts:71`). | `bad_request` matches the 400 label (`services/catalyst/shared/src/http_util.rs:14`). 500 is `{"error":"Internal Server Error","message":"Internal Server Error"}` (`http_util.rs:30`), except on `/permissions`, which answers lamb2's bare 500 (`services/catalyst/land-authz/src/routes.rs:94-100`). Source outages answer 503 `{"error":"Service Unavailable","message":…,"source":…,"configure"?:…}` plus `Retry-After: 60` (`services/catalyst/chain-index/src/source.rs:88`). | DIVERGENT |
-| Trailing slash | `path-to-regexp` non-strict: accepted | `NormalizePath::trim_trailing_slash` (`services/catalyst/src/serve.rs:1294`) | MATCH |
+| Trailing slash | `path-to-regexp` non-strict: accepted | `NormalizePath::trim_trailing_slash` (`services/catalyst/src/serve.rs:1304`) | MATCH |
 | Path case | The well-known-components router uses `path-to-regexp` defaults (case-insensitive), so `/USERS/...` matches | axum is case-sensitive, so 404 | DIVERGENT (P2; covered by the cross-cutting area) |
 | 405 | `router.allowedMethods()` (`decentraland/lamb2:src/service.ts:15`) | axum 405 with `Allow` | MATCH (status) |
-| CORS | `cors: {maxAge: 36000}` (`decentraland/lamb2:src/components.ts:65`) | `cors_middleware` on both routers (`services/catalyst/land-authz/src/routes.rs:60`, `services/catalyst/shop/src/market/mod.rs:978`) | See the CORS area |
+| CORS | `cors: {maxAge: 36000}` (`decentraland/lamb2:src/components.ts:65`) | `cors_middleware` on both routers (`services/catalyst/land-authz/src/routes.rs:60`, `services/catalyst/shop/src/market/mod.rs:985`) | See the CORS area |
 | Rate limit | None in lamb2 for these routes. The marketplace bulkhead only sheds names (503). | None in the app. Behind this tree's gateway, `/lambdas/*` takes the server-wide `limit_req zone=read` (30 r/s per client IP, burst 60, `nodelay`), answering nginx's 429 page (`infra/gateway/gateway.py:257,260,292`). | DIVERGENT behind the gateway (P2) |
 | Auth | None (no signed fetch) | None | MATCH |
 
@@ -97,10 +97,10 @@ Counts: 6 endpoints. MATCH 0, GAP 0, DIVERGENT 6, MISSING 0.
 | Marketplace bulkhead full | 503 | `{"error":"Service overloaded, retry shortly","message":…}` | | `marketplace-api-fetcher.ts:136`, `errorHandler.ts:17` | n/a | n/a (dcl-one has no API leg) |
 | Both sources fail | 502 | `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}` (a stale entry is served for up to `maxAge+maxStaleAge` = 120 s) | | `elements-fetcher.ts:265-274` | 503 `{"error":"Service Unavailable","message":"ownership readers unavailable"}` (`user_items.rs:368`), no stale serving, 30 s TTL (`services/catalyst/chain-index/src/graph.rs:34`) | DIVERGENT |
 | No subgraph configured | n/a (defaults always exist) | | | `the-graph.ts:38` | 503 envelope, `source:"marketplace-subgraph"`, message "the marketplace subgraph reader (LAND, estates, names) is not configured on this node" (`services/catalyst/shop/src/market/readers.rs:162`) | DIVERGENT |
-| Subgraph name `null` | Element kept with `name: null` | | | `fetch-names.ts:61` | Element dropped (`services/catalyst/chain-index/src/graph.rs:468`) | DIVERGENT (P2) |
+| Subgraph name `null` | Element kept with `name: null` | | | `fetch-names.ts:61` | Element dropped (`services/catalyst/chain-index/src/graph.rs:473`) | DIVERGENT (P2) |
 | More than 10,000 names | All returned | | | `fetch-elements.ts:23-44` | Cut at `MAX_PAGES=10` × 1000 (`services/catalyst/chain-index/src/graph.rs:29`) | DIVERGENT |
 
-Subgraph query: upstream filters on `owner_: {address: $owner}` (`fetch-names.ts:11`); dcl-one on `owner: $owner` (`services/catalyst/chain-index/src/graph.rs:453`). Account ids are addresses in the marketplace subgraph, so these are equivalent (read, not confirmed by capture).
+Subgraph query: upstream filters on `owner_: {address: $owner}` (`fetch-names.ts:11`); dcl-one on `owner: $owner` (`services/catalyst/chain-index/src/graph.rs:458`). Account ids are addresses in the marketplace subgraph, so these are equivalent (read, not confirmed by capture).
 
 **Data dependency:** marketplace subgraph (`MARKETPLACE_SUBGRAPH_URL`). Upstream also reads the marketplace-server API (`MARKETPLACE_API_URL`). dcl-one has its own DCLRegistrar index (`shop.nft`), but this route does not use it. The `services/catalyst/config/src/shop.rs:19` doc ("unset answers empty names") disagrees with the code, which answers 503.
 
@@ -123,7 +123,7 @@ Subgraph query: upstream filters on `owner_: {address: $owner}` (`fetch-names.ts
 | nft index not ready and no subgraph URL | n/a | | | 503 envelope `source:"nft-index"` | DIVERGENT (no upstream equivalent) |
 | Index DB error | 500 | | | 500 with `message` | DIVERGENT (P2) |
 
-Upstream query: `nfts(where:{category: ens, searchText:$name}, first:1)` with no `orderBy`. dcl-one: the same filter plus `orderBy: id asc` (`services/catalyst/chain-index/src/graph.rs:625`). A name is a single token, so the order never matters.
+Upstream query: `nfts(where:{category: ens, searchText:$name}, first:1)` with no `orderBy`. dcl-one: the same filter plus `orderBy: id asc` (`services/catalyst/chain-index/src/graph.rs:630`). A name is a single token, so the order never matters.
 
 **Data dependency:** dcl-one's own nft index over `ETH_RPC_URL` (DCLRegistrar `Transfer`/`NameRegistered`), or the marketplace subgraph as fallback.
 
@@ -135,7 +135,7 @@ Upstream query: `nfts(where:{category: ens, searchText:$name}, first:1)` with no
 
 | Item | Upstream | dcl-one |
 |---|---|---|
-| `address` | Not validated. Lowercased (`decentraland/lamb2:src/logic/fetch-elements/fetch-elements.ts:20`). | Not validated. Lowercased (`services/catalyst/shop/src/market/lambdas_land.rs:180`). An invalid address yields `[]` on the reader path (`services/catalyst/chain-index/src/graph.rs:735`). |
+| `address` | Not validated. Lowercased (`decentraland/lamb2:src/logic/fetch-elements/fetch-elements.ts:20`). | Not validated. Lowercased (`services/catalyst/shop/src/market/lambdas_land.rs:180`). An invalid address yields `[]` on the reader path (`services/catalyst/chain-index/src/graph.rs:740`). |
 | `pageSize` | `parseInt`, default 100, **no maximum** (`maxPageSize = Number.MAX_VALUE`, `lands-handler.ts:10`) | Clamped to 1000. Below 1 is clamped to 1. Parse failure means 100 (`lambdas_land.rs:35`). |
 | `pageNum` | `parseInt`, default 1 | Clamped to at least 1 |
 
@@ -154,10 +154,10 @@ Undefined keys are omitted. `x` and `y` are present only when `category == "parc
 | OK | 200 `{elements,totalAmount,pageNum,pageSize}`. In-memory slice of the full list (`decentraland/lamb2:src/logic/pagination.ts:25`). | `lands-handler.ts:12` | Index path (`lambdas_land.rs:194-241`) or reader path (`lambdas_land.rs:135`) | DIVERGENT (fields below) |
 | `name` | Subgraph `nft.name`; null is omitted | `fetch-lands.ts:69` | Index: `shop.land_data.name`. Reader: `nft.name`. Omitted when null (`lambdas_land.rs:112`). | MATCH (shape) |
 | `x`/`y` | Strings from `parcel.x/y` | `fetch-lands.ts:65` | Strings from `token_right.x/y` or `searchParcelX/Y`, parcels only (`lambdas_land.rs:115`) | MATCH |
-| `description` | `data.description`; null when the data record exists with a null description; absent when there is no data | `fetch-lands.ts:67` | `""` when the data record exists with a null description (`lambdas_land.rs:231`, `services/catalyst/chain-index/src/graph.rs:686`) | DIVERGENT (P2) |
+| `description` | `data.description`; null when the data record exists with a null description; absent when there is no data | `fetch-lands.ts:67` | `""` when the data record exists with a null description (`lambdas_land.rs:231`, `services/catalyst/chain-index/src/graph.rs:691`) | DIVERGENT (P2) |
 | `price` | Subgraph `activeOrder.price` (wei string). The subgraph's active order does not test expiry. | `fetch-lands.ts:76` | Index: `shop.nft_order` with `status='open' AND expires_at > now AND seller = owner` (`lambdas_land.rs:80`). Reader: `activeOrder.price`. | DIVERGENT on the index path: expired or foreign-seller orders are dropped |
 | `image` | Subgraph `nft.image` (production: `https://api.decentraland.org/v1/{parcels/x/y,estates/id}/map.png`; dcl-one's test at `lambdas_land.rs:449` assumes the same) | `fetch-lands.ts:77` | Synthesized as `<LAND_IMAGE_BASE_URL>/v1/parcels/{x}/{y}/map.png` or `/v1/estates/{id}/map.png`. The default base is the node's own `/api` (`services/catalyst/config/src/config.rs:530`). The reader never asks for `image`. | DIVERGENT by default |
-| Order | `orderBy: transferredAt desc` per 1000-row page, paged by `id_gt` (so the order is only page-local beyond 1000) | `fetch-lands.ts:9` | Index: latest `Transfer` event (block, log) desc, then contract and token (`lambdas_land.rs:86`). Reader: full sort by `transferredAt` desc (`services/catalyst/chain-index/src/graph.rs:757`). | MATCH for ≤1000 lands. Tie-break differs (P2). |
+| Order | `orderBy: transferredAt desc` per 1000-row page, paged by `id_gt` (so the order is only page-local beyond 1000) | `fetch-lands.ts:9` | Index: latest `Transfer` event (block, log) desc, then contract and token (`lambdas_land.rs:86`). Reader: full sort by `transferredAt` desc (`services/catalyst/chain-index/src/graph.rs:762`). | MATCH for ≤1000 lands. Tie-break differs (P2). |
 | `pageSize` > 1000 | 200 with the requested size | `lands-handler.ts:10` | Clamped to 1000; `pageSize:1000` echoed | DIVERGENT |
 | `pageSize=0` / `pageNum=0` / negative | `[]`, or JS `slice` with a negative start (e.g. `pageSize=-1` gives every element but the last); the value is echoed | `pagination.ts:16-36` | Clamped to 1 | DIVERGENT (P2) |
 | `pageSize=abc` | `elements: []`, `"pageSize": null` | | 100 | DIVERGENT (P2) |
@@ -263,7 +263,7 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
    - dcl-one: before readiness, `land_graph::parcel_operators` and `operator_flags` (`services/catalyst/land-authz/src/routes.rs:292-313`); with no `LAND_SUBGRAPH_URL`, or on a source error, lamb2's bare 500 (`routes.rs:293-298`, `routes.rs:315-318`).
    - Severity: none (closed).
 3. **LL-3: Outside `NODE_POSTURE=mirror`, these routes have no source.** All six endpoints.
-   - Gap: with `NODE_POSTURE` unset, `island` or `journey`, `MARKETPLACE_SUBGRAPH_URL` and `LAND_SUBGRAPH_URL` are unset and `LAND_AUTHZ_INDEX_ENABLED` is false, so the routes answer the 503 envelope (`/permissions`: a 500). Under `mirror`, the posture sets both URLs to the subgraphs lamb2 reads and turns on the land-authz and nft indexes (`services/catalyst/config/src/posture.rs:272-292`), so every route answers.
+   - Gap: with `NODE_POSTURE` unset, `island` or `journey`, `MARKETPLACE_SUBGRAPH_URL` and `LAND_SUBGRAPH_URL` are unset and `LAND_AUTHZ_INDEX_ENABLED` is false, so the routes answer the 503 envelope (`/permissions`: a 500). Under `mirror`, the posture sets both URLs to the subgraphs lamb2 reads and turns on the land-authz and nft indexes (`services/catalyst/config/src/posture.rs:272-297`), so every route answers.
    - Expected: upstream always answers, from its production subgraph defaults (`decentraland/lamb2:src/ports/the-graph.ts:19-48`).
    - Change: state `NODE_POSTURE=mirror` as the replacement posture where the node's deployment is described, and correct the `MARKETPLACE_SUBGRAPH_URL` doc comment ("unset answers empty names"; the routes answer 503) in `services/catalyst/config/src/shop.rs:19`.
    - Severity: P2 (configuration; the replacement posture answers).
@@ -283,7 +283,7 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
 7. **LL-7: Names come from the subgraph only.** Endpoint: `/users/:a/names`.
    - Gap: no marketplace API leg, and the order is subgraph id order.
    - Expected: page, order and total as the marketplace-server `/v1/users/:a/names` returns them (`decentraland/lamb2:src/adapters/marketplace-api-fetcher.ts:474`).
-   - Change: serve from dcl-one's own `/v1/users/{address}/names` logic (`services/catalyst/shop/src/market/mod.rs:1041`) or from the `shop.nft` index, with the marketplace API's ordering, in `user_items.rs:364`.
+   - Change: serve from dcl-one's own `/v1/users/{address}/names` logic (`services/catalyst/shop/src/market/mod.rs:1048`) or from the `shop.nft` index, with the marketplace API's ordering, in `user_items.rs:364`.
    - Severity: P1.
 8. **LL-8: Names rejects invalid addresses.** Endpoint: `/users/:a/names`.
    - Expected: 200 with an empty page (`decentraland/lamb2:src/logic/api-with-fallback.ts:28-45`).
@@ -307,7 +307,7 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
 12. **LL-12: Default `image` URL.** Endpoint: `/users/:a/lands`.
     - Gap: the default base is the node's own `/api`.
     - Expected: the subgraph's `image` value (`decentraland/lamb2:src/logic/fetch-elements/fetch-lands.ts:77`; production `https://api.decentraland.org/v1/...`).
-    - Change: default `LAND_IMAGE_BASE_URL` in `services/catalyst/config/src/config.rs:530`, or read `image` in `QUERY_OWNED_LANDS` (`services/catalyst/chain-index/src/graph.rs:658`).
+    - Change: default `LAND_IMAGE_BASE_URL` in `services/catalyst/config/src/config.rs:530`, or read `image` in `QUERY_OWNED_LANDS` (`services/catalyst/chain-index/src/graph.rs:663`).
     - Severity: P1.
 13. **LL-13: `price` filter on the index path.** Endpoint: `/users/:a/lands`.
     - Gap: dcl-one drops expired orders and orders by a seller other than the owner.
@@ -317,7 +317,7 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
 14. **LL-14: `description` when the data record has a null description.** Endpoint: `/users/:a/lands`.
     - Gap: dcl-one answers `""`.
     - Expected: `null` (`decentraland/lamb2:src/logic/fetch-elements/fetch-lands.ts:67`).
-    - Change: `services/catalyst/shop/src/market/lambdas_land.rs:231` and `services/catalyst/chain-index/src/graph.rs:686`.
+    - Change: `services/catalyst/shop/src/market/lambdas_land.rs:231` and `services/catalyst/chain-index/src/graph.rs:691`.
     - Severity: P2.
 15. **LL-15: The `/lands` index path is mainnet-only.**
     - Gap: `LAND_REGISTRY_MAINNET`, `ESTATE_REGISTRY_MAINNET` and `NETWORK_MAINNET` are hard-coded, so a sepolia node never answers from its index.
@@ -355,11 +355,11 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
     - Severity: P2.
 22. **LL-22: Names with a null `name` are dropped.** Endpoint: `/users/:a/names` (reader).
     - Expected: keep the element with `name: null` (`decentraland/lamb2:src/logic/fetch-elements/fetch-names.ts:61`).
-    - Change: `services/catalyst/chain-index/src/graph.rs:468`.
+    - Change: `services/catalyst/chain-index/src/graph.rs:473`.
     - Severity: P2.
 23. **LL-23: Route matching is case-sensitive.** All six endpoints.
     - Expected: case-insensitive (`path-to-regexp` defaults in the lamb2 router).
-    - Change: cross-cutting, `services/catalyst/src/serve.rs:1294`.
+    - Change: cross-cutting, `services/catalyst/src/serve.rs:1304`.
     - Severity: P2.
 24. **LL-24: Stale serving on outage.** Endpoints: names, lands.
     - Gap: dcl-one has a 30 s TTL with no stale serving.

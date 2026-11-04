@@ -15,11 +15,7 @@ captured from a live peer or run, unless a row says otherwise.
 | --- | --- |
 | `github.com/decentraland/catalyst` (content server) | `a416565db1e705cff9523540a2578af642598a29` (2026-10-21) |
 | `github.com/decentraland/lamb2` (lambdas) | `02a37f5d88fb895339c20e84c2470be68cdf3f57` (2026-10-21) |
-| this tree | `f2f04942206450080fbe8a1cf955ab12c40d15ed` (origin/main, 2026-11-04) |
-
-decentraland/dcl-one#209 (third-party ownership, profile and outfit sanitization, explorer filters) and
-decentraland/dcl-one#210 (partial uploads, JSON parsing on `/entities/active`, denylist on `/deployments`) are
-not in this pin. Every row describes the pinned tree.
+| this tree | `37e91aed` (origin/main, 2026-11-04) |
 
 ## Verdicts
 
@@ -37,34 +33,34 @@ A backlog item whose behaviour matches in this tree keeps its id and reads "Stat
 
 | file | area | endpoints | MATCH | GAP | DIVERGENT | MISSING | backlog |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| [content-writes.md](content-writes.md) | `POST /entities` (regular and `partial=true`), preflight, 405 | 4 | 1 | 0 | 2 | 1 | CW-1..18 |
+| [content-writes.md](content-writes.md) | `POST /entities` (regular and `partial=true`), preflight, 405 | 4 | 1 | 0 | 3 | 0 | CW-1..18 |
 | [content-reads.md](content-reads.md) | `/entities/*`, `/contents/:hash` (GET/HEAD), `/contents/:hash/active-entities`, `/available-content`, `/audit`, 404/405/CORS | 8 | 1 | 2 | 5 | 0 | CR-1..20 |
-| [content-sync.md](content-sync.md) | `/deployments`, `/pointer-changes`, `/failed-deployments`, `/snapshots`, `/status`, `/challenge`, `/queries/items/*`, `/queries/erc721/*` | 11 | 0 | 1 | 10 | 0 | CS-01..23 |
-| [lambdas-profiles.md](lambdas-profiles.md) | `/profiles`, `/profile/:id`, `/outfits/:id`, `/status`, `/about`, `/contracts/*`, `/crypto/validate-signature` | 10 | 1 | 1 | 7 | 1 | LP-01..32 |
-| [lambdas-items.md](lambdas-items.md) | `/users/:a/{wearables,emotes,third-party-wearables}`, `/third-party-integrations`, `/explorer/:a/*`, `/nfts/collections`, `/collections/*` | 12 | 0 | 2 | 10 | 0 | LI-1..32 |
+| [content-sync.md](content-sync.md) | `/deployments`, `/pointer-changes`, `/failed-deployments`, `/snapshots`, `/status`, `/challenge`, `/queries/items/*`, `/queries/erc721/*` | 11 | 0 | 0 | 11 | 0 | CS-01..23 |
+| [lambdas-profiles.md](lambdas-profiles.md) | `/profiles`, `/profile/:id`, `/outfits/:id`, `/status`, `/about`, `/contracts/*`, `/crypto/validate-signature` | 10 | 1 | 0 | 8 | 1 | LP-01..32 |
+| [lambdas-items.md](lambdas-items.md) | `/users/:a/{wearables,emotes,third-party-wearables}`, `/third-party-integrations`, `/explorer/:a/*`, `/nfts/collections`, `/collections/*` | 12 | 0 | 0 | 12 | 0 | LI-1..32 |
 | [lambdas-land.md](lambdas-land.md) | `/users/:a/{names,lands,lands-permissions}`, `/names/:n/owner`, `/users/:a/parcels/:x/:y/permissions`, `/parcels/:x/:y/operators` | 6 | 0 | 0 | 6 | 0 | LL-1..24 |
-| **total** | | **51** | **3** | **6** | **40** | **2** | **149** (2 with no work: LL-1, LL-2) |
+| **total** | | **51** | **3** | **2** | **45** | **1** | **149** (9 with no work, 140 open) |
 
-Every upstream route has a route at the same path in this tree, except two:
-- `GET /lambdas/about`: only the root `/about` exists here.
-- `POST /entities?partial=true`: partial uploads.
+Every upstream route has a route at the same path in this tree, except `GET /lambdas/about`: only the root
+`/about` exists here.
 
 Most rows are DIVERGENT on one field, header or error branch rather than on the whole response. Each file
 lists its own dcl-one-only routes at the end.
 
 ## P0: a client breaks or the data is wrong
 
-| id | endpoint | gap |
-| --- | --- | --- |
-| CW-1 | `POST /entities?partial=true` | Partial uploads (ADR-325, `202 {"missing":[...]}`) are not implemented. Each batch is handled as a regular deployment: a batch that carries the entity file and every content file succeeds, but an incomplete batch is refused with 400, so large scene deploys from the SDK and Creator Hub that split their files fail. |
-| CR-1 | `POST /entities/active` | A body without `Content-Type: application/json` answers 415. Upstream parses it regardless of the header (`ensureJsonContentType: false`). |
-| CS-01 | `GET /deployments` | Deployments of denylisted entities are returned; upstream drops them. |
-| LP-01 | `POST /profiles`, `GET /profiles/:id` | Every third-party wearable is dropped, because ownership is checked against the collections subgraph. Upstream keeps v1 third-party URNs, checks linked ones through the mapping plus on-chain reads, and appends the owned ones. |
-| LP-02 | `GET /outfits/:id` | Outfits are served as deployed. Upstream drops outfits that hold an unowned wearable, appends `:tokenId`, lowercases URNs and checks third-party items. |
-| LI-1 | `GET /explorer/:a/wearables` | `isSmartWearable` and `network` are ignored. |
-| LI-2 | `GET /explorer/:a/wearables` | `thirdPartyCollectionId` is ignored, so every provider's linked wearables are returned. |
-| LI-3 | `GET /explorer/:a/wearables` | `trimmed=true` returns the whole entity instead of the trimmed object, and `metadata.isSmart` is missing. The same trimmed shape on `/explorer/:a/emotes` is P1. |
-| LI-9 | third-party wearables (all routes) | Ownership is read over JSON-RPC, not from the NFT worker. Missed cases: `any` and wide `range` mappings (more than 2,048 ids) on non-enumerable ERC-721 and on ERC-1155, enumerable holdings above 1,000, and `sepolia`/`amoy`. An RPC error reads as nothing owned; upstream answers 502 when the NFT worker request throws. |
+No backlog item is P0 in this tree. These items keep their ids with "Status: MATCH, no work": CR-1, CS-01,
+LP-01, LP-15, LI-1, LI-3, LI-4, LL-1 and LL-2.
+
+The largest open items:
+
+| id | endpoint | severity | what remains |
+| --- | --- | --- | --- |
+| CW-1 | `POST /entities?partial=true` | P2 | Batches are buffered in memory and take the in-memory upload budget (upstream spools to disk), so under load dcl-one answers 503 where upstream accepts; the busy-lock and expired-upload messages differ. |
+| LI-9 | third-party wearables (all routes) | P2 | With `NFT_WORKER_BASE_URL` (set by `NODE_POSTURE=mirror`) ownership matches. Without it, the JSON-RPC path leaves `any` and wide `range` mappings on plain ERC-721 and on ERC-1155 unresolved, fails above 50,000 enumerable tokens, and reads a network with no RPC endpoint as nothing owned. |
+| LI-10 | third-party routes | P1 | A registry failure reads as an empty provider list (200, or 502 `Third Party not found`), where upstream answers 502 `Cannot fetch elements for <address>`. |
+| LP-02 | `GET /outfits/:id` | P2 | A failed third-party check answers 502 where upstream answers 500; without a collections subgraph nothing is checked. |
+| LI-2 | `GET /explorer/:a/wearables` | P2 | `thirdPartyCollectionId` lists each provider once, refuses more than 100 values, and checks the URN without its network segment. |
 
 ## Themes that cut across files
 
@@ -72,13 +68,18 @@ These problems show up in several files, so one fix can close several rows.
 
 - **Validation error bodies.** Upstream uses the `@dcl/schema-validator-component` body:
   `400 {"ok":false,"message":"Invalid JSON body","data":[...]}`. It is used on `POST /entities/active` and
-  `POST /crypto/validate-signature`. Here, each handler has its own message, or axum's plain-text 400/415/422
-  (CR-2, LP validate-signature, CW-8).
+  `POST /crypto/validate-signature`. `POST /entities/active` answers that shape here, with a `data` array
+  rebuilt from AJV's rules and not yet confirmed by a capture (CR-2). The other handlers have their own
+  message, or axum's plain-text 400/415/422 (LP validate-signature, CW-8).
 - **Failure statuses.**
-  - When a source fails, upstream lambdas answer 502 or 500. This tree answers 503 for the subgraph and
-    index readers (LL-9, LL-10, LI), with two exceptions:
-    - `/users/:a/parcels/:x/:y/permissions` answers lamb2's bare 500, as upstream does;
-    - a third-party registry failure answers 200 with an empty list, where upstream answers 502 (LI-10).
+  - When a source fails, upstream lambdas answer 502 or 500. This tree answers:
+    - lamb2's 502 `FetcherError` on the explorer, the third-party routes and the by-owner lists with
+      `collectionId` (LI-15); outfits answer the same 502 when the third-party check fails, where upstream
+      answers 500 (LP-02);
+    - lamb2's bare 500 on `/users/:a/parcels/:x/:y/permissions`;
+    - 503 on the other subgraph and index readers: names, lands, operators, lands-permissions,
+      `/users/:a/{wearables,emotes}` and the on-chain by-owner lists (LL-9, LL-10, LI-15);
+    - an empty provider list on a third-party registry failure, where upstream answers 502 (LI-10).
   - Some 400/503 bodies here carry internal error text, where upstream sends a fixed message (CW-9).
 - **Page-size limits.** This tree clamps or rejects at 1000 where upstream has no cap, and the reverse
   (LL, LI). Paged subgraph reads also stop at 10,000–20,000 rows, where upstream reads every page.
@@ -96,12 +97,13 @@ These problems show up in several files, so one fix can close several rows.
   unfiltered data until the sources are configured:
   - **Ownership** of collections, names and LAND comes from TheGraph subgraphs or this tree's chain
     indexes, depending on the route.
-  - **Third-party wearables** come from the registry subgraph plus JSON-RPC.
+  - **Third-party wearables** come from the registry subgraph plus the NFT worker when
+    `NFT_WORKER_BASE_URL` is set, else JSON-RPC (LI-9).
   - **EIP-1654** (contract-wallet signatures) needs `ETH_RPC_URL`.
 
   Upstream ships production defaults for each of these sources. In this tree `NODE_POSTURE=mirror` sets the
-  collections, marketplace and LAND subgraph URLs, turns on the chain indexes, and leaves `ETH_RPC_URL` at the
-  binary's default (`services/catalyst/config/src/posture.rs:262-320`). With `NODE_POSTURE` unset, `island`
+  collections, marketplace and LAND subgraph URLs and `NFT_WORKER_BASE_URL`, turns on the chain indexes, and
+  leaves `ETH_RPC_URL` at the binary's default (`services/catalyst/config/src/posture.rs:262-325`). With `NODE_POSTURE` unset, `island`
   or `journey`, the subgraph URLs stay unset (LL-3). The third-party registry URL has no default under any
   posture. The sources each route reads are listed in each file's "Data dependency" and "Where dcl-one gets
   the data" sections.

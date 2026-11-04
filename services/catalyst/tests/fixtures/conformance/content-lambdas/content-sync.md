@@ -8,7 +8,7 @@ Pinned revisions:
 
 - Upstream content server: `decentraland/catalyst` @ `a416565db1e705cff9523540a2578af642598a29` (2026-10-21).
 - Upstream lambdas: `decentraland/lamb2` @ `02a37f5d88fb895339c20e84c2470be68cdf3f57` (2026-10-21). It serves no route in this area.
-- dcl-one: `dcl-one-conformance` @ `f2f04942` (origin/main, 2026-11-04), Rust workspace `services/catalyst`.
+- dcl-one: `dcl-one-conformance` @ `37e91aed` (origin/main, 2026-11-04), Rust workspace `services/catalyst`.
 
 Everything below is from reading the code. Nothing was built, run or captured, and no line is
 "verified". Where an upstream behaviour depends on a package that is not in the clone
@@ -64,14 +64,14 @@ Files read:
 Common notes:
 
 - **Mount points.** In production, upstream serves the content server under `/content`. dcl-one
-  mounts the same routes at the root and under `/content` (`services/catalyst/content/src/lib.rs:705-706`).
+  mounts the same routes at the root and under `/content` (`services/catalyst/content/src/lib.rs:710-711`).
 - **Error envelope.** Both trees use `{"error": "<message>"}`:
   - upstream `decentraland/catalyst:src/controllers/middlewares.ts:41-82`;
   - dcl-one `services/catalyst/content/src/errors.rs` (`json_error`).
   - Both map an unexpected error to 500 `{"error":"Internal Server Error"}`.
   - dcl-one's `AppError::ServiceUnavailable` renders the bare message, with no `Retry-After` header.
 - **Unknown paths.** dcl-one's fallback is 404 with the `text/plain` body `Not found`
-  (`services/catalyst/content/src/lib.rs:618-620`). The upstream 404 body comes from
+  (`services/catalyst/content/src/lib.rs:623-625`). The upstream 404 body comes from
   `@dcl/http-server`, which is not in the clone.
 - **Trailing slash and path case.** dcl-one (axum) matches paths exactly, so `/deployments/` and
   `/Deployments` both return the fallback 404. Upstream's router is the `@dcl/http-server`
@@ -93,19 +93,19 @@ Common notes:
 
 | # | method | upstream path | prod prefix | dcl-one route(s) | status |
 |---|---|---|---|---|---|
-| 1 | GET | `/deployments` | `/content` | `/deployments`, `/content/deployments` → `services/catalyst/content/src/deployments.rs:37` (route `services/catalyst/content/src/lib.rs:647`) | GAP |
-| 2 | GET | `/pointer-changes` | `/content` | `services/catalyst/content/src/pointer_changes.rs:23` (route `lib.rs:652-655`) | DIVERGENT |
-| 3 | GET | `/failed-deployments` | `/content` | `services/catalyst/content/src/failed_deployments.rs:14` (route `lib.rs:648-651`) | DIVERGENT |
-| 4 | GET | `/snapshots` | `/content` | `services/catalyst/content/src/snapshots.rs:77` (route `lib.rs:656`) | DIVERGENT |
-| 5 | GET | `/status` | `/content` | `services/catalyst/content/src/status.rs:12` (route `lib.rs:659`) | DIVERGENT |
-| 6 | GET | `/challenge` | `/content` | `services/catalyst/content/src/status.rs:59` (route `lib.rs:624`) | DIVERGENT |
-| 7 | GET | `/queries/items/:pointer/thumbnail` | `/content` | `services/catalyst/content/src/entity_thumbnail.rs:91` (route `lib.rs:660-664`) | DIVERGENT |
+| 1 | GET | `/deployments` | `/content` | `/deployments`, `/content/deployments` → `services/catalyst/content/src/deployments.rs:37` (route `services/catalyst/content/src/lib.rs:652`) | DIVERGENT |
+| 2 | GET | `/pointer-changes` | `/content` | `services/catalyst/content/src/pointer_changes.rs:23` (route `lib.rs:657-660`) | DIVERGENT |
+| 3 | GET | `/failed-deployments` | `/content` | `services/catalyst/content/src/failed_deployments.rs:14` (route `lib.rs:653-656`) | DIVERGENT |
+| 4 | GET | `/snapshots` | `/content` | `services/catalyst/content/src/snapshots.rs:77` (route `lib.rs:661`) | DIVERGENT |
+| 5 | GET | `/status` | `/content` | `services/catalyst/content/src/status.rs:12` (route `lib.rs:664`) | DIVERGENT |
+| 6 | GET | `/challenge` | `/content` | `services/catalyst/content/src/status.rs:59` (route `lib.rs:629`) | DIVERGENT |
+| 7 | GET | `/queries/items/:pointer/thumbnail` | `/content` | `services/catalyst/content/src/entity_thumbnail.rs:91` (route `lib.rs:665-669`) | DIVERGENT |
 | 8 | HEAD | `/queries/items/:pointer/thumbnail` | `/content` | same handler | DIVERGENT |
-| 9 | GET | `/queries/items/:pointer/image` | `/content` | `services/catalyst/content/src/entity_thumbnail.rs:121` (route `lib.rs:665-668`) | DIVERGENT |
+| 9 | GET | `/queries/items/:pointer/image` | `/content` | `services/catalyst/content/src/entity_thumbnail.rs:121` (route `lib.rs:670-673`) | DIVERGENT |
 | 10 | HEAD | `/queries/items/:pointer/image` | `/content` | same handler | DIVERGENT |
-| 11 | GET | `/queries/erc721/:chainId/:contract/:option/:emission?` | `/content` | `services/catalyst/content/src/validator/erc721.rs:295`, as two routes with and without `{emission}` (`lib.rs:669-676`) | DIVERGENT |
+| 11 | GET | `/queries/erc721/:chainId/:contract/:option/:emission?` | `/content` | `services/catalyst/content/src/validator/erc721.rs:295`, as two routes with and without `{emission}` (`lib.rs:674-681`) | DIVERGENT |
 
-Counts: 11 endpoints. MATCH 0, GAP 1, DIVERGENT 10, MISSING 0. Every route exists in dcl-one.
+Counts: 11 endpoints. MATCH 0, GAP 0, DIVERGENT 11, MISSING 0. Every route exists in dcl-one.
 Each one differs in at least one field, header or error branch, as listed below.
 
 ---
@@ -124,16 +124,16 @@ Query parsing uses `qs.parse(..., {parseArrays:true, parameterLimit:2000, arrayL
 |---|---|---|
 | `entityType` (repeatable; `entityType[0]=` and `entityType[]=` also accepted) | `qsGetArray`: a missing key or a single empty value gives `[]`; an empty element inside a multi-value list is kept; non-string elements are dropped (`query-params/component.ts:21-31`). So `?entityType=` adds no filter, and `?entityType=scene&entityType=` is a 400 (`parseEntityType('')` is undefined). `parseEntityType` trims and lowercases, then accepts the exact type or the type plus `s`, except for `outfits` (`types.ts:212-221`). Types: `scene`, `profile`, `wearable`, `store`, `emote`, `outfits`. | `qs_get_array` keeps every value, a single empty one included (`shared/src/query_params.rs:40-42`), so `?entityType=` gives `[""]` and a **400**. `parse_entity_type` also strips one trailing `s`, so it accepts `outfitss` (`shared/src/query_params.rs:56-62`). |
 | `entityId` (repeatable) | Case-sensitive `entity_id = ANY(...)`. A single empty value (`?entityId=`) is absent, so no filter; an empty element in a list (`entityId=a&entityId=`) is kept. | Case-sensitive. **A single empty value is kept**: `?entityId=` filters on `''` and returns nothing. A list matches upstream. |
-| `pointer` (repeatable) | Lowercased, then `entity_pointers && $pointers` (`deployments-repository/component.ts:118-121`). A single empty value (`?pointer=`) is absent, so no filter; an empty element in a list is kept. | Lowercased (`deployments.rs:132-135`). **A single empty value is kept**: `?pointer=` filters on `''` and returns nothing. A list matches upstream. |
-| `deployedBy` | **Not read by the handler.** `DeploymentFilters.deployedBy` exists in `deployment-types.ts:7`, but the handler never fills it. | Read, lowercased, and filtered with `LOWER(deployer_address) = ANY(...)` (`deployments.rs:137-140`, `queries.rs:540-543`). Also echoed in `filters.deployedBy` and in `next`. |
+| `pointer` (repeatable) | Lowercased, then `entity_pointers && $pointers` (`deployments-repository/component.ts:118-121`). A single empty value (`?pointer=`) is absent, so no filter; an empty element in a list is kept. | Lowercased (`deployments.rs:139-142`). **A single empty value is kept**: `?pointer=` filters on `''` and returns nothing. A list matches upstream. |
+| `deployedBy` | **Not read by the handler.** `DeploymentFilters.deployedBy` exists in `deployment-types.ts:7`, but the handler never fills it. | Read, lowercased, and filtered with `LOWER(deployer_address) = ANY(...)` (`deployments.rs:144-147`, `queries.rs:540-543`). Also echoed in `filters.deployedBy` and in `next`. |
 | `onlyCurrentlyPointed` | `qsGetBoolean`: `undefined` when missing or empty; otherwise `=== 'true'`. When true, adds `deleter_deployment IS NULL`. | `qs_get_bool`: an empty value gives `Some(false)`, which is echoed as `"onlyCurrentlyPointed": false` where upstream omits the key. |
 | `from`, `to` | `parseInt(v, 10)`, so `10abc` → 10 and `1.5` → 1. A falsy value (0) adds no bound (`deployments-repository/component.ts:156-188`). | `str::parse::<i64>`, so `10abc` and `1.5` are ignored. `0` adds a `>= 0` bound, which returns the same rows. |
-| `offset` | `parseInt`. More than 5000 → 400. A negative value is treated as 0 (`logic/deployments/component.ts:237-239`). | Same, at `deployments.rs:188-192` and `queries.rs:30-35`. |
+| `offset` | `parseInt`. More than 5000 → 400. A negative value is treated as 0 (`logic/deployments/component.ts:237-239`). | Same, at `deployments.rs:195-199` and `queries.rs:30-35`. |
 | `limit` | `parseInt`. A value of 1..500 is used as given; anything else (missing, 0, negative, more than 500) becomes **500** (`logic/deployments/component.ts:235-242`). | Same (`queries.rs:21-28`). |
 | `lastId` | Lowercased. Only used as a tiebreak on the bound in the direction of travel (`createOrClause`, `deployments-repository/component.ts:145-241`). | Lowercased. The tuple cursor is `(ts, lower(id)) < (ts of the lastId row, or T, lower(lastId))` (`queries.rs:374-453`). It returns the same rows, and it also handles sub-millisecond ties. |
-| `fields` | Comma split, **no trim**. Only `content`, `pointers`, `metadata` and `auditInfo` are kept, and unknown values are dropped silently. Empty or whitespace means the default `pointers,content,metadata`. | Same, but each item is trimmed, so `pointers, content` keeps `content` where upstream drops it (`deployments.rs:158-165`). |
-| `sortingField` | camelCase → snake_case; must be `local_timestamp` or `entity_timestamp`. An empty value is ignored. Any other value → 400 `Found an unrecognized sort field param`. | Same mapping. **An empty value gives a 400**, because `camel_to_snake("")` is not a valid field (`deployments.rs:167-176`). |
-| `sortingOrder` | `ASC` or `DESC`, case-sensitive. An empty value is ignored (`|| undefined`). | Case-sensitive. **An empty value gives a 400** (`deployments.rs:178-186`). |
+| `fields` | Comma split, **no trim**. Only `content`, `pointers`, `metadata` and `auditInfo` are kept, and unknown values are dropped silently. Empty or whitespace means the default `pointers,content,metadata`. | Same, but each item is trimmed, so `pointers, content` keeps `content` where upstream drops it (`deployments.rs:165-172`). |
+| `sortingField` | camelCase → snake_case; must be `local_timestamp` or `entity_timestamp`. An empty value is ignored. Any other value → 400 `Found an unrecognized sort field param`. | Same mapping. **An empty value gives a 400**, because `camel_to_snake("")` is not a valid field (`deployments.rs:174-183`). |
+| `sortingOrder` | `ASC` or `DESC`, case-sensitive. An empty value is ignored (`|| undefined`). | Case-sensitive. **An empty value gives a 400** (`deployments.rs:185-193`). |
 
 **Filter caps and limits**
 
@@ -159,8 +159,8 @@ Query parsing uses `qs.parse(..., {parseArrays:true, parameterLimit:2000, arrayL
 
 | trigger | status | body | headers | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
-| Success | 200 | Example below. | Upstream: `content-type: application/json` (http-server default). dcl-one adds `cache-control: max-age=5` and `x-cache: HIT\|MISS`. | `get-deployments-handler.ts:136-139` | `deployments.rs:62-68` | DIVERGENT: extra headers; denylisted entities are not removed; `deployedBy` filter; empty-value filters. Field shape: see notes. |
-| Unknown entity type | 400 | `{"error":"Found an unrecognized entity type"}` | | `get-deployments-handler.ts:55-60` | `deployments.rs:123-128` | MATCH. `?entityType=` gives a 400 in dcl-one but a 200 upstream. |
+| Success | 200 | Example below. | Upstream: `content-type: application/json` (http-server default). dcl-one adds `cache-control: max-age=5` and `x-cache: HIT\|MISS`. | `get-deployments-handler.ts:136-139` | `deployments.rs:62-68` | DIVERGENT: extra headers; `deployedBy` filter; empty-value filters. Field shape: see notes. |
+| Unknown entity type | 400 | `{"error":"Found an unrecognized entity type"}` | | `get-deployments-handler.ts:55-60` | `deployments.rs:130-135` | MATCH. `?entityType=` gives a 400 in dcl-one but a 200 upstream. |
 | `offset` > 5000 | 400 | `{"error":"Offset can't be higher than 5000. Please use the 'next' property for pagination."}` | | `:62-67` | `:188-192` | MATCH |
 | More than 1000 values in a filter | 400 | `{"error":"Too many filter values; the maximum allowed per filter is 1000"}` | | `:69-78` | `:142-149` | MATCH |
 | Bad `sortingField` | 400 | `{"error":"Found an unrecognized sort field param"}` | | `:92-98` | `:167-176` | MATCH. An empty value differs. |
@@ -230,7 +230,10 @@ dcl-one `wire_types.rs:20-37`, `queries.rs:571-596`):
 
 - `{offset, limit, moreData, next?, lastId?}` in both trees.
 - `lastId` echoes the lowercased request value; both omit it when it is missing.
-- `moreData` is computed before the denylist filter upstream. dcl-one has no denylist filter here.
+- Both trees compute `moreData` before dropping denylisted entities from the truncated page, and build `next`
+  from the last kept deployment, so a page that is entirely denylisted answers `moreData: true` with no
+  `next` in both (`decentraland/catalyst:src/logic/deployments/component.ts:302-318`,
+  `get-deployments-handler.ts:130-133`; `services/catalyst/content/src/deployments.rs:87-107`).
 
 **`next` link format**:
 
@@ -241,7 +244,7 @@ dcl-one `wire_types.rs:20-37`, `queries.rs:571-596`):
     from, to, fields (if not the default array instance), sortingField, sortingOrder, lastId, limit (raw request value, if truthy)`.
   - The timestamp written to `from` (ASC) or `to` (DESC) is the last row's `localTimestamp` or
     `entityTimestamp`, depending on the sort field.
-- dcl-one (`deployments.rs:230-303`, `shared/src/query_params.rs:74-92`):
+- dcl-one (`deployments.rs:237-310`, `shared/src/query_params.rs:74-92`):
   - The same pairs, plus `deployedBy`.
   - **Keys are sorted alphabetically.**
   - `fields` is left out when the set equals the default, even when the client passed it explicitly.
@@ -571,11 +574,11 @@ no snapshot in either tree:
 
 | field | upstream | dcl-one |
 |---|---|---|
-| `version` | `process.env.CURRENT_VERSION ?? 'Unknown'` (`Environment.ts:270`) | `CARGO_PKG_VERSION` (`content/src/lib.rs:211`) |
+| `version` | `process.env.CURRENT_VERSION ?? 'Unknown'` (`Environment.ts:270`) | `CARGO_PKG_VERSION` (`content/src/lib.rs:214`) |
 | `commitHash` | `process.env.COMMIT_HASH ?? 'Unknown'` (`Environment.ts:269`) | The configured or build-time hash, otherwise **`"unknown"`** in lowercase (`status.rs:26-30`) |
 | `ethNetwork` | `ETH_NETWORK` config | `config.node.eth_network` |
 | `synchronizationStatus.lastSyncWithDAO` | Time of the last successful DAO server-list refresh; 0 before the first one (`logic/peer-cluster/component.ts:43,79,123-125`) | **The current time** on every call (`status.rs:33`) |
-| `synchronizationStatus.synchronizationState` | `"Bootstrapping"` or `"Syncing"` (`sync-orchestrator/types.ts:7-10`) | `"Bootstrapping"`, `"Syncing"` (which also covers partially synced) or **`"Failed"`** (`content/src/lib.rs:368-374`) |
+| `synchronizationStatus.synchronizationState` | `"Bootstrapping"` or `"Syncing"` (`sync-orchestrator/types.ts:7-10`) | `"Bootstrapping"`, `"Syncing"` (which also covers partially synced) or **`"Failed"`** (`content/src/lib.rs:373-379`) |
 | extra keys | none | `syncFrontier`, `lastHeartbeat` and `up` when the sync worker reports them (`wire_types.rs:106-120`) |
 
 ### Data dependency
@@ -716,7 +719,7 @@ Field by field:
   - Upstream: `new URL('contents/<hash>', CONTENT_SERVER_ADDRESS)`. Without a trailing slash, the
     last segment of the address is replaced.
   - dcl-one: `<content_public_url without trailing '/'>/contents/<hash>`, where the default
-    `content_public_url` is `<own_url>/content/` (`content/src/lib.rs:214-215`).
+    `content_public_url` is `<own_url>/content/` (`content/src/lib.rs:217-218`).
   - They agree when the upstream address ends in `/`.
   - Both omit the key when the hash is missing.
 - **`name`.**
@@ -769,13 +772,12 @@ catalyst list and its `/about` is healthy.
 
 ## Backlog (CS-)
 
-1. **CS-01 · `/deployments` · denylisted entities are served.**
-   - Gap: dcl-one returns deployments of denylisted entity ids. Upstream drops them after the
-     `moreData` check.
-   - Expected: filter `denylist.contains(entityId)` on the truncated page, keeping
-     `moreData` computed before the filter (`decentraland/catalyst:src/logic/deployments/component.ts:316-318`).
-   - Where: `services/catalyst/content/src/deployments.rs:87-91` (`fetch_deployments_response`).
-   - Severity: P0 (moderated content stays visible through history).
+1. **CS-01 · `/deployments` · denylisted entities are dropped from the page.** Status: MATCH, no work.
+   - Upstream: filter `denylist.isDenylisted(entityId)` on the truncated page, with `moreData` computed
+     before the filter (`decentraland/catalyst:src/logic/deployments/component.ts:316-318`).
+   - dcl-one: the same filter after the query, before `next` is built
+     (`services/catalyst/content/src/deployments.rs:93-98`).
+   - Severity: none (closed).
 
 2. **CS-02 · `/deployments` · empty filter values filter on `''`.**
    - Gap: `?pointer=` or `?entityId=` returns no rows. Upstream treats a single empty value as absent
@@ -791,7 +793,7 @@ catalyst list and its `/about` is healthy.
    - Gap: upstream ignores `deployedBy`; dcl-one filters on it and echoes it in `filters` and `next`.
    - Expected: either ignore it, or keep it as a documented superset. A client that passes it
      against upstream gets unfiltered rows.
-   - Where: `services/catalyst/content/src/deployments.rs:137-140,260-262`,
+   - Where: `services/catalyst/content/src/deployments.rs:144-147,267-269`,
      `services/catalyst/content/src/queries.rs:540-543`, `services/catalyst/content/src/wire_types.rs:63-64`.
    - Severity: P2.
 
@@ -806,13 +808,13 @@ catalyst list and its `/about` is healthy.
    - Gap: an empty value is treated as an unknown type. Upstream returns 200 with no type filter.
    - Expected: treat a single empty value as absent before `parse_entity_type`, as in CS-02; an empty element
      inside a list stays a 400.
-   - Where: `services/catalyst/content/src/deployments.rs:122-128`, `services/catalyst/content/src/pointer_changes.rs:46-52`.
+   - Where: `services/catalyst/content/src/deployments.rs:129-135`, `services/catalyst/content/src/pointer_changes.rs:46-52`.
    - Severity: P2.
 
 6. **CS-06 · `/deployments` and `/pointer-changes` · an empty `sortingField` or `sortingOrder` gives a 400.**
    - Gap: upstream treats `''` as missing (`decentraland/catalyst:src/controllers/handlers/get-deployments-handler.ts:44-50`).
    - Expected: treat an empty string as `None`.
-   - Where: `services/catalyst/content/src/deployments.rs:167-186`, `services/catalyst/content/src/pointer_changes.rs:60-79`.
+   - Where: `services/catalyst/content/src/deployments.rs:174-193`, `services/catalyst/content/src/pointer_changes.rs:60-79`.
    - Severity: P2.
 
 7. **CS-07 · `/deployments` · `pagination.next` key order and `fields` rule.**
@@ -821,7 +823,7 @@ catalyst list and its `/about` is healthy.
    - Expected: the upstream order `pointer, entityType, entityId, onlyCurrentlyPointed, from, to,
      fields, sortingField, sortingOrder, lastId, limit`
      (`decentraland/catalyst:src/controllers/handlers/get-deployments-handler.ts:185-196`).
-   - Where: `services/catalyst/content/src/deployments.rs:230-303`. Use an ordered list, not a `HashMap`.
+   - Where: `services/catalyst/content/src/deployments.rs:237-310`. Use an ordered list, not a `HashMap`.
    - Severity: P2.
 
 8. **CS-08 · `/deployments` and `/pointer-changes` · number and boolean parsing.**
@@ -829,7 +831,7 @@ catalyst list and its `/about` is healthy.
      `onlyCurrentlyPointed` gives `false` instead of absent. `fields` items are trimmed; upstream
      does not trim them.
    - Expected: upstream `qsGetNumber` and `qsGetBoolean` (`decentraland/catalyst:src/logic/query-params/component.ts:32-39`).
-   - Where: `services/catalyst/shared/src/query_params.rs:48-54`, `services/catalyst/content/src/deployments.rs:158-165`.
+   - Where: `services/catalyst/shared/src/query_params.rs:48-54`, `services/catalyst/content/src/deployments.rs:165-172`.
    - Severity: P2.
 
 9. **CS-09 · `/pointer-changes` · `next` drops `includeAuthChain=true`.**
@@ -951,7 +953,7 @@ catalyst list and its `/about` is healthy.
 21. **CS-21 · `/deployments` and `/pointer-changes` · validation order.**
     - Gap: dcl-one checks `offset` after the sort checks (and after "too many" on `/deployments`).
     - Expected: the upstream order (`decentraland/catalyst:src/controllers/handlers/get-deployments-handler.ts:55-105`).
-    - Where: `services/catalyst/content/src/deployments.rs:121-192`, `services/catalyst/content/src/pointer_changes.rs:43-85`.
+    - Where: `services/catalyst/content/src/deployments.rs:128-199`, `services/catalyst/content/src/pointer_changes.rs:43-85`.
     - Severity: P2.
 
 22. **CS-22 · `/deployments` · `metadata: null`.**
@@ -964,7 +966,7 @@ catalyst list and its `/about` is healthy.
     - Gap: dcl-one returns a plain-text 404 for `/deployments/` and `/Deployments`. The upstream
       behaviour depends on the `@dcl/http-server` router defaults, which were not read.
     - Expected: capture both against a production peer before changing anything.
-    - Where: `services/catalyst/content/src/lib.rs:690-706`.
+    - Where: `services/catalyst/content/src/lib.rs:695-711`.
     - Severity: P2.
 
 ## Endpoints dcl-one serves in this area that upstream does not
@@ -974,10 +976,10 @@ catalyst list and its `/about` is healthy.
     `{hash, lastIncludedDeploymentTimestamp}`;
   - 400 `Unrecognized type: <type>`;
   - 503 `Snapshot not yet created`.
-- `GET /scenes` (`services/catalyst/content/src/lib.rs:613-616`): `{"scenes":[],"total":0}`, the
+- `GET /scenes` (`services/catalyst/content/src/lib.rs:618-621`): `{"scenes":[],"total":0}`, the
   shape of the worlds-content-server listing.
 - `GET`/`HEAD /lambdas/collections/contents/{pointer}/thumbnail` and `/image`
-  (`services/catalyst/content/src/lib.rs:696-704`):
+  (`services/catalyst/content/src/lib.rs:701-709`):
   - the same handlers as `/queries/items/*`, served with bytes, not a redirect;
   - lamb2 at the pinned revision has no `/collections/contents/*` route.
 - `?width=` derivatives on the thumbnail routes (`services/catalyst/content/src/entity_thumbnail.rs:235-301`).
