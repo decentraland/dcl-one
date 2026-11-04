@@ -135,6 +135,15 @@ pub async fn get_about(
     if about.scenes.is_empty() && state.fill_world(&world_name).await {
         about = queries::world_about(&state.pool, &world_name).await?;
     }
+    // The live NAME holder's quota block, not the stored owner's.
+    if let (Some(policy), Some(world)) = (state.policy(), about.world.as_mut())
+        && let Ok(name) = crate::comms::world_identity::WorldName::parse(&world.name)
+    {
+        world.quota_blocked_since = policy
+            .quota_blocked_since(&name)
+            .await
+            .map_err(|e| AppError::Internal(format!("quota block: {e}")))?;
+    }
     Ok(Json(build_about(&state.settings, &world_name, about)?))
 }
 

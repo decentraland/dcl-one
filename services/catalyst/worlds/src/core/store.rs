@@ -273,6 +273,8 @@ pub struct SceneDeployment<'a> {
     /// The upstream this publish is forwarded to (`WORLDS_FORWARD_UPSTREAM_URL`):
     /// its `worlds.forward_outbox` row commits with the scene.
     pub forward_to: Option<&'a str>,
+    /// The storage allowance the publish is charged to, re-checked before commit.
+    pub quota: Option<&'a super::quota::QuotaCharge>,
 }
 
 pub(crate) struct DerivedSceneSettings {
@@ -422,22 +424,25 @@ pub async fn get_world(pool: &PgPool, world: &WorldName) -> Result<Option<WorldR
 
 /// Upstream's `isWorldValid`: the world has scenes and is neither disabled
 /// nor its owner quota-blocked past the grace.
-pub async fn world_is_valid(pool: &PgPool, world: &WorldName) -> Result<bool, ApiError> {
-    let row: Option<(bool, Option<NaiveDateTime>, Option<NaiveDateTime>)> =
-        sqlx::query_as(concat!(
-            "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes s WHERE s.world_name = w.name), \
-                w.blocked_since, q.created_at \
-           FROM worlds.worlds w LEFT JOIN worlds.quota_blocks q ON q.wallet = w.owner AND ",
-            super::quota::quota_blockable_world!(),
-            " WHERE w.name = $1"
-        ))
-        .bind(world.key())
-        .fetch_optional(pool)
-        .await?;
+pub async fn world_is_valid(
+    pool: &PgPool,
+    policy: &crate::policy::Policy,
+    world: &WorldName,
+) -> Result<bool, ApiError> {
+    let row: Option<(bool, Option<NaiveDateTime>)> = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM worlds.world_scenes s WHERE s.world_name = w.name), \
+                w.blocked_since \
+           FROM worlds.worlds w WHERE w.name = $1",
+    )
+    .bind(world.key())
+    .fetch_optional(pool)
+    .await?;
+    let Some((has_scenes, disabled)) = row else {
+        return Ok(false);
+    };
+    let quota = policy.quota_blocked_since(world).await?;
     let now = chrono::Utc::now().naive_utc();
-    Ok(row.is_some_and(|(has_scenes, disabled, quota)| {
-        has_scenes && !crate::comms::access::world_blocked(disabled, quota, now)
-    }))
+    Ok(has_scenes && !crate::comms::access::world_blocked(disabled, quota, now))
 }
 
 pub async fn ensure_world(
@@ -602,6 +607,7 @@ pub async fn deploy_scene_with(
         size,
         replacement,
         forward_to,
+        quota,
     } = deployment;
     let mut s = scene_settings_from_entity(entity);
     if let Some(hash) = s.thumbnail_hash.take() {
@@ -617,8 +623,15 @@ pub async fn deploy_scene_with(
         return Err(error);
     }
 
-    // The RETURNING subquery reads the statement's snapshot: the owner before this write.
-    let (is_insert, disabled, previous_owner): (bool, bool, Option<String>) = sqlx::query_as(
+    // Locks an existing row so the owner read is the one this write replaces.
+    let previous_owner: Option<String> =
+        sqlx::query_scalar("SELECT owner FROM worlds.worlds WHERE name = $1 FOR UPDATE")
+            .bind(world.key())
+            .fetch_optional(&mut *tx)
+            .await?
+            .flatten();
+
+    let (is_insert, disabled): (bool, bool) = sqlx::query_as(
         r#"INSERT INTO worlds.worlds AS w (
                name, owner, blocked_since, spawn_coordinates,
                title, description, content_rating, skybox_time, categories,
@@ -631,8 +644,7 @@ pub async fn deploy_scene_with(
              mirror_source = NULL,
              spawn_coordinates = COALESCE(w.spawn_coordinates, EXCLUDED.spawn_coordinates),
              updated_at = timezone('UTC', now())
-           RETURNING (xmax = 0), blocked_since IS NOT NULL,
-                     (SELECT p.owner FROM worlds.worlds p WHERE p.name = $1)"#,
+           RETURNING (xmax = 0), blocked_since IS NOT NULL"#,
     )
     .bind(world.key())
     .bind(name_owner)
@@ -794,6 +806,15 @@ pub async fn deploy_scene_with(
         .await?;
     crate::explore::places::scene_identity::retire_orphans(&mut tx, &[world.key().to_string()])
         .await?;
+
+    if let Some(charge) = quota
+        && let Some(max) = super::quota::recheck_charge(&mut tx, charge, size).await?
+    {
+        return Err(ApiError::bad_request(format!(
+            "Deployment failed: {}",
+            super::quota::too_big(max, size)
+        )));
+    }
 
     if let Some(target) = forward_to {
         // A re-publish of the same entity replaces its record: the new id

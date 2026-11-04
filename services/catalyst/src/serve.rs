@@ -820,7 +820,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let personal_worlds = worlds::policy::PersonalWorldsPolicy::new(
         config.worlds.worlds_personal_worlds_max,
         config.worlds.worlds_personal_world_max_size_bytes,
-        worlds::policy::MAX_WORLD_SIZE_BYTES,
+        worlds::policy::MAX_SCENE_SIZE_BYTES,
     )
     .context("WORLDS_PERSONAL_WORLDS_MAX / WORLDS_PERSONAL_WORLD_MAX_SIZE_BYTES")?;
     let land_operators = comms_settings
@@ -828,23 +828,12 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .as_deref()
         .map(|url| worlds::policy::LandOperatorsReader::new(http_client.clone(), url));
     let ens = if config.worlds.allow_ens_domains {
-        let rpc = config
-            .content
-            .eth_rpc_url()
-            .context("ETH_RPC_URL")?
-            .context("ALLOW_ENS_DOMAINS=true needs ETH_RPC_URL to read ENS owners")?;
-        let contracts = worlds::ens::EnsContracts::for_network(&config.node.eth_network)
-            .with_context(|| {
-                format!(
-                    "ALLOW_ENS_DOMAINS=true: no ENS contracts for ETH_NETWORK={}",
-                    config.node.eth_network
-                )
-            })?;
-        Some(Arc::new(worlds::ens::EnsResolver::new(
+        let rpc = config.content.eth_rpc_url().context("ETH_RPC_URL")?;
+        Some(Arc::new(worlds::ens::EnsResolver::configured(
             http_client.clone(),
-            &rpc,
-            contracts,
-        )))
+            rpc.as_deref(),
+            &config.node.eth_network,
+        )?))
     } else {
         None
     };
@@ -858,6 +847,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .with_max_parcels(config.worlds.max_parcels)
             .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024),
     );
+    worlds.attach_policy(policy.clone());
     // A world read-through holds each mirrored scene's signer to this policy and shares the
     // content read-through's download bound.
     if let Some(read_through) = &read_through {

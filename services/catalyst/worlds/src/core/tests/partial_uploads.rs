@@ -851,7 +851,7 @@ async fn a_personal_world_stages_only_once_published() {
     let personal = PersonalWorldsPolicy::new(
         1_000_000,
         50 * 1024 * 1024,
-        crate::policy::MAX_WORLD_SIZE_BYTES,
+        crate::policy::MAX_SCENE_SIZE_BYTES,
     )
     .unwrap();
     let Some(f) = fixture_with(personal, None).await else {
@@ -1066,7 +1066,7 @@ async fn an_upload_expiring_during_its_completing_publish_is_refused_as_expired(
         .unwrap();
     let ((status, _, body), ()) =
         tokio::join!(send(&f.app, &u, Batch::of(&owner, false, &[1])), async {
-            wait_for_lock_wait(&f.pool, "INSERT INTO worlds.worlds AS w").await;
+            wait_for_lock_wait(&f.pool, "SELECT owner FROM worlds.worlds").await;
             // Meanwhile the upload expires and a file it found stored is collected.
             sqlx::query(
                 "UPDATE worlds.pending_scenes SET created_at = created_at - interval '2 hours' \

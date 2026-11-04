@@ -56,11 +56,14 @@ pub async fn reconcile_owners(state: &CoreState) -> Result<ReconcileReport, sqlx
         if stored.as_ref() == Some(&holder) {
             continue;
         }
+        // Compare-and-set: a publish that changed the owner since the read wins.
         let changed = sqlx::query(
-            "UPDATE worlds.worlds SET owner = $2 WHERE name = $1 AND owner IS DISTINCT FROM $2",
+            "UPDATE worlds.worlds SET owner = $2 \
+             WHERE name = $1 AND owner IS DISTINCT FROM $2 AND owner IS NOT DISTINCT FROM $3",
         )
         .bind(world.key())
         .bind(&holder)
+        .bind(stored.as_ref())
         .execute(&state.pool)
         .await?
         .rows_affected();

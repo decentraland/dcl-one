@@ -32,7 +32,7 @@ const QUOTA_NS: Uuid = Uuid::from_bytes([
     0x5b, 0x0e, 0x7c, 0x31, 0x9a, 0x4d, 0x4f, 0x8e, 0xa1, 0x52, 0x3c, 0x77, 0x08, 0xd4, 0x6e, 0x19,
 ]);
 
-/// Namespace of the permission notices' ids (v5 over kind, world, permission, recipient and hour).
+/// Namespace of the permission notices' ids (v5 over kind, world, permission, recipient and change time).
 const PERMISSION_NS: Uuid = Uuid::from_bytes([
     0x2f, 0x81, 0x4a, 0xc6, 0x13, 0x5e, 0x4b, 0x07, 0x9d, 0x3a, 0x60, 0xe2, 0x71, 0xbc, 0x58, 0x0d,
 ]);
@@ -89,13 +89,14 @@ impl Notices {
             (PERMISSION_REVOKED, "World Permission Revoked")
         };
         let (world, permission) = (world.key(), permission.as_str());
+        // The owner-chosen name stays out of the free text.
         let description = if granted {
-            format!("You have been granted {permission} permission for world {world}.")
+            format!("You have been granted {permission} permission for a world.")
         } else {
-            format!("Your {permission} permission for world {world} has been revoked.")
+            format!("Your {permission} permission for a world has been revoked.")
         };
-        // Repeats within the hour share an id, so they insert once.
-        let hour = now.and_utc().timestamp().div_euclid(3600);
+        // Keyed on the change itself, so a later change is always a new notice.
+        let version = now.and_utc().timestamp_micros();
         addresses
             .iter()
             .filter_map(|a| Address::parse(a).ok())
@@ -103,7 +104,7 @@ impl Notices {
                 id: Uuid::new_v5(
                     &PERMISSION_NS,
                     format!(
-                        "{kind}\n{world}\n{permission}\n{}\n{hour}",
+                        "{kind}\n{world}\n{permission}\n{}\n{version}",
                         recipient.as_str()
                     )
                     .as_bytes(),
@@ -133,7 +134,8 @@ impl Notices {
     ) -> UserNotification {
         let ends = created_at + QUOTA_BLOCK_GRACE;
         let when = ends.and_utc().timestamp_millis();
-        if updated_at - created_at < QUOTA_BLOCK_GRACE {
+        // Restricted only once access is refused (`world_blocked`'s `>`).
+        if updated_at - created_at <= QUOTA_BLOCK_GRACE {
             quota_notice(
                 MISSING_RESOURCES,
                 wallet,
@@ -234,7 +236,7 @@ mod tests {
             out[0].metadata,
             json!({
                 "title": "World Permission Granted",
-                "description": "You have been granted deployment permission for world foo.dcl.eth.",
+                "description": "You have been granted deployment permission for a world.",
                 "world": "foo.dcl.eth",
                 "permissions": ["deployment"],
                 "url": "https://builder.example/worlds?tab=dcl",
@@ -252,12 +254,12 @@ mod tests {
         assert_eq!(out[0].metadata["title"], "World Permission Revoked");
         assert_eq!(
             out[0].metadata["description"],
-            "Your streaming permission for world foo.dcl.eth has been revoked."
+            "Your streaming permission for a world has been revoked."
         );
     }
 
     #[test]
-    fn permission_notices_repeat_with_one_id_within_the_hour() {
+    fn each_permission_change_is_its_own_notice() {
         let notices = Notices::default();
         let world = WorldName::parse("foo.dcl.eth").unwrap();
         let id = |granted: bool, permission, secs| {
@@ -267,8 +269,9 @@ mod tests {
         };
         let base = 3600 * 500_000;
         let first = id(true, Permission::Deployment, base);
-        assert_eq!(first, id(true, Permission::Deployment, base + 3599));
-        assert_ne!(first, id(true, Permission::Deployment, base + 3600));
+        assert_eq!(first, id(true, Permission::Deployment, base));
+        // Grant, revoke, grant within the hour: the last grant is not dropped.
+        assert_ne!(first, id(true, Permission::Deployment, base + 2));
         assert_ne!(first, id(false, Permission::Deployment, base));
         assert_ne!(first, id(true, Permission::Streaming, base));
         let other = notices.permission_changed(
@@ -319,7 +322,9 @@ mod tests {
         // The same block re-detected keeps its id; the restriction is another notice.
         let again = notices.quota_block(&wallet, created, created + chrono::TimeDelta::hours(12));
         assert_eq!(again.id, warn.id);
-        let restricted = notices.quota_block(&wallet, created, ends);
+        assert_eq!(notices.quota_block(&wallet, created, ends).id, warn.id);
+        let after = ends + chrono::TimeDelta::seconds(1);
+        let restricted = notices.quota_block(&wallet, created, after);
         assert_eq!(restricted.kind, ACCESS_RESTRICTED);
         assert_eq!(restricted.occurred_at, ends);
         assert_ne!(restricted.id, warn.id);

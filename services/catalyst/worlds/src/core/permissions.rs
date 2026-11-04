@@ -83,16 +83,15 @@ pub async fn get_permissions(
         .as_ref()
         .map(|w| w.access.clone())
         .unwrap_or_default();
-    // The personal rule or the row's owner, else the NAME holder by name.
-    let owner = match state
+    // The live holder; unknown while the authority cannot answer.
+    let owner = state
         .policy
-        .personal_worlds()
-        .owner_of(&world)
-        .or_else(|| record.as_ref().and_then(|w| w.owner.clone()))
-    {
-        Some(owner) => Some(owner),
-        None => state.policy.owner_by_name(&world, None).await,
-    };
+        .current_owner(&world)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!(%world, error = %e, "world owner unresolved");
+            None
+        });
 
     let mut deployment_wallets = Vec::new();
     let mut streaming_wallets = Vec::new();
@@ -183,8 +182,12 @@ fn parse_permission(raw: &str) -> Option<Permission> {
     Permission::parse(raw)
 }
 
-/// Notifies each address the edit in `tx` actually `added` or `removed`
-/// (the old permission events) in the same transaction, then commits.
+/// The most addresses one permission edit notifies per direction.
+pub const MAX_NOTICES_PER_EDIT: usize = 50;
+
+/// Notifies the addresses the edit in `tx` actually `added` or `removed`
+/// (the old permission events, at most [`MAX_NOTICES_PER_EDIT`] each) in the
+/// same transaction, then commits.
 async fn commit_with_notices(
     state: &SharedState,
     mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
@@ -194,14 +197,21 @@ async fn commit_with_notices(
     removed: &[String],
 ) -> Result<(), ApiError> {
     let now = chrono::Utc::now().naive_utc();
-    let mut notices = state
-        .notices
-        .permission_changed(false, world, permission, removed, now);
-    notices.extend(
-        state
-            .notices
-            .permission_changed(true, world, permission, added, now),
+    let capped = |a: &'_ [String]| a.len().min(MAX_NOTICES_PER_EDIT);
+    let mut notices = state.notices.permission_changed(
+        false,
+        world,
+        permission,
+        &removed[..capped(removed)],
+        now,
     );
+    notices.extend(state.notices.permission_changed(
+        true,
+        world,
+        permission,
+        &added[..capped(added)],
+        now,
+    ));
     state.notices.send(&mut tx, &notices).await?;
     tx.commit().await?;
     Ok(())
@@ -481,7 +491,7 @@ pub async fn delete_permissions_address(
         &world,
     )
     .await?;
-    if !store::world_is_valid(&state.pool, &world).await? {
+    if !store::world_is_valid(&state.pool, &state.policy, &world).await? {
         return Err(ApiError::not_found(format!(
             "World \"{}\" not found.",
             world.display()

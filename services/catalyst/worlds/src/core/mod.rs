@@ -143,7 +143,7 @@ impl Settings {
 
     /// The partial upload limits, validated against the world size cap.
     pub fn with_partial_uploads(mut self, limits: PartialUploadLimits) -> anyhow::Result<Self> {
-        self.partial_uploads = limits.validate(crate::policy::MAX_WORLD_SIZE_BYTES)?;
+        self.partial_uploads = limits.validate(crate::policy::MAX_SCENE_SIZE_BYTES)?;
         Ok(self)
     }
 

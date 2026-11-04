@@ -475,6 +475,8 @@ pub(super) struct Validated {
     pub(super) max_size_bytes: i64,
     /// The world's scene size cap, whatever the owner's allowance (the staging budget's unit).
     pub(super) world_size_cap: i64,
+    /// The allowance the publish is charged to.
+    pub(super) charge: Option<super::quota::QuotaCharge>,
 }
 
 /// Which checks [`validate`] runs and where it takes the content sizes from.
@@ -699,17 +701,15 @@ pub(super) async fn validate(
     }
     let size: i64 = sizes.values().copied().fold(0, i64::saturating_add);
     // A staging batch that skipped the permission resolves the owner here; it is refused alike.
-    let max = state
-        .max_scene_size(&world, &limits, name_owner.as_ref(), Some(pointers.as_slice()))
+    let cap = state
+        .scene_cap(&world, &limits, name_owner.as_ref(), Some(pointers.as_slice()))
         .await
         .map_err(|e| {
             tracing::warn!(world = %world, error = ?e, "deploy denied: storage allowance undetermined");
             unavailable("Deployment failed: the storage allowance could not be determined right now")
         })?;
-    if size > max {
-        return Err(failed(format!(
-            "The deployment is too big. The maximum total size allowed is {max} bytes for scenes. You can upload up to {max} bytes but you tried to upload {size}."
-        )));
+    if size > cap.max {
+        return Err(failed(super::quota::too_big(cap.max, size)));
     }
 
     Ok(Validated {
@@ -719,8 +719,9 @@ pub(super) async fn validate(
         replacement,
         name_owner,
         size,
-        max_size_bytes: max,
+        max_size_bytes: cap.max,
         world_size_cap: limits.max_size_bytes,
+        charge: cap.charge,
     })
 }
 
@@ -742,6 +743,7 @@ pub(super) async fn publish(
         replacement,
         name_owner,
         size,
+        charge,
         ..
     } = validated;
     let (Some(replacement), Some(name_owner)) = (replacement, name_owner) else {
@@ -762,6 +764,7 @@ pub(super) async fn publish(
             size: *size,
             replacement,
             forward_to: state.forwarder.as_deref().map(|f| f.target()),
+            quota: charge.as_ref(),
         },
         completion,
     )
