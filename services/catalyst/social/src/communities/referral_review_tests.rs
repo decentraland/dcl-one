@@ -453,6 +453,84 @@ async fn a_failed_tier_reward_is_retried_by_the_next_finalize_of_its_grant() {
     }
 }
 
+/// A paid reward whose tier notification fails is not paid again: the next
+/// finalize retries only the notification, and the image is stored once.
+#[tokio::test]
+async fn a_failed_tier_notification_is_retried_without_paying_the_reward_again() {
+    let Some(pool) = crate::db::scratch::pool(6).await else {
+        return;
+    };
+    let (referrer, invited) = (wallet(), wallet());
+    let rewards = Arc::new(AtomicUsize::new(0));
+    let tier_notices = Arc::new(AtomicUsize::new(0));
+    let (observed_rewards, observed_notices) = (rewards.clone(), tier_notices.clone());
+    let app=axum::Router::new().route("/api/rewards",axum::routing::post(move || {let calls=observed_rewards.clone();async move {calls.fetch_add(1,Ordering::SeqCst);Json(json!({"data":[{"image":"https://reward.example.org/tier.png","rarity":"rare"}]}))}}))
+        .fallback(move |body:axum::body::Bytes| {let notices=observed_notices.clone();async move {
+            let fields=url::form_urlencoded::parse(&body).into_owned().collect::<std::collections::HashMap<_,_>>();
+            let event:Value=serde_json::from_str(&fields["Message"]).unwrap();
+            if event["subType"]=="referral-new-tier-reached" && notices.fetch_add(1,Ordering::SeqCst)==0 {
+                return (StatusCode::BAD_REQUEST,[("content-type","text/xml")],"<ErrorResponse><Error><Type>Sender</Type><Code>InvalidParameter</Code><Message>fixture SNS failure</Message></Error><RequestId>fixture</RequestId></ErrorResponse>");
+            }
+            (StatusCode::OK,[("content-type","text/xml")],"<PublishResponse xmlns=\"http://sns.amazonaws.com/doc/2010-03-31/\"><PublishResult><MessageId>fixture</MessageId></PublishResult><ResponseMetadata><RequestId>fixture</RequestId></ResponseMetadata></PublishResponse>")
+        }});
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let referral = Referral::new(
+        pool.clone(),
+        Outbound::for_tests(),
+        Settings {
+            min_login_days: 0.0,
+            reward_server_url: Some(url.clone()),
+            suspicious_window_ms: 0.0,
+            ..Settings::for_tests()
+        },
+    );
+    referral.set_publisher(crate::legacy_events::LegacyEvents::test_publisher(&url));
+    sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,status,tier_granted) SELECT $1,'0x'||replace(gen_random_uuid()::text,'-','')||'00000000','tier_granted',true FROM generate_series(1,4)").bind(&referrer).execute(&pool).await.unwrap();
+    referral.create(&referrer, &invited, "192.0.2.1").await.unwrap();
+    let state = |pool: sqlx::PgPool, invited: Address| async move {
+        sqlx::query_as::<_, (Option<i32>, Option<Value>)>(
+            "SELECT reward_tier,reward_paid FROM social.referral_progress WHERE invited_user=$1",
+        )
+        .bind(&invited)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+    let images = |pool: sqlx::PgPool, referrer: Address| async move {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM social.referral_reward_images WHERE referrer=$1 AND tier=5",
+        )
+        .bind(&referrer)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    };
+
+    assert!(referral.finalize_referral(invited.as_str()).await.is_err());
+    assert_eq!(rewards.load(Ordering::SeqCst), 1);
+    assert_eq!(tier_notices.load(Ordering::SeqCst), 1);
+    let (owed, paid) = state(pool.clone(), invited.clone()).await;
+    assert_eq!(owed, None, "the reward request is no longer owed");
+    let paid = paid.expect("its follow-ups are pending");
+    assert_eq!((paid["tier"].clone(), paid["notified"].clone()), (json!(5), json!(false)));
+    assert_eq!(images(pool.clone(), referrer.clone()).await, 1);
+
+    referral.finalize_referral(invited.as_str()).await.unwrap();
+    assert_eq!(rewards.load(Ordering::SeqCst), 1, "the reward is not requested again");
+    assert_eq!(tier_notices.load(Ordering::SeqCst), 2, "the notification is retried");
+    assert_eq!(state(pool.clone(), invited.clone()).await, (None, None));
+    assert_eq!(images(pool.clone(), referrer.clone()).await, 1);
+
+    referral.finalize_referral(invited.as_str()).await.unwrap();
+    assert_eq!(
+        (rewards.load(Ordering::SeqCst), tier_notices.load(Ordering::SeqCst)),
+        (1, 2)
+    );
+    server.abort();
+}
+
 /// A tier without a configured campaign key posts nothing; the reward stays
 /// pending until the key is configured.
 #[tokio::test]

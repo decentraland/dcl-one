@@ -318,13 +318,17 @@ impl Referral {
             .execute(&mut *tx)
             .await
             .map_err(database_error)?;
-        let (status,granted,mut days,pending): (String,bool,Vec<chrono::NaiveDate>,Option<i32>) = sqlx::query_as("SELECT status,tier_granted,login_days,reward_tier FROM social.referral_progress WHERE invited_user=$1 FOR UPDATE")
+        let (status,granted,mut days,pending,paid): (String,bool,Vec<chrono::NaiveDate>,Option<i32>,Option<Value>) = sqlx::query_as("SELECT status,tier_granted,login_days,reward_tier,reward_paid FROM social.referral_progress WHERE invited_user=$1 FOR UPDATE")
             .bind(&invited).fetch_one(&mut *tx).await.map_err(database_error)?;
         if granted || status == "tier_granted" || status == "rejected_ip_match" {
             drop(tx);
-            // A redelivered login retries the reward a failed finalize left.
+            // A redelivered login resumes what a failed finalize left: an
+            // unpaid reward from its request, a paid one from its follow-ups.
             if let Some(tier) = pending {
                 self.reward(&referrer, invited.as_str(), tier.into())
+                    .await?;
+            } else if let Some(paid) = paid {
+                self.reward_follow_ups(&referrer, invited.as_str(), paid)
                     .await?;
             }
             return Ok(());
@@ -378,10 +382,12 @@ impl Referral {
         }
         Ok(())
     }
-    /// The tier reward of one grant: the rewards request, then its notification
-    /// and image together. Only their joint success clears the grant's
-    /// `reward_tier`, so a failure is retried by the next finalize of the same
-    /// invited user. The image is stored once per referrer and tier.
+    /// The tier reward of one grant. `reward_tier` marks the rewards request as
+    /// owed; its success moves the grant to `reward_paid` at once, so a later
+    /// failure never sends the reward again. The source's rewards API takes no
+    /// idempotency key (`adapters/rewards.ts` sends only `campaign_key` and
+    /// `beneficiary`); only a request whose answer is lost, or a failed
+    /// `reward_paid` write right after it, can repeat it.
     async fn reward(&self, referrer: &str, invited: &str, total: i64) -> Result<(), CommError> {
         let url = self.settings.reward_server_url.as_deref().ok_or_else(|| {
             CommError::MessageOnly(
@@ -420,9 +426,42 @@ impl Referral {
             .as_array()
             .and_then(|values| values.first())
             .ok_or(CommError::Internal)?;
-        // Promise.all starts both source operations independently. Once
-        // started, either operation survives the other's early failure.
-        let notice = tokio::spawn(self.notify(referrer, invited, total, Some(reward)));
+        let paid = json!({"tier": total, "reward": reward, "notified": false});
+        sqlx::query(
+            "UPDATE social.referral_progress SET reward_tier=NULL, reward_paid=$3 WHERE invited_user=$1 AND reward_tier=$2",
+        )
+        .bind(invited)
+        .bind(total as i32)
+        .bind(&paid)
+        .execute(&self.pool)
+        .await
+        .map_err(database_error)?;
+        self.reward_follow_ups(referrer, invited, paid).await
+    }
+    /// A paid reward's notification and image. Promise.all starts both source
+    /// operations independently; once started, either survives the other's
+    /// early failure. A sent notification is recorded in `reward_paid`, and
+    /// the image is stored once per referrer and tier, so a retry repeats
+    /// neither; `reward_paid` clears once both are done.
+    async fn reward_follow_ups(
+        &self,
+        referrer: &str,
+        invited: &str,
+        paid: Value,
+    ) -> Result<(), CommError> {
+        let total = paid["tier"].as_i64().ok_or(CommError::Internal)?;
+        let reward = &paid["reward"];
+        let notice = (paid["notified"] != true).then(|| {
+            let notify = self.notify(referrer, invited, total, Some(reward));
+            let pool = self.pool.clone();
+            let invited = invited.to_owned();
+            tokio::spawn(async move {
+                notify.await?;
+                sqlx::query("UPDATE social.referral_progress SET reward_paid=jsonb_set(reward_paid,'{notified}','true') WHERE invited_user=$1 AND reward_paid IS NOT NULL")
+                    .bind(invited).execute(&pool).await.map_err(database_error)?;
+                Ok::<_, CommError>(())
+            })
+        });
         let image = reward["image"].as_str().map(str::to_owned);
         let image_referrer = referrer.to_owned();
         let pool = self.pool.clone();
@@ -433,17 +472,19 @@ impl Referral {
             Ok::<_, CommError>(())
         });
         futures::try_join!(
-            async { notice.await.map_err(|_| CommError::Internal)? },
+            async {
+                match notice {
+                    Some(notice) => notice.await.map_err(|_| CommError::Internal)?,
+                    None => Ok(()),
+                }
+            },
             async { image.await.map_err(|_| CommError::Internal)? }
         )?;
-        sqlx::query(
-            "UPDATE social.referral_progress SET reward_tier=NULL WHERE invited_user=$1 AND reward_tier=$2",
-        )
-        .bind(invited)
-        .bind(total as i32)
-        .execute(&self.pool)
-        .await
-        .map_err(database_error)?;
+        sqlx::query("UPDATE social.referral_progress SET reward_paid=NULL WHERE invited_user=$1")
+            .bind(invited)
+            .execute(&self.pool)
+            .await
+            .map_err(database_error)?;
         Ok(())
     }
     #[cfg(test)]
