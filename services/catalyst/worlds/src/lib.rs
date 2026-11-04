@@ -106,6 +106,8 @@ pub struct Settings {
     /// as `/worlds/status` reports them (the policy itself lives in [`policy`]).
     pub personal_worlds_max: u64,
     pub personal_world_max_size_bytes: u64,
+    /// `/about`'s `healthy`/`acceptingUsers` source: this node's content sync.
+    pub content_readiness: about::ContentReadiness,
 }
 
 fn non_empty(value: Option<&str>) -> Option<String> {
@@ -156,6 +158,7 @@ impl Settings {
             sfu: crate::content::about_comms::SfuHealth::always_alive(),
             personal_worlds_max: config.worlds.worlds_personal_worlds_max,
             personal_world_max_size_bytes: config.worlds.worlds_personal_world_max_size_bytes,
+            content_readiness: about::ContentReadiness::default(),
         }
     }
 
@@ -185,6 +188,7 @@ impl Settings {
             sfu: crate::content::about_comms::SfuHealth::always_alive(),
             personal_worlds_max: 0,
             personal_world_max_size_bytes: policy::DEFAULT_PERSONAL_WORLD_MAX_SIZE_BYTES as u64,
+            content_readiness: about::ContentReadiness::default(),
         }
     }
 }
@@ -205,6 +209,8 @@ pub struct WorldsState {
     /// `READ_THROUGH_ENABLED` with the mirror on: a world held with no scene is mirrored on
     /// first read ([`WorldsState::fill_world`]).
     read_through: OnceLock<WorldReadThrough>,
+    /// The DAO name deny list `/about` applies.
+    pub names: core::names::NameDenyList,
 }
 
 pub type SharedState = Arc<WorldsState>;
@@ -235,6 +241,7 @@ impl WorldsState {
             http,
             preview_memo: preview_wearables::memo(),
             read_through: OnceLock::new(),
+            names: core::names::NameDenyList::default(),
         }
     }
 

@@ -489,6 +489,22 @@ CREATE TABLE social.livekit_removal_intents (
 CREATE INDEX livekit_removal_intents_due_idx ON social.livekit_removal_intents (next_attempt_at, created_at, root_key, target_key);
 CREATE INDEX livekit_removal_intents_room_idx ON social.livekit_removal_intents (room_name, room_sid) WHERE room_name IS NOT NULL;
 
+-- Comms-owned shared-secret throttle of the world comms mints, shared by every
+-- replica. A row exists only after a wrong secret for (world key, caller IP or
+-- wallet, lowercase); point reads/upserts by PK per mint, deleted on success or
+-- by the comms-secret-attempts-sweep job once its 60 s window has passed.
+-- Rows are tiny and short-lived: bounded by recent wrong-secret callers.
+CREATE TABLE social.world_secret_attempts (
+    world_name text NOT NULL,
+    subject text NOT NULL,
+    attempts integer NOT NULL,
+    window_start timestamp without time zone NOT NULL,
+    CONSTRAINT world_secret_attempts_pkey PRIMARY KEY (world_name, subject),
+    CONSTRAINT world_secret_attempts_positive CHECK (attempts > 0)
+);
+-- The expiry sweep.
+CREATE INDEX world_secret_attempts_window_idx ON social.world_secret_attempts (window_start);
+
 CREATE TABLE social.user_warnings (
     id uuid NOT NULL DEFAULT gen_random_uuid(),
     warned_address text NOT NULL,

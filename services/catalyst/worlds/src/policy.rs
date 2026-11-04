@@ -57,7 +57,10 @@ use crate::shared::identity::{
 };
 
 // The access vocabulary `Policy` returns and reads lives in `comms::access`.
-pub use crate::comms::access::{Access, AccessGrant, AccessType, Ban, LandOperators, SceneRef};
+pub use crate::comms::access::{
+    Access, AccessGrant, AccessType, Ban, LandOperators, SceneRef, WorldAdmission,
+    blocked_past_grace,
+};
 
 /// The permission-relevant columns of one `worlds.worlds` row.
 #[derive(Debug, Clone)]
@@ -965,6 +968,21 @@ impl crate::comms::interfaces::AccessPolicy for Policy {
             .map_err(|e| store_unavailable("worlds.worlds", &e))
     }
 
+    async fn world_admission(
+        &self,
+        world: &WorldName,
+        now: NaiveDateTime,
+    ) -> Result<WorldAdmission, AuthorityNotEstablished> {
+        let row = Policy::world(self, world)
+            .await
+            .map_err(|e| store_unavailable("worlds.worlds", &e))?;
+        Ok(match row {
+            None => WorldAdmission::Unknown,
+            Some(row) if blocked_past_grace(row.blocked_since, now) => WorldAdmission::Blocked,
+            Some(row) => WorldAdmission::Open(row.access_type),
+        })
+    }
+
     async fn world_owner(
         &self,
         world: &WorldName,
@@ -1344,6 +1362,41 @@ mod tests {
         }
         let dcl = WorldName::parse(&format!("{label}.dcl.eth")).unwrap();
         assert!(p.is_owner(&dcl, &holder).await.is_allowed());
+    }
+
+    #[tokio::test]
+    async fn world_admission_applies_the_block_grace() {
+        use crate::comms::interfaces::AccessPolicy;
+        let Some(p) = scratch().await else {
+            return;
+        };
+        let world = world_name();
+        assert_eq!(
+            p.world_admission(&world, now()).await.unwrap(),
+            WorldAdmission::Unknown
+        );
+        seed_world(&p, &world, None, AccessType::AllowList, None).await;
+        assert_eq!(
+            p.world_admission(&world, now()).await.unwrap(),
+            WorldAdmission::Open(AccessType::AllowList)
+        );
+        sqlx::query("UPDATE worlds.worlds SET blocked_since = $2 WHERE name = $1")
+            .bind(world.key())
+            .bind(now() - chrono::TimeDelta::days(1))
+            .execute(p.pool())
+            .await
+            .unwrap();
+        assert_eq!(
+            p.world_admission(&world, now()).await.unwrap(),
+            WorldAdmission::Open(AccessType::AllowList),
+            "inside the grace period"
+        );
+        assert_eq!(
+            p.world_admission(&world, now() + chrono::TimeDelta::days(2))
+                .await
+                .unwrap(),
+            WorldAdmission::Blocked
+        );
     }
 
     /// `worlds.owner` is a cache of the authority's answer, not the authority:
