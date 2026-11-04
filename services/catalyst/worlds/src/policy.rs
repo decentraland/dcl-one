@@ -440,6 +440,31 @@ impl Policy {
         }
     }
 
+    /// The NAME's current holder by the same authority as [`Self::is_owner`]:
+    /// the personal world's address, else the names reader; no reader or a
+    /// reader fault is undetermined, `Ok(None)` when nobody holds it.
+    pub async fn live_name_owner(
+        &self,
+        world: &WorldName,
+    ) -> Result<Option<Address>, AuthorityNotEstablished> {
+        if let Some(owner) = self.personal_worlds.owner_of(world) {
+            return Ok(Some(owner));
+        }
+        let Some(market) = self.names_reader() else {
+            return Err(reader_unavailable(
+                "marketplace names reader",
+                NO_NAME_AUTHORITY_MSG,
+            ));
+        };
+        match crate::chain_index::graph::name_owner(market, world.label()).await {
+            Ok(Some(owner)) => Address::parse(&owner)
+                .map(Some)
+                .map_err(|e| reader_unavailable("marketplace names reader", &e.to_string())),
+            Ok(None) => Ok(None),
+            Err(e) => Err(reader_unavailable("marketplace names reader", &e)),
+        }
+    }
+
     /// Whether `actor` owns `world` (see the decision table): the answer
     /// every mutation takes. `worlds.owner` is the last owner publish's copy
     /// of the authority's answer, consulted only when no reader is

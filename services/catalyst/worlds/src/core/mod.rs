@@ -72,6 +72,10 @@ pub use upload_limits::UploadLimits;
 /// Rows per multi-row access-log INSERT; the drain takes whatever is queued up to this.
 const ACCESS_LOG_BATCH: usize = 256;
 
+/// WCS `SCENE_EVICTION_TTL_MS` default: 7 days.
+pub const DEFAULT_SCENE_EVICTION_TTL: std::time::Duration =
+    std::time::Duration::from_secs(7 * 24 * 3600);
+
 /// What the write surface needs beside the shared handles.
 #[derive(Clone)]
 pub struct Settings {
@@ -84,6 +88,8 @@ pub struct Settings {
     /// `GLOBAL_SCENES_URN`: scenes the configuration names, kept by the blob
     /// store collector (`/admin/gc`).
     pub global_scenes_urn: Vec<String>,
+    /// `SCENE_EVICTION_TTL_MS`: how long a retired scene is kept.
+    pub scene_eviction_ttl: std::time::Duration,
 }
 
 impl std::fmt::Debug for Settings {
@@ -106,7 +112,13 @@ impl Settings {
             admin_token: admin_token.filter(|t| !t.trim().is_empty()),
             upload_limits: upload_limits.validate(deploy::MAX_UPLOAD_SIZE_BYTES as u64)?,
             global_scenes_urn: Vec::new(),
+            scene_eviction_ttl: DEFAULT_SCENE_EVICTION_TTL,
         })
+    }
+
+    pub fn with_scene_eviction_ttl_ms(mut self, ms: u64) -> Self {
+        self.scene_eviction_ttl = std::time::Duration::from_millis(ms);
+        self
     }
 
     pub fn with_global_scenes_urn(mut self, raw: Option<&str>) -> Self {
@@ -121,6 +133,7 @@ impl Settings {
             admin_token: admin_token.map(str::to_string),
             upload_limits: UploadLimits::default(),
             global_scenes_urn: Vec::new(),
+            scene_eviction_ttl: DEFAULT_SCENE_EVICTION_TTL,
         }
     }
 }
@@ -372,8 +385,25 @@ impl CoreState {
     }
 
     /// The `worlds-access-log` job: drains the queue into `world_access_log`
-    /// in batches until shutdown, flushing what is left on cancel.
+    /// in batches until shutdown, flushing what is left on cancel; and the
+    /// fleet-wide hourly `worlds-scene-eviction` of expired retired scenes.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
+        let state = self.clone();
+        jobs.spawn_periodic_leased(
+            "worlds-scene-eviction",
+            crate::jobs::PeriodicCfg::every(std::time::Duration::from_secs(3600)),
+            move |_ctx| {
+                let state = state.clone();
+                async move {
+                    let evicted =
+                        store::evict_retired_scenes(&state.pool, state.settings.scene_eviction_ttl)
+                            .await
+                            .map_err(|e| anyhow::anyhow!("evicting retired scenes: {e:?}"))?;
+                    tracing::info!(evicted, "retired world scenes evicted");
+                    Ok(())
+                }
+            },
+        );
         let Some(mut rx) = self.access_log_rx.lock().take() else {
             return;
         };
