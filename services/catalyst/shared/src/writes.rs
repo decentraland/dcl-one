@@ -598,6 +598,7 @@ mod tests {
             "mirror",
         ),
         ("worlds/src/core/deploy.rs", "worlds"),
+        ("worlds/src/core/partial.rs", "worlds"),
         ("worlds/src/core/settings.rs", "worlds"),
         ("worlds/src/mirror.rs", "worlds"),
     ];
