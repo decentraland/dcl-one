@@ -15,6 +15,7 @@
 //! divergence from upstream (2026-08-26): with no `collectionType` in the
 //! query the answer is upstream's, byte for byte.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -1096,8 +1097,9 @@ pub async fn nfts_collections(State(state): State<SharedState>) -> Response {
 }
 
 /// `GET /lambdas/outfits/{address}`, `/outfits/{address}`: the address's
-/// outfits entity with `namesForExtraSlots` (the names it owns); an address
-/// without names keeps only slots 0-4.
+/// outfits entity, keeping only the outfits it may wear
+/// (`sanitize_outfits`), with `namesForExtraSlots` (the names it owns);
+/// an address without names keeps only slots 0-4.
 pub async fn outfits(State(state): State<SharedState>, Path(id): Path<String>) -> Response {
     let address = id.to_lowercase();
     let st = state.clone();
@@ -1126,16 +1128,146 @@ pub async fn outfits(State(state): State<SharedState>, Path(id): Path<String>) -
             );
             let Some(mut entity) = docs.ok().and_then(|d| d.first().and_then(|d| d.to_value()))
             else {
-                return Ok::<Value, ()>(Value::Null);
+                return Ok::<Value, Response>(Value::Null);
             };
+            sanitize_outfits(&st, &address, &mut entity).await?;
             apply_names(&mut entity, &owned_names);
             Ok(entity)
         })
         .await;
     match cached {
         Ok(v) if !v.is_null() => Json(v).into_response(),
-        _ => not_found("Outfits not found"),
+        Ok(_) => not_found("Outfits not found"),
+        Err(resp) => resp,
     }
+}
+
+/// Drops every outfit with a wearable the address does not own, as
+/// decentraland/lamb2's `getOutfits` does: base and off-chain items pass,
+/// third-party items go through `third_party::sanitize_third_party_urns`,
+/// and any other must be an owned item (and, given a token id, that token),
+/// rewritten `<urn>:<tokenId or first owned tokenId>`. The kept wearables
+/// are lowercased. The upstream walk stops at the first wearable not owned,
+/// and its third-party check then decides alone for the items seen so far:
+/// an outfit `[owned third-party, not owned]` is kept with the first only.
+/// Without a collections subgraph nothing is checked, as profiles do.
+async fn sanitize_outfits(
+    state: &MarketplaceState,
+    address: &str,
+    entity: &mut Value,
+) -> Result<(), Response> {
+    let Some(outfits) = entity
+        .pointer_mut("/metadata/outfits")
+        .and_then(Value::as_array_mut)
+    else {
+        return Ok(());
+    };
+    if outfits.is_empty() {
+        return Ok(());
+    }
+    if !graph::any_collections_reader(&state.index) {
+        for outfit in outfits.iter_mut() {
+            if let Some(wearables) = outfit
+                .pointer_mut("/outfit/wearables")
+                .and_then(Value::as_array_mut)
+            {
+                for w in wearables.iter_mut() {
+                    if let Some(lower) = w.as_str().map(str::to_lowercase) {
+                        *w = Value::String(lower);
+                    }
+                }
+            }
+        }
+        return Ok(());
+    }
+    let copies = graph::owned_copies(&state.index, address, "wearable")
+        .await
+        .map_err(|e| super::third_party::fetch_error(address, &e))?;
+    let mut tokens: HashMap<&str, Vec<&str>> = HashMap::new();
+    for c in copies.iter() {
+        tokens
+            .entry(c.urn.as_str())
+            .or_default()
+            .push(c.token_id.as_str());
+    }
+
+    // Per outfit: the wearables kept, the third-party ones among them, and
+    // whether every other one was owned.
+    let walked: Vec<(Vec<String>, Vec<String>, bool)> = outfits
+        .iter()
+        .map(|outfit| {
+            let mut wearables = Vec::new();
+            let mut third_party = Vec::new();
+            let mut all_owned = true;
+            let worn = outfit
+                .pointer("/outfit/wearables")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str);
+            for wearable in worn {
+                if wearable.contains("off-chain") || wearable.contains("base-avatars") {
+                    wearables.push(wearable.to_string());
+                    continue;
+                }
+                if wearable.contains("collections-thirdparty") {
+                    wearables.push(wearable.to_string());
+                    third_party.push(wearable.to_string());
+                    continue;
+                }
+                let (urn, token_id) = super::profiles::split_urn_and_token_id(wearable);
+                let owned = tokens.get(urn).and_then(|held| match token_id {
+                    Some(t) => held.contains(&t).then_some(t),
+                    None => held.first().copied(),
+                });
+                match owned {
+                    Some(t) => wearables.push(format!("{urn}:{t}")),
+                    None => {
+                        all_owned = false;
+                        break;
+                    }
+                }
+            }
+            (wearables, third_party, all_owned)
+        })
+        .collect();
+    let worn_third_party: Vec<String> = walked
+        .iter()
+        .flat_map(|(_, tp, _)| tp.iter().cloned())
+        .collect();
+    let owned_third_party: HashSet<String> = if worn_third_party.is_empty() {
+        HashSet::new()
+    } else {
+        super::third_party::sanitize_third_party_urns(state, address, &worn_third_party)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, address, "outfits: third-party ownership read failed");
+                super::internal_server_error()
+            })?
+            .into_iter()
+            .collect()
+    };
+    let kept: Vec<Value> = outfits
+        .drain(..)
+        .zip(walked)
+        .filter_map(|(mut outfit, (wearables, third_party, all_owned))| {
+            let all_owned = if third_party.is_empty() {
+                all_owned
+            } else {
+                third_party.iter().all(|w| owned_third_party.contains(w))
+            };
+            if !all_owned {
+                return None;
+            }
+            let lowered = wearables.iter().map(|w| Value::String(w.to_lowercase()));
+            if let Some(slot) = outfit.pointer_mut("/outfit/wearables") {
+                *slot = Value::Array(lowered.collect());
+            }
+            Some(outfit)
+        })
+        .collect();
+    *outfits = kept;
+    Ok(())
 }
 
 fn apply_names(entity: &mut Value, owned_names: &[String]) {

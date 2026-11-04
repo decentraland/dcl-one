@@ -48,7 +48,8 @@ pub fn is_base_emote(urn: &str) -> bool {
         && matches!(parts[3], "base-emotes" | "base-scene-emotes")
 }
 
-fn split_urn_and_token_id(urn: &str) -> (&str, Option<&str>) {
+/// `splitUrnAndTokenId`: a seven-part non-third-party URN ends in its token id.
+pub(crate) fn split_urn_and_token_id(urn: &str) -> (&str, Option<&str>) {
     let segment_count = urn.split(':').count();
     if segment_count == 7
         && !urn.contains("collections-thirdparty")

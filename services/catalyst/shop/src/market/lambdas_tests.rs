@@ -430,12 +430,21 @@ async fn seed(pool: &PgPool) {
     tp["mappings"] =
         json!({ "matic": { TP_CONTRACT: [{ "type": "range", "from": "1", "to": "3" }] } });
     deploy(pool, "bafytphat", "wearable", TP_URN, tp, &files).await;
+    let linked = |token: u32| format!("{TP_URN}:matic:{TP_CONTRACT}:{token}");
+    let outfit = |slot: u32, wearables: Vec<String>| json!({ "slot": slot, "outfit": { "wearables": wearables } });
     deploy(
         pool,
         "bafyoutfits",
         "outfits",
         &format!("{OWNER}:outfits"),
-        json!({ "outfits": [{ "slot": 0 }, { "slot": 6 }] }),
+        json!({ "outfits": [
+            outfit(0, vec!["urn:decentraland:off-chain:base-avatars:Eyes_00".into(), hat_urn.clone()]),
+            outfit(1, vec![format!("{hat_urn}:10")]),
+            outfit(2, vec![format!("{hat_urn}:99")]),
+            outfit(3, vec![linked(2), format!("urn:decentraland:matic:collections-v2:{COFFEE}:7")]),
+            outfit(4, vec![linked(3)]),
+            outfit(6, vec![]),
+        ] }),
         &[],
     )
     .await;
@@ -742,10 +751,21 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     let (status, body) = get(&state, &format!("/lambdas/outfits/{OWNER}")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["metadata"]["namesForExtraSlots"], json!(["alice"]));
+    let hat = format!("urn:decentraland:matic:collections-v2:{COFFEE}:1");
     assert_eq!(
-        body["metadata"]["outfits"].as_array().unwrap().len(),
-        2,
-        "a name owner keeps the extra slots"
+        body["metadata"]["outfits"],
+        json!([
+            // The newest copy's token when none is named; lowercased.
+            { "slot": 0, "outfit": { "wearables": ["urn:decentraland:off-chain:base-avatars:eyes_00", format!("{hat}:11")] } },
+            { "slot": 1, "outfit": { "wearables": [format!("{hat}:10")] } },
+            // Slot 2 names a token the owner does not hold. Slot 3 keeps the
+            // upstream quirk: the walk stops at the item not owned and the
+            // owned third-party item decides. Slot 4's NFT is not held.
+            { "slot": 3, "outfit": { "wearables": [format!("{TP_URN}:matic:{TP_CONTRACT}:2")] } },
+            // A name owner keeps the extra slots.
+            { "slot": 6, "outfit": { "wearables": [] } },
+        ]),
+        "{body}"
     );
     let (status, _) = get(
         &state,
