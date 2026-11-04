@@ -1,13 +1,11 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 
 use bevy::{asset::RenderAssetUsages, prelude::*, render::render_resource::PrimitiveTopology};
 use bevy_console::ConsoleCommand;
 use common::structs::PrimaryUser;
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
-use dcl_types::interface::CrdtStore;
 use scene_material::SceneMaterial;
 use serde_json::{json, Value};
-use web_time::{Duration, Instant};
 
 use crate::{
     asset_preload::plugin::{LoadingPreloadedAsset, PreloadedAsset},
@@ -15,6 +13,7 @@ use crate::{
         CurrentSceneLoading, PointerResult, SceneLoading, SuperUserScene, PARCEL_SIZE,
     },
     renderer_context::RendererSceneContext,
+    scene_traffic::{Batch, SceneTraffic, Tick},
     update_world::{
         gltf_container::{GltfLoadingCount, SceneResourceLookup},
         mesh_collider::SceneColliderData,
@@ -221,118 +220,36 @@ fn draw_bounds(
     }
 }
 
-#[derive(Clone, Copy, Default)]
-struct Batch {
-    bytes: usize,
-    updates: usize,
-}
-
-impl Batch {
-    fn measure(crdt: &CrdtStore) -> Self {
-        let mut batch = Self::default();
-        for state in crdt.lww.values() {
-            batch.updates += state.last_write.len();
-            batch.bytes += state
-                .last_write
-                .values()
-                .filter(|v| v.is_some)
-                .map(|v| v.data.len())
-                .sum::<usize>();
-        }
-        for values in crdt.go.values().flat_map(|state| state.0.values()) {
-            batch.updates += values.len();
-            batch.bytes += values.iter().map(|v| v.data.len()).sum::<usize>();
-        }
-        batch
+fn traffic_report(history: &SceneTraffic) -> Value {
+    let ticks = &history.ticks;
+    if ticks.is_empty() {
+        return Value::Null;
     }
-}
-
-struct Tick {
-    dt: f64,
-    sent: Batch,
-    received: Batch,
-}
-
-/// Sampling is attached only to the queried parcel. Stop after the HUD stops reading it.
-#[derive(Component)]
-pub(super) struct SceneTraffic {
-    last_read: Instant,
-    sent: Option<Batch>,
-    ticks: VecDeque<Tick>,
-}
-
-impl SceneTraffic {
-    fn new() -> Self {
-        Self {
-            last_read: Instant::now(),
-            sent: None,
-            ticks: VecDeque::with_capacity(256),
-        }
-    }
-    pub(super) fn expired(&self) -> bool {
-        self.last_read.elapsed() > Duration::from_secs(4)
-    }
-
-    pub(super) fn record_sent(&mut self, crdt: &CrdtStore) {
-        if !self.expired() {
-            self.sent = Some(Batch::measure(crdt));
-        }
-    }
-    pub(super) fn record_received(&mut self, crdt: &CrdtStore, dt: f64) {
-        let Some(sent) = self.sent.take() else {
-            return;
-        };
-        if !dt.is_finite() || dt <= 0.0 {
-            return;
-        }
-        if self.ticks.len() == 256 {
-            self.ticks.pop_front();
-        }
-        self.ticks.push_back(Tick {
-            dt,
-            sent,
-            received: Batch::measure(crdt),
-        });
-    }
-    fn report(&mut self) -> Value {
-        if self.expired() {
-            self.ticks.clear();
-            self.sent = None;
-        }
-        self.last_read = Instant::now();
-        if self.ticks.is_empty() {
-            return Value::Null;
-        }
-        let seconds = self.ticks.iter().map(|tick| tick.dt).sum::<f64>();
-        let direction = |batch: fn(&Tick) -> Batch| {
-            let bytes: Vec<usize> = self.ticks.iter().map(|tick| batch(tick).bytes).collect();
-            let updates: Vec<usize> = self.ticks.iter().map(|tick| batch(tick).updates).collect();
-            let total_updates = updates.iter().map(|v| *v as u64).sum::<u64>();
-            let total_bytes = bytes.iter().map(|v| *v as u64).sum::<u64>();
-            let mean = total_updates as f64 / updates.len() as f64;
-            let spikes = updates
-                .iter()
-                .filter(|count| **count as f64 > 2.0 * mean)
-                .count();
-            json!({
-                "range": [updates.iter().min().copied(), updates.iter().max().copied(), Some(spikes)],
-                "total": [total_bytes, total_updates],
-                "rate": [(total_bytes as f64 / seconds).round(), (total_updates as f64 / seconds).round()],
-                "bytes": {"unit":"bytes/tick","samples":bytes},
-                "updates": {"unit":"updates/tick","samples":updates}
-            })
-        };
-        let fps: Vec<f64> = self
-            .ticks
+    let seconds = ticks.iter().map(|tick| tick.dt).sum::<f64>();
+    let direction = |batch: fn(&Tick) -> Batch| {
+        let bytes: Vec<usize> = ticks.iter().map(|tick| batch(tick).bytes).collect();
+        let updates: Vec<usize> = ticks.iter().map(|tick| batch(tick).updates).collect();
+        let total_updates = updates.iter().map(|v| *v as u64).sum::<u64>();
+        let total_bytes = bytes.iter().map(|v| *v as u64).sum::<u64>();
+        let mean = total_updates as f64 / updates.len() as f64;
+        let spikes = updates
             .iter()
-            .map(|tick| (1.0 / tick.dt).round())
-            .collect();
-        let recent = self.ticks.len().min(32);
-        json!({"fps": (recent as f64 / self.ticks.iter().rev().take(recent).map(|t|t.dt).sum::<f64>()).round(),
-            "minFps":fps.iter().copied().reduce(f64::min), "maxFps":fps.iter().copied().reduce(f64::max),
-            "hiccups":self.ticks.iter().filter(|t|t.dt>0.05).count(), "tickFps":{"unit":"FPS", "samples":fps},
-            "from":direction(|t|t.received), "to":direction(|t|t.sent)})
-    }
+            .filter(|count| **count as f64 > 2.0 * mean)
+            .count();
+        json!({
+            "range": [updates.iter().min().copied(), updates.iter().max().copied(), Some(spikes)],
+            "total": [total_bytes, total_updates],
+            "rate": [(total_bytes as f64 / seconds).round(), (total_updates as f64 / seconds).round()],
+            "bytes": {"unit":"bytes/tick","samples":bytes},
+            "updates": {"unit":"updates/tick","samples":updates}
+        })
+    };
+    let fps: Vec<f64> = ticks.iter().map(|tick| (1.0 / tick.dt).round()).collect();
+    let recent = ticks.len().min(32);
+    json!({"fps": (recent as f64 / ticks.iter().rev().take(recent).map(|t|t.dt).sum::<f64>()).round(),
+        "minFps":fps.iter().copied().reduce(f64::min), "maxFps":fps.iter().copied().reduce(f64::max),
+        "hiccups":ticks.iter().filter(|t|t.dt>0.05).count(), "tickFps":{"unit":"FPS", "samples":fps},
+        "from":direction(|t|t.received), "to":direction(|t|t.sent)})
 }
 
 /// Runtime counters for the player's parcel scene.
@@ -373,8 +290,7 @@ fn scene_state(
     containing: ContainingScene,
     scenes: Query<(&RendererSceneContext, Has<SuperUserScene>)>,
     bounds: Res<ShowBounds>,
-    mut histories: Query<&mut SceneTraffic>,
-    mut commands: Commands,
+    histories: Query<&SceneTraffic>,
 ) {
     if input.take().is_none() {
         return;
@@ -422,15 +338,9 @@ fn scene_state(
         scene.base.y as f32 * PARCEL_SIZE,
     );
     let root = scene.scene_id.0;
-    let history = match histories.get_mut(root) {
-        Ok(mut history) => history.report(),
-        Err(_) => {
-            commands.entity(root).try_insert(SceneTraffic::new());
-            Value::Null
-        }
-    };
+    let history = histories.get(root).ok().map(traffic_report);
     // Browser scene workers do not publish V8 heap readings or the native fetch counters.
-    unavailable["history"] = "Waiting for a complete scene tick while this section is open.".into();
+    unavailable["history"] = "Waiting for a complete tick in the current parcel scene.".into();
     unavailable["bytesPerSecond"] = "Waiting for two consecutive worker samples.".into();
     unavailable["height"] = "The scene has no parcel bounds.".into();
     unavailable[""] = "The parcel scene worker has not reported a sample.".into();
@@ -728,11 +638,10 @@ mod tests {
     use crate::initialize_scene::{LiveScenes, PortableScenes, ScenePointers};
     use bevy_console::{ConsoleCommandEntered, ConsoleResponder};
     use dcl_component::{DclReader, SceneComponentId, SceneCrdtTimestamp, SceneEntityId};
-    use dcl_types::interface::CrdtType;
+    use dcl_types::interface::{CrdtStore, CrdtType};
     use std::sync::{Arc, Mutex};
 
-    #[test]
-    fn empty_parcel_keeps_player_coordinates_and_explains_missing_scene_readings() {
+    fn scene_state_app() -> App {
         let mut app = App::new();
         app.add_plugins(console::ConsolePlugin {
             add_bevy_console: false,
@@ -742,15 +651,13 @@ mod tests {
         .init_resource::<ScenePointers>()
         .init_resource::<ShowBounds>()
         .add_console_command::<SceneState, _>(scene_state);
-        let mut pointers = app.world_mut().resource_mut::<ScenePointers>();
-        pointers.set_realm(IVec2::ZERO, IVec2::ONE);
-        pointers.insert(IVec2::ZERO, PointerResult::Nothing);
-        app.world_mut().spawn((
-            PrimaryUser::default(),
-            GlobalTransform::from_translation(Vec3::new(8.0, 2.0, -8.0)),
-        ));
-        app.update();
+        app.world_mut()
+            .resource_mut::<ScenePointers>()
+            .set_realm(IVec2::ZERO, IVec2::ONE);
+        app
+    }
 
+    fn read_scene_state(app: &mut App) -> Value {
         let result = Arc::new(Mutex::new(None));
         let responder: ConsoleResponder = {
             let result = result.clone();
@@ -763,13 +670,93 @@ mod tests {
         });
         app.update();
         let reply = result.lock().unwrap().take().unwrap().unwrap();
-        let report: Value = serde_json::from_str(&reply).unwrap();
+        serde_json::from_str(&reply).unwrap()
+    }
+
+    #[test]
+    fn empty_parcel_keeps_player_coordinates_and_explains_missing_scene_readings() {
+        let mut app = scene_state_app();
+        app.world_mut()
+            .resource_mut::<ScenePointers>()
+            .insert(IVec2::ZERO, PointerResult::Nothing);
+        app.world_mut().spawn((
+            PrimaryUser::default(),
+            GlobalTransform::from_translation(Vec3::new(8.0, 2.0, -8.0)),
+        ));
+        app.update();
+        let report = read_scene_state(&mut app);
         assert_eq!(report["world"], json!([8.0, 2.0, 8.0]));
         assert_eq!(
             report["unavailable"][""],
             "There is no scene on this parcel."
         );
         assert!(report["parcels"].is_null());
+    }
+
+    #[test]
+    fn first_scene_state_read_has_ticks_from_the_current_parcel_only() {
+        let mut app = scene_state_app();
+        app.add_systems(Update, crate::scene_traffic::track_parcel);
+        let player = app
+            .world_mut()
+            .spawn((PrimaryUser::default(), GlobalTransform::IDENTITY))
+            .id();
+        let parcels = [IVec2::ZERO, IVec2::X].map(|parcel| {
+            let world = app.world_mut();
+            let root = world.spawn_empty().id();
+            let hash = parcel.to_string();
+            world.entity_mut(root).insert(RendererSceneContext::new(
+                dcl_types::SceneId(root),
+                hash.clone(),
+                String::new(),
+                false,
+                0,
+                hash.clone(),
+                parcel,
+                [parcel].into_iter().collect(),
+                vec![],
+                default(),
+                vec![],
+                root,
+                0.0,
+                false,
+                "sdk7",
+                false,
+                false,
+            ));
+            world
+                .resource_mut::<LiveScenes>()
+                .scenes
+                .insert(hash.clone(), root);
+            world
+                .resource_mut::<ScenePointers>()
+                .insert(parcel, PointerResult::Exists { hash, urn: None });
+            root
+        });
+        app.update();
+        let empty = CrdtStore::default();
+        let incoming = component_update();
+        let mut history = app.world_mut().get_mut::<SceneTraffic>(parcels[0]).unwrap();
+        history.record_sent(&empty);
+        history.record_received(&incoming, 0.04);
+        let first = read_scene_state(&mut app);
+        assert_eq!(first["history"]["tickFps"]["samples"], json!([25.0]));
+        assert_eq!(first["history"]["from"]["rate"], json!([750.0, 25.0]));
+        assert!(app.world().get::<SceneTraffic>(parcels[1]).is_none());
+
+        *app.world_mut().get_mut::<GlobalTransform>(player).unwrap() =
+            GlobalTransform::from_translation(Vec3::X * PARCEL_SIZE);
+        app.update();
+        assert!(app.world().get::<SceneTraffic>(parcels[0]).is_none());
+        let mut next = app.world_mut().get_mut::<SceneTraffic>(parcels[1]).unwrap();
+        // A reply already in flight on entry has no matching dispatch on this parcel.
+        next.record_received(&incoming, 0.04);
+        next.record_sent(&empty);
+        next.record_received(&incoming, 0.02);
+        assert_eq!(
+            read_scene_state(&mut app)["history"]["tickFps"]["samples"],
+            json!([50.0])
+        );
     }
 
     #[test]
@@ -788,9 +775,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn charts_pair_actual_dispatched_and_received_component_batches() {
-        let mut history = SceneTraffic::new();
+    fn component_update() -> CrdtStore {
         let mut incoming = CrdtStore::default();
         incoming.try_update(
             SceneComponentId(42),
@@ -799,17 +784,24 @@ mod tests {
             SceneCrdtTimestamp(1),
             Some(&mut DclReader::new(&[5; 30])),
         );
+        incoming
+    }
+
+    #[test]
+    fn charts_pair_actual_dispatched_and_received_component_batches() {
+        let mut history = SceneTraffic::default();
+        let incoming = component_update();
         let empty = CrdtStore::default();
         history.record_received(&incoming, 0.02);
         assert!(
-            history.report().is_null(),
-            "opening mid-tick must not invent an outbound sample"
+            traffic_report(&history).is_null(),
+            "entering mid-tick must not invent an outbound sample"
         );
         for _ in 0..260 {
             history.record_sent(&empty);
             history.record_received(&incoming, 0.02);
         }
-        let report = history.report();
+        let report = traffic_report(&history);
         assert_eq!(report["tickFps"]["samples"].as_array().unwrap().len(), 256);
         assert_eq!(report["tickFps"]["samples"][0], 50.0);
         assert_eq!(report["from"]["bytes"]["samples"][255], 30);

@@ -10,6 +10,7 @@ use common::{
     util::AsH160,
 };
 use comms::{global_crdt::ForeignPlayer, profile::UserProfile};
+use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use scene_runner::{initialize_scene::SuperUserScene, SceneEntity};
 use serde_json::{json, Value};
 
@@ -19,11 +20,39 @@ use crate::{
     AvatarDefinition, AvatarLoaded, AvatarProcessed, AvatarSelection, PreviousAvatar,
 };
 
+pub(super) fn register(app: &mut App) {
+    app.add_console_command::<AvatarStateCommand, _>(avatar_state_cmd);
+
+    app.add_debug_section(DebugSection {
+        title: "Avatar",
+        query: "/avatar_state --panel",
+        fields: &[
+            ("Body shape", "rendered.bodyShape"),
+            ("Address", "address"),
+            ("Rendered wearables", "rendered.wearables"),
+            ("Hidden slots", "rendered.hidden"),
+            ("Equipped emotes", "selected.emotes"),
+            ("Animation", "emote.urn"),
+            ("Animation source", "emote.source"),
+        ],
+        actions: &[(
+            "Play wave",
+            "/emote urn:decentraland:off-chain:base-emotes:wave",
+        )],
+        inputs: &[DebugInput {
+            label: "Play emote (URN or equipped slot)",
+            field: "",
+            command: "/emote {value}",
+            kind: DebugInputKind::Text,
+        }],
+    });
+}
+
 /// Report, as JSON, what avatars are selected to wear, what was built from that and the emote they
 /// play: the local player's, all of them, or the player with an address
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/avatar_state")]
-pub struct AvatarStateCommand {
+struct AvatarStateCommand {
     /// `all`, or a player's address; the local player's avatar by default
     target: Option<String>,
     /// Read the local player's completed model and explain any missing panel readings.
@@ -194,7 +223,7 @@ fn hidden_slots<'a>(hides: impl IntoIterator<Item = &'a WearableCategory>) -> Ve
 }
 
 #[allow(clippy::type_complexity)]
-pub fn avatar_state_cmd(
+fn avatar_state_cmd(
     mut input: ConsoleCommand<AvatarStateCommand>,
     avatars: Query<(
         Entity,

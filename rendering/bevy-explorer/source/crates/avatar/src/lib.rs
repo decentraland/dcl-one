@@ -23,7 +23,7 @@ use collectibles::{
     CollectibleError, CollectibleManager, Emote, EmoteUrn,
 };
 use colliders::AvatarColliderPlugin;
-use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+use console::DoAddConsoleCommand;
 use npc_dynamics::NpcMovementPlugin;
 use scene_material::{
     SceneBound, SceneBounds, SceneMaterial, SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
@@ -169,33 +169,7 @@ impl Plugin for AvatarPlugin {
         );
 
         app.add_preview_console_command::<DebugDumpAvatar, _>(debug_dump_avatar);
-        app.add_console_command::<avatar_state::AvatarStateCommand, _>(
-            avatar_state::avatar_state_cmd,
-        );
-
-        app.add_debug_section(DebugSection {
-            title: "Avatar",
-            query: "/avatar_state --panel",
-            fields: &[
-                ("Body shape", "rendered.bodyShape"),
-                ("Address", "address"),
-                ("Rendered wearables", "rendered.wearables"),
-                ("Hidden slots", "rendered.hidden"),
-                ("Equipped emotes", "selected.emotes"),
-                ("Animation", "emote.urn"),
-                ("Animation source", "emote.source"),
-            ],
-            actions: &[(
-                "Play wave",
-                "/emote urn:decentraland:off-chain:base-emotes:wave",
-            )],
-            inputs: &[DebugInput {
-                label: "Play emote (URN or equipped slot)",
-                field: "",
-                command: "/emote {value}",
-                kind: DebugInputKind::Text,
-            }],
-        });
+        avatar_state::register(app);
 
         app.add_observer(add_attach_points_to_avatar_shape);
         app.add_observer(remove_attach_points_from_avatar_shape);

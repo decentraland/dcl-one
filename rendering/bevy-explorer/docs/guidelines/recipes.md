@@ -162,7 +162,15 @@ When developing a runtime feature, include the diagnostics that answer a concret
 question. Show the effective state, units, scope and reason for an unavailable reading.
 For an adjustable feature, bind its existing validated action or setting. Register controls
 only where the feature and its permission level are available. Keep keys, tokens, private
-messages and signed URLs out of the panel. Compute expensive readings on demand.
+messages and signed URLs out of the panel.
+
+Keep section labels, console bindings and JSON formatting in a diagnostics module beside
+the feature. The feature owns its state, transitions and permission checks. Read existing
+components on demand. For rates and histories, retain the smallest counters or bounded
+window needed to answer the first query after activity. When the panel reopens, show
+activity that occurred while polling was stopped. Build charts and format snapshots
+only when queried, after releasing any producer lock. Verify the first read with the
+panel closed throughout the activity being measured.
 
 Use `DebugInput` for a toggle, choice, number or text argument. A field path binds the
 control to live state. A command template substitutes `{value}` into its arguments.

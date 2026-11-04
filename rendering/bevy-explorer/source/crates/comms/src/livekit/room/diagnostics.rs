@@ -7,14 +7,15 @@ use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddCo
 use serde_json::json;
 
 use super::{
-    ConnectFailed, Connected, Connecting, Disconnected, LivekitRoom, Reconnecting, RoomTraffic,
+    control::{client_can_control, room_control_block, RoomConnections, RoomKind, RoomPaused},
+    ConnectFailed, Connected, Disconnected, LivekitRoom, Reconnecting,
 };
 use crate::{
     automation::RoomState,
     global_crdt::ForeignPlayer,
     livekit::{
         participant::{ConnectionQuality, HostedBy, LivekitParticipant, Local, ParticipantIndex},
-        ConnectionAvailability, LivekitNetworkMessage, LivekitRuntimeRes, LivekitTransport,
+        ConnectionAvailability, LivekitTransport,
     },
     private_chat::PrivateChatRoom,
     profile::ProfileMetaCache,
@@ -22,15 +23,14 @@ use crate::{
 };
 use bevy::ecs::relationship::Relationship;
 
-pub(super) fn register(app: &mut App) {
+pub(in crate::livekit) fn register(app: &mut App) {
     app.add_console_command::<RoomDiagnostics, _>(room_diagnostics);
-    let client = !app
-        .world()
-        .contains_resource::<common::structs::NoRenderApp>()
-        && !common::structs::server_mode();
+    let client = client_can_control(
+        app.world()
+            .contains_resource::<common::structs::NoRenderApp>(),
+    );
     if client {
-        app.add_console_command::<RoomConnectionCommand, _>(room_connection)
-            .add_systems(Update, (close_paused_rooms, discard_paused_messages));
+        app.add_console_command::<RoomConnectionCommand, _>(room_connection);
     }
     for (title, scope) in [
         ("Island room", "island"),
@@ -132,26 +132,13 @@ enum Scope {
 }
 
 impl Scope {
-    fn for_room(scene: bool, private: bool, transport: bool) -> Option<Self> {
-        if private {
-            Some(Self::Chat)
-        } else if !transport {
-            None
-        } else if scene {
-            Some(Self::Scene)
-        } else {
-            Some(Self::Island)
+    fn room_kind(self) -> Option<RoomKind> {
+        match self {
+            Self::Island => Some(RoomKind::Island),
+            Self::Scene => Some(RoomKind::Scene),
+            Self::Chat => Some(RoomKind::Chat),
+            Self::Info | Self::Throughput => None,
         }
-    }
-}
-
-fn room_control_block(policy: ConnectionAvailability, no_render: bool) -> Option<&'static str> {
-    if common::structs::server_mode() || no_render {
-        Some("Only a graphical player client can control room connections")
-    } else if policy == ConnectionAvailability::Unavailable {
-        Some("Room connections are controlled by session policy")
-    } else {
-        None
     }
 }
 
@@ -178,7 +165,6 @@ fn room_diagnostics(
             Has<Reconnecting>,
             Has<Disconnected>,
             Has<ConnectFailed>,
-            Option<&RoomTraffic>,
             Has<RoomPaused>,
             &LivekitTransport,
         ),
@@ -238,15 +224,16 @@ fn room_diagnostics(
         reconnecting,
         disconnected,
         failed,
-        traffic,
         paused,
         livekit,
     ) in &rooms
     {
-        let Some(scope) = Scope::for_room(scene.is_some(), private, transport) else {
+        let Some(kind) = RoomKind::for_room(scene.is_some(), private, transport) else {
             continue;
         };
-        if scope != command.scope && (command.scope != Scope::Throughput || private) {
+        if Some(kind) != command.scope.room_kind()
+            && (command.scope != Scope::Throughput || private)
+        {
             continue;
         }
         if command.scope != Scope::Throughput && !result["room"].is_null() {
@@ -285,12 +272,13 @@ fn room_diagnostics(
             }
         }
         if command.scope == Scope::Throughput {
-            let key = if scope == Scope::Scene {
+            let key = if kind == RoomKind::Scene {
                 "scene"
             } else {
                 "island"
             };
-            result[key] = json!({"sent": traffic.map(|t| t.sent.last_second().bytes), "received": traffic.map(|t| t.received.last_second().bytes), "peers": peer_quality});
+            let traffic = room.map(|room| room.traffic.last_second());
+            result[key] = json!({"sent": traffic.map(|t| t.sent.bytes), "received": traffic.map(|t| t.received.bytes), "peers": peer_quality});
             if traffic.is_none() {
                 result["unavailable"][key] = json!("Room has not connected");
             } else {
@@ -338,10 +326,6 @@ fn room_diagnostics(
     input.reply_ok(result.to_string());
 }
 
-/// A pause belongs to the current credentialed room. A fresh assignment starts normally.
-#[derive(Component)]
-pub(super) struct RoomPaused;
-
 #[derive(clap::ValueEnum, Clone, Copy)]
 enum RoomAction {
     Connect,
@@ -356,97 +340,13 @@ struct RoomConnectionCommand {
     action: RoomAction,
 }
 
-#[allow(clippy::type_complexity)]
-fn room_connection(
-    mut input: ConsoleCommand<RoomConnectionCommand>,
-    mut commands: Commands,
-    policy: Res<State<ConnectionAvailability>>,
-    no_render: Option<Res<common::structs::NoRenderApp>>,
-    rooms: Query<
-        (
-            Entity,
-            Has<SceneRoom>,
-            Has<PrivateChatRoom>,
-            Has<Transport>,
-            Has<RoomPaused>,
-            Has<ConnectFailed>,
-            Option<&LivekitRoom>,
-        ),
-        With<LivekitTransport>,
-    >,
-) {
-    let Some(Ok(command)) = input.take() else {
-        return;
-    };
-    if let Some(reason) = room_control_block(*policy.get(), no_render.is_some()) {
-        input.reply_failed(reason);
-        return;
-    }
-    let mut matching = rooms.iter().filter(|(_, scene, private, transport, ..)| {
-        Scope::for_room(*scene, *private, *transport) == Some(command.scope)
-    });
-    let Some((entity, _, _, _, paused, failed, room)) = matching.next() else {
-        input.reply_failed("No current room");
-        return;
-    };
-    if matching.next().is_some() {
-        input.reply_failed("More than one room matches");
-        return;
-    }
-    match command.action {
-        RoomAction::Disconnect if !paused => {
-            commands
-                .entity(entity)
-                .insert(RoomPaused)
-                .remove::<Connecting>();
+fn room_connection(mut input: ConsoleCommand<RoomConnectionCommand>, mut rooms: RoomConnections) {
+    if let Some(Ok(command)) = input.take() {
+        let enabled = matches!(command.action, RoomAction::Connect);
+        match rooms.set_enabled(command.scope.room_kind(), enabled) {
+            Ok(()) => input.reply_ok("Room connection request applied"),
+            Err(reason) => input.reply_failed(reason),
         }
-        RoomAction::Connect if paused || failed => {
-            let mut entity = commands.entity(entity);
-            entity.remove::<RoomPaused>();
-            // A refused dial retains Connecting. Its OnAdd observer dials again only
-            // when the marker is removed and re-added.
-            if failed {
-                entity.remove::<Connecting>();
-            }
-            // While close is in flight the SDK will report Disconnected, invoking the
-            // regular reconnect path once cleanup of the old participants has finished.
-            if failed || room.is_none_or(|room| room.closed) {
-                entity.insert(Connecting);
-            }
-        }
-        _ => {}
-    }
-    input.reply_ok("Room connection request applied");
-}
-
-// A dial can finish in the same frame a pause is requested. Close both rooms that
-// were already live at pause time and any room installed by that in-flight dial.
-#[allow(clippy::type_complexity)]
-fn close_paused_rooms(
-    rooms: Query<
-        &LivekitRoom,
-        (
-            With<RoomPaused>,
-            Or<(Added<RoomPaused>, Added<LivekitRoom>)>,
-        ),
-    >,
-    runtime: LivekitRuntimeRes,
-) {
-    for room in &rooms {
-        if !room.closed {
-            let room = room.room.clone();
-            runtime.spawn(async move {
-                if let Err(err) = room.close().await {
-                    warn!("Unable to close paused room: {err}");
-                }
-            });
-        }
-    }
-}
-
-fn discard_paused_messages(mut rooms: Query<&mut LivekitNetworkMessage, With<RoomPaused>>) {
-    for mut messages in &mut rooms {
-        while messages.try_recv().is_ok() {}
     }
 }
 
@@ -518,6 +418,7 @@ fn draw_room_indicators(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::livekit::room::Connecting;
     use bevy_console::ConsoleCommandEntered;
     use std::sync::{Arc, Mutex};
 
@@ -536,19 +437,23 @@ mod tests {
             .id()
     }
 
-    fn island_diagnostics(app: &mut App) -> serde_json::Value {
+    fn invoke(app: &mut App, name: &str, args: &[&str]) -> Result<String, String> {
         let reply = Arc::new(Mutex::new(None));
         let writer = reply.clone();
         app.world_mut().send_event(ConsoleCommandEntered {
-            command_name: "/room_diagnostics".into(),
-            args: vec!["island".into()],
+            command_name: name.into(),
+            args: args.iter().map(|arg| arg.to_string()).collect(),
             responder: Some(Arc::new(move |result| {
                 *writer.lock().unwrap() = Some(result)
             })),
         });
         app.update();
-        let text = reply.lock().unwrap().take().unwrap().unwrap();
-        serde_json::from_str(&text).unwrap()
+        let result = reply.lock().unwrap().take().unwrap();
+        result
+    }
+
+    fn island_diagnostics(app: &mut App) -> serde_json::Value {
+        serde_json::from_str(&invoke(app, "/room_diagnostics", &["island"]).unwrap()).unwrap()
     }
 
     #[test]
@@ -604,6 +509,66 @@ mod tests {
     }
 
     #[test]
+    fn pause_discards_queued_messages_and_policy_blocks_resume() {
+        let mut app = App::new();
+        app.add_plugins((
+            console::ConsolePlugin {
+                add_bevy_console: false,
+            },
+            crate::livekit::runtime::LivekitRuntimePlugin,
+        ))
+        .insert_resource(State::new(ConnectionAvailability::Available))
+        .add_console_command::<RoomConnectionCommand, _>(room_connection);
+        super::super::control::register(&mut app);
+        let room = spawn_island(&mut app);
+        app.update();
+        invoke(&mut app, "/room_connection", &["island", "disconnect"]).unwrap();
+        assert!(app.world().get::<RoomPaused>(room).is_some());
+
+        let sender = app.world().get::<Transport>(room).unwrap().sender.clone();
+        let enqueue = || {
+            sender
+                .try_send(crate::NetworkMessage {
+                    message: Box::new(vec![1_u8]),
+                    unreliable: true,
+                    recipient: crate::NetworkMessageRecipient::All,
+                    topic: None,
+                })
+                .unwrap()
+        };
+        enqueue();
+        app.update();
+        assert!(app
+            .world()
+            .get::<crate::livekit::LivekitNetworkMessage>(room)
+            .unwrap()
+            .is_empty());
+
+        app.insert_resource(State::new(ConnectionAvailability::Unavailable));
+        assert_eq!(
+            invoke(&mut app, "/room_connection", &["island", "connect"]).unwrap_err(),
+            "Room connections are controlled by session policy",
+        );
+        assert!(app.world().get::<RoomPaused>(room).is_some());
+        app.insert_resource(State::new(ConnectionAvailability::Available));
+        app.insert_resource(common::structs::NoRenderApp);
+        assert_eq!(
+            invoke(&mut app, "/room_connection", &["island", "connect"]).unwrap_err(),
+            "Only a graphical player client can control room connections",
+        );
+        assert!(app.world().get::<RoomPaused>(room).is_some());
+        // A producer may enqueue after the last Update drain. The marker removal itself
+        // must retire that message before a resumed room is allowed to publish.
+        enqueue();
+        app.world_mut().entity_mut(room).remove::<RoomPaused>();
+        assert!(app
+            .world()
+            .get::<crate::livekit::LivekitNetworkMessage>(room)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
     fn reconnect_restarts_a_refused_dial_once() {
         let mut app = App::new();
         app.add_plugins(console::ConsolePlugin {
@@ -620,12 +585,7 @@ mod tests {
         app.world_mut().entity_mut(room).insert(Connecting);
         app.update();
         app.world_mut().entity_mut(room).insert(ConnectFailed);
-        app.world_mut().send_event(ConsoleCommandEntered {
-            command_name: "/room_connection".into(),
-            args: vec!["island".into(), "connect".into()],
-            responder: None,
-        });
-        app.update();
+        invoke(&mut app, "/room_connection", &["island", "connect"]).unwrap();
         assert_eq!(
             app.world().get::<LivekitTransport>(room).unwrap().retries,
             2

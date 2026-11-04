@@ -80,7 +80,10 @@ In a development engine build, click the bug button in the lower-right corner of
 In any build, open **Sidebar settings (•••) → Debug panel** or enter `/debug` in chat.
 Use `/debug help` to list the sections available in this client and `/debug <section>`
 to open one directly. Search matches both section titles and controls. Expand the
-sections you want to watch. Collapsing a section stops its queries.
+sections you want to watch. Collapsing a section stops its queries. Download totals and
+connection rates include traffic from before you opened the panel. Current Scene charts
+show up to 256 completed ticks from the player's current parcel scene. Entering a different
+scene starts its own history.
 Pulse and LiveKit rooms show one connection button. It changes from **Disconnect**
 to **Connect** when paused, and is disabled when there is no controllable connection.
 

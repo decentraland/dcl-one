@@ -4,6 +4,7 @@ mod debug_panel;
 #[cfg(feature = "ipfs_debug")]
 mod ipfs_debug;
 pub mod ipfs_path;
+mod request_metrics;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod web_cache;
 
@@ -923,7 +924,7 @@ pub struct RealmConfig {
 }
 
 pub struct IpfsIo {
-    debug: std::sync::Mutex<debug_panel::RequestStats>,
+    request_metrics: std::sync::Mutex<request_metrics::RequestMetrics>,
     /// Effective preview-only delay before a real outbound request, without holding a slot.
     preview_delay_ms: AtomicU32,
     is_preview: bool, // determines whether we always retry failed assets immediately
@@ -972,7 +973,7 @@ impl IpfsIo {
                 ..Default::default()
             }),
             request_slots: tokio::sync::Semaphore::new(num_slots),
-            debug: Default::default(),
+            request_metrics: Default::default(),
             preview_delay_ms: AtomicU32::new(0),
             reqno: default(),
             static_files: static_paths,
@@ -988,6 +989,14 @@ impl IpfsIo {
             #[cfg(feature = "ipfs_debug")]
             debug_overlay_sender,
         }
+    }
+
+    fn preview_request_delay(&self) -> Option<Duration> {
+        if !self.is_preview {
+            return None;
+        }
+        let ms = self.preview_delay_ms.load(Ordering::Relaxed);
+        (ms > 0).then(|| Duration::from_millis(ms.into()))
     }
 
     /// Allow `file://` reads under `root` (canonical). See `allowed_file_roots`.
@@ -2024,10 +2033,14 @@ impl IpfsIo {
             // Headers-phase timeout + body inactivity timeout; the total transfer
             // time is unbounded, so a slow-but-progressing download is never
             // killed — only a stall (no chunk for 10s) or a dead connection trips.
-            let fetched = platform::fetch(
-                self.client.execute(request),
+            let send = self.client.execute(request);
+            let attempt_start = Instant::now();
+            let mut first_byte = None;
+            let fetched = platform::fetch_with_first_byte(
+                send,
                 Duration::from_secs(30),
                 Duration::from_secs(10),
+                || first_byte = Some(attempt_start.elapsed()),
             )
             .await;
 
@@ -2050,7 +2063,7 @@ impl IpfsIo {
                 Err(e) => {
                     #[cfg(not(target_arch = "wasm32"))]
                     if matches!(&e, platform::FetchError::Send(error) if error.is_connect()) {
-                        self.debug.lock().unwrap().connect_failed += 1;
+                        self.request_metrics.lock().unwrap().connect_failed += 1;
                     }
                     let detail = match e {
                         platform::FetchError::Headers => "timed out awaiting headers".to_owned(),
@@ -2091,10 +2104,10 @@ impl IpfsIo {
             #[cfg(not(target_arch = "wasm32"))]
             let sw_cached = false;
             if !sw_cached {
-                self.debug.lock().unwrap().download(
+                self.request_metrics.lock().unwrap().download(
                     fetched.body.len(),
                     transfer_start.elapsed(),
-                    fetched.first_byte,
+                    first_byte,
                 );
             }
 

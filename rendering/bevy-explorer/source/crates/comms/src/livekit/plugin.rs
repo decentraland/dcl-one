@@ -68,6 +68,7 @@ impl Plugin for LivekitPlugin {
         }
         app.add_plugins(LivekitRuntimePlugin);
         app.add_plugins(LivekitRoomPlugin);
+        super::room::diagnostics::register(app);
         app.add_plugins(LivekitParticipantPlugin);
         app.add_plugins(LivekitTrackPlugin);
 

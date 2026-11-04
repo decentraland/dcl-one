@@ -4,6 +4,7 @@
 pub mod automation;
 mod autopilot;
 mod commands;
+mod debug_panel;
 mod deep_link;
 mod ext;
 mod gpu_memory;
@@ -52,9 +53,7 @@ use common::{
     util::UtilsPlugin,
 };
 use comms::CommsPlugin;
-use console::{
-    AddDebugSection, ConsolePlugin, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand,
-};
+use console::{ConsolePlugin, DoAddConsoleCommand};
 use image_processing::ImageProcessingPlugin;
 use imposters::DclImposterPlugin;
 use input_manager::InputManagerPlugin;
@@ -708,58 +707,7 @@ impl DecentralandApp {
         app.add_console_command::<SceneThreadsCommand, _>(scene_threads);
         app.add_console_command::<FpsCommand, _>(set_fps);
         app.add_console_command::<SessionGraphicsCommand, _>(session_graphics);
-        app.add_console_command::<commands::MemoryCommand, _>(commands::debug_memory)
-            .add_debug_section(DebugSection {
-                title: "Memory and limits",
-                query: "/debug_memory",
-                fields: &[
-                    ("Engine memory (MiB)", "used"),
-                    ("Platform capacity (MiB)", "capacity"),
-                    ("Effective cap (MiB)", "cap"),
-                    ("Memory pressure", "pressure"),
-                    ("Thresholds (MiB)", "thresholds"),
-                    ("GPU memory pools", "gpu"),
-                ],
-                actions: &[("Restore platform limit", "/debug_memory 0")],
-                inputs: &[DebugInput {
-                    label: "Session memory limit (MiB)",
-                    field: "limit",
-                    command: "/debug_memory {value}",
-                    kind: DebugInputKind::Number {
-                        min: 0.0,
-                        max: u32::MAX as f64,
-                        step: 1.0,
-                    },
-                }],
-            });
-        app.add_console_command::<commands::PerformanceStateCommand, _>(
-            commands::performance_state,
-        )
-        .add_debug_section(DebugSection {
-            title: "Performance",
-            inputs: &[DebugInput {
-                label: "30 FPS limit",
-                field: "limit30",
-                command: "/session_graphics fps {value}",
-                kind: DebugInputKind::ActionButton {
-                    enable: ("Limit to 30 FPS", "30"),
-                    disable: ("Use configured FPS", ""),
-                },
-            }],
-            query: "/performance_state",
-            fields: &[
-                ("Client version", "version"),
-                ("Frame rate (FPS)", "fps"),
-                ("Frame duration (ms)", "frameMs"),
-                ("Min FPS in last 1,000 frames", "minFps"),
-                ("Max FPS in last 1,000 frames", "maxFps"),
-                ("Hiccups in last 1,000 frames", "hiccups"),
-                ("Target frame rate (FPS)", "targetFps"),
-                ("GPU frame time (ms)", "gpuFrameMs"),
-                ("Engine memory (MiB)", "engineMemoryMiB"),
-            ],
-            actions: &[],
-        });
+        debug_panel::register(&mut app);
 
         app
     }

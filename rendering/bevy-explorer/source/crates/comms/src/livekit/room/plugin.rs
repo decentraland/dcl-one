@@ -1,4 +1,4 @@
-use super::diagnostics::RoomPaused;
+use super::control::RoomPaused;
 use alloy_core::primitives::Address;
 use bevy::{
     platform::{collections::HashMap, sync::Arc},
@@ -6,16 +6,13 @@ use bevy::{
 };
 use common::{debug_panic, structs::AudioDecoderError, util::AsH160};
 use http::Uri;
-use tokio::{
-    sync::{mpsc, oneshot},
-    task::JoinHandle,
-};
+use tokio::sync::{mpsc, oneshot};
 #[cfg(not(target_arch = "wasm32"))]
 use {
     kira::sound::streaming::StreamingSoundData,
     livekit::{
         id::ParticipantIdentity, participant::Participant, ConnectionState, DataPacket,
-        DisconnectReason, Room, RoomError, RoomEvent, RoomOptions, RoomResult,
+        DisconnectReason, Room, RoomEvent, RoomOptions, RoomResult,
     },
 };
 
@@ -29,7 +26,7 @@ use crate::{
         },
         room::{
             Connected, Connecting, ConnectingLivekitRoom, Disconnected, LivekitRoom, Reconnecting,
-            RoomTraffic, UnannouncedParticipants,
+            UnannouncedParticipants,
         },
         track, ConnectionAvailability, LivekitChannelControl, LivekitNetworkMessage,
         LivekitRuntimeRes, LivekitTransport,
@@ -41,7 +38,7 @@ use crate::{
     global_crdt::StreamingSoundData,
     livekit::web::{
         ConnectionState, DataPacket, DisconnectReason, Participant, ParticipantIdentity, Room,
-        RoomError, RoomEvent, RoomOptions, RoomResult,
+        RoomEvent, RoomOptions, RoomResult,
     },
 };
 
@@ -49,7 +46,7 @@ pub struct LivekitRoomPlugin;
 
 impl Plugin for LivekitRoomPlugin {
     fn build(&self, app: &mut App) {
-        super::diagnostics::register(app);
+        super::control::register(app);
         app.add_observer(livekit_transport_added);
         app.add_observer(initiate_room_connection);
         app.add_observer(create_local_participant);
@@ -72,12 +69,6 @@ impl Plugin for LivekitRoomPlugin {
         app.add_systems(Last, close_rooms_on_app_exit.run_if(on_event::<AppExit>));
     }
 }
-
-#[derive(Default, Component, Deref, DerefMut)]
-struct RoomTasks(Vec<RoomTask>);
-
-#[derive(Deref, DerefMut)]
-struct RoomTask(#[deref] JoinHandle<Result<(), RoomError>>, usize);
 
 fn livekit_transport_added(trigger: Trigger<OnAdd, LivekitTransport>, mut commands: Commands) {
     let entity = trigger.target();
@@ -153,6 +144,8 @@ fn poll_connecting_rooms(
                             room: Arc::new(room),
                             room_event_receiver,
                             closed: false,
+                            traffic: Default::default(),
+                            publishes: Vec::new(),
                         })
                         .remove::<ConnectingLivekitRoom>();
                 }
@@ -196,15 +189,10 @@ const UNANNOUNCED_GRACE_SECS: f64 = 15.0;
 
 fn process_room_events(
     mut commands: Commands,
-    livekit_rooms: Query<(
-        Entity,
-        &mut LivekitRoom,
-        &mut UnannouncedParticipants,
-        &mut RoomTraffic,
-    )>,
+    livekit_rooms: Query<(Entity, &mut LivekitRoom, &mut UnannouncedParticipants)>,
     time: Res<Time>,
 ) {
-    for (entity, mut livekit_room, mut unannounced, mut traffic) in livekit_rooms {
+    for (entity, mut livekit_room, mut unannounced) in livekit_rooms {
         while let Ok(room_event) = livekit_room.room_event_receiver.try_recv() {
             trace!("in: {:?}", room_event);
 
@@ -259,7 +247,7 @@ fn process_room_events(
                     participant_identity,
                     ..
                 } => {
-                    traffic.received.record(payload.len());
+                    livekit_room.traffic.record_received(payload.len());
                     let identity = participant_identity
                         .filter(|identity| !identity.as_str().is_empty())
                         .or_else(|| participant.as_ref().map(|p| p.identity()));
@@ -378,20 +366,13 @@ fn process_channel_control(
 /// the transport's bounded channel and go out once it is (again).
 #[allow(clippy::type_complexity)]
 fn process_network_message(
-    mut commands: Commands,
     rooms: Query<
-        (
-            Entity,
-            &LivekitRoom,
-            &mut LivekitNetworkMessage,
-            Option<&mut RoomTasks>,
-        ),
+        (&mut LivekitRoom, &mut LivekitNetworkMessage),
         (With<Connected>, Without<RoomPaused>),
     >,
     livekit_runtime: LivekitRuntimeRes,
 ) {
-    let mut new_room_tasks = vec![];
-    for (entity, room, mut network_message, maybe_room_tasks) in rooms {
+    for (mut room, mut network_message) in rooms {
         loop {
             match network_message.try_recv() {
                 Ok(outgoing) => {
@@ -417,26 +398,15 @@ fn process_network_message(
                     };
 
                     let local_participant = room.local_participant();
-                    let task = livekit_runtime
-                        .spawn(async move { local_participant.publish_data(packet).await });
-                    new_room_tasks.push(RoomTask(task, size));
+                    room.publishes.push(livekit_runtime.spawn(async move {
+                        local_participant.publish_data(packet).await.map(|()| size)
+                    }));
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
                 Err(mpsc::error::TryRecvError::Disconnected) => {
                     debug_panic!("Network message of {} was closed.", room.name());
                 }
             }
-        }
-        if let Some(mut room_tasks) = maybe_room_tasks {
-            room_tasks.extend(&mut new_room_tasks.drain(..));
-        } else {
-            #[expect(
-                clippy::drain_collect,
-                reason = "This does not reset the capacity of `new_room_tasks`."
-            )]
-            commands
-                .entity(entity)
-                .try_insert(RoomTasks(new_room_tasks.drain(..).collect()));
         }
     }
 }
@@ -598,19 +568,16 @@ fn unsubscribe_to_voice(
     }
 }
 
-fn verify_room_tasks(
-    rooms: Query<(&mut RoomTasks, &mut RoomTraffic), With<LivekitRoom>>,
-    livekit_runtime: LivekitRuntimeRes,
-) {
-    for (mut room_tasks, mut traffic) in rooms {
+fn verify_room_tasks(rooms: Query<&mut LivekitRoom>, livekit_runtime: LivekitRuntimeRes) {
+    for mut room in rooms {
         let mut i = 0;
-        while i < room_tasks.len() {
-            if room_tasks[i].is_finished() {
-                let RoomTask(task, size) = room_tasks.swap_remove(i);
+        while i < room.publishes.len() {
+            if room.publishes[i].is_finished() {
+                let task = room.publishes.swap_remove(i);
 
                 let res = livekit_runtime.block_on(task);
                 match res {
-                    Ok(Ok(())) => traffic.sent.record(size),
+                    Ok(Ok(size)) => room.traffic.record_sent(size),
                     Ok(Err(err)) => {
                         error!("Failed to complete room task due to {err}.");
                     }

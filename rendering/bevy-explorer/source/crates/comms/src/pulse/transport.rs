@@ -155,8 +155,7 @@ pub struct PulseTransportConfig {
 /// resource.
 pub struct PulseLink {
     outbound: mpsc::Sender<PulseFrame>,
-    pub(crate) sent: crate::traffic::PayloadRate,
-    pub(crate) received: crate::traffic::PayloadRate,
+    pub(super) traffic: crate::traffic::PayloadTraffic,
     pub inbound: mpsc::Receiver<Vec<u8>>,
     pub status: mpsc::Receiver<PulseStatus>,
 }
@@ -167,13 +166,13 @@ impl PulseLink {
         if self.outbound.try_send(frame).is_err() {
             return false;
         }
-        self.sent.record(size);
+        self.traffic.record_sent(size);
         true
     }
 
     pub(crate) fn receive(&mut self) -> Option<Vec<u8>> {
         let bytes = self.inbound.try_recv().ok()?;
-        self.received.record(bytes.len());
+        self.traffic.record_received(bytes.len());
         Some(bytes)
     }
 }
@@ -194,8 +193,7 @@ pub fn pulse_channels(capacity: usize) -> (PulseLink, PulseDriverChannels) {
     (
         PulseLink {
             outbound: outbound_tx,
-            sent: Default::default(),
-            received: Default::default(),
+            traffic: Default::default(),
             inbound: inbound_rx,
             status: status_rx,
         },

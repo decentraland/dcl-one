@@ -1,4 +1,4 @@
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 pub struct BatchSizes {
     samples: u64,
     items: u64,

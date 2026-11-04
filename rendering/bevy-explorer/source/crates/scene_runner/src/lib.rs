@@ -73,6 +73,7 @@ pub mod initialize_scene;
 pub mod permissions;
 pub mod primary_entities;
 pub mod renderer_context;
+mod scene_traffic;
 #[cfg(test)]
 pub mod test;
 pub mod update_scene;
@@ -419,6 +420,7 @@ impl Plugin for SceneRunnerPlugin {
         app.add_plugins(SceneOutputPlugin);
         app.add_plugins(SceneUtilPlugin);
         if app.world().get_resource::<NoRenderApp>().is_none() {
+            app.add_systems(Update, scene_traffic::track_parcel.in_set(SceneSets::Input));
             debug_panel::register(app);
             app.add_plugins(LightsPlugin);
         }
@@ -911,7 +913,7 @@ fn send_scene_updates(
         &mut RendererSceneContext,
         &GlobalTransform,
         Has<SuperUserScene>,
-        Option<&mut debug_panel::SceneTraffic>,
+        Option<&mut scene_traffic::SceneTraffic>,
     )>,
     mut updates: ResMut<SceneUpdates>,
     time: Res<Time>,
@@ -1214,7 +1216,7 @@ fn receive_scene_updates(
     mut toaster: Toaster,
     mut snapshot_events: EventWriter<CrdtSnapshotEvent>,
     mut entity_allocated_events: EventWriter<EntityAllocatedEvent>,
-    mut traffic: Query<&mut debug_panel::SceneTraffic>,
+    mut traffic: Query<&mut scene_traffic::SceneTraffic>,
 ) {
     loop {
         let maybe_completed_job = match updates.receiver().try_recv() {
@@ -1310,11 +1312,7 @@ fn receive_scene_updates(
                             }
                             context.last_update_dt = runtime.0 - context.total_runtime;
                             if let Ok(mut history) = traffic.get_mut(root) {
-                                if history.expired() {
-                                    commands.entity(root).remove::<debug_panel::SceneTraffic>();
-                                } else {
-                                    history.record_received(&crdt, context.last_update_dt);
-                                }
+                                history.record_received(&crdt, context.last_update_dt);
                             }
                             context.total_runtime = runtime.0;
                             context.last_update_frame = frame.0;

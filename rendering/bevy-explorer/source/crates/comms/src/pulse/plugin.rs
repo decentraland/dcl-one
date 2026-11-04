@@ -393,6 +393,48 @@ impl Announcement {
 }
 
 impl PulseSession {
+    fn connection_enabled(&self, no_render: bool) -> Result<bool, &'static str> {
+        if no_render || common::structs::server_mode() {
+            return Err("Only a graphical player client can control the Pulse connection");
+        }
+        if !matches!(self.role, PulseRole::Player(_)) {
+            return Err("Only a player session can control its Pulse connection");
+        }
+        match self.state {
+            Connection::Dead => Err("A terminal disconnect requires a fresh Pulse session"),
+            Connection::Paused => Ok(false),
+            _ => Ok(true),
+        }
+    }
+
+    fn set_connection_enabled(
+        &mut self,
+        enabled: bool,
+        no_render: bool,
+        commands: &mut Commands,
+    ) -> Result<(), &'static str> {
+        if self.connection_enabled(no_render)? == enabled {
+            return Ok(());
+        }
+        if enabled {
+            self.state = Connection::Down { respawn_at: 0.0 };
+        } else {
+            if let Some(transport) = self
+                .role
+                .player_mut()
+                .and_then(|p| p.routing_transport.take())
+            {
+                commands.entity(transport).try_despawn();
+            }
+            self.link = None;
+            self._driver = None;
+            self.decoder.reset();
+            self.last_state = None;
+            self.state = Connection::Paused;
+        }
+        Ok(())
+    }
+
     /// Forward an inbound Pulse update for a peer standing in `parcel` of `realm`, re-homing it
     /// first if that lands in a different scene than the one it was last routed to. A peer that has
     /// left every hosted parcel is reported as departed and its state dropped.

@@ -62,8 +62,6 @@ async fn with_timeout<F: Future>(dur: Duration, fut: F) -> Result<F::Output, Ela
 pub struct FetchedResponse {
     pub headers: reqwest::header::HeaderMap,
     pub body: Vec<u8>,
-    /// Time from sending the request to the first nonempty body chunk.
-    pub first_byte: Option<Duration>,
 }
 
 /// Why a [`fetch`] failed. `E` is the error type of the supplied send future —
@@ -96,7 +94,16 @@ pub async fn fetch<E>(
     headers_timeout: Duration,
     idle_timeout: Duration,
 ) -> Result<FetchedResponse, FetchError<E>> {
-    let start = bevy::platform::time::Instant::now();
+    fetch_with_first_byte(send, headers_timeout, idle_timeout, || {}).await
+}
+
+/// As [`fetch`], calling `on_first_byte` once when a nonempty body chunk arrives.
+pub async fn fetch_with_first_byte<E>(
+    send: impl Future<Output = Result<reqwest::Response, E>>,
+    headers_timeout: Duration,
+    idle_timeout: Duration,
+    on_first_byte: impl FnOnce(),
+) -> Result<FetchedResponse, FetchError<E>> {
     let response = match with_timeout(headers_timeout, send).await {
         Ok(Ok(response)) => response,
         Ok(Err(e)) => return Err(FetchError::Send(e)),
@@ -110,23 +117,19 @@ pub async fn fetch<E>(
     let headers = response.headers().clone();
     let mut stream = Box::pin(response.bytes_stream());
     let mut body = Vec::new();
-    let mut first_byte = None;
+    let mut on_first_byte = Some(on_first_byte);
     loop {
         match with_timeout(idle_timeout, stream.next()).await {
             Ok(Some(Ok(chunk))) => {
-                if first_byte.is_none() && !chunk.is_empty() {
-                    first_byte = Some(start.elapsed());
+                if !chunk.is_empty() {
+                    if let Some(notify) = on_first_byte.take() {
+                        notify();
+                    }
                 }
                 body.extend_from_slice(&chunk);
             }
             Ok(Some(Err(e))) => return Err(FetchError::Body(e)),
-            Ok(None) => {
-                return Ok(FetchedResponse {
-                    headers,
-                    body,
-                    first_byte,
-                })
-            }
+            Ok(None) => return Ok(FetchedResponse { headers, body }),
             Err(Elapsed) => return Err(FetchError::Stalled),
         }
     }

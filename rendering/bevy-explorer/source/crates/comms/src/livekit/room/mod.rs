@@ -1,4 +1,5 @@
-mod diagnostics;
+mod control;
+pub(super) mod diagnostics;
 pub(super) mod plugin;
 
 pub use plugin::{ConnectFailed, ServerRoomTerminal};
@@ -21,19 +22,16 @@ use crate::livekit::{
 };
 
 #[derive(Component, Deref)]
-#[require(UnannouncedParticipants, RoomTraffic)]
+#[require(UnannouncedParticipants)]
 pub struct LivekitRoom {
     #[deref]
     room: Arc<Room>,
     room_event_receiver: mpsc::UnboundedReceiver<RoomEvent>,
     /// The SDK reported this room disconnected (gave up reconnecting); it is closed already.
     closed: bool,
-}
-
-#[derive(Component, Default)]
-pub(super) struct RoomTraffic {
-    received: crate::traffic::PayloadRate,
-    sent: crate::traffic::PayloadRate,
+    traffic: crate::traffic::PayloadTraffic,
+    /// Keep pending publishes with the SDK connection whose payload they contribute to.
+    publishes: Vec<JoinHandle<RoomResult<usize>>>,
 }
 
 /// Senders whose data reached the room before LiveKit announced them, by identity, with the
