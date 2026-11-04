@@ -37,16 +37,19 @@ class SocialVoiceReleaseCiTests(unittest.TestCase):
                         PGHOST='must-not-connect.invalid', PGHOSTADDR='192.0.2.1',
                         PGSERVICE='must-not-use', PGPASSWORD='ambient-test-password',
                         PSQL='must-not-use-ambient-psql')
+        self.env.pop('RUST_TEST_THREADS', None)
         self.write_tool('cargo', '''
 import json, os, subprocess, sys
 from pathlib import Path
 url = os.environ['CATALYST_TEST_DATABASE_URL']
 psql = os.environ['PSQL']
-def query(sql):
-    return subprocess.check_output([psql, '-X', '--no-password', url, '-Atqc', sql], text=True).strip()
+def query(sql, database=url):
+    return subprocess.check_output([psql, '-X', '--no-password', database, '-Atqc', sql], text=True).strip()
 record = {'args': sys.argv[1:], 'url': url, 'psql': psql, 'data': os.environ['PGDATA'],
           'listen': query('SHOW listen_addresses'), 'server': query('SHOW server_version_num'),
-          'role': query('SELECT rolsuper AND rolcreatedb FROM pg_roles WHERE rolname=current_user')}
+          'locks': query('SHOW max_locks_per_transaction'), 'threads': os.environ['RUST_TEST_THREADS'],
+          'role': query('SELECT rolsuper AND rolcreatedb FROM pg_roles WHERE rolname=current_user'),
+          'collation': query("SELECT EXISTS(SELECT 1 FROM pg_collation WHERE collname='en_US.utf8' AND collnamespace='pg_catalog'::regnamespace)", url.replace('/postgres?', '/template1?'))}
 Path(os.environ['RELEASE_CI_TEST_RECORD']).write_text(json.dumps(record))
 sys.exit(int(os.environ.get('RELEASE_CI_TEST_CARGO_EXIT', '0')))
 ''')
@@ -80,7 +83,10 @@ sys.exit(int(os.environ.get('RELEASE_CI_TEST_CARGO_EXIT', '0')))
         self.assertEqual(record['psql'], self.tools['psql'])
         self.assertEqual(record['listen'], '')
         self.assertEqual(record['server'], '180006')
+        self.assertEqual(record['locks'], '1024')
+        self.assertEqual(record['threads'], '2')
         self.assertEqual(record['role'], 't')
+        self.assertEqual(record['collation'], 't')
         self.assert_owned_cluster_removed(record)
 
     def test_cargo_failure_is_not_hidden_and_still_removes_the_owned_cluster(self):

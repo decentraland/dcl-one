@@ -28,7 +28,7 @@ cleanup() {
     fi
   fi
   if [[ $result -ne 0 && -f "$work/postgres.log" ]]; then
-    cat "$work/postgres.log" >&2
+    tail -n 100 "$work/postgres.log" >&2
   fi
   rm -rf -- "$work"
   exit "$result"
@@ -45,15 +45,25 @@ listen_addresses = ''
 unix_socket_directories = '$socket'
 unix_socket_permissions = 0700
 max_connections = 40
+# Captured schemas acquire thousands of object locks in one transaction.
+max_locks_per_transaction = 1024
+log_min_error_statement = panic
 EOF
 pg_ctl -D "$PGDATA" -l "$work/postgres.log" -w -t 30 start
 export CATALYST_TEST_DATABASE_URL="postgresql://release_test@localhost/postgres?host=$socket"
-export PGCONNECT_TIMEOUT=10 PGPASSFILE=/dev/null
+touch "$work/pgpass"
+chmod 600 "$work/pgpass"
+export PGCONNECT_TIMEOUT=10 PGPASSFILE="$work/pgpass"
+export RUST_TEST_THREADS="${RUST_TEST_THREADS:-2}"
 version="$("$PSQL" -X --no-password "$CATALYST_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -Atqc 'SHOW server_version_num')"
 if [[ "$version" != 180006 ]]; then
   echo "Release proof requires PostgreSQL 18.6; server returned $version" >&2
   exit 1
 fi
+# Scratch databases inherit template1. Match the existing development harness's
+# Darwin alias for the collation required by the production bootstrap check.
+"$PSQL" -X --no-password "postgresql://release_test@localhost/template1?host=$socket" -v ON_ERROR_STOP=1 \
+  -c "CREATE COLLATION IF NOT EXISTS pg_catalog.\"en_US.utf8\" (provider=libc, locale='en_US.UTF-8')"
 # Availability and scratch-database privileges must hold before any test can run.
 "$PSQL" -X --no-password "$CATALYST_TEST_DATABASE_URL" -v ON_ERROR_STOP=1 \
   -c 'CREATE DATABASE catalyst_release_ci_probe' -c 'DROP DATABASE catalyst_release_ci_probe'
