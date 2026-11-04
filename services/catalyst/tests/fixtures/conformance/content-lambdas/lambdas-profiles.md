@@ -71,7 +71,7 @@ dcl-one: `ids` must deserialize as `Option<Vec<String>>`. Every id is lowercased
 | `links` | each url kept if `LinkUrl.validate` passes, else `decodeURIComponent` and revalidate, else dropped; `undefined`/`[]` returned as is `profiles.ts:84-106` | regex `(?i)^(?:https?)://[^\s/$.?#].[^\s]*$` **and** `is_safe_http_url` (rejects loopback, private and single-label hosts) `profiles.rs:279-317` | DIVERGENT: dcl-one also drops links to private/single-label hosts. Whether the regex equals `LinkUrl` is not verified (package not vendored) |
 | `hasClaimedName` | always set: `ownedNames.has(avatar.name)`; `false` for default profiles `profiles.ts:197,261` | always set from the owned names (none without `MARKETPLACE_SUBGRAPH_URL`); `false` for default profiles `profiles.rs:215-229,460-467` | MATCH |
 | `bodyShape` | legacy `dcl://` ids translated to URN; `?? ''` `profiles.ts:55-62,265` | untouched | DIVERGENT (legacy ids only) |
-| snapshots | `face256` and `body` overwritten with `<PROFILE_CDN_BASE_URL>/entities/<entityId>/{face,body}.png`; default base `https://profile-images.decentraland.org`; other snapshot keys kept; a missing object becomes `{face256:'',body:''}` and is then overwritten `profiles.ts:73-82,142,266-270` | the same, with the base `PROFILE_CDN_BASE_URL` or, unset (every posture's default), this node's `profile-images` `profiles.rs:230-277` | DIVERGENT: default host only; `PROFILE_CDN_BASE_URL=https://profile-images.decentraland.org` matches |
+| snapshots | `face256` and `body` overwritten with `<PROFILE_CDN_BASE_URL>/entities/<entityId>/{face,body}.png`; default base `https://profile-images.decentraland.org`; other snapshot keys kept; a missing object becomes `{face256:'',body:''}` and is then overwritten `profiles.ts:73-82,142,266-270` | the same, with the base `PROFILE_CDN_BASE_URL` (the mirror posture sets `https://profile-images.decentraland.org`, `services/catalyst/config/src/posture.rs:401-407`) or, unset (island and journey), this node's `profile-images` `profiles.rs:230-277` | MATCH (mirror) |
 | wearables, base | `includes('base-avatars')` → kept as is `profiles.ts:47-49,207-210` | same `profiles.rs:45-47` | MATCH |
 | wearables, on-chain | `splitUrnAndTokenId` (7 segments and not `collections-thirdparty` → urn + tokenId) `decentraland/lamb2:src/logic/utils.ts:51-61`. The URN must equal an owned inventory URN **exactly**. If a tokenId is given it must be one of the owned tokens. Output (`ENSURE_ERC_721` default on, `profiles.ts:141`) is `<ownedUrn>:<tokenId or first owned tokenId>` `profiles.ts:212-229` | same split. Ownership = the token ids held of `(owner, urn)` in the collections subgraph (`urn_in`, subgraph id order), after `:mainnet:`→`:ethereum:` normalization. A named tokenId must be held; the output is `<ownedUrn>:<tokenId or first held tokenId>` `profiles.rs:108-169`, `services/catalyst/chain-index/src/graph.rs:405-462` | DIVERGENT (LP-16 only): `mainnet` spelling accepted; the first held token follows subgraph order, upstream the marketplace API's order (needs capture) |
 | wearables, third-party | Not in the owned inventory, so dropped from the validated list. Then appended at the **end**: v1 `collections-thirdparty` URNs of an L2 collection unchecked; linked (v2) items checked through the content-server mapping + on-chain `ownerOf`/`balanceOf`; order v1, then the NFTs on L1, then those on L2 `profiles.ts:178,199-201,271`, `decentraland/lamb2:src/ports/ownership-checker/tpw-ownership-checker.ts:65-95`, `decentraland/lamb2:src/ports/ownership-checker/contract-helpers.ts:57-91`, `decentraland/lamb2:src/ports/ownership-checker/third-party-item-checker.ts:33-100` | the same split, checks and order: `third_party::sanitize_third_party_urns` over every avatar's non-base wearables, appended after the validated wearables of each avatar `profiles.rs:146-180,379-447`, `services/catalyst/shop/src/market/third_party.rs:1446-1643`. Runs only when a collections subgraph is configured. A linked item on a network with no RPC endpoint reads as not owned | MATCH |
@@ -83,7 +83,7 @@ dcl-one: `ids` must deserialize as `Option<Vec<String>>`. Every id is lowercased
 | emotes, absent | `emotes: []` always present `profiles.ts:233,264` | `emotes: []` `profiles.rs:146-176` | MATCH |
 | emote without `urn` | `emote.urn.includes` throws → whole batch `[]` | kept | DIVERGENT (edge) |
 | default profiles (`pointer` starts with `default`) | nothing owned: every non-base wearable and emote dropped; no TP; `hasClaimedName:false`; no `userId` override `profiles.ts:172,285-294` | the same, with or without a reader `profiles.rs:439-467` | MATCH |
-| no ownership reader configured | n/a (the marketplace API or subgraph is always configured) | without a collections subgraph the wearables and emotes are served as deployed (`emotes` still present) `profiles.rs:128-176,439-446`. The mirror posture sets both subgraphs; island and journey set none | DIVERGENT (config) |
+| no ownership reader configured | n/a (the marketplace API or subgraph is always configured) | without a collections subgraph the wearables and emotes are served as deployed (`emotes` still present) `profiles.rs:128-176,439-446`. A mirror refuses to start with either collections subgraph or the marketplace subgraph set empty (`services/catalyst/config/src/posture.rs:711-744`); island and journey set none by design | MATCH (mirror) |
 | result order | content-server order: pointer-cache hits first (in request order), then DB misses in DB order `decentraland/catalyst:src/logic/active-entities/component.ts:323-356`, `profiles.ts:375-380` | ≤50 ids, no IMS: request order `profiles.rs:527-564`; otherwise byte order of each entity's smallest matching pointer `services/catalyst/content/src/queries.rs:179-211` | DIVERGENT (neither is request order upstream) |
 
 **Responses**
@@ -99,7 +99,7 @@ dcl-one: `ids` must deserialize as `Option<Vec<String>>`. Every id is lowercased
 | success | 200 | `Profile[]` (example below) | `Content-Type: application/json` | `profiles-handler.ts:50-53` | `profiles.rs:711-731` | DIVERGENT (assembly table above) |
 | unknown ids | 200 | `[]` | | | fixture `services/catalyst/shop/src/market/fixtures/profiles-post-200-unknown-id.json` | MATCH |
 | content server unreachable / errors | 200 | `[]` | | `profiles.ts:381-389` | 500 `{"error":"Internal Server Error","message":"Internal Server Error"}` `profiles.rs:485-499,716-719` | DIVERGENT |
-| ownership/names fetch fails (non-overload) | 200 | `[]` (`FetcherError` is caught inside `getProfiles`) | | `profiles.ts:381-389` | 503 `{"error":"Service overloaded, retry shortly","message":"ownership readers unavailable"}` (lamb2's retryable envelope) `profiles.rs:528-547` | DIVERGENT (dcl-one fails closed) |
+| ownership/names fetch fails (non-overload) | 200 | `[]` (`FetcherError` is caught inside `getProfiles`) | | `profiles.ts:381-389` | 503 `{"error":"Service overloaded, retry shortly","message":"ownership readers unavailable"}` (lamb2's retryable envelope) `profiles.rs:528-547` | DIVERGENT, deliberate (LP-10: dcl-one fails closed) |
 | marketplace API bulkhead full | 503 | `{"error":"Service overloaded, retry shortly","message":<msg>}` | | `profiles.ts:383-385`, `errorHandler.ts:17-25` | no equivalent | MISSING (not applicable: no bulkhead) |
 | body > 256 KiB | n/a | | | | 413 | DIVERGENT (edge) |
 
@@ -144,7 +144,7 @@ Success example (upstream shape, `ENSURE_ERC_721` on, default CDN):
 ]
 ```
 
-dcl-one returns the same object; without `PROFILE_CDN_BASE_URL` the snapshot URLs are on this node's `profile-images` host.
+dcl-one returns the same object under the mirror posture; without `PROFILE_CDN_BASE_URL` (island, journey) the snapshot URLs are on this node's `profile-images` host.
 
 **Data dependency**
 - Profile entities: upstream reads its content server. dcl-one reads `content.deployments`/`active_pointers` (peer sync), or the read-through when one is configured `profiles.rs:471-480`. Present.
@@ -263,8 +263,8 @@ dcl-one serves the same handler at `/lambdas/about` and at the root `/about` (`s
 | `configurations.globalScenesUrn` / `scenesUrn` | `[]` / `[]` | `[]` / `[]` | MATCH |
 | `configurations.realmName` | `REALM_NAME`, omitted when unset | same | MATCH |
 | `configurations.map.minimapEnabled`, `sizes` | `true`; `[{-150,150,150,-150},{62,158,162,151},{151,150,163,59}]` | same `about.rs:125-146` | MATCH |
-| `configurations.map.satelliteView` | always `{version:"v1",baseUrl:"https://genesis.city/map/latest",suffixUrl:".jpg",topLeftOffset:{x:-2,y:-6}}` `:103-108` | present only with `MAP_SATELLITE_BASE_URL`, using that value `about.rs:159-167` | DIVERGENT |
-| `configurations.map.parcelView` | always `{version:"v1",imageUrl:"https://api.decentraland.org/v1/minimap.png"}` `:109-112` | this node's parcel view URL, absent when the node has none `about.rs:168-171` | DIVERGENT |
+| `configurations.map.satelliteView` | always `{version:"v1",baseUrl:"https://genesis.city/map/latest",suffixUrl:".jpg",topLeftOffset:{x:-2,y:-6}}` `:103-108` | present with `MAP_SATELLITE_BASE_URL`, using that value `about.rs:159-167`; the mirror posture sets it to `https://genesis.city/map/latest` (`services/catalyst/config/src/posture.rs:456-460`); island and journey omit the view | MATCH (mirror) |
+| `configurations.map.parcelView` | always `{version:"v1",imageUrl:"https://api.decentraland.org/v1/minimap.png"}` `:109-112` | `MAP_PARCEL_VIEW_URL` `about.rs:168-171`; the mirror posture sets `https://api.decentraland.org/v1/minimap.png` (`services/catalyst/config/src/posture.rs:462-468`); island and journey advertise their own minimap | MATCH (mirror) |
 | `comms` | present only with `ARCHIPELAGO_URL`: `{healthy, protocol:"v3", version, commitHash, usersCount, adapter:"archipelago:archipelago:wss://<host>/archipelago/ws"}`. `version`/`commitHash` come from archipelago `/status` `:77-93` | present only with `COMMS_FIXED_ADAPTER`: `{healthy, protocol (COMMS_PROTOCOL, default "v3"), version?, commitHash?, usersCount, adapter:"fixed-adapter:<x>", fixedAdapter:"<x>"}`. `"offline:offline"` when the SFU probe fails `services/catalyst/content/src/about_comms.rs:22-37,92-105,202-227` | DIVERGENT: adapter scheme and extra `fixedAdapter` key |
 | `bff` | `{healthy:true,protocolVersion:"1.0_0",userCount:0,publicUrl:"/bff"}` | same `about.rs:213-218` | MATCH |
 
@@ -384,16 +384,16 @@ LP-06. **Profiles: `hasClaimedName` is always computed.**
 - Severity: none (closed).
 
 LP-07. **Profiles: serving without ownership readers.**
-- Gap: with no collections subgraph configured, wearables and emotes are served as deployed. The mirror posture sets `ETH_/MATIC_COLLECTIONS_SUBGRAPH_URL` and `MARKETPLACE_SUBGRAPH_URL` (`services/catalyst/config/src/posture.rs:273-287`), but an operator can set them empty; island and journey set none by design (no third-party traffic).
-- Expected: upstream always filters.
-- Place: the posture checks in `services/catalyst/config/src/posture.rs`: refuse a mirror whose collections or marketplace subgraph URL is empty. `services/catalyst/shop/src/market/profiles.rs:439-446` keeps serving as deployed on island and journey.
-- Severity: P1.
+- Status: MATCH, no work.
+- Upstream: always filters.
+- dcl-one: a mirror refuses to start when `ETH_COLLECTIONS_SUBGRAPH_URL`, `MATIC_COLLECTIONS_SUBGRAPH_URL` or `MARKETPLACE_SUBGRAPH_URL` is set empty (the posture names all three) `services/catalyst/config/src/posture.rs:654-656,711-744`. Island and journey have no ownership source by design and serve the items as deployed `services/catalyst/shop/src/market/profiles.rs:439-446`.
+- Severity: none (closed).
 
 LP-08. **Profiles: snapshot URLs.**
-- Gap: without `PROFILE_CDN_BASE_URL` (unset under every posture) the base is this node's `profile-images`, not `https://profile-images.decentraland.org`. Face, body, the other keys and a missing object follow upstream.
-- Expected: `face256 = <PROFILE_CDN_BASE_URL or https://profile-images.decentraland.org>/entities/<entityId>/face.png`, `body = …/body.png`, every other snapshot key untouched, a missing object created. `decentraland/lamb2:src/adapters/profiles.ts:73-82,142,266-270`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:230-277` serves the node's own images on purpose (sync never copies snapshot files). Parity needs `PROFILE_CDN_BASE_URL=https://profile-images.decentraland.org`, for example as the mirror posture's default.
-- Severity: P1.
+- Status: MATCH, no work.
+- Upstream: `face256 = <PROFILE_CDN_BASE_URL or https://profile-images.decentraland.org>/entities/<entityId>/face.png`, `body = …/body.png`, every other snapshot key untouched, a missing object created. `decentraland/lamb2:src/adapters/profiles.ts:73-82,142,266-270`.
+- dcl-one: the same `services/catalyst/shop/src/market/profiles.rs:230-277`; the mirror posture sets `PROFILE_CDN_BASE_URL=https://profile-images.decentraland.org` `services/catalyst/config/src/posture.rs:401-407`. Island and journey leave it unset and point at this node's `/profile-images` (sync never copies snapshot files).
+- Severity: none (closed).
 
 LP-09. **POST /profiles: `If-Modified-Since`.**
 - Status: MATCH, no work.
@@ -402,10 +402,10 @@ LP-09. **POST /profiles: `If-Modified-Since`.**
 - Severity: none (closed).
 
 LP-10. **Profiles: failure semantics.**
-- Gap: on a DB failure dcl-one answers 500; on a reader failure, 503 `{"error":"Service overloaded, retry shortly","message":"ownership readers unavailable"}` (lamb2's retryable envelope).
-- Expected: upstream answers `200 []` (POST), 404 (`/profiles/:id`) or the stub (`/profile/:id`) for any failure except overload. Overload is 503 with `"error":"Service overloaded, retry shortly"`. `decentraland/lamb2:src/adapters/profiles.ts:381-389`, `decentraland/lamb2:src/controllers/handlers/errorHandler.ts:17-25`.
-- Place: `services/catalyst/shop/src/market/profiles.rs:528-547`. Decide whether to keep failing closed.
-- Severity: P1.
+- Deliberate difference: on a DB failure dcl-one answers 500; on a reader failure, 503 `{"error":"Service overloaded, retry shortly","message":"ownership readers unavailable"}` (lamb2's retryable envelope). dcl-one fails closed: a `[]`, 404 or stub reads to a client as "no profile", and an unproven inventory is not served.
+- Upstream: `200 []` (POST), 404 (`/profiles/:id`) or the stub (`/profile/:id`) for any failure except overload; overload is 503 with `"error":"Service overloaded, retry shortly"`. `decentraland/lamb2:src/adapters/profiles.ts:381-389`, `decentraland/lamb2:src/controllers/handlers/errorHandler.ts:17-25`.
+- Place: `services/catalyst/shop/src/market/profiles.rs:528-547`.
+- Severity: none (kept by decision).
 
 LP-11. **GET /profiles/:id and /profile/:id: synthetic default profiles.**
 - Status: MATCH, no work.
@@ -420,10 +420,10 @@ LP-12. **/lambdas/about not routed.**
 - Severity: none (closed).
 
 LP-13. **/about: map views.**
-- Gap: under the mirror posture `satelliteView` is upstream's (`MAP_SATELLITE_BASE_URL=https://genesis.city/map/latest`, `services/catalyst/config/src/posture.rs:445-450`) and `parcelView` is this node's minimap (`MAP_PARCEL_VIEW_URL` unset). Island and journey omit `satelliteView` and point `parcelView` at the node, by design.
-- Expected: always `satelliteView {version:"v1",baseUrl:"https://genesis.city/map/latest",suffixUrl:".jpg",topLeftOffset:{x:-2,y:-6}}` and `parcelView {version:"v1",imageUrl:"https://api.decentraland.org/v1/minimap.png"}`. `decentraland/lamb2:src/controllers/handlers/about-handler.ts:96-113`.
-- Place: the mirror row of `MAP_PARCEL_VIEW_URL` in `services/catalyst/config/src/posture.rs`.
-- Severity: P1.
+- Status: MATCH, no work.
+- Upstream: always `satelliteView {version:"v1",baseUrl:"https://genesis.city/map/latest",suffixUrl:".jpg",topLeftOffset:{x:-2,y:-6}}` and `parcelView {version:"v1",imageUrl:"https://api.decentraland.org/v1/minimap.png"}`. `decentraland/lamb2:src/controllers/handlers/about-handler.ts:96-113`.
+- dcl-one: the mirror posture sets `MAP_SATELLITE_BASE_URL=https://genesis.city/map/latest` and `MAP_PARCEL_VIEW_URL=https://api.decentraland.org/v1/minimap.png` `services/catalyst/config/src/posture.rs:456-468`. Island and journey omit the satellite view and advertise their own minimap, by design (no third-party host).
+- Severity: none (closed).
 
 LP-14. **/about: comms block.**
 - Gap: `adapter` is `fixed-adapter:<x>` with an extra `fixedAdapter` key (or `offline:offline`), driven by `COMMS_FIXED_ADAPTER`.
