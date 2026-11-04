@@ -334,7 +334,10 @@ async fn hundred_thousand_completed_events_use_bounded_pages_and_finish_a_cycle_
         .unwrap();
     sqlx::raw_sql("ANALYZE explore.event; ANALYZE social.communities; ANALYZE social.community_ranking_events; ANALYZE explore.event_attendance_local")
         .execute(&pool).await.unwrap();
-    let mut cursor = EndedScan::default();
+    let mut cursor = EndedScan {
+        after_event: "history-000000".to_owned(),
+        ..Default::default()
+    };
     let started = std::time::Instant::now();
     let mut passes = 0;
     loop {
@@ -348,6 +351,7 @@ async fn hundred_thousand_completed_events_use_bounded_pages_and_finish_a_cycle_
             "each budgeted pass must retain useful progress"
         );
     }
+    assert_eq!(cursor, EndedScan::default(), "the full cycle must wrap");
     let elapsed = started.elapsed();
     assert_eq!(counts(&pool, community).await, (100000, 0, 100000));
     eprintln!(
