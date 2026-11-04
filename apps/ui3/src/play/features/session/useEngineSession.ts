@@ -26,7 +26,9 @@ import { closeTopPopup, hasOpenPopup, subscribePopups } from '../../design'
 import { requestDebugPanel } from '../debug/useDebugPanel'
 import { emitFriendEvent } from '../friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
+import { clearNotificationToasts, queueNotificationToasts } from '../notifications/NotificationToast'
 import { bootMode } from '../../lib/bootMode'
+import { notificationTimeMs } from '../../lib/notificationTime'
 import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { dispatchCancelLayer } from '../../lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '../../lib/inputLock'
@@ -952,6 +954,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // What the profile looked like before the in-flight save, to put back if the engine rejects it.
   const profileRevertRef = useRef<{ address: string; profile: Profile | null; stored: Profile | undefined } | null>(null)
   const [notifications, setNotifications] = useState<AppNotification[]>([])
+  // The list as of the last render, so a poll result can tell new ids from known ones without a
+  // side effect inside a state updater.
+  const notificationsRef = useRef(notifications)
+  notificationsRef.current = notifications
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [skyboxOpen, setSkyboxOpen] = useState(false)
   const [skyboxHours, setSkyboxHoursState] = useState(SKYBOX_START_HOURS)
@@ -1267,7 +1273,22 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'notifications':
           setNotifications(msg.notifications)
+          notificationsRef.current = msg.notifications
           break
+        case 'notificationsNew': {
+          const known = new Set(notificationsRef.current.map((n) => n.id))
+          const at = (n: AppNotification): number => notificationTimeMs(n.timestamp) ?? 0
+          const fresh = msg.notifications.filter((n) => !known.has(n.id)).sort((a, b) => at(b) - at(a))
+          if (fresh.length === 0) break
+          notificationsRef.current = [...fresh, ...notificationsRef.current]
+          setNotifications((prev) => {
+            const have = new Set(prev.map((n) => n.id))
+            return [...fresh.filter((n) => !have.has(n.id)), ...prev]
+          })
+          // Newest first in the list; toasts play in arrival order.
+          queueNotificationToasts([...fresh].reverse())
+          break
+        }
         case 'emotes':
           setEmotes(msg.emotes)
           break
@@ -2583,6 +2604,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setForceRenderState([])
     setAvatarColors(undefined)
     setNotifications([])
+    clearNotificationToasts()
     setCommunities([])
     setFriendPending(new Set())
     setMutualFriends({})

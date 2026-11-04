@@ -1,11 +1,21 @@
-// Notifications: the notifications list + persisting "mark as read".
+// Notifications: the notifications list, persisting "mark as read", and a poll for new ones.
 //   from: notifications service via BevyApi.kernelFetch (signed GET list / PUT read).
+//   The service has no push channel, so like unity-explorer this scene polls every 5 s for unread
+//   notifications newer than the newest it has seen, and pushes them as `notificationsNew`.
+import { getPlayer } from '@dcl/sdk/players'
 import { isZone, signed } from '../http'
+import { identity } from '../identity'
 import type { Ctx } from '../bridge'
 import type { AppNotification } from '../../../src/engine/protocol'
+import { notificationTimeMs } from '../../../src/lib/notificationTime'
 
 const ORG = 'https://notifications.decentraland.org/notifications'
 const ZONE = 'https://notifications.decentraland.zone/notifications'
+
+/** unity-explorer's NotificationsRequestController polls at the same rate. */
+export const POLL_INTERVAL_S = 5
+/** A failing service is retried with doubling waits up to this cap, not every 5 s. */
+export const POLL_BACKOFF_MAX_S = 60
 
 type NotificationRaw = {
   id: string
@@ -19,17 +29,41 @@ async function base(): Promise<string> {
   return (await isZone()) ? ZONE : ORG
 }
 
+function toApp(n: NotificationRaw): AppNotification {
+  return { id: n.id, type: n.type, timestamp: n.timestamp, read: n.read, metadata: n.metadata ?? {} }
+}
+
+async function fetchList(query: string): Promise<AppNotification[]> {
+  const res = await signed<{ notifications?: NotificationRaw[] }>(`${await base()}?${query}`)
+  return (res?.notifications ?? []).map(toApp)
+}
+
 export function registerNotifications(ctx: Ctx): void {
+  // `from` is the server's own `occurred_at > from` bound, so the cursor is the newest timestamp
+  // the server has sent us, never the local clock. Polling starts once the page has fetched the
+  // list (world entry), so the first poll never re-announces what the panel already holds.
+  let armed = false
+  let cursor: number | undefined
+  let inFlight = false
+  let waitS = POLL_INTERVAL_S
+  let elapsedS = 0
+
+  const advance = (list: AppNotification[]): void => {
+    for (const n of list) {
+      const t = notificationTimeMs(n.timestamp)
+      if (t != null && (cursor == null || t > cursor)) cursor = t
+    }
+  }
+
+  identity.onChange(() => {
+    armed = false
+    cursor = undefined
+  })
+
   ctx.on('getNotifications', async () => {
-    const res = await signed<{ notifications?: NotificationRaw[] }>(`${await base()}?limit=50&from=0`)
-    const list = res?.notifications ?? []
-    const notifications: AppNotification[] = list.map((n) => ({
-      id: n.id,
-      type: n.type,
-      timestamp: n.timestamp,
-      read: n.read,
-      metadata: n.metadata ?? {}
-    }))
+    const notifications = await fetchList('limit=50&from=0')
+    advance(notifications)
+    armed = true
     ctx.send({ kind: 'notifications', notifications })
   })
 
@@ -40,5 +74,40 @@ export function registerNotifications(ctx: Ctx): void {
     })().catch((e: unknown) => {
       console.error('[notifications] markRead failed', e)
     })
+  })
+
+  const poll = async (): Promise<void> => {
+    const query = `onlyUnread=true&limit=50${cursor != null ? `&from=${cursor}` : ''}`
+    const polledFor = cursor
+    const fresh = (await fetchList(query)).filter((n) => !n.read)
+    // An account switch while the request was out: its answer belongs to the old account.
+    if (!armed || cursor !== polledFor) return
+    advance(fresh)
+    if (fresh.length > 0) ctx.send({ kind: 'notificationsNew', notifications: fresh })
+  }
+
+  ctx.push((dt) => {
+    const player = getPlayer()
+    if (player == null || player.isGuest) {
+      // Logged out (the engine clears the player) or a guest, who has no notifications.
+      armed = false
+      return
+    }
+    if (!armed || inFlight) return
+    elapsedS += dt
+    if (elapsedS < waitS) return
+    elapsedS = 0
+    inFlight = true
+    poll()
+      .then(() => {
+        waitS = POLL_INTERVAL_S
+      })
+      .catch((e: unknown) => {
+        waitS = Math.min(waitS * 2, POLL_BACKOFF_MAX_S)
+        console.error('[notifications] poll failed', e)
+      })
+      .finally(() => {
+        inFlight = false
+      })
   })
 }
