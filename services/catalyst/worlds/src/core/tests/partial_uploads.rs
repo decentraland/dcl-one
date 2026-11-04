@@ -913,25 +913,6 @@ async fn uploads_from_one_source_share_its_staging_budget() {
     assert!(retry_after(&headers) >= 1);
 }
 
-/// Waits until a backend running a statement that contains `fragment` waits on a lock.
-async fn wait_for_lock_wait(pool: &PgPool, fragment: &str) {
-    for _ in 0..200 {
-        let waiting: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity \
-             WHERE wait_event_type = 'Lock' AND strpos(query, $1) > 0)",
-        )
-        .bind(fragment)
-        .fetch_one(pool)
-        .await
-        .unwrap();
-        if waiting {
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-    }
-    panic!("no statement with {fragment:?} waited on a lock");
-}
-
 #[tokio::test]
 async fn a_partial_upload_of_a_mirrored_scene_publishes_it_here() {
     let Some(f) = fixture().await else { return };
@@ -1016,10 +997,11 @@ async fn a_refused_batch_keeps_an_upload_another_replica_created() {
         .execute(&mut *held)
         .await
         .unwrap();
+    let holder = backend_pid(&mut held).await;
     let ((status, _, body), ()) = tokio::join!(
         send(&f.app, &u, Batch::of(&owner, true, &[])),
         async {
-            wait_for_lock_wait(&f.pool, "pg_advisory_xact_lock(hashtextextended").await;
+            blocked_by(&f.pool, holder, "pg_advisory_xact_lock(hashtextextended", 1).await;
             // Another replica creates the upload meanwhile.
             let entity: Value = serde_json::from_slice(&u.entity_bytes).unwrap();
             sqlx::query(
@@ -1064,9 +1046,10 @@ async fn an_upload_expiring_during_its_completing_publish_is_refused_as_expired(
         .execute(&mut *held)
         .await
         .unwrap();
+    let holder = backend_pid(&mut held).await;
     let ((status, _, body), ()) =
         tokio::join!(send(&f.app, &u, Batch::of(&owner, false, &[1])), async {
-            wait_for_lock_wait(&f.pool, "SELECT owner FROM worlds.worlds").await;
+            blocked_by(&f.pool, holder, "SELECT owner FROM worlds.worlds", 1).await;
             // Meanwhile the upload expires and a file it found stored is collected.
             sqlx::query(
                 "UPDATE worlds.pending_scenes SET created_at = created_at - interval '2 hours' \
@@ -1110,4 +1093,182 @@ async fn a_completion_after_the_permission_is_revoked_is_refused() {
         "{body}"
     );
     assert!(deployed_entity_ids(&f.pool, &world).await.is_empty());
+}
+
+/// The backend id of the connection `conn`.
+async fn backend_pid(conn: &mut sqlx::PgConnection) -> i32 {
+    sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(conn)
+        .await
+        .unwrap()
+}
+
+/// Waits until `n` backends running a statement that contains `fragment` wait on `blocker`; their ids.
+async fn blocked_by(pool: &PgPool, blocker: i32, fragment: &str, n: usize) -> Vec<i32> {
+    waiting_on(pool, blocker, &[fragment], false, n).await
+}
+
+/// Waits until `n` backends running a statement with one of `fragments` wait on `blocker`,
+/// directly or (`transitive`) behind other waiters; their ids.
+async fn waiting_on(
+    pool: &PgPool,
+    blocker: i32,
+    fragments: &[&str],
+    transitive: bool,
+    n: usize,
+) -> Vec<i32> {
+    for _ in 0..200 {
+        let waiting: Vec<i32> = sqlx::query_scalar(
+            "WITH RECURSIVE chain(pid, depth) AS ( \
+               SELECT $1::int, 0 \
+               UNION \
+               SELECT a.pid, c.depth + 1 FROM pg_stat_activity a \
+               JOIN chain c ON c.pid = ANY(pg_blocking_pids(a.pid)) \
+               WHERE c.depth < 8 AND ($3 OR c.depth = 0)) \
+             SELECT DISTINCT a.pid FROM pg_stat_activity a JOIN chain c ON c.pid = a.pid \
+             WHERE c.depth > 0 AND EXISTS (SELECT 1 FROM unnest($2::text[]) f WHERE strpos(a.query, f) > 0)",
+        )
+        .bind(blocker)
+        .bind(fragments)
+        .bind(transitive)
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        if waiting.len() >= n {
+            return waiting;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    let fragment = fragments.join(" | ");
+    let waits: Vec<(i32, Vec<i32>, String)> = sqlx::query_as(
+        "SELECT pid, pg_blocking_pids(pid), query FROM pg_stat_activity WHERE wait_event_type = 'Lock'",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    panic!("fewer than {n} statements with {fragment:?} waited on backend {blocker}: {waits:?}");
+}
+
+async fn insert_world(f: &Fixture, world: &WorldName) {
+    sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
+        .bind(world.key())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn two_replicas_completing_one_entity_publish_it_once() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 1);
+    insert_world(&f, &world).await;
+    expect_batch(&f.app, &u, Batch::of(&owner, true, &[]), 202).await;
+
+    // Both completing batches reach their publish and wait on the world row.
+    let mut held = f.pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM worlds.worlds WHERE name = $1 FOR UPDATE")
+        .bind(world.key())
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let holder = backend_pid(&mut held).await;
+    let (a, b, ()) = tokio::join!(
+        partial::REPLICA.scope("a", send(&f.app, &u, Batch::of(&owner, false, &[0]))),
+        partial::REPLICA.scope("b", send(&f.app, &u, Batch::of(&owner, false, &[0]))),
+        async {
+            let first = blocked_by(&f.pool, holder, "SELECT owner FROM worlds.worlds", 1).await;
+            // The second queues behind the first: on the row, or on the store lock behind a collector.
+            let row_or_store = [
+                "SELECT owner FROM worlds.worlds",
+                "pg_advisory_xact_lock_shared",
+            ];
+            waiting_on(&f.pool, first[0], &row_or_store, true, 1).await;
+            held.commit().await.unwrap();
+        },
+    );
+    assert_eq!((a.0.as_u16(), b.0.as_u16()), (200, 200), "{} {}", a.2, b.2);
+    assert_eq!(
+        deployed_entity_ids(&f.pool, &world).await,
+        vec![u.entity_id.clone()]
+    );
+    assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
+}
+
+#[tokio::test]
+async fn an_upload_expiring_while_it_completes_is_reclaimed_by_a_concurrent_cleanup() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 2);
+    insert_world(&f, &world).await;
+    expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 202).await;
+    let _cleanup = CLEANUP.lock().await;
+
+    // The completing batch holds the shared store lock while it waits on the world row.
+    let mut held = f.pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM worlds.worlds WHERE name = $1 FOR UPDATE")
+        .bind(world.key())
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    let holder = backend_pid(&mut held).await;
+    let racer = async {
+        let publish = blocked_by(&f.pool, holder, "SELECT owner FROM worlds.worlds", 1).await;
+        age_upload(&f, &u, std::time::Duration::from_secs(2 * 3600)).await;
+        let (report, ()) = tokio::join!(partial::delete_expired_uploads(&f.state), async {
+            blocked_by(&f.pool, publish[0], "pg_advisory_xact_lock($1)", 1).await;
+            held.commit().await.unwrap();
+        });
+        report
+    };
+    let ((status, _, body), report) =
+        tokio::join!(send(&f.app, &u, Batch::of(&owner, false, &[1])), racer);
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        body["message"],
+        "This upload expired. Create a new entity with a fresh timestamp."
+    );
+    assert!(report.removed >= 1, "{report:?}");
+    assert!(deployed_entity_ids(&f.pool, &world).await.is_empty());
+    assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
+    for key in [&u.entity_id, &u.files[0].0, &u.files[1].0] {
+        assert!(!f.storage.exist(key).await.unwrap(), "{key} is reclaimed");
+    }
+}
+
+#[tokio::test]
+async fn the_cleanup_keeps_a_file_the_catalogue_names_once_its_run_began() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = owned(&f).await;
+    let u = upload(&world, 2);
+    expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 202).await;
+    let _cleanup = CLEANUP.lock().await;
+    age_upload(&f, &u, std::time::Duration::from_secs(2 * 3600)).await;
+
+    // A publish holds the store lock while an import starts naming the upload's file.
+    let mut held = f.pool.begin().await.unwrap();
+    catalyst_storage::gc::lock_store_shared(&mut held)
+        .await
+        .unwrap();
+    let holder = backend_pid(&mut held).await;
+    let (report, ()) = tokio::join!(partial::delete_expired_uploads(&f.state), async {
+        blocked_by(&f.pool, holder, "pg_advisory_xact_lock($1)", 1).await;
+        sqlx::query(
+            "INSERT INTO builder.asset_catalog (id, packs, source, built_at) \
+             VALUES (1, $1, 'test', timezone('UTC', now())) \
+             ON CONFLICT (id) DO UPDATE SET packs = builder.asset_catalog.packs || EXCLUDED.packs",
+        )
+        .bind(json!([{ "assets": [{ "contents": { "a.glb": u.files[0].0 } }] }]))
+        .execute(&f.pool)
+        .await
+        .unwrap();
+        held.commit().await.unwrap();
+    });
+    assert!(report.removed >= 1, "{report:?}");
+    assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
+    assert!(
+        f.storage.exist(&u.files[0].0).await.unwrap(),
+        "the catalogue names it"
+    );
+    assert!(!f.storage.exist(&u.entity_id).await.unwrap());
 }

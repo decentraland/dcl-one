@@ -187,14 +187,22 @@ impl Drop for EntityGuard {
     }
 }
 
+#[cfg(test)]
+tokio::task_local! {
+    /// Tests: the replica a request runs on, each with its own in-process locks.
+    pub(super) static REPLICA: &'static str;
+}
+
 async fn lock_entity(entity_id: &str) -> EntityGuard {
-    let lock = ENTITY_LOCKS
-        .lock()
-        .entry(entity_id.to_string())
-        .or_default()
-        .clone();
+    #[cfg(test)]
+    let key = REPLICA
+        .try_with(|replica| format!("{replica}/{entity_id}"))
+        .unwrap_or_else(|_| entity_id.to_string());
+    #[cfg(not(test))]
+    let key = entity_id.to_string();
+    let lock = ENTITY_LOCKS.lock().entry(key.clone()).or_default().clone();
     EntityGuard {
-        key: entity_id.to_string(),
+        key,
         _guard: lock.lock_owned().await,
     }
 }
@@ -1256,7 +1264,7 @@ async fn run_cleanup(
         removed: 0,
         failed: 0,
     };
-    // The catalogue and global scenes, read once per run and outside the store lock.
+    // The catalogue and global scenes, read once per run outside the store lock to pre-filter.
     let mut fixed: Option<HashSet<String>> = None;
     let mut after: Option<(NaiveDateTime, String)> = None;
     loop {
@@ -1393,9 +1401,15 @@ async fn reclaim(
     let mut keys: Vec<String> = candidates.iter().map(|(_, k)| k.clone()).collect();
     keys.sort();
     keys.dedup();
-    let referenced = catalyst_storage::gc::referenced_rows_among_on(&mut lock, &keys)
+    let mut referenced = catalyst_storage::gc::referenced_rows_among_on(&mut lock, &keys)
         .await
         .map_err(|e| failed(&e))?;
+    // Re-read under the lock: an import since the run began may name a stored file.
+    referenced.extend(
+        catalyst_storage::gc::catalogue_references(&mut lock)
+            .await
+            .map_err(|e| failed(&e))?,
+    );
     let mut unlinked: HashMap<String, bool> = HashMap::new();
     let mut broken: HashSet<String> = HashSet::new();
     for (entity_id, key) in &candidates {

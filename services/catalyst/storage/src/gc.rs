@@ -499,14 +499,7 @@ pub async fn fixed_references(
     conn: &mut sqlx::PgConnection,
     pins: Pins<'_>,
 ) -> Result<HashSet<String>, GcError> {
-    let mut keys = HashSet::new();
-    let catalogue: Option<Value> =
-        sqlx::query_scalar("SELECT packs FROM builder.asset_catalog WHERE id = 1")
-            .fetch_optional(&mut *conn)
-            .await?;
-    if let Some(packs) = catalogue {
-        catalogue_hashes(&packs, &mut keys)?;
-    }
+    let mut keys = catalogue_references(conn).await?;
     for entity_id in global_scene_entity_ids(pins.global_scenes_urn) {
         if let Some(bytes) = pins.storage.retrieve(&entity_id).await? {
             let entity: Value = serde_json::from_slice(&bytes).map_err(|e| {
@@ -521,6 +514,21 @@ pub async fn fixed_references(
             )?;
         }
         keys.insert(entity_id);
+    }
+    Ok(keys)
+}
+
+/// The keys the asset-pack catalogue names (its one row).
+pub async fn catalogue_references(
+    conn: &mut sqlx::PgConnection,
+) -> Result<HashSet<String>, GcError> {
+    let mut keys = HashSet::new();
+    let catalogue: Option<Value> =
+        sqlx::query_scalar("SELECT packs FROM builder.asset_catalog WHERE id = 1")
+            .fetch_optional(&mut *conn)
+            .await?;
+    if let Some(packs) = catalogue {
+        catalogue_hashes(&packs, &mut keys)?;
     }
     Ok(keys)
 }
