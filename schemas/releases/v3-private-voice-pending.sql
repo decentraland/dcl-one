@@ -10,11 +10,13 @@
 -- Old binaries refuse stamp 3. No pending/media row or credential is rewritten.
 -- Once coexistence is written, rollback is quiesce + forward fix or a reviewed
 -- restore: never delete/deduplicate calls to reinstall the former UNIQUEs.
+\set ON_ERROR_STOP on
 BEGIN;
 SET LOCAL lock_timeout = '15s';
 LOCK TABLE meta.schema, social.communities, social.private_voice_chats,
     social.private_voice_chat_participants IN ACCESS EXCLUSIVE MODE;
 DO $$
+DECLARE incomplete_legacy boolean;
 BEGIN
     IF (SELECT version FROM meta.schema WHERE id = 1 AND identity = 'catalyst') IS DISTINCT FROM 2 THEN
         RAISE EXCEPTION 'schema release v3 requires catalyst version 2';
@@ -39,6 +41,44 @@ BEGIN
     END IF;
     IF to_regclass('social.community_voice_notifications') IS NOT NULL THEN
         RAISE EXCEPTION 'schema release v3 destination already exists; inspect retained state before cutover; no data changed';
+    END IF;
+    -- Both former role constraints must be exactly the reviewed v2 keys.
+    -- Refuse extra UNIQUE indexes too: dropping only the known constraints must
+    -- not leave hidden role uniqueness in the version-3 layout.
+    IF (SELECT count(*)
+        FROM (VALUES ('private_voice_chats_caller_key','caller_address'),
+                     ('private_voice_chats_callee_key','callee_address')) expected(name, column_name)
+        JOIN pg_constraint c ON c.conrelid='social.private_voice_chats'::regclass
+            AND c.conname=expected.name AND c.contype='u' AND c.convalidated
+        JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attname=expected.column_name
+            AND NOT a.attisdropped AND c.conkey=ARRAY[a.attnum]
+        JOIN pg_index i ON i.indexrelid=c.conindid AND i.indrelid=c.conrelid
+            AND i.indisunique AND i.indisvalid AND i.indisready
+            AND i.indnkeyatts=1 AND i.indnatts=1 AND i.indkey[0]=a.attnum
+            AND i.indpred IS NULL AND i.indexprs IS NULL
+    ) <> 2 THEN
+        RAISE EXCEPTION 'schema release v3 requires the named v2 caller/callee UNIQUE constraints with their expected keys; no data changed';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_index i
+        WHERE i.indrelid='social.private_voice_chats'::regclass
+          AND i.indisunique AND NOT i.indisprimary
+          AND NOT EXISTS (SELECT 1 FROM pg_constraint c WHERE c.conrelid=i.indrelid
+              AND c.conindid=i.indexrelid AND c.contype='u'
+              AND c.conname IN ('private_voice_chats_caller_key','private_voice_chats_callee_key'))
+    ) THEN
+        RAISE EXCEPTION 'schema release v3 found unexpected private voice UNIQUE indexes; inspect retained state before cutover; no data changed';
+    END IF;
+    IF EXISTS (SELECT 1 FROM meta.schema_steps WHERE step='0020_social_voice_notifications') THEN
+        EXECUTE $audit$
+            SELECT EXISTS (SELECT 1 FROM social.communities
+                WHERE (voice_notification_generation IS NULL
+                    AND (voice_notification_scope IS NOT NULL OR voice_notification_expires_at IS NOT NULL))
+                   OR (voice_notification_generation IS NOT NULL
+                    AND (voice_notification_scope IS NULL OR voice_notification_expires_at IS NULL)))
+        $audit$ INTO incomplete_legacy;
+        IF incomplete_legacy THEN
+            RAISE EXCEPTION 'schema release v3 found incomplete legacy notification facts; no data changed';
+        END IF;
     END IF;
     -- A normalized pending wallet appears in only one role of one pending
     -- intent. Audit both roles together; the former independent UNIQUEs did
@@ -72,14 +112,6 @@ BEGIN
     IF EXISTS (SELECT 1 FROM meta.schema_steps WHERE step='0020_social_voice_notifications') THEN
         -- Dynamic statements are planned only in the genuine prepared branch;
         -- shipped main v2 has no legacy columns and never creates them.
-        EXECUTE $audit$
-            SELECT EXISTS (SELECT 1 FROM social.communities
-                WHERE voice_notification_generation IS NULL
-                  AND (voice_notification_scope IS NOT NULL OR voice_notification_expires_at IS NOT NULL))
-        $audit$ INTO mismatch;
-        IF mismatch THEN
-            RAISE EXCEPTION 'schema release v3 found incomplete legacy notification facts; no data changed';
-        END IF;
         EXECUTE $copy$
             INSERT INTO social.community_voice_notifications
                 (raw_community_id, community_id, notification_scope, generation, expires_at)
@@ -120,7 +152,27 @@ END $retire$;
 -- address access paths exist before the old UNIQUEs and final stamp change.
 \ir v3/42_social_private_voice_indexes.sql
 -- Cutover boundary: replacement indexes created.
-ALTER TABLE social.private_voice_chats DROP CONSTRAINT IF EXISTS private_voice_chats_caller_key;
-ALTER TABLE social.private_voice_chats DROP CONSTRAINT IF EXISTS private_voice_chats_callee_key;
+ALTER TABLE social.private_voice_chats DROP CONSTRAINT private_voice_chats_caller_key;
+ALTER TABLE social.private_voice_chats DROP CONSTRAINT private_voice_chats_callee_key;
+DO $postcondition$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_class
+        WHERE oid=to_regclass('social.community_voice_notifications') AND relkind='r') THEN
+        RAISE EXCEPTION 'schema release v3 requires the notification destination table before stamp; no data changed';
+    END IF;
+    IF (SELECT count(*)
+        FROM (VALUES ('private_voice_chats_caller_idx','caller_address'),
+                     ('private_voice_chats_callee_idx','callee_address')) expected(name, column_name)
+        JOIN pg_class c ON c.relnamespace='social'::regnamespace AND c.relname=expected.name
+        JOIN pg_index i ON i.indexrelid=c.oid AND i.indrelid='social.private_voice_chats'::regclass
+            AND NOT i.indisunique AND i.indisvalid AND i.indisready
+            AND i.indnkeyatts=1 AND i.indnatts=1 AND i.indpred IS NULL AND i.indexprs IS NULL
+        JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attname=expected.column_name
+            AND NOT a.attisdropped AND i.indkey[0]=a.attnum
+        JOIN pg_am am ON am.oid=c.relam AND am.amname='btree'
+    ) <> 2 THEN
+        RAISE EXCEPTION 'schema release v3 requires both valid replacement private voice indexes before stamp; no data changed';
+    END IF;
+END $postcondition$;
 UPDATE meta.schema SET version = 3, applied_at = timezone('UTC', now()) WHERE id = 1;
 COMMIT;
