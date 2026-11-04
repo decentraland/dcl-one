@@ -1538,6 +1538,97 @@ async fn the_job_regenerates_a_marked_window_at_the_next_tick() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// The deleter repair commits after a pass read a window but before the pass
+/// writes its row: the row the pass writes carries the repair's mark, so the
+/// next pass regenerates the window without the superseded scene. The test
+/// holds the restored scene's row so the repair stops mid-statement while the
+/// pass reads.
+#[tokio::test]
+async fn a_window_read_before_the_deleter_repair_commits_is_written_marked() {
+    let Some((db_a, root, node, old_local, _)) = restored_scene_database("repair-read").await
+    else {
+        return;
+    };
+    let generator = SnapshotGenerator::new(node.clone(), false, settings(100));
+    let (before, _) = generator
+        .generate(chrono::Utc::now().timestamp_millis())
+        .await
+        .unwrap();
+    let window = before
+        .iter()
+        .find(|r| r.number_of_entities == 1)
+        .expect("the restored scene is in a window")
+        .time_range;
+    // Only this window is regenerated, so the pass's first row write is its.
+    sqlx::query(
+        "UPDATE content.snapshots SET generation_time = 'epoch'::timestamp
+         WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'",
+    )
+    .bind(window.init_timestamp as f64)
+    .execute(&db_a.pool)
+    .await
+    .unwrap();
+
+    let mut hold = db_a.pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM content.deployments WHERE entity_id = $1 FOR UPDATE")
+        .bind(&old_local)
+        .execute(&mut *hold)
+        .await
+        .unwrap();
+    let repair = tokio::spawn({
+        let pool = db_a.pool.clone();
+        async move {
+            catalyst::content::sync::LiveDeploymentRepository::new(
+                pool,
+                Arc::new(SyncStatus::default()),
+            )
+            .resolve_deleter_deployments()
+            .await
+        }
+    });
+    wait_for_lock_waiters(&db_a.pool, 1).await;
+    let pass = tokio::spawn({
+        let generator = generator.clone();
+        async move {
+            generator
+                .generate(chrono::Utc::now().timestamp_millis())
+                .await
+        }
+    });
+    wait_for_lock_waiters(&db_a.pool, 2).await;
+    hold.rollback().await.unwrap();
+    repair.await.unwrap().unwrap();
+    let (written, _) = pass.await.unwrap().unwrap();
+    let row = written
+        .iter()
+        .find(|r| r.time_range == window)
+        .expect("the window's row");
+    assert_eq!(row.number_of_entities, 1, "the pass read before the repair");
+    let generated: chrono::NaiveDateTime = sqlx::query_scalar(
+        "SELECT generation_time FROM content.snapshots
+         WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'",
+    )
+    .bind(window.init_timestamp as f64)
+    .fetch_one(&db_a.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        generated.and_utc().timestamp_millis(),
+        0,
+        "the window carries the repair's mark"
+    );
+
+    let (after, _) = generator
+        .generate(chrono::Utc::now().timestamp_millis())
+        .await
+        .unwrap();
+    let in_files: u64 = after.iter().map(|r| r.number_of_entities).sum();
+    assert_eq!(in_files, 0, "the next pass leaves the scene out");
+
+    db_a.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// A pass stamps a window with the oldest open transaction's start, which can
 /// precede the window when a transaction stays open for days. That stamp is
 /// not the deleter repair's mark: the job waits for its interval, and the

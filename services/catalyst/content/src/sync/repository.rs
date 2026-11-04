@@ -212,6 +212,19 @@ impl LiveDeploymentRepository {
         .fetch_one(&mut *tx)
         .await
         .map_err(storage)?;
+        if superseded > 0 {
+            // A window pass that read before this commit marks the row it writes.
+            sqlx::query(
+                "INSERT INTO content.system_properties (key, value) VALUES ($1, '1')
+                 ON CONFLICT (key) DO UPDATE
+                 SET value = (content.system_properties.value::bigint + 1)::text",
+            )
+            .bind(crate::snapshot_gen::DELETER_REPAIR_RUNS_KEY)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+        }
+        // Only ever raised: an older binary never lowers what a newer one recorded.
         sqlx::query(
             "INSERT INTO content.system_properties (key, value) VALUES ($1, $2)
              ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",

@@ -594,7 +594,7 @@ pub async fn snapshot_is_outdated(
 /// column carries microseconds and the row stores milliseconds. The
 /// sessions are visible because every writer of `content.deployments` runs
 /// as this pool's role.
-async fn read_horizon_ms(conn: &mut sqlx::PgConnection) -> Result<Timestamp, GenerationError> {
+async fn read_horizon_ms(pool: &PgPool) -> Result<Timestamp, GenerationError> {
     let ms: i64 = sqlx::query_scalar(
         "SELECT floor(EXTRACT(EPOCH FROM LEAST(now(), min(xact_start))) * 1000)::bigint
          FROM pg_stat_activity
@@ -602,7 +602,7 @@ async fn read_horizon_ms(conn: &mut sqlx::PgConnection) -> Result<Timestamp, Gen
            AND pid <> pg_backend_pid()
            AND xact_start IS NOT NULL",
     )
-    .fetch_one(conn)
+    .fetch_one(pool)
     .await?;
     Ok(ms - 1)
 }
@@ -617,9 +617,24 @@ async fn any_marked_window(pool: &PgPool) -> Result<bool, GenerationError> {
     .await?)
 }
 
-/// Advisory lock key the generator takes shared while it writes a window and
-/// the deleter repair takes exclusive while it marks windows outdated.
+/// Advisory lock key the generator takes shared while it writes a window's row
+/// and the deleter repair takes exclusive while it marks windows outdated.
 pub const SNAPSHOT_ROWS_LOCK: i64 = 0x636f_6e74_656e_7473;
+
+/// The `content.system_properties` key counting deleter repairs that superseded rows.
+pub const DELETER_REPAIR_RUNS_KEY: &str = "deleter_repair_runs";
+
+/// The deleter repair count, read before a window read and again under the row lock.
+async fn deleter_repair_runs<'e>(
+    conn: impl sqlx::PgExecutor<'e>,
+) -> Result<Option<String>, GenerationError> {
+    Ok(
+        sqlx::query_scalar("SELECT value FROM content.system_properties WHERE key = $1")
+            .bind(DELETER_REPAIR_RUNS_KEY)
+            .fetch_optional(conn)
+            .await?,
+    )
+}
 
 async fn generate_window(
     pool: &PgPool,
@@ -628,14 +643,9 @@ async fn generate_window(
     cancel: Option<&CancellationToken>,
 ) -> Result<Written, GenerationError> {
     let started = Instant::now();
-    // Held from the read to the row write, so the deleter repair's mark lands before or after.
-    let mut tx = pool.begin().await?;
-    sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
-        .bind(SNAPSHOT_ROWS_LOCK)
-        .execute(&mut *tx)
-        .await?;
-    let generation_ms = read_horizon_ms(&mut tx).await?;
-    let (bytes, entities) = read_window(&mut tx, &window, cancel).await?;
+    let repairs_before = deleter_repair_runs(pool).await?;
+    let generation_ms = read_horizon_ms(pool).await?;
+    let (bytes, entities) = read_window(pool, &window, cancel).await?;
     let number_of_entities = i32::try_from(entities).map_err(|_| {
         GenerationError::Invalid(format!(
             "snapshot deployment count {entities} overflows the i32 column"
@@ -648,6 +658,17 @@ async fn generate_window(
     let size = bytes.len() as u64;
     storage.store(&hash, Bytes::from(bytes)).await?;
 
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
+        .bind(SNAPSHOT_ROWS_LOCK)
+        .execute(&mut *tx)
+        .await?;
+    // A repair that committed since the read may have superseded rows the file lists: keep its mark.
+    let generation_ms = if deleter_repair_runs(&mut *tx).await? == repairs_before {
+        generation_ms
+    } else {
+        0
+    };
     let gone: Vec<Option<String>> = sqlx::query_scalar(
         "WITH gone AS (
              DELETE FROM content.snapshots
@@ -696,7 +717,7 @@ async fn generate_window(
 /// The file bytes and the line count. Rows stream from one connection into
 /// the buffer; the buffer is the whole file (the store takes it whole).
 async fn read_window(
-    conn: &mut sqlx::PgConnection,
+    pool: &PgPool,
     window: &TimeRange,
     cancel: Option<&CancellationToken>,
 ) -> Result<(Vec<u8>, u64), GenerationError> {
@@ -707,7 +728,7 @@ async fn read_window(
         .persistent(false)
         .bind(naive(window.init_timestamp)?)
         .bind(naive(window.end_timestamp)?)
-        .fetch(conn);
+        .fetch(pool);
     let mut count = 0u64;
     while let Some(row) = rows.try_next().await? {
         write_line(
