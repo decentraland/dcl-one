@@ -190,93 +190,32 @@ on the zero address and a second address created for the run). The local answers
 | The private call ends when the address's last socket detaches, not before | 3 cases | `context.rs` `presence_counts_sockets_per_address` (the predicate); PV `a_caller_that_disconnects_ends_the_call_for_the_callee` (the end) | covered, ported |
 | Start without creators, service registration, Redis channels, emitter internals | 6 cases | — | n/a |
 
-## Friendships
+## Friends, blocks and settings
 
-### logic/friendships.spec.ts (39) and logic/friends.spec.ts (2)
+The current per-method source review is [PARITY.md](PARITY.md), generated from
+[parity.json](parity.json). Its thirteen unary friend/block/settings rows name
+source scope, regression tests and remaining verification separately. The
+registry contains 27 unary methods, six RPC streams and six JSON stream names.
+A route registration or a local regression alone does not establish parity.
 
-| behaviour | upstream cases | local test | status |
-| --- | --- | --- | --- |
-| The transition table; the acting-user rules | `isFriendshipActionValid`, `isUserActionValid`, `validateNewFriendshipAction` | `domain.rs` `full_transition_table_is_enforced`, `no_prior_action_only_admits_request_and_block`, `self_request_is_rejected_even_without_prior_action`, `acting_user_rules_still_apply_after_transition_check` | covered |
-| Only accept activates the friendship | `getNewFriendshipStatus` | T `two_explorers_exchange_a_friend_request_over_the_socket`; F `cancel_reject_and_delete_reach_the_other_party` | covered, ported |
-| The status of each last action and direction | `getFriendshipRequestStatus` (9) | `domain.rs` `action_mapping_covers_every_action_and_direction`, `block_fallback_only_when_no_friendship_action` | covered |
-| Each emitted update names who acted | `parseEmittedUpdateToFriendshipUpdate` (7) | T `two_explorers_exchange_a_friend_request_over_the_socket`; F `cancel_reject_and_delete_reach_the_other_party`, `blocking_a_friend_ends_the_friendship_and_tells_them` | covered, ported |
-| Connectivity updates parse ONLINE and OFFLINE | `parseEmittedUpdateToFriendConnectivityUpdate` | `subscriptions.rs` `replay_tests` | covered |
-| A target is lowercased | `parseUpsertFriendshipRequest` | T `two_explorers_exchange_a_friend_request_over_the_socket` | covered |
-| A request without a message stores none | `parseUpsertFriendshipRequest` | F `upsert_friendship_validates_and_reads_messages_as_upstream` | ported: an explicit `""` is no message, stored and forwarded as none. Upstream `src/logic/friends/friendships.ts:129`; local `social/src/rpc/service/friends.rs:43` |
-| Profile mapping; the address is lowercased | `parseProfileToFriend`, `parseProfilesToFriends` | `profiles.rs` `profiles_come_from_the_active_profile_entity` | covered; differs: the picture is the node's face URL, and the caller's casing is kept. Upstream `src/logic/profiles.ts:35`, `:45-49`; local `social/src/rpc/profiles.rs:314`, `:161` |
-| Requests whose counterparty has no (parseable) profile are dropped | 5 cases | F `a_wallet_without_a_profile_is_left_out_with_a_profile_source` | ported, with a profile source (see Profiles, throughout). Upstream `src/logic/friends/friendships.ts:247-268`; local `social/src/rpc/service/domain.rs:252-270` |
+`source-cases.json` contains 27 responses produced by the actual handlers and
+friendship/settings components at the baseline pin with deterministic injected
+dependencies. `rpc_wire_answers_match_executed_upstream_source_cases` compares
+the local responses byte for byte as Protobuf; the capture builder is
+`tooling/social-service-source-cases.cjs`. It covers invalid action/target/self,
+missing profiles, synthesized block status, defaults, duplicate settings and
+invalid enum branches. It does not exercise a deployed registry, Redis, SNS or
+upstream PostgreSQL.
 
-### logic/friends-logic.spec.ts (83)
-
-| behaviour | upstream cases | local test | status |
-| --- | --- | --- | --- |
-| Friends with total and pagination | `getFriendsProfiles` (4) | T `apply_without_a_known_row_reuses_the_reversed_pair`; `helpers.rs` `friends_and_mutual_allow_up_to_1000_and_do_not_share_the_100_cap` | covered |
-| Friends newest friendship first; friends and mutual friends leave out a pair with a block either way, in the page and the total | `src/logic/queries.ts:144-148`, `:243` | T `friends_are_newest_first_and_blocked_pairs_are_left_out` | covered |
-| Mutual friends | 6 cases | F `mutual_friends_answer_the_shared_friends_and_an_empty_page_for_a_bad_user` | ported |
-| Pending and sent requests with totals | 6 cases | T `pending_requests_list_the_latest_request_with_its_message` | covered |
-| The rate limits: pair budget symmetric, block budget directional | 6 cases | `limits.rs` `actor_budget_spans_targets`, `pair_budget_is_symmetric_for_friendship_actions`, `symmetric_and_directional_buckets_never_merge`, `block_budget_is_directional_so_the_counterparty_cannot_spend_it`; F `friendship_mutations_past_the_pair_budget_are_refused_without_a_write` | covered, ported |
-| Blocked users: total is the full count | 3 cases | T `get_blocked_users_pages_and_counts_the_full_set` | covered |
-| Friendship status: the latest action | 3 cases | T `friendship_probe_reports_last_action_and_both_block_directions`, `friendship_action_outranks_a_block_row` | covered |
-| Upsert on a blocked pair writes nothing | 1 case | F `a_blocked_pair_cannot_change_its_friendship` | ported |
-| Legal transitions write, publish and answer | 4×4 cases | T `two_explorers_exchange_a_friend_request_over_the_socket`; F `cancel_reject_and_delete_reach_the_other_party` | covered, ported |
-| Illegal transitions write nothing | 7×2 cases | `domain.rs` (decision); F `an_illegal_transition_writes_nothing` | covered, ported |
-| Blocking a friend ends the friendship and publishes both updates; unblocking records a delete | 8 cases | F `blocking_a_friend_ends_the_friendship_and_tells_them` | ported |
-| Blocking a stranger publishes only the block update | 3 cases | F `blocking_a_stranger_publishes_only_the_block_update` | ported. Upstream `src/logic/friends/component.ts:304-319`; local `social/src/rpc/service/blocks.rs:31-43` |
-| Unblocking a stranger publishes only the block update | 3 cases | F `unblocking_a_stranger_only_lifts_the_block` | ported |
-| Unblocking someone who isn't blocked records no action and publishes nothing, so a friendship survives it | `bdb14ce` | F `unblocking_an_unblocked_friend_changes_nothing` | ported from `b6b2cef` (`src/logic/friends/component.ts` `unblockUser`); at the pin upstream recorded a `DELETE` action and published both updates |
-| A request message over 256 characters (code points) is refused with `invalidRequest` before anything is written | `15b02b2` | F `a_request_message_over_256_characters_is_refused` | ported from `b6b2cef` (`src/logic/friends/component.ts` `applyFriendshipAction`, `src/logic/friends/constants.ts:2`) |
-| A checksummed block target reaches the lowercase subscriber | 1 case | F `blocking_a_friend_ends_the_friendship_and_tells_them` | ported |
-| A missing sender or receiver profile fails the upsert | 2 cases | F `a_wallet_without_a_profile_is_left_out_with_a_profile_source`, `friendship_notifications_use_action_ids_and_preserve_profile_metadata` | ported, with a profile source: `internalServerError` after the write and the update, the sender named first (its message the throughout carrier). Upstream `src/logic/friends/component.ts:495-508`; local `social/src/rpc/service/friends.rs:390-400` |
-| A request or accept emits a friendship notification | 2 cases | F `friendship_notifications_use_action_ids_and_preserve_profile_metadata`, `missing_profiles_skip_friendship_notifications_without_failing_the_action` | ported: the receiver's `social_service_friendship_request` / `_accepted` row in `social.notifications`, as notifications-workers stores the event (`processor/src/logic/event-parser.ts:231-279` at `0f113fb`), the notification id and `requestId` are the committed action id; skipped when a party has no profile, never failing the action. Upstream `src/logic/friends/component.ts:181-223`, `:517-530`, `:545-547`; local `social/src/rpc/service/friends.rs:122-177` |
-| A failed block write answers an error and tells no one | 1 case | FA `a_failed_database_call_answers_as_upstream_does` | ported |
-| A block whose friendship write fails is rolled back with it | (one transaction) | F `a_block_whose_friendship_write_fails_is_rolled_back` | ported; unblock and its `delete` action are one transaction too. Upstream `src/logic/friends/component.ts:290-302`, `:330-340`; local `social/src/rpc/db.rs:550-602` |
-| Profile-registry counts, limiter backend, query-error propagation | 12 cases | — | n/a |
-
-### rpc-server/services: friends
-
-| spec | behaviour | local test | status |
-| --- | --- | --- | --- |
-| get-friends (3) | Profiles, total, page; a failure answers the empty page | T `two_explorers_exchange_a_friend_request_over_the_socket`; `helpers.rs` `page_of_matches_upstream_get_page`; FA `a_failed_database_call_answers_as_upstream_does`; UR | covered, ported |
-| get-mutual-friends (5) | Shared friends; a missing or invalid user answers the empty page; a failure too | F `mutual_friends_answer_the_shared_friends_and_an_empty_page_for_a_bad_user`; FA | ported |
-| get-pending-friendship-requests (5), get-sent-friendship-requests (5) | Requests with id, profile, date and message; default 100, cap 200; a failure answers `internalServerError` | T `pending_requests_list_the_latest_request_with_its_message`; F `a_wallet_without_a_profile_is_left_out_with_a_profile_source`; `helpers.rs` `friendship_requests_default_100_max_200`, `page_of_matches_upstream_get_page`; FA; UR | covered, ported: an absent message reads `''`. Upstream `src/logic/friends/friendships.ts:242`; local `social/src/rpc/service/domain.rs:265` |
-| get-friendship-status (8) | The status; a missing user and an invalid one are named; a lone block | T `two_explorers_exchange_a_friend_request_over_the_socket`; F `friendship_status_names_a_missing_or_invalid_user_and_reads_a_lone_block`; UR | covered, ported; differs: an unknown stored action reads as none or blocked, not UNRECOGNIZED. Upstream `src/logic/friends/friendships.ts:230-231`; local `social/src/rpc/service/domain.rs:109`, `social/src/rpc/service/friends.rs:179-198` |
-| upsert-friendship (7) | Accepted with the receiver's profile; illegal transitions; a blocked pair | T `two_explorers_exchange_a_friend_request_over_the_socket`; F `a_blocked_pair_cannot_change_its_friendship`, `an_illegal_transition_writes_nothing` | covered, ported |
-| upsert-friendship | An invalid address answers `invalidRequest` | F `upsert_friendship_validates_and_reads_messages_as_upstream` | ported, "Invalid user address in the request payload", nothing written; differs: a missing user answers it too, where upstream's dereference of the absent user throws (`internalServerError`). Upstream `src/controllers/handlers/rpc/upsert-friendship.ts:31-33`, `src/logic/friends/friendships.ts:103-130`; local `social/src/rpc/service/friends.rs:341-369` |
-| upsert-friendship | A request to yourself answers `invalidFriendshipAction` "You cannot send a friendship request to yourself" | F `upsert_friendship_validates_and_reads_messages_as_upstream` | ported, in any letter case; any other action to yourself meets the state machine. Upstream `src/controllers/handlers/rpc/upsert-friendship.ts:27-29`; local `social/src/rpc/service/friends.rs:362-365` |
-| upsert-friendship | An unknown action answers `invalidRequest` "Unknown message" | F `upsert_friendship_validates_and_reads_messages_as_upstream` | ported. Upstream `src/controllers/handlers/rpc/upsert-friendship.ts:22-24`; local `social/src/rpc/service/friends.rs:358` |
-| subscribe-to-friendship-updates (6) | The other party's updates with the sender's profile | T `two_explorers_exchange_a_friend_request_over_the_socket` | covered; stream errors and cleanup n/a; stream closed covered (throughout) |
-| subscribe-to-friend-connectivity-updates (11) | Live updates; an initial snapshot of the online friends that a failure does not end | T `two_explorers_exchange_a_friend_request_over_the_socket`; `subscriptions.rs` `replay_tests` | covered; differs: the snapshot replays every friend with its status, and a failed or unacknowledged snapshot ends the stream. Upstream `src/controllers/handlers/rpc/subscribe-to-friend-connectivity-updates.ts:35-42`, `src/logic/updates.ts:519-523`; local `social/src/rpc/service/subscriptions.rs:43-93`; stream closed covered (throughout) |
-| subscribe-to-community-member-connectivity-updates (7) | Member updates passed through, the subscriber's own included | CN `a_member_update_reaches_the_subscriber_only_when_current_and_co_member`, `a_membership_change_reaches_the_departed_wallet_and_the_members`; `subscriptions.rs` `replay_tests` | ported; a membership change (join, leave, kick, ban, deletion) passes through as published; differs: a presence update is re-checked at delivery (the member must be a co-member and the status current), and an initial replay of the co-members comes first. Upstream `src/controllers/handlers/rpc/subscribe-to-community-member-connectivity-updates.ts:33-46`; local `social/src/rpc/service/subscriptions.rs:183-286`, `social/src/rpc/context.rs:383-405` |
-
-## Blocks
-
-### logic/blocks.spec.ts (3) and rpc-server/services: blocks
-
-| spec | behaviour | local test | status |
-| --- | --- | --- | --- |
-| blocks (3) | Blocked profiles with `blockedAt`; the update names the blocker | `profiles.rs` `without_a_pool_every_address_is_a_placeholder_in_input_order`; F `blocking_a_friend_ends_the_friendship_and_tells_them` | covered, ported |
-| block-user (4) | Ok with the profile and `blockedAt`; yourself is invalid | F `blocking_a_friend_ends_the_friendship_and_tells_them`, `blocking_yourself_is_an_invalid_request`, `block_targets_are_checked_as_upstream` | ported: an invalid or missing address answers "Invalid user address in the request payload", yourself (any letter case) "Cannot block yourself". Upstream `src/controllers/handlers/rpc/block-user.ts:20-26`; local `social/src/rpc/service/blocks.rs:95-111` |
-| unblock-user (5) | Ok with the profile, no `blockedAt`; a failure answers `internalServerError` | F `blocking_a_friend_ends_the_friendship_and_tells_them`, `unblocking_a_stranger_only_lifts_the_block`, `block_targets_are_checked_as_upstream`; FA | ported: an invalid address and yourself ("Cannot unblock yourself") are refused as upstream. Upstream `src/controllers/handlers/rpc/unblock-user.ts:20-27`; local `social/src/rpc/service/blocks.rs:95-111` |
-| get-blocked-users (3) | Profiles with `blockedAt`, the full total; a failure answers the empty page | T `get_blocked_users_pages_and_counts_the_full_set`; FA; UR | covered, ported |
-| get-blocking-status (5) | Each direction alone, both, none; a failure answers both empty | T `block_and_unblock_return_the_latest_action_in_one_statement`; F `blocking_status_reads_each_direction_alone`; FA; UR | covered, ported |
-| subscribe-to-block-updates (6) | The blocked party receives `{address: blocker, isBlocked}` | F `blocking_a_friend_ends_the_friendship_and_tells_them`, `unblocking_a_stranger_only_lifts_the_block` | ported (the published update); stream closed covered (throughout) |
-
-## Settings
-
-### logic/settings (14) and rpc-server/services: settings
-
-| spec | behaviour | local test | status |
-| --- | --- | --- | --- |
-| settings (4) | A stored row, the defaults of an absent one, mixed, an empty input | T `private_messages_settings_keeps_input_order_and_schema_defaults`; ST `settings_read_their_defaults_and_round_trip_every_value` | covered, ported |
-| settings.utils (10) | Every value maps both ways; a partial update writes only its fields | ST `settings_read_their_defaults_and_round_trip_every_value` | ported |
-| settings.utils | An unknown value is refused | ST `settings_reject_empty_and_unknown_wire_values_before_storage` | ported: each field's own message ("Unknown private messages privacy setting", …), nothing written. Upstream `src/logic/settings/utils.ts:116-143`; local `social/src/rpc/service/settings.rs:57-85` |
-| settings.utils | Private-message settings per address with friendship | ST `private_message_settings_read_per_address_with_friendship` | ported |
-| get-social-settings (3) | Stored values; the defaults of an absent row, nothing inserted | ST `settings_read_their_defaults_and_round_trip_every_value`; UR | ported |
-| get-private-messages-settings (5) | Privacy and friendship per address, in order; an empty list; more than 50 addresses | ST `private_message_settings_read_per_address_with_friendship`; UR | ported |
-| upsert-social-settings (15) | One or several fields, the merged row back | ST `settings_read_their_defaults_and_round_trip_every_value` | ported |
-| upsert-social-settings | An empty payload answers `invalidRequest` "At least one setting to update must be provided" | ST `settings_reject_empty_and_unknown_wire_values_before_storage` | ported; no row is created. Upstream `src/controllers/handlers/rpc/upsert-social-settings.ts:30-41`; local `social/src/rpc/service/settings.rs:57-62`, `:79-85` |
-| upsert-social-settings | An unknown privacy value answers `invalidRequest` | ST `settings_reject_empty_and_unknown_wire_values_before_storage` | ported (as settings.utils). Upstream `src/controllers/handlers/rpc/upsert-social-settings.ts:58-66`; local `social/src/rpc/service/settings.rs:62-66` |
-| upsert-social-settings | The gatekeeper's copy follows the privacy, fail-closed (10 cases) | — | n/a: one table; the private-messages token reads it when minted |
+| Contract | Current implementation | Regression evidence |
+| --- | --- | --- |
+| Friendship action and consent | Shared HTTP/RPC state machine, message code-point bound, pair and actor budgets, blocked-pair gate; empty message is absent metadata. | `rpc/tests/friends.rs`: illegal transitions, rate/message boundaries, cancel/reject/delete and blocked-pair tests |
+| Creation and action identity | A mutation response identifies the friendship and keeps its original creation time; request-list rows and request events identify the action UUID. | `friendship_responses_keep_the_original_creation_time_after_later_actions`, `pending_requests_list_the_latest_request_with_its_message`, `a_friendship_runs_through_the_http_routes` |
+| Profile failure after mutation | The action commits before RPC profile resolution; either missing profile yields `internalServerError`. HTTP address-only writes do not require profiles. | source golden case `upsert-friendship.missing-profiles-after-commit`; `missing_profiles_commit_friendship_but_fail_rpc_enrichment_and_skip_notifications` |
+| Status | The last friendship action wins; a lone block supplies the fallback, matching `src/adapters/friends-db.ts`'s synthetic `block_action`. | `friendship_status_names_a_missing_or_invalid_user_and_reads_a_lone_block`, `friendship_action_outranks_a_block_row` |
+| Blocks | Block/unblock plus the existing friendship action commit atomically. Blocking a stranger emits only the block update; retrying an unblock writes and publishes nothing. | `block_and_unblock_roll_back_when_the_friendship_action_cannot_be_recorded`, `blocking_without_friendship_only_emits_a_block_update`, `unblocking_an_unblocked_friend_changes_nothing` |
+| Settings | Empty or unknown enums fail before SQL. Absent settings read defaults without insertion; partial writes preserve other fields and new-row column defaults. Privacy enforcement reads the same SQL authority in process. | `settings_reject_empty_and_unknown_wire_values_before_storage`, `settings_read_their_defaults_and_round_trip_every_value`, source golden setting cases |
+| Per-address privacy | Lowercase, first-occurrence deduplication, at most 50 inputs before deduplication, active/unblocked friendship. HTTP additionally validates every address. | `private_message_settings_read_per_address_with_friendship`, `settings_run_through_the_http_routes`, source golden duplicate case |
 
 ## Private voice
 
@@ -380,27 +319,26 @@ on the zero address and a second address created for the run). The local answers
 | A failing source is skipped; all failing gives none | 4 | comms `topology.rs` `complete_replacement_invalid_retention_and_quiet_expiry` | covered; differs: a frame that does not decode keeps the previous set until its receipt expires, and an expired receipt empties it. Upstream `src/logic/peers-stats/peers-stats.ts:12-14`; local `comms/src/topology.rs:55`, `:89-97` |
 | Every source is asked | 1 | — | n/a |
 
-### logic/profiles.spec.ts (16)
+### RPC profiles and friendship notifications
 
-| behaviour | upstream cases | local test | status |
-| --- | --- | --- | --- |
-| The first avatar is the profile | 1 | `profiles.rs` `the_first_avatar_names_the_profile_and_falls_back_to_unclaimed_name` | ported |
-| No avatar, or neither a name nor an unclaimed name, means no profile | 4 | `profiles.rs` `profiles_come_from_the_active_profile_entity`; F `a_wallet_without_a_profile_is_left_out_with_a_profile_source` | covered, ported: no profile, so the wallet is left out where upstream drops it (see Profiles, throughout); without a profile source, a placeholder. Upstream `src/logic/profiles.ts:8-21`; local `social/src/rpc/profiles.rs:155-163`, `:212-238` |
-| The name, else `unclaimedName` | 2 | `profiles.rs` `profiles_come_from_the_active_profile_entity`, `the_first_avatar_names_the_profile_and_falls_back_to_unclaimed_name` | covered, ported: an empty `name` falls back too (`name \|\| unclaimedName`). Upstream `src/logic/profiles.ts:19-21`; local `social/src/rpc/profiles.rs:61-62` |
-| The user id is required and lowercased | 3 | `profiles.rs` `profiles_come_from_the_active_profile_entity` | differs: the address is the caller's, as recorded under friendships. Upstream `src/logic/profiles.ts:33-35`; local `social/src/rpc/profiles.rs:314` |
-| The picture is `face256`, required | 3 | `profiles.rs` `profiles_come_from_the_active_profile_entity` | covered; differs: the node's face URL, as recorded under friendships |
-| A full profile carries the name color only when present | 1 | `profiles.rs` `profiles_come_from_the_active_profile_entity` | covered |
-| An absent `hasClaimedName` is false | 1 | `profiles.rs` `profiles_come_from_the_active_profile_entity` | ported |
-| The minimal profile kept in the cache | 1 | — | n/a |
+RPC profiles use the first avatar's required `userId`, name (falling back to
+`unclaimedName` even for an empty name) and required stored `face256`. The
+response lowercases the identity and preserves the snapshot URL. Friend,
+mutual-friend, request and blocked-user lists omit unavailable profiles while
+retaining the domain row count. Block/unblock write responses retain an address
+with empty display fields when enrichment is unavailable. Positive profiles are
+cached for ten minutes; missing profiles are retried rather than negatively
+cached. Resolver failure is kept distinct from a successful empty lookup.
+`rpc/profiles.rs` tests `first_avatar_requires_identity_name_and_face_and_preserves_snapshot_url`
+and `absent_profiles_are_omitted_from_lists_and_block_responses_keep_the_address`
+cover those wire choices; the source golden replay covers absent-profile lists.
 
-### logic/notifications.spec.ts (6, and 2 `it.each` tables)
-
-| behaviour | upstream cases | local test | status |
-| --- | --- | --- | --- |
-| A request or an accept notifies; cancel, reject and delete do not | the 2 tables | F `friendship_notifications_use_action_ids_and_preserve_profile_metadata`, `missing_profiles_skip_friendship_notifications_without_failing_the_action` | ported. Upstream `src/logic/notifications.ts:78-79`; local `social/src/rpc/service/friends.rs:133-137` |
-| The event names both parties, and the message when there is one | 3 | F `friendship_notifications_use_action_ids_and_preserve_profile_metadata`, `missing_profiles_skip_friendship_notifications_without_failing_the_action` | ported: the stored row, as the processor parses the event (`processor/src/logic/event-parser.ts:231-279` of notifications-workers at `0f113fb`). Upstream `src/logic/notifications.ts:28-60`; local `social/src/rpc/service/friends.rs:152-171` |
-| An unknown action is an error | 1 | — | n/a: the action is a closed enum (`social/src/rpc/service/domain.rs:20-27`) |
-| The SNS publish retries | 2 | — | n/a |
+Requests and accepts create inbox/outbox notifications when both profiles exist;
+cancel, reject and delete do not. Notification IDs use the committed action UUID
+and metadata preserves sender, receiver, picture, name and optional message
+(`friendship_notifications_use_action_ids_and_preserve_profile_metadata`). Local
+notification persistence replaces this producer's SNS hop; it does not establish
+compatibility for external SNS consumers or prove upstream retry behaviour.
 
 ## HTTP twins and `/v1/stream` (b6b2cef)
 
@@ -412,11 +350,11 @@ routes are `social/src/rpc/http.rs` (`ENDPOINTS.md` lists them), the stream `soc
 
 | upstream | behaviour | local test | status |
 | --- | --- | --- | --- |
-| #504 friends | `/v2/friends`, `/v2/users/{address}/mutual-friends`, `/v1/users/{address}/friendship-status`, `/v2/friendship-requests`, `POST /v1/friendship-requests`, `PATCH /v1/friendship-requests/{address}`, `DELETE /v1/friends/{address}`: addresses only; 403 blocked, 409 invalid transition, 429 rate limited | `tests/social_api.rs` `a_friendship_runs_through_the_http_routes`, `friendship_routes_refuse_as_upstream_does`, `a_route_and_its_procedure_write_and_publish_alike` | ported; the procedure's invalid-transition message is now upstream's `InvalidFriendshipActionError` (local `social/src/rpc/service/friends.rs:24`) |
-| #505 blocks | `POST /v1/blocks`, `DELETE /v1/blocks/{address}` (idempotent), `/v1/blocking-status`, `/v2/blocks` | `tests/social_api.rs` `blocks_run_through_the_http_routes` | ported: the block and its friendship action in one transaction, and `FriendshipUpdate::Block` only when a friendship was ended, as the procedure (upstream `src/logic/friends/component.ts:290-319`; local `social/src/rpc/service/blocks.rs:12-53`) |
+| #504 friends | `/v2/friends`, `/v2/users/{address}/mutual-friends`, `/v1/users/{address}/friendship-status`, `/v2/friendship-requests`, `POST /v1/friendship-requests`, `PATCH /v1/friendship-requests/{address}`, `DELETE /v1/friends/{address}`: addresses only; 403 blocked, 409 invalid transition, 429 rate limited | `tests/social_api.rs` `a_friendship_runs_through_the_http_routes`, `friendship_routes_refuse_as_upstream_does`, `a_route_and_its_procedure_write_and_publish_alike` | ported; the procedure's invalid-transition message is now upstream's `InvalidFriendshipActionError` (local `social/src/rpc/service/friends.rs:22`) |
+| #505 blocks | `POST /v1/blocks`, `DELETE /v1/blocks/{address}` (idempotent), `/v1/blocking-status`, `/v2/blocks` | `tests/social_api.rs` `blocks_run_through_the_http_routes` | Local regression coverage; block events follow the existence of a friendship, and paired writes are atomic. See the per-operation backlog for remaining verification. |
 | #506 settings | `GET`/`PATCH /v1/social-settings` (the stored strings), `/v1/private-messages-settings` (at most 50, each validated, deduplicated) | `tests/social_api.rs` `settings_run_through_the_http_routes` | ported |
 | #507 voice | private calls: start, incoming, accept/reject, end; community rooms: start, end, join, kick, promote, mute, demote, raise and lower or reject a hand | `tests/social_api.rs` `a_private_call_runs_through_the_http_routes`, `a_community_room_runs_through_the_http_routes` | ported; the community gates' messages are the procedures' (the rows above) |
-| #503 stream handshake | Upgrade headers verified before the upgrade (401, 503) or the first frame (`auth_in_progress`, 3003, 3004), signed over `/v1/stream`, never `/` | `tests/stream.rs` `both_handshakes_are_over_the_stream_route_only`, `no_chain_within_the_window_closes_3004`; `stream.rs` `the_signature_is_over_the_stream_route_never_the_rpc_root` | ported; served at `/social-rpc/v1/stream` (the RPC socket's `/` is `/social-rpc`), local `social/src/rpc/mod.rs:283-286`, `social/src/rpc/stream.rs:162`, `:187`, `:213`, `:495` |
+| #503 stream handshake | Upgrade headers verified before the upgrade (401, 503) or the first frame (`auth_in_progress`, 3003, 3004), signed over `/v1/stream`, never `/` | `tests/stream.rs` `both_handshakes_are_over_the_stream_route_only`, `no_chain_within_the_window_closes_3004`; `tests/socket.rs` `mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers` | ported; served at `/social-rpc/v1/stream` (the RPC socket's `/` is `/social-rpc`), local `social/src/rpc/mod.rs:283-286`, `social/src/rpc/stream.rs:162`, `:187`, `:213`, `:495` |
 | #503 stream messages | `subscribe`/`subscribed`, `unsubscribe`/`end`, `ping`/`pong`, `event`; the error codes and messages of `messages.ts` | `tests/stream.rs` `a_subscription_receives_the_update_its_rpc_stream_would`; `stream.rs` `messages_parse_as_upstream_validates_them` | ported (local `social/src/rpc/stream.rs:614`, `:642`, `:771`) |
 | #503 per-address cap | `WS_MAX_CONNECTIONS_PER_ADDRESS` 8 across both protocols; the ninth closes the oldest `3005` | `tests/stream.rs` `the_ninth_socket_of_an_address_ends_its_oldest`; `limits.rs` `the_ninth_socket_displaces_the_oldest` | ported, an RPC socket included (local `social/src/rpc/limits.rs:98`, `:184-208`); the cap is claimed after auth |
 | #503 subscription bucket | 2/s, burst 24 per address, surviving reconnects, 10,000 idle buckets; `rate_limited` | `limits.rs` `the_subscription_bucket_survives_a_reconnect` | ported (local `social/src/rpc/limits.rs:103-128`, `:212`) |

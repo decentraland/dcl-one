@@ -339,7 +339,7 @@ async fn node_without_db(settings: Settings) -> Node {
         http: crate::http::Outbound::for_tests(),
         content,
         registry: registry::Cache::new(),
-        denylist: denylist::Snapshot::default(),
+        denylist: Default::default(),
         flags: feature_flags::Snapshot::default(),
         map: map::MapState::new(),
         ab_cdn: ab_cdn::Cache::new(tmp.0.join("ab-cdn"), u64::MAX).unwrap(),
@@ -457,6 +457,38 @@ async fn call_json(
 }
 
 /// A live job context (cancelled by `jobs.shutdown`) to run a pass under.
+/// A replica that never runs the leased mirror pass still follows the
+/// shared denylist tables through its own periodic reload.
+#[tokio::test]
+async fn every_replica_reloads_the_shared_denylist() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let replica = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    let wallet = "0x00000000000000000000000000000000000000fe";
+    assert!(!replica.state.denylist.contains(wallet));
+    let jobs = Jobs::new();
+    denylist::spawn_reload(&replica.state, &jobs, std::time::Duration::from_millis(20));
+    denylist::set_local(&db.pool, wallet, true).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !replica.state.denylist.contains(wallet) {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the replica reloads the shared overlay");
+    denylist::set_local(&db.pool, wallet, false).await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while replica.state.denylist.contains(wallet) {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("and its removal");
+    jobs.shutdown(std::time::Duration::from_secs(2)).await;
+    db.teardown().await;
+}
+
 async fn job_ctx() -> (Jobs, crate::jobs::JobContext) {
     let jobs = Jobs::new();
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -1467,6 +1499,86 @@ async fn feature_flags_mirror_sends_the_referer_applies_overrides_and_uses_the_e
     assert_eq!(doc["flags"]["explorer-local-only"], true);
 
     jobs.shutdown(Duration::from_secs(1)).await;
+    db.teardown().await;
+}
+
+#[tokio::test]
+async fn dapps_flags_refresh_preserves_the_audience_and_last_good_document() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    let reply = Arc::new(Mutex::new((
+        StatusCode::OK,
+        json!({
+            "flags": {"dapps-communities_global_moderators": true},
+            "variants": {"dapps-communities_global_moderators": {
+                "payload": {"value": "0xABC"}
+            }}
+        }),
+    )));
+    let observed = Arc::new(Mutex::new(Vec::new()));
+    let (reply_route, observed_route) = (reply.clone(), observed.clone());
+    let server = Router::new().route(
+        "/dapps.json",
+        get(move |headers: HeaderMap| {
+            let (reply, observed) = (reply_route.clone(), observed_route.clone());
+            async move {
+                observed.lock().push(headers);
+                let (status, body) = reply.lock().clone();
+                (status, Json(body))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let task = tokio::spawn(axum::serve(listener, server).into_future());
+    let node = node_with_db(Settings::for_tests(sources_at(addr)), db.pool.clone()).await;
+    let snapshot = feature_flags::Snapshot::empty();
+    let url = format!("http://{addr}/dapps.json");
+    let audience = "https://social.example.invalid";
+    feature_flags::refresh_app(
+        &node.state,
+        &snapshot,
+        "dapps",
+        &url,
+        audience,
+        Duration::from_secs(1),
+    )
+    .await
+    .unwrap();
+    assert_eq!(observed.lock()[0][header::REFERER], audience);
+    assert!(observed.lock()[0].get(header::IF_NONE_MATCH).is_none());
+    assert_eq!(
+        snapshot.variant_values("dapps", "communities_global_moderators"),
+        Some(vec!["0xabc".into()])
+    );
+    let last_good = snapshot.document();
+    for invalid in [
+        (StatusCode::SERVICE_UNAVAILABLE, json!({})),
+        (
+            StatusCode::OK,
+            json!({"flags":{"invalid":"true"}, "variants":{}}),
+        ),
+    ] {
+        *reply.lock() = invalid;
+        assert!(
+            feature_flags::refresh_app(
+                &node.state,
+                &snapshot,
+                "dapps",
+                &url,
+                audience,
+                Duration::from_secs(1)
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(snapshot.document(), last_good);
+        let restarted = feature_flags::Snapshot::empty();
+        restarted.reload(&db.pool, "dapps").await.unwrap();
+        assert_eq!(restarted.document(), last_good);
+    }
+    task.abort();
     db.teardown().await;
 }
 

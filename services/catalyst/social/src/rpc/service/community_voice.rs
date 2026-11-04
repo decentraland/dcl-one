@@ -48,19 +48,19 @@ fn room_not_found(community_id: &str) -> Refusal {
 /// call throwing); a room or participant the runtime does not hold is the
 /// action's not-found (the gatekeeper's 404).
 fn runtime(
-    action: &str,
+    _action: &str,
     community_id: &str,
     outcome: Result<(), VoiceUnavailable>,
 ) -> Result<(), Refusal> {
     match outcome {
         Ok(()) => Ok(()),
         Err(VoiceUnavailable::NotFound) => Err(resource_not_found(community_id)),
-        Err(e) => Err(Refusal::Internal(format!("voice runtime: {action}: {e}"))),
+        Err(e) => Err(Refusal::Internal(e.to_string())),
     }
 }
 
-fn internal(what: &str) -> impl Fn(VoiceUnavailable) -> Refusal + '_ {
-    move |e| Refusal::Internal(format!("voice runtime: {what}: {e}"))
+fn internal(_what: &str) -> impl Fn(VoiceUnavailable) -> Refusal + '_ {
+    move |e| Refusal::Internal(e.to_string())
 }
 
 /// The community id as upstream reads it: empty is an invalid request; one
@@ -78,6 +78,40 @@ fn community_id(raw: &str, gatekeeper_first: bool) -> Result<Uuid, Refusal> {
             Refusal::Internal(format!("community id {raw} is not a uuid"))
         }
     })
+}
+
+/// The privileged adapter accepts the dashed UUID spelling only. PostgreSQL's
+/// UUID parser is deliberately more permissive, so this check belongs at the
+/// media boundary after the social authorization reads.
+fn gatekeeper_identifiers(
+    raw: &str,
+    target: Option<&str>,
+    opaque_error: bool,
+) -> Result<(), Refusal> {
+    let canonical = raw.len() == 36
+        && raw.bytes().enumerate().all(|(i, b)| {
+            if [8, 13, 18, 23].contains(&i) {
+                b == b'-'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        });
+    let invalid = if !canonical {
+        Some(INVALID_GATEKEEPER_COMMUNITY_ID)
+    } else if target.is_some_and(|address| {
+        address.len() != 42
+            || !address.starts_with("0x")
+            || !address.as_bytes()[2..].iter().all(u8::is_ascii_hexdigit)
+    }) {
+        Some("Invalid Gatekeeper user address")
+    } else {
+        None
+    };
+    match invalid {
+        Some(message) if opaque_error => Err(Refusal::Internal(message.into())),
+        Some(message) => Err(Refusal::Invalid(message.into())),
+        None => Ok(()),
+    }
 }
 
 /// Upstream `assertIdentifiers` (promote, demote, reject, kick).
@@ -107,6 +141,7 @@ async fn voice_profile(ctx: &Context, address: &str) -> Option<serde_json::Value
 /// membership when private. Answers the stored role (`none` for a public
 /// guest).
 async fn participation(ctx: &Context, cid: Uuid, raw: &str, me: &str) -> Result<String, Refusal> {
+    gatekeeper_identifiers(raw, None, false)?;
     let live = ctx
         .voice()
         .community_voice_chat_active(cid)
@@ -137,12 +172,32 @@ async fn participation(ctx: &Context, cid: Uuid, raw: &str, me: &str) -> Result<
 /// and `communityVoiceChatUpdateHandler`): every subscriber for a public,
 /// listed community, its members otherwise, never the starter; the places'
 /// positions and worlds and the thumbnail ride along.
-async fn announce_started(ctx: &Context, me: &str, cid: Uuid, gate: &VoiceGate) {
+async fn announce_started(
+    ctx: &Context,
+    me: &str,
+    cid: Uuid,
+    raw: &str,
+    gate: &VoiceGate,
+) -> Result<(), Refusal> {
     let Some(community) = &gate.community else {
-        return;
+        return Ok(());
     };
     let everyone = !community.private && !community.unlisted;
-    ctx.pubsub().record_voice_audience(cid, everyone);
+    let created_at = now_ms();
+    // Persist the routing fact before optional enrichment, as upstream does before its
+    // thumbnail/place reads. The generation guards notification metadata, not media I/O.
+    let generation = ctx
+        .db()
+        .record_voice_notification(
+            cid,
+            raw,
+            if everyone {
+                crate::rpc::fanout::Scope::All
+            } else {
+                crate::rpc::fanout::Scope::Members
+            },
+        )
+        .await?;
     let id = crate::CommunityId::from_uuid(cid);
     let (positions, worlds, image) = match ctx.communities() {
         Some(state) => crate::communities::voice::started_enrichment(state, id).await,
@@ -150,8 +205,8 @@ async fn announce_started(ctx: &Context, me: &str, cid: Uuid, gate: &VoiceGate) 
     };
     let update = CommunityVoiceChatUpdate {
         stream_closed: None,
-        community_id: cid.to_string(),
-        created_at: chrono::Utc::now().timestamp_millis(),
+        community_id: raw.to_string(),
+        created_at,
         status: CommunityVoiceChatStatus::CommunityVoiceChatStarted as i32,
         ended_at: None,
         positions,
@@ -160,30 +215,49 @@ async fn announce_started(ctx: &Context, me: &str, cid: Uuid, gate: &VoiceGate) 
         community_image: image.clone(),
         worlds,
     };
-    ctx.pubsub()
-        .community_voice(ctx.db().pool(), cid, update, everyone, Some(me))
-        .await;
+    let current_generation = ctx.db().voice_generation_is(raw, Some(generation)).await?;
     // upstream `broadcastVoiceChatStarted` (`logic/community/broadcaster.ts`):
     // the online members but the opener
     let online = ctx.topology().snapshot().wallets;
-    notify(
-        ctx.db().pool(),
-        CommunityEvent {
-            kind: "community_voice_chat_started",
-            key: format!("{cid}-{}", now_ms()),
-            community_id: id,
-            metadata: serde_json::json!({
-                "communityId": cid,
-                "communityName": community.name,
-                "thumbnailUrl": image.unwrap_or_default(),
-            }),
-        },
-        Audience::OnlineMembersExcept {
-            online: &online,
-            except: me,
-        },
-    )
-    .await;
+    let event = CommunityEvent {
+        kind: "community_voice_chat_started",
+        key: format!("{raw}-{created_at}"),
+        community_id: id,
+        metadata: serde_json::json!({
+            "communityId": raw,
+            "communityName": community.name,
+            "thumbnailUrl": image.unwrap_or_default(),
+        }),
+    };
+    let audience = Audience::OnlineMembersExcept {
+        online: &online,
+        except: me,
+    };
+    // Source Promise.all starts pub/sub and the broadcast before analytics,
+    // without waiting for either notification transport to finish first.
+    let publish = async {
+        if current_generation {
+            ctx.pubsub()
+                .community_voice(ctx.db().pool(), cid, update, everyone, Some(me))
+                .await;
+        }
+    };
+    let broadcast = async {
+        if let Some(state) = ctx.communities() {
+            state.publish_community_event(&event, &audience).await;
+        }
+        notify(ctx.db().pool(), event, audience).await;
+    };
+    let analytics = async {
+        if let Some(state) = ctx.communities() {
+            state.fire_analytics(
+                "START_COMMUNITY_CALL",
+                serde_json::json!({"call_id":raw,"user_id":me}),
+            );
+        }
+    };
+    tokio::join!(publish, broadcast, analytics);
+    Ok(())
 }
 
 /// An owner or moderator opens the room (no room may be live); its
@@ -192,10 +266,12 @@ pub(crate) async fn start_community_voice_chat(
     ctx: &Context,
     me: &str,
     raw: &str,
+    include_profile: bool,
 ) -> Result<String, Refusal> {
     let cid = community_id(raw, false)?;
     let gate = ctx.db().community_voice_gate(cid, me, me).await?;
     host_gate(&gate, me, raw, "start voice chats")?;
+    gatekeeper_identifiers(raw, None, true)?;
     let live = ctx
         .voice()
         .community_voice_chat_active(cid)
@@ -206,14 +282,21 @@ pub(crate) async fn start_community_voice_chat(
             "Community {raw} already has an active voice chat"
         )));
     }
-    let profile = voice_profile(ctx, me).await;
+    let profile = if include_profile {
+        voice_profile(ctx, me).await
+    } else {
+        None
+    };
     let role = gate.a.role.clone().unwrap_or_default();
     let conn = ctx
         .voice()
         .community_voice_credentials(cid, me, &role, CommunityVoiceAction::Create, profile)
         .await
-        .map_err(internal("community voice credentials"))?;
-    announce_started(ctx, me, cid, &gate).await;
+        .map_err(|error| match error {
+            VoiceUnavailable::NotFound => resource_not_found(raw),
+            other => internal("community voice credentials")(other),
+        })?;
+    announce_started(ctx, me, cid, raw, &gate).await?;
     Ok(conn)
 }
 
@@ -224,15 +307,24 @@ pub(crate) async fn join_community_voice_chat(
     ctx: &Context,
     me: &str,
     raw: &str,
+    include_profile: bool,
 ) -> Result<String, Refusal> {
     let cid = community_id(raw, false)?;
+    gatekeeper_identifiers(raw, None, true)?;
     let role = participation(ctx, cid, raw, me).await?;
-    let profile = voice_profile(ctx, me).await;
+    let profile = if include_profile {
+        voice_profile(ctx, me).await
+    } else {
+        None
+    };
     let conn = ctx
         .voice()
         .community_voice_credentials(cid, me, &role, CommunityVoiceAction::Join, profile)
         .await
-        .map_err(internal("community voice credentials"))?;
+        .map_err(|error| match error {
+            VoiceUnavailable::NotFound => resource_not_found(raw),
+            other => internal("community voice credentials")(other),
+        })?;
     if ctx.db().is_member_banned(&cid.to_string(), me).await? {
         tracing::warn!(%me, community_id = %cid, "banned while joining; evicting");
         if let Err(e) = ctx.voice().kick_player(cid, me).await {
@@ -241,6 +333,12 @@ pub(crate) async fn join_community_voice_chat(
         return Err(Refusal::Forbidden(format!(
             "The user {me} is banned from community {raw}"
         )));
+    }
+    if let Some(state) = ctx.communities() {
+        state.fire_analytics(
+            "JOIN_COMMUNITY_CALL",
+            serde_json::json!({"call_id":raw,"user_id":me}),
+        );
     }
     Ok(conn)
 }
@@ -257,6 +355,7 @@ pub(crate) async fn request_to_speak(
     if raising_hand {
         participation(ctx, cid, raw, me).await?;
     }
+    gatekeeper_identifiers(raw, Some(me), false)?;
     let outcome = ctx.voice().request_to_speak(cid, me, raising_hand).await;
     match runtime("request to speak", raw, outcome) {
         Err(Refusal::NotFound(_)) if !raising_hand => Ok(()),
@@ -309,6 +408,7 @@ pub(crate) async fn set_speaker(
     } else {
         "demote speaker"
     };
+    gatekeeper_identifiers(raw, Some(&target_address), false)?;
     let outcome = ctx.voice().set_speaker(cid, &target_address, promote).await;
     runtime(action, raw, outcome).map(|()| self_demote)
 }
@@ -326,6 +426,7 @@ pub(crate) async fn kick_player(
         .community_voice_gate(cid, me, &target_address)
         .await?;
     moderator_gate(&gate, me, &target_address, "kick players")?;
+    gatekeeper_identifiers(raw, Some(&target_address), false)?;
     let outcome = ctx.voice().kick_player(cid, &target_address).await;
     runtime("kick player", raw, outcome)
 }
@@ -350,6 +451,7 @@ pub(crate) async fn reject_speak_request(
     // Public guests can raise a hand; a banned target stays rejectable
     // since denying grants nothing.
     target_membership_gate(community.private, &gate.b, target, raw)?;
+    gatekeeper_identifiers(raw, Some(&target_address), false)?;
     let outcome = ctx.voice().reject_speak_request(cid, &target_address).await;
     runtime("reject speak request", raw, outcome)
 }
@@ -364,6 +466,7 @@ pub(crate) async fn end_community_voice_chat(
     let cid = community_id(raw, false)?;
     let gate = ctx.db().community_voice_gate(cid, me, me).await?;
     host_gate(&gate, me, raw, "end voice chats")?;
+    gatekeeper_identifiers(raw, None, true)?;
     let live = ctx
         .voice()
         .community_voice_chat_active(cid)
@@ -372,26 +475,41 @@ pub(crate) async fn end_community_voice_chat(
     if !live {
         return Err(room_not_found(raw));
     }
-    // Taken before the runtime closes the room, so the closed-room hook
-    // finds nothing to announce and this end tells the audience once.
-    let audience = ctx.pubsub().take_voice_audience(cid);
-    if let Err(e) = ctx.voice().end_community_voice_chat(cid, me).await {
-        if let Some(everyone) = audience {
-            ctx.pubsub().record_voice_audience(cid, everyone);
+    // Claim only this raw key's generation before media teardown. Other spellings
+    // retain their own facts until the poll observes the shared room has ended.
+    let audience = ctx.db().voice_notification(raw).await?;
+    let claimed = match &audience {
+        Some(entry) => ctx.db().clear_voice_notification(entry).await?,
+        None => true,
+    };
+    if let Err(error) = ctx.voice().end_community_voice_chat(cid, me).await {
+        if claimed {
+            if let Some(entry) = &audience {
+                ctx.db().restore_voice_notification(entry).await?;
+            }
         }
-        return runtime("end community voice chat", raw, Err(e));
+        return runtime("end community voice chat", raw, Err(error));
     }
-    // An audience no start here recorded is the members' (upstream's
-    // fail-closed default).
-    ctx.pubsub()
-        .community_voice(
-            ctx.db().pool(),
-            cid,
-            crate::rpc::pubsub::community_voice_ended(cid),
-            audience.unwrap_or(false),
-            None,
-        )
-        .await;
+    if claimed && ctx.db().voice_generation_is(raw, None).await? {
+        let everyone = audience
+            .as_ref()
+            .is_some_and(|entry| entry.fresh && entry.scope == crate::rpc::fanout::Scope::All);
+        ctx.pubsub()
+            .community_voice(
+                ctx.db().pool(),
+                cid,
+                crate::rpc::pubsub::community_voice_ended(raw),
+                everyone,
+                None,
+            )
+            .await;
+    }
+    if let Some(state) = ctx.communities() {
+        state.fire_analytics(
+            "END_COMMUNITY_CALL",
+            serde_json::json!({"call_id":raw,"user_id":me}),
+        );
+    }
     Ok(())
 }
 
@@ -410,6 +528,7 @@ pub(crate) async fn mute_speaker(
     if target.trim().is_empty() {
         return Err(Refusal::Invalid(USER_ADDRESS_REQUIRED.into()));
     }
+    let wire_target = target;
     let target = normalize(target);
     if target != me {
         let cid = community_id(raw, false)?;
@@ -420,8 +539,16 @@ pub(crate) async fn mute_speaker(
         participation(ctx, cid, raw, me).await?;
     }
     let cid = community_id(raw, true)?;
+    gatekeeper_identifiers(raw, Some(&target), false)?;
     let outcome = ctx.voice().mute_speaker(cid, &target, muted).await;
-    runtime("mute speaker", raw, outcome)
+    runtime("mute speaker", raw, outcome)?;
+    if let Some(state) = ctx.communities() {
+        state.fire_analytics(
+            "MUTE_SPEAKER_IN_COMMUNITY_CALL",
+            serde_json::json!({"call_id":raw,"user_id":me,"target_user_id":wire_target}),
+        );
+    }
+    Ok(())
 }
 
 /// The `oneof` arms a community-voice refusal lands in.
@@ -435,18 +562,23 @@ enum Answer {
 
 /// A refusal onto its arm; an internal one carries the procedure's own
 /// upstream message (`failed`), the detail only logged. A database error
-/// raised with `?` stays the remote error (the throughout difference).
+/// raised with `?` also answers the procedure's application error arm.
 fn answer(refusal: Refusal, failed: &str) -> Result<Answer, SocialError> {
     Ok(match refusal {
         Refusal::Invalid(m) => Answer::Invalid(InvalidRequest { message: Some(m) }),
         Refusal::Forbidden(m) => Answer::Forbidden(ForbiddenError { message: Some(m) }),
         Refusal::NotFound(m) => Answer::NotFound(NotFoundError { message: Some(m) }),
         Refusal::Conflict(m) => Answer::Conflict(ConflictingError { message: Some(m) }),
-        Refusal::Failed(m) => return Err(SocialError::Internal(m)),
-        Refusal::Internal(detail) | Refusal::RateLimited(detail) => {
+        Refusal::Failed(detail) | Refusal::Internal(detail) | Refusal::RateLimited(detail) => {
             tracing::error!(%detail, "{failed}");
             Answer::Internal(InternalServerError {
-                message: Some(failed.to_string()),
+                message: Some(
+                    if failed == "Failed to mute/unmute speaker from community voice chat" {
+                        format!("{failed}: {detail}")
+                    } else {
+                        failed.to_string()
+                    },
+                ),
             })
         }
     })
@@ -502,7 +634,8 @@ impl SocialServiceImpl {
         respond!(
             start_community_voice_chat_response,
             StartCommunityVoiceChatResponse,
-            start_community_voice_chat(&context.server_context, &me, &request.community_id).await,
+            start_community_voice_chat(&context.server_context, &me, &request.community_id, true)
+                .await,
             "Failed to start community voice chat",
             |connection_url| start_community_voice_chat_response::Ok {
                 credentials: Some(CommunityVoiceChatCredentials { connection_url }),
@@ -520,7 +653,7 @@ impl SocialServiceImpl {
         respond!(
             join_community_voice_chat_response,
             JoinCommunityVoiceChatResponse,
-            join_community_voice_chat(&context.server_context, &me, &community_id).await,
+            join_community_voice_chat(&context.server_context, &me, &community_id, true).await,
             "Failed to join community voice chat",
             |connection_url| join_community_voice_chat_response::Ok {
                 voice_chat_id: community_id,
