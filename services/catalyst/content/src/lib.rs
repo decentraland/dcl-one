@@ -157,6 +157,9 @@ pub struct Settings {
     pub max_in_memory_deployment_bytes: u64,
     /// `POST_ENTITIES_DAILY_QUOTA_MAX`; 0 is off.
     pub post_entities_daily_quota_max: u32,
+    /// `POST_ENTITIES_RATE_LIMIT_MAX` per `POST_ENTITIES_RATE_LIMIT_WINDOW_SECONDS`; 0 is off.
+    pub post_entities_rate_limit_max: u32,
+    pub post_entities_rate_limit_window: Duration,
     /// The partial-upload limits (`PENDING_DEPLOYMENT_TTL`, ...).
     pub partial_uploads: partial_deployments::Limits,
 }
@@ -242,6 +245,13 @@ impl Settings {
             max_upload_field_bytes: config.content.max_upload_field_size,
             max_in_memory_deployment_bytes: config.content.max_in_memory_deployment_bytes,
             post_entities_daily_quota_max: config.content.post_entities_daily_quota_max,
+            post_entities_rate_limit_max: config.content.post_entities_rate_limit_max,
+            post_entities_rate_limit_window: Duration::from_secs(
+                config
+                    .content
+                    .post_entities_rate_limit_window_seconds
+                    .max(1),
+            ),
             partial_uploads: partial_deployments::Limits::from_config(config),
         }
     }
@@ -273,6 +283,8 @@ impl Settings {
             max_upload_field_bytes: 32 * 1024,
             max_in_memory_deployment_bytes: 2 * 1024 * 1024 * 1024,
             post_entities_daily_quota_max: 300,
+            post_entities_rate_limit_max: 200,
+            post_entities_rate_limit_window: Duration::from_secs(60),
             partial_uploads: partial_deployments::Limits::default(),
         }
     }
@@ -491,6 +503,8 @@ pub struct ContentState {
     pub upload_budget: upload_admission::UploadBudget,
     /// `POST /entities` requests per client address and day.
     pub deploy_quota: upload_admission::DailyQuota,
+    /// `POST /entities` requests per client address and burst window.
+    pub deploy_burst: upload_admission::DailyQuota,
 }
 
 /// See [`ContentState::attach_parcel_grid`].
@@ -518,6 +532,10 @@ impl ContentState {
         );
         let deploy_quota =
             upload_admission::DailyQuota::new(settings.post_entities_daily_quota_max);
+        let deploy_burst = upload_admission::DailyQuota::with_window(
+            settings.post_entities_rate_limit_max,
+            settings.post_entities_rate_limit_window,
+        );
         Self {
             pool,
             settings,
@@ -536,6 +554,7 @@ impl ContentState {
             parcel_grid: OnceLock::new(),
             upload_budget,
             deploy_quota,
+            deploy_burst,
         }
     }
 
@@ -689,7 +708,9 @@ fn content_routes(max_deploy_body: usize) -> Router<SharedState> {
         )
         .route(
             "/entities",
-            post(create_entity::create_entity).layer(DefaultBodyLimit::max(max_deploy_body)),
+            post(create_entity::create_entity)
+                .layer(DefaultBodyLimit::max(max_deploy_body))
+                .fallback(create_entity::other_method),
         )
         .route("/scenes/{coord}", delete(unpublish_scene::unpublish_scene))
         .route("/forwarding", get(forward::list_forwards))

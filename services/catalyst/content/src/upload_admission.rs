@@ -1,9 +1,13 @@
 //! Admission for `POST /entities` before its body is read: a byte budget
-//! shared by every in-flight deploy (the forms are held in memory) and a
-//! per-client daily deploy quota (IPv6 by /64), counted at admission. Both
-//! are in-process state, never the database: each upstream behind the
-//! gateway keeps its own, so N upstreams admit N times the quota, and a
-//! restart resets it.
+//! shared by every in-flight deploy (the forms are held in memory), a
+//! per-client burst limit (upstream's `POST_ENTITIES_RATE_LIMIT_MAX` per
+//! `POST_ENTITIES_RATE_LIMIT_WINDOW_SECONDS`, every request counted) and a
+//! per-client daily deploy quota, counted at admission; both client limits
+//! are fixed windows keyed by address (IPv6 by /64), as upstream's rate
+//! limiter keys them. All three are in-process state, never the database:
+//! each upstream behind the gateway keeps its own, so N upstreams admit N
+//! times the limits, and a restart resets them (upstream's limiter is
+//! process-local too).
 //!
 //! The table holds [`MAX_QUOTA_SOURCES`] windows; a new source past it
 //! evicts the oldest, whose next deploy starts a fresh window. A client
@@ -110,11 +114,11 @@ struct Windows {
 }
 
 impl Windows {
-    /// Drops the windows that ended by `now`, oldest first.
-    fn prune(&mut self, now: Instant) {
+    /// Drops the windows of length `length` that ended by `now`, oldest first.
+    fn prune(&mut self, now: Instant, length: Duration) {
         while let Some(key) = self.by_age.front() {
             match self.by_source.get(key) {
-                Some(w) if now.saturating_duration_since(w.started) < DAILY_WINDOW => break,
+                Some(w) if now.saturating_duration_since(w.started) < length => break,
                 _ => {
                     let key = self.by_age.pop_front().expect("front exists");
                     self.by_source.remove(&key);
@@ -130,10 +134,12 @@ impl Windows {
     }
 }
 
-/// A fixed 24-hour window of deploys per client source; `max` 0 is off.
-/// Per process: every upstream and restart counts on its own.
+/// A fixed window of requests per client source (24 hours for the daily
+/// quota); `max` 0 is off. Per process: every upstream and restart counts
+/// on its own.
 pub struct DailyQuota {
     max: u32,
+    window: Duration,
     max_sources: usize,
     windows: Mutex<Windows>,
     warned_no_source: AtomicBool,
@@ -160,12 +166,18 @@ impl QuotaCharge<'_> {
 
 impl DailyQuota {
     pub fn new(max: u32) -> Self {
-        Self::with_max_sources(max, MAX_QUOTA_SOURCES)
+        Self::with_window(max, DAILY_WINDOW)
     }
 
-    fn with_max_sources(max: u32, max_sources: usize) -> Self {
+    /// `max` requests per `window` and source: the burst limit's shape.
+    pub fn with_window(max: u32, window: Duration) -> Self {
+        Self::with_max_sources(max, window, MAX_QUOTA_SOURCES)
+    }
+
+    fn with_max_sources(max: u32, window: Duration, max_sources: usize) -> Self {
         Self {
             max,
+            window,
             max_sources: max_sources.max(1),
             windows: Mutex::new(Windows::default()),
             warned_no_source: AtomicBool::new(false),
@@ -190,16 +202,16 @@ impl DailyQuota {
         if client_ip.trim().is_empty() {
             if !self.warned_no_source.swap(true, Ordering::Relaxed) {
                 tracing::warn!(
-                    "POST /entities without a gateway-stamped client address; the daily quota does not apply to such requests"
+                    "POST /entities without a gateway-stamped client address; the per-client limits do not apply to such requests"
                 );
             }
             return Ok(None);
         }
         let key = source_key(client_ip);
         let mut windows = self.windows.lock();
-        windows.prune(now);
+        windows.prune(now, self.window);
         let started = match windows.by_source.get_mut(&key) {
-            Some(w) if w.count >= self.max => return Err(retry_after(w, now)),
+            Some(w) if w.count >= self.max => return Err(retry_after(w, now, self.window)),
             Some(w) => {
                 w.count += 1;
                 w.started
@@ -235,12 +247,12 @@ impl DailyQuota {
         }
         let now = Instant::now();
         let mut windows = self.windows.lock();
-        windows.prune(now);
+        windows.prune(now, self.window);
         windows
             .by_source
             .get(&source_key(client_ip))
             .filter(|w| w.count >= self.max)
-            .map(|w| retry_after(w, now))
+            .map(|w| retry_after(w, now, self.window))
     }
 }
 
@@ -256,9 +268,9 @@ impl DailyQuota {
     }
 }
 
-/// Whole seconds until a live `window` ends, at least 1.
-fn retry_after(window: &Window, now: Instant) -> u64 {
-    DAILY_WINDOW
+/// Whole seconds until a live `window` of length `length` ends, at least 1.
+fn retry_after(window: &Window, now: Instant, length: Duration) -> u64 {
+    length
         .saturating_sub(now.saturating_duration_since(window.started))
         .as_secs()
         .max(1)
@@ -358,7 +370,7 @@ mod tests {
 
     #[test]
     fn a_new_source_past_the_table_evicts_only_the_oldest_window() {
-        let quota = DailyQuota::with_max_sources(1, 3);
+        let quota = DailyQuota::with_max_sources(1, DAILY_WINDOW, 3);
         let now = Instant::now();
         for (i, ip) in ["203.0.113.1", "203.0.113.2", "203.0.113.3"]
             .iter()
@@ -396,6 +408,24 @@ mod tests {
         assert_eq!(source_key("2001:db8:1:2:abcd::9"), "2001:db8:1:2::/64");
         assert_eq!(source_key("::ffff:203.0.113.5"), "203.0.113.5");
         assert_eq!(source_key("203.0.113.5"), "203.0.113.5");
+    }
+
+    #[test]
+    fn a_short_window_limits_bursts_and_reports_its_own_end() {
+        let burst = DailyQuota::with_window(2, Duration::from_secs(60));
+        let now = Instant::now();
+        assert!(counted(&burst, "203.0.113.1", now));
+        assert!(counted(&burst, "203.0.113.1", now + Duration::from_secs(1)));
+        assert_eq!(
+            burst
+                .try_consume_at("203.0.113.1", now + Duration::from_secs(20))
+                .err(),
+            Some(40)
+        );
+        assert!(
+            counted(&burst, "203.0.113.1", now + Duration::from_secs(60)),
+            "the next window starts over"
+        );
     }
 
     #[test]

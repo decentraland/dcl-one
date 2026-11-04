@@ -317,7 +317,27 @@ async fn the_write_routes_answer_their_gates_in_order() {
         (status, &body[..]),
         (StatusCode::NOT_FOUND, &b"Not found"[..])
     );
+    let other_method = |method: &str| {
+        Request::builder()
+            .method(method)
+            .uri("/content/entities")
+            .body(Body::empty())
+            .unwrap()
+    };
+    for method in ["GET", "PUT", "DELETE"] {
+        let (status, _, body) = call(&router, other_method(method)).await;
+        assert_eq!(
+            (status, &body[..]),
+            (StatusCode::NOT_FOUND, &b"Not found"[..]),
+            "{method} while read-only"
+        );
+    }
     node.state.set_read_only(false);
+    for method in ["GET", "PUT", "DELETE"] {
+        let (status, headers, _) = call(&router, other_method(method)).await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{method}");
+        assert_eq!(headers[header::ALLOW], "POST");
+    }
 
     for req in [
         deploy_request("/content/entities", "bafy", &chain, &[]),
@@ -1592,6 +1612,44 @@ async fn a_client_past_its_daily_quota_is_turned_away() {
         status,
         StatusCode::BAD_REQUEST,
         "another address has its own quota"
+    );
+}
+
+/// Upstream's burst limit: every request of a client address counts, a
+/// refused one included, and past it the answer is the JSON 429 with the
+/// seconds left in the window; the daily quota is not touched by it.
+#[tokio::test]
+async fn a_client_past_its_burst_limit_is_turned_away() {
+    let settings = Settings {
+        post_entities_rate_limit_max: 2,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("burst-limit", settings).await;
+    let router = node.router();
+    for _ in 0..2 {
+        let (status, _, _) = call(&router, form_request("203.0.113.20", &entity_form())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    let (status, headers, body) = call(&router, form_request("203.0.113.20", &entity_form())).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({"error": "Too many requests"})
+        )
+    );
+    let retry: u64 = headers[header::RETRY_AFTER]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(retry > 0 && retry <= 60, "{retry}");
+    assert_eq!(node.state.deploy_quota.counted_for("203.0.113.20"), 2);
+    let (status, _, _) = call(&router, form_request("203.0.113.21", &entity_form())).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "another address has its own"
     );
 }
 

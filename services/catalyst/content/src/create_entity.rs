@@ -29,8 +29,12 @@
 //! deployer could not decide for its own state (its 503). A contract-wallet
 //! signature this node cannot check (503) and an unsynced copy refusing the
 //! entity's type (503) still count: the client chose them.
-//! The per-second request rate is the gateway's (`limit_req zone=deploy`,
-//! `infra/gateway/gateway.py`); the per-pointer TTLs are the deployer's.
+//! Ahead of the bootstrapping gate, every request (partial batches
+//! included) counts toward upstream's per-client burst limit, 200 per
+//! 60 s by default, a 429 `{"error":"Too many requests"}` with
+//! `Retry-After` past it; the gateway's coarser `limit_req zone=deploy`
+//! (`infra/gateway/gateway.py`) sits above it. The per-pointer TTLs are the
+//! deployer's.
 //!
 //! A form with `partial=true` is a batch of a partial upload
 //! ([`super::partial_deployments`]): 202 `{missing}` until the upload is
@@ -343,7 +347,7 @@ fn with_retry_after(mut response: Response, value: header::HeaderValue) -> Respo
     response
 }
 
-/// 429 with `Retry-After` for a client past its daily quota.
+/// 429 with `Retry-After` for a client past its burst limit or daily quota.
 fn quota_exceeded_response(retry_after_secs: u64) -> Response {
     with_retry_after(
         super::errors::json_error(StatusCode::TOO_MANY_REQUESTS, "Too many requests"),
@@ -366,6 +370,19 @@ fn declared_length(headers: &HeaderMap) -> Option<u64> {
         .and_then(|v| v.trim().parse::<u64>().ok())
 }
 
+/// Any other method on `/entities`: 405 with `Allow: POST`, or, read-only,
+/// the not-found of upstream's `READ_ONLY` node, which has no such route.
+pub async fn other_method(State(state): State<SharedState>) -> Response {
+    if state.is_read_only() {
+        return writes::read_only_response();
+    }
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        [(header::ALLOW, header::HeaderValue::from_static("POST"))],
+    )
+        .into_response()
+}
+
 pub async fn create_entity(
     State(state): State<SharedState>,
     RawQuery(query): RawQuery,
@@ -379,6 +396,11 @@ pub async fn create_entity(
     let Some(deployer) = state.deployer().cloned() else {
         return Ok(writes::disabled_response());
     };
+    let client_ip = crate::shared::client_ip::client_ip(&headers);
+    // Upstream's burst limit: every request counts, none is given back.
+    if let Err(retry_after) = state.deploy_burst.try_consume(&client_ip) {
+        return Ok(quota_exceeded_response(retry_after));
+    }
     if !state.sync.takes_some_deploys() {
         return Ok(writes::bootstrapping_response());
     }
@@ -395,7 +417,6 @@ pub async fn create_entity(
             header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
         ));
     };
-    let client_ip = crate::shared::client_ip::client_ip(&headers);
     // A declared partial batch is counted once its form is read
     // ([`partial_deployments`]): a source that spent its quota may still
     // resume its own uploads.

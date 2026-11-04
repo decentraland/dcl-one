@@ -72,6 +72,17 @@ class ConfigurationTest(unittest.TestCase):
                 self.assertTrue(re.search(deploy, path))
         self.assertIsNone(re.search(deploy, "/worlds-content-server/entities/active"))
 
+    def test_the_deploy_zone_sits_above_the_content_servers_burst_limit(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
+                 "deploy": ["/entities"]}
+        text = gateway.render(table, cfg, "/mime.types")
+        rate = int(re.search(r"zone=deploy:10m rate=(\d+)r/s;", text)[1])
+        burst = int(re.search(r"limit_req zone=deploy burst=(\d+) nodelay;", text)[1])
+        # The content server answers 200 per 60 s per client itself (JSON 429).
+        self.assertGreaterEqual(burst, 200)
+        self.assertGreater(rate * 60, 200)
+
     def test_social_cards_keep_exact_backend_routes_without_shadowing_discovery_pages(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
         table = {"sites": ["places.tsx", "places_.place.$position.tsx", "places_.world.$name.tsx"],

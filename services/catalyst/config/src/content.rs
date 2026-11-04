@@ -166,6 +166,21 @@ pub struct ContentConfig {
     #[arg(long, env = "POST_ENTITIES_DAILY_QUOTA_MAX", default_value_t = 300)]
     pub post_entities_daily_quota_max: u32,
 
+    /// `POST /entities` requests one client address (IPv6 by /64) may make per
+    /// `POST_ENTITIES_RATE_LIMIT_WINDOW_SECONDS`, every request counted, before
+    /// a 429 with `Retry-After`; upstream's burst limit. 0 turns it off. Kept
+    /// per process, like the daily quota.
+    #[arg(long, env = "POST_ENTITIES_RATE_LIMIT_MAX", default_value_t = 200)]
+    pub post_entities_rate_limit_max: u32,
+
+    /// The burst limit's fixed window, in seconds.
+    #[arg(
+        long,
+        env = "POST_ENTITIES_RATE_LIMIT_WINDOW_SECONDS",
+        default_value_t = 60
+    )]
+    pub post_entities_rate_limit_window_seconds: u64,
+
     /// Milliseconds a partial (multi-request) upload lives from its first
     /// batch; batches do not extend it.
     #[arg(long, env = "PENDING_DEPLOYMENT_TTL", default_value_t = 60 * 60 * 1000)]
@@ -371,9 +386,11 @@ mod tests {
                 c.content.max_upload_field_count,
                 c.content.max_upload_field_size,
                 c.content.max_in_memory_deployment_bytes,
-                c.content.post_entities_daily_quota_max
+                c.content.post_entities_daily_quota_max,
+                c.content.post_entities_rate_limit_max,
+                c.content.post_entities_rate_limit_window_seconds
             ),
-            (32, 32 * 1024, 2 * 1024 * 1024 * 1024, 300)
+            (32, 32 * 1024, 2 * 1024 * 1024 * 1024, 300, 200, 60)
         );
         assert!(c.content.retry_failed_enabled);
         assert_eq!(c.content.max_failed_deployment_retries, 10);
