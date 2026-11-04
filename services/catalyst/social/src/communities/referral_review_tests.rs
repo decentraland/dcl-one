@@ -515,7 +515,14 @@ async fn a_failed_tier_notification_is_retried_without_paying_the_reward_again()
     assert_eq!(owed, None, "the reward request is no longer owed");
     let paid = paid.expect("its follow-ups are pending");
     assert_eq!((paid["tier"].clone(), paid["notified"].clone()), (json!(5), json!(false)));
-    assert_eq!(images(pool.clone(), referrer.clone()).await, 1);
+    // The image work started with the notification and survives its failure.
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while images(pool.clone(), referrer.clone()).await != 1 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the paid reward's image is stored");
 
     referral.finalize_referral(invited.as_str()).await.unwrap();
     assert_eq!(rewards.load(Ordering::SeqCst), 1, "the reward is not requested again");

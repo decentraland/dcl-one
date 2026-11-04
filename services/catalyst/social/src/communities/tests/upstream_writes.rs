@@ -956,9 +956,18 @@ async fn a_started_room_carries_the_places_and_the_thumbnail() {
     use crate::rpc::proto::v2::CommunityVoiceChatStatus;
     use crate::rpc::pubsub::SocialEvent;
     let _voice = VOICE_ROWS.lock().await;
-    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+    // Every voice poll sweeps all tracked rooms of its database; fixtures that
+    // poll the shared scratch database would clear this START's row between
+    // its write and its generation check, so it publishes nothing.
+    let Some(database) = crate::rpc::tests::fanout::OwnedDatabase::new().await else {
         return;
     };
+    let rig = Rig::with_pool(
+        Settings::for_tests(),
+        State::explore_for_tests,
+        database.pool.clone(),
+    )
+    .await;
     let (owner, member) = (wallet(), wallet());
     let c = rig.community(&owner, false).await;
     rig.member(c, &member, "member").await;
@@ -1025,4 +1034,5 @@ async fn a_started_room_carries_the_places_and_the_thumbnail() {
     assert_eq!(thumbnail, vec![image]);
     rig.clear_world_place(place).await;
     rig.finish();
+    database.close().await;
 }

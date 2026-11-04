@@ -38,7 +38,7 @@ mod auxiliary_source_cases;
 mod community_voice;
 mod connectivity;
 mod failures;
-mod fanout;
+pub(crate) mod fanout;
 mod friends;
 mod http;
 mod notification_source_cases;

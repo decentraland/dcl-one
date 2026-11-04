@@ -237,6 +237,16 @@ impl Rig {
         explore: impl FnOnce(&PgPool) -> crate::explore::SharedState,
     ) -> Option<Self> {
         let pool = crate::db::scratch::pool(6).await?;
+        Some(Self::with_pool(settings, explore, pool).await)
+    }
+
+    /// On `pool`, e.g. an owned database that no other fixture's voice poll
+    /// sweeps (`rpc::tests::fanout::OwnedDatabase`).
+    async fn with_pool(
+        settings: Settings,
+        explore: impl FnOnce(&PgPool) -> crate::explore::SharedState,
+        pool: PgPool,
+    ) -> Self {
         let storage_dir =
             std::env::temp_dir().join(format!("catalyst-communities-{}", Uuid::new_v4()));
         let storage = Arc::new(
@@ -260,12 +270,12 @@ impl Rig {
             "/social-api",
             crate::social_api_gateway(router(state.clone())),
         );
-        Some(Self {
+        Self {
             pool,
             app,
             state,
             storage_dir,
-        })
+        }
     }
 
     async fn community(&self, owner: &Wallet, private: bool) -> CommunityId {

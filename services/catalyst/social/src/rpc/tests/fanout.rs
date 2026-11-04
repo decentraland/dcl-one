@@ -10,13 +10,13 @@ mod membership;
 mod raw_voice;
 
 /// Separate fixtures keep a fake media view from polling another test's rooms.
-pub(super) struct OwnedDatabase {
-    pub(super) pool: PgPool,
+pub(crate) struct OwnedDatabase {
+    pub(crate) pool: PgPool,
     admin: PgPool,
     name: String,
 }
 impl OwnedDatabase {
-    pub(super) async fn new() -> Option<Self> {
+    pub(crate) async fn new() -> Option<Self> {
         let shared = scratch_pool().await?;
         let options = shared.connect_options();
         let admin = sqlx::postgres::PgPoolOptions::new()
@@ -41,7 +41,7 @@ impl OwnedDatabase {
         crate::db::apply_schema(&pool).await.unwrap();
         Some(Self { pool, admin, name })
     }
-    pub(super) async fn close(self) {
+    pub(crate) async fn close(self) {
         self.pool.close().await;
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP DATABASE \"{}\" WITH (FORCE)",

@@ -54,7 +54,7 @@ pub mod voice;
 pub mod ws;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use std::sync::Arc;
 use std::time::Duration;
