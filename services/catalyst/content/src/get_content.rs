@@ -17,6 +17,10 @@ pub struct ContentQuery {
     pub include_mime_type: Option<String>,
 }
 
+/// The `?includeMimeType` answer for the head of a file: the binary
+/// signatures of `file-type` that content files carry, else
+/// `application/octet-stream` (`file-type` detects no text format, JSON
+/// included).
 pub fn detect_content_type(first_bytes: &[u8]) -> &'static str {
     if first_bytes.len() >= 8 {
         if first_bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
@@ -32,29 +36,31 @@ pub fn detect_content_type(first_bytes: &[u8]) -> &'static str {
     if first_bytes.len() >= 3 && first_bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
         return "image/jpeg";
     }
-    if first_bytes.len() >= 4 {
-        if first_bytes.starts_with(b"RIFF")
-            && first_bytes.len() >= 12
-            && &first_bytes[8..12] == b"WEBP"
-        {
-            return "image/webp";
-        }
-        if first_bytes.starts_with(b"OggS") {
-            return "audio/ogg";
-        }
-        if first_bytes.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
-            return "video/webm";
+    if first_bytes.starts_with(b"GIF8") {
+        return "image/gif";
+    }
+    if first_bytes.starts_with(b"ID3")
+        || (first_bytes.len() >= 2
+            && first_bytes[0] == 0xFF
+            && matches!(first_bytes[1], 0xFB | 0xFA | 0xF3 | 0xF2 | 0xE3 | 0xE2))
+    {
+        return "audio/mpeg";
+    }
+    if first_bytes.starts_with(&[0x50, 0x4B, 0x03, 0x04]) {
+        return "application/zip";
+    }
+    if first_bytes.len() >= 12 && first_bytes.starts_with(b"RIFF") {
+        match &first_bytes[8..12] {
+            b"WEBP" => return "image/webp",
+            b"WAVE" => return "audio/wav",
+            _ => {}
         }
     }
-    let trimmed = if first_bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-        &first_bytes[3..]
-    } else {
-        first_bytes
-    };
-    if let Some(&first) = trimmed.first()
-        && (first == b'{' || first == b'[')
-    {
-        return "application/json";
+    if first_bytes.starts_with(b"OggS") {
+        return "audio/ogg";
+    }
+    if first_bytes.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]) {
+        return "video/webm";
     }
 
     "application/octet-stream"
@@ -160,12 +166,7 @@ pub async fn get_content(
         None => {}
     }
 
-    if method == Method::HEAD {
-        let mut response = StatusCode::OK.into_response();
-        apply_headers(&mut response, &base_headers);
-        return Ok(response);
-    }
-
+    // Upstream sniffs for HEAD as for GET: the headers are the same.
     let head = if query.include_mime_type.is_some() {
         let head = opened.read_range(0, 31).await?;
         set_content_type(&mut base_headers, detect_content_type(&head));
@@ -173,6 +174,12 @@ pub async fn get_content(
     } else {
         Bytes::new()
     };
+
+    if method == Method::HEAD {
+        let mut response = StatusCode::OK.into_response();
+        apply_headers(&mut response, &base_headers);
+        return Ok(response);
+    }
 
     if let Some(accel) =
         x_accel_redirect_path(state.settings.storage_x_accel_base.as_deref(), &hash_id)
@@ -263,6 +270,39 @@ mod tests {
             detect_content_type(b"plain bytes"),
             "application/octet-stream"
         );
+    }
+
+    #[test]
+    fn detect_content_type_matches_file_type_on_content_formats() {
+        assert_eq!(detect_content_type(b"GIF89a\x01\x00"), "image/gif");
+        assert_eq!(
+            detect_content_type(b"ID3\x04\x00\x00\x00\x00"),
+            "audio/mpeg"
+        );
+        assert_eq!(detect_content_type(&[0xFF, 0xFB, 0x90, 0x64]), "audio/mpeg");
+        assert_eq!(
+            detect_content_type(b"RIFF\x24\x08\x00\x00WAVEfmt "),
+            "audio/wav"
+        );
+        assert_eq!(
+            detect_content_type(b"RIFF\x24\x08\x00\x00WEBPVP8 "),
+            "image/webp"
+        );
+        assert_eq!(
+            detect_content_type(b"PK\x03\x04\x14\x00"),
+            "application/zip"
+        );
+        assert_eq!(detect_content_type(b"OggS\x00\x02"), "audio/ogg");
+        // `file-type` has no text detector: JSON is not recognised.
+        assert_eq!(
+            detect_content_type(b"{\"version\":\"v3\"}"),
+            "application/octet-stream"
+        );
+        assert_eq!(
+            detect_content_type(b"\xEF\xBB\xBF[1]"),
+            "application/octet-stream"
+        );
+        assert_eq!(detect_content_type(b""), "application/octet-stream");
     }
 
     async fn get(
@@ -361,8 +401,10 @@ mod tests {
             .unwrap();
         assert_eq!(body, blob);
 
+        // Upstream sniffs for HEAD too (`get-content-handler.ts:54`).
         let resp = get(&node, Method::HEAD, Some(""), None).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(header(&resp, "content-type").unwrap(), "image/png");
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
             .unwrap();
