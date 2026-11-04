@@ -98,12 +98,43 @@ export interface ChatHistory {
   messages: ChatMessage[]
 }
 
+/** A participant of the voice call or community stream the player is in (`/voice_state` `call`). */
+export interface VoiceCallParticipant {
+  address: string
+  name: string
+  role: string
+  isSpeaker: boolean
+  isRequestingToSpeak: boolean
+  isMuted: boolean
+  isSpeaking: boolean
+}
+
+/** The private call or community stream as the HUD sees it: unity-explorer's `VoiceChatStatus`
+ *  (`disconnected`, `receivedCall`, `startingCall`, `startedCall`, `inCall`, `endingCall`,
+ *  `rejectingCall`, `busy`, `genericError`) and `VoiceChatType` (`none`, `private`, `community`). */
+export interface VoiceCallState {
+  status: string
+  kind: string
+  callId: string | null
+  communityId: string | null
+  peer: string | null
+  connection: string
+  participants: VoiceCallParticipant[]
+  micEnabled: boolean
+  localSpeaker: boolean
+  localRole: string
+  localRequestingToSpeak: boolean
+  error: string | null
+}
+
 export interface VoiceState {
   mic: { available: boolean; enabled: boolean }
   livekit: boolean
   connected: boolean | null
   rooms: { scene: boolean; state: string }[] | null
   speakers: string[] | null
+  /** Null without `livekit`. */
+  call: VoiceCallState | null
 }
 
 export interface ScreenPosition {
@@ -328,6 +359,44 @@ export class Explorer {
 
   voiceState(): Promise<VoiceState> {
     return this.json<VoiceState>('/voice_state')
+  }
+
+  /** Ring a user (a private voice call). Only queues the request: `/voice_state` `call` follows. */
+  async voiceCall(address: string): Promise<void> {
+    await this.run(`/voice_call ${address}`)
+  }
+
+  async voiceAccept(): Promise<void> {
+    await this.run('/voice_accept')
+  }
+
+  async voiceReject(): Promise<void> {
+    await this.run('/voice_reject')
+  }
+
+  /** Hang up the private call, or leave the community stream. */
+  async voiceEnd(): Promise<void> {
+    await this.run('/voice_end')
+  }
+
+  /** `start` or `join` a community's stream, `end` it (a moderator) or `leave` it. */
+  async voiceCommunity(action: 'start' | 'join' | 'end' | 'leave', communityId?: string): Promise<void> {
+    await this.run(['/voice_community', action, communityId ?? ''].join(' ').trimEnd())
+  }
+
+  /** Raise (`true`) or lower the hand in a community stream. */
+  async voiceHand(raise: boolean): Promise<void> {
+    await this.run(`/voice_hand ${raise ? 'up' : 'down'}`)
+  }
+
+  /** Publish (`true`) or stop the call microphone. */
+  async voiceMic(on: boolean): Promise<void> {
+    await this.run(`/voice_mic ${on ? 'on' : 'off'}`)
+  }
+
+  /** Moderate a community stream: `promote`, `demote`, `kick` or `reject` (a raised hand). */
+  async voiceModerate(action: 'promote' | 'demote' | 'kick' | 'reject', address: string): Promise<void> {
+    await this.run(`/voice_moderate ${action} ${address}`)
   }
 
   /** The sky time: `/time` reports; with `hours` (and `speed`, 0 stops the clock) it sets. */

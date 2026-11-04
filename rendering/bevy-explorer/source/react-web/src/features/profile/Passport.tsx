@@ -13,6 +13,7 @@ import type { Profile } from '../../engine/protocol'
 import { splitName } from '../../lib/identity'
 import { confirmUnblock, confirmUnfriend } from '../friends/friendDialogs'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
+import { startCallWith } from '../voiceChat/callGate'
 
 export function Passport({
   userId,
@@ -66,6 +67,10 @@ export function Passport({
       onMessage={(a) => {
         onClose()
         session.chat.openConversation(a)
+      }}
+      onCall={(a) => {
+        onClose()
+        startCallWith(session, a)
       }}
       onUnfriend={() => void confirmUnfriend(friendUser).then((ok) => ok && session.friends.act('delete', userId))}
       onCancelRequest={() => session.friends.act('cancel', userId)}

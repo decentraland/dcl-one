@@ -17,7 +17,9 @@
 }
 
 .open {
-  height: 689px; /* 738 less the 49px voice-chat bar shown above it */
+  /* Unity's 738px shared area less the voice chat panel above it (46px by default; the panel
+     publishes its height as --voice-dock, VoiceChatPanel.tsx) and a 3px gap. */
+  height: calc(735px - var(--voice-dock, 46px));
 }
 /* With DM tabs the conversation rail sits on the panel's right, inside its outline: the column
    keeps its width and place, so the collapsed input does not move, and squares its corners

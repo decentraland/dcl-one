@@ -5,7 +5,7 @@
 // my-communities derived from role) — invites/create are omitted until wired.
 
 import { useEffect, useMemo, useState } from 'react'
-import { Avatar, Button } from '../../design'
+import { Avatar, Button, Chip } from '../../design'
 import { nameColor } from '../../lib/identity'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { openCommunityModal } from './CommunityModal'
@@ -34,6 +34,7 @@ function CommunityCard({ c, onJoin, onOpen }: { c: Community; onJoin: (id: strin
   return (
     <div className={styles.card} onClick={onOpen} role="button" tabIndex={0}>
       <div className={styles.cover} style={{ background: showImg ? undefined : nameColor(c.id) }}>
+        {c.voiceChatStatus?.isActive && <span className={styles.live} aria-label="Live stream">● LIVE</span>}
         {showImg ? (
           <img className={styles.coverImg} src={c.thumbnail} alt="" onError={() => setFailed(true)} />
         ) : (
@@ -73,6 +74,8 @@ export function CommunitiesPage({
   const [openId, setOpenId] = useState<string | null>(null)
   // Main area shows the browse grid, or all of "My Communities" (via VIEW ALL).
   const [tab, setTab] = useState<'browse' | 'mine'>('browse')
+  // Unity's "Streaming" filter: only the communities with a live voice stream.
+  const [streaming, setStreaming] = useState(false)
 
   // The community detail modal lives in the HUD-wide popup layer (openCommunityModal), not this page's
   // own JSX — CommunityModalContainer reads live data itself. Re-opens on a different selection; closes
@@ -86,10 +89,11 @@ export function CommunitiesPage({
     return openCommunityModal(wantOpen, () => setOpenId((id) => (id === wantOpen ? null : id)))
   }, [wantOpen])
 
-  const matchesQuery = (c: Community): boolean => !query || c.name.toLowerCase().includes(query.toLowerCase())
+  const matchesQuery = (c: Community): boolean =>
+    (!query || c.name.toLowerCase().includes(query.toLowerCase())) && (!streaming || c.voiceChatStatus?.isActive === true)
   const mine = useMemo(() => communities.list.filter((c) => isMember(c.role)), [communities.list])
-  const browse = useMemo(() => communities.list.filter(matchesQuery), [communities.list, query])
-  const mineFiltered = useMemo(() => mine.filter(matchesQuery), [mine, query])
+  const browse = useMemo(() => communities.list.filter(matchesQuery), [communities.list, query, streaming])
+  const mineFiltered = useMemo(() => mine.filter(matchesQuery), [mine, query, streaming])
   const showingMine = tab === 'mine'
   const gridList = showingMine ? mineFiltered : browse
 
@@ -114,6 +118,7 @@ export function CommunitiesPage({
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search"
         />
+        <Chip label="Streaming" selected={streaming} onClick={() => setStreaming((s) => !s)} />
       </div>
 
       <div className={styles.layout}>

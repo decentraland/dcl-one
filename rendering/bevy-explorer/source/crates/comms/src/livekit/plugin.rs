@@ -18,6 +18,7 @@ use {
     common::structs::AudioSettings,
     kira::{
         manager::{AudioManager, AudioManagerSettings, DefaultBackend},
+        track::TrackBuilder,
         tween::Tween,
     },
 };
@@ -38,6 +39,7 @@ use crate::{
         ConnectionAvailability, LivekitChannelControl, LivekitNetworkMessage, LivekitRuntime,
         LivekitTransport, StartLivekit,
     },
+    voice_chat::{state::Input as VoiceInput, CallMic, VoiceInputs},
     SceneRoom, Transport, TransportType,
 };
 
@@ -173,16 +175,31 @@ fn verify_player_update_tasks(mut player_update_tasks: PlayerUpdateTasksMut) {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn build_kira_audio_manager(mut commands: Commands) {
-    match AudioManager::new(AudioManagerSettings::<DefaultBackend>::default()) {
-        Ok(manager) => {
-            debug!("Livekit AudioManager built.");
-            commands.insert_resource(LivekitAudioManager { manager });
-        }
+fn build_kira_audio_manager(mut commands: Commands, audio_settings: Option<Res<AudioSettings>>) {
+    let (scene, voice) = audio_settings
+        .map(|s| (s.scene(), s.voice()))
+        .unwrap_or((1.0, 1.0));
+    let mut manager = match AudioManager::new(AudioManagerSettings::<DefaultBackend>::default()) {
+        Ok(manager) => manager,
         Err(err) => {
             debug_panic!("Failed to livekit build AudioManager due to '{err}'.");
         }
     };
+    let scene_track = manager.add_sub_track(TrackBuilder::new().volume(scene as f64));
+    let voice_track = manager.add_sub_track(TrackBuilder::new().volume(voice as f64));
+    match (scene_track, voice_track) {
+        (Ok(scene_track), Ok(voice_track)) => {
+            debug!("Livekit AudioManager built.");
+            commands.insert_resource(LivekitAudioManager {
+                manager,
+                scene_track,
+                voice_track,
+            });
+        }
+        (Err(err), _) | (_, Err(err)) => {
+            debug_panic!("Failed to build the livekit audio tracks due to '{err}'.");
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -191,23 +208,44 @@ fn respond_to_audio_settings_change(
     audio_settings: Res<AudioSettings>,
 ) {
     livekit_audio_manager
-        .main_track()
+        .scene_track
         .set_volume(audio_settings.scene() as f64, Tween::default());
+    livekit_audio_manager
+        .voice_track
+        .set_volume(audio_settings.voice() as f64, Tween::default());
 }
 
+/// The microphone key toggles the nearby mic, or the call mic while a call is connected.
 fn handle_input(
     input_manager: InputManager,
     mut mic_state: ResMut<MicState>,
     mut pressed: Local<bool>,
+    call_mic: Option<Res<CallMic>>,
+    voice_inputs: Option<ResMut<VoiceInputs>>,
 ) {
-    if *pressed {
+    let toggled = if *pressed {
         if input_manager.just_up(SystemAction::Microphone) {
             *pressed = false;
-            mic_state.enabled = !mic_state.enabled;
+            true
+        } else {
+            false
         }
     } else if input_manager.just_down(SystemAction::Microphone, InputPriority::None) {
         *pressed = true;
-        mic_state.enabled = !mic_state.enabled;
+        true
+    } else {
+        false
+    };
+    if !toggled {
+        return;
+    }
+    match (call_mic, voice_inputs) {
+        (Some(call_mic), Some(mut voice_inputs)) if call_mic.in_call => {
+            voice_inputs
+                .0
+                .push_back(VoiceInput::SetMic(!call_mic.enabled));
+        }
+        _ => mic_state.enabled = !mic_state.enabled,
     }
 }
 

@@ -663,6 +663,50 @@ pub fn op_close_dm_user_state_stream(state: &WorkerContext, rid: u32) {
 }
 
 #[wasm_bindgen]
+pub fn op_get_voice_chat_state_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_voice_chat_state_stream(state.rc())
+}
+
+#[wasm_bindgen]
+pub async fn op_read_voice_chat_state_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_voice_chat_state_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub fn op_close_voice_chat_state_stream(state: &WorkerContext, rid: u32) {
+    dcl_js::system_api::op_close_voice_chat_state_stream(state.rc(), rid)
+}
+
+#[wasm_bindgen]
+pub fn op_get_community_voice_update_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_community_voice_update_stream(state.rc())
+}
+
+#[wasm_bindgen]
+pub async fn op_read_community_voice_update_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(
+        dcl_js::system_api::op_read_community_voice_update_stream(state.rc(), rid).await
+    )
+}
+
+#[wasm_bindgen]
+pub fn op_close_community_voice_update_stream(state: &WorkerContext, rid: u32) {
+    dcl_js::system_api::op_close_community_voice_update_stream(state.rc(), rid)
+}
+
+#[wasm_bindgen]
+pub fn op_voice_chat_action(state: &WorkerContext, action: JsValue) -> Result<(), WasmError> {
+    serde_parse!(action);
+    dcl_js::system_api::op_voice_chat_action(state.rc(), action).map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
 pub async fn op_get_dm_history(
     state: &WorkerContext,
     address: String,

@@ -68,6 +68,56 @@ describe('Explorer', () => {
     assert.deepEqual(await explorer.position(), { x: 8, y: 0.5, z: -3 })
   })
 
+  test('the voice chat commands compose their lines', async () => {
+    const fake = new FakeConsole({
+      voice_call: 'calling 0xabc',
+      voice_accept: 'accepting',
+      voice_reject: 'rejecting',
+      voice_end: 'ending',
+      voice_community: 'join c1',
+      voice_hand: 'hand up',
+      voice_mic: 'call mic off',
+      voice_moderate: 'promote 0xabc'
+    })
+    const explorer = new Explorer(fake)
+    await explorer.voiceCall('0xabc')
+    await explorer.voiceAccept()
+    await explorer.voiceReject()
+    await explorer.voiceEnd()
+    await explorer.voiceCommunity('join', 'c1')
+    await explorer.voiceCommunity('leave')
+    await explorer.voiceHand(true)
+    await explorer.voiceMic(false)
+    await explorer.voiceModerate('promote', '0xabc')
+    assert.deepEqual(fake.lines, [
+      '/voice_call 0xabc',
+      '/voice_accept',
+      '/voice_reject',
+      '/voice_end',
+      '/voice_community join c1',
+      '/voice_community leave',
+      '/voice_hand up',
+      '/voice_mic off',
+      '/voice_moderate promote 0xabc'
+    ])
+  })
+
+  test('voiceState carries the call', async () => {
+    const fake = new FakeConsole({
+      voice_state: JSON.stringify({
+        mic: { available: true, enabled: false },
+        livekit: true,
+        connected: true,
+        rooms: [],
+        speakers: [],
+        call: { status: 'receivedCall', kind: 'private', callId: 'c1', communityId: null, peer: '0xabc', connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, error: null }
+      })
+    })
+    const state = await new Explorer(fake).voiceState()
+    assert.equal(state.call?.status, 'receivedCall')
+    assert.equal(state.call?.peer, '0xabc')
+  })
+
   test('connectedPlayers is empty on the no-players text', async () => {
     const fake = new FakeConsole({ connected_players: 'no other players connected' })
     assert.deepEqual(await new Explorer(fake).connectedPlayers(), [])

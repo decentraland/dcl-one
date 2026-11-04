@@ -11,8 +11,11 @@ import type {
   BlockingStatusData,
   ChatMessage,
   ChatReactionData,
+  CommunityVoiceUpdate,
   DmHistoryEntryData,
   DmUserStateData,
+  VoiceChatAction,
+  VoiceChatState,
   VoiceMessage,
   FriendData,
   FriendRequestData,
@@ -65,6 +68,17 @@ export type SocialApi = {
   getDmUserStateStream: (address: string) => AsyncIterable<DmUserStateData> & { close: () => void }
   getDmHistory: (address: string) => Promise<DmHistoryEntryData[]>
   deleteDmHistory: (address: string) => void
+}
+
+/** Private calls and community streams (BevyApi.voiceChat.*), generated from the Rust structs. */
+export type { VoiceChatState, VoiceChatAction, CommunityVoiceUpdate }
+export type VoiceChatApi = {
+  /** The voice chat state now, then on every change; `close()` ends it. */
+  getStateStream: () => AsyncIterable<VoiceChatState> & { close: () => void }
+  /** Every community stream started / ended broadcast; `close()` ends it. */
+  getCommunityUpdateStream: () => AsyncIterable<CommunityVoiceUpdate> & { close: () => void }
+  /** Fire and forget; the outcome shows on the state stream. */
+  action: (action: VoiceChatAction) => void
 }
 
 export type ChatStreamMessage = ChatMessage
@@ -201,6 +215,8 @@ export type BevyApiInterface = {
   loginCancel: () => void
   logout: () => void
   social: SocialApi
+  /** Optional: absent on runtimes whose SystemApi predates voice chat. */
+  voiceChat?: VoiceChatApi
 }
 
 const globalRequire = (globalThis as { require?: (module: string) => unknown }).require

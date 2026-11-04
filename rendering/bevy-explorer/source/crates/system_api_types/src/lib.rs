@@ -141,6 +141,121 @@ pub struct VoiceMessage {
     pub active: bool,
 }
 
+/// A participant of the voice room the local user is in (a private call's peer, or a community
+/// stream's speakers and listeners), as the gatekeeper's participant metadata describes them.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct VoiceChatParticipant {
+    pub address: String,
+    pub name: String,
+    pub has_claimed_name: bool,
+    pub profile_picture_url: String,
+    /// "none", "user", "moderator" or "owner"
+    pub role: String,
+    pub is_speaker: bool,
+    pub is_requesting_to_speak: bool,
+    pub is_muted: bool,
+    pub is_speaking: bool,
+}
+
+/// The voice chat the local user is in or being offered: one snapshot per change
+/// (`GetVoiceChatStateStream`). Statuses and kinds follow unity-explorer's `VoiceChatStatus` and
+/// `VoiceChatType`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct VoiceChatState {
+    /// "disconnected", "receivedCall", "startingCall", "startedCall", "inCall", "endingCall",
+    /// "rejectingCall", "busy" or "genericError"
+    pub status: String,
+    /// "none", "private" or "community"
+    pub kind: String,
+    /// The private call's id.
+    pub call_id: Option<String>,
+    /// The community whose stream this is.
+    pub community_id: Option<String>,
+    /// The other party of a private call.
+    pub peer: Option<String>,
+    /// The LiveKit room: "none", "connecting", "connected" or "reconnecting"
+    pub connection: String,
+    pub participants: Vec<VoiceChatParticipant>,
+    /// The call microphone is publishing.
+    pub mic_enabled: bool,
+    /// The local user may publish (always in a private call; a community speaker).
+    pub local_speaker: bool,
+    /// The local user's role in the community: "none", "user", "moderator" or "owner"
+    pub local_role: String,
+    pub local_requesting_to_speak: bool,
+    /// Why the last action failed, or why the call ended in busy / error.
+    pub error: Option<String>,
+}
+
+/// A community voice chat started or ended (`GetCommunityVoiceUpdateStream`), as the social
+/// service broadcasts it: to everyone for a public listed community, to members otherwise.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub struct CommunityVoiceUpdate {
+    pub community_id: String,
+    /// "started" or "ended"
+    pub status: String,
+    pub created_at: i64,
+    pub ended_at: Option<i64>,
+    /// Parcels ("x,y") of the community's places, sent to non-members.
+    pub positions: Vec<String>,
+    /// World names of the community's places, sent to non-members.
+    pub worlds: Vec<String>,
+    pub is_member: bool,
+    pub community_name: String,
+    pub community_image: Option<String>,
+}
+
+/// What the HUD asks of the voice chat (`SystemApi::VoiceChatAction`); outcomes arrive on the
+/// state stream.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "op")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub enum VoiceChatAction {
+    /// Ring a user (opens a private call).
+    #[serde(rename_all = "camelCase")]
+    StartPrivateCall { address: String },
+    AcceptCall,
+    RejectCall,
+    /// Hang up a private call, at any stage.
+    EndCall,
+    /// Open a community's stream (owner or moderator).
+    #[serde(rename_all = "camelCase")]
+    StartCommunityCall { community_id: String },
+    #[serde(rename_all = "camelCase")]
+    JoinCommunityCall { community_id: String },
+    /// Leave the community stream (no server call).
+    LeaveCall,
+    /// Close the community's stream for everyone (owner or moderator).
+    EndCommunityCall,
+    /// Raise (`true`) or lower the hand in a community stream.
+    #[serde(rename_all = "camelCase")]
+    RequestToSpeak { raise: bool },
+    #[serde(rename_all = "camelCase")]
+    PromoteSpeaker { address: String },
+    /// Demote a speaker; the local user's own address leaves the stage.
+    #[serde(rename_all = "camelCase")]
+    DemoteSpeaker { address: String },
+    #[serde(rename_all = "camelCase")]
+    KickPlayer { address: String },
+    #[serde(rename_all = "camelCase")]
+    RejectSpeakRequest { address: String },
+    /// Publish or stop publishing the call microphone.
+    #[serde(rename_all = "camelCase")]
+    SetMic { enabled: bool },
+    /// Clear a busy / error status.
+    DismissError,
+}
+
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 #[derive(ts_rs::TS)]

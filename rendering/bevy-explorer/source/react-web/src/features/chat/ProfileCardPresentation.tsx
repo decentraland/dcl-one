@@ -5,7 +5,8 @@
 // View Passport · Mention · Block/Unblock.
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Avatar, VerifiedBadge } from '../../design'
+import { Avatar, MaskIcon, VerifiedBadge } from '../../design'
+import callIcon from '../../assets/voice/call.png'
 import { shortAddr, splitName, userColor } from '../../lib/identity'
 import { looksClaimed, mentionName } from '../../engine/mention'
 import { peekProfile } from '../session/profileStore'
@@ -101,6 +102,7 @@ export function ProfileCardPresentation({
   onReport,
   onMention,
   onMessage,
+  onCall,
   onViewProfile,
   onClose
 }: {
@@ -123,6 +125,8 @@ export function ProfileCardPresentation({
   onMention?: (name: string) => void
   /** Open a DM with the user. */
   onMessage?: (user: ChatUser) => void
+  /** Ring the user (a private voice call). */
+  onCall?: (user: ChatUser) => void
   onViewProfile?: (user: ChatUser) => void
   onClose: () => void
 }): React.JSX.Element {
@@ -166,6 +170,7 @@ export function ProfileCardPresentation({
   const canReport = other && !!onReport
   const showMention = context !== 'request' && context !== 'blocked' && !!onMention
   const showMessage = other && relationship !== 'blocked' && context !== 'blocked' && !!onMessage
+  const showCall = other && relationship !== 'blocked' && context !== 'blocked' && !!onCall
 
   let cta: React.ReactNode = null
   if (other && relationship !== 'blocked') {
@@ -217,7 +222,7 @@ export function ProfileCardPresentation({
     </button>
   )
   const hasDestructive = !!block || !!report
-  const hasMenu = !isMe && (!!viewProfile || showMention || showMessage || hasDestructive)
+  const hasMenu = !isMe && (!!viewProfile || showMention || showMessage || showCall || hasDestructive)
 
   // The backdrop (and click-outside-to-close) is owned by the popup layer (openPopup default
   // options); this just renders the positioned card. The stopPropagation keeps a click on the card
@@ -262,6 +267,12 @@ export function ProfileCardPresentation({
                 <button type="button" className={styles.row} onClick={run(onMessage)}>
                   <MessageIcon />
                   <span>Chat</span>
+                </button>
+              )}
+              {showCall && (
+                <button type="button" className={styles.row} onClick={run(onCall)}>
+                  <MaskIcon src={callIcon} size={16} />
+                  <span>Call</span>
                 </button>
               )}
               {showMention && (

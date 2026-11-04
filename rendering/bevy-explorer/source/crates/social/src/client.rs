@@ -30,6 +30,7 @@ use web_time::Duration;
 
 use crate::rpc_websocket::PlatformRpcWebSocket;
 use crate::runtime::SocialRuntime;
+use crate::voice::{self, IncomingPrivateCall, PrivateVoiceStatus, PrivateVoiceUpdate, VoiceEvent, VoiceQuery};
 use crate::{DirectChatMessage, DmPrivacy, DmPrivacyOf};
 
 pub enum SocialQuery {
@@ -62,6 +63,8 @@ pub enum SocialQuery {
         addresses: Vec<String>,
         response: tokio::sync::oneshot::Sender<Result<Vec<DmPrivacyOf>, String>>,
     },
+    /// A voice chat procedure; its reply channel is inside.
+    Voice(VoiceQuery),
 }
 
 enum FriendData {
@@ -99,6 +102,8 @@ enum FriendData {
         address: String,
         is_blocked: bool,
     },
+    /// A voice chat update, or the voice subscriptions opening.
+    Voice(VoiceEvent),
     Disconnected,
 }
 
@@ -120,6 +125,9 @@ pub type BlockingStatusResult = Result<BlockingStatus, String>;
 
 /// Callback invoked when someone blocks / unblocks the local user.
 type BlockUpdateCallback = Box<dyn Fn(&str, bool) + Send + Sync + 'static>;
+
+/// Callback invoked with every voice chat event (see [`VoiceEvent`]).
+type VoiceCallback = Box<dyn Fn(VoiceEvent) + Send + Sync + 'static>;
 
 pub struct SocialClientHandler {
     sender: UnboundedSender<UpsertFriendshipRequest>,
@@ -145,6 +153,7 @@ pub struct SocialClientHandler {
     block_update_callback: BlockUpdateCallback,
     #[allow(dead_code)]
     chat_event_callback: Box<dyn Fn(DirectChatMessage) + Send + Sync + 'static>,
+    voice_callback: VoiceCallback,
 }
 
 impl SocialClientHandler {
@@ -155,6 +164,7 @@ impl SocialClientHandler {
         connectivity_callback: impl Fn(Address, ConnectivityStatus) + Send + Sync + 'static,
         block_update_callback: impl Fn(&str, bool) + Send + Sync + 'static,
         chat_callback: impl Fn(DirectChatMessage) + Send + Sync + 'static,
+        voice_callback: impl Fn(VoiceEvent) + Send + Sync + 'static,
     ) -> Option<Self> {
         let (event_sx, event_rx) = mpsc::unbounded_channel();
         let (response_sx, response_rx) = mpsc::unbounded_channel();
@@ -187,6 +197,7 @@ impl SocialClientHandler {
             connectivity_callback: Box::new(connectivity_callback),
             block_update_callback: Box::new(block_update_callback),
             chat_event_callback: Box::new(chat_callback),
+            voice_callback: Box::new(voice_callback),
         })
     }
 
@@ -379,6 +390,12 @@ impl SocialClientHandler {
         Ok(rx)
     }
 
+    /// Runs a voice chat procedure; the answer arrives on the query's own channel.
+    pub fn voice(&self, query: VoiceQuery) -> Result<(), anyhow::Error> {
+        self.query_sender.send(SocialQuery::Voice(query))?;
+        Ok(())
+    }
+
     pub fn chat(&self, _address: Address, _message: String) -> Result<(), anyhow::Error> {
         // DM chat not supported in V2 (no Matrix)
         Err(anyhow!("chat not available in V2"))
@@ -545,9 +562,13 @@ impl SocialClientHandler {
                     }
                     (self.block_update_callback)(&address, is_blocked);
                 }
+                FriendData::Voice(event) => {
+                    (self.voice_callback)(event);
+                }
                 FriendData::Disconnected => {
                     self.is_initialized = false;
                     self.friend_status.clear();
+                    (self.voice_callback)(VoiceEvent::Disconnected);
                 }
             }
         }
@@ -831,6 +852,43 @@ async fn run_one_connection(
         .await
         .map_err(dbgerr)?;
     debug!("[social] Subscribed to block updates");
+
+    // Subscribe to the voice chat updates (private calls, community rooms), then ask for a call
+    // that rang while we were away, as unity-explorer's voice services do on every (re)connect.
+    debug!("[social] Subscribing to voice chat updates...");
+    let mut private_voice_updates = service_module
+        .subscribe_to_private_voice_chat_updates()
+        .await
+        .map_err(dbgerr)?;
+    let mut community_voice_updates = service_module
+        .subscribe_to_community_voice_chat_updates()
+        .await
+        .map_err(dbgerr)?;
+    debug!("[social] Subscribed to voice chat updates");
+    response_sx.send(FriendData::Voice(VoiceEvent::Connected))?;
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        voice::rpc::dispatch(
+            service_module.as_ref(),
+            VoiceQuery::GetIncomingPrivate { response: tx },
+        )
+        .await;
+        match rx.await {
+            Ok(Ok(Some(IncomingPrivateCall { call_id, caller }))) => {
+                debug!("[social] incoming private call {call_id} from {caller}");
+                response_sx.send(FriendData::Voice(VoiceEvent::Private(PrivateVoiceUpdate {
+                    call_id,
+                    status: PrivateVoiceStatus::Requested,
+                    caller: Some(caller),
+                    callee: None,
+                    connection_url: None,
+                })))?;
+            }
+            Ok(Ok(None)) => (),
+            Ok(Err(e)) => warn!("[social] get_incoming_private_voice_chat_request: {e}"),
+            Err(_) => (),
+        }
+    }
 
     // Outbound: send friendship actions + handle queries
     let response_sx_write = response_sx.clone();
@@ -1116,6 +1174,10 @@ async fn run_one_connection(
                             }
                             let _ = response.send(result);
                         }
+                        SocialQuery::Voice(query) => {
+                            debug!("[social] voice query: {query:?}");
+                            voice::rpc::dispatch(service_module.as_ref(), query).await;
+                        }
                         SocialQuery::GetPrivateMessagesSettings {
                             addresses,
                             response,
@@ -1211,6 +1273,38 @@ async fn run_one_connection(
     }
     .fuse();
 
+    // Inbound: private voice chat updates (a call ringing, accepted, rejected, ended, expired)
+    let sx_private_voice = response_sx.clone();
+    let f_private_voice_read = async move {
+        while let Some(update) = private_voice_updates.next().await {
+            debug!("[social] Received private voice update: {update:?}");
+            match voice::rpc::private_update(update) {
+                Some(update) => sx_private_voice
+                    .send(FriendData::Voice(VoiceEvent::Private(update)))
+                    .map_err(dbgerr)?,
+                None => break,
+            }
+        }
+        Err(anyhow!("[social] private voice update stream ended"))
+    }
+    .fuse();
+
+    // Inbound: community voice chat updates (a community room started or ended)
+    let sx_community_voice = response_sx.clone();
+    let f_community_voice_read = async move {
+        while let Some(update) = community_voice_updates.next().await {
+            debug!("[social] Received community voice update: {update:?}");
+            match voice::rpc::community_update(update) {
+                Some(update) => sx_community_voice
+                    .send(FriendData::Voice(VoiceEvent::Community(update)))
+                    .map_err(dbgerr)?,
+                None => break,
+            }
+        }
+        Err(anyhow!("[social] community voice update stream ended"))
+    }
+    .fuse();
+
     // Keepalive every 30s. Both proxies / load balancers and the server itself may
     // close idle connections; this also surfaces broken sockets promptly (the send
     // will fail rather than appearing healthy).
@@ -1266,6 +1360,8 @@ async fn run_one_connection(
         f_service_write,
         f_connectivity_read,
         f_block_read,
+        f_private_voice_read,
+        f_community_voice_read,
         f_keepalive,
         f_ws_closed
     );
@@ -1274,6 +1370,8 @@ async fn run_one_connection(
         r = f_service_write => r,
         r = f_connectivity_read => r,
         r = f_block_read => r,
+        r = f_private_voice_read => r,
+        r = f_community_voice_read => r,
         r = f_keepalive => r,
         r = f_ws_closed => r,
     }

@@ -33,6 +33,7 @@ use crate::{
         track, ConnectionAvailability, LivekitChannelControl, LivekitNetworkMessage,
         LivekitRuntimeRes, LivekitTransport,
     },
+    voice_chat::{is_terminal_disconnect, VoiceRoom, VoiceRoomDisconnected},
     NetworkMessageRecipient,
 };
 #[cfg(target_arch = "wasm32")]
@@ -192,10 +193,15 @@ const UNANNOUNCED_GRACE_SECS: f64 = 15.0;
 
 fn process_room_events(
     mut commands: Commands,
-    livekit_rooms: Query<(Entity, &mut LivekitRoom, &mut UnannouncedParticipants)>,
+    livekit_rooms: Query<(
+        Entity,
+        &mut LivekitRoom,
+        &mut UnannouncedParticipants,
+        Has<VoiceRoom>,
+    )>,
     time: Res<Time>,
 ) {
-    for (entity, mut livekit_room, mut unannounced) in livekit_rooms {
+    for (entity, mut livekit_room, mut unannounced, is_voice_room) in livekit_rooms {
         while let Ok(room_event) = livekit_room.room_event_receiver.try_recv() {
             trace!("in: {:?}", room_event);
 
@@ -218,7 +224,15 @@ fn process_room_events(
                     }
                 }
                 RoomEvent::Disconnected { reason } => {
-                    if matches!(
+                    if is_voice_room {
+                        // a call's room ends the call, never every other room's connection:
+                        // a community kick or a deleted call room is the voice module's to
+                        // handle (see `voice_chat`)
+                        commands.entity(entity).try_insert(VoiceRoomDisconnected {
+                            terminal: is_terminal_disconnect(&reason),
+                            reason: format!("{reason:?}"),
+                        });
+                    } else if matches!(
                         reason,
                         DisconnectReason::DuplicateIdentity | DisconnectReason::ParticipantRemoved
                     ) {
@@ -625,7 +639,12 @@ fn close_rooms_on_app_exit(rooms: Query<&LivekitRoom>, livekit_runtime: LivekitR
     }
 }
 
-fn try_reconnect(mut commands: Commands, rooms: Populated<Entity, With<Disconnected>>) {
+/// Re-dials every dropped room but the voice room, whose re-dial budget the voice module keeps
+/// (a call's token stays valid after the server deleted the room; re-dialling would recreate it).
+fn try_reconnect(
+    mut commands: Commands,
+    rooms: Populated<Entity, (With<Disconnected>, Without<VoiceRoom>)>,
+) {
     if common::structs::multi_tenant() {
         // orchestrated server: the adapter's token is long expired (the gatekeeper mints
         // them with a five-minute TTL), so a re-dial can only be refused. The room stays

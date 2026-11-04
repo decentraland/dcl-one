@@ -7,7 +7,7 @@
 // Domain types mirror scene/src/bevy-api/interface.ts so the bridge scene can
 // forward SystemApi results verbatim.
 
-import type { Color3, HomeScene, SatelliteView, SceneLoadingUi, WelcomeState } from './generated'
+import type { Color3, HomeScene, SatelliteView, SceneLoadingUi, VoiceChatAction, WelcomeState } from './generated'
 import type { AvatarLook } from './avatarEquip'
 
 export const BRIDGE_CHANNEL = 'bevy-ui-bridge'
@@ -153,6 +153,7 @@ export interface BridgeUnavailableMessage {
 
 export type PageToScene =
   | HelloRequest
+  | VoiceChatActionRequest
   | RpcRequest
   | SendChatRequest
   | SendChatReactionRequest
@@ -328,6 +329,110 @@ export interface VoiceActivityMessage {
   kind: 'voiceActivity'
   address: string
   active: boolean
+}
+
+// ---- voice chat: private calls and community streams ----------------------
+
+/** A participant of the voice room the local user is in. */
+export interface VoiceChatParticipant {
+  address: string
+  name: string
+  hasClaimedName: boolean
+  profilePictureUrl: string
+  /** 'none' | 'user' | 'moderator' | 'owner' */
+  role: string
+  isSpeaker: boolean
+  isRequestingToSpeak: boolean
+  isMuted: boolean
+  isSpeaking: boolean
+}
+
+export type VoiceChatStatus =
+  | 'disconnected'
+  | 'receivedCall'
+  | 'startingCall'
+  | 'startedCall'
+  | 'inCall'
+  | 'endingCall'
+  | 'rejectingCall'
+  | 'busy'
+  | 'genericError'
+
+/** The voice chat the local user is in or being offered (scene → page, one per change). Mirrors the
+ *  engine's VoiceChatState; statuses follow unity-explorer's VoiceChatStatus. */
+export interface VoiceChatState {
+  status: VoiceChatStatus
+  /** 'none' | 'private' | 'community' */
+  kind: 'none' | 'private' | 'community'
+  callId: string | null
+  communityId: string | null
+  /** The other party of a private call. */
+  peer: string | null
+  /** The LiveKit room: 'none' | 'connecting' | 'connected' | 'reconnecting' */
+  connection: 'none' | 'connecting' | 'connected' | 'reconnecting'
+  participants: VoiceChatParticipant[]
+  micEnabled: boolean
+  localSpeaker: boolean
+  /** 'none' | 'user' | 'moderator' | 'owner' */
+  localRole: string
+  localRequestingToSpeak: boolean
+  /** Why the last action failed, or why the call ended in busy / error. */
+  error: string | null
+}
+
+export interface VoiceChatStateMessage {
+  kind: 'voiceChatState'
+  state: VoiceChatState
+}
+
+/** A voice chat command (page → scene → engine), the engine's own shape; its outcome shows on
+ *  `voiceChatState`. */
+export type VoiceChatActionWire = VoiceChatAction
+
+export interface VoiceChatActionRequest {
+  kind: 'voiceChatAction'
+  action: VoiceChatActionWire
+}
+
+/** A community stream started or ended, as the social service broadcasts it (scene → page). */
+export interface CommunityVoiceUpdateMessage {
+  kind: 'communityVoiceUpdate'
+  communityId: string
+  status: 'started' | 'ended'
+  createdAt: number
+  endedAt: number | null
+  /** Parcels ('x,y') of the community's places, sent to non-members. */
+  positions: string[]
+  /** World names of the community's places, sent to non-members. */
+  worlds: string[]
+  isMember: boolean
+  communityName: string
+  communityImage: string | null
+}
+
+/** A live community stream the local user may see (social-api `/v1/community-voice-chats/active`). */
+export interface ActiveCommunityVoiceChat {
+  communityId: string
+  communityName: string
+  communityImage?: string
+  isMember: boolean
+  positions: string[]
+  worlds: string[]
+  participantCount: number
+  moderatorCount: number
+}
+
+/** Every live community stream, re-read on start and on each broadcast (scene → page). */
+export interface ActiveCommunityVoiceChatsMessage {
+  kind: 'activeCommunityVoiceChats'
+  chats: ActiveCommunityVoiceChat[]
+}
+
+/** The live community stream whose places include where the player stands, or none
+ *  (unity-explorer's SceneVoiceChatTrackerService). */
+export interface SceneVoiceChatMessage {
+  kind: 'sceneVoiceChat'
+  chat: ActiveCommunityVoiceChat | null
 }
 
 /** Nearby members + count, polled by the scene (chat header "Nearby · N"). */
@@ -1066,6 +1171,8 @@ export interface Community {
   privacy?: string
   /** Id of the local user's pending request to join (private communities). */
   pendingRequestId?: string
+  /** The community's voice stream, as the social-api reports it. */
+  voiceChatStatus?: { isActive: boolean; participantCount: number; moderatorCount: number }
 }
 
 /** A page request's handler threw, so its reply never came (scene → page). */
@@ -1617,6 +1724,10 @@ export interface AvatarClickMessage {
 export type SceneToPage =
   | BridgeReadyMessage
   | BridgeUnavailableMessage
+  | VoiceChatStateMessage
+  | CommunityVoiceUpdateMessage
+  | ActiveCommunityVoiceChatsMessage
+  | SceneVoiceChatMessage
   | RpcResponse
   | HoverMessage
   | CursorLockMessage

@@ -10,6 +10,8 @@ pub mod preview;
 #[cfg(feature = "livekit")]
 pub mod private_chat;
 pub mod profile;
+#[cfg(feature = "livekit")]
+pub mod voice_chat;
 pub mod pulse;
 pub mod signed_login;
 #[cfg(test)]
@@ -110,7 +112,11 @@ impl Plugin for CommsPlugin {
         ));
 
         #[cfg(feature = "livekit")]
-        app.add_plugins((LivekitPlugin, private_chat::PrivateChatPlugin));
+        app.add_plugins((
+            LivekitPlugin,
+            private_chat::PrivateChatPlugin,
+            voice_chat::VoiceChatPlugin,
+        ));
         app.init_resource::<MicState>();
 
         // Pulse movement transport. Inert until a `pulse::plugin::PulseConfig` resource is

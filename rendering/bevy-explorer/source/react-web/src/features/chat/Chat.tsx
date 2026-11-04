@@ -32,9 +32,13 @@ import { isCancelKey } from '../../lib/bindingLabels'
 import { hudInsetRef } from '../../lib/hudInset'
 import { displayName, mentionName } from '../../engine/mention'
 import playersIcon from '../../assets/chat/players.png'
+import callIcon from '../../assets/voice/call.png'
+import callBlockedIcon from '../../assets/voice/call-blocked.png'
 import closeIcon from '../../assets/chat/close-thin.png'
 import newTag from '../../assets/chat/new-tag.png'
 import arrowLeftIcon from '../../assets/chat/arrow-left.png'
+import { callGate } from '../voiceChat/callGate'
+import { useOptionalSession } from '../session/SessionContext'
 import styles from './Chat.module.css'
 
 const MAX_LEN = 500
@@ -674,7 +678,7 @@ function BlockedInput({ state, onSettings }: { state: Exclude<DmUserState, 'conn
   )
 }
 
-/** The DM title bar: the partner, their reachability, and the conversation menu. */
+/** The DM title bar: the partner, their reachability, the Call button, and the conversation menu. */
 function DmHeader({ conversation, onClose, onDelete, onOpenProfile }: {
   conversation: Conversation
   onClose: () => void
@@ -698,6 +702,10 @@ function DmHeader({ conversation, onClose, onDelete, onOpenProfile }: {
     }
   }, [menu])
   const status = conversation.state == null ? 'Checking…' : conversation.online ? 'Online' : 'Offline'
+  // Unity's CallButtonPresenter: the button, and why it is disabled when it is. Only with a session
+  // (the chat also renders on its own).
+  const session = useOptionalSession()
+  const gate = session == null ? null : callGate(session.voiceChat.state, conversation, session.profile.data?.isGuest === true)
   return (
     <header className={styles.nav}>
       <button
@@ -717,6 +725,20 @@ function DmHeader({ conversation, onClose, onDelete, onOpenProfile }: {
         </span>
       </button>
       <div className={styles.navRight}>
+        {session != null && gate != null && (
+          <Tooltip label={gate.allowed ? 'Call' : gate.reason} side="bottom" multiline={!gate.allowed}>
+            <ControlButton
+              variant="faint"
+              aria-label="Call"
+              aria-disabled={!gate.allowed}
+              onClick={() => {
+                if (gate.allowed) session.voiceChat.act({ op: 'startPrivateCall', address: conversation.address })
+              }}
+            >
+              <MaskIcon src={gate.allowed ? callIcon : callBlockedIcon} size={18} />
+            </ControlButton>
+          </Tooltip>
+        )}
         <AutoTranslateButton channel={conversation.address} />
         <div ref={menuRef} className={styles.menuWrap}>
           <ControlButton variant="faint" aria-label="Conversation options" aria-expanded={menu} active={menu} onClick={() => setMenu((m) => !m)}>

@@ -33,6 +33,7 @@ type CommunityRaw = {
   privacy?: string
   pendingActionType?: string
   pendingInviteOrRequestId?: string
+  voiceChatStatus?: { isActive?: boolean; participantCount?: number; moderatorCount?: number }
 }
 
 // The v2 rows are FLAT and address-only: no name, face, or claimed-name flag on any of them.
@@ -65,7 +66,12 @@ async function list(): Promise<Community[]> {
     role: c.role,
     ownerName: identity(c.ownerAddress ?? '').name,
     privacy: c.privacy,
-    pendingRequestId: c.pendingActionType === 'request_to_join' ? c.pendingInviteOrRequestId : undefined
+    pendingRequestId: c.pendingActionType === 'request_to_join' ? c.pendingInviteOrRequestId : undefined,
+    voiceChatStatus: c.voiceChatStatus == null ? undefined : {
+      isActive: c.voiceChatStatus.isActive === true,
+      participantCount: c.voiceChatStatus.participantCount ?? 0,
+      moderatorCount: c.voiceChatStatus.moderatorCount ?? 0
+    }
   }))
 }
 
@@ -139,6 +145,11 @@ async function detail(id: string): Promise<{ members: CommunityMember[]; posts: 
     thumbnail: ph.thumbnailUrl ?? ph.url
   }))
   return { members, posts, places, events, photos }
+}
+
+/** The social-api base the voice domain's active-streams read shares. */
+export async function socialApiBase(): Promise<string> {
+  return (await isZone()) ? ZONE : ORG
 }
 
 export function registerCommunities(ctx: Ctx): void {

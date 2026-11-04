@@ -25,6 +25,8 @@ import { LobbyHome } from './features/lobby/LobbyHome'
 import { WelcomePage } from './features/welcome/WelcomePage'
 import { GalleryPage } from './features/gallery/GalleryPage'
 import { Sidebar } from './features/sidebar/Sidebar'
+import { VoiceChatPanel } from './features/voiceChat/VoiceChatPanel'
+import { SceneVoiceChatBanner } from './features/voiceChat/SceneVoiceChatBanner'
 import { Minimap } from './features/minimap/Minimap'
 import { Pointer } from './features/pointer/Pointer'
 import { openPassport } from './features/profile/Passport'
@@ -350,7 +352,7 @@ function Hud(): React.JSX.Element {
         <>
           <LobbyHome onPick={session.pickDestination} setEngineViewport={session.setEngineViewport} />
           <SurfaceBoundary name="Notifications" open={session.notifications.open} onCrash={session.closeAllPanels}>
-            <NotificationsPanel notifications={session.notifications} friends={session.friends} anchor="lobby" />
+            <NotificationsPanel notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} anchor="lobby" />
           </SurfaceBoundary>
           <SurfaceBoundary name="Backpack" open={session.backpack.open} onCrash={session.closeAllPanels}>
             <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} initialTab={backpackTab} modal />
@@ -368,6 +370,8 @@ function Hud(): React.JSX.Element {
           {/* The full-screen menu pages own the whole screen; hide the rail + chat so
               they don't show through (the map page's body is transparent). */}
           {chrome && <Sidebar session={session} onViewProfile={viewMyProfile} />}
+          {chrome && <VoiceChatPanel />}
+          {chrome && <SceneVoiceChatBanner />}
           {chrome && (
             <Minimap
               minimap={session.minimap}
@@ -402,7 +406,7 @@ function Hud(): React.JSX.Element {
             <ProfilePanel profile={session.profile} />
           </SurfaceBoundary>
           <SurfaceBoundary name="Notifications" open={session.notifications.open} onCrash={session.closeAllPanels}>
-            <NotificationsPanel notifications={session.notifications} friends={session.friends} anchor={session.lobbyPage.open ? 'lobbyInWorld' : 'rail'} />
+            <NotificationsPanel notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} anchor={session.lobbyPage.open ? 'lobbyInWorld' : 'rail'} />
           </SurfaceBoundary>
           <SurfaceBoundary name="Skybox" open={session.skybox.open} onCrash={session.closeAllPanels}>
             <SkyboxMenu skybox={session.skybox} />

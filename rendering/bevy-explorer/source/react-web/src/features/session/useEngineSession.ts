@@ -50,6 +50,10 @@ import type {
   MessageReaction,
   Community,
   DmUserState,
+  ActiveCommunityVoiceChat,
+  CommunityVoiceUpdateMessage,
+  VoiceChatActionWire,
+  VoiceChatState,
   CommunityAction,
   CommunityDetailMessage,
   Emote,
@@ -652,6 +656,28 @@ export interface EditorHostState {
   setMode: (mode: EditorHudMode) => void
 }
 
+/** Private calls and community streams: the engine's state, the live streams, and the commands. */
+export interface VoiceChatSession {
+  /** Null until the engine's first snapshot. */
+  state: VoiceChatState | null
+  /** Every live community stream the local user may see. */
+  active: ActiveCommunityVoiceChat[]
+  /** The live stream whose places include where the player stands. */
+  scene: ActiveCommunityVoiceChat | null
+  act: (action: VoiceChatActionWire) => void
+}
+
+type VoiceChatEventListener = (event: CommunityVoiceUpdateMessage) => void
+const voiceChatListeners = new Set<VoiceChatEventListener>()
+/** Subscribe to community stream started / ended broadcasts (toasts); returns the unsubscribe. */
+export function onVoiceChatEvent(listener: VoiceChatEventListener): () => void {
+  voiceChatListeners.add(listener)
+  return () => voiceChatListeners.delete(listener)
+}
+function emitVoiceChatEvent(event: CommunityVoiceUpdateMessage): void {
+  for (const listener of voiceChatListeners) listener(event)
+}
+
 export interface EngineSession {
   phase: SessionPhase
   playerReady: boolean
@@ -716,6 +742,8 @@ export interface EngineSession {
   worldPassword: WorldPasswordState
   editor: EditorHostState
   mic: { enabled: boolean; available: boolean; toggle: () => void }
+  /** Private calls and community streams. */
+  voiceChat: VoiceChatSession
   /** Trigger a sidebar nav action in the scene (open menu/popup, emotes, mic). */
   nav: (action: NavAction) => void
   /** Report (or clear) the screen rect where the scene should render an engine view. */
@@ -957,6 +985,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [emotes, setEmotes] = useState<Emote[]>([])
   const [emotesOpen, setEmotesOpen] = useState(false)
   const [mic, setMic] = useState({ enabled: false, available: false })
+  const [voiceChatState, setVoiceChatState] = useState<VoiceChatState | null>(null)
+  const [activeVoiceChats, setActiveVoiceChats] = useState<ActiveCommunityVoiceChat[]>([])
+  const [sceneVoiceChat, setSceneVoiceChat] = useState<ActiveCommunityVoiceChat | null>(null)
   const [catalogItems, setCatalogItems] = useState<Wearable[]>([])
   const [catalogTotal, setCatalogTotal] = useState(0)
   const [catalogLoading, setCatalogLoading] = useState(false)
@@ -1174,6 +1205,19 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           })
           break
         }
+        case 'voiceChatState':
+          setVoiceChatState(msg.state)
+          break
+        case 'communityVoiceUpdate':
+          // the live list follows (the scene re-reads it); the broadcast itself feeds the toasts
+          emitVoiceChatEvent(msg)
+          break
+        case 'activeCommunityVoiceChats':
+          setActiveVoiceChats(msg.chats)
+          break
+        case 'sceneVoiceChat':
+          setSceneVoiceChat(msg.chat)
+          break
         case 'menuVisibility':
           setMenuOpen(msg.open)
           break
@@ -2471,6 +2515,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       })
     )
   }, [])
+  const voiceChatAct = useCallback((action: VoiceChatActionWire) => {
+    driverRef.current?.send({ kind: 'voiceChatAction', action })
+  }, [])
   const toggleMic = useCallback(() => {
     setMic((m) => {
       driverRef.current?.send({ kind: 'setMic', enabled: !m.enabled })
@@ -3317,6 +3364,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     worldPassword: { pending: worldPassword, resolve: resolveWorldPassword },
     editor: { mode: editorMode, setMode: setEditorMode },
     mic: { enabled: mic.enabled, available: mic.available, toggle: toggleMic },
+    voiceChat: { state: voiceChatState, active: activeVoiceChats, scene: sceneVoiceChat, act: voiceChatAct },
     nav,
     setEngineViewport,
     setInteractableArea,

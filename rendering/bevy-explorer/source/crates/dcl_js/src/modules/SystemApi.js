@@ -691,6 +691,47 @@ module.exports.social = {
   }
 }
 
+// Voice chat: private calls and community streams. The state stream carries one snapshot per
+// change; actions are fire-and-forget and their outcome shows on it.
+// type VoiceChatState = { status: string, kind: string, callId: string | null, communityId: string | null,
+//   peer: string | null, connection: string, participants: VoiceChatParticipant[], micEnabled: boolean,
+//   localSpeaker: boolean, localRole: string, localRequestingToSpeak: boolean, error: string | null }
+// type CommunityVoiceUpdate = { communityId: string, status: 'started' | 'ended', createdAt: number,
+//   endedAt: number | null, positions: string[], worlds: string[], isMember: boolean,
+//   communityName: string, communityImage: string | null }
+// type VoiceChatAction = { op: string, address?: string, communityId?: string, raise?: boolean, enabled?: boolean }
+function closeableStream(rid, read, close) {
+  async function* streamGenerator() {
+    try {
+      while (true) {
+        const next = await read(rid);
+        if (next === null) break;
+        yield next;
+      }
+    } finally {
+      close(rid);
+    }
+  }
+
+  const stream = streamGenerator();
+  stream.close = () => close(rid);
+  return stream;
+}
+
+module.exports.voiceChat = {
+  getStateStream: function() {
+    const rid = Deno.core.ops.op_get_voice_chat_state_stream();
+    return closeableStream(rid, Deno.core.ops.op_read_voice_chat_state_stream, Deno.core.ops.op_close_voice_chat_state_stream);
+  },
+  getCommunityUpdateStream: function() {
+    const rid = Deno.core.ops.op_get_community_voice_update_stream();
+    return closeableStream(rid, Deno.core.ops.op_read_community_voice_update_stream, Deno.core.ops.op_close_community_voice_update_stream);
+  },
+  action: function(action) {
+    Deno.core.ops.op_voice_chat_action(action);
+  }
+}
+
 // get scene loading UI state as a stream
 // type SceneLoadingUi = {
 //   visible: boolean,

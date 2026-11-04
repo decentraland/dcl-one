@@ -5,6 +5,10 @@
 
 import {
   bridgeChannelName,
+  type ActiveCommunityVoiceChat,
+  type VoiceChatActionWire,
+  type VoiceChatParticipant,
+  type VoiceChatState,
   type Badge,
   type BadgeTier,
   type BindingEntry,
@@ -124,6 +128,26 @@ const mockCommunities: Community[] = [
   { id: 'c7', name: 'SheFi', description: 'Empowering women in web3 and DeFi.', thumbnail: '', membersCount: 310, role: 'none', ownerName: 'msjoedor' },
   { id: 'c8', name: 'Community Building DCL', description: 'Helping communities grow in Decentraland.', thumbnail: '', membersCount: 639, role: 'owner', ownerName: 'TheCryptKeeper' }
 ]
+
+// A live stream on one community for the Communities page's chip and the scene banner.
+mockCommunities[0].voiceChatStatus = { isActive: true, participantCount: 12, moderatorCount: 1 }
+const MOCK_ACTIVE_CHATS: ActiveCommunityVoiceChat[] = [
+  { communityId: 'c1', communityName: 'Decentraland Foundation', communityImage: 'https://picsum.photos/seed/dcl/540/360', isMember: true, positions: ['0,0', '0,1'], worlds: [], participantCount: 12, moderatorCount: 1 }
+]
+
+/** Voice chat: a scripted call so every panel state shows in ?mock=1. `?mockcall=incoming` rings
+ *  on start; the Call buttons and the community Start / Join flows drive the rest. */
+const MOCK_ME = '0x0000000000000000000000000000000000000001'
+function mockParticipant(address: string, name: string, picture: string | undefined, role: string, isSpeaker: boolean, extra: Partial<VoiceChatParticipant> = {}): VoiceChatParticipant {
+  return { address, name, hasClaimedName: !/\d/.test(name), profilePictureUrl: picture ?? '', role, isSpeaker, isRequestingToSpeak: false, isMuted: false, isSpeaking: false, ...extra }
+}
+const idleVoice: VoiceChatState = { status: 'disconnected', kind: 'none', callId: null, communityId: null, peer: null, connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, error: null }
+let voice: VoiceChatState = { ...idleVoice }
+let mockVoiceAction: ((action: VoiceChatActionWire) => void) | null = null
+const voiceTimers: ReturnType<typeof setTimeout>[] = []
+const clearVoiceTimers = (): void => {
+  while (voiceTimers.length > 0) clearTimeout(voiceTimers.pop())
+}
 
 const RARITIES = ['base', 'common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic']
 const thumb = (urn: string): string => `https://peer.decentraland.org/lambdas/collections/contents/${urn}/thumbnail`
@@ -506,6 +530,108 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     // One nearby player is talking in voice chat, so the speaking indicator is visible in ?mock=1.
     setTimeout(() => reply({ kind: 'voiceActivity', address: MOCK_NEARBY[0].address, active: true }), 1500)
 
+    // Voice chat: the engine's first snapshot, the live streams, and the stream in this scene.
+    const pushVoice = (next: Partial<VoiceChatState>): void => {
+      voice = { ...voice, ...next }
+      reply({ kind: 'voiceChatState', state: voice })
+    }
+    const voiceLater = (ms: number, next: () => void): void => {
+      voiceTimers.push(setTimeout(next, ms))
+    }
+    setTimeout(() => {
+      pushVoice({})
+      reply({ kind: 'activeCommunityVoiceChats', chats: MOCK_ACTIVE_CHATS })
+      reply({ kind: 'sceneVoiceChat', chat: MOCK_ACTIVE_CHATS[0] })
+    }, 1600)
+    const mockCall = new URLSearchParams(location.search).get('mockcall')
+    if (mockCall === 'incoming') {
+      setTimeout(() => pushVoice({ status: 'receivedCall', kind: 'private', callId: 'mock-call', peer: MOCK_NEARBY[0].address }), 2000)
+    }
+    mockVoiceAction = (action) => {
+      const community = (id: string): VoiceChatParticipant[] => [
+        mockParticipant(MOCK_ME, 'You', undefined, id === 'c8' ? 'owner' : 'user', id === 'c8'),
+        mockParticipant(MOCK_NEARBY[0].address, MOCK_NEARBY[0].name, MOCK_NEARBY[0].picture, 'moderator', true, { isSpeaking: true }),
+        mockParticipant(MOCK_NEARBY[1].address, MOCK_NEARBY[1].name, MOCK_NEARBY[1].picture, 'user', true, { isMuted: true }),
+        mockParticipant(MOCK_NEARBY[2].address, MOCK_NEARBY[2].name, MOCK_NEARBY[2].picture, 'user', false, { isRequestingToSpeak: true }),
+        mockParticipant(MOCK_NEARBY[3].address, MOCK_NEARBY[3].name, undefined, 'user', false),
+        mockParticipant(MOCK_NEARBY[4].address, MOCK_NEARBY[4].name, undefined, 'user', false),
+        mockParticipant(MOCK_NEARBY[5].address, MOCK_NEARBY[5].name, undefined, 'user', false)
+      ]
+      const peerOf = (address: string): VoiceChatParticipant => {
+        const known = MOCK_NEARBY.find((p) => p.address.toLowerCase() === address.toLowerCase())
+        return mockParticipant(address, known?.name ?? 'Caller', known?.picture, 'none', true)
+      }
+      switch (action.op) {
+        case 'startPrivateCall': {
+          clearVoiceTimers()
+          const busy = MOCK_NEARBY[2].address.toLowerCase() === action.address.toLowerCase()
+          pushVoice({ ...idleVoice, status: 'startingCall', kind: 'private', peer: action.address })
+          voiceLater(600, () => {
+            if (busy) pushVoice({ ...idleVoice, status: 'busy', error: 'One of the users is busy calling someone else' })
+            else pushVoice({ status: 'startedCall', callId: 'mock-call' })
+          })
+          if (!busy) {
+            voiceLater(4000, () => pushVoice({ status: 'inCall', connection: 'connecting' }))
+            voiceLater(5000, () => pushVoice({ connection: 'connected', micEnabled: true, localSpeaker: true, participants: [peerOf(action.address)] }))
+          }
+          break
+        }
+        case 'acceptCall':
+          clearVoiceTimers()
+          pushVoice({ status: 'startingCall' })
+          voiceLater(500, () => pushVoice({ status: 'inCall', connection: 'connecting' }))
+          voiceLater(1200, () => pushVoice({ connection: 'connected', micEnabled: true, localSpeaker: true, participants: [peerOf(voice.peer ?? MOCK_NEARBY[0].address)] }))
+          break
+        case 'rejectCall':
+          clearVoiceTimers()
+          pushVoice({ status: 'rejectingCall' })
+          voiceLater(300, () => pushVoice({ ...idleVoice }))
+          break
+        case 'endCall':
+        case 'leaveCall':
+          clearVoiceTimers()
+          pushVoice({ ...idleVoice, status: voice.kind === 'private' ? 'endingCall' : 'disconnected' })
+          voiceLater(300, () => pushVoice({ ...idleVoice }))
+          break
+        case 'startCommunityCall':
+        case 'joinCommunityCall': {
+          clearVoiceTimers()
+          const id = action.communityId
+          const owner = id === 'c8'
+          pushVoice({ ...idleVoice, status: 'startingCall', kind: 'community', communityId: id })
+          voiceLater(600, () => pushVoice({ status: 'inCall', connection: 'connecting', localSpeaker: owner, localRole: owner ? 'owner' : 'user' }))
+          voiceLater(1400, () => pushVoice({ connection: 'connected', micEnabled: owner, participants: community(id) }))
+          break
+        }
+        case 'endCommunityCall':
+          clearVoiceTimers()
+          pushVoice({ ...idleVoice })
+          break
+        case 'requestToSpeak':
+          pushVoice({ localRequestingToSpeak: action.raise })
+          break
+        case 'promoteSpeaker':
+          pushVoice({ participants: voice.participants.map((p) => (p.address === action.address ? { ...p, isSpeaker: true, isRequestingToSpeak: false } : p)) })
+          break
+        case 'demoteSpeaker':
+          if (action.address.toLowerCase() === MOCK_ME) pushVoice({ localSpeaker: false, micEnabled: false })
+          pushVoice({ participants: voice.participants.map((p) => (p.address === action.address ? { ...p, isSpeaker: false } : p)) })
+          break
+        case 'rejectSpeakRequest':
+          pushVoice({ participants: voice.participants.map((p) => (p.address === action.address ? { ...p, isRequestingToSpeak: false } : p)) })
+          break
+        case 'kickPlayer':
+          pushVoice({ participants: voice.participants.filter((p) => p.address !== action.address) })
+          break
+        case 'setMic':
+          pushVoice({ micEnabled: action.enabled && voice.localSpeaker })
+          break
+        case 'dismissError':
+          pushVoice({ ...idleVoice })
+          break
+      }
+    }
+
     // ?simhover=N seeds N world-hover prompts so the radial cursor tooltips are visible/verifiable in
     // ?mock=1 (the real engine hover stream isn't mocked). React positions them at the live DOM cursor,
     // so we only send the action list — no coordinates. One is disabled (camera-distance gated →
@@ -654,6 +780,10 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
 
     if (msg.kind === 'chatBubbleText') return // no avatars' bubbles in the mock
     if (msg.kind === 'navAction') return // no scene menus in the mock
+    if (msg.kind === 'voiceChatAction') {
+      mockVoiceAction?.(msg.action)
+      return
+    }
     if (msg.kind === 'friendAction') {
       // No social service in the mock: acknowledge so the page's flows (toasts, popups) run.
       reply({ kind: 'friendActionDone', op: msg.op, address: msg.address })

@@ -29,6 +29,27 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
+- **Voice chat (private calls and community streams)**, ported from `Assets/DCL/VoiceChat/`
+  with its statuses, guards, the 3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay
+  and the server's 60 s ring, differs where the engine does:
+  - The call microphone has no hold-to-talk: Unity's `T` (0.5 s hold threshold) opens the chat
+    here, so the `Microphone` key (`V`) toggles the call mic while a call is connected and the
+    nearby mic otherwise.
+  - Muting unpublishes the track instead of muting a published one (the engine's mic mechanism);
+    the server still gets `MuteSpeakerFromCommunityVoiceChat`, so everyone sees the same thing.
+  - Call playback follows the one `Voice` volume setting (Unity has a separate `VoiceChat_Volume`)
+    and there is no microphone device picker.
+  - The call tune is a one-shot clip re-triggered every 3.056 s (its length) while ringing, the
+    audio layer having no loop.
+  - The room joins with `auto_subscribe: false` like every other room and the voice module
+    subscribes to each microphone track itself.
+  - A call peer who is also nearby is heard through the call only; Unity's nearby voice plays
+    them a second time. Their spatial track is unsubscribed for the call's duration.
+  - The reconnection budget is spent regardless of remote participants (Unity skips the re-dial
+    when nobody else is in the room).
+  - The chat has no community channels, so Unity's stream buttons in the community chat title
+    and subtitle have no place; the community card, the Communities page, the scene banner and
+    the notification carry Start / Join.
 
 ## Deliberate choices that look like mistakes
 

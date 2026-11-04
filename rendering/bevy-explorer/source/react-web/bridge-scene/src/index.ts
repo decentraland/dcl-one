@@ -30,6 +30,7 @@ import { registerCommunities } from './domains/communities'
 import { registerGallery } from './domains/gallery'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
+import { registerVoiceChat } from './domains/voiceChat'
 import { registerPointer } from './domains/pointer'
 import { registerProximity } from './domains/proximity'
 import { registerSystemAction } from './domains/systemAction'
@@ -52,6 +53,7 @@ export function main(): void {
     registerChat(ctx)
     registerDm(ctx)
     registerVoice(ctx)
+    registerVoiceChat(ctx)
     registerEmotes(ctx)
     registerWearables(ctx)
     registerCatalog(ctx)

@@ -4,7 +4,10 @@
 // (members/posts/places/events) arrives via the bridge `communityDetail` relay.
 
 import { useEffect, useState } from 'react'
-import { Avatar, Button, Tabs, openPopup, type TabItem } from '../../design'
+import { Avatar, Button, MaskIcon, Tabs, openPopup, type TabItem } from '../../design'
+import joinStreamIcon from '../../assets/voice/join-stream.png'
+import streamIcon from '../../assets/voice/stream-small.png'
+import endStreamIcon from '../../assets/voice/end-stream.png'
 import { nameColor } from '../../lib/identity'
 import { knownUserColor } from '../session/profileStore'
 import { useSession } from '../session/SessionContext'
@@ -17,6 +20,7 @@ import type {
   CommunityPlace,
   CommunityPost
 } from '../../engine/protocol'
+import { inCommunityStream } from '../voiceChat/callGate'
 import styles from './CommunityModal.module.css'
 
 type Tab = 'announcements' | 'members' | 'places' | 'photos'
@@ -195,6 +199,7 @@ export function CommunityModal({
   onLeave,
   onAddFriend,
   onOpenChat,
+  stream,
   onClose
 }: {
   community: Community
@@ -207,6 +212,9 @@ export function CommunityModal({
   onLeave: (id: string) => void
   onAddFriend: (address: string) => void
   onOpenChat: () => void
+  /** The community's voice stream: live, whether the local user is in it, and whether they may
+   *  open one (owner or moderator). */
+  stream?: { live: boolean; inStream: boolean; canStart: boolean; participants: number; onStart: () => void; onJoin: () => void; onLeave: () => void }
   onClose: () => void
 }): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('announcements')
@@ -251,6 +259,13 @@ export function CommunityModal({
             {error && <p className={styles.error} role="alert">{error}</p>}
           </div>
           <div className={styles.headActions}>
+            {stream != null && stream.inStream ? (
+              <Button size="sm" variant="secondary" onClick={stream.onLeave}><MaskIcon src={endStreamIcon} size={14} /> Leave stream</Button>
+            ) : stream != null && stream.live ? (
+              <Button size="sm" variant="accent" aria-label="Join stream" onClick={stream.onJoin}><MaskIcon src={joinStreamIcon} size={14} /> Live · Join stream</Button>
+            ) : stream != null && stream.canStart ? (
+              <Button size="sm" variant="secondary" onClick={stream.onStart}><MaskIcon src={streamIcon} size={14} /> Start stream</Button>
+            ) : null}
             {member && (
               <button type="button" className={styles.iconBtn} aria-label="Open chat" onClick={onOpenChat}><ChatIcon /></button>
             )}
@@ -328,7 +343,7 @@ export function CommunityModal({
  *  in place — never a frozen snapshot from when it was opened. */
 function CommunityModalContainer({ communityId, onClose }: { communityId: string; onClose: () => void }): React.JSX.Element | null {
   const session = useSession()
-  const { communities, friends, chat } = session
+  const { communities, friends, chat, voiceChat } = session
   const { loadDetail } = communities
 
   useEffect(() => {
@@ -339,9 +354,20 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
   if (!community) return null // e.g. the community disappeared from the list while open
 
   const detail = communities.detail != null && communities.detail.id === communityId ? communities.detail : null
+  const live = voiceChat.active.find((c) => c.communityId === communityId)
+  const stream = {
+    live: live != null || community.voiceChatStatus?.isActive === true,
+    inStream: inCommunityStream(voiceChat.state, communityId),
+    canStart: community.role === 'owner' || community.role === 'moderator',
+    participants: live?.participantCount ?? community.voiceChatStatus?.participantCount ?? 0,
+    onStart: () => voiceChat.act({ op: 'startCommunityCall', communityId }),
+    onJoin: () => voiceChat.act({ op: 'joinCommunityCall', communityId }),
+    onLeave: () => voiceChat.act({ op: 'leaveCall' })
+  }
 
   return (
     <CommunityModal
+      stream={stream}
       community={community}
       detail={detail}
       error={communities.error?.id === communityId ? communities.error.message : null}

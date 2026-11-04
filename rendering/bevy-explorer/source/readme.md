@@ -169,8 +169,17 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
   after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`,
-  `/voice_state`, `/entity_screen_position <entity> [--bounds]`, plus the older `/player_position`,
-  `/get_user_data`, `/connected_players`, `/time` and the scene commands.
+  `/voice_state` (the nearby voice rooms and, as `call`, the private call or community stream the
+  player is in: `status`, `kind`, `peer`, `communityId`, `connection`, `participants`,
+  `micEnabled`, `localSpeaker`, `localRole`, `error`), `/entity_screen_position <entity>
+  [--bounds]`, plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`
+  and the scene commands.
+- Voice chat, as the HUD's buttons do it: `/voice_call <address>` rings a user, `/voice_accept`
+  and `/voice_reject` answer a ringing call, `/voice_end` hangs up or leaves a stream,
+  `/voice_community start|join|end|leave [<community id>]`, `/voice_hand up|down`,
+  `/voice_mic on|off` (the call microphone; the nearby one is the `Microphone` key) and
+  `/voice_moderate promote|demote|kick|reject <address>`. Each only queues the request; read
+  `/voice_state` `call` for the outcome.
 - The HUD, by role and accessible name (`react-web/src/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`; `"timeout"` ms). A selector is the name or JSON
