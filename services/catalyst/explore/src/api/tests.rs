@@ -489,6 +489,116 @@ async fn every_replica_reloads_the_shared_denylist() {
     db.teardown().await;
 }
 
+#[tokio::test]
+async fn denylist_reload_timeout_retains_last_snapshot_and_recovers_after_sql_unblocks() {
+    let Some(db) = scratch_database().await else {
+        return;
+    };
+    denylist::replace(
+        &db.pool,
+        &[denylist::UserEntry {
+            wallet: "0xPrevious".into(),
+        }],
+    )
+    .await
+    .unwrap();
+    let replica = node_with_db(Settings::for_tests(Sources::defaults()), db.pool.clone()).await;
+    let previous = replica.state.denylist.list();
+    let app = router(replica.state.clone());
+
+    // Commit the next snapshot first. The refresh must preserve the old one
+    // when PostgreSQL cannot answer, then load this committed replacement.
+    denylist::replace(
+        &db.pool,
+        &[denylist::UserEntry {
+            wallet: "0xReplacement".into(),
+        }],
+    )
+    .await
+    .unwrap();
+    let mut blocker = db.pool.begin().await.unwrap();
+    let blocker_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *blocker)
+        .await
+        .unwrap();
+    sqlx::query("LOCK TABLE explore_api.denylist_users IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *blocker)
+        .await
+        .unwrap();
+
+    let jobs = Jobs::new().with_fleet_jobs(false).with_first_pass_now(true);
+    let started = tokio::time::Instant::now();
+    // Only shorten the interval between passes; the production five-second
+    // pass timeout and real SQL wait remain unchanged.
+    denylist::spawn_reload(&replica.state, &jobs, Duration::from_millis(100));
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let blocked: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+                 WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)))",
+            )
+            .bind(blocker_pid)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+            if blocked {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the real snapshot query must reach PostgreSQL and wait for the table lock");
+    assert_eq!(jobs.report()[0].passes, 0);
+
+    tokio::time::timeout_at(started + Duration::from_secs(8), async {
+        while jobs.report()[0].passes == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the five-second reload deadline must finish a pass despite the SQL lock");
+    assert!(started.elapsed() >= Duration::from_secs(5));
+    let failed = &jobs.report()[0];
+    assert!(
+        failed
+            .last_error
+            .as_deref()
+            .is_some_and(|error| { error.contains("denylist snapshot reload timed out") }),
+        "expected the reload deadline, not a PostgreSQL/pool failure: {failed:?}"
+    );
+    assert!(Arc::ptr_eq(&previous, &replica.state.denylist.list()));
+    assert!(replica.state.denylist.contains("0xprevious"));
+    assert!(!replica.state.denylist.contains("0xreplacement"));
+    let (status, body) = call_json(&app, "GET", "/config/denylist.json", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({"users": [{"wallet": "0xPrevious"}]}));
+
+    blocker.rollback().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let report = &jobs.report()[0];
+            if report.passes >= 2
+                && report
+                    .progress
+                    .as_deref()
+                    .is_some_and(|message| message.contains(" ok in "))
+                && replica.state.denylist.contains("0xreplacement")
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the same job must retry and recover after PostgreSQL unblocks");
+    assert!(!replica.state.denylist.contains("0xprevious"));
+    let (_, body) = call_json(&app, "GET", "/config/denylist.json", None).await;
+    assert_eq!(body, json!({"users": [{"wallet": "0xReplacement"}]}));
+    assert!(jobs.shutdown(Duration::from_secs(2)).await.is_empty());
+    db.teardown().await;
+}
+
 async fn job_ctx() -> (Jobs, crate::jobs::JobContext) {
     let jobs = Jobs::new();
     let (tx, rx) = tokio::sync::oneshot::channel();
