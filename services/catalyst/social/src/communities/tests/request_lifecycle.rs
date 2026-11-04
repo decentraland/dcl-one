@@ -38,7 +38,7 @@ async fn accepted_invitation_replay_does_not_rejoin_after_leaving() {
     );
     assert_eq!(
         decide(&rig.app, &member, &path, "accepted").await,
-        StatusCode::NO_CONTENT
+        StatusCode::NOT_FOUND
     );
     assert_eq!(
         rig.role_of(community, &member).await,
@@ -47,7 +47,7 @@ async fn accepted_invitation_replay_does_not_rejoin_after_leaving() {
     );
     assert_eq!(
         decide(&rig.app, &member, &path, "rejected").await,
-        StatusCode::CONFLICT
+        StatusCode::NOT_FOUND
     );
     let fresh = rig.request(community, &member, "invite").await;
     assert_eq!(
@@ -95,7 +95,7 @@ async fn rejected_and_cancelled_requests_cannot_be_accepted_later() {
         );
         assert_eq!(
             decide(&rig.app, terminal_actor, &path, terminal).await,
-            StatusCode::NO_CONTENT
+            StatusCode::NOT_FOUND
         );
         let acceptor = if kind == "invite" {
             &member
@@ -104,7 +104,7 @@ async fn rejected_and_cancelled_requests_cannot_be_accepted_later() {
         };
         assert_eq!(
             decide(&rig.app, acceptor, &path, "accepted").await,
-            StatusCode::CONFLICT,
+            StatusCode::NOT_FOUND,
             "{kind}/{terminal}"
         );
         assert_eq!(rig.role_of(community, &member).await, None);
@@ -130,28 +130,21 @@ async fn competing_request_decisions_have_one_winner_and_matching_membership() {
         assert!(
             matches!(
                 (accept, reject),
-                (StatusCode::NO_CONTENT, StatusCode::CONFLICT)
-                    | (StatusCode::CONFLICT, StatusCode::NO_CONTENT)
+                (StatusCode::NO_CONTENT, StatusCode::NOT_FOUND)
+                    | (StatusCode::NOT_FOUND, StatusCode::NO_CONTENT)
             ),
             "accept={accept}, reject={reject}"
         );
-        let persisted: String =
-            sqlx::query_scalar("SELECT status FROM social.community_requests WHERE id = $1")
+        let retained: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM social.community_requests WHERE id = $1")
                 .bind(request)
                 .fetch_one(&rig.pool)
                 .await
                 .unwrap();
-        assert_eq!(
-            persisted,
-            if accept == StatusCode::NO_CONTENT {
-                "accepted"
-            } else {
-                "rejected"
-            }
-        );
+        assert_eq!(retained, 0);
         assert_eq!(
             rig.role_of(community, &member).await.is_some(),
-            persisted == "accepted"
+            accept == StatusCode::NO_CONTENT
         );
     }
 }
@@ -193,15 +186,15 @@ async fn opposite_type_auto_accept_cannot_grant_access_after_a_competing_cancell
     wait_for_decisions(&rig.pool, blocker, 2).await;
     fence.commit().await.unwrap();
     assert_eq!(cancelled.await.unwrap().0, StatusCode::NO_CONTENT);
-    assert_eq!(accepted.await.unwrap().0, StatusCode::CONFLICT);
+    assert_eq!(accepted.await.unwrap().0, StatusCode::NOT_FOUND);
     assert_eq!(rig.role_of(community, &member).await, None);
-    let status: String =
-        sqlx::query_scalar("SELECT status FROM social.community_requests WHERE id=$1")
+    let retained: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM social.community_requests WHERE id = $1")
             .bind(request)
             .fetch_one(&rig.pool)
             .await
             .unwrap();
-    assert_eq!(status, "cancelled");
+    assert_eq!(retained, 0);
 }
 
 async fn wait_for_decisions(pool: &PgPool, blocker: i32, count: i64) {

@@ -767,6 +767,7 @@ fn island_refuses_the_secrets_that_call_a_third_party() {
     for posture in ["island", "journey"] {
         for (secret, api) in [
             ("SENDGRID_API_KEY", "SendGrid"),
+            ("SLACK_BOT_TOKEN", "Slack"),
             ("TURNSTILE_SECRET_KEY", "Turnstile"),
             ("STRIPE_SECRET_KEY", "Stripe"),
             ("CREDITS_CAPTCHA_SECRET", "hCaptcha"),

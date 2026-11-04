@@ -260,14 +260,14 @@ mod tests {
         for uri in [
             "/v1/communities".to_string(),
             "/social-api/v2/communities".to_string(),
-            format!("/v1/communities/{mirrored}"),
+            format!("/v2/communities/{mirrored}"),
         ] {
             let (status, body) = get(state(), &uri).await;
             assert_eq!(status, StatusCode::OK, "{uri}: {body}");
             assert_eq!(body["as_of"], "2026-03-04T05:06:07.500Z", "{uri}");
             assert_eq!(body["stale_after_secs"], 7200, "{uri}");
         }
-        let (status, body) = get(state(), &format!("/v1/communities/{local}")).await;
+        let (status, body) = get(state(), &format!("/v2/communities/{local}")).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert!(
             body.get("as_of").is_none(),
@@ -278,7 +278,7 @@ mod tests {
         // with its mirror row gone, a state that already read it still
         // stamps the page, and a fresh one sees a local community.
         let warm = state();
-        let page = format!("/v1/communities/{mirrored}");
+        let page = format!("/v2/communities/{mirrored}");
         let (_, body) = get(warm.clone(), &page).await;
         assert_eq!(body["as_of"], "2026-03-04T05:06:07.500Z");
         sqlx::query("DELETE FROM social.community_mirror WHERE community_id = $1")

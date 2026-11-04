@@ -46,6 +46,36 @@ CREATE TABLE social.user_settings (
         CHECK (show_situation_reactions IN ('show', 'hide'))
 );
 
+-- Fixed-window mutation counters: at most two atomic keyed increments per
+-- attempt (actor, then pair). Expiry is set only by the first increment. NULL
+-- records Redis's persistent key after a failed first EXPIRE. The expiry/key
+-- index serves bounded 1000-row cleanup; no profile or friendship FK applies.
+-- UTC Unix milliseconds preserve the signed-64 Redis TTL range, which exceeds
+-- PostgreSQL timestamp range. The database clock supplies production time.
+CREATE TABLE social.friendship_mutation_limits (
+    key text NOT NULL,
+    attempts bigint NOT NULL,
+    expires_at_ms bigint,
+    CONSTRAINT friendship_mutation_limits_pkey PRIMARY KEY (key),
+    CONSTRAINT friendship_mutation_limits_attempts_check CHECK (attempts > 0)
+);
+CREATE INDEX friendship_mutation_limits_expiry_idx
+    ON social.friendship_mutation_limits (expires_at_ms, key) WHERE expires_at_ms IS NOT NULL;
+
+-- Legacy registry minimal-profile cache. One shared fact per exact source
+-- cache key: single reads use the requested pointer; batch fills use public
+-- avatar.userId. Expiry is600s after last successful upsert; no negative entries
+-- or content-write invalidation. Bounded expiry work orders this index.
+CREATE TABLE social.registry_profile_cache (
+    profile_key text NOT NULL PRIMARY KEY,
+    profile jsonb NOT NULL,
+    expires_at timestamp without time zone NOT NULL,
+    CONSTRAINT registry_profile_cache_object CHECK(jsonb_typeof(profile)='object')
+);
+CREATE INDEX registry_profile_cache_expiry_idx
+    ON social.registry_profile_cache(expires_at,profile_key);
+
+
 -- ── friendships ────────────────────────────────────────────────────────────
 
 -- One canonical row per unordered pair. last_action/last_actor/last_action_at
@@ -149,18 +179,20 @@ CREATE INDEX friend_messages_pair_idx
 -- ── private voice calls ────────────────────────────────────────────────────
 
 -- The call; its LiveKit room is 'voice-chat-private-' || id. A pending call (no
--- participant rows) lives while created_at >= $now - PRIVATE_VOICE_CHAT_EXPIRATION_TIME;
--- the sweep deletes expired pending calls. An accepted call lives until ended.
+-- participant rows) keeps its parties busy until the expiry sweep deletes it,
+-- including after PRIVATE_VOICE_CHAT_EXPIRATION_TIME. An accepted call lives until ended.
 CREATE TABLE social.private_voice_chats (
     id uuid NOT NULL,
     caller_address text NOT NULL,
     callee_address text NOT NULL,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     CONSTRAINT private_voice_chats_pkey PRIMARY KEY (id),
-    CONSTRAINT private_voice_chats_caller_key UNIQUE (caller_address),
-    CONSTRAINT private_voice_chats_callee_key UNIQUE (callee_address),
     CONSTRAINT private_voice_chats_no_self_call_check CHECK (caller_address <> callee_address)
 );
+
+-- Pending creation serializes both normalized wallets with transaction advisory
+-- locks before probing rows without participants. A media row may coexist with
+-- a pending call; caller/callee UNIQUEs would incorrectly forbid that history.
 
 -- The expiry sweep and the admin "active calls" read.
 CREATE INDEX private_voice_chats_created_idx ON social.private_voice_chats (created_at);
@@ -185,9 +217,10 @@ CREATE INDEX private_voice_chat_participants_status_idx
 -- ── communities ────────────────────────────────────────────────────────────
 
 -- active = false is the (federation-visible) deletion; suspended is the local
--- operator hold (a separate axis, 0005). ranking_score has no writer yet
--- (derived column, source "none"; stays 0), editors_choice is set by the
--- admin route; both are read by the listing's ORDER BY.
+-- operator hold (a separate axis, 0005). The local ranking job derives
+-- ranking_score from the five lifetime counters and current community facts.
+-- Its activation timestamp prevents rebuilding missing lifetime history from
+-- an old event catalogue. Mirrored rankings are not recalculated.
 CREATE TABLE social.communities (
     id uuid NOT NULL,
     name text NOT NULL,
@@ -198,6 +231,12 @@ CREATE TABLE social.communities (
     unlisted boolean NOT NULL DEFAULT false,
     editors_choice boolean NOT NULL DEFAULT false,
     ranking_score real NOT NULL DEFAULT 0,
+    ranking_events_count integer NOT NULL DEFAULT 0,
+    ranking_photos_count integer NOT NULL DEFAULT 0,
+    ranking_streams_count integer NOT NULL DEFAULT 0,
+    ranking_events_total_attendees integer NOT NULL DEFAULT 0,
+    ranking_streams_total_participants integer NOT NULL DEFAULT 0,
+    ranking_tracking_since timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     suspended boolean NOT NULL DEFAULT false,
     suspended_at timestamp without time zone,
     suspended_by text,
@@ -209,10 +248,37 @@ CREATE TABLE social.communities (
     origin text NOT NULL DEFAULT 'local',
     CONSTRAINT communities_pkey PRIMARY KEY (id),
     CONSTRAINT communities_origin_known CHECK (origin IN ('upstream', 'local')),
+    CONSTRAINT communities_ranking_nonnegative CHECK (ranking_events_count >= 0 AND ranking_photos_count >= 0 AND ranking_streams_count >= 0 AND ranking_events_total_attendees >= 0 AND ranking_streams_total_participants >= 0),
     CONSTRAINT communities_suspension_check
         CHECK ((suspended AND suspended_at IS NOT NULL AND suspended_by IS NOT NULL)
             OR (NOT suspended AND suspended_at IS NULL AND suspended_by IS NULL AND suspension_reason IS NULL))
 );
+
+-- Local lifecycle retries and ended-occurrence scans share a durable receipt.
+-- A photo fans out to several communities, hence community_id is part of its
+-- key. Counters and receipts commit together; receipts are retained for the
+-- community's lifetime and never expire behind a scanner checkpoint.
+CREATE TABLE social.community_ranking_events (
+    kind text NOT NULL,
+    event_key text NOT NULL,
+    community_id uuid NOT NULL REFERENCES social.communities(id) ON DELETE CASCADE,
+    occurred_at timestamp without time zone NOT NULL,
+    PRIMARY KEY (kind, event_key, community_id),
+    CHECK (kind IN ('photo', 'event', 'stream'))
+);
+-- Community deletion probes the referencing side of its cascading foreign key.
+CREATE INDEX community_ranking_events_community_idx ON social.community_ranking_events (community_id);
+
+-- Two-hour provider results, keyed exactly as the source Redis cache. Cached
+-- rejections carry their full issue lists; expiry uses a bounded indexed job.
+CREATE TABLE social.community_compliance_cache (
+    model text NOT NULL,
+    input_hash bytea NOT NULL CHECK (octet_length(input_hash) = 32),
+    result jsonb NOT NULL,
+    expires_at timestamp without time zone NOT NULL,
+    PRIMARY KEY (model, input_hash)
+);
+CREATE INDEX community_compliance_cache_expiry_idx ON social.community_compliance_cache (expires_at);
 
 -- The public listing's ORDER BY; the listing carries exactly this predicate.
 CREATE INDEX communities_ranking_idx
@@ -751,11 +817,27 @@ CREATE TABLE social.badge_admin_audit (
 
 -- One row per invited wallet; first referrer wins (ON CONFLICT DO NOTHING).
 CREATE TABLE social.referral_progress (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
     invited_user text NOT NULL,
     referrer text NOT NULL,
     status text NOT NULL DEFAULT 'pending',
+    invited_user_ip text,
+    signed_up_at timestamp without time zone,
+    tier_granted boolean NOT NULL DEFAULT false,
+    tier_granted_at timestamp without time zone,
+    -- The reward tier this grant reached while its rewards request is owed:
+    -- set with the grant, cleared when the request succeeds.
+    reward_tier integer,
+    -- The paid reward ({tier, reward, notified}) while its notification or
+    -- image is not done. A later finalize of the same invited user resumes
+    -- them without requesting the reward again.
+    reward_paid jsonb,
+    -- The source's no-TTL login-day set; whole-value reads, at most the
+    -- configured minimum distinct UTC dates before the next login grants.
+    login_days date[] NOT NULL DEFAULT '{}',
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT referral_progress_id_key UNIQUE (id),
     CONSTRAINT referral_progress_pkey PRIMARY KEY (invited_user),
     CONSTRAINT referral_progress_status_check
         CHECK (status IN ('pending', 'signed_up', 'tier_granted', 'rejected_ip_match')),
@@ -763,7 +845,24 @@ CREATE TABLE social.referral_progress (
 );
 
 -- The referrer's `COUNT(*) WHERE status = 'tier_granted'` and progress list.
+-- Its referrer prefix also bounds registration's referrer+IP count, which
+-- compares each row's IP as inet (historical aliases included), so no index
+-- on the stored IP text can serve it.
 CREATE INDEX referral_progress_referrer_idx ON social.referral_progress (referrer, status);
+CREATE INDEX referral_progress_granted_idx ON social.referral_progress (referrer) WHERE tier_granted;
+
+-- Reward art returned by the rewards API after a tier's guarded transition;
+-- source IDs and all historical snapshots survive imports and later updates.
+CREATE TABLE social.referral_reward_images (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    referrer text NOT NULL,
+    reward_image_url text NOT NULL,
+    tier integer NOT NULL CHECK (tier > 0),
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT referral_reward_images_pkey PRIMARY KEY (id)
+);
+CREATE INDEX referral_reward_images_referrer_idx ON social.referral_reward_images (referrer);
+
 
 -- The invitedUsersAccepted count each referrer last saw.
 CREATE TABLE social.referral_progress_viewed (
@@ -1236,3 +1335,13 @@ CREATE TABLE social.island_takeover_receipts (
 CREATE INDEX island_takeover_receipts_due_idx
     ON social.island_takeover_receipts(next_attempt_at, wallet, source_incarnation, takeover_id)
     WHERE NOT acknowledged;
+
+-- Immutable overflow transport payloads for core NATS' bounded social messages.
+-- This is a transient cache, not an outbox: publication may still be lost.
+CREATE TABLE social.event_payloads (
+    id uuid PRIMARY KEY,
+    payload bytea NOT NULL,
+    expires_at timestamp without time zone NOT NULL,
+    CONSTRAINT event_payloads_size_check CHECK (octet_length(payload) > 0 AND octet_length(payload) <= 536870912)
+);
+CREATE INDEX event_payloads_expiry_idx ON social.event_payloads (expires_at, id);

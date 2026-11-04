@@ -20,10 +20,12 @@ use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::PgPool;
 
 use super::{Shared, mirror};
-use crate::jobs::JobContext;
+use crate::jobs::{JobContext, Jobs, PeriodicCfg};
 
 pub const MIRROR: &str = "denylist";
 const BODY_CAP: usize = 4 << 20;
+/// How stale a replica's in-memory set may be after the shared tables change.
+pub const RELOAD_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Denylist {
@@ -233,6 +235,27 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
         })
     })
     .await
+}
+
+/// Every process reloads its served set from the tables the leased mirror and
+/// the local overlay write, so replicas that never hold the mirror lease (and
+/// social's referral checks on them) follow the shared denylist.
+pub fn spawn_reload(state: &Shared, jobs: &Jobs, every: std::time::Duration) {
+    let state = state.clone();
+    jobs.spawn_periodic(
+        "explorer-denylist-reload",
+        PeriodicCfg::every(every).after_first_interval(),
+        move |_ctx| {
+            let state = state.clone();
+            async move {
+                state
+                    .denylist
+                    .reload(&state.pool)
+                    .await
+                    .context("reloading the denylist")
+            }
+        },
+    );
 }
 
 pub fn routes() -> Router<Shared> {
