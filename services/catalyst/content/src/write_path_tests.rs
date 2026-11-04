@@ -591,23 +591,37 @@ fn land_token(x: i32, y: i32) -> String {
 
 /// Folds `owner`'s LAND at `parcels` into the index and publishes the fold.
 async fn index_land(pool: &PgPool, owner: &str, parcels: &[(i32, i32)]) {
+    let grants: Vec<_> = parcels
+        .iter()
+        .map(|&p| (crate::land_authz::KIND_TRANSFER, p, owner))
+        .collect();
+    index_land_events(pool, &grants).await;
+}
+
+/// Folds LAND registry events `(kind, parcel, address)` into the index and
+/// publishes the fold: a transfer's address is the new owner, an update
+/// operator's the operator.
+async fn index_land_events(pool: &PgPool, grants: &[(&'static str, (i32, i32), &str)]) {
     let settings = crate::land_authz::Settings::for_tests();
     let start = settings.start_block as i64;
     indexer::ensure_cursor(pool, &settings).await.unwrap();
-    let events: Vec<AuthzEvent> = parcels
+    let events: Vec<AuthzEvent> = grants
         .iter()
         .enumerate()
-        .map(|(i, (x, y))| AuthzEvent {
-            block_number: start + 10,
-            log_index: i as i32,
-            block_time: (start + 10) * 12,
-            token_address: crate::land_authz::LAND_REGISTRY_MAINNET.to_string(),
-            kind: crate::land_authz::KIND_TRANSFER,
-            token_id: Some(land_token(*x, *y)),
-            estate_id: None,
-            account: Some(owner.to_string()),
-            operator: None,
-            approved: None,
+        .map(|(i, &(kind, (x, y), address))| {
+            let transfer = kind == crate::land_authz::KIND_TRANSFER;
+            AuthzEvent {
+                block_number: start + 10,
+                log_index: i as i32,
+                block_time: (start + 10) * 12,
+                token_address: crate::land_authz::LAND_REGISTRY_MAINNET.to_string(),
+                kind,
+                token_id: Some(land_token(x, y)),
+                estate_id: None,
+                account: transfer.then(|| address.to_string()),
+                operator: (!transfer).then(|| address.to_string()),
+                approved: None,
+            }
         })
         .collect();
     let mut conn = pool.acquire().await.unwrap();
@@ -844,6 +858,335 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
     assert_eq!(active_by_pointers(&router, &[&parcel]).await[0]["id"], id4);
 
     drop((router, deployer, state));
+    let _ = std::fs::remove_dir_all(&tmp);
+    db.drop_now().await;
+}
+
+/// A scene on two parcels goes only for a signer with LAND rights on both:
+/// the holder of one of them is refused and the scene stays; the holder of
+/// both takes it down, and both parcels are left empty although an older
+/// scene occupied one of them before.
+#[tokio::test]
+async fn unpublishing_a_scene_needs_rights_on_every_parcel_and_empties_them() {
+    require_test_db!(Some(db) = OwnDb::create("contentu").await);
+    let (owner, neighbour) = (key(OWNER_KEY), key(STRANGER_KEY));
+    let (x, y) = (41, -13);
+    let (a, b) = (format!("{x},{y}"), format!("{},{y}", x + 1));
+    // The owner holds (x, y) and operates (x + 1, y), which the neighbour owns.
+    index_land_events(
+        &db.pool,
+        &[
+            (crate::land_authz::KIND_TRANSFER, (x, y), &address(&owner)),
+            (
+                crate::land_authz::KIND_TRANSFER,
+                (x + 1, y),
+                &address(&neighbour),
+            ),
+            (
+                crate::land_authz::KIND_UPDATE_OPERATOR,
+                (x + 1, y),
+                &address(&owner),
+            ),
+        ],
+    )
+    .await;
+
+    let tmp = std::env::temp_dir().join(format!(
+        "catalyst-write-path-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
+    let state = Arc::new(ContentState::new(
+        db.pool.clone(),
+        Settings::for_tests(),
+        storage.clone(),
+    ));
+    state.sync.set_state(SyncState::Syncing);
+    let land = Arc::new(LandAuthzState::new(
+        db.pool.clone(),
+        Outbound::for_tests(),
+        crate::land_authz::Settings::for_tests(),
+        None,
+    ));
+    // Deploys ask the chain; the unpublish route reads the LAND index.
+    let fake = fake_chain::serve(fake_chain::land_owners(vec![
+        (address(&neighbour), (x + 1).into(), y.into()),
+        (address(&owner), x.into(), y.into()),
+        (address(&owner), (x + 1).into(), y.into()),
+    ]))
+    .await;
+    attach(&state, true, Some(land), Some(&fake));
+    let router = build_router(state.clone());
+    let deployer = state.deployer().unwrap().clone();
+
+    // The neighbour's older scene on (x + 1, y), then the owner's over both.
+    let (old_bytes, old_id, old_chain) = signed_entity(&neighbour, scene(&[&b], &[])).await;
+    let (status, _, body) = call(
+        &router,
+        deploy_request("/entities", &old_id, &old_chain, &[(&old_id, &old_bytes)]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", json_of(&body));
+    deployer.clear_rate_limits();
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let (bytes, entity_id, chain) = signed_entity(&owner, scene(&[&a, &b], &[])).await;
+    let (status, _, body) = call(
+        &router,
+        deploy_request("/entities", &entity_id, &chain, &[(&entity_id, &bytes)]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", json_of(&body));
+    let active = active_by_pointers(&router, &[&a, &b]).await;
+    assert_eq!(active.as_array().unwrap().len(), 1, "{active}");
+    assert_eq!(active[0]["id"], entity_id);
+
+    // The neighbour holds (x + 1, y) only: refused on either coordinate.
+    for coord in [&a, &b] {
+        let path = format!("/content/scenes/{coord}");
+        let (status, _, body) = call(&router, signed_delete(&neighbour, &path).await).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{}", json_of(&body));
+        assert_eq!(
+            json_of(&body),
+            json!({"error": format!("The provided Eth Address does not have access to the following parcel: ({x},{y})")})
+        );
+    }
+    let active = active_by_pointers(&router, &[&a, &b]).await;
+    assert_eq!(active.as_array().unwrap().len(), 1, "{active}");
+    assert_eq!(active[0]["id"], entity_id, "the scene is still active");
+
+    // The owner holds both: the scene goes and neither parcel has a scene.
+    let path = format!("/content/scenes/{b}");
+    let (status, _, body) = call(&router, signed_delete(&owner, &path).await).await;
+    assert_eq!(status, StatusCode::OK, "{}", json_of(&body));
+    let mut parcels = vec![a.clone(), b.clone()];
+    parcels.sort();
+    assert_eq!(
+        json_of(&body),
+        json!({"entityId": entity_id, "unpublished": true, "parcels": parcels})
+    );
+    assert_eq!(active_by_pointers(&router, &[&a, &b]).await, json!([]));
+    let (_, _, audit) = call(
+        &router,
+        Request::get(format!("/audit/scene/{old_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        json_of(&audit)["localProvenance"]["status"],
+        "superseded",
+        "the older scene is not restored"
+    );
+
+    drop((router, deployer, state));
+    let _ = std::fs::remove_dir_all(&tmp);
+    db.drop_now().await;
+}
+
+/// What the LAND check's subgraph does before it answers, standing in for a
+/// write that lands between the route's lookup and its unpublish.
+enum Race {
+    /// A peer scene replaces the local one on the parcel.
+    PeerReplaces {
+        local: String,
+        peer: String,
+        pointer: String,
+    },
+    /// A concurrent DELETE takes the local scene down first.
+    Unpublished { local: String, pointer: String },
+}
+
+/// The marketplace subgraph on the loopback: `owner` owns every parcel asked
+/// for, and each request first runs the armed [`Race`] against `pool`.
+async fn serve_racing_land_subgraph(
+    pool: PgPool,
+    owner: String,
+    race: Arc<parking_lot::Mutex<Option<Race>>>,
+) -> String {
+    use axum::extract::State;
+    type Shared = (PgPool, String, Arc<parking_lot::Mutex<Option<Race>>>);
+    async fn graphql(
+        State(shared): State<Arc<Shared>>,
+        axum::Json(body): axum::Json<Value>,
+    ) -> axum::Json<Value> {
+        let (pool, owner, race) = &*shared;
+        let armed = race.lock().take();
+        match armed {
+            Some(Race::PeerReplaces {
+                local,
+                peer,
+                pointer,
+            }) => {
+                let id: i32 = sqlx::query_scalar(
+                    "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id,
+                         entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain)
+                     VALUES ('0xpeer', 'v3', 'scene', $1, NULL, timezone('UTC', now()), ARRAY[$2],
+                             timezone('UTC', now()), '[]'::json)
+                     RETURNING id",
+                )
+                .bind(&peer)
+                .bind(&pointer)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+                sqlx::query(
+                    "UPDATE content.deployments SET deleter_deployment = $2 WHERE entity_id = $1",
+                )
+                .bind(&local)
+                .bind(id)
+                .execute(pool)
+                .await
+                .unwrap();
+                sqlx::query("UPDATE content.active_pointers SET entity_id = $2 WHERE pointer = $1")
+                    .bind(&pointer)
+                    .bind(&peer)
+                    .execute(pool)
+                    .await
+                    .unwrap();
+            }
+            Some(Race::Unpublished { local, pointer }) => {
+                super::land_publish::unpublish_local_scene(pool, &pointer, &local)
+                    .await
+                    .unwrap();
+            }
+            None => {}
+        }
+        let xs: Vec<String> = serde_json::from_value(body["variables"]["xs"].clone()).unwrap();
+        let ys: Vec<String> = serde_json::from_value(body["variables"]["ys"].clone()).unwrap();
+        let nfts: Vec<Value> = xs
+            .iter()
+            .flat_map(|x| ys.iter().map(move |y| (x, y)))
+            .map(|(x, y)| {
+                json!({"id": format!("0xland-{x}-{y}"), "searchParcelX": x, "searchParcelY": y,
+                       "owner": {"id": owner}, "parcel": {"estate": null}})
+            })
+            .collect();
+        axum::Json(json!({"data": {"nfts": nfts}}))
+    }
+    let app = Router::new()
+        .route("/", axum::routing::post(graphql))
+        .with_state(Arc::new((pool, owner, race)));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    format!("http://{addr}/")
+}
+
+/// A local scene on `pointer`, as the deploy function leaves it.
+async fn seed_local_scene(pool: &PgPool, entity_id: &str, pointer: &str) {
+    sqlx::query(
+        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id,
+             entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain)
+         VALUES ('0xowner', 'v3', 'scene', $1, NULL, timezone('UTC', now()) - interval '1 day',
+                 ARRAY[$2], timezone('UTC', now()), '[]'::json)",
+    )
+    .bind(entity_id)
+    .bind(pointer)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ($1, $2, 'scene')")
+        .bind(pointer)
+        .bind(entity_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO content.local_entities (entity_id, signer) VALUES ($1, '0xowner')")
+        .bind(entity_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// A write between the route's lookup and its unpublish: a peer scene that
+/// replaced the local one answers 409 and stays; a concurrent DELETE that took
+/// the scene down first leaves this one a 404.
+#[tokio::test]
+async fn an_unpublish_raced_by_another_write_answers_409_or_404() {
+    require_test_db!(Some(db) = OwnDb::create("contentr").await);
+    let owner = key(OWNER_KEY);
+    let race = Arc::new(parking_lot::Mutex::new(None));
+    let subgraph = serve_racing_land_subgraph(db.pool.clone(), address(&owner), race.clone()).await;
+    let market = Arc::new(crate::chain_index::ChainIndex::new(
+        Outbound::for_tests(),
+        crate::chain_index::IndexSettings {
+            marketplace_subgraph_url: Some(subgraph),
+            ..crate::chain_index::IndexSettings::for_tests()
+        },
+    ));
+    market.allow_loopback_for_tests();
+
+    let tmp = std::env::temp_dir().join(format!(
+        "catalyst-write-path-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
+    let state = Arc::new(ContentState::new(
+        db.pool.clone(),
+        Settings::for_tests(),
+        storage.clone(),
+    ));
+    state.sync.set_state(SyncState::Syncing);
+    let land = Arc::new(LandAuthzState::new(
+        db.pool.clone(),
+        Outbound::for_tests(),
+        crate::land_authz::Settings::for_tests(),
+        Some(market),
+    ));
+    attach(&state, true, Some(land), None);
+    let router = build_router(state.clone());
+
+    let (replaced, gone) = ("23,-7", "29,-7");
+    seed_local_scene(&db.pool, "bafylocalreplaced", replaced).await;
+    seed_local_scene(&db.pool, "bafylocalgone", gone).await;
+
+    *race.lock() = Some(Race::PeerReplaces {
+        local: "bafylocalreplaced".into(),
+        peer: "bafypeerreplacing".into(),
+        pointer: replaced.into(),
+    });
+    let path = format!("/content/scenes/{replaced}");
+    let (status, _, body) = call(&router, signed_delete(&owner, &path).await).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{}", json_of(&body));
+    assert!(
+        race.lock().is_none(),
+        "the race ran during the rights check"
+    );
+    let tombstoned: Option<chrono::NaiveDateTime> = sqlx::query_scalar(
+        "SELECT tombstoned_at FROM content.local_entities WHERE entity_id = 'bafylocalreplaced'",
+    )
+    .fetch_one(&db.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        tombstoned, None,
+        "the replaced local scene is not tombstoned"
+    );
+    let holder: String =
+        sqlx::query_scalar("SELECT entity_id FROM content.active_pointers WHERE pointer = $1")
+            .bind(replaced)
+            .fetch_one(&db.pool)
+            .await
+            .unwrap();
+    assert_eq!(holder, "bafypeerreplacing");
+
+    *race.lock() = Some(Race::Unpublished {
+        local: "bafylocalgone".into(),
+        pointer: gone.into(),
+    });
+    let path = format!("/content/scenes/{gone}");
+    let (status, _, body) = call(&router, signed_delete(&owner, &path).await).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::NOT_FOUND,
+            json!({"error": format!("No locally published scene at {gone}.")})
+        )
+    );
+
+    drop((router, state));
     let _ = std::fs::remove_dir_all(&tmp);
     db.drop_now().await;
 }

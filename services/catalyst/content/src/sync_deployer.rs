@@ -680,12 +680,9 @@ async fn flush_batch(pool: &PgPool, entities: &[ParsedEntity]) -> Result<(), Syn
                                    AND lower(d2.entity_id) > lower(nr.entity_id)))
                         OFFSET 0
                     ) c
+                    -- An unpublished local scene still succeeds older ones:
+                    -- its parcels stay empty.
                     WHERE c.entity_type = nr.entity_type
-                      -- An unpublished local scene succeeds nothing: an older
-                      -- peer scene arriving after the unpublish takes the pointer.
-                      AND NOT EXISTS (
-                          SELECT 1 FROM content.local_entities le
-                          WHERE le.entity_id = c.entity_id AND le.tombstoned_at IS NOT NULL)
                     ORDER BY c.entity_timestamp, lower(c.entity_id)
                     LIMIT 1) AS newer_id
             FROM content.deployments nr
