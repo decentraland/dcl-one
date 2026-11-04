@@ -2413,7 +2413,7 @@
       "props": {
         "launch_url": {
           "kind": "string",
-          "optional": true
+          "optional": false
         },
         "place_id": {
           "kind": "string",
@@ -2426,7 +2426,7 @@
       "props": {
         "error": {
           "kind": "string",
-          "optional": true
+          "optional": false
         },
         "place_id": {
           "kind": "string",

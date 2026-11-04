@@ -411,7 +411,7 @@ RETURN QUERY
         ;
 END $deploy$;
 
-CREATE FUNCTION content.unpublish_scene_be255dae6005(text) RETURNS TABLE (entity_id text, tombstoned bigint, pointer text, replacement text) LANGUAGE plpgsql AS $unpublish$ #variable_conflict use_column
+CREATE FUNCTION content.unpublish_scene_47d21316abf2(text, text) RETURNS TABLE (entity_id text, tombstoned bigint, pointer text) LANGUAGE plpgsql AS $unpublish$ #variable_conflict use_column
 DECLARE v_entity_id text; v_pointers text[];
 BEGIN
 SELECT d.entity_id, d.entity_pointers INTO v_entity_id, v_pointers
@@ -428,55 +428,23 @@ WITH cur AS (
     JOIN content.deployments d ON d.entity_id = ap.entity_id
     JOIN content.local_entities le ON le.entity_id = d.entity_id AND le.tombstoned_at IS NULL
     WHERE ap.pointer = $1 AND d.entity_type = 'scene' AND d.entity_id = v_entity_id
+      AND d.entity_id = $2
 ), tomb AS (
     UPDATE content.local_entities SET tombstoned_at = timezone('UTC', now())
     WHERE entity_id = v_entity_id AND tombstoned_at IS NULL AND EXISTS (SELECT 1 FROM cur)
     RETURNING entity_id
-), restored AS (
-    UPDATE content.deployments SET deleter_deployment = NULL
-    WHERE deleter_deployment = (SELECT id FROM cur) AND EXISTS (SELECT 1 FROM tomb)
-    RETURNING id
-), held AS (
-    SELECT ap.pointer
-    FROM content.active_pointers ap
-    WHERE ap.entity_id = v_entity_id AND EXISTS (SELECT 1 FROM tomb)
-), candidates AS MATERIALIZED (
-    SELECT d.entity_id, d.entity_pointers, d.entity_timestamp
-    FROM content.deployments d
-    WHERE d.entity_pointers && v_pointers
-      AND d.entity_type = 'scene'
-      AND d.entity_id <> v_entity_id
-      AND (d.deleter_deployment IS NULL OR d.deleter_deployment = (SELECT id FROM cur))
-      AND NOT EXISTS (
-          SELECT 1 FROM content.local_entities le
-          WHERE le.entity_id = d.entity_id AND le.tombstoned_at IS NOT NULL)
-      AND EXISTS (SELECT 1 FROM tomb)
-), replacement AS (
-    SELECT DISTINCT ON (h.pointer) h.pointer, c.entity_id
-    FROM held h
-    JOIN candidates c ON c.entity_pointers @> ARRAY[h.pointer::text]
-    ORDER BY h.pointer, c.entity_timestamp DESC, lower(c.entity_id) DESC
-), repointed AS (
-    UPDATE content.active_pointers ap SET entity_id = r.entity_id, entity_type = 'scene'
-    FROM replacement r
-    WHERE ap.pointer = r.pointer
-    RETURNING ap.pointer
 ), removed AS (
     DELETE FROM content.active_pointers ap
-    WHERE ap.entity_id = v_entity_id
-      AND ap.pointer IN (SELECT pointer FROM held)
-      AND NOT EXISTS (SELECT 1 FROM replacement r WHERE r.pointer = ap.pointer)
+    WHERE ap.entity_id = v_entity_id AND EXISTS (SELECT 1 FROM tomb)
     RETURNING ap.pointer
 ), notified AS (
     SELECT pg_notify('new_deployment', 'scene:' || v_entity_id) AS sent
 )
 SELECT v_entity_id AS entity_id,
        (SELECT count(*) FROM tomb) AS tombstoned,
-       h.pointer::text AS pointer,
-       r.entity_id AS replacement
+       r.pointer::text AS pointer
 FROM (SELECT 1) AS marker
 CROSS JOIN notified
-LEFT JOIN held h ON true
-LEFT JOIN replacement r ON r.pointer = h.pointer
-ORDER BY h.pointer;
+LEFT JOIN removed r ON true
+ORDER BY r.pointer;
 END $unpublish$;

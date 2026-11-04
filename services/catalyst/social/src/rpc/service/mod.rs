@@ -136,13 +136,39 @@ macro_rules! unary {
 }
 
 macro_rules! server_stream {
-    ($def:ident, $svc:ident, $name:literal, $method:ident) => {{
+    ($def:ident, $svc:ident, $name:literal, $method:ident, $update:ident, $event:literal) => {{
         let service = Arc::clone(&$svc);
         $def.add_server_streams($name, move |_request, context| {
             let service = service.clone();
             Box::pin(async move {
-                match service.$method(context).await {
-                    Ok(generator) => Ok(Generator::from_generator(generator, |item| {
+                SocialServiceImpl::caller(&context).map_err(RemoteError::from)?;
+                let Some(guard) = context
+                    .server_context
+                    .try_subscription(context.transport_id, $name)
+                else {
+                    let (generator, yielder) = Generator::create();
+                    let notice = $update {
+                        stream_closed: Some(SubscriptionStreamClosed {
+                            reason:
+                                SubscriptionStreamClosedReason::StreamClosedDuplicateSubscription
+                                    as i32,
+                            message: Some(
+                                concat!(
+                                    "This connection already has an active ",
+                                    $event,
+                                    " subscription"
+                                )
+                                .to_string(),
+                            ),
+                        }),
+                        ..Default::default()
+                    };
+                    let _ = yielder.r#yield(notice.encode_to_vec()).await;
+                    return Ok(generator);
+                };
+                match service.$method(context, guard.cancellation()).await {
+                    Ok(generator) => Ok(Generator::from_generator(generator, move |item| {
+                        let _ = &guard;
                         Some(item.encode_to_vec())
                     })),
                     Err(err) => Err(err.into()),
@@ -190,7 +216,9 @@ pub fn register_service(port: &mut RpcServerPort<Context>) {
         def,
         svc,
         "SubscribeToFriendshipUpdates",
-        subscribe_to_friendship_updates
+        subscribe_to_friendship_updates,
+        FriendshipUpdate,
+        "friendshipUpdate"
     );
     unary!(
         def,
@@ -203,7 +231,9 @@ pub fn register_service(port: &mut RpcServerPort<Context>) {
         def,
         svc,
         "SubscribeToFriendConnectivityUpdates",
-        subscribe_to_friend_connectivity_updates
+        subscribe_to_friend_connectivity_updates,
+        FriendConnectivityUpdate,
+        "friendConnectivityUpdate"
     );
     unary!(def, svc, "BlockUser", BlockUserPayload, block_user);
     unary!(def, svc, "UnblockUser", UnblockUserPayload, unblock_user);
@@ -219,7 +249,9 @@ pub fn register_service(port: &mut RpcServerPort<Context>) {
         def,
         svc,
         "SubscribeToBlockUpdates",
-        subscribe_to_block_updates
+        subscribe_to_block_updates,
+        BlockUpdate,
+        "blockUpdate"
     );
     unary!(def, svc, "GetSocialSettings", get_social_settings);
     unary!(
@@ -240,7 +272,9 @@ pub fn register_service(port: &mut RpcServerPort<Context>) {
         def,
         svc,
         "SubscribeToCommunityMemberConnectivityUpdates",
-        subscribe_to_community_member_connectivity_updates
+        subscribe_to_community_member_connectivity_updates,
+        CommunityMemberConnectivityUpdate,
+        "communityMemberConnectivityUpdate"
     );
     unary!(
         def,
@@ -280,7 +314,9 @@ pub fn register_service(port: &mut RpcServerPort<Context>) {
         def,
         svc,
         "SubscribeToPrivateVoiceChatUpdates",
-        subscribe_to_private_voice_chat_updates
+        subscribe_to_private_voice_chat_updates,
+        PrivateVoiceChatUpdate,
+        "privateVoiceChatUpdate"
     );
     unary!(
         def,
@@ -342,7 +378,9 @@ pub fn register_service(port: &mut RpcServerPort<Context>) {
         def,
         svc,
         "SubscribeToCommunityVoiceChatUpdates",
-        subscribe_to_community_voice_chat_updates
+        subscribe_to_community_voice_chat_updates,
+        CommunityVoiceChatUpdate,
+        "communityVoiceChatUpdate"
     );
     unary!(
         def,

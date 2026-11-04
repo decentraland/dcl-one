@@ -1027,6 +1027,8 @@ pub async fn delete_community(
         .await
     ));
     state.community_closed_to_worlds(uuid);
+    // upstream `deleteCommunity`'s `COMMUNITY_DELETED_UPDATES_CHANNEL`
+    state.community_deleted_update(uuid).await;
     // upstream `broadcastCommunityDeleted`: the owner hears of a moderator's
     // removal, every other member of the deletion
     let metadata = json!({

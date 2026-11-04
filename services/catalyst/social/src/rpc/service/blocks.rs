@@ -1,6 +1,6 @@
 use super::SocialServiceImpl;
 use super::helpers::{
-    FRIENDSHIP_RATE_LIMIT_MESSAGE, Refusal, SocialError, internal_err, invalid_req, normalize,
+    FRIENDSHIP_RATE_LIMIT_MESSAGE, Refusal, SocialError, internal_err, invalid_req,
     page_blocked_users, page_of,
 };
 use crate::rpc::context::{Context, PairScope};
@@ -10,9 +10,10 @@ use crate::rpc::proto::v2::*;
 use crate::rpc::pubsub::SocialEvent;
 
 /// Records the block and, when a friendship exists, appends the `block`
-/// action that deactivates it; the other party gets a BlockUpdate and a
-/// FriendshipUpdate::Block. Shared by the RPC procedure and `POST /v1/blocks`
-/// (upstream `applyBlock`). Answers when the block was recorded.
+/// action that deactivates it, both in one transaction; the other party gets
+/// a BlockUpdate, and a FriendshipUpdate::Block only when a friendship action
+/// was written. Shared by the RPC procedure and `POST /v1/blocks` (upstream
+/// `applyBlock`). Answers when the block was recorded.
 pub(crate) async fn block(
     ctx: &Context,
     me: &str,
@@ -25,30 +26,11 @@ pub(crate) async fn block(
         tracing::warn!(actor = %me, target = %other, "block mutation rate limited");
         return Err(Refusal::RateLimited(FRIENDSHIP_RATE_LIMIT_MESSAGE.into()));
     }
-    let db = ctx.db();
-    let blocked_at = match db.block_user_and_last(me, other).await? {
-        (blocked_at, Some(last)) => {
-            if let Err(e) = db
-                .apply_friendship_action(me, other, "block", false, Some(last.friendship_id), None)
-                .await
-            {
-                tracing::warn!(error = %e, "block: recording the friendship action failed");
-            }
-            blocked_at
-        }
-        (blocked_at, None) => blocked_at,
-    };
+    let (blocked_at, ended_friendship) = ctx.db().block_user_recording_action(me, other).await?;
     let pubsub = ctx.pubsub();
-    pubsub.publish(
-        other,
-        SocialEvent::Block(BlockUpdate {
-            address: me.to_string(),
-            is_blocked: true,
-        }),
-    );
-    pubsub.publish(
-        other,
-        SocialEvent::Friendship(FriendshipUpdate {
+    if ended_friendship {
+        ctx.publish_friendship(me, other, |_| FriendshipUpdate {
+            stream_closed: None,
             update: Some(friendship_update::Update::Block(
                 friendship_update::BlockResponse {
                     user: Some(User {
@@ -56,15 +38,25 @@ pub(crate) async fn block(
                     }),
                 },
             )),
+        })
+        .await;
+    }
+    pubsub.publish(
+        other,
+        SocialEvent::Block(BlockUpdate {
+            stream_closed: None,
+            address: me.to_string(),
+            is_blocked: true,
         }),
     );
     Ok(blocked_at)
 }
 
 /// Removes the block; a friendship the block had deactivated is closed with a
-/// `delete` action (the pair starts over), and the other party is told.
-/// Without a block to remove nothing is recorded or told. Shared by the RPC
-/// procedure and `DELETE /v1/blocks/{address}` (upstream `applyUnblock`).
+/// `delete` action (the pair starts over) in the same transaction, and the
+/// other party is told. Without a block to remove nothing is recorded or
+/// told. Shared by the RPC procedure and `DELETE /v1/blocks/{address}`
+/// (upstream `applyUnblock`).
 pub(crate) async fn unblock(ctx: &Context, me: &str, other: &str) -> Result<(), Refusal> {
     if !ctx
         .friendship_limiter()
@@ -73,38 +65,49 @@ pub(crate) async fn unblock(ctx: &Context, me: &str, other: &str) -> Result<(), 
         tracing::warn!(actor = %me, target = %other, "block mutation rate limited");
         return Err(Refusal::RateLimited(FRIENDSHIP_RATE_LIMIT_MESSAGE.into()));
     }
-    let db = ctx.db();
-    let pubsub = ctx.pubsub();
-    let Some(last) = db.unblock_user_and_last(me, other).await? else {
+    let Some(deleted_friendship) = ctx.db().unblock_user_recording_action(me, other).await? else {
         return Ok(());
     };
-    if let Some(last) = last
-        && db
-            .apply_friendship_action(me, other, "delete", false, Some(last.friendship_id), None)
-            .await
-            .is_ok()
-    {
-        pubsub.publish(
-            other,
-            SocialEvent::Friendship(FriendshipUpdate {
-                update: Some(friendship_update::Update::Delete(
-                    friendship_update::DeleteResponse {
-                        user: Some(User {
-                            address: me.to_string(),
-                        }),
-                    },
-                )),
-            }),
-        );
+    if deleted_friendship {
+        ctx.publish_friendship(me, other, |_| FriendshipUpdate {
+            stream_closed: None,
+            update: Some(friendship_update::Update::Delete(
+                friendship_update::DeleteResponse {
+                    user: Some(User {
+                        address: me.to_string(),
+                    }),
+                },
+            )),
+        })
+        .await;
     }
-    pubsub.publish(
+    ctx.pubsub().publish(
         other,
         SocialEvent::Block(BlockUpdate {
+            stream_closed: None,
             address: me.to_string(),
             is_blocked: false,
         }),
     );
     Ok(())
+}
+
+/// Upstream `block-user.ts` / `unblock-user.ts`: the raw address must be an
+/// address, and not the caller's.
+fn block_target(
+    request_user: Option<&User>,
+    me: &str,
+    yourself: &'static str,
+) -> Result<String, &'static str> {
+    let raw = request_user.map(|u| u.address.as_str()).unwrap_or_default();
+    if !crate::auth::is_eth_address(raw) {
+        return Err("Invalid user address in the request payload");
+    }
+    let other = raw.to_lowercase();
+    if other == me {
+        return Err(yourself);
+    }
+    Ok(other)
 }
 
 impl SocialServiceImpl {
@@ -117,23 +120,16 @@ impl SocialServiceImpl {
         context: ProcedureContext<Context>,
     ) -> Result<BlockUserResponse, SocialError> {
         let me = Self::caller(&context)?;
-        let other = match request.user.as_ref() {
-            Some(u) => normalize(&u.address),
-            None => {
+        let other = match block_target(request.user.as_ref(), &me, "Cannot block yourself") {
+            Ok(other) => other,
+            Err(message) => {
                 return Ok(BlockUserResponse {
                     response: Some(block_user_response::Response::InvalidRequest(invalid_req(
-                        "missing user",
+                        message,
                     ))),
                 });
             }
         };
-        if other == me {
-            return Ok(BlockUserResponse {
-                response: Some(block_user_response::Response::InvalidRequest(invalid_req(
-                    "cannot block yourself",
-                ))),
-            });
-        }
         let blocked_at = match block(&context.server_context, &me, &other).await {
             Ok(at) => at,
             Err(Refusal::Internal(m) | Refusal::Failed(m)) => {
@@ -173,12 +169,12 @@ impl SocialServiceImpl {
         context: ProcedureContext<Context>,
     ) -> Result<UnblockUserResponse, SocialError> {
         let me = Self::caller(&context)?;
-        let other = match request.user.as_ref() {
-            Some(u) => normalize(&u.address),
-            None => {
+        let other = match block_target(request.user.as_ref(), &me, "Cannot unblock yourself") {
+            Ok(other) => other,
+            Err(message) => {
                 return Ok(UnblockUserResponse {
                     response: Some(unblock_user_response::Response::InvalidRequest(
-                        invalid_req("missing user"),
+                        invalid_req(message),
                     )),
                 });
             }

@@ -35,7 +35,7 @@ flowchart LR
 | `Init` | Scene spawn and load, and per-frame setup that must precede scene work. Runs after bevy's `scene_spawner_system`; console commands land just before it (`ConsoleSet::PostCommands`) | `initialize_scene`, collider registration into the scene's qbvh, imposter tick start |
 | `PostInit` | Adding data to scenes that just appeared | scene collider data, gltf readiness, scene UI root, avatar colliders |
 | `Input` | Systems that produce this frame's engine-to-scene messages | pointer results, raycasts, trigger areas, pointer lock, camera mode, time and FOV into the CRDT |
-| `RunLoop` | The scene loop (below) | `update_scene_priority`, `run_scene_loop` |
+| `RunLoop` | The scene loop (below), the partitions it ranks by, and the download priorities published from them | `update_scene_partitions`, `publish_download_priorities`, `update_scene_priority`, `run_scene_loop` |
 | `PostLoop` | Reacting to scene state the loop wrote: by far the largest set | materials, mesh renderer, gltf container, lights, animation, fonts, scene UI, tween, audio, NFT, texture camera, avatar attach and animate, world UI |
 | `RestrictedActions` | Anything that may move the player, change realm, or alter engine-level state on a scene's behalf | teleport and move player, settings, profile updates, emote reports, imposter render |
 
@@ -64,11 +64,20 @@ Each pass of the loop runs four chained sets (`SceneLoopSets`):
    the system. Only transforms and text shapes have hand-written loop systems.
 
 The loop runs at least once per frame, then repeats while time remains and there are eligible
-scenes or replies outstanding. Priority: a scene the player stands in is 0; any other scene is
-its squared distance from the player's nearest point on its bounds; both are divided by the
-time since the scene was last sent, so a starved scene rises. A scene is skipped while in
-flight, broken, or blocked (unless it is the system scene), and is not sent twice in one frame.
-A scene that has not replied for ten seconds is marked broken and its slot freed.
+scenes or replies outstanding. Priority: the scenes the player is in (the one they stand in,
+plus portables and global scenes) are 0; any other scene is its squared distance from the
+player to the nearest point of its nearest parcel (its `Partition`, refreshed each frame by
+`update_scene_partitions`); both are divided by the time since the scene was last sent, so a
+starved scene rises. A scene behind the rendering camera (every corner of every parcel behind
+it) counts as four times farther (`BEHIND_SCENE_TICK_PENALTY`), so it keeps ticking and yields
+first when frame time runs short. Distance is always from the player; only facing comes from
+the camera, and with no rendering camera (headless) nothing is behind. The same partitions rank
+the ipfs request slots (`publish_download_priorities`, on frames with a download waiting; which
+hashes take part is settled by component hooks on `SceneHash` and `PartitionedDownloads`, not by
+a system in this set); see the
+[ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md). A scene is skipped
+while in flight, broken, or blocked (unless it is the system scene), and is not sent twice in
+one frame. A scene that has not replied for ten seconds is marked broken and its slot freed.
 
 Everything downstream of the loop reads bevy components. A system that needs scene data never
 reads the CRDT store directly; it queries the component the `UpdateWorld` system wrote.
@@ -129,3 +138,24 @@ The headless server uses the same `ScenePlugin`, so the `SceneSets` chain and th
 are identical. There is no render app and no window, so the frame budget comes from the fps
 target, and the plugin set is narrower: see the security guide on what must not be scheduled
 there.
+
+## Content request scheduling
+
+Each network attempt enters the IPFS priority gate with its current readers.
+A shared download has one waiting ticket across those readers. Changes to the
+published scene or avatar keys affect the grant while the request waits. A
+retry releases the previous permit before backoff and enters the queue again
+with a fresh sequence when the wait ends. Other downloads can use the freed
+slot immediately. See the [HTTP admission decision](../../../../docs/adr/2026-11-03-explorer-http-admission.md).
+
+### Profiling content requests
+
+With `--log-fps`, the diagnostics log includes `IPFS_REQUEST_ATTEMPTS`,
+`IPFS_REQUEST_BYTES`, `IPFS_REQUEST_RETRIES`, `IPFS_REQUEST_STATUS_FAILURES`, and
+`IPFS_REQUEST_CANCELLED`. Bytes count chunks received across attempts, including partial
+transfers. `IPFS_REQUEST_DURATION_MS` sums elapsed milliseconds across concurrent downloads,
+including queue and retry waits. All six counters are cumulative for the session.
+
+Editor imports queue under the edited scene's hash. Compile `scene_inspector` when changing
+the admission interface. The [content request review checks](contributing.md#reviewing-content-request-changes)
+exercise this interface and the retry, cancellation and cache lifecycles.

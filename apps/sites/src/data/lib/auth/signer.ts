@@ -78,9 +78,11 @@ export async function signedFetch(
   const path = signedPath(signPath ?? input);
   const scheduleWrite = (method === "POST" || method === "PATCH") && /^\/(?:events\/)?api\/schedules(?:\/[^/]+)?$/.test(path);
   const eventWrite = (method === "PATCH" || method === "DELETE") && /^\/(?:events\/)?api\/events\/[^/]+$/.test(path);
-  if (scheduleWrite || eventWrite) {
+  const profileWrite = method === "PATCH" && /^\/(?:events\/)?api\/profiles\/[^/]+\/settings$/.test(path);
+  if (scheduleWrite || eventWrite || profileWrite) {
     if (rest.body != null && typeof rest.body !== "string") throw new Error("Signed writes require a serialized JSON body.");
     if (scheduleWrite && typeof rest.body !== "string") throw new Error("Schedule writes require a serialized JSON body.");
+    if (profileWrite && typeof rest.body !== "string") throw new Error("Profile writes require a serialized JSON body.");
     signedMetadata = { ...signedMetadata, body_sha256: bytesToHex(sha256(new TextEncoder().encode(rest.body ?? ""))), nonce: crypto.randomUUID() };
   }
   const signed = await signRequest(identity, method, signPath ?? input, signedMetadata);

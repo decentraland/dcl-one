@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use crate::api::Shared as AppState;
 use crate::auth::AuthChain;
+use crate::shared::client_ip::{client_ip, normalize_ip};
 
 mod identities;
 mod validation;
@@ -698,28 +699,6 @@ fn is_valid_uuid(s: &str) -> bool {
         })
 }
 
-fn client_ip(headers: &HeaderMap) -> String {
-    if let Some(value) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
-        let ip = value.trim();
-        if !ip.is_empty() {
-            return normalize_ip(ip);
-        }
-    }
-    if let Some(value) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok())
-        && let Some(last) = value.rsplit(',').next()
-    {
-        let ip = last.trim();
-        if !ip.is_empty() {
-            return normalize_ip(ip);
-        }
-    }
-    String::new()
-}
-
-fn normalize_ip(ip: &str) -> String {
-    ip.strip_prefix("::ffff:").unwrap_or(ip).trim().to_string()
-}
-
 fn ips_match(stored: &str, request: &str) -> bool {
     if stored.is_empty() || request.is_empty() {
         return false;
@@ -806,34 +785,6 @@ mod tests {
             .unwrap();
         let generated = response.headers()[CORRELATION_HEADER].to_str().unwrap();
         assert!(Uuid::parse_str(generated).is_ok());
-    }
-
-    #[test]
-    fn client_ip_ignores_client_settable_spoof_headers() {
-        let map = headers(&[
-            ("true-client-ip", "6.6.6.6"),
-            ("cf-connecting-ip", "7.7.7.7"),
-            ("x-real-ip", "203.0.113.9"),
-        ]);
-        assert_eq!(client_ip(&map), "203.0.113.9");
-    }
-
-    #[test]
-    fn client_ip_takes_proxy_appended_forwarded_entry() {
-        let map = headers(&[
-            ("true-client-ip", "6.6.6.6"),
-            ("x-forwarded-for", "6.6.6.6, 203.0.113.9"),
-        ]);
-        assert_eq!(client_ip(&map), "203.0.113.9");
-    }
-
-    #[test]
-    fn client_ip_empty_when_only_spoofable_headers_present() {
-        let map = headers(&[
-            ("true-client-ip", "6.6.6.6"),
-            ("cf-connecting-ip", "7.7.7.7"),
-        ]);
-        assert_eq!(client_ip(&map), "");
     }
 
     #[test]

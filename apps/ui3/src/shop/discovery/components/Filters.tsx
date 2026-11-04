@@ -7,6 +7,7 @@ import { t } from "../intl";
 import { CATEGORIES, type Sub, type Top } from "../lib/categories";
 import { PRICE_SLIDER_MAX, PRICE_SLIDER_STEPS, priceToSliderPct, priceToSliderPos, sliderPosToPrice } from "../lib/price-slider";
 import { RARITIES, rarityColor, rarityLabel } from "../lib/rarity";
+import { CollectionFilter, CreatorFilter, useCollectionName, useCreatorNames } from "./PickerFilters";
 import Icon from "./Icon";
 import "./filters.css";
 
@@ -179,6 +180,19 @@ export function FilterSection({
   );
 }
 
+function SwitchRow({ label, checked, onChange, testId }: { label: string; checked: boolean; onChange: (v: boolean) => void; testId: string }) {
+  return (
+    <div className="shop-filters__toggle">
+      <span className="shop-filters__toggleleft">
+        <span className="shop-filters__toggletitle">{label}</span>
+      </span>
+      <button type="button" role="switch" className="shop-filters__switch" aria-checked={checked} aria-label={label} data-testid={testId} onClick={() => onChange(!checked)}>
+        <span className="shop-filters__knob" />
+      </button>
+    </div>
+  );
+}
+
 export type FiltersProps = {
   category: string;
   subCategory: string | null;
@@ -200,11 +214,27 @@ export type FiltersProps = {
   onSmart: (v: boolean) => void;
   deals?: boolean;
   onDeals?: (v: boolean) => void;
+  /** The emote attributes, offered while browsing emotes (the handlers' presence shows them). */
+  emotePlayMode?: string;
+  onEmotePlayMode?: (v: string) => void;
+  emoteSound?: boolean;
+  onEmoteSound?: (v: boolean) => void;
+  emoteProps?: boolean;
+  onEmoteProps?: (v: boolean) => void;
   hideNames?: boolean;
   hideAll?: boolean;
   hideStatus?: boolean;
+  /** Hides the price range, for a status whose items have no price (Not for sale). */
+  hidePrice?: boolean;
   collections?: boolean;
   onCollections?: () => void;
+  /** The creators and collection pickers, offered when their handlers are given. */
+  creators?: string[];
+  onCreators?: (creators: string[]) => void;
+  collection?: string | null;
+  onCollection?: (collection: string | null) => void;
+  /** The collection search offers only collections on primary sale (the grid shows creator listings only). */
+  collectionOnSale?: boolean;
 };
 
 export default function Filters(props: FiltersProps) {
@@ -213,7 +243,12 @@ export default function Filters(props: FiltersProps) {
   const [openPrice, setOpenPrice] = useState(true);
   const [openRarity, setOpenRarity] = useState(false);
   const [openStatus, setOpenStatus] = useState(true);
+  const [openCreators, setOpenCreators] = useState(true);
+  const [openCollection, setOpenCollection] = useState(true);
   const statusName = useId();
+  const creators = props.onCreators ? (props.creators ?? []) : [];
+  const creatorNames = useCreatorNames(creators);
+  const collectionName = useCollectionName(props.onCollection ? (props.collection ?? null) : null);
 
   const min = priceMin && !Number.isNaN(Number(priceMin)) ? Number(priceMin) : undefined;
   const max = priceMax && !Number.isNaN(Number(priceMax)) ? Number(priceMax) : undefined;
@@ -261,6 +296,8 @@ export default function Filters(props: FiltersProps) {
 
       <hr className="shop-filters__divider" />
 
+      {props.hidePrice ? null : (
+        <>
       <FilterSection title={t("filter.price")} open={openPrice} onToggle={() => setOpenPrice((o) => !o)} summary={priceSummary} desktopStatic>
         <div className="shop-filters__prices">
           <label>
@@ -319,6 +356,25 @@ export default function Filters(props: FiltersProps) {
       </FilterSection>
 
       <hr className="shop-filters__divider" />
+        </>
+      )}
+
+      {props.onCreators ? (
+        <>
+          <FilterSection title={t("picker.creators")} open={openCreators} onToggle={() => setOpenCreators((o) => !o)} summary={creators.map((a) => creatorNames[a]).join(", ")}>
+            <CreatorFilter creators={creators} onChange={props.onCreators} />
+          </FilterSection>
+          <hr className="shop-filters__divider" />
+        </>
+      ) : null}
+      {props.onCollection ? (
+        <>
+          <FilterSection title={t("picker.collection")} open={openCollection} onToggle={() => setOpenCollection((o) => !o)} summary={collectionName ?? ""}>
+            <CollectionFilter collection={props.collection ?? null} onSale={!!props.collectionOnSale} onChange={props.onCollection} />
+          </FilterSection>
+          <hr className="shop-filters__divider" />
+        </>
+      ) : null}
 
       <FilterSection title={t("assets.rarity")} open={openRarity} onToggle={() => setOpenRarity((o) => !o)} summary={raritySummary} testId="sidebar-section-toggle">
         <div className="shop-filters__rarities" data-testid="rarity-filter">
@@ -381,6 +437,19 @@ export default function Filters(props: FiltersProps) {
           </select>
         </label>
       ) : null}
+
+      {props.onEmotePlayMode ? (
+        <label className="shop-filters__toggle shop-filters__toggle--select">
+          <span className="shop-filters__toggletitle">{t("filter.emotePlayMode")}</span>
+          <select aria-label={t("filter.emotePlayMode")} value={props.emotePlayMode ?? "all"} onChange={(e) => props.onEmotePlayMode?.(e.target.value)} data-testid="emote-play-mode">
+            <option value="all">{t("filter.statusAll")}</option>
+            <option value="simple">{t("filter.emotePlayOnce")}</option>
+            <option value="loop">{t("filter.emoteLoop")}</option>
+          </select>
+        </label>
+      ) : null}
+      {props.onEmoteSound ? <SwitchRow label={t("filter.emoteWithSound")} checked={!!props.emoteSound} onChange={props.onEmoteSound} testId="emote-sound" /> : null}
+      {props.onEmoteProps ? <SwitchRow label={t("filter.emoteWithProps")} checked={!!props.emoteProps} onChange={props.onEmoteProps} testId="emote-props" /> : null}
 
       {props.onDeals ? (
         <div className="shop-filters__toggle" data-testid="deals-row">

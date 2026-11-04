@@ -22,7 +22,12 @@ pub fn check_update_sync() -> Option<(String, String)> {
 
 pub async fn check_update() -> Option<(String, String)> {
     let latest: GitData = platform::compat(async {
-        reqwest::get("https://api.github.com/repos/decentraland/bevy-explorer/releases/latest")
+        platform::http_client_builder()
+            .user_agent("DCLExplorer/0.1")
+            .build()
+            .ok()?
+            .get("https://api.github.com/repos/decentraland/bevy-explorer/releases/latest")
+            .send()
             .await
             .ok()?
             .json()

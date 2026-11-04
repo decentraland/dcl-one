@@ -5,17 +5,20 @@
 
 use crate::comms::gatekeeper::voice::rooms::VoiceRooms;
 use crate::rpc::db::Db;
-use crate::rpc::limits::{Admission, FriendshipMutationLimiter};
+use crate::rpc::limits::{Admission, FriendshipMutationLimiter, Protocol};
 use crate::rpc::profiles::Profiles;
 use crate::rpc::proto::v2::{
     CommunityMemberConnectivityUpdate, ConnectivityStatus, FriendConnectivityUpdate,
     PrivateVoiceChatStatus, PrivateVoiceChatUpdate, User,
 };
 use crate::rpc::pubsub::{PubSub, SocialEvent};
+use crate::shared::rpc::ws::SocketClose;
 use dashmap::DashMap;
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use tokio::sync::Notify;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+use tokio_util::sync::CancellationToken;
 
 pub use crate::rpc::limits::PairScope;
 
@@ -48,11 +51,18 @@ pub struct ContextInner {
     friendship_limiter: FriendshipMutationLimiter,
     admission: Admission,
     identities: DashMap<u32, String>,
+    subscriptions: DashMap<(u32, &'static str), Arc<CancellationToken>>,
     presence: DashMap<String, u32>,
     topology: std::sync::OnceLock<Arc<crate::comms::topology::Topology>>,
+    /// The communities state, attached in `serve`: a community voice start
+    /// reads its places and thumbnail through it.
+    communities: std::sync::OnceLock<crate::communities::SharedState>,
     connectivity_operations: tokio::sync::Semaphore,
-    kill_handles: DashMap<u32, Arc<Notify>>,
-    connections: AtomicUsize,
+    kill_handles: DashMap<u32, Arc<SocketClose>>,
+    /// Every open socket of both protocols, from the moment it opens
+    /// (upstream's `ws-pool`): the pool cap counts them and shutdown ends them.
+    sockets: parking_lot::Mutex<HashMap<u64, Arc<SocketClose>>>,
+    next_socket: AtomicU64,
     /// `SOCIAL_WRITES_ENABLED` (`social::writes`): false refuses every
     /// mutating procedure with `SocialError::WritesDisabled`.
     writes_enabled: AtomicBool,
@@ -70,6 +80,49 @@ pub(crate) struct ConnectivityCursor {
 #[derive(Clone)]
 pub struct Context(Arc<ContextInner>);
 
+/// Releases only the subscription it acquired, including after transport-id reuse.
+pub(crate) struct SubscriptionGuard {
+    context: Context,
+    key: (u32, &'static str),
+    token: Arc<CancellationToken>,
+}
+
+impl SubscriptionGuard {
+    pub(crate) fn cancellation(&self) -> CancellationToken {
+        self.token.as_ref().clone()
+    }
+}
+
+impl Drop for SubscriptionGuard {
+    fn drop(&mut self) {
+        self.token.cancel();
+        self.context
+            .0
+            .subscriptions
+            .remove_if(&self.key, |_, token| Arc::ptr_eq(token, &self.token));
+    }
+}
+
+/// An open socket's place in the pool; dropping it frees the place.
+pub struct OpenSocket {
+    ctx: Context,
+    id: u64,
+    protocol: Protocol,
+    opened: Instant,
+    /// How the server ends this socket.
+    pub close: Arc<SocketClose>,
+}
+
+impl Drop for OpenSocket {
+    fn drop(&mut self) {
+        self.ctx.0.sockets.lock().remove(&self.id);
+        let protocol = self.protocol.label();
+        metrics::gauge!("ws_active_connections_by_protocol", "protocol" => protocol).decrement(1.0);
+        metrics::histogram!("ws_connection_duration_seconds_by_protocol", "protocol" => protocol)
+            .record(self.opened.elapsed().as_secs_f64());
+    }
+}
+
 impl Context {
     pub fn new(
         voice_settings: VoiceSettings,
@@ -86,11 +139,14 @@ impl Context {
             friendship_limiter: FriendshipMutationLimiter::new(),
             admission: Admission::default(),
             identities: DashMap::new(),
+            subscriptions: DashMap::new(),
             presence: DashMap::new(),
             topology: std::sync::OnceLock::new(),
+            communities: std::sync::OnceLock::new(),
             connectivity_operations: tokio::sync::Semaphore::new(4),
             kill_handles: DashMap::new(),
-            connections: AtomicUsize::new(0),
+            sockets: parking_lot::Mutex::new(HashMap::new()),
+            next_socket: AtomicU64::new(0),
             writes_enabled: AtomicBool::new(true),
         }))
     }
@@ -118,6 +174,28 @@ impl Context {
     pub fn profiles(&self) -> &Profiles {
         &self.0.profiles
     }
+
+    /// Publishes `from`'s friendship update to `to`, built from `from`'s
+    /// profile. Upstream's live loop skips an update whose sender's profile
+    /// the registry does not hold (`src/logic/updates.ts`
+    /// `handleSubscriptionUpdates`, `shouldRetrieveProfile`), so with a
+    /// profile source such an update reaches no one.
+    pub(crate) async fn publish_friendship(
+        &self,
+        from: &str,
+        to: &str,
+        update: impl FnOnce(
+            crate::rpc::proto::v2::FriendProfile,
+        ) -> crate::rpc::proto::v2::FriendshipUpdate,
+    ) {
+        match self.0.profiles.existing_friend_profile(from).await {
+            Some(profile) => self
+                .0
+                .pubsub
+                .publish(to, SocialEvent::Friendship(update(profile))),
+            None => tracing::debug!(%from, "friendship update skipped: the sender has no profile"),
+        }
+    }
     pub fn friendship_limiter(&self) -> &FriendshipMutationLimiter {
         &self.0.friendship_limiter
     }
@@ -134,25 +212,82 @@ impl Context {
             .insert(transport_id, address.to_lowercase());
     }
 
-    pub fn connection_opened(&self) {
-        self.0.connections.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn connection_closed(&self) {
-        self.0.connections.fetch_sub(1, Ordering::Relaxed);
+    /// Counts a socket that just opened, before its handshake (upstream
+    /// `ws-handler.ts:323`, `wsPool.registerConnection` in `open`); `None`
+    /// when `max` sockets are already open, checked and counted at once so
+    /// concurrent opens cannot pass a full pool.
+    pub fn open_socket(&self, protocol: Protocol, max: Option<usize>) -> Option<OpenSocket> {
+        let close = Arc::new(SocketClose::default());
+        let mut sockets = self.0.sockets.lock();
+        if max.is_some_and(|max| sockets.len() >= max) {
+            return None;
+        }
+        let id = self.0.next_socket.fetch_add(1, Ordering::Relaxed);
+        sockets.insert(id, close.clone());
+        drop(sockets);
+        metrics::gauge!("ws_active_connections_by_protocol", "protocol" => protocol.label())
+            .increment(1.0);
+        Some(OpenSocket {
+            ctx: self.clone(),
+            id,
+            protocol,
+            opened: Instant::now(),
+            close,
+        })
     }
 
     pub fn live_connections(&self) -> usize {
-        self.0.connections.load(Ordering::Relaxed)
+        self.0.sockets.lock().len()
     }
 
-    pub fn register_kill_handle(&self, transport_id: u32, kill: Arc<Notify>) {
+    /// Ends every open socket, authenticated or not, with `code` and
+    /// `reason`, and waits up to `budget` for them to close.
+    pub async fn end_sockets(&self, code: u16, reason: &'static str, budget: Duration) {
+        for socket in self.0.sockets.lock().values() {
+            socket.end(code, reason);
+        }
+        let deadline = Instant::now() + budget;
+        while self.live_connections() > 0 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    pub fn register_kill_handle(&self, transport_id: u32, kill: Arc<SocketClose>) {
         self.0.kill_handles.insert(transport_id, kill);
     }
 
     pub fn forget_identity(&self, transport_id: u32) {
         self.0.identities.remove(&transport_id);
         self.0.kill_handles.remove(&transport_id);
+        self.0.subscriptions.retain(|(id, _), token| {
+            if *id == transport_id {
+                token.cancel();
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    /// One active RPC stream of each kind per connection, across all its ports.
+    pub(crate) fn try_subscription(
+        &self,
+        transport_id: u32,
+        procedure: &'static str,
+    ) -> Option<SubscriptionGuard> {
+        let key = (transport_id, procedure);
+        match self.0.subscriptions.entry(key) {
+            dashmap::mapref::entry::Entry::Occupied(_) => None,
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                let token = Arc::new(CancellationToken::new());
+                entry.insert(token.clone());
+                Some(SubscriptionGuard {
+                    context: self.clone(),
+                    key,
+                    token,
+                })
+            }
+        }
     }
 
     pub fn identity(&self, transport_id: u32) -> Option<String> {
@@ -184,7 +319,7 @@ impl Context {
         let mut kicked = 0;
         for id in ids {
             if let Some(handle) = self.0.kill_handles.get(&id) {
-                handle.notify_waiters();
+                handle.end(1000, "Disconnected by the operator");
                 kicked += 1;
             }
         }
@@ -218,6 +353,15 @@ impl Context {
         self.0
             .topology
             .get_or_init(|| Arc::new(crate::comms::topology::Topology::default()))
+    }
+
+    /// Attaches the communities state (once).
+    pub fn set_communities(&self, communities: crate::communities::SharedState) {
+        let _ = self.0.communities.set(communities);
+    }
+
+    pub(crate) fn communities(&self) -> Option<&crate::communities::SharedState> {
+        self.0.communities.get()
     }
 
     pub(crate) fn set_topology(&self, topology: Arc<crate::comms::topology::Topology>) {
@@ -385,9 +529,13 @@ impl Context {
                 .connectivity_friends_page(&address, &cursor.friend_after, true)
                 .await?;
             if !friends.is_empty() {
-                let profile = crate::rpc::profiles::connectivity_profile(
-                    self.0.profiles.friend_profile(&address).await,
-                );
+                // Upstream's live loop skips a connectivity update whose
+                // wallet the registry holds no profile for.
+                let Some(profile) = self.0.profiles.existing_friend_profile(&address).await else {
+                    cursor.friends_done = true;
+                    return Ok((cursor, false));
+                };
+                let profile = crate::rpc::profiles::connectivity_profile(profile);
                 for friend in &friends {
                     if !self
                         .topology()
@@ -396,6 +544,7 @@ impl Context {
                                 friend,
                                 SocialEvent::TopologyFriendConnectivity(
                                     FriendConnectivityUpdate {
+                                        stream_closed: None,
                                         friend: Some(profile.clone()),
                                         status,
                                     },
@@ -425,6 +574,7 @@ impl Context {
                         member,
                         SocialEvent::TopologyCommunityMember(
                             CommunityMemberConnectivityUpdate {
+                                stream_closed: None,
                                 community_id: community_id.to_string(),
                                 member: Some(User {
                                     address: address.clone(),
@@ -474,7 +624,37 @@ impl Context {
                 return;
             }
         };
-        self.publish_private_voice(&chat, PrivateVoiceChatStatus::VoiceChatEnded);
+        self.publish_private_voice_ended_by(&chat, address);
+    }
+
+    /// ENDED to the party that did not end the call (upstream
+    /// `endPrivateVoiceChat`, `src/logic/voice/voice.ts:203-208`, `:230-237`:
+    /// the acting side is left out of the update), whether it ended or
+    /// dropped.
+    pub fn publish_private_voice_ended_by(
+        &self,
+        chat: &crate::comms::gatekeeper::voice::db::PrivateVoiceChatRow,
+        ender: &str,
+    ) {
+        let update = PrivateVoiceChatUpdate {
+            stream_closed: None,
+            call_id: chat.id.to_string(),
+            status: PrivateVoiceChatStatus::VoiceChatEnded as i32,
+            caller: Some(User {
+                address: chat.caller_address.clone(),
+            }),
+            callee: Some(User {
+                address: chat.callee_address.clone(),
+            }),
+            credentials: None,
+        };
+        for party in [&chat.caller_address, &chat.callee_address] {
+            if !party.eq_ignore_ascii_case(ender) {
+                self.0
+                    .pubsub
+                    .publish(party, SocialEvent::PrivateVoice(update.clone()));
+            }
+        }
     }
 
     /// The same update to both parties of `chat`.
@@ -484,6 +664,7 @@ impl Context {
         status: PrivateVoiceChatStatus,
     ) {
         let update = PrivateVoiceChatUpdate {
+            stream_closed: None,
             call_id: chat.id.to_string(),
             status: status as i32,
             caller: Some(User {
@@ -595,9 +776,10 @@ mod tests {
 
         ctx.register_identity(7, "0xAbC".into());
         assert_eq!(ctx.identity(7).as_deref(), Some("0xabc"));
-        let kill = Arc::new(Notify::new());
-        ctx.register_kill_handle(7, kill);
+        let kill = Arc::new(SocketClose::default());
+        ctx.register_kill_handle(7, kill.clone());
         assert_eq!(ctx.disconnect_address("0xABC"), 1);
+        assert_eq!(kill.frame(), Some((1000, "Disconnected by the operator")));
         ctx.forget_identity(7);
         assert_eq!(ctx.disconnect_address("0xabc"), 0);
         assert!(ctx.identity(7).is_none());

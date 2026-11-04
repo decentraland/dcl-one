@@ -6,10 +6,21 @@ use sqlx::PgPool;
 
 pub struct Directory {
     pool: PgPool,
+    /// The social RPC's fan-out, attached in `serve` once it exists.
+    updates: std::sync::OnceLock<crate::rpc::pubsub::PubSub>,
 }
 impl Directory {
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            updates: std::sync::OnceLock::new(),
+        }
+    }
+
+    /// Attaches the social RPC's fan-out (once): a room the gatekeeper
+    /// closes reaches the open community voice streams as ENDED.
+    pub fn set_updates(&self, updates: crate::rpc::pubsub::PubSub) {
+        let _ = self.updates.set(updates);
     }
 }
 
@@ -52,6 +63,13 @@ impl SocialDirectory for Directory {
     ) -> Result<(), sqlx::Error> {
         sqlx::query("INSERT INTO social.notifications (id, address, type, metadata, broadcast_key, occurred_at, read, created_at) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, FALSE, $5) ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO NOTHING").bind(&notification.recipient).bind(notification.kind.as_str()).bind(&notification.metadata).bind(&notification.event_key).bind(notification.occurred_at).execute(&self.pool).await?;
         Ok(())
+    }
+    async fn community_voice_room_closed(&self, community: CommunityId) {
+        if let Some(updates) = self.updates.get() {
+            updates
+                .community_voice_closed(&self.pool, community.as_uuid())
+                .await;
+        }
     }
 }
 

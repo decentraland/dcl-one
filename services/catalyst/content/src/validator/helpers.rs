@@ -8,7 +8,7 @@ pub(super) fn is_ipfs_v2_hash(hash: &str) -> bool {
 
 pub(super) fn should_validate_face_thumbnail(
     entity: &Entity,
-    files: &HashMap<String, Vec<u8>>,
+    files: &HashMap<String, bytes::Bytes>,
 ) -> bool {
     let ts = entity.timestamp;
     if (adr_timestamps::ADR_45..adr_timestamps::ADR_290_OPTIONAL).contains(&ts) {

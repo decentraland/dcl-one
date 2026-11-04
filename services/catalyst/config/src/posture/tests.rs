@@ -167,7 +167,7 @@ fn only_the_mirror_row_names_decentraland() {
 
 #[test]
 fn island_config_names_no_upstream_and_advertises_its_own_map() {
-    let c = parsed(&[
+    let mut c = parsed(&[
         ("DATABASE_URL", "postgres:///catalyst"),
         (ENV, "island"),
         ("PUBLIC_URL", "https://node.example.org/"),
@@ -178,7 +178,9 @@ fn island_config_names_no_upstream_and_advertises_its_own_map() {
     assert!(Config::non_empty(&c.ab_cdn.abgen_upstream_ab_cdn).is_none());
     assert!(c.explore.opensea_fallback_url.is_empty());
     assert!(c.price.coingecko_url.is_empty());
+    c.default_rpc_urls();
     assert!(c.content.eth_rpc_url().unwrap().is_none());
+    assert_eq!(c.economy.rpc_endpoint_polygon.as_deref(), Some(""));
     let map = c.map_urls();
     assert_eq!(map.satellite_base, None, "no satellite view on an island");
     assert_eq!(
@@ -201,6 +203,7 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
         c.marketplace.trade_rpc_urls, None,
         "derived after the secret files"
     );
+    c.default_rpc_urls();
     c.derive_trade_rpc_urls();
     assert!(c.node.sync_enabled && !c.node.serve_unsynced);
     assert!(c.content.sync_source.contains("peer.decentraland.org"));
@@ -214,7 +217,10 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
     assert!(c.price.price_poll_enabled);
     assert_eq!(
         c.marketplace.trade_rpc_urls.as_deref(),
-        Some("1=https://rpc.decentraland.org/mainnet,137=https://rpc.decentraland.org/polygon")
+        Some(
+            "1=https://rpc.decentraland.org/mainnet?project=catalyst-content,\
+             137=https://rpc.decentraland.org/polygon?project=catalyst-content"
+        )
     );
     assert!(c.content.content_history_prune_enabled);
     assert!(!c.writes.content_writes_enabled && !c.worlds.worlds_writes_enabled);
@@ -247,7 +253,8 @@ fn mirror_follows_decentraland_and_derives_the_trade_rpcs() {
     );
     assert!(!c.content.content_history_prune_enabled);
 
-    // Off mainnet the preset knows no chain endpoint or contract.
+    // The preset leaves the chain endpoints to the binary's default; off
+    // mainnet it knows no contract.
     let got = expanded(Posture::Mirror, &[("ETH_NETWORK", "sepolia")]);
     for key in [
         "ETH_RPC_URL",
@@ -383,6 +390,16 @@ fn env_prints_the_named_keys_as_the_posture_sets_them() {
     assert!(err.to_string().contains("NOT_A_KEY is not a key"), "{err}");
     let all = env_file(Posture::Journey, &[]).unwrap();
     assert!(all.contains("CONTENT_WRITES_ENABLED=true\n"), "{all}");
+    assert!(
+        all.contains("IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true\n"),
+        "the journey stack reads no chain: {all}"
+    );
+    for posture in [Posture::Mirror, Posture::Island] {
+        assert_eq!(
+            expanded(posture, &[])["IGNORE_BLOCKCHAIN_ACCESS_CHECKS"],
+            "false"
+        );
+    }
 }
 
 #[test]
@@ -432,12 +449,16 @@ fn a_polygon_endpoint_from_its_file_still_makes_the_trade_list() {
         ("RPC_ENDPOINT_POLYGON_FILE", "/run/credentials/polygon"),
     ]);
     assert_eq!(c.economy.rpc_endpoint_polygon, None);
-    // What `resolve_secret_files` reads from the file.
+    // What `resolve_secret_files` reads from the file, then the defaults.
     c.economy.rpc_endpoint_polygon = Some("https://polygon.example.org/key".into());
+    c.default_rpc_urls();
     c.derive_trade_rpc_urls();
     assert_eq!(
         c.marketplace.trade_rpc_urls.as_deref(),
-        Some("1=https://rpc.decentraland.org/mainnet,137=https://polygon.example.org/key")
+        Some(
+            "1=https://rpc.decentraland.org/mainnet?project=catalyst-content,\
+             137=https://polygon.example.org/key"
+        )
     );
 
     // An explicit list, even empty, wins; island derives nothing.
@@ -460,16 +481,13 @@ fn a_polygon_endpoint_from_its_file_still_makes_the_trade_list() {
 #[test]
 fn an_empty_file_variable_counts_as_unset() {
     let got = expanded(
-        Posture::Mirror,
+        Posture::Island,
         &[("RPC_ENDPOINT_POLYGON_FILE", ""), ("ETH_RPC_URL_FILE", " ")],
     );
-    assert_eq!(
-        got["RPC_ENDPOINT_POLYGON"],
-        "https://rpc.decentraland.org/polygon"
-    );
-    assert_eq!(got["ETH_RPC_URL"], "https://rpc.decentraland.org/mainnet");
+    assert_eq!(got["RPC_ENDPOINT_POLYGON"], "");
+    assert_eq!(got["ETH_RPC_URL"], "");
     let got = expanded(
-        Posture::Mirror,
+        Posture::Island,
         &[("RPC_ENDPOINT_POLYGON_FILE", "/run/credentials/polygon")],
     );
     assert!(!got.contains_key("RPC_ENDPOINT_POLYGON"));
@@ -742,4 +760,90 @@ fn island_refuses_the_secrets_that_call_a_third_party() {
         refusal(&[db, (ENV, "mirror"), ("SENDGRID_API_KEY", "s3cr3t")]),
         None
     );
+}
+
+#[test]
+fn optional_moderation_webhooks_obey_posture_before_and_after_secret_resolution() {
+    for posture in ["island", "journey"] {
+        let error = refusal(&[
+            ("DATABASE_URL", "postgres:///catalyst"),
+            (ENV, posture),
+            (
+                "SLACK_WEBHOOK",
+                "https://hooks.slack.com/services/private-token",
+            ),
+        ])
+        .unwrap();
+        assert!(error.contains("SLACK_WEBHOOK"));
+        assert!(!error.contains("private-token"));
+        let mut config = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, posture)]);
+        config.explore.events_slack_webhook =
+            Some("https://hooks.slack.com/services/private-token".into());
+        assert!(
+            refuse_remote_secrets(&mut config).is_err(),
+            "credential-file values obey the same posture"
+        );
+        config.explore.events_slack_webhook = Some("http://127.0.0.1:9999/slack-fixture".into());
+        refuse_remote_secrets(&mut config).unwrap();
+    }
+}
+
+/// Every node reads the public RPCs of its network unless the operator names
+/// others; island and journey, which dial no outside host, read none.
+#[test]
+fn the_chain_rpcs_default_by_network_outside_island_and_journey() {
+    let rpcs = |pairs: &[(&str, &str)]| {
+        let mut all = vec![("DATABASE_URL", "postgres:///catalyst")];
+        all.extend_from_slice(pairs);
+        let mut c = parsed(&all);
+        c.default_rpc_urls();
+        (c.content.eth_rpc_url, c.economy.rpc_endpoint_polygon)
+    };
+    let pair = |l1: &str, l2: &str| {
+        let url = |chain: &str| {
+            Some(format!(
+                "https://rpc.decentraland.org/{chain}?project=catalyst-content"
+            ))
+        };
+        (url(l1), url(l2))
+    };
+    assert_eq!(rpcs(&[]), pair("mainnet", "polygon"));
+    assert_eq!(rpcs(&[(ENV, "mirror")]), pair("mainnet", "polygon"));
+    assert_eq!(rpcs(&[("ETH_NETWORK", "sepolia")]), pair("sepolia", "amoy"));
+    assert_eq!(
+        rpcs(&[(ENV, "mirror"), ("ETH_NETWORK", "sepolia")]),
+        pair("sepolia", "amoy")
+    );
+    // Empty is unset.
+    assert_eq!(
+        rpcs(&[("ETH_RPC_URL", ""), ("RPC_ENDPOINT_POLYGON", " ")]),
+        pair("mainnet", "polygon")
+    );
+    // An operator's endpoint wins.
+    assert_eq!(
+        rpcs(&[
+            ("ETH_RPC_URL", "https://eth.example.org/key"),
+            ("ETH_NETWORK", "sepolia"),
+        ]),
+        (
+            Some("https://eth.example.org/key".to_string()),
+            pair("sepolia", "amoy").1
+        )
+    );
+    for posture in ["island", "journey"] {
+        assert_eq!(
+            rpcs(&[(ENV, posture)]),
+            (Some(String::new()), Some(String::new())),
+            "{posture}"
+        );
+        assert_eq!(
+            rpcs(&[(ENV, posture), ("ETH_RPC_URL", "http://127.0.0.1:8545")]).0,
+            Some("http://127.0.0.1:8545".to_string()),
+            "{posture}"
+        );
+    }
+    // The journey stack's defaults pass its own refusals.
+    let mut c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "journey")]);
+    c.default_rpc_urls();
+    refuse_remote_secrets(&mut c).unwrap();
 }
