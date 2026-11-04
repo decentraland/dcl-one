@@ -23,7 +23,7 @@ required-features = ["headless"]
 # - wasm-pack build --target web --out-dir ./deploy/web/engine/pkg --no-default-features --features="livekit,social" (then serve via react-web; see react-web/README.md)
 
 [features]
-default = ["livekit", "ffmpeg", "inspect", "social", "react-hud-cef", "remote"]
+default = ["livekit", "uuav", "inspect", "social", "react-hud-cef", "remote"]
 # default = ["wasm"]
 console = []
 dcl-assert = ["common/dcl-assert"]
@@ -32,7 +32,9 @@ tracy = ["bevy/trace_tracy"]
 inspect = ["dcl_deno/inspect", "system_ui/inspect"]
 hot_reload = ["bevy/file_watcher", "bevy/embedded_watcher", "ipfs/hot_reload"]
 livekit = ["comms/livekit", "system_ui/livekit"]
-ffmpeg = ["av/ffmpeg"]
+# Scene video and audio streams through the UUAV player (library/uuav): the out-of-process
+# FFmpeg helper whose runtime set ships next to the executable (tooling/uuav/stage-dist.py).
+uuav = ["av/uuav"]
 social = ["social/social"]
 # The loopback console server (`--automation-token`, src/automation.rs `remote`): native only, in
 # every native build (`default` and `headless`), never in the wasm build.
@@ -91,7 +93,7 @@ members = [
   "local-harness/benchmark",
   "local-harness/presence/harness-util",
 ]
-exclude = ["../../../library/vendor/rusty_enet"]
+exclude = ["../../../library/vendor/rusty_enet", "../../../library/uuav"]
 
 [workspace.dependencies]
 analytics = { path = "crates/analytics" }
@@ -189,6 +191,11 @@ bevy_console = { git = "https://github.com/robtfm/bevy-console", branch = "0.16"
 # Shared pinned ENet-CSharp transport source; provenance and local patches live beside it.
 # The native Pulse client and Catalyst use the same implementation. Native only.
 rusty_enet = { path = "../../../library/vendor/rusty_enet", version = "0.4.0" }
+# The UUAV player's client: spawns and drives the uuav-helper process that decodes scene video
+# (library/uuav). Native only; the helper and its FFmpeg ship as library/uuav/dist/<target>.
+uuav = { path = "../../../library/uuav/uuav-client", package = "uuav-client", version = "0.4.0" }
+# wgpu-hal's Metal binding; the video planes UUAV presents are wrapped through it.
+metal = "0.31"
 # enables naga_oil function overrides on non-`virtual` bevy_pbr functions (e.g.
 # our shadow-darkness override in bound_material.wgsl). feature-unifies into the
 # naga_oil that bevy builds its shader composer with. version must match bevy's.
@@ -489,8 +496,8 @@ wasm-bindgen-test = { workspace = true }
 # of data that arrives before its participant announcement; PR'd upstream as
 # livekit/rust-sdks#1574, drop that commit when it lands in a release), and the webrtc-sys
 # build downloading the ffmpeg/BoringSSL-prefixed libwebrtc prebuilts (upstream's macOS/Windows
-# archives carry unprefixed symbols that shadow the engine's own ffmpeg). The sibling crates
-# follow from the same checkout as the fork's path dependencies.
+# archives export unprefixed ffmpeg and BoringSSL symbols into the engine process). The sibling
+# crates follow from the same checkout as the fork's path dependencies.
 livekit = { git = "https://github.com/robtfm/client-sdk-rust", branch = "decentraland-0.9.7" }
 livekit-api = { git = "https://github.com/robtfm/client-sdk-rust", branch = "decentraland-0.9.7" }
 # naga_oil with deterministic override-emit order (redirect.rs HashMap ->
@@ -544,7 +551,6 @@ bevy_platform = { git = "https://github.com/robtfm/bevy", branch = "release-0.16
 # bevy_window = { path = "../bevy-fork/crates/bevy_window" }
 # bevy_platform = { path = "../bevy-fork/crates/bevy_platform" }
 
-ffmpeg-next = { git = "https://github.com/robtfm/rust-ffmpeg", branch = "audio-linesize-0-6.1" }
 parry3d-f64 = { git = "https://github.com/robtfm/parry", branch = "fix-bvh-negative-scale-0.25" }
 deno_core = { git = "https://github.com/robtfm/deno_core", branch = "0_307_hotfix" }
 serde_v8 = { git = "https://github.com/robtfm/deno_core", branch = "0_307_hotfix" }
