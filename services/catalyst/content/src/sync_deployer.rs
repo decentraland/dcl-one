@@ -88,14 +88,14 @@ impl Drop for BufferedMark {
     }
 }
 
-/// Marks `entity_id` as buffered until the guard drops.
-#[cfg(test)]
-pub(crate) fn hold_buffered(entity_id: &str) -> impl Drop {
+/// Marks `entity_id` as buffered until the guard drops: from the download that precedes its
+/// validation ([`crate::deploy_remote_entity::deploy_entity_streaming`]).
+pub(crate) fn hold_buffered(entity_id: &str) -> impl Drop + Send + use<> {
     BufferedMark::new(entity_id)
 }
 
-/// Whether any deployer of this process holds `entity_id` between its validation and the end
-/// of the flush that carries it.
+/// Whether any deployer of this process holds `entity_id` between its download and the end of
+/// the flush that carries it.
 pub fn is_buffered(entity_id: &str) -> bool {
     BUFFERED
         .lock()
