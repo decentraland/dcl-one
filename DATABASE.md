@@ -511,7 +511,7 @@ clean schema status before traffic resumes. On shipped main version 2, step
 default: PostgreSQL rewrites the table and builds its unique index under ACCESS
 EXCLUSIVE and mints one id per existing row (see METRICS.md for a measured size).
 Its other columns take constant defaults or are nullable, and step
-`0023_social_referral_pending_reward` adds a nullable column without a rewrite.
+`0023_social_referral_pending_reward` adds two nullable columns without a rewrite.
 Both run inside the writer-stopped sequence above. The owned upgrade test
 `populated_main_v2_referrals_survive_the_upgrade_with_minted_ids` checks a
 populated shipped-main table keeps every value, gains unique ids and marks its
@@ -814,13 +814,16 @@ a referral serializes its referrer and counts the milestone before committing
 the grant. A grant that reaches a reward tier records it in the nullable
 `referral_progress.reward_tier` in the same transaction. External Slack, SNS and
 reward requests occur after commit. A failed notification or reward request
-retains the committed tier as the pinned source does, and a pending
-`reward_tier` is the retry receipt: the next finalize of the same invited user,
-such as a redelivered login, re-runs only the reward request, its notification
-and its image, and clears `reward_tier` once all three succeed. A missing tier
-campaign key leaves the reward pending without a request. The reward request is
-at-least-once: a retry after a lost response can repeat it. The image is stored
-once per referrer and tier. Tier image persistence and its notification start
+retains the committed tier as the pinned source does. `reward_tier` marks the
+rewards request as owed; its success replaces it, in one statement, with
+`reward_paid` (`{tier, reward, notified}`), so a later failure never requests the
+reward again. The next finalize of the same invited user, such as a redelivered
+login, resumes from whichever marker is set: an owed request, or the paid
+reward's notification (recorded in `notified` once sent) and image (stored once
+per referrer and tier); `reward_paid` clears when both are done. A missing tier
+campaign key leaves the request owed without sending it. The source's rewards
+API takes no idempotency key, so only a lost response, or a failed
+`reward_paid` write right after a successful request, can repeat a request. Tier image persistence and its notification start
 independently, so either may finish after the other has already failed. SNS publishing admits at most eight ten-entry requests per
 invocation; it awaits every admitted delivery and retains input result order.
 

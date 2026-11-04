@@ -212,7 +212,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 202,
+          "line": 215,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -347,14 +347,14 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 142,
+          "line": 155,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 143,
+          "line": 156,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -463,7 +463,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 208,
+          "line": 221,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -1083,14 +1083,14 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/communities/compliance.rs",
-          "line": 480,
+          "line": 488,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": []
         },
         {
           "path": "services/catalyst/social/src/communities/compliance.rs",
-          "line": 499,
+          "line": 507,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -1108,7 +1108,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/communities/compliance.rs",
-          "line": 479,
+          "line": 487,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -1117,7 +1117,7 @@
         },
         {
           "path": "services/catalyst/social/src/communities/compliance.rs",
-          "line": 488,
+          "line": 496,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -1126,7 +1126,7 @@
         },
         {
           "path": "services/catalyst/social/src/communities/compliance.rs",
-          "line": 495,
+          "line": 503,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -1135,7 +1135,7 @@
         },
         {
           "path": "services/catalyst/social/src/communities/compliance.rs",
-          "line": 501,
+          "line": 509,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -1144,7 +1144,7 @@
         },
         {
           "path": "services/catalyst/social/src/communities/compliance.rs",
-          "line": 504,
+          "line": 512,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
