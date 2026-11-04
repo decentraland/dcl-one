@@ -161,10 +161,11 @@ A reference counts as approved once a reviewer has checked it against the scene'
   `win-gpu-t4-explorer`, which an org admin enables for this repository), in the `e2e`
   environment, whose `DCL_E2E_ACCOUNT_KEYS` secret reaches only the two scenario steps. That
   image carries MinGit alone, so the job runs its steps in PowerShell, puts a pinned git-lfs on
-  PATH before the checkout, and drives Chrome where the image has it, else Edge, with
-  `--enable-unsafe-webgpu --ignore-gpu-blocklist` (without them the runner's browser gave WebGPU no
-  adapter, and the app stopped at its GPU page); a GPU probe step says first what adapter that
-  browser gives, bare and with those flags (`npm run gpu-probe`). The scenes' CLI is built on a
+  PATH before the checkout, and drives Chrome where the image has it, else a pinned Chrome for
+  Testing build it downloads and checks against the sum the workflow records (the image's Edge gave
+  WebGPU no adapter), with `--enable-unsafe-webgpu --ignore-gpu-blocklist`, the first of which the
+  app's own GPU page asks for; a GPU probe step says first what adapter that browser gives, bare
+  and with those flags (`npm run gpu-probe`). The scenes' CLI is built on a
   hosted Windows runner and handed over, so the image needs no Rust toolchain. The label
   is what admits a pull request's code to that runner and those accounts; the Inputs summary
   names the pull request and the commit under test; the job holds no write permission and saves

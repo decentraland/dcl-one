@@ -225,8 +225,8 @@ jobs:
       DCL_E2E_BASE_DOMAIN: ${{ vars.DCL_E2E_BASE_DOMAIN || 'decentraland.zone' }}
       DCL_E2E_REALM: ${{ vars.DCL_E2E_REALM || 'https://peer.decentraland.zone' }}
       DCL_E2E_WORKER: '0'
-      # Without them the runner's browser answers requestAdapter with no adapter and the app
-      # stops at its "Enable GPU acceleration" page, which asks for the first of these.
+      # The app's "Enable GPU acceleration" page asks for the first of these: the image's Edge
+      # gave WebGPU no adapter without them. The GPU probe below says whether Chrome needs them.
       CHROME_EXTRA_ARGS: --enable-unsafe-webgpu --ignore-gpu-blocklist
     steps:
       # The checkout fetches the scenes' assets through git-lfs, which the image's MinGit lacks:
@@ -267,21 +267,29 @@ jobs:
           github-token: ${{ github.token }}
       - name: Install the suite
         run: npm ci
-      # The web driver looks for Chrome under Google's install paths; an image without one has
-      # Edge, the same Chromium, which CHROME_PATH points the driver at.
+      # The web driver looks for Chrome under Google's install paths; an image without one gets
+      # the pinned Chrome for Testing build, checked against the sum recorded here (Google
+      # publishes none), which CHROME_PATH points the driver at. The image's Edge is not used: it
+      # gave WebGPU no adapter.
       - name: Find a browser
+        working-directory: ${{ runner.temp }}
+        env:
+          CHROME_VERSION: '157.0.8103.38'
+          CHROME_SHA256: ae0deef27d449e1d7529df7705d609bab102de48464da13567ed3dd2ee1a0586
         run: |
           $ErrorActionPreference = 'Stop'
-          $chrome = @("$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe", "$env:LocalAppData\Google\Chrome\Application\chrome.exe")
-          $edge = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe")
-          $found = $chrome | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if ($found) { Write-Output "Chrome: $found" }
-          else {
-            $found = $edge | Where-Object { Test-Path $_ } | Select-Object -First 1
-            if (-not $found) { throw 'neither Chrome nor Edge is installed on this runner' }
-            Write-Output "::warning::No Chrome on this runner; the scenarios run in Edge at $found"
-            Add-Content -Path $env:GITHUB_ENV -Value "CHROME_PATH=$found"
-          }
+          $ProgressPreference = 'SilentlyContinue'
+          $installed = @("$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe", "$env:LocalAppData\Google\Chrome\Application\chrome.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($installed) { Write-Output "Chrome: $installed"; exit 0 }
+          $zip = 'chrome-win64.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri "https://storage.googleapis.com/chrome-for-testing-public/$env:CHROME_VERSION/win64/$zip" -OutFile $zip
+          $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $env:CHROME_SHA256) { throw "$zip has sha256 $hash, not $env:CHROME_SHA256" }
+          Expand-Archive -Path $zip -DestinationPath chrome -Force
+          $exe = Join-Path (Get-Location) 'chrome\chrome-win64\chrome.exe'
+          if (-not (Test-Path $exe)) { throw "$zip holds no chrome-win64\chrome.exe" }
+          Write-Output "Chrome for Testing $env:CHROME_VERSION at $exe"
+          Add-Content -Path $env:GITHUB_ENV -Value "CHROME_PATH=$exe"
       # What the scenarios will find, said in seconds rather than after a boot's timeout: the
       # GPU and its driver, whether the job's session is interactive, and the WebGPU adapter the
       # browser gives a page, bare and then with the scenarios' flags (`npm run gpu-probe`).
