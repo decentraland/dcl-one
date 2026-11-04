@@ -140,7 +140,7 @@
 .shop-filters__fill {
   left: var(--min-pct, 0%);
   right: calc(100% - var(--max-pct, 100%));
-  background: #a14bf3;
+  background: #ff7439;
 }
 .shop-filters__slider input {
   position: absolute;
@@ -163,7 +163,7 @@
   height: 16px;
   border-radius: 50%;
   background: #fff;
-  border: 2px solid #a14bf3;
+  border: 2px solid #ff7439;
   box-shadow: 0 1px 3px rgba(22, 21, 24, 0.25);
   cursor: pointer;
 }
@@ -173,7 +173,7 @@
   height: 16px;
   border-radius: 50%;
   background: #fff;
-  border: 2px solid #a14bf3;
+  border: 2px solid #ff7439;
   box-shadow: 0 1px 3px rgba(22, 21, 24, 0.25);
   cursor: pointer;
 }
@@ -269,6 +269,53 @@
 }
 .shop-filters__radio input[type="radio"]:focus-visible { outline: 2px solid #ff2d55; outline-offset: 2px; }
 
+/* Checkboxes rather than switches, as decentraland.org's Shop: a switch reads as turning a feature on or off, a
+   checkbox under "Filter by type" as narrowing the grid. */
+.shop-filters__typerow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 4px 4px 4px 24px;
+  box-sizing: border-box;
+}
+.shop-filters__typelabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .shop-filters__typelabel:hover .shop-filters__checkbox { border-color: #ff2d55; }
+}
+.shop-filters__checkbox {
+  appearance: none;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border: 2px solid #ecebed;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.shop-filters__checkbox:checked {
+  border-color: #ff2d55;
+  background: #ff2d55 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2 5 8.6l4.5-5' fill='none' stroke='%23fcfcfc' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 12px no-repeat;
+}
+.shop-filters__checkbox:focus-visible { outline: 2px solid #ff2d55; outline-offset: 2px; }
+.shop-filters__typename {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  line-height: 1.43;
+  color: #cfcdd4;
+}
+.shop-filters__typename[data-kind="smart"] { text-transform: uppercase; }
+
 .shop-filters__toggle {
   display: flex;
   align-items: center;
@@ -331,6 +378,7 @@
   font: inherit;
 }
 @media (max-width: 900px) {
+  .shop-filters__typerow { height: 52px; }
   .shop-filters__toggle { min-height: 52px; }
   .shop-filters__toggletitle { font-size: 16px; }
   .shop-filters__smart { width: 16px; height: 16px; }

@@ -97,6 +97,30 @@ describe("the collectibles grid", () => {
     await waitFor(() => expect(screen.getByTestId("where").textContent).not.toContain("smart"));
   });
 
+  it("narrows by type with checkboxes, as decentraland.org's Shop, and puts the Marketplace's filters after its own", async () => {
+    const client = catalogClient();
+    items("/shop/items", { client });
+    await screen.findAllByTestId("card");
+    const smart = screen.getByRole("checkbox", { name: /smart/i });
+    expect(screen.getByRole("button", { name: /filter by type/i })).toBeTruthy();
+    expect(smart).not.toBeChecked();
+    expect(screen.queryByRole("switch", { name: /smart/i })).toBeNull();
+    fireEvent.click(smart);
+    await waitFor(() => expect(lastUrl(client).searchParams.get("isSmart")).toBe("true"));
+    expect(screen.getByRole("checkbox", { name: /smart/i })).toBeChecked();
+    // The hint sits outside the label: reading it never ticks the box.
+    fireEvent.click(screen.getByTestId("smart-hint"));
+    expect(screen.getByRole("checkbox", { name: /smart/i })).toBeChecked();
+
+    const order = (label: RegExp) => {
+      const heading = screen.getAllByRole("button").find((b) => label.test(b.textContent ?? ""));
+      return heading ? Array.from(document.querySelectorAll<HTMLElement>("button")).indexOf(heading) : -1;
+    };
+    expect(order(/filter by type/i)).toBeGreaterThan(order(/^status/i));
+    expect(order(/^creators/i)).toBeGreaterThan(order(/filter by type/i));
+    expect(order(/^collection/i)).toBeGreaterThan(order(/^creators/i));
+  });
+
   it("Not for Sale reads the catalogue as view cards with no purchase", async () => {
     const client = catalogClient();
     items("/shop/items?status=not_for_sale&priceMin=5", { client });
