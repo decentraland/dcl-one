@@ -23,10 +23,18 @@ use crate::shared::identity::is_valid_eth_address;
 use super::ChainIndex;
 
 pub const THE_GRAPH_PAGE_SIZE: i64 = 1000;
-/// Pages walked per owner and network before the answer is cut off: 10,000
-/// tokens, past which the explorer paginates a truncated set rather than the
-/// node walking a whale's inventory on every request.
+/// Pages walked per owner and network before the names and lands answers
+/// are cut off.
 const MAX_PAGES: usize = 10;
+/// Pages of owned wearables or emotes walked per owner and network: 100,000
+/// tokens, the marketplace-server's 100 pages of 1,000 groups that lamb2
+/// reads before its own whole subgraph walk
+/// (decentraland/lamb2:src/adapters/marketplace-api-fetcher.ts:362-385). An
+/// inventory past it is a failed read, never a truncated one. Each page is
+/// one subgraph request (at most 1,000 copies, a few hundred KiB), so a
+/// whale costs up to 100 sequential requests per network, memoized
+/// [`OWNED_TTL`] per owner and category.
+const OWNED_MAX_PAGES: usize = 100;
 const BODY_CAP: usize = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_ATTEMPTS: u32 = 3;
@@ -318,33 +326,47 @@ async fn owned_on_network(
         return Ok(Vec::new());
     };
     let query = QUERY_OWNED.replace("CATEGORY", category);
-    let mut out = Vec::new();
-    let mut id_from = String::new();
-    for _ in 0..MAX_PAGES {
-        let data = graph_query(
+    let pages = walk_owned_pages(OWNED_MAX_PAGES, |id_from| {
+        graph_query(
             state,
             url,
             &query,
             json!({ "owner": owner, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
         )
-        .await?;
+    })
+    .await
+    .map_err(|e| format!("{network:?} owned {category}s of {owner}: {e}"))?;
+    Ok(pages
+        .iter()
+        .flat_map(|data| parse_owned_copies(data, category))
+        .collect())
+}
+
+/// The `id_gt` walk: every page until a short one, or an error once
+/// `max_pages` full pages leave more to read.
+async fn walk_owned_pages<F, Fut>(max_pages: usize, mut page: F) -> Result<Vec<Value>, String>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, String>>,
+{
+    let mut out = Vec::new();
+    let mut id_from = String::new();
+    for _ in 0..max_pages {
+        let data = page(id_from).await?;
         let n = page_len(&data);
-        out.extend(parse_owned_copies(&data, category));
+        let next = last_id(&data);
+        out.push(data);
         if (n as i64) < THE_GRAPH_PAGE_SIZE {
             return Ok(out);
         }
-        match last_id(&data) {
+        match next {
             Some(id) => id_from = id,
             None => return Ok(out),
         }
     }
-    tracing::warn!(
-        owner,
-        category,
-        ?network,
-        "owned items cut off at {MAX_PAGES} pages"
-    );
-    Ok(out)
+    Err(format!(
+        "more than {max_pages} pages of {THE_GRAPH_PAGE_SIZE}"
+    ))
 }
 
 /// Every copy of `category` (`wearable` | `emote`) the owner holds on both
@@ -971,6 +993,56 @@ mod tests {
         assert!(doc.starts_with("query { o0: nfts(first: 1000, where: { owner: \"0xaaaa\", urn_in: [\"urn:decentraland:matic:collections-v2:0xa:1\"] }) { urn }"), "{doc}");
         assert!(doc.contains(" o1: nfts(first: 1000, where: { owner: \"0xbbbb\", urn_in: [\"urn:x\\\"y\",\"urn:z\"] }) { urn }"), "{doc}");
         assert!(doc.ends_with(" }"));
+    }
+
+    fn page_of(start: usize, n: usize) -> Value {
+        let nfts: Vec<Value> = (start..start + n)
+            .map(|i| json!({ "id": format!("0xc-{i:08}"), "urn": format!("urn:x:{i}") }))
+            .collect();
+        json!({ "nfts": nfts })
+    }
+
+    #[tokio::test]
+    async fn owned_walk_reads_every_page_and_fails_past_the_cap() {
+        let full = THE_GRAPH_PAGE_SIZE as usize;
+        let asked = std::sync::Mutex::new(Vec::new());
+        let pages = walk_owned_pages(3, |from| {
+            asked.lock().unwrap().push(from.clone());
+            let start = asked.lock().unwrap().len() - 1;
+            let n = if start == 2 { 7 } else { full };
+            async move { Ok(page_of(start * full, n)) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(pages.len(), 3, "a short third page ends the walk");
+        assert_eq!(
+            *asked.lock().unwrap(),
+            vec![
+                String::new(),
+                format!("0xc-{:08}", full - 1),
+                format!("0xc-{:08}", 2 * full - 1)
+            ],
+            "each page starts after the previous page's last id"
+        );
+
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let err = walk_owned_pages(3, |_| {
+            let i = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async move { Ok(page_of(i * full, full)) }
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
+        assert_eq!(
+            err,
+            format!("more than 3 pages of {full}"),
+            "never a truncated list"
+        );
+
+        let err = walk_owned_pages(3, |_| async { Err::<Value, _>("boom".to_string()) })
+            .await
+            .unwrap_err();
+        assert_eq!(err, "boom");
     }
 
     #[tokio::test]

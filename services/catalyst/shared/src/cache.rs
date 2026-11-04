@@ -118,6 +118,13 @@ where
         (entry.at.elapsed() < self.ttl).then(|| entry.value.clone())
     }
 
+    /// The last value stored under `key`, however old: a failed refresh
+    /// keeps it, so a caller can serve it stale.
+    pub fn get_stale(&self, key: &K) -> Option<V> {
+        let slot = self.map.get(key)?;
+        slot.cached.as_ref().map(|entry| entry.value.clone())
+    }
+
     pub fn insert(&self, key: K, value: V) {
         let mut slot = self.map.entry(key).or_insert_with(Slot::empty);
         slot.cached = Some(Entry {
@@ -263,6 +270,23 @@ mod tests {
         map.clear();
         assert_eq!(map.get_or_fetch("k".into(), fetch).await, Ok(7));
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a_failed_refresh_keeps_the_stale_value() {
+        let map: TtlMap<String, u32> = TtlMap::new(Duration::ZERO);
+        assert_eq!(map.get_stale(&"k".into()), None);
+        map.insert("k".into(), 3);
+        assert_eq!(
+            map.get_fresh(&"k".into()),
+            None,
+            "a zero TTL is never fresh"
+        );
+        let failed = map
+            .get_or_fetch("k".into(), || async { Err::<u32, &str>("boom") })
+            .await;
+        assert_eq!(failed, Err("boom"));
+        assert_eq!(map.get_stale(&"k".into()), Some(3));
     }
 
     #[tokio::test]

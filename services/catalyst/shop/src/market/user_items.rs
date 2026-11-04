@@ -1,9 +1,10 @@
 //! `/lambdas/users/{address}/{wearables,emotes,names}` and the grouped
 //! `/lambdas/collections/*-by-owner/{owner}` lists over the subgraph readers.
 //! The old queries grouped in SQL over the squid; here the owner's copies
-//! come back from the subgraph newest first and are grouped, filtered, sorted
-//! (UCA order) and paged in Rust exactly as the old handler did after its
-//! query. Definitions come from the content entities peer sync ingested.
+//! come back from the subgraph newest first and are grouped, filtered,
+//! sorted (UCA order, only when `orderBy` is given) and paged in Rust.
+//! Definitions come from the content entities peer sync ingested. A reader
+//! that fails answers lamb2's 502 `FetcherError`.
 //! Without a reader the routes answer the unavailable envelope, as their
 //! `/marketplace-api/v1/users` twins do: the explorer reads these lambdas,
 //! and an empty page from an unconfigured node showed every avatar owning
@@ -93,6 +94,17 @@ fn group_copies(copies: &[OwnedCopy]) -> Vec<GroupedItem> {
     groups
 }
 
+/// `(category, rarity, name)`: the first value of each, `category` and
+/// `rarity` lowercased as lamb2's `extractFiltersFromURL` does
+/// (decentraland/lamb2:src/controllers/handlers/utils.ts:12-19).
+fn owned_filters(params: &QueryParams) -> (Option<String>, Option<String>, Option<String>) {
+    (
+        qs_get_string(params, "category").map(|c| c.to_lowercase()),
+        qs_get_string(params, "rarity").map(|r| r.to_lowercase()),
+        qs_get_string(params, "name"),
+    )
+}
+
 fn filter_groups(
     items: &mut Vec<GroupedItem>,
     filter_category: Option<&str>,
@@ -111,10 +123,17 @@ fn filter_groups(
     }
 }
 
+/// lamb2 validates and sorts only when `orderBy` is present
+/// (decentraland/lamb2:src/controllers/handlers/utils.ts:45-48,
+/// src/logic/fetch-elements/fetch-items.ts:82-85): without it the groups keep
+/// the reader's order and a lone `direction` is ignored.
 fn validate_and_sort(items: &mut [GroupedItem], params: &QueryParams) -> Result<(), String> {
+    if !params.contains_key("orderBy") {
+        return Ok(());
+    }
     let sort = qs_get_string(params, "orderBy")
         .map(|s| s.to_lowercase())
-        .unwrap_or_else(|| "rarity".to_string());
+        .unwrap_or_default();
     let direction = qs_get_string(params, "direction")
         .map(|s| s.to_uppercase())
         .unwrap_or_else(|| {
@@ -231,6 +250,8 @@ async fn owned_items_response(
     if !super::is_valid_eth_address(address) {
         return bad_request("Address must be a valid Ethereum address");
     }
+    // The 502 names the address as the path spelled it, as lamb2's does.
+    let path_address = address;
     let address = &address.to_lowercase();
     let params = parse_query_string(query_string);
 
@@ -255,16 +276,16 @@ async fn owned_items_response(
     let copies = match graph::owned_copies(&state.index, address, item_category).await {
         Ok(c) => c,
         Err(e) => {
-            tracing::warn!(error = %e, address, item_category, "owned items reader failed");
-            return service_unavailable("ownership readers unavailable");
+            return super::third_party::fetch_error(path_address, &e);
         }
     };
     let mut items = group_copies(&copies);
+    let (category, rarity, name) = owned_filters(&params);
     filter_groups(
         &mut items,
-        qs_get_string(&params, "category").as_deref(),
-        qs_get_string(&params, "rarity").as_deref(),
-        qs_get_string(&params, "name").as_deref(),
+        category.as_deref(),
+        rarity.as_deref(),
+        name.as_deref(),
     );
 
     if let Err(msg) = validate_and_sort(&mut items, &params) {
@@ -282,26 +303,27 @@ async fn owned_items_response(
         HashMap::new()
     };
 
+    // A missing definition or entity leaves its key out, as lamb2's
+    // `undefined` does (decentraland/lamb2:src/controllers/handlers/utils.ts:56-67).
     let content_public_url = &state.settings.content_public_url;
     let elements: Vec<Value> = page
         .iter()
         .map(|item| {
             let mut obj = grouped_to_json(item);
-            let ent = by_pointer
-                .get(&item.urn.to_lowercase())
-                .cloned()
-                .unwrap_or(Value::Null);
-            if include_definitions {
-                obj["definition"] = if ent.is_null() {
-                    Value::Null
-                } else if item_category == "emote" {
-                    extract_emote_definition(&ent, content_public_url).unwrap_or(Value::Null)
-                } else {
-                    extract_wearable_definition(&ent, content_public_url).unwrap_or(Value::Null)
-                };
+            let ent = by_pointer.get(&item.urn.to_lowercase());
+            if include_definitions
+                && let Some(def) = ent.and_then(|ent| {
+                    if item_category == "emote" {
+                        extract_emote_definition(ent, content_public_url)
+                    } else {
+                        extract_wearable_definition(ent, content_public_url)
+                    }
+                })
+            {
+                obj["definition"] = def;
             }
-            if include_entities {
-                obj["entity"] = ent;
+            if include_entities && let Some(ent) = ent {
+                obj["entity"] = ent.clone();
             }
             obj
         })
@@ -467,10 +489,7 @@ async fn items_by_owner(
         .await;
     match body {
         Ok(body) => Json(body).into_response(),
-        Err(e) => {
-            tracing::warn!(error = %e, owner, category, "items by owner reader failed");
-            service_unavailable("ownership readers unavailable")
-        }
+        Err(e) => super::third_party::fetch_error(owner, &e),
     }
 }
 
@@ -787,13 +806,48 @@ mod tests {
     }
 
     #[test]
-    fn default_orderby_is_rarity_desc() {
-        let mut items = vec![
-            item("urn:b", "B", "common", 0, 0),
-            item("urn:a", "A", "legendary", 0, 0),
-        ];
+    fn without_order_by_nothing_is_validated_or_sorted() {
+        let mk = || {
+            vec![
+                item("urn:b", "B", "common", 0, 0),
+                item("urn:a", "A", "legendary", 0, 0),
+            ]
+        };
+        let mut items = mk();
         validate_and_sort(&mut items, &parse_query_string("")).unwrap();
-        assert_eq!(urns(&items), vec!["urn:a", "urn:b"]);
+        assert_eq!(urns(&items), vec!["urn:b", "urn:a"], "the reader's order");
+        let mut items = mk();
+        validate_and_sort(&mut items, &parse_query_string("direction=sideways")).unwrap();
+        assert_eq!(
+            urns(&items),
+            vec!["urn:b", "urn:a"],
+            "a lone direction is ignored"
+        );
+        let mut items = mk();
+        validate_and_sort(&mut items, &parse_query_string("orderBy=rarity")).unwrap();
+        assert_eq!(
+            urns(&items),
+            vec!["urn:a", "urn:b"],
+            "rarity defaults to DESC"
+        );
+        let err = validate_and_sort(&mut mk(), &parse_query_string("orderBy=")).unwrap_err();
+        assert_eq!(
+            err, "Invalid sorting requested:  DESC",
+            "an empty orderBy is present"
+        );
+    }
+
+    #[test]
+    fn category_and_rarity_filters_are_lowercased() {
+        let (category, rarity, name) =
+            owned_filters(&parse_query_string("category=HaT&rarity=EPIC&name=Hat"));
+        assert_eq!(
+            (category.as_deref(), rarity.as_deref(), name.as_deref()),
+            (Some("hat"), Some("epic"), Some("Hat"))
+        );
+        let mut items = group_copies(&inventory());
+        filter_groups(&mut items, category.as_deref(), rarity.as_deref(), None);
+        assert_eq!(urns(&items), vec![HAT]);
     }
 
     #[test]
