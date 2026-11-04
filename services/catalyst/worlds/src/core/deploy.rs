@@ -361,7 +361,9 @@ fn scene_pointers_error(entity: &Value) -> Option<String> {
     }
     let pointers = distinct(&raw_strings(entity.get("pointers")));
     let parcels = distinct(&raw_strings(scene.and_then(|s| s.get("parcels"))));
-    let same = pointers.len() == parcels.len() && pointers.iter().all(|p| parcels.contains(p));
+    let parcel_set: HashSet<&str> = parcels.iter().map(String::as_str).collect();
+    let same =
+        pointers.len() == parcels.len() && pointers.iter().all(|p| parcel_set.contains(p.as_str()));
     (!same).then(|| {
         format!(
             "The scene pointers [{}] must match the scene parcels [{}].",
@@ -794,6 +796,7 @@ async fn deploy_entity_inner(
 
 #[cfg(test)]
 mod tests {
+    use super::super::deploy_validate::MAX_SCENE_POINTERS;
     use super::*;
     use serde_json::json;
 
@@ -939,6 +942,53 @@ mod tests {
             scene_pointers_error(&scene(json!(["0,1"]), "0,0", json!(["0,0"]))).as_deref(),
             Some("The scene pointers [0,1] must match the scene parcels [0,0].")
         );
+    }
+
+    fn entity_with_pointers(pointers: Vec<Value>) -> Value {
+        json!({ "version": "v3", "type": "scene", "pointers": pointers, "timestamp": 1, "content": [] })
+    }
+
+    #[test]
+    fn an_oversized_pointer_list_is_refused_before_the_item_checks() {
+        let pointers: Vec<Value> = (0..200_000).map(|i| json!(format!("{i},0"))).collect();
+        let started = Instant::now();
+        let error = entity_schema_error(&entity_with_pointers(pointers));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(
+            error.as_deref(),
+            Some("must NOT have more than 90601 items")
+        );
+    }
+
+    #[test]
+    fn duplicate_pointers_are_found_in_linear_time_and_named_as_ajv_does() {
+        let mut pointers: Vec<Value> = (0..MAX_SCENE_POINTERS - 1)
+            .map(|i| json!(format!("{i},0")))
+            .collect();
+        pointers.push(json!("0,0"));
+        let started = Instant::now();
+        let error = entity_schema_error(&entity_with_pointers(pointers));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(
+            error.as_deref(),
+            Some(&*format!(
+                "must NOT have duplicate items (items ## {} and 0 are identical)",
+                MAX_SCENE_POINTERS - 1
+            ))
+        );
+    }
+
+    #[test]
+    fn a_full_grid_scene_is_matched_against_its_parcels_in_linear_time() {
+        let grid: Vec<Value> = (-150..=150)
+            .flat_map(|x| (-150..=150).map(move |y| json!(format!("{x},{y}"))))
+            .collect();
+        let mut parcels = grid.clone();
+        parcels.reverse();
+        let started = Instant::now();
+        let error = scene_pointers_error(&scene(json!(grid), "0,0", json!(parcels)));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(error, None);
     }
 
     #[test]

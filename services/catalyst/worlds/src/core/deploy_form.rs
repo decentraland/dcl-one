@@ -103,7 +103,8 @@ pub(super) async fn read_deploy_form(
         }
 
         if field.file_name().is_some() {
-            if files.len() >= MAX_DEPLOY_FILES {
+            // The entity itself is one more file part than its content.
+            if files.len() > MAX_DEPLOY_FILES {
                 return Err(Box::new(
                     payload_too_large(TOO_MANY_FILES_MESSAGE).into_response(),
                 ));
@@ -420,6 +421,44 @@ mod tests {
         assert_eq!(
             body,
             json!({ "error": "Payload Too Large", "message": "The multipart request has too many fields." })
+        );
+    }
+
+    async fn read_files(count: usize) -> Result<usize, StatusCode> {
+        let root = std::env::temp_dir().join(format!("catalyst-form-{}", uuid::Uuid::new_v4()));
+        let names: Vec<String> = (0..count).map(|i| format!("f{i}")).collect();
+        let parts: Vec<(&str, Option<&str>, &str)> = names
+            .iter()
+            .map(|n| (n.as_str(), Some(n.as_str()), n.as_str()))
+            .collect();
+        let multipart = multipart_from(&parts).await;
+        let mut bytes_lease = upload_limits::reserve_in_flight();
+        let mut files_lease = upload_limits::reserve_in_flight_files();
+        let read = read_deploy_form(
+            multipart,
+            &mut bytes_lease,
+            &mut files_lease,
+            u64::MAX,
+            u64::MAX,
+            &root,
+        )
+        .await;
+        let out = read
+            .map(|form| form.files.len())
+            .map_err(|resp| resp.status());
+        let _ = std::fs::remove_dir_all(&root);
+        out
+    }
+
+    #[tokio::test]
+    async fn read_deploy_form_takes_the_entity_part_beside_the_content_cap() {
+        assert_eq!(
+            read_files(MAX_DEPLOY_FILES + 1).await,
+            Ok(MAX_DEPLOY_FILES + 1)
+        );
+        assert_eq!(
+            read_files(MAX_DEPLOY_FILES + 2).await,
+            Err(StatusCode::PAYLOAD_TOO_LARGE)
         );
     }
 
