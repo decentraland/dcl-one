@@ -1,19 +1,19 @@
-//! Renders root `schemas/*.sql` and the two explicitly enrolled definitions
-//! in `schemas/releases/v3/`, ordered by filename, into `$OUT_DIR/schema.sql`.
-//! `db::SCHEMA_SQL` embeds it and `catalyst schema print` writes the same
-//! rendering. The gitignored root `schema.sql` is output, never a source.
+//! Renders `schemas/*.sql` (name order) into `$OUT_DIR/schema.sql`, which
+//! `db::SCHEMA_SQL` embeds. One file per domain keeps parallel work off one
+//! giant DDL file; `catalyst schema print` writes the same rendering (the
+//! gitignored root `schema.sql` is that output, never a source).
 
 use std::path::PathBuf;
 use std::{env, fs};
 
 const HEADER: &str = "\
--- Catalyst: current-state DDL for an empty `catalyst` database.
+-- Catalyst v2: current-state DDL for an empty `catalyst` database.
 -- Design/review contract: DATABASE.md. The inherited indexes below are a
 -- baseline; query/layout changes require representative workload evidence.
 --
--- RENDERED FILE. Sources are schemas/*.sql and the two explicitly enrolled
--- definitions in schemas/releases/v3/, ordered by filename by build.rs.
--- Edit those source definitions;
+-- RENDERED FILE. The source is schemas/*.sql, concatenated in name order by
+-- build.rs (one file per domain: 00 content + meta, 10 explore, 20 worlds,
+-- 30 shop, 40 social, 50 create: builder + camera_reel). Edit those;
 -- `catalyst schema print` writes this rendering.
 --
 -- Applied once, by an operator, with `catalyst schema apply` (or psql -f). No
@@ -35,26 +35,16 @@ fn main() {
         .map(|entry| entry.expect("schema entry").path())
         .filter(|path| path.extension().is_some_and(|ext| ext == "sql"))
         .collect();
-    // These sole definitions are also used by the explicit v3 release. Keep
-    // them outside automatic root discovery and enroll them only with v3.
-    files.extend([
-        dir.join("releases/v3/41_social_voice_notifications.sql"),
-        dir.join("releases/v3/42_social_private_voice_indexes.sql"),
-    ]);
-    files.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+    files.sort();
     assert!(!files.is_empty(), "schema/ holds no .sql file");
 
     let mut out = String::from(HEADER);
     for path in &files {
         println!("cargo:rerun-if-changed={}", path.display());
-        let repository = root();
-        let name = path
-            .strip_prefix(&repository)
-            .expect("schema within repository")
-            .display();
+        let name = path.file_name().unwrap().to_string_lossy();
         let body =
             fs::read_to_string(path).unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
-        out.push_str(&format!("-- ════ {name} ════\n\n"));
+        out.push_str(&format!("-- ════ schemas/{name} ════\n\n"));
         out.push_str(body.trim_end_matches('\n'));
         out.push_str("\n\n");
     }
@@ -69,11 +59,10 @@ fn main() {
 }
 
 const MIGRATIONS_HEADER: &str = "\
--- Catalyst: the additive steps `catalyst schema migrate` applies, in name
+-- Catalyst v2: the additive steps `catalyst schema migrate` applies, in name
 -- order, to a database stamped before them (a column an existing table gained,
 -- a constraint, a backfill). schema.sql already holds every effect for a new
--- database; `schema apply` records active steps as carried from birth. Retired
--- steps remain immutable but never execute or gain a new receipt. Each active step
+-- database; `schema apply` records the steps as carried from birth. Each step
 -- is recorded in meta.schema_steps with the sha256 of its text and never runs
 -- twice; a recorded step whose text changed is refused, and so is a step
 -- that drops, renames or retypes anything (src/schema_migrate.rs, the lint).

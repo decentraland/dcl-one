@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use crate::communities::http::DeferredBody;
+use axum::body::Bytes;
 use axum::extract::{OriginalUri, Path, Query, State as AxumState};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -34,183 +34,6 @@ type Shared = Arc<State>;
 type Answer = Result<Response, CommError>;
 
 const ADDRESS_PATTERN: &str = "^0x[a-fA-F0-9]{40}$";
-
-// Source router registration order, including HEAD inherited from GET. Native
-// federation/admin extensions are deliberately absent from this application view.
-const SOURCE_HTTP_ROUTES: &[(&str, &[&str])] = &[
-    ("/v1/communities/:address/managed", &["HEAD", "GET"]),
-    ("/v1/communities/:id", &["HEAD", "GET"]),
-    ("/v1/communities", &["HEAD", "GET"]),
-    ("/v1/communities/:id/members", &["HEAD", "GET"]),
-    ("/v1/communities/:id/members", &["POST"]),
-    ("/v1/communities/:id/members/:memberAddress", &["DELETE"]),
-    ("/v1/communities/:id/members/:address", &["PATCH"]),
-    ("/v1/communities/:id/bans", &["HEAD", "GET"]),
-    ("/v1/communities/:id/members/:memberAddress/bans", &["POST"]),
-    (
-        "/v1/communities/:id/members/:memberAddress/bans",
-        &["DELETE"],
-    ),
-    ("/v1/members/:address/communities", &["HEAD", "GET"]),
-    ("/v1/members/:address/communities", &["POST"]),
-    ("/v1/members/:address/requests", &["HEAD", "GET"]),
-    ("/v1/communities/:id/requests", &["HEAD", "GET"]),
-    ("/v1/members/:address/invites", &["HEAD", "GET"]),
-    ("/v1/communities", &["POST"]),
-    ("/v1/communities/:id", &["PUT"]),
-    ("/v1/communities/:id", &["PATCH"]),
-    ("/v1/communities/:id", &["DELETE"]),
-    ("/v1/communities/:id/places", &["HEAD", "GET"]),
-    ("/v1/communities/:id/places", &["POST"]),
-    ("/v1/communities/:id/places/:placeId", &["DELETE"]),
-    ("/v1/communities/:id/posts", &["HEAD", "GET"]),
-    ("/v1/communities/:id/posts", &["POST"]),
-    ("/v1/communities/:id/posts/:postId", &["DELETE"]),
-    ("/v1/communities/:id/posts/:postId/like", &["POST"]),
-    ("/v1/communities/:id/posts/:postId/like", &["DELETE"]),
-    ("/v1/referral-progress", &["POST"]),
-    ("/v1/referral-progress", &["PATCH"]),
-    ("/v1/referral-progress", &["HEAD", "GET"]),
-    ("/v1/referral-email", &["POST"]),
-    ("/v1/communities/:id/requests", &["POST"]),
-    ("/v1/communities/:id/requests/:requestId", &["PATCH"]),
-    ("/v1/social-settings", &["HEAD", "GET"]),
-    ("/v1/social-settings", &["PATCH"]),
-    ("/v1/private-messages-settings", &["HEAD", "GET"]),
-    ("/v1/mutes", &["HEAD", "GET"]),
-    ("/v1/mutes", &["POST"]),
-    ("/v1/mutes", &["DELETE"]),
-    ("/v1/friends/:address", &["DELETE"]),
-    ("/v1/users/:address/friendship-status", &["HEAD", "GET"]),
-    ("/v1/friendship-requests", &["POST"]),
-    ("/v1/friendship-requests/:address", &["PATCH"]),
-    ("/v1/blocks", &["POST"]),
-    ("/v1/blocks/:address", &["DELETE"]),
-    ("/v1/blocking-status", &["HEAD", "GET"]),
-    ("/v1/community-voice-chats/active", &["HEAD", "GET"]),
-    ("/v1/private-voice-chats", &["POST"]),
-    ("/v1/private-voice-chats/incoming", &["HEAD", "GET"]),
-    ("/v1/private-voice-chats/:callId", &["PATCH"]),
-    ("/v1/private-voice-chats/:callId", &["DELETE"]),
-    ("/v1/community-voice-chats", &["POST"]),
-    ("/v1/community-voice-chats/:communityId", &["DELETE"]),
-    (
-        "/v1/community-voice-chats/:communityId/participants",
-        &["POST"],
-    ),
-    (
-        "/v1/community-voice-chats/:communityId/participants/:address",
-        &["DELETE"],
-    ),
-    (
-        "/v1/community-voice-chats/:communityId/speakers/:address",
-        &["PUT"],
-    ),
-    (
-        "/v1/community-voice-chats/:communityId/speakers/:address",
-        &["PATCH"],
-    ),
-    (
-        "/v1/community-voice-chats/:communityId/speakers/:address",
-        &["DELETE"],
-    ),
-    (
-        "/v1/community-voice-chats/:communityId/speak-requests",
-        &["POST"],
-    ),
-    (
-        "/v1/community-voice-chats/:communityId/speak-requests/:address",
-        &["DELETE"],
-    ),
-    ("/v1/moderation/communities", &["HEAD", "GET"]),
-    ("/v2/communities/:id", &["HEAD", "GET"]),
-    ("/v2/communities", &["HEAD", "GET"]),
-    ("/v2/communities/:id/members", &["HEAD", "GET"]),
-    ("/v2/communities/:id/bans", &["HEAD", "GET"]),
-    ("/v2/members/:address/requests", &["HEAD", "GET"]),
-    ("/v2/communities/:id/requests", &["HEAD", "GET"]),
-    ("/v2/communities/:id/posts", &["HEAD", "GET"]),
-    ("/v2/friends", &["HEAD", "GET"]),
-    ("/v2/users/:address/mutual-friends", &["HEAD", "GET"]),
-    ("/v2/friendship-requests", &["HEAD", "GET"]),
-    ("/v2/blocks", &["HEAD", "GET"]),
-];
-
-fn source_http_route(path: &str, method: &str) -> Option<&'static str> {
-    let parts = path.trim_end_matches('/').split('/').collect::<Vec<_>>();
-    SOURCE_HTTP_ROUTES
-        .iter()
-        .rev()
-        .find_map(|(pattern, methods)| {
-            let pattern_parts = pattern.split('/').collect::<Vec<_>>();
-            (methods.contains(&method)
-                && parts.len() == pattern_parts.len()
-                && parts.iter().zip(pattern_parts).all(|(part, expected)| {
-                    expected.starts_with(':') || part.eq_ignore_ascii_case(expected)
-                }))
-            .then_some(*pattern)
-        })
-}
-
-/// Source ordinary HTTP middleware, scoped to the Social API composition.
-/// CORS and declared-size rejection run outside this observer. uWS has its own
-/// lower-case method labels and never observes the request-size family.
-pub(crate) async fn instrument_metrics(
-    request: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> Response {
-    let method = request.method().as_str().to_owned();
-    let path = request
-        .uri()
-        .path()
-        .strip_prefix("/social-api")
-        .unwrap_or(request.uri().path());
-    if matches!(method.as_str(), "OPTIONS" | "TRACE" | "TRACK") || path.starts_with("/federation/")
-    {
-        return next.run(request).await;
-    }
-    let handler = source_http_route(path, &method);
-    let size = request
-        .headers()
-        .get(axum::http::header::CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<f64>().ok())
-        .filter(|value| !value.is_nan())
-        .unwrap_or(0.0);
-    let started = std::time::Instant::now();
-    let response = next.run(request).await;
-    if response
-        .extensions()
-        .get::<crate::communities::fed::NativeEnvelopeResponse>()
-        .is_some()
-    {
-        return response;
-    }
-    let code = response.status();
-    let fallback = response
-        .extensions()
-        .get::<crate::communities::http::SocialApiNotFound>()
-        .is_some();
-    if handler.is_some()
-        || fallback
-        || matches!(
-            code,
-            StatusCode::METHOD_NOT_ALLOWED | StatusCode::NOT_IMPLEMENTED
-        )
-    {
-        let handler = if matches!(
-            code,
-            StatusCode::METHOD_NOT_ALLOWED | StatusCode::NOT_IMPLEMENTED
-        ) {
-            ""
-        } else {
-            handler.unwrap_or("")
-        };
-        metrics::histogram!("http_request_size_bytes", "method" => super::metrics::http_method_label(&method), "handler" => handler, "code" => code.as_u16().to_string()).record(size);
-        super::metrics::http_finished(method, handler, code.as_u16(), started);
-    }
-    response
-}
 
 /// The routes, with the social-api CORS answer; `social::router` mounts them
 /// at the root and under `/social-api`, behind the writes switch.
@@ -360,30 +183,12 @@ fn path_uuid(raw: &str, name: &str) -> Result<(), CommError> {
 }
 
 /// One body property's schema (the AJV schemas of `handlers/http/schemas.ts`).
-pub(crate) enum Kind {
+enum Kind {
     Address,
-    Email,
     Uuid,
     OneOf(&'static [&'static str]),
-    Text {
-        max: usize,
-    },
-    TextRange {
-        min: usize,
-        max: usize,
-        non_whitespace: bool,
-    },
-    Strings {
-        min: usize,
-        max: usize,
-        element_max: usize,
-        uuid: bool,
-    },
+    Text { max: usize },
     Bool,
-}
-
-pub(crate) fn js_whitespace(character: char) -> bool {
-    character != '\u{0085}' && (character.is_whitespace() || character == '\u{FEFF}')
 }
 
 /// Upstream `UUID_PATTERN` (`src/utils/uuid.ts`).
@@ -416,50 +221,12 @@ fn schema_refusal(message: String, error: Option<Value>) -> CommError {
     CommError::Body(StatusCode::BAD_REQUEST, body)
 }
 
-/// AJV visits object properties in JavaScript order. Keep that order when
-/// selecting the first unknown field even though Value uses a sorted map.
-fn input_keys(bytes: &[u8]) -> Vec<String> {
-    struct Keys;
-    impl<'de> serde::de::Visitor<'de> for Keys {
-        type Value = Vec<String>;
-        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
-            formatter.write_str("an object")
-        }
-        fn visit_map<A: serde::de::MapAccess<'de>>(
-            self,
-            mut map: A,
-        ) -> Result<Self::Value, A::Error> {
-            let mut keys = Vec::new();
-            while let Some(key) = map.next_key::<String>()? {
-                map.next_value::<serde::de::IgnoredAny>()?;
-                if !keys.contains(&key) {
-                    keys.push(key);
-                }
-            }
-            let index = |key: &str| {
-                key.parse::<u32>()
-                    .ok()
-                    .filter(|n| *n < u32::MAX && n.to_string() == key)
-            };
-            keys.sort_by(|left, right| match (index(left), index(right)) {
-                (Some(a), Some(b)) => a.cmp(&b),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                _ => std::cmp::Ordering::Equal,
-            });
-            Ok(keys)
-        }
-    }
-    serde::Deserializer::deserialize_map(&mut serde_json::Deserializer::from_slice(bytes), Keys)
-        .unwrap_or_default()
-}
-
 /// A JSON object body checked against upstream's schema as AJV checks it
 /// (one error, the first in AJV's order: the type, `minProperties`,
 /// `required`, `additionalProperties` in the body's order, then each
 /// property in the schema's order: its type, then its pattern, enum or
 /// length). The refusal is the schema validator's 400.
-pub(crate) fn body(
+fn body(
     bytes: &[u8],
     properties: &[(&str, Kind)],
     required: &[&str],
@@ -505,8 +272,8 @@ pub(crate) fn body(
             format!("must have required property '{name}'"),
         ));
     }
-    if let Some(name) = input_keys(bytes)
-        .iter()
+    if let Some(name) = object
+        .keys()
         .find(|name| !properties.iter().any(|(p, _)| p == name))
     {
         return Err(invalid(
@@ -529,62 +296,6 @@ pub(crate) fn body(
                 format!("must be {expected}"),
             )
         };
-        if let Kind::Strings {
-            min,
-            max,
-            element_max,
-            uuid,
-        } = kind
-        {
-            let Value::Array(items) = value else {
-                return Err(wrong_type("array"));
-            };
-            for (keyword, limit, fails, message) in [
-                (
-                    "maxItems",
-                    *max,
-                    items.len() > *max,
-                    format!("must NOT have more than {max} items"),
-                ),
-                (
-                    "minItems",
-                    *min,
-                    items.len() < *min,
-                    format!("must NOT have fewer than {min} items"),
-                ),
-            ] {
-                if fails {
-                    return Err(invalid(field, keyword, json!({ "limit": limit }), message));
-                }
-            }
-            for (index, item) in items.iter().enumerate() {
-                let violation = match item.as_str() {
-                    None => Some((
-                        "type",
-                        json!({ "type": "string" }),
-                        "must be string".to_string(),
-                    )),
-                    Some(text) if text.chars().count() > *element_max => Some((
-                        "maxLength",
-                        json!({ "limit": element_max }),
-                        format!("must NOT have more than {element_max} characters"),
-                    )),
-                    Some(text) if *uuid && !is_uuid(text) => Some((
-                        "pattern",
-                        json!({ "pattern": UUID_PATTERN }),
-                        format!("must match pattern \"{UUID_PATTERN}\""),
-                    )),
-                    _ => None,
-                };
-                if let Some((keyword, params, message)) = violation {
-                    let mut error = ajv_error(field, keyword, params, message);
-                    error["instancePath"] = json!(format!("/{name}/{index}"));
-                    error["schemaPath"] = json!(format!("#/properties/{name}/items/{keyword}"));
-                    return Err(schema_refusal("Invalid JSON body".into(), Some(error)));
-                }
-            }
-            continue;
-        }
         let text = match (kind, value) {
             (Kind::Bool, Value::Bool(_)) => continue,
             (Kind::Bool, _) => return Err(wrong_type("boolean")),
@@ -600,24 +311,6 @@ pub(crate) fn body(
             )
         };
         match kind {
-            Kind::Email => {
-                if text.is_empty() {
-                    return Err(invalid(
-                        field,
-                        "minLength",
-                        json!({"limit":1}),
-                        "must NOT have fewer than 1 characters".into(),
-                    ));
-                }
-                if !schema_email(text) {
-                    return Err(invalid(
-                        field,
-                        "format",
-                        json!({"format":"email"}),
-                        "must match format \"email\"".into(),
-                    ));
-                }
-            }
             Kind::Address if !crate::auth::is_eth_address(text) => {
                 return Err(pattern(ADDRESS_PATTERN));
             }
@@ -639,58 +332,13 @@ pub(crate) fn body(
                     format!("must NOT have more than {max} characters"),
                 ));
             }
-            Kind::TextRange {
-                min,
-                max,
-                non_whitespace,
-            } => {
-                if text.chars().count() > *max {
-                    return Err(invalid(
-                        field,
-                        "maxLength",
-                        json!({ "limit": max }),
-                        format!("must NOT have more than {max} characters"),
-                    ));
-                }
-                if text.chars().count() < *min {
-                    return Err(invalid(
-                        field,
-                        "minLength",
-                        json!({ "limit": min }),
-                        format!("must NOT have fewer than {min} characters"),
-                    ));
-                }
-                if *non_whitespace && text.starts_with(js_whitespace) {
-                    return Err(pattern("^\\S"));
-                }
-            }
             _ => {}
         }
     }
     Ok(object)
 }
 
-// ajv-formats default/full email regexp used by the source schema middleware.
-fn schema_email(text: &str) -> bool {
-    let Some((local, domain)) = text.split_once('@') else {
-        return false;
-    };
-    let atom = |part: &str| {
-        !part.is_empty()
-            && part
-                .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+/=?^_`{|}~-".contains(&c))
-    };
-    let label = |part: &str| {
-        !part.is_empty()
-            && part.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
-            && part.as_bytes()[0].is_ascii_alphanumeric()
-            && part.as_bytes()[part.len() - 1].is_ascii_alphanumeric()
-    };
-    local.split('.').all(atom) && domain.contains('.') && domain.split('.').all(label)
-}
-
-pub(crate) fn text<'a>(object: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
+fn text<'a>(object: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
     object.get(name).and_then(Value::as_str)
 }
 
@@ -816,11 +464,10 @@ async fn create_friendship_request(
     AxumState(state): AxumState<Shared>,
     headers: HeaderMap,
     original: OriginalUri,
-    bytes: DeferredBody,
+    bytes: Bytes,
 ) -> Answer {
     let local = "/v1/friendship-requests".to_string();
     let me = signer(&state, &headers, &original, "post", local).await?;
-    let bytes = bytes.schema().await?;
     let object = body(
         &bytes,
         &[
@@ -857,11 +504,10 @@ async fn update_friendship_request(
     headers: HeaderMap,
     original: OriginalUri,
     Path(address): Path<String>,
-    bytes: DeferredBody,
+    bytes: Bytes,
 ) -> Answer {
     let local = format!("/v1/friendship-requests/{address}");
     let me = signer(&state, &headers, &original, "patch", local).await?;
-    let bytes = bytes.schema().await?;
     let object = body(
         &bytes,
         &[(
@@ -941,10 +587,9 @@ async fn block_user(
     AxumState(state): AxumState<Shared>,
     headers: HeaderMap,
     original: OriginalUri,
-    bytes: DeferredBody,
+    bytes: Bytes,
 ) -> Answer {
     let me = signer(&state, &headers, &original, "post", "/v1/blocks".into()).await?;
-    let bytes = bytes.schema().await?;
     let object = body(&bytes, &[("address", Kind::Address)], &["address"], 0)?;
     let other = text(&object, "address").unwrap_or_default().to_lowercase();
     if other == me {
@@ -1030,11 +675,10 @@ async fn update_social_settings(
     AxumState(state): AxumState<Shared>,
     headers: HeaderMap,
     original: OriginalUri,
-    bytes: DeferredBody,
+    bytes: Bytes,
 ) -> Answer {
     let local = "/v1/social-settings".to_string();
     let me = signer(&state, &headers, &original, "patch", local).await?;
-    let bytes = bytes.schema().await?;
     let object = body(
         &bytes,
         &[
@@ -1106,11 +750,10 @@ async fn start_private_voice_chat(
     AxumState(state): AxumState<Shared>,
     headers: HeaderMap,
     original: OriginalUri,
-    bytes: DeferredBody,
+    bytes: Bytes,
 ) -> Answer {
     let local = "/v1/private-voice-chats".to_string();
     let me = signer(&state, &headers, &original, "post", local).await?;
-    let bytes = bytes.schema().await?;
     let object = body(
         &bytes,
         &[("calleeAddress", Kind::Address)],
@@ -1154,11 +797,10 @@ async fn update_private_voice_chat(
     headers: HeaderMap,
     original: OriginalUri,
     Path(call_id): Path<String>,
-    bytes: DeferredBody,
+    bytes: Bytes,
 ) -> Answer {
     let local = format!("/v1/private-voice-chats/{call_id}");
     let me = signer(&state, &headers, &original, "patch", local).await?;
-    let bytes = bytes.schema().await?;
     let object = body(
         &bytes,
         &[("intention", Kind::OneOf(&["accepted", "rejected"]))],
@@ -1168,12 +810,12 @@ async fn update_private_voice_chat(
     path_uuid(&call_id, "callId")?;
     let id = uuid::Uuid::parse_str(&call_id).map_err(failed)?;
     if text(&object, "intention") == Some("rejected") {
-        ops::reject_private_voice_chat_with_id(&state.ctx, &me, id, &call_id)
+        ops::reject_private_voice_chat(&state.ctx, &me, id)
             .await
             .map_err(refused)?;
         return no_content();
     }
-    let connection_url = ops::accept_private_voice_chat_with_id(&state.ctx, &me, id, &call_id)
+    let connection_url = ops::accept_private_voice_chat(&state.ctx, &me, id)
         .await
         .map_err(refused)?;
     data(
@@ -1192,7 +834,7 @@ async fn end_private_voice_chat(
     let me = signer(&state, &headers, &original, "delete", local).await?;
     path_uuid(&call_id, "callId")?;
     let id = uuid::Uuid::parse_str(&call_id).map_err(failed)?;
-    ops::end_private_voice_chat_with_id(&state.ctx, &me, id, &call_id)
+    ops::end_private_voice_chat(&state.ctx, &me, id)
         .await
         .map_err(refused)?;
     no_content()
@@ -1204,14 +846,13 @@ async fn start_community_voice_chat(
     AxumState(state): AxumState<Shared>,
     headers: HeaderMap,
     original: OriginalUri,
-    bytes: DeferredBody,
+    bytes: Bytes,
 ) -> Answer {
     let local = "/v1/community-voice-chats".to_string();
     let me = signer(&state, &headers, &original, "post", local).await?;
-    let bytes = bytes.schema().await?;
     let object = body(&bytes, &[("communityId", Kind::Uuid)], &["communityId"], 0)?;
     let community_id = text(&object, "communityId").unwrap_or_default();
-    let connection_url = ops::start_community_voice_chat(&state.ctx, &me, community_id, false)
+    let connection_url = ops::start_community_voice_chat(&state.ctx, &me, community_id)
         .await
         .map_err(refused)?;
     data(
@@ -1244,7 +885,7 @@ async fn join_community_voice_chat(
     let local = format!("/v1/community-voice-chats/{community_id}/participants");
     let me = signer(&state, &headers, &original, "post", local).await?;
     path_uuid(&community_id, "communityId")?;
-    let connection_url = ops::join_community_voice_chat(&state.ctx, &me, &community_id, false)
+    let connection_url = ops::join_community_voice_chat(&state.ctx, &me, &community_id)
         .await
         .map_err(refused)?;
     data(
@@ -1316,11 +957,10 @@ async fn mute_speaker(
     headers: HeaderMap,
     original: OriginalUri,
     Path(path): Path<(String, String)>,
-    bytes: DeferredBody,
+    bytes: Bytes,
 ) -> Answer {
     let local = format!("/v1/community-voice-chats/{}/speakers/{}", path.0, path.1);
     let me = signer(&state, &headers, &original, "patch", local).await?;
-    let bytes = bytes.schema().await?;
     let object = body(&bytes, &[("muted", Kind::Bool)], &["muted"], 0)?;
     path_uuid(&path.0, "communityId")?;
     let target = path_address(&path.1)?;
@@ -1377,16 +1017,6 @@ async fn remove_speak_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn metrics_handler_catalog_matches_actual_pinned_source_router() {
-        let fixture: Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"), "/services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json"))).unwrap();
-        let actual = SOURCE_HTTP_ROUTES
-            .iter()
-            .map(|(path, methods)| json!({ "path": path, "methods": methods }))
-            .collect::<Vec<_>>();
-        assert_eq!(actual, fixture["httpRoutes"].as_array().unwrap().to_owned());
-    }
 
     #[test]
     fn uuids_are_upstreams_hyphenated_form() {

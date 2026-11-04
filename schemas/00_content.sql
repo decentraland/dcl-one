@@ -1,4 +1,4 @@
--- Catalyst schema version 3: meta (schema identity/version, database defaults) and the
+-- Catalyst v2: meta (schema identity/version, database defaults) and the
 -- content domain (entities, pointers, files, peer-sync state, local authority).
 --
 -- Derived from catalyrst/crates/catalyrst-server/migrations/0001..0007 as the
@@ -40,7 +40,7 @@ CREATE TABLE meta.schema (
     applied_at timestamp without time zone NOT NULL
 );
 INSERT INTO meta.schema (id, identity, version, applied_at)
-VALUES (1, 'catalyst', 3, timezone('UTC', now()));
+VALUES (1, 'catalyst', 2, timezone('UTC', now()));
 
 -- The additive steps of schema/migrations/ this database has taken (or, for
 -- a database created by `schema apply`, carries from birth: created_fresh),

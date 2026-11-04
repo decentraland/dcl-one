@@ -99,7 +99,7 @@ impl Seed<'_> {
             .as_ref()
             .unwrap()["data"];
         self.clear().await;
-        self.rig.state.profiles.clear().await;
+        self.rig.state.profiles.clear();
         self.community_row(
             COMMUNITY,
             data["name"].as_str().unwrap(),
@@ -147,8 +147,8 @@ impl Seed<'_> {
         color: Option<&Value>,
     ) {
         let mut avatar = json!({
-            "userId": address, "name": name, "hasClaimedName": claimed,
-            "avatar": { "snapshots": { "face256": picture } }
+            "name": name, "hasClaimedName": claimed,
+            "avatar": { "snapshots": { "face256": "bafkface" } }
         });
         if let Some(color) = color {
             avatar["nameColor"] = color.clone();
@@ -164,8 +164,6 @@ impl Seed<'_> {
         .execute(&self.rig.pool)
         .await
         .unwrap();
-        sqlx::query("INSERT INTO content.active_pointers(pointer,entity_id,entity_type) VALUES($1,$2,'profile') ON CONFLICT(pointer) DO UPDATE SET entity_id=EXCLUDED.entity_id")
-            .bind(address).bind(entity_of(picture)).execute(&self.rig.pool).await.unwrap();
     }
 
     /// A member row of a members capture and its profile.
@@ -328,7 +326,7 @@ fn fields(prefix: &str, kind: &str, names: &[&str]) -> Vec<String> {
 /// records as social-api extensions ("social-api recorded extensions"), each
 /// with the consumer that reads it.
 fn pinned() -> BTreeMap<&'static str, Vec<String>> {
-    let page = Vec::new();
+    let page = fields("data.", "extra", &["isLive"]);
     let posts = fields("data.posts[].", "extra", &["isLikedByUser"]);
     BTreeMap::from([
         ("community-by-id", page.clone()),
@@ -338,7 +336,10 @@ fn pinned() -> BTreeMap<&'static str, Vec<String>> {
         ("community-v2-members", Vec::new()),
         ("community-posts", posts.clone()),
         ("community-posts-v2", posts),
-        ("community-places", Vec::new()),
+        (
+            "community-places",
+            fields("data.results[].", "extra", &["addedAt", "addedBy"]),
+        ),
         ("member-communities", Vec::new()),
     ])
 }

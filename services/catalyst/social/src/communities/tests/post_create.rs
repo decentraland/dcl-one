@@ -39,7 +39,6 @@ async fn a_retried_publish_with_the_same_key_stores_one_post() {
     let (owner, moderator) = (wallet(), wallet());
     let community = rig.community(&owner, false).await;
     rig.member(community, &moderator, "moderator").await;
-    rig.profile(&moderator, "Moderator", false).await;
 
     let (status, first) = publish(&rig, community, &owner, Some("draft-1"), "Hello").await;
     assert_eq!(status, StatusCode::CREATED, "{first}");

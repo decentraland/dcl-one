@@ -120,7 +120,7 @@ impl From<crate::comms::gatekeeper::voice::rooms::VoiceUnavailable> for SocialEr
 }
 
 pub(crate) fn normalize(addr: &str) -> String {
-    addr.to_lowercase()
+    addr.trim().to_lowercase()
 }
 
 /// Mirrors upstream `normalizePagination(bounds)`. A missing, zero or negative
@@ -200,12 +200,12 @@ pub(super) fn upsert_internal_error(msg: impl Into<String>) -> UpsertFriendshipR
     }
 }
 
-/// Upstream's application error oneofs preserve the caught error's message.
+/// The detail is logged, never sent: the wire says "internal error".
 pub(super) fn internal_err(msg: impl Into<String>) -> InternalServerError {
     let detail = msg.into();
     tracing::error!(detail = %detail, "social-rpc internal error");
     InternalServerError {
-        message: Some(detail),
+        message: Some("internal error".to_string()),
     }
 }
 
@@ -264,7 +264,7 @@ where
     F: Fn(&SocialEvent) -> Option<T> + Send + 'static,
 {
     let (generator, yielder) = Generator::create();
-    let mut rx = pubsub.subscribe_updates::<T>(address);
+    let mut rx = pubsub.subscribe(address);
     tokio::spawn(async move {
         loop {
             let event = tokio::select! {

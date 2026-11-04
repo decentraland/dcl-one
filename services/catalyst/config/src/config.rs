@@ -167,7 +167,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 74] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 62] {
         [
             (
                 "CATALYRST_CONTENT_ADMIN_TOKEN",
@@ -175,15 +175,6 @@ impl Config {
             ),
             ("LIVEKIT_API_KEY", &mut self.social.livekit_api_key),
             ("LIVEKIT_API_SECRET", &mut self.social.livekit_api_secret),
-            ("SLACK_BOT_TOKEN", &mut self.social.referral_slack_token),
-            (
-                "ANALYTICS_API_TOKEN",
-                &mut self.social.social_analytics_api_token,
-            ),
-            (
-                "OPEN_AI_API_KEY",
-                &mut self.social.community_compliance_api_key,
-            ),
             (
                 "COMMUNITIES_ADMIN_TOKEN",
                 &mut self.social.communities_admin_token,
@@ -191,10 +182,6 @@ impl Config {
             (
                 "CATALYRST_SOCIAL_RPC_ADMIN_TOKEN",
                 &mut self.social.catalyrst_social_rpc_admin_token,
-            ),
-            (
-                "WKC_METRICS_BEARER_TOKEN",
-                &mut self.social.wkc_metrics_bearer_token,
             ),
             ("MODERATOR_TOKEN", &mut self.social.moderator_token),
             (
@@ -211,38 +198,6 @@ impl Config {
             ),
             ("SENDGRID_API_KEY", &mut self.social.sendgrid_api_key),
             ("SLACK_WEBHOOK", &mut self.explore.events_slack_webhook),
-            (
-                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_5",
-                &mut self.social.rewards_api_key_by_referral_invited_users_5,
-            ),
-            (
-                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_10",
-                &mut self.social.rewards_api_key_by_referral_invited_users_10,
-            ),
-            (
-                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_20",
-                &mut self.social.rewards_api_key_by_referral_invited_users_20,
-            ),
-            (
-                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_25",
-                &mut self.social.rewards_api_key_by_referral_invited_users_25,
-            ),
-            (
-                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_30",
-                &mut self.social.rewards_api_key_by_referral_invited_users_30,
-            ),
-            (
-                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_50",
-                &mut self.social.rewards_api_key_by_referral_invited_users_50,
-            ),
-            (
-                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_60",
-                &mut self.social.rewards_api_key_by_referral_invited_users_60,
-            ),
-            (
-                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_75",
-                &mut self.social.rewards_api_key_by_referral_invited_users_75,
-            ),
             (
                 "TURNSTILE_SECRET_KEY",
                 &mut self.social.turnstile_secret_key,
@@ -654,49 +609,6 @@ mod tests {
     /// slot (read from `<NAME>_FILE`, refused on argv). `DATABASE_URL` is the
     /// one hidden non-slot: a required peer-auth DSN `schema apply` and the
     /// tests pass on the command line.
-    #[test]
-    fn analytics_token_file_resolves_without_exposing_the_secret() {
-        const CHILD: &str = "CATALYST_TEST_ANALYTICS_FILE_CHILD";
-        if std::env::var_os(CHILD).is_some() {
-            let mut config = parse(&["catalyst", "--database-url", "postgres://x/y"]).unwrap();
-            config.resolve_secret_files().unwrap();
-            assert_eq!(
-                config.social.social_analytics_api_token.as_deref(),
-                Some("analytics-fixture-secret")
-            );
-            assert!(!format!("{config:?}").contains("analytics-fixture-secret"));
-            config.social.social_analytics_api_token = Some("inline".into());
-            let error = config.resolve_secret_files().unwrap_err().to_string();
-            assert!(
-                error.contains("ANALYTICS_API_TOKEN")
-                    && error.contains("both set")
-                    && !error.contains("analytics-fixture-secret")
-            );
-            return;
-        }
-        let file =
-            std::env::temp_dir().join(format!("catalyst-analytics-token-{}", uuid::Uuid::new_v4()));
-        std::fs::write(&file, "  analytics-fixture-secret\n").unwrap();
-        let result = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "config::tests::analytics_token_file_resolves_without_exposing_the_secret",
-                "--nocapture",
-            ])
-            .env_clear()
-            .env(CHILD, "1")
-            .env("ANALYTICS_API_TOKEN_FILE", &file)
-            .output()
-            .unwrap();
-        std::fs::remove_file(file).unwrap();
-        assert!(
-            result.status.success(),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
-        );
-        assert!(String::from_utf8_lossy(&result.stdout).contains("1 passed"));
-    }
-
     #[test]
     fn every_hidden_value_is_a_secret_slot_and_every_slot_hides_its_value() {
         let (mut config, _) =

@@ -17,8 +17,6 @@
 //! EIP-1654 (contract wallet) SIGNER links verify through the validator the
 //! caller passes; with `None` they fail closed.
 
-mod number;
-
 use std::sync::Arc;
 
 use axum::http::HeaderMap;
@@ -27,8 +25,8 @@ use thiserror::Error;
 
 use crate::auth::eip1654::Eip1654Validator;
 use crate::auth::signed_fetch::{
-    ChainShapeError, LegacyPayload, SignatureRefusal, SignedRequest, UnsignedLinks,
-    extract_auth_chain_with, verify_signature,
+    ChainShapeError, LegacyPayload, SignatureRefusal, SignedRequest, SkewError, UnsignedLinks,
+    check_symmetric_skew, extract_auth_chain_with, verify_signature,
 };
 use crate::auth::{AuthChain, AuthError, MAX_AUTH_CHAIN_LINKS};
 use crate::identity::Address;
@@ -203,9 +201,12 @@ fn map_auth_error(err: AuthError) -> HandshakeError {
     }
 }
 
-/// Candidates for callers that choose proxy/mount alias compatibility. The first
-/// verifying path settles it; only an invalid signature tries the next one.
-/// Social uses its fixed source protocol paths instead of this opt-in helper.
+/// The paths the frame may be signed over, in the order they are tried: the
+/// first path that verifies settles it, and only an invalid-signature verdict
+/// tries the next one. Upstream verifies `/` (the explorer connects to the
+/// service's root); the old gateway forwarded the stripped public path as
+/// `x-original-path`, and this node serves the socket under `/social-rpc`,
+/// so a signature over any of the three is the same authority.
 pub fn candidate_paths(headers: &HeaderMap, route: &str) -> Vec<String> {
     let mut paths = vec![handshake_path(headers, "/")];
     if !paths.contains(&route.to_string()) {
@@ -224,92 +225,25 @@ pub async fn verify_handshake(
     now_secs: i64,
     validator: Option<&dyn Eip1654Validator>,
 ) -> Result<Address, HandshakeError> {
-    verify_handshake_ms(
-        frame_json,
-        method,
-        paths,
-        expiration_secs.saturating_mul(1000),
-        now_secs.saturating_mul(1000),
-        validator,
-    )
-    .await
-}
-
-/// The source socket settings use independent millisecond signature expiry.
-pub async fn verify_handshake_ms(
-    frame_json: &str,
-    method: &str,
-    paths: &[String],
-    expiration_ms: i64,
-    now_ms: i64,
-    validator: Option<&dyn Eip1654Validator>,
-) -> Result<Address, HandshakeError> {
-    verify_handshake_inner(
-        frame_json,
-        method,
-        paths,
-        expiration_ms as f64,
-        now_ms,
-        validator,
-        false,
-    )
-    .await
-}
-/// Social's source uses JavaScript Number for timestamps and a numeric
-/// millisecond expiry. Existing integer callers retain their header syntax.
-pub async fn verify_handshake_number_ms(
-    frame_json: &str,
-    method: &str,
-    paths: &[String],
-    expiration_ms: f64,
-    now_ms: i64,
-    validator: Option<&dyn Eip1654Validator>,
-) -> Result<Address, HandshakeError> {
-    verify_handshake_inner(
-        frame_json,
-        method,
-        paths,
-        expiration_ms,
-        now_ms,
-        validator,
-        true,
-    )
-    .await
-}
-async fn verify_handshake_inner(
-    frame_json: &str,
-    method: &str,
-    paths: &[String],
-    expiration_ms: f64,
-    now_ms: i64,
-    validator: Option<&dyn Eip1654Validator>,
-    number_timestamp: bool,
-) -> Result<Address, HandshakeError> {
-    let now_secs = now_ms / 1000;
     let obj = frame_object(frame_json)?;
     let chain = extract_from_object(&obj)?;
-    let timestamp = if number_timestamp {
-        obj_str(&obj, AUTH_TIMESTAMP_HEADER).unwrap_or("")
-    } else {
-        obj_str(&obj, AUTH_TIMESTAMP_HEADER)
-            .ok_or(HandshakeError::MissingHeader(AUTH_TIMESTAMP_HEADER))?
-    };
-    let signed_ms = if number_timestamp {
-        number::timestamp(timestamp)
-    } else {
-        timestamp.parse::<i64>().ok().map(|value| value as f64)
-    }
-    .ok_or_else(|| HandshakeError::MalformedChain {
-        index: 0,
-        detail: format!("invalid timestamp: {}", truncate_detail(timestamp)),
+    let timestamp = obj_str(&obj, AUTH_TIMESTAMP_HEADER)
+        .ok_or(HandshakeError::MissingHeader(AUTH_TIMESTAMP_HEADER))?;
+    check_symmetric_skew(timestamp, now_secs, expiration_secs).map_err(|e| match e {
+        SkewError::InvalidTimestamp(timestamp) => HandshakeError::MalformedChain {
+            index: 0,
+            detail: format!("invalid timestamp: {}", truncate_detail(&timestamp)),
+        },
+        SkewError::Expired {
+            signed_at,
+            now,
+            window_secs,
+        } => HandshakeError::Expired {
+            signed_at,
+            now,
+            window_secs,
+        },
     })?;
-    if signed_ms + expiration_ms < now_ms as f64 || signed_ms > now_ms as f64 + expiration_ms {
-        return Err(HandshakeError::Expired {
-            signed_at: (signed_ms / 1000.0) as i64,
-            now: now_secs,
-            window_secs: (expiration_ms / 1000.0) as i64,
-        });
-    }
     // An absent metadata reads as `{}` and is signed as nothing: `createPayload`
     // joins `undefined` as empty, so the payload ends with `:` (`dist/verify.js:173`, `:218`).
     let metadata_raw = obj_str(&obj, AUTH_METADATA_HEADER);
@@ -466,78 +400,6 @@ pub mod test_support {
 #[cfg(test)]
 mod tests {
     use super::test_support::*;
-    #[tokio::test]
-    async fn millisecond_signature_window_keeps_its_exact_boundary() {
-        let now = 1_800_000_000_555i64;
-        let (_, frame) = frame("/", now - 17).await;
-        let paths = vec!["/".to_string()];
-        assert!(
-            super::verify_handshake_ms(&frame, "get", &paths, 17, now, None)
-                .await
-                .is_ok()
-        );
-        assert!(matches!(
-            super::verify_handshake_ms(&frame, "get", &paths, 16, now, None).await,
-            Err(super::HandshakeError::Expired { .. })
-        ));
-    }
-    #[tokio::test]
-    async fn social_numeric_timestamps_and_expiry_match_executed_source_without_rewriting_signed_bytes()
-     {
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
-            env!("DCL_ONE_ROOT"),
-            "/services/catalyst/tests/fixtures/conformance/social/ws-numbers-source-cases.json"
-        )))
-        .unwrap();
-        let now = fixture["now"].as_i64().unwrap();
-        let paths = vec!["/".to_string()];
-        for case in fixture["timestamps"].as_array().unwrap() {
-            let raw = case["raw"].as_str();
-            let text = raw.unwrap_or("");
-            let payload = crate::signed_fetch::build_payload_v6("get", "/", text, "{}");
-            let (_, frame) = frame_with(&ROOT_WALLET, now, &payload, "{}").await;
-            let mut frame: serde_json::Value = serde_json::from_str(&frame).unwrap();
-            if let Some(raw) = raw {
-                frame[super::AUTH_TIMESTAMP_HEADER] = serde_json::Value::String(raw.into());
-            } else {
-                frame
-                    .as_object_mut()
-                    .unwrap()
-                    .remove(super::AUTH_TIMESTAMP_HEADER);
-            }
-            let window = case["window"]
-                .as_f64()
-                .unwrap_or_else(|| case["window"].as_str().unwrap().parse().unwrap());
-            let result = super::verify_handshake_number_ms(
-                &frame.to_string(),
-                "get",
-                &paths,
-                window,
-                now,
-                None,
-            )
-            .await;
-            assert_eq!(
-                result.is_ok(),
-                case["accepted"].as_bool().unwrap(),
-                "{} {:?}",
-                case,
-                result
-            );
-            if let Some(expected) = case["parsed"].as_f64() {
-                assert_eq!(super::number::timestamp(text), Some(expected));
-            }
-        }
-        let (_, frame) = frame("/", now).await;
-        let mut frame: serde_json::Value = serde_json::from_str(&frame).unwrap();
-        frame[super::AUTH_TIMESTAMP_HEADER] = serde_json::Value::String(format!("0x{now:x}"));
-        assert!(
-            super::verify_handshake_number_ms(&frame.to_string(), "get", &paths, 1.0, now, None)
-                .await
-                .is_err(),
-            "a differently signed timestamp cannot authenticate just because its numeric value matches"
-        );
-    }
     use super::*;
     use crate::signed_fetch::{FIVE_MINUTES, SCENE_SIGNER, build_payload_v6};
     use axum::http::HeaderValue;

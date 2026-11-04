@@ -546,7 +546,7 @@ impl AdmittedPeer {
 fn peer_client_cfg() -> HttpClientCfg {
     HttpClientCfg {
         total_timeout: Some(Duration::from_secs(30)),
-        connect_timeout: Some(Duration::from_secs(10)),
+        connect_timeout: Duration::from_secs(10),
         max_redirects: None,
         ..HttpClientCfg::default()
     }

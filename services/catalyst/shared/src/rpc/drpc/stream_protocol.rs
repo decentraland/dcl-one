@@ -234,7 +234,7 @@ enum Sender<M> {
 }
 pub struct Generator<M> {
     receiver: Receiver<M>,
-    policy: Option<(usize, std::time::Duration, usize)>,
+    policy: Option<(usize, std::time::Duration)>,
 }
 
 impl<M: Send + Sync + 'static> Generator<M> {
@@ -244,21 +244,10 @@ impl<M: Send + Sync + 'static> Generator<M> {
 
     /// Bounded staging at every mapping hop, plus a total transport send/ACK deadline.
     pub fn bounded(capacity: usize, deadline: std::time::Duration) -> (Self, GeneratorYielder<M>) {
-        Self::with_policy(Some((capacity.max(1), deadline, MAX_GUARDED_MESSAGE_BYTES)))
+        Self::with_policy(Some((capacity.max(1), deadline)))
     }
-    /// Opt-in frame bound for callers whose source permits large individual
-    /// updates. Transport byte admission still bounds concurrent queued bytes.
-    pub fn bounded_with_frame_limit(
-        capacity: usize,
-        deadline: std::time::Duration,
-        max_frame_bytes: usize,
-    ) -> (Self, GeneratorYielder<M>) {
-        Self::with_policy(Some((capacity.max(1), deadline, max_frame_bytes.max(256))))
-    }
-    fn with_policy(
-        policy: Option<(usize, std::time::Duration, usize)>,
-    ) -> (Self, GeneratorYielder<M>) {
-        let (receiver, sender) = if let Some((capacity, _, _)) = policy {
+    fn with_policy(policy: Option<(usize, std::time::Duration)>) -> (Self, GeneratorYielder<M>) {
+        let (receiver, sender) = if let Some((capacity, _)) = policy {
             let (tx, rx) = tokio::sync::mpsc::channel(capacity);
             (Receiver::Bounded(rx), Sender::Bounded(tx))
         } else {
@@ -269,13 +258,12 @@ impl<M: Send + Sync + 'static> Generator<M> {
             Self { receiver, policy },
             GeneratorYielder {
                 sender,
-                deadline: policy.map(|(_, deadline, _)| deadline),
-                max_frame_bytes: policy.map_or(MAX_GUARDED_MESSAGE_BYTES, |(_, _, limit)| limit),
+                deadline: policy.map(|(_, deadline)| deadline),
             },
         )
     }
     pub(crate) fn delivery_deadline(&self) -> Option<std::time::Duration> {
-        self.policy.map(|(_, deadline, _)| deadline)
+        self.policy.map(|(_, deadline)| deadline)
     }
 
     /// Mapping preserves boundedness and the original item's final delivery fence.
@@ -355,7 +343,6 @@ impl<M: Send + Sync + 'static> Generator<M> {
 pub struct GeneratorYielder<M> {
     sender: Sender<M>,
     deadline: Option<std::time::Duration>,
-    max_frame_bytes: usize,
 }
 impl<M> GeneratorYielder<M> {
     pub async fn closed(&self) {
@@ -400,7 +387,7 @@ impl<M> GeneratorYielder<M> {
     where
         M: prost::Message,
     {
-        if item.encoded_len() > self.max_frame_bytes - 256 {
+        if item.encoded_len() > MAX_GUARDED_MESSAGE_BYTES - 256 {
             return Err(GeneratorError::UnableToInsert);
         }
         let expires_at =
@@ -409,7 +396,6 @@ impl<M> GeneratorYielder<M> {
         self.yield_item(Item {
             value: item,
             delivery: Some(GuardedDelivery {
-                max_frame_bytes: self.max_frame_bytes,
                 guard,
                 expires_at,
                 cancel: CancellationToken::new(),
@@ -427,14 +413,13 @@ impl<M> GeneratorYielder<M> {
     where
         M: prost::Message,
     {
-        if item.encoded_len() > self.max_frame_bytes - 256 {
+        if item.encoded_len() > MAX_GUARDED_MESSAGE_BYTES - 256 {
             return Err(GeneratorError::UnableToInsert);
         }
         let deadline = self.deadline.ok_or(GeneratorError::UnableToInsert)?;
         self.yield_item(Item {
             value: item,
             delivery: Some(GuardedDelivery {
-                max_frame_bytes: self.max_frame_bytes,
                 guard,
                 expires_at: tokio::time::Instant::now() + deadline,
                 cancel: CancellationToken::new(),
@@ -453,7 +438,6 @@ impl<M> Clone for GeneratorYielder<M> {
         Self {
             sender,
             deadline: self.deadline,
-            max_frame_bytes: self.max_frame_bytes,
         }
     }
 }

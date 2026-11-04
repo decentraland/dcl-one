@@ -120,7 +120,6 @@ async fn request_listings_show_pending_rows_of_live_communities_that_admit_the_w
         return;
     };
     let (owner, wallet_a) = (wallet(), wallet());
-    rig.profile(&wallet_a, "Requester", false).await;
     let live = rig.community(&owner, true).await;
     let decided = rig.community(&owner, true).await;
     let inactive = rig.community(&owner, true).await;

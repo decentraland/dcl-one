@@ -37,10 +37,8 @@ pub mod control_position;
 pub mod room_events;
 pub mod topology;
 
-/// Social mutation fanout between serves; the higher-layer social module owns its codec.
-pub const SOCIAL_EVENTS_SUBJECT: &str = "comms.social.events.v1";
-
-/// The most a cluster message may carry. A lookup reply has the same bound.
+/// The most a cluster message may carry. A lookup reply is held to the same size
+/// ([`cluster::MAX_REPLY_BYTES`]).
 pub const MAX_PAYLOAD_BYTES: usize = 64 * 1024;
 
 /// The longest subject a consumer parses; checked before the subject is split.

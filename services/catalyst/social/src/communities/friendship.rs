@@ -3,8 +3,7 @@
 //! viewer's friends inside a batch of communities. Reads
 //! `social.friendships` / `social.friendship_actions` over the ONE pool (the
 //! old service reached them through a second `MUTES_PG_CONNECTION_STRING`
-//! pool). Community HTTP reads propagate these core query failures; the legacy
-//! best-effort status wrapper remains available to its existing consumers.
+//! pool). Decoration: a failed read defaults to NONE / no friends.
 
 use std::collections::HashMap;
 
@@ -59,49 +58,11 @@ pub async fn friendship_statuses(
     viewer: &Address,
     addresses: &[String],
 ) -> HashMap<String, i32> {
-    if addresses.is_empty() {
-        return HashMap::new();
-    }
-    try_friendship_statuses(pool, viewer, addresses)
-        .await
-        .unwrap_or_else(|error| {
-            tracing::warn!(%error, "legacy friendship status lookup failed");
-            HashMap::new()
-        })
-}
-
-pub async fn try_friendship_statuses(
-    pool: &PgPool,
-    viewer: &Address,
-    addresses: &[String],
-) -> sqlx::Result<HashMap<String, i32>> {
-    Ok(try_friendship_actions(pool, viewer, addresses)
-        .await?
-        .into_iter()
-        .map(|(address, action)| (address, action.status(viewer)))
-        .collect())
-}
-
-pub(crate) struct FriendshipAction {
-    pub action: String,
-    pub acting_user: String,
-}
-
-impl FriendshipAction {
-    pub fn status(&self, viewer: &Address) -> i32 {
-        friendship_request_status(&self.action, &self.acting_user, viewer.as_str())
-    }
-}
-
-/// Preserve the SQL action/actor aliases for signed V1 members and bans.
-/// V2 uses the same facts only to calculate its numeric status.
-pub(crate) async fn try_friendship_actions(
-    pool: &PgPool,
-    viewer: &Address,
-    addresses: &[String],
-) -> sqlx::Result<HashMap<String, FriendshipAction>> {
     let mut out = HashMap::new();
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
+    if addresses.is_empty() {
+        return out;
+    }
+    let rows: Vec<(String, String, String)> = match sqlx::query_as(
         "SELECT DISTINCT ON (f.id) \
            CASE WHEN f.address_requester = $1 THEN f.address_requested \
                 ELSE f.address_requester END AS other_user, \
@@ -116,17 +77,21 @@ pub(crate) async fn try_friendship_actions(
     .bind(viewer)
     .bind(addresses)
     .fetch_all(pool)
-    .await?;
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "friendship status lookup failed; defaulting members to NONE");
+            return out;
+        }
+    };
     for (other_user, action, acting_user) in rows {
         out.insert(
             other_user.to_lowercase(),
-            FriendshipAction {
-                action,
-                acting_user,
-            },
+            friendship_request_status(&action, &acting_user, viewer.as_str()),
         );
     }
-    Ok(out)
+    out
 }
 
 /// Up to three of the viewer's friends per community (by address order),
@@ -135,9 +100,12 @@ pub async fn community_friends(
     pool: &PgPool,
     viewer: &Address,
     community_ids: &[CommunityId],
-) -> sqlx::Result<HashMap<CommunityId, Vec<String>>> {
+) -> HashMap<CommunityId, Vec<String>> {
     let mut out: HashMap<CommunityId, Vec<String>> = HashMap::new();
-    let friend_rows: Vec<(String,)> = sqlx::query_as(
+    if community_ids.is_empty() {
+        return out;
+    }
+    let friend_rows: Vec<(String,)> = match sqlx::query_as(
         "SELECT DISTINCT CASE WHEN f.address_requester = $1 \
                                 THEN f.address_requested \
                                 ELSE f.address_requester END AS address \
@@ -147,12 +115,19 @@ pub async fn community_friends(
     )
     .bind(viewer)
     .fetch_all(pool)
-    .await?;
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "community friends: friend lookup failed; defaulting to no friends");
+            return out;
+        }
+    };
     let friends: Vec<String> = friend_rows.into_iter().map(|(a,)| a).collect();
     if friends.is_empty() {
-        return Ok(out);
+        return out;
     }
-    let rows: Vec<(CommunityId, String)> = sqlx::query_as(
+    let rows: Vec<(CommunityId, String)> = match sqlx::query_as(
         "SELECT community_id, member_address FROM ( \
            SELECT cm.community_id, cm.member_address, \
                   ROW_NUMBER() OVER (PARTITION BY cm.community_id ORDER BY cm.member_address) AS rn \
@@ -164,11 +139,18 @@ pub async fn community_friends(
     .bind(community_ids)
     .bind(&friends)
     .fetch_all(pool)
-    .await?;
+    .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "community friends: membership lookup failed; defaulting to no friends");
+            return out;
+        }
+    };
     for (community_id, address) in rows {
         out.entry(community_id).or_default().push(address);
     }
-    Ok(out)
+    out
 }
 
 #[cfg(test)]

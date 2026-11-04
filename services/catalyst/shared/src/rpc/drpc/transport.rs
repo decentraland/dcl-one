@@ -27,7 +27,6 @@ pub type DeliveryGuard = std::sync::Arc<
 >;
 pub const MAX_GUARDED_MESSAGE_BYTES: usize = 16 * 1024;
 pub struct GuardedDelivery {
-    pub max_frame_bytes: usize,
     pub guard: DeliveryGuard,
     pub expires_at: tokio::time::Instant,
     pub cancel: tokio_util::sync::CancellationToken,
@@ -112,7 +111,7 @@ pub mod memory {
             delivery: super::GuardedDelivery,
         ) -> Result<super::GuardedSend, TransportError> {
             let _cancel_on_drop = delivery.cancel.clone().drop_guard();
-            if message.len() > delivery.max_frame_bytes {
+            if message.len() > super::MAX_GUARDED_MESSAGE_BYTES {
                 return Ok(super::GuardedSend::Suppressed);
             }
             let send = async {

@@ -7,6 +7,7 @@
 //! every query fails without a database.
 
 use super::*;
+use crate::rpc::drpc::rpc_protocol::RemoteError;
 use crate::rpc::proto::errors::InternalServerError;
 
 fn unreachable_ctx() -> Context {
@@ -149,10 +150,11 @@ async fn a_failed_database_call_answers_as_upstream_does() {
     );
 }
 
-/// Voice procedures keep source application error arms on dependency failure;
-/// community voice answers its fixed handler message rather than a RemoteError.
+/// A failure a procedure refuses with (a dcl-rpc RemoteError 500) says only
+/// `Internal Server Error`, for every procedure: the database's text goes to
+/// the log, never to the client.
 #[tokio::test]
-async fn voice_dependency_failures_use_application_error_arms() {
+async fn an_internal_refusal_carries_no_database_text() {
     let ctx = unreachable_ctx();
     let me = addr("fail3");
     let svc = SocialServiceImpl;
@@ -164,11 +166,7 @@ async fn voice_dependency_failures_use_application_error_arms() {
             procedure_ctx(&ctx, &me, 69),
         )
         .await
-        .unwrap();
-    assert!(matches!(
-        end.response,
-        Some(end_private_voice_chat_response::Response::InternalServerError(_))
-    ));
+        .unwrap_err();
     let community = svc
         .start_community_voice_chat(
             StartCommunityVoiceChatPayload {
@@ -177,11 +175,12 @@ async fn voice_dependency_failures_use_application_error_arms() {
             procedure_ctx(&ctx, &me, 70),
         )
         .await
-        .unwrap();
-    assert!(matches!(community.response,
-        Some(start_community_voice_chat_response::Response::InternalServerError(error))
-        if error.message.as_deref()==Some("Failed to start community voice chat")
-    ));
+        .unwrap_err();
+    for (name, refusal) in [("end", end), ("community", community)] {
+        let remote = RemoteError::from(refusal);
+        assert_eq!(remote.error_code, 500, "{name}");
+        assert_eq!(remote.error_message, "Internal Server Error", "{name}");
+    }
 }
 
 /// Gatekeeper execution errors propagate through all shared operations. An

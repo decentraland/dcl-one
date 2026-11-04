@@ -135,7 +135,6 @@ async fn a_subscription_receives_the_update_its_rpc_stream_would() {
     let address = format!("{:#x}", me.address());
     let other = addr("str1");
     let ctx = server.state.ctx.clone();
-    seed_profiles(&ctx, &[&address, &other]).await;
 
     let mut socket = ready(&server, &me).await;
     send_json(&mut socket, json!({ "type": "ping" })).await;
@@ -281,8 +280,8 @@ async fn both_handshakes_are_over_the_stream_route_only() {
         .unwrap();
     assert_eq!(close_code(&next_message(&mut socket).await), Some(3003));
 
-    // The first-frame fallback signs the source protocol path.
-    for path in ["/v1/stream"] {
+    // The first-frame fallback, over the route or the served path.
+    for path in ["/v1/stream", STREAM] {
         let mut socket = connect(&server, STREAM).await;
         socket
             .send(WsMessage::Text(signed_frame(&me, path).await.into()))
@@ -294,8 +293,8 @@ async fn both_handshakes_are_over_the_stream_route_only() {
             "{path}"
         );
     }
-    // Upgrade headers use that same source protocol path.
-    let mut socket = with_headers(&server, &signed_frame(&me, "/v1/stream").await)
+    // And the upgrade headers over the served path.
+    let mut socket = with_headers(&server, &signed_frame(&me, STREAM).await)
         .await
         .unwrap();
     assert_eq!(next_json(&mut socket).await, json!({ "type": "ready" }));
@@ -369,8 +368,7 @@ async fn the_ninth_socket_of_an_address_ends_its_oldest() {
 async fn a_send_past_the_backpressure_limit_closes_slow_consumer() {
     let settings = Settings {
         auth_window_secs: 5,
-        // The handler retains this raw number; the native writer wraps to 1024.
-        ws_max_backpressure_bytes: 4294968320.5,
+        ws_max_backpressure_bytes: 1024,
         stream: crate::rpc::stream::StreamLimits {
             messages_per_second: 1e9,
             message_burst: 1_000_000_000,
@@ -379,17 +377,10 @@ async fn a_send_past_the_backpressure_limit_closes_slow_consumer() {
         ..Settings::default()
     };
     let server = spawn_server_with(None, settings, None).await;
-    let me = PrivateKeySigner::random();
-    let address = format!("{:#x}", me.address());
-    let socket = ready(&server, &me).await;
+    let socket = ready(&server, &PrivateKeySigner::random()).await;
     let (mut sink, mut stream) = socket.split();
-    // Stop sending once the server retires the session. Writing after the peer
-    // closes can put tungstenite in an error state before its read half exposes
-    // the close frame, which measures a client-side write failure instead.
+    // Pings until the server stops reading them.
     for _ in 0..2_000_000 {
-        if server.state.ctx.admission().sockets_of(&address) == 0 {
-            break;
-        }
         let ping = sink.send(WsMessage::Text(r#"{"type":"ping"}"#.into()));
         match tokio::time::timeout(Duration::from_millis(200), ping).await {
             Ok(Ok(())) => continue,

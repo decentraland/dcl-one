@@ -22,7 +22,6 @@ const CAPTURES: [&str; 5] = [
 fn app(pool: PgPool) -> Router {
     let settings = Settings {
         commit_hash: Some("cafe".into()),
-        current_version: Some("fixture-version".into()),
         ..Default::default()
     };
     super::super::router(Arc::new(State::new(
@@ -80,7 +79,7 @@ async fn the_rpc_host_routes_follow_upstream_and_keep_the_local_ones() {
     let (status, origin, body) = call(&app, Method::GET, "/social-rpc/status").await;
     assert_eq!((status, origin.as_deref()), (StatusCode::OK, Some("*")));
     let v: Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(v["version"], "fixture-version");
+    assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
     assert_eq!(v["commitHash"], "cafe");
     assert!(
         v["currentTime"].as_u64().unwrap() > 1_700_000_000_000,
@@ -229,9 +228,9 @@ async fn with_writes_off_the_guard_answers_non_gets_first() {
     );
 }
 
-/// Non-server SQLx failures retain the dependency's own message at this boundary.
+/// A failed read answers upstream's `{error}` 500 without the database's detail.
 #[tokio::test]
-async fn a_failed_privacy_read_preserves_the_dependency_message() {
+async fn a_failed_privacy_read_names_no_database_detail() {
     let pool = sqlx::postgres::PgPoolOptions::new()
         .acquire_timeout(std::time::Duration::from_millis(200))
         .connect_lazy("postgres://nobody@127.0.0.1:1/nowhere")
@@ -244,7 +243,7 @@ async fn a_failed_privacy_read_preserves_the_dependency_message() {
     );
     assert_eq!(
         serde_json::from_str::<Value>(&body).unwrap(),
-        json!({ "error": "pool timed out while waiting for an open connection" })
+        json!({ "error": "Internal Server Error" })
     );
 }
 

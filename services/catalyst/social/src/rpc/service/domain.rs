@@ -253,31 +253,14 @@ pub(super) async fn friendship_requests(
     // request whose counterparty has no profile is left out (the total
     // stays the row count), and an absent message reads `''`.
     let addrs: Vec<String> = rows.iter().map(|r| r.address.clone()).collect();
-    let map = match context
-        .server_context
-        .profiles()
-        .get_profiles_result(&addrs)
-        .await
-    {
-        Ok(profiles) => profiles,
-        Err(error) => {
-            tracing::error!(%error, "friendship request profiles unavailable");
-            return Ok(PaginatedFriendshipRequestsResponse {
-                response: Some(
-                    paginated_friendship_requests_response::Response::InternalServerError(
-                        InternalServerError { message: None },
-                    ),
-                ),
-                pagination_data: None,
-            });
-        }
-    };
+    let profiles = context.server_context.profiles();
+    let (map, strict) = profiles.known_profiles(&addrs).await;
     let requests = rows
         .into_iter()
         .filter_map(|r| {
-            let profile = map.get(&r.address.to_lowercase())?;
-            Some(FriendshipRequestResponse {
-                friend: Some(profiles::friend_profile(&r.address, Some(profile))),
+            let info = map.get(&r.address.to_lowercase());
+            (info.is_some() || !strict).then(|| FriendshipRequestResponse {
+                friend: Some(profiles::friend_profile(&r.address, info)),
                 created_at: r.timestamp.timestamp_millis(),
                 message: Some(r.message.unwrap_or_default()),
                 id: r.id.to_string(),

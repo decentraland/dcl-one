@@ -1,14 +1,5 @@
 # Social family: endpoint enumeration
 
-The exhaustive `social-service-ea` registration and per-operation review backlog
-is [PARITY.md](PARITY.md), backed by [parity.json](parity.json). It counts 72 API
-HTTP registrations, five API auxiliary operations, five uWS HTTP operations,
-two WebSocket upgrades, 33 RPC methods and six JSON subscriptions at
-`b6b2cefefdf727b2ed47ddb887e77d226a41eea6`: 123 separately tracked operations.
-HTTP and RPC twins, streams, conditional bearer routes, framework health/CORS,
-metrics and fallbacks each have their own row. Production captures listed below
-cover only their recorded requests and do not certify the other operations.
-
 Baseline = the production `*.decentraland.org` services; candidate = a Catalyst node
 (`serve`), which mounts each service under the configured gateway prefix (`/social-api`, `/comms-gatekeeper`,
 `/notifications`, `/badges`, `/profile-images`, `/camera-reel-service`).

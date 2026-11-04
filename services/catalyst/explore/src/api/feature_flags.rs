@@ -58,53 +58,8 @@ impl Default for Snapshot {
 }
 
 impl Snapshot {
-    /// An application without a bundled document starts with every flag off.
-    /// Explorer's bundled defaults must never enable another application's flags.
-    pub fn empty() -> Self {
-        Self {
-            doc: RwLock::new(Arc::new(json!({"flags": {}, "variants": {}}))),
-        }
-    }
-
     pub fn document(&self) -> Arc<Value> {
         self.doc.read().clone()
-    }
-
-    /// `@dcl/features-component` 1.0.2 addresses flags by `<app>-<feature>`.
-    pub fn enabled(&self, app: &str, feature: &str) -> bool {
-        self.document()["flags"][format!("{app}-{feature}")]
-            .as_bool()
-            .unwrap_or(false)
-    }
-
-    /// The SDK exposes variants only while the document's flag is enabled.
-    /// Its payload is a comma-separated string; CRLF/LF is stripped before
-    /// splitting, and even empty list entries are retained by the adapter.
-    pub fn variant_values(&self, app: &str, feature: &str) -> Option<Vec<String>> {
-        let doc = self.document();
-        let key = format!("{app}-{feature}");
-        if doc["flags"][&key].as_bool() != Some(true) {
-            return None;
-        }
-        let value = doc["variants"][&key]["payload"]["value"].as_str()?;
-        if value.is_empty() {
-            return None;
-        }
-        Some(
-            value
-                .replace("\r\n", "")
-                .replace('\n', "")
-                .split(',')
-                .map(|value| {
-                    value
-                        .to_lowercase()
-                        .trim_matches(|c: char| {
-                            c == '\u{feff}' || c != '\u{85}' && c.is_whitespace()
-                        })
-                        .to_string()
-                })
-                .collect(),
-        )
     }
 
     /// The mirrored row for `app` (the embedded asset when there is none yet)
@@ -115,13 +70,7 @@ impl Snapshot {
                 .bind(app)
                 .fetch_optional(pool)
                 .await?;
-        let mut doc = row.map(|(d,)| d).unwrap_or_else(|| {
-            if app == "explorer" {
-                embedded_document()
-            } else {
-                json!({"flags": {}, "variants": {}})
-            }
-        });
+        let mut doc = row.map(|(d,)| d).unwrap_or_else(embedded_document);
         let overrides: Vec<(String, bool)> = sqlx::query_as(
             "SELECT name, value FROM explore_api.feature_flags_local WHERE app = $1 ORDER BY name",
         )
@@ -181,79 +130,6 @@ pub async fn store(pool: &PgPool, app: &str, doc: &Value, etag: Option<&str>) ->
     .execute(pool)
     .await?;
     Ok(())
-}
-
-/// Refresh a separate application's document through the same outbound client,
-/// bounded body reader and persisted flag store as Explorer. A failed fetch or
-/// validation leaves both the persisted and process snapshots unchanged.
-pub async fn refresh_app(
-    state: &Shared,
-    snapshot: &Snapshot,
-    app: &str,
-    url: &str,
-    referer: &str,
-    timeout: std::time::Duration,
-) -> anyhow::Result<()> {
-    let target = state.settings.guarded_url(url)?;
-    let response = state
-        .http
-        .get(target)
-        .header("referer", referer)
-        .timeout(timeout)
-        .send()
-        .await
-        .context("fetching application feature flags")?;
-    if !response.status().is_success() {
-        anyhow::bail!("application feature flags answered {}", response.status());
-    }
-    let body = crate::http::read_body_capped(response, BODY_CAP)
-        .await
-        .context("reading application feature flags")?;
-    let doc: Value = serde_json::from_slice(&body).context("feature flags are not JSON")?;
-    validate(&doc)?;
-    store(&state.pool, app, &doc, None).await?;
-    snapshot.reload(&state.pool, app).await?;
-    Ok(())
-}
-
-#[cfg(test)]
-mod application_tests {
-    use super::*;
-
-    #[test]
-    fn sdk_app_keys_and_enabled_variants_are_independent() {
-        let snapshot = Snapshot::empty();
-        assert!(!snapshot.enabled("dapps", "communities_ai_compliance"));
-        *snapshot.doc.write() = Arc::new(json!({
-            "flags": {
-                "communities_ai_compliance": true,
-                "explorer-communities_ai_compliance": true,
-                "dapps-communities_ai_compliance": false,
-                "dapps-communities_global_moderators": true
-            },
-            "variants": {"dapps-communities_global_moderators": {
-                "payload": {"value": " 0xAbC,\r\n0xDeF, ,"}
-            }}
-        }));
-        assert!(!snapshot.enabled("dapps", "communities_ai_compliance"));
-        assert_eq!(
-            snapshot.variant_values("dapps", "communities_global_moderators"),
-            Some(vec!["0xabc".into(), "0xdef".into(), "".into(), "".into()])
-        );
-        assert!(
-            snapshot
-                .variant_values("explorer", "communities_global_moderators")
-                .is_none()
-        );
-        *snapshot.doc.write() = Arc::new(json!({"flags": {}, "variants": {
-            "dapps-communities_global_moderators": {"payload": {"value": "0xabc"}}
-        }}));
-        assert!(
-            snapshot
-                .variant_values("dapps", "communities_global_moderators")
-                .is_none()
-        );
-    }
 }
 
 /// One pass: the document with the referer strategy header, validated and

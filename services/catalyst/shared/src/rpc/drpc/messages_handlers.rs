@@ -850,7 +850,6 @@ impl StreamsHandler {
             payload: vec![],
         };
         let delivery = GuardedDelivery {
-            max_frame_bytes: super::transport::MAX_GUARDED_MESSAGE_BYTES,
             guard: Arc::new(|| Box::pin(async { Ok(true) })),
             expires_at,
             cancel: tokio_util::sync::CancellationToken::new(),

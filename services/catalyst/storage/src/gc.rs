@@ -197,10 +197,6 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "social.community_mirror.thumbnail_url",
         "a URL (the upstream CDN's thumbnail of a mirrored community)",
     ),
-    (
-        "social.referral_reward_images.reward_image_url",
-        "a URL returned by the rewards API",
-    ),
     ("credits.usages.tx_hash", "a transaction hash"),
     (
         "social.profile_images.entity_id",

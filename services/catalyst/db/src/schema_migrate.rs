@@ -10,11 +10,10 @@
 //! migrate` (the administrative role, the schema oneshot on every activation)
 //! first compares `meta.schema` with this binary's identity and version (a
 //! different one is the explicit data-safe release procedure, never this
-//! command), then, in one transaction: applies the active steps of
+//! command), then, in one transaction: applies the steps of
 //! `schemas/migrations/` the database has not recorded in `meta.schema_steps`
 //! (each one additive by construction, see [`classify_step`]; a recorded
-//! step whose text changed is refused; release-retired SQL never runs or gains
-//! a new receipt), creates each object of `schema.sql`
+//! step whose text changed is refused), creates each object of `schema.sql`
 //! the database does not have, statement by statement in file order, with
 //! the statements that only make sense for a new object (`ALTER SEQUENCE ...
 //! OWNED BY`, seed `INSERT`s) applied only when that object was created in
@@ -27,8 +26,7 @@
 //! alters, drops or resets anything a step does not spell out, and a step
 //! may not drop, rename, retype or delete. `db::bootstrap` refuses to start
 //! serve on a database missing any relation, type, function or column of the
-//! layout or retaining the exact release-retired voice objects (indexes only
-//! warn when missing), naming them and `catalyst schema migrate`;
+//! layout (indexes only warn), naming them and `catalyst schema migrate`;
 //! `catalyst schema status` prints the same comparison for an operator.
 
 use std::collections::{HashMap, HashSet};
@@ -632,8 +630,6 @@ async fn missing_columns(
 pub struct Gaps {
     pub objects: Vec<Object>,
     pub columns: Vec<String>,
-    /// Exact objects retired by a reviewed schema release, still present.
-    pub retired: Vec<String>,
 }
 
 impl Gaps {
@@ -644,7 +640,6 @@ impl Gaps {
             .filter(|o| !matches!(o, Object::Index(_)))
             .map(|o| o.to_string())
             .chain(self.columns.iter().map(|c| format!("column {c}")))
-            .chain(self.retired.iter().map(|c| format!("retired {c}")))
             .collect()
     }
 
@@ -665,10 +660,7 @@ pub async fn gaps(pool: &PgPool, sql: &str) -> Result<Gaps, LayoutError> {
 }
 
 async fn gaps_on(conn: &mut sqlx::PgConnection, plan: &[Planned]) -> sqlx::Result<Gaps> {
-    let mut out = Gaps {
-        retired: retired_voice_objects(conn).await?,
-        ..Default::default()
-    };
+    let mut out = Gaps::default();
     for p in plan {
         if let Step::Create { object, columns } = &p.step {
             if !exists(&mut *conn, object).await? {
@@ -686,57 +678,6 @@ async fn gaps_on(conn: &mut sqlx::PgConnection, plan: &[Planned]) -> sqlx::Resul
 }
 
 const LEDGER: &str = "meta.schema_steps";
-
-// Release 3 retires exactly this immutable historical step. Missing receipt
-// means it never ran, not permission to recreate columns the release removed.
-const RETIRED_VOICE_STEP: &str = "0020_social_voice_notifications";
-const RETIRED_VOICE_SHA256: &str =
-    "41c5172fe07ee74acad62a9e1fa3ae74e5eaeb51d2a13262146f20034faaef17";
-const VOICE_RETIRED_SINCE: i32 = 3;
-
-fn step_retired(step: &MigrationStep, version: i32) -> Result<bool, MigrateError> {
-    if step.name != RETIRED_VOICE_STEP {
-        return Ok(false);
-    }
-    if step.sha256 != RETIRED_VOICE_SHA256 {
-        return Err(MigrateError::StepDrift {
-            step: step.name.clone(),
-            recorded: RETIRED_VOICE_SHA256.into(),
-            embedded: step.sha256.clone(),
-        });
-    }
-    Ok(version >= VOICE_RETIRED_SINCE)
-}
-
-/// Fresh bootstrap records only steps whose effects the current schema carries.
-/// Retired SQL and any genuine historical receipt remain immutable.
-pub fn fresh_steps(steps: Vec<MigrationStep>) -> Result<Vec<MigrationStep>, MigrateError> {
-    let mut active = Vec::new();
-    for step in steps {
-        if !step_retired(&step, crate::SCHEMA_VERSION)? {
-            active.push(step);
-        }
-    }
-    Ok(active)
-}
-
-async fn retired_voice_objects(conn: &mut sqlx::PgConnection) -> sqlx::Result<Vec<String>> {
-    if !matches!(read_stamp(conn).await?, Some((identity, version))
-        if identity == crate::SCHEMA_IDENTITY && version >= VOICE_RETIRED_SINCE)
-    {
-        return Ok(Vec::new());
-    }
-    sqlx::query_scalar(
-        "SELECT 'column social.communities.' || attname FROM pg_attribute \
-         WHERE attrelid=to_regclass('social.communities') AND NOT attisdropped \
-         AND attname IN ('voice_notification_scope','voice_notification_generation','voice_notification_expires_at') \
-         UNION ALL SELECT 'constraint social.communities.communities_voice_notification_scope_check' \
-         WHERE EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('social.communities') \
-         AND conname='communities_voice_notification_scope_check') \
-         UNION ALL SELECT 'index social.communities_voice_notifications_idx' \
-         WHERE to_regclass('social.communities_voice_notifications_idx') IS NOT NULL ORDER BY 1",
-    ).fetch_all(conn).await
-}
 
 /// The steps `meta.schema_steps` records, by name, with the digest recorded;
 /// empty when the ledger table does not exist yet (a database stamped before
@@ -802,10 +743,6 @@ pub enum MigrateError {
          a release added, or take the data-safe release procedure for a change that is not additive. Nothing was applied."
     )]
     Drift(String),
-    #[error(
-        "the database retains objects retired by schema release 3: {0}. Inspect the release state; nothing was applied."
-    )]
-    RetiredDrift(String),
     #[error("schemas/migrations/{step}.sql is not an additive step: {why}. Nothing was applied.")]
     StepRefused { step: String, why: String },
     #[error(
@@ -962,13 +899,7 @@ pub async fn migrate(pool: &PgPool, sql: &str, migrations: &str) -> Result<Migra
     let linted = lint_steps(&steps)?;
     let plan = plan(sql)?;
     let mut tx = pool.begin().await?;
-    let stamp = read_stamp(&mut tx).await?;
-    check_stamp(stamp.clone())?;
-    let version = stamp.expect("checked stamp").1;
-    let retired = retired_voice_objects(&mut tx).await?;
-    if !retired.is_empty() {
-        return Err(MigrateError::RetiredDrift(retired.join(", ")));
-    }
+    check_stamp(read_stamp(&mut tx).await?)?;
     let mut done = Migrated::default();
     let mut made: HashSet<Object> = HashSet::new();
 
@@ -985,11 +916,7 @@ pub async fn migrate(pool: &PgPool, sql: &str, migrations: &str) -> Result<Migra
     }
     let recorded = recorded_steps(&mut tx).await?;
     for (step, statements) in steps.iter().zip(linted.iter().map(|(_, s)| s)) {
-        // Verify both the embedded immutable bytes and any genuine receipt,
-        // even when this version deliberately carries no effect of the step.
-        let retired = step_retired(step, version)?;
-        let pending = step_needs_apply(step, recorded.get(&step.name).map(String::as_str))?;
-        if retired || !pending {
+        if !step_needs_apply(step, recorded.get(&step.name).map(String::as_str))? {
             continue;
         }
         if step.name == RECEIPT_RETIREMENT
@@ -1080,11 +1007,7 @@ impl SchemaStatus {
     /// its way. 4: no stamp, another identity or version, a drifted or
     /// refused step, or a missing column no pending step adds.
     pub fn exit_code(&self) -> i32 {
-        if !self.compatible()
-            || !self.drifted_steps.is_empty()
-            || self.refused_step.is_some()
-            || !self.gaps.retired.is_empty()
-        {
+        if !self.compatible() || !self.drifted_steps.is_empty() || self.refused_step.is_some() {
             return 4;
         }
         if !self.gaps.columns.is_empty() && self.pending_steps.is_empty() {
@@ -1133,12 +1056,6 @@ impl SchemaStatus {
         if let Some(why) = &self.refused_step {
             out.push(format!("step refused: {why}"));
         }
-        if !self.gaps.retired.is_empty() {
-            out.push(format!(
-                "retired objects present: {}",
-                self.gaps.retired.join(", ")
-            ));
-        }
         out.push(format!("objects missing: {}", self.gaps.objects.len()));
         out.push(format!(
             "columns missing: {}",
@@ -1178,18 +1095,10 @@ pub async fn status(
     if out.stamp.is_some() {
         let recorded = recorded_steps(&mut conn).await?;
         for step in &steps {
-            let version = out.stamp.as_ref().expect("stamp exists").1;
-            let retired = match step_retired(step, version) {
-                Ok(retired) => retired,
-                Err(error) => {
-                    out.refused_step = Some(error.to_string());
-                    continue;
-                }
-            };
-            match step_needs_apply(step, recorded.get(&step.name).map(String::as_str)) {
-                Ok(true) if !retired => out.pending_steps.push(step.name.clone()),
-                Ok(_) => {}
-                Err(_) => out.drifted_steps.push(step.name.clone()),
+            match recorded.get(&step.name) {
+                Some(d) if *d == step.sha256 => {}
+                Some(_) => out.drifted_steps.push(step.name.clone()),
+                None => out.pending_steps.push(step.name.clone()),
             }
         }
         out.gaps = gaps_on(&mut conn, &plan(sql)?).await?;
@@ -1432,30 +1341,6 @@ mod tests {
             matches!(&linted[0].1[2].1, StepStatement::AddConstraint { table, name } if table == "credits.purchases" && name == "purchases_quantity_check")
         );
         assert!(steps.iter().all(|s| s.sha256.len() == 64));
-    }
-
-    #[test]
-    fn retirement_is_bound_to_the_exact_immutable_step_and_schema_version() {
-        let steps = parse_steps(crate::MIGRATIONS_SQL);
-        let step = steps.iter().find(|s| s.name == RETIRED_VOICE_STEP).unwrap();
-        assert!(!step_retired(step, 2).unwrap());
-        assert!(step_retired(step, 3).unwrap());
-        assert!(step_retired(step, 4).unwrap());
-        assert!(
-            !fresh_steps(steps.clone())
-                .unwrap()
-                .iter()
-                .any(|s| s.name == RETIRED_VOICE_STEP)
-        );
-        let mut changed = step.clone();
-        changed.sql.push_str(" -- changed");
-        changed.sha256 = hex::encode(Sha256::digest(changed.sql.as_bytes()));
-        assert!(matches!(
-            step_retired(&changed, 3),
-            Err(MigrateError::StepDrift { .. })
-        ));
-        changed.name.push_str("_another");
-        assert!(!step_retired(&changed, 3).unwrap());
     }
 
     #[test]

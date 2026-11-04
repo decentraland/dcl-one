@@ -16,7 +16,7 @@ use crate::shared::rpc::ws::SocketClose;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
@@ -61,9 +61,7 @@ pub struct ContextInner {
     kill_handles: DashMap<u32, Arc<SocketClose>>,
     /// Every open socket of both protocols, from the moment it opens
     /// (upstream's `ws-pool`): the pool cap counts them and shutdown ends them.
-    sockets: parking_lot::Mutex<HashMap<u64, (Protocol, Arc<SocketClose>)>>,
-    /// Updated under `sockets`' lock so both gauges follow the same pool state.
-    socket_counts: [AtomicUsize; 2],
+    sockets: parking_lot::Mutex<HashMap<u64, Arc<SocketClose>>>,
     next_socket: AtomicU64,
     /// `SOCIAL_WRITES_ENABLED` (`social::writes`): false refuses every
     /// mutating procedure with `SocialError::WritesDisabled`.
@@ -117,27 +115,9 @@ pub struct OpenSocket {
 
 impl Drop for OpenSocket {
     fn drop(&mut self) {
-        let mut sockets = self.ctx.0.sockets.lock();
-        if sockets.remove(&self.id).is_none() {
-            return;
-        }
-        metrics::gauge!("ws_active_connections").set(sockets.len() as f64);
-        let count = &self.ctx.0.socket_counts[match self.protocol {
-            Protocol::Rpc => 0,
-            Protocol::Stream => 1,
-        }];
-        metrics::gauge!("ws_active_connections_by_protocol", "protocol" => self.protocol.label())
-            .set((count.fetch_sub(1, Ordering::Relaxed) - 1) as f64);
-        drop(sockets);
+        self.ctx.0.sockets.lock().remove(&self.id);
         let protocol = self.protocol.label();
-        if matches!(self.protocol, Protocol::Rpc) {
-            let code =
-                super::metrics::ws_close_code_label(self.close.observed_code().unwrap_or(1006));
-            metrics::counter!("ws_close_codes", "code" => code).increment(1);
-        }
-        metrics::histogram!("ws_connection_duration_seconds")
-            .record(self.opened.elapsed().as_secs_f64());
-        super::metrics::log("ws-pool", "debug");
+        metrics::gauge!("ws_active_connections_by_protocol", "protocol" => protocol).decrement(1.0);
         metrics::histogram!("ws_connection_duration_seconds_by_protocol", "protocol" => protocol)
             .record(self.opened.elapsed().as_secs_f64());
     }
@@ -150,14 +130,13 @@ impl Context {
         profiles: Profiles,
         voice: Arc<dyn VoiceRooms>,
     ) -> Self {
-        let friendship_limiter = FriendshipMutationLimiter::new(db.pool().clone());
         Self(Arc::new(ContextInner {
             voice_settings,
             db,
             pubsub: PubSub::new(),
             voice,
             profiles,
-            friendship_limiter,
+            friendship_limiter: FriendshipMutationLimiter::new(),
             admission: Admission::default(),
             identities: DashMap::new(),
             subscriptions: DashMap::new(),
@@ -167,7 +146,6 @@ impl Context {
             connectivity_operations: tokio::sync::Semaphore::new(4),
             kill_handles: DashMap::new(),
             sockets: parking_lot::Mutex::new(HashMap::new()),
-            socket_counts: [AtomicUsize::new(0), AtomicUsize::new(0)],
             next_socket: AtomicU64::new(0),
             writes_enabled: AtomicBool::new(true),
         }))
@@ -197,6 +175,27 @@ impl Context {
         &self.0.profiles
     }
 
+    /// Publishes `from`'s friendship update to `to`, built from `from`'s
+    /// profile. Upstream's live loop skips an update whose sender's profile
+    /// the registry does not hold (`src/logic/updates.ts`
+    /// `handleSubscriptionUpdates`, `shouldRetrieveProfile`), so with a
+    /// profile source such an update reaches no one.
+    pub(crate) async fn publish_friendship(
+        &self,
+        from: &str,
+        to: &str,
+        update: impl FnOnce(
+            crate::rpc::proto::v2::FriendProfile,
+        ) -> crate::rpc::proto::v2::FriendshipUpdate,
+    ) {
+        match self.0.profiles.existing_friend_profile(from).await {
+            Some(profile) => self
+                .0
+                .pubsub
+                .publish(to, SocialEvent::Friendship(update(profile))),
+            None => tracing::debug!(%from, "friendship update skipped: the sender has no profile"),
+        }
+    }
     pub fn friendship_limiter(&self) -> &FriendshipMutationLimiter {
         &self.0.friendship_limiter
     }
@@ -221,20 +220,13 @@ impl Context {
         let close = Arc::new(SocketClose::default());
         let mut sockets = self.0.sockets.lock();
         if max.is_some_and(|max| sockets.len() >= max) {
-            metrics::counter!("ws_connections_rejected").increment(1);
             return None;
         }
         let id = self.0.next_socket.fetch_add(1, Ordering::Relaxed);
-        sockets.insert(id, (protocol, close.clone()));
-        let count = &self.0.socket_counts[match protocol {
-            Protocol::Rpc => 0,
-            Protocol::Stream => 1,
-        }];
-        metrics::gauge!("ws_active_connections_by_protocol", "protocol" => protocol.label())
-            .set((count.fetch_add(1, Ordering::Relaxed) + 1) as f64);
-        metrics::gauge!("ws_active_connections").set(sockets.len() as f64);
+        sockets.insert(id, close.clone());
         drop(sockets);
-        super::metrics::log("ws-pool", "debug");
+        metrics::gauge!("ws_active_connections_by_protocol", "protocol" => protocol.label())
+            .increment(1.0);
         Some(OpenSocket {
             ctx: self.clone(),
             id,
@@ -251,7 +243,7 @@ impl Context {
     /// Ends every open socket, authenticated or not, with `code` and
     /// `reason`, and waits up to `budget` for them to close.
     pub async fn end_sockets(&self, code: u16, reason: &'static str, budget: Duration) {
-        for (_, socket) in self.0.sockets.lock().values() {
+        for socket in self.0.sockets.lock().values() {
             socket.end(code, reason);
         }
         let deadline = Instant::now() + budget;
@@ -308,12 +300,6 @@ impl Context {
             .iter()
             .map(|e| (e.key().clone(), *e.value()))
             .collect()
-    }
-
-    pub(crate) fn report_subscriber_metrics(&self) {
-        metrics::gauge!("subscribers_local_count").set(self.0.presence.len() as f64);
-        metrics::gauge!("subscribers_generators_count")
-            .set(self.0.pubsub.active_generators() as f64);
     }
 
     pub fn online_count(&self) -> usize {
@@ -399,6 +385,17 @@ impl Context {
         self.delivery_guard(recipient, actor, online, generation, None)
     }
 
+    pub(crate) fn community_delivery_guard(
+        &self,
+        recipient: String,
+        actor: String,
+        online: bool,
+        generation: u64,
+        community: uuid::Uuid,
+    ) -> crate::rpc::drpc::stream_protocol::DeliveryGuard {
+        self.delivery_guard(recipient, actor, online, generation, Some(community))
+    }
+
     fn delivery_guard(
         &self,
         recipient: String,
@@ -458,68 +455,6 @@ impl Context {
                 Some(update.community_id.parse().ok()?),
             )),
             _ => None,
-        }
-    }
-
-    /// Shared scope survives restart. Each page is bounded; a generation compare-and-clear
-    /// retires notification metadata only, without claiming atomicity with media teardown.
-    pub async fn poll_community_voice_notifications(&self) {
-        if let Err(error) = self.db().expire_social_event_payloads().await {
-            tracing::warn!(%error, "social event payload expiry failed");
-        }
-        let mut after = String::new();
-        loop {
-            let page = match self.db().voice_notifications_page(&after).await {
-                Ok(page) => page,
-                Err(error) => {
-                    tracing::warn!(%error, "voice notification poll failed");
-                    return;
-                }
-            };
-            for entry in &page {
-                after.clone_from(&entry.raw_community);
-                if !entry.fresh {
-                    let _ = self.db().clear_voice_notification(entry).await;
-                    continue;
-                }
-                match self
-                    .voice()
-                    .community_voice_chat_active(entry.community)
-                    .await
-                {
-                    Ok(true) => {
-                        let _ = self.db().refresh_voice_notification(entry).await;
-                    }
-                    Ok(false) => {
-                        if self
-                            .db()
-                            .clear_voice_notification(entry)
-                            .await
-                            .unwrap_or(false)
-                            && self
-                                .db()
-                                .voice_generation_is(&entry.raw_community, None)
-                                .await
-                                .unwrap_or(false)
-                        {
-                            self.pubsub()
-                                .community_voice(
-                                    self.db().pool(),
-                                    entry.community,
-                                    crate::rpc::pubsub::community_voice_ended(&entry.raw_community),
-                                    entry.scope == super::fanout::Scope::All,
-                                    None,
-                                )
-                                .await;
-                        }
-                    }
-                    Err(error) => tracing::warn!(%error, "voice status poll failed"),
-                }
-            }
-            if page.len() < 64 {
-                return;
-            }
-            tokio::task::yield_now().await;
         }
     }
 
@@ -596,14 +531,11 @@ impl Context {
             if !friends.is_empty() {
                 // Upstream's live loop skips a connectivity update whose
                 // wallet the registry holds no profile for.
-                let Some(mut profile) = self.0.profiles.existing_friend_profile(&address).await
-                else {
+                let Some(profile) = self.0.profiles.existing_friend_profile(&address).await else {
                     cursor.friends_done = true;
                     return Ok((cursor, false));
                 };
-                // Raw topology identity authorizes and routes the actor. RPC
-                // enrichment may expose a historical profile userId alias later.
-                profile.address = address.clone();
+                let profile = crate::rpc::profiles::connectivity_profile(profile);
                 for friend in &friends {
                     if !self
                         .topology()
@@ -664,12 +596,27 @@ impl Context {
         Ok((cursor, completed))
     }
 
-    /// A Social disconnect ends only its pending call. Accepted media rooms
-    /// have their own lifecycle and survive the Social socket disconnect.
+    /// Upstream #479: without this only the periodic sweep clears a dropped
+    /// user's call, so the other party keeps ringing until the TTL elapses.
+    /// The ENDED notification is symmetric, so the still-online party is told
+    /// regardless of which side dropped.
+    /// An accepted call ends through the voice runtime (row, then room);
+    /// otherwise the address's latest pending call is deleted.
     pub async fn end_private_voice_chat_on_disconnect(&self, address: &str) {
-        let pending =
-            crate::comms::gatekeeper::voice::db::PendingPrivateCall::Address(address.to_string());
-        let chat = match self.0.voice.finish_pending_private_call(pending).await {
+        let voice = &self.0.voice;
+        let ended = match voice
+            .end_private_voice_chat(None, &address.to_lowercase())
+            .await
+        {
+            Ok(None) => {
+                let pending = crate::comms::gatekeeper::voice::db::PendingPrivateCall::Address(
+                    address.to_string(),
+                );
+                voice.finish_pending_private_call(pending).await
+            }
+            accepted => accepted,
+        };
+        let chat = match ended {
             Ok(Some(c)) => c,
             Ok(None) => return,
             Err(e) => {
@@ -677,17 +624,14 @@ impl Context {
                 return;
             }
         };
-        self.publish_private_voice_ended_by(&chat, address).await;
-        if let Some(state) = self.communities() {
-            state.fire_analytics("END_CALL", serde_json::json!({"call_id":chat.id,"user_id":chat.caller_address,"receiver_id":chat.callee_address}));
-        }
+        self.publish_private_voice_ended_by(&chat, address);
     }
 
     /// ENDED to the party that did not end the call (upstream
     /// `endPrivateVoiceChat`, `src/logic/voice/voice.ts:203-208`, `:230-237`:
     /// the acting side is left out of the update), whether it ended or
     /// dropped.
-    pub async fn publish_private_voice_ended_by(
+    pub fn publish_private_voice_ended_by(
         &self,
         chat: &crate::comms::gatekeeper::voice::db::PrivateVoiceChatRow,
         ender: &str,
@@ -696,22 +640,25 @@ impl Context {
             stream_closed: None,
             call_id: chat.id.to_string(),
             status: PrivateVoiceChatStatus::VoiceChatEnded as i32,
-            caller: None,
-            callee: None,
+            caller: Some(User {
+                address: chat.caller_address.clone(),
+            }),
+            callee: Some(User {
+                address: chat.callee_address.clone(),
+            }),
             credentials: None,
         };
         for party in [&chat.caller_address, &chat.callee_address] {
             if !party.eq_ignore_ascii_case(ender) {
                 self.0
                     .pubsub
-                    .publish_mutation(party, SocialEvent::PrivateVoice(update.clone()))
-                    .await;
+                    .publish(party, SocialEvent::PrivateVoice(update.clone()));
             }
         }
     }
 
     /// The same update to both parties of `chat`.
-    pub async fn publish_private_voice(
+    pub fn publish_private_voice(
         &self,
         chat: &crate::comms::gatekeeper::voice::db::PrivateVoiceChatRow,
         status: PrivateVoiceChatStatus,
@@ -720,21 +667,21 @@ impl Context {
             stream_closed: None,
             call_id: chat.id.to_string(),
             status: status as i32,
-            caller: None,
-            callee: None,
+            caller: Some(User {
+                address: chat.caller_address.clone(),
+            }),
+            callee: Some(User {
+                address: chat.callee_address.clone(),
+            }),
             credentials: None,
         };
+        self.0.pubsub.publish(
+            &chat.caller_address,
+            SocialEvent::PrivateVoice(update.clone()),
+        );
         self.0
             .pubsub
-            .publish_mutation(
-                &chat.caller_address,
-                SocialEvent::PrivateVoice(update.clone()),
-            )
-            .await;
-        self.0
-            .pubsub
-            .publish_mutation(&chat.callee_address, SocialEvent::PrivateVoice(update))
-            .await;
+            .publish(&chat.callee_address, SocialEvent::PrivateVoice(update));
     }
 
     /// The periodic tick. The DELETE runs only once a call can have expired
@@ -785,11 +732,7 @@ impl Context {
                 break;
             }
             for chat in &expired {
-                self.publish_private_voice(chat, PrivateVoiceChatStatus::VoiceChatExpired)
-                    .await;
-                if let Some(state) = self.communities() {
-                    state.fire_analytics("EXPIRE_CALL", serde_json::json!({"call_id":chat.id}));
-                }
+                self.publish_private_voice(chat, PrivateVoiceChatStatus::VoiceChatExpired);
             }
             total += expired.len();
         }
@@ -810,7 +753,7 @@ mod tests {
                     .connect_lazy("postgres://localhost/unused")
                     .unwrap(),
             ),
-            Profiles::new(None),
+            Profiles::new(None, Default::default()),
             Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
         );
         assert!(ctx.mark_online("0xAbC"));
@@ -840,134 +783,5 @@ mod tests {
         ctx.forget_identity(7);
         assert_eq!(ctx.disconnect_address("0xabc"), 0);
         assert!(ctx.identity(7).is_none());
-    }
-    #[tokio::test]
-    async fn socket_and_subscriber_metrics_follow_source_owned_lifecycle_counts() {
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
-        let handle = recorder.handle();
-        let _recording = metrics::set_default_local_recorder(&recorder);
-        let ctx = Context::new(
-            VoiceSettings::default(),
-            Db::new(
-                sqlx::postgres::PgPoolOptions::new()
-                    .connect_lazy("postgres://localhost/unused")
-                    .unwrap(),
-            ),
-            Profiles::new(None),
-            Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
-        );
-        let rpc = ctx.open_socket(Protocol::Rpc, Some(2)).unwrap();
-        let stream = ctx.open_socket(Protocol::Stream, Some(2)).unwrap();
-        assert!(ctx.open_socket(Protocol::Rpc, Some(2)).is_none());
-        let rendered = handle.render();
-        assert!(rendered.contains("ws_active_connections 2"));
-        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"rpc\"} 1"));
-        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"stream\"} 1"));
-        assert!(rendered.contains("ws_connections_rejected 1"));
-        rpc.close.peer_closed(1000);
-        rpc.close.peer_closed(4000);
-        rpc.close.end(1011, "already closed");
-        assert_eq!(
-            ctx.live_connections(),
-            2,
-            "a close signal holds its pool slot until drop"
-        );
-        drop(rpc);
-        assert_eq!(ctx.live_connections(), 1);
-        let rendered = handle.render();
-        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"rpc\"} 0"));
-        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"stream\"} 1"));
-        let replacement = ctx.open_socket(Protocol::Rpc, Some(2)).unwrap();
-        replacement
-            .close
-            .end(3005, "Replaced by a newer connection");
-        drop(replacement);
-        drop(stream);
-        let rendered = handle.render();
-        assert!(rendered.contains("ws_active_connections 0"));
-        assert!(rendered.contains("ws_connection_duration_seconds_count 3"));
-        assert!(rendered.contains("ws_close_codes{code=\"1000\"} 1"));
-        assert!(rendered.contains("ws_close_codes{code=\"3005\"} 1"));
-        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"rpc\"} 0"));
-        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"stream\"} 0"));
-        ctx.mark_online("fixture");
-        ctx.mark_online("fixture");
-        ctx.mark_online("other");
-        let receiver = ctx
-            .pubsub()
-            .subscribe_updates::<crate::rpc::proto::v2::BlockUpdate>("fixture");
-        assert!(
-            !handle.render().contains("subscribers_generators_count"),
-            "reporting waits for its callback"
-        );
-        ctx.report_subscriber_metrics();
-        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"), "/services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json"))).unwrap();
-        for observation in &fixture["subscriberObservations"].as_array().unwrap()[..2] {
-            assert!(handle.render().contains(&format!(
-                "{} {}",
-                observation["name"].as_str().unwrap(),
-                observation["value"]
-            )));
-        }
-        drop(receiver);
-        ctx.mark_offline("fixture");
-        ctx.mark_offline("fixture");
-        ctx.mark_offline("other");
-        ctx.report_subscriber_metrics();
-        for observation in &fixture["subscriberObservations"].as_array().unwrap()[2..] {
-            assert!(handle.render().contains(&format!(
-                "{} {}",
-                observation["name"].as_str().unwrap(),
-                observation["value"]
-            )));
-        }
-    }
-
-    #[tokio::test]
-    async fn socket_drops_bound_client_close_codes_and_keep_mixed_protocol_counts() {
-        let recorder = crate::comms::metrics::prometheus_builder()
-            .unwrap()
-            .build_recorder();
-        let handle = recorder.handle();
-        let _recording = metrics::set_default_local_recorder(&recorder);
-        let ctx = Context::new(
-            VoiceSettings::default(),
-            Db::new(
-                sqlx::postgres::PgPoolOptions::new()
-                    .connect_lazy("postgres://localhost/unused")
-                    .unwrap(),
-            ),
-            Profiles::new(None),
-            Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
-        );
-        let stream = ctx.open_socket(Protocol::Stream, None).unwrap();
-        let codes = [1004, 1016, 2000, 2999, 3000, 3002, 3006, 3999]
-            .into_iter()
-            .chain(4000..4128);
-        for code in codes {
-            let socket = ctx.open_socket(Protocol::Rpc, Some(2)).unwrap();
-            socket.close.peer_closed(code);
-            socket.close.peer_closed(1000);
-            drop(socket);
-            assert_eq!(ctx.live_connections(), 1);
-        }
-        let rendered = handle.render();
-        let close_samples = rendered
-            .lines()
-            .filter(|line| line.starts_with("ws_close_codes{"))
-            .collect::<Vec<_>>();
-        assert_eq!(close_samples, ["ws_close_codes{code=\"other\"} 136"]);
-        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"rpc\"} 0"));
-        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"stream\"} 1"));
-        ctx.end_sockets(1001, "shutdown", Duration::ZERO).await;
-        assert_eq!(stream.close.observed_code(), Some(1001));
-        assert_eq!(ctx.live_connections(), 1);
-        drop(stream);
-        let rendered = handle.render();
-        assert!(rendered.contains("ws_active_connections 0"));
-        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"stream\"} 0"));
-        assert!(rendered.contains("ws_connection_duration_seconds_count 137"));
     }
 }

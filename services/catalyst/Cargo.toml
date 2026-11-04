@@ -76,7 +76,6 @@ clap = { version = "4", features = ["derive", "env"] }
 futures = "0.3"
 async-trait = "0.1"
 bytes = "1"
-ipnet = "2"
 uuid = { version = "1", features = ["serde", "v4", "v5"] }
 tokio-util = { version = "0.7", features = ["io"] }
 dashmap = "6"
@@ -105,9 +104,6 @@ multer = "3.1.0"
 unicode-normalization = "0.1.26"
 icu_properties = "2.3.0"
 hmac = "0.13.0"
-aws-config = { version = "1.13.0", default-features = false, features = ["rt-tokio", "default-https-client", "credentials-process"] }
-aws-sdk-sqs = "1.119.0"
-aws-sdk-sns = "1"
 bcrypt = "0.19.3"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "tiff"] }
 alloy-sol-types = "1.7.3"

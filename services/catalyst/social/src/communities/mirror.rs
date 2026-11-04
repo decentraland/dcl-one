@@ -36,7 +36,7 @@ use anyhow::{Context, Result, anyhow};
 use axum::extract::{Request, State};
 use axum::http::{Method, StatusCode};
 use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
+use axum::response::Response;
 use chrono::{NaiveDateTime, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
@@ -610,11 +610,7 @@ pub async fn refuse_mirrored_writes(
         Ok(Some(upstream)) => err_json(StatusCode::CONFLICT, mirrored_message(&upstream)),
         Err(e) => {
             tracing::error!(error = %e, "community mirror: provenance lookup failed");
-            if super::http::is_social_api(&request) {
-                super::http::database_error(e).into_response()
-            } else {
-                err_json(StatusCode::INTERNAL_SERVER_ERROR, "database error")
-            }
+            err_json(StatusCode::INTERNAL_SERVER_ERROR, "database error")
         }
     }
 }

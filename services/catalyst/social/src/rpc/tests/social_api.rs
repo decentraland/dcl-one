@@ -161,7 +161,6 @@ async fn a_friendship_runs_through_the_http_routes() {
     };
     let (a_key, a) = wallet();
     let (b_key, b) = wallet();
-    seed_profiles(&rig.ctx, &[&a, &b]).await;
     let mut to_b = rig.ctx.pubsub().subscribe(&b);
     let mut to_a = rig.ctx.pubsub().subscribe(&a);
 
@@ -175,8 +174,6 @@ async fn a_friendship_runs_through_the_http_routes() {
         .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let request_id = body["data"]["id"].as_str().unwrap().to_string();
-    let action_id: String = sqlx::query_scalar("SELECT id::text FROM social.friendship_actions WHERE friendship_id=$1 AND action='request' ORDER BY timestamp DESC LIMIT 1")
-        .bind(Uuid::parse_str(&request_id).unwrap()).fetch_one(&rig.pool).await.unwrap();
     assert_eq!(body["data"]["address"], b);
     assert_eq!(body["data"]["message"], "hi");
     assert!(body["data"]["createdAt"].is_i64());
@@ -188,7 +185,7 @@ async fn a_friendship_runs_through_the_http_routes() {
             assert_eq!(r.friend.as_ref().unwrap().address, a);
             assert_eq!(
                 (r.id.as_str(), r.message.as_deref()),
-                (action_id.as_str(), Some("hi"))
+                (request_id.as_str(), Some("hi"))
             );
         }
         other => panic!("{:?}", std::mem::discriminant(other)),
@@ -204,10 +201,7 @@ async fn a_friendship_runs_through_the_http_routes() {
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["total"], 1);
-    assert_eq!(
-        body["data"]["results"][0]["id"], action_id,
-        "list entries identify the request action"
-    );
+    assert_eq!(body["data"]["results"][0]["id"], request_id);
     assert_eq!(body["data"]["results"][0]["address"], a);
     assert_eq!(body["data"]["results"][0]["message"], "hi");
     let (_, sent) = rig
@@ -568,7 +562,6 @@ async fn a_route_and_its_procedure_write_and_publish_alike() {
     let (a_key, a) = wallet();
     let (_, b) = wallet();
     let (c, d) = (addr("par1"), addr("par2"));
-    seed_profiles(&rig.ctx, &[&a, &b, &c, &d]).await;
     let mut to_b = rig.ctx.pubsub().subscribe(&b);
     let mut to_d = rig.ctx.pubsub().subscribe(&d);
 
@@ -614,8 +607,8 @@ async fn a_route_and_its_procedure_write_and_publish_alike() {
     let (from_d, id_d, message_d) = request_of(&to_d.try_recv().unwrap());
     assert_eq!((from_b, message_b), (a.clone(), Some("hello".to_string())));
     assert_eq!((from_d, message_d), (c.clone(), Some("hello".to_string())));
-    assert_ne!(id_b, http["data"]["id"].as_str().unwrap());
-    assert_ne!(id_d, accepted.id);
+    assert_eq!(id_b, http["data"]["id"].as_str().unwrap());
+    assert_eq!(id_d, accepted.id);
 
     let db = rig.ctx.db();
     for (sender, receiver) in [(&a, &b), (&c, &d)] {

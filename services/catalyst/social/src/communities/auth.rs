@@ -12,7 +12,7 @@
 //! route). This surface verifies the 6.x payload only ([`PayloadPolicy::V6Only`]),
 //! as the old social-service did (`CANONICAL_METADATA_KEYS = &[]`).
 
-use axum::http::{HeaderMap, Method};
+use axum::http::HeaderMap;
 
 use crate::Address;
 use crate::auth::eip1654::Eip1654Validator;
@@ -25,99 +25,6 @@ use super::http::SignedFetchRejection;
 pub use crate::shared::signed_fetch::SignedPath;
 
 pub use crate::shared::signed_fetch::is_refused_signer;
-
-/// A fact about one gateway request, created only after its ADR-44 check.
-/// It grants no community permission and says nothing about its body.
-#[derive(Clone)]
-struct VerifiedRequest {
-    address: Address,
-    method: Method,
-    path: SignedPath,
-    headers: HeaderMap,
-}
-
-impl VerifiedRequest {
-    fn matches(&self, headers: &HeaderMap, method: &Method, path: &SignedPath) -> bool {
-        self.method == *method && self.path == *path && self.headers == *headers
-    }
-}
-
-/// Extract the private, request-scoped fact, when gateway ingress supplied it.
-/// Native handlers have no such fact and retain their existing verifier order.
-#[derive(Default)]
-pub struct Caller(Option<VerifiedRequest>);
-
-impl<S: Send + Sync> axum::extract::FromRequestParts<S> for Caller {
-    type Rejection = std::convert::Infallible;
-
-    async fn from_request_parts(
-        parts: &mut axum::http::request::Parts,
-        _: &S,
-    ) -> Result<Self, Self::Rejection> {
-        Ok(Self::from_extensions(&parts.extensions))
-    }
-}
-
-impl Caller {
-    pub(super) fn from_extensions(extensions: &axum::http::Extensions) -> Self {
-        Self(extensions.get::<VerifiedRequest>().cloned())
-    }
-
-    pub(super) async fn require_signer(
-        &self,
-        state: &super::State,
-        headers: &HeaderMap,
-        method: &str,
-        path: &SignedPath,
-    ) -> Result<Address, super::http::CommError> {
-        // Handler method literals use the signed-fetch lowercase spelling;
-        // compare their corresponding HTTP Method with the ingress snapshot.
-        if let Ok(method) = Method::from_bytes(method.to_ascii_uppercase().as_bytes())
-            && let Some(fact) = &self.0
-            && fact.matches(headers, &method, path)
-        {
-            return Ok(fact.address.clone());
-        }
-        state.require_signer(headers, method, path).await
-    }
-}
-
-/// The Social gateway authenticates registered community writes before mirror
-/// SQL and body classification. The private body-limit extension comes from
-/// the server's gateway boundary, never a client-supplied marker header.
-pub async fn gateway_preauth(
-    axum::extract::State(state): axum::extract::State<super::SharedState>,
-    mut request: axum::extract::Request,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    if !super::http::is_social_api(&request)
-        || !super::fed::requires_gateway_signer(request.method(), request.uri().path())
-    {
-        return next.run(request).await;
-    }
-    let original = request
-        .extensions()
-        .get::<axum::extract::OriginalUri>()
-        .map(|original| original.0.path())
-        .unwrap_or_else(|| request.uri().path());
-    let path = SignedPath::new(original.to_owned(), request.uri().path().to_owned());
-    let address = match state
-        .require_signer(request.headers(), request.method().as_str(), &path)
-        .await
-    {
-        Ok(address) => address,
-        Err(error) => return error.into_response(),
-    };
-    let fact = VerifiedRequest {
-        address,
-        method: request.method().clone(),
-        path,
-        headers: request.headers().clone(),
-    };
-    request.extensions_mut().insert(fact);
-    next.run(request).await
-}
 
 /// Read straight off the header so the "not for scenes" gate can answer
 /// before any crypto: a refused request is a 400 that costs no verification.
@@ -196,55 +103,6 @@ mod tests {
     use crate::shared::signed_fetch::SCENE_SIGNER;
     use axum::http::HeaderValue;
     use serde_json::json;
-
-    #[test]
-    fn verified_request_requires_the_exact_method_both_paths_and_all_headers() {
-        let mut headers = HeaderMap::new();
-        for (key, value) in [
-            ("x-identity-auth-chain-0", "signer"),
-            ("x-identity-auth-chain-1", "signed-entity"),
-            ("x-identity-timestamp", "123"),
-            ("x-identity-metadata", "{}"),
-            ("content-type", "application/json"),
-        ] {
-            headers.insert(key, HeaderValue::from_static(value));
-        }
-        let path = SignedPath::new(
-            "/social-api/v1/communities".to_owned(),
-            "/v1/communities".to_owned(),
-        );
-        let fact = VerifiedRequest {
-            address: Address::parse("0x1111111111111111111111111111111111111111").unwrap(),
-            method: Method::POST,
-            path: path.clone(),
-            headers: headers.clone(),
-        };
-        assert!(fact.matches(&headers, &Method::POST, &path));
-        assert!(!fact.matches(&headers, &Method::PUT, &path));
-        for changed in [
-            SignedPath::new("/v1/communities".to_owned(), path.local.clone()),
-            SignedPath::new(path.request.clone(), "/v2/communities".to_owned()),
-        ] {
-            assert!(!fact.matches(&headers, &Method::POST, &changed));
-        }
-        for key in [
-            "x-identity-auth-chain-0",
-            "x-identity-auth-chain-1",
-            "x-identity-timestamp",
-            "x-identity-metadata",
-            "content-type",
-        ] {
-            let mut changed = headers.clone();
-            changed.insert(key, HeaderValue::from_static("changed"));
-            assert!(!fact.matches(&changed, &Method::POST, &path), "{key}");
-            let mut duplicate = headers.clone();
-            duplicate.append(key, headers[key].clone());
-            assert!(
-                !fact.matches(&duplicate, &Method::POST, &path),
-                "duplicate {key}"
-            );
-        }
-    }
 
     #[test]
     fn plain_and_non_canonical_scene_signers_are_refused() {

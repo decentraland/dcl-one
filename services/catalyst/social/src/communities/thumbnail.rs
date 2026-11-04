@@ -13,8 +13,8 @@ use crate::storage::{Storage, StorageError};
 /// Rejected before any storage or database work happens (upstream: 1KB floor).
 pub const MIN_THUMBNAIL_BYTES: usize = 1024;
 
-/// The pinned upstream fields validator accepts thumbnails up to 500 KiB.
-pub const MAX_THUMBNAIL_BYTES: usize = 500 * 1024;
+/// The old communities content store's body cap; validation and storage agree.
+pub const MAX_THUMBNAIL_BYTES: usize = 256 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageMimeType {
@@ -45,7 +45,7 @@ pub enum ThumbnailError {
 impl ThumbnailError {
     pub fn message(self) -> &'static str {
         match self {
-            ThumbnailError::Size => "Thumbnail size must be between 1KB and 500KB",
+            ThumbnailError::Size => "Thumbnail size must be between 1KB and 256KB",
             ThumbnailError::UnsupportedSignature => {
                 "Thumbnail must start with a supported PNG, JPEG, GIF or WebP signature"
             }

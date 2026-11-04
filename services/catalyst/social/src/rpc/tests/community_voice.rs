@@ -31,10 +31,7 @@ impl Rig {
     /// A community (`private` or not) with an owner, a moderator, a member,
     /// a banned wallet and a guest with no role.
     async fn new(private: bool) -> Option<Self> {
-        Some(Self::with_pool(private, scratch_pool().await?).await)
-    }
-
-    async fn with_pool(private: bool, pool: PgPool) -> Self {
+        let pool = scratch_pool().await?;
         let voice = Arc::new(FakeVoiceRooms::new(pool.clone()));
         let ctx = test_ctx(Db::new(pool.clone()), voice.clone());
         let (owner, moderator, member, banned, guest) = (
@@ -67,7 +64,7 @@ impl Rig {
             .execute(&pool)
             .await
             .unwrap();
-        Self {
+        Some(Self {
             pool,
             ctx,
             voice,
@@ -78,7 +75,7 @@ impl Rig {
             member,
             banned,
             guest,
-        }
+        })
     }
 
     fn as_(&self, me: &str) -> ProcedureContext<Context> {
@@ -960,9 +957,7 @@ async fn runtime_failures_are_internal_errors() {
                 muted: true,
             }
         ),
-        failed(
-            "mute/unmute speaker from community voice chat: voice runtime failed: test runtime failed"
-        )
+        failed("mute/unmute speaker from community voice chat")
     );
     let end = || EndCommunityVoiceChatPayload {
         community_id: cid.clone(),
@@ -1057,7 +1052,7 @@ async fn the_profile_reaches_the_room_metadata() {
         Some(serde_json::json!({
             "name": "Owner",
             "has_claimed_name": true,
-            "profile_picture_url": "bafkreiface",
+            "profile_picture_url": format!("https://peer.test/profile-images/entities/{entity}/face.png"),
         }))
     );
     assert_eq!(profiles.get(&rig.guest), Some(&None));
@@ -1067,18 +1062,16 @@ async fn the_profile_reaches_the_room_metadata() {
 
 /// Upstream's community-voice polling (`community-voice-polling.ts:104-130`):
 /// a room that ends without the end procedure (expired, finished) reaches
-/// the audience its start recorded as ENDED on the next poll, once. A canonical
-/// media closure cannot identify the source's independently cased cache keys.
+/// the audience its start recorded as ENDED, once; the end procedure's own
+/// ENDED is not repeated when the runtime then reports the room closed.
 #[tokio::test]
 async fn a_room_closed_out_of_band_reaches_its_audience_as_ended() {
     use crate::comms::interfaces::SocialDirectory;
-    // The poll inspects every tracked key. Its fake media view must not close
-    // generations created concurrently by other fixtures in the scratch DB.
-    let Some(database) = super::fanout::OwnedDatabase::new().await else {
+    let Some(rig) = Rig::new(false).await else {
         return;
     };
-    let rig = Rig::with_pool(false, database.pool.clone()).await;
     let directory = crate::comms_directory::Directory::new(rig.pool.clone());
+    directory.set_updates(rig.ctx.pubsub().clone());
     let mut to_member = rig.ctx.pubsub().subscribe(&rig.member);
     let mut to_guest = rig.ctx.pubsub().subscribe(&rig.guest);
     assert_eq!(rig.start(&rig.owner).await, "Ok");
@@ -1086,18 +1079,6 @@ async fn a_room_closed_out_of_band_reaches_its_audience_as_ended() {
     voice_updates(&mut to_guest);
     let id = crate::CommunityId::from_uuid(rig.community);
     directory.community_voice_room_closed(id).await;
-    assert!(voice_updates(&mut to_member).is_empty());
-    assert!(voice_updates(&mut to_guest).is_empty());
-    assert!(
-        rig.ctx
-            .db()
-            .voice_notification(&rig.community.to_string())
-            .await
-            .unwrap()
-            .is_some()
-    );
-    rig.voice.live.lock().clear();
-    rig.ctx.poll_community_voice_notifications().await;
     for rx in [&mut to_member, &mut to_guest] {
         let ended = voice_updates(rx);
         assert_eq!(ended.len(), 1, "{ended:?}");
@@ -1108,7 +1089,6 @@ async fn a_room_closed_out_of_band_reaches_its_audience_as_ended() {
         assert!(ended[0].ended_at.is_some());
     }
     directory.community_voice_room_closed(id).await;
-    rig.ctx.poll_community_voice_notifications().await;
     assert!(voice_updates(&mut to_member).is_empty(), "once");
 
     // ended by the procedure: the runtime's closed-room report adds nothing
@@ -1119,7 +1099,6 @@ async fn a_room_closed_out_of_band_reaches_its_audience_as_ended() {
     let seen = voice_updates(&mut to_member);
     assert_eq!(seen.len(), 2, "STARTED and one ENDED: {seen:?}");
     rig.drop().await;
-    database.close().await;
 }
 
 /// Participation admits public guests, rejects bans even without a membership
