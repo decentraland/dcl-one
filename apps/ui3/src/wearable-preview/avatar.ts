@@ -53,6 +53,11 @@ export interface AvatarSceneOptions {
   urns?: string[] | string;
   outfit?: OutfitData | null;
   profile?: string;
+  /**
+   * Report "empty" unless at least one requested wearable mounted: the bare body alone is not the picture asked for
+   * (a promo whose items this network cannot resolve keeps its still image instead).
+   */
+  requireWearables?: boolean;
 }
 
 export type AvatarCameraOptions = Pick<
@@ -700,7 +705,9 @@ export function createAvatarScene(
     }
     applyColors(colors);
     renderOnce();
-    return { count: mounted.size, bodyChanged };
+    // The body is always there; with requireWearables only a wearable counts as something shown.
+    const wearablesMounted = [...mounted.values()].filter((p) => !p.isBody).length + features.size;
+    return { count: opts.requireWearables ? wearablesMounted : mounted.size, bodyChanged };
   }
 
   function failInitial(err: unknown): void {

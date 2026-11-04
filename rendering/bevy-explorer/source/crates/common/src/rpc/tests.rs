@@ -154,6 +154,21 @@ fn stream_channel_is_released_on_both_sides_when_the_engine_closes_it() {
 }
 
 #[test]
+fn dropping_a_pending_result_receiver_cancels_the_remote_reply() {
+    let mut bridge = Bridge::new();
+    let _guard = bridge.rt.enter();
+    let (local, receiver) = RpcResultSender::<bool>::channel();
+    let remote: RpcResultSender<bool> =
+        rmp_serde::from_slice(&rmp_encode(&local).unwrap()).unwrap();
+    assert!(!remote.is_cancelled());
+    drop(receiver);
+    assert!(local.is_cancelled());
+    bridge.settle();
+    assert_eq!(bridge.route_to_engine(), 1);
+    assert!(remote.is_cancelled());
+}
+
+#[test]
 fn dropping_the_receiver_early_still_notifies_the_engine() {
     let mut bridge = Bridge::new();
     let _guard = bridge.rt.enter();

@@ -317,6 +317,7 @@ pub fn request_collectibles<T: CollectibleType>(
     if let Some((mut task, mut requested_entities)) = active_task.take() {
         match task.complete() {
             Some(Ok(entities)) => {
+                ipfas.ipfs().record_attachment_batch(entities.len());
                 debug!("got results: {:?}", entities.len());
 
                 for entity in entities {

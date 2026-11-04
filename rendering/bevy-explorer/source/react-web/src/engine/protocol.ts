@@ -128,6 +128,7 @@ export type NavAction =
   | 'notifications'
   | 'emotes'
   | 'mic'
+  | 'support'
 
 export interface NavActionRequest {
   kind: 'navAction'

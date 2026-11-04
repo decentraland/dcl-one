@@ -318,6 +318,7 @@ def runtime_env(config):
             'ETH_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-ethereum-mainnet',
             'MATIC_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-matic-mainnet',
             'MARKETPLACE_SUBGRAPH_URL': 'https://subgraph.decentraland.org/marketplace',
+            'LAND_SUBGRAPH_URL': 'https://subgraph.decentraland.org/land-manager',
             'MARKETPLACE_NFT_INDEX_ENABLED': 'true', 'LAND_AUTHZ_INDEX_ENABLED': 'true',
             'ETH_RPC_URL': 'https://rpc.decentraland.org/mainnet',
             'BUILDER_CONTENT_BUCKET_URL': 'https://builder-items.decentraland.org',
