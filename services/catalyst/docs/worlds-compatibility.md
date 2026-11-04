@@ -54,9 +54,11 @@ difference not listed here is a gap, not a decision.
   Mirrored worlds keep the suffix.
 - **Owner admission.** The owner is the name authority's current holder,
   memoized for 30 seconds per DCL NAME (60 seconds per ENS name; upstream
-  one minute). When the authority cannot answer, nobody is admitted as
-  owner and the world's access setting still decides; only a refusal by
-  that setting answers 503 (upstream fails the whole mint).
+  one minute). It is asked only when the world's access setting refuses,
+  admission waits on it for at most 3 seconds, and its answer (a fault
+  included) is shared for 5 seconds. When the authority cannot answer,
+  nobody is admitted as owner; that refusal answers 503 (upstream fails
+  the whole mint).
 - **Capacity check fails closed.** When the live occupancy of a world cannot
   be recovered, the comms mint answers 503 instead of counting zero
   participants and admitting the user.
@@ -89,13 +91,16 @@ difference not listed here is a gap, not a decision.
 - **Thumbnails** are hashed as CIDv1.
 - **ENS names.** With `ALLOW_ENS_DOMAINS=true` the holder is read over
   `ETH_RPC_URL` (required then; the process refuses to start without it).
-  Only names whose labels are lowercase ASCII letters, digits, `-` and `_`
-  resolve; any other ENS name has no owner here (no ENSIP-15
-  normalization).
+  Only names whose labels the upstream's UTS46 normalization leaves
+  unchanged resolve: lowercase ASCII letters, digits and inner `-`, with no
+  `--` at the third and fourth characters. Upstream decodes `xn--` labels
+  and resolves other Unicode names; here those have no owner.
 - **Owner reconcile.** `worlds.owner` is rewritten from the name authority
-  every `WORLDS_OWNER_RECONCILE_INTERVAL_SECS` (default one hour; upstream
-  every 12 hours), ENS worlds included. A previous holder the world's
-  access setting no longer admits is removed from the world's live rooms.
+  every `WORLDS_OWNER_RECONCILE_INTERVAL_SECS` (default 12 hours, as
+  upstream) for worlds with a locally published scene, ENS worlds
+  included. A previous holder the world's access setting no longer admits
+  is removed from the world's live rooms, as it is when a new holder's
+  publish replaces the stored owner.
 - **Newer-entity check** compares against the lower of the stored entity's
   timestamp and its row's update time, so a future-dated mirrored or
   imported entity cannot block redeploys.
@@ -106,7 +111,9 @@ difference not listed here is a gap, not a decision.
 - **Per-source upload limits** key on the gateway's `X-Real-IP` (IPv6 by
   /64), not `cf-connecting-ip`.
 - **Per-world limits** come from `MAX_PARCELS`, `MAX_FILE_COUNT` and the
-  `worlds.world_limit_overrides` table; there is no `WHITELIST_URL`.
+  `worlds.world_limit_overrides` table; there is no `WHITELIST_URL`. As
+  upstream, an ENS world's size cap is `ENS_MAX_SIZE` whatever its override
+  row says.
 - **Retired scenes.** Replaced and undeployed scenes are kept for
   `SCENE_EVICTION_TTL_MS` and removed by an hourly sweep. Scenes a mirror
   pass retires are deleted at once.

@@ -82,6 +82,14 @@ pub const DEFAULT_ENS_MAX_SIZE_BYTES: i64 = 36 * 1024 * 1024;
 pub const DEFAULT_PERSONAL_WORLD_MAX_SIZE_BYTES: i64 = 50 * 1024 * 1024;
 /// `MAX_PARCELS`' default, as the old service's.
 pub const DEFAULT_MAX_PARCELS: u32 = 4;
+/// How long admission waits on the name authority before deciding without it.
+pub const ADMISSION_OWNER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+/// How long admission reuses an authority answer, a fault included.
+pub const ADMISSION_OWNER_MEMO: std::time::Duration = std::time::Duration::from_secs(5);
+const ADMISSION_OWNER_MAX_ENTRIES: usize = 20_000;
+
+type OwnerLookup =
+    futures::future::BoxFuture<'static, Result<Option<Address>, AuthorityNotEstablished>>;
 
 /// The limits a publish to one world is held to: its
 /// `worlds.world_limit_overrides` row over the node defaults.
@@ -296,6 +304,8 @@ pub struct Policy {
     ens: Option<Arc<EnsResolver>>,
     /// `ENS_MAX_SIZE`: an ENS world's size cap.
     ens_max_size_bytes: i64,
+    /// World key -> the authority's admission-time answer or fault, single-flight.
+    admission_owners: TtlMap<String, Result<Option<Address>, String>>,
 }
 
 impl Policy {
@@ -327,6 +337,7 @@ impl Policy {
             max_parcels: DEFAULT_MAX_PARCELS,
             ens: None,
             ens_max_size_bytes: DEFAULT_ENS_MAX_SIZE_BYTES,
+            admission_owners: TtlMap::bounded(ADMISSION_OWNER_MEMO, ADMISSION_OWNER_MAX_ENTRIES),
         }
     }
 
@@ -345,7 +356,8 @@ impl Policy {
     /// Whether any authority can name an owner of `world`: a `.dcl.eth`
     /// label, or an ENS name while ENS worlds are enabled.
     pub(crate) fn ownable(&self, world: &WorldName) -> bool {
-        world.owner_label().is_some() || (world.is_ens_world() && self.ens_enabled())
+        world.owner_label().is_some()
+            || (world.is_ens_world() && self.ens_enabled() && crate::ens::resolvable(world.key()))
     }
 
     /// Whether `world`'s owner comes from a live authority (else `worlds.owner`).
@@ -438,7 +450,9 @@ impl Policy {
 
     /// The parcel and size caps of a publish to `world`, the ones
     /// `GET /world/{name}/limits` reports. An override's size replaces the
-    /// personal-world cap too: the operator set it for that world.
+    /// personal-world cap too: the operator set it for that world. An ENS
+    /// world's size is `ENS_MAX_SIZE` whatever an override says (the upstream
+    /// checks ENS before its whitelist).
     pub async fn world_limits(&self, world: &WorldName) -> Result<WorldLimits, sqlx::Error> {
         let row: Option<(Option<i32>, Option<i64>)> = sqlx::query_as(
             "SELECT max_parcels, max_size_bytes FROM worlds.world_limit_overrides WHERE world_name = $1",
@@ -446,7 +460,10 @@ impl Policy {
         .bind(world.key())
         .fetch_optional(&self.pool)
         .await?;
-        let (parcels, size) = row.unwrap_or_default();
+        let (parcels, mut size) = row.unwrap_or_default();
+        if world.is_ens_world() {
+            size = None;
+        }
         Ok(WorldLimits {
             max_parcels: parcels.map_or(self.max_parcels, |n| n as u32),
             max_size_bytes: size.unwrap_or_else(|| self.world_size_cap(world)),
@@ -508,12 +525,16 @@ impl Policy {
     }
 
     /// The owner a public read reports: [`Self::known_owner`], else the DCL
-    /// NAME holder by name; `None` when nobody is known or the reader fails.
+    /// NAME holder by name (memoized, "nobody" included); `None` when nobody
+    /// is known or the reader fails. A name no authority can own asks nobody.
     pub async fn owner_by_name(
         &self,
         world: &WorldName,
         row: Option<&WorldRow>,
     ) -> Option<Address> {
+        if !self.ownable(world) {
+            return None;
+        }
         if let Some(owner) = self.known_owner(world, row) {
             return Some(owner);
         }
@@ -582,34 +603,149 @@ impl Policy {
         &self,
         world: &WorldName,
     ) -> Result<Option<Address>, AuthorityNotEstablished> {
+        self.name_owner_lookup(world).await
+    }
+
+    /// [`Self::live_name_owner`] as a future that owns what it needs, so a
+    /// caller that stops waiting leaves it to finish and fill the memo.
+    fn name_owner_lookup(&self, world: &WorldName) -> OwnerLookup {
+        use futures::FutureExt;
+        let ready = |answer| futures::future::ready(answer).boxed();
         if let Some(owner) = self.personal_worlds.owner_of(world) {
-            return Ok(Some(owner));
+            return ready(Ok(Some(owner)));
         }
         if world.is_ens_world() {
-            let Some(ens) = self.ens.as_ref() else {
-                return Ok(None);
+            let Some(ens) = self.ens.clone() else {
+                return ready(Ok(None));
             };
-            return ens
-                .owner(world)
-                .await
-                .map_err(|e| reader_unavailable("ENS owner reader", &e));
+            let world = world.clone();
+            return async move {
+                ens.owner(&world)
+                    .await
+                    .map_err(|e| reader_unavailable("ENS owner reader", &e))
+            }
+            .boxed();
         }
-        let Some(label) = world.owner_label() else {
-            return Ok(None);
+        let Some(label) = world.owner_label().map(str::to_string) else {
+            return ready(Ok(None));
         };
-        let Some(market) = self.names_reader() else {
-            return Err(reader_unavailable(
+        let Some(market) = self.names_reader().cloned() else {
+            return ready(Err(reader_unavailable(
                 "marketplace names reader",
                 NO_NAME_AUTHORITY_MSG,
-            ));
+            )));
         };
-        match crate::chain_index::graph::name_owner(market, label).await {
-            Ok(Some(owner)) => Address::parse(&owner)
-                .map(Some)
-                .map_err(|e| reader_unavailable("marketplace names reader", &e.to_string())),
-            Ok(None) => Ok(None),
-            Err(e) => Err(reader_unavailable("marketplace names reader", &e)),
+        async move {
+            match crate::chain_index::graph::name_owner(&market, &label).await {
+                Ok(Some(owner)) => Address::parse(&owner)
+                    .map(Some)
+                    .map_err(|e| reader_unavailable("marketplace names reader", &e.to_string())),
+                Ok(None) => Ok(None),
+                Err(e) => Err(reader_unavailable("marketplace names reader", &e)),
+            }
         }
+        .boxed()
+    }
+
+    /// [`Self::current_owner`] for admission: the authority is waited on for
+    /// at most [`ADMISSION_OWNER_TIMEOUT`] and its answer, a fault included,
+    /// is shared by every caller for [`ADMISSION_OWNER_MEMO`].
+    async fn admission_owner(
+        &self,
+        world: &WorldName,
+        row: Option<&WorldRow>,
+    ) -> Result<Option<Address>, AuthorityNotEstablished> {
+        let personal = self.personal_worlds.owner_of(world).is_some();
+        if personal || !self.ownable(world) || !self.has_live_authority(world) {
+            return self.current_owner(world, row).await;
+        }
+        let lookup = self.name_owner_lookup(world);
+        let answer = self
+            .admission_owners
+            .get_or_fetch(world.key().to_string(), || async move {
+                let lookup = tokio::spawn(lookup);
+                Ok::<_, std::convert::Infallible>(
+                    match tokio::time::timeout(ADMISSION_OWNER_TIMEOUT, lookup).await {
+                        Ok(Ok(answer)) => answer.map_err(|e| match e {
+                            AuthorityNotEstablished::UndeterminedStoreUnavailable {
+                                reason_for_operators,
+                                ..
+                            } => reason_for_operators,
+                            other => other.to_string(),
+                        }),
+                        Ok(Err(join)) => Err(format!("owner lookup failed: {join}")),
+                        Err(_) => Err("owner lookup timed out".to_string()),
+                    },
+                )
+            })
+            .await;
+        match answer {
+            Ok(answer) => answer.map_err(|e| reader_unavailable("name authority", &e)),
+            Err(never) => match never {},
+        }
+    }
+
+    /// Records `owner` as `world`'s holder, an answer the caller just proved,
+    /// in every memo the owner questions read.
+    pub fn note_owner(&self, world: &WorldName, owner: Option<&Address>) {
+        if world.personal_owner().is_some() || !self.ownable(world) {
+            return;
+        }
+        self.admission_owners
+            .insert(world.key().to_string(), Ok(owner.cloned()));
+        if world.is_ens_world() {
+            if let Some(ens) = self.ens.as_ref() {
+                ens.note_owner(world, owner);
+            }
+        } else if let (Some(label), Some(market)) = (world.owner_label(), self.names_reader()) {
+            market.graph.name_owner.insert(
+                label.to_lowercase(),
+                Arc::new(owner.map(|o| o.as_str().to_string())),
+            );
+        }
+    }
+
+    /// The live holders of many worlds at once for the background reconcile,
+    /// batched and outside every memo: world key -> holder, or the fault.
+    /// Personal worlds and names no live authority can own are left out.
+    pub(crate) async fn reconcile_owners(
+        &self,
+        worlds: &[WorldName],
+    ) -> std::collections::HashMap<String, Result<Option<Address>, String>> {
+        let mut out = std::collections::HashMap::new();
+        let mut dcl: Vec<(&WorldName, String)> = Vec::new();
+        let mut ens: Vec<String> = Vec::new();
+        for world in worlds {
+            if world.personal_owner().is_some()
+                || !self.ownable(world)
+                || !self.has_live_authority(world)
+            {
+                continue;
+            }
+            if world.is_ens_world() {
+                ens.push(world.key().to_string());
+            } else if let Some(label) = world.owner_label() {
+                dcl.push((world, label.to_lowercase()));
+            }
+        }
+        if let (Some(resolver), false) = (self.ens.as_ref(), ens.is_empty()) {
+            out.extend(resolver.owners_uncached(&ens).await);
+        }
+        if let (Some(market), false) = (self.names_reader(), dcl.is_empty()) {
+            let labels: Vec<String> = dcl.iter().map(|(_, l)| l.clone()).collect();
+            let answer = crate::chain_index::graph::name_owners(market, &labels).await;
+            for (world, label) in dcl {
+                let owner = match &answer {
+                    Ok(owners) => match owners.get(&label).cloned().flatten() {
+                        Some(owner) => Address::parse(&owner).map(Some).map_err(|e| e.to_string()),
+                        None => Ok(None),
+                    },
+                    Err(e) => Err(e.clone()),
+                };
+                out.insert(world.key().to_string(), owner);
+            }
+        }
+        out
     }
 
     /// Whether `actor` owns `world` (see the decision table): the answer
@@ -696,14 +832,14 @@ impl Policy {
         Ok(row.and_then(|r| r.owner.clone()))
     }
 
-    /// The admission-time owner check over [`Self::current_owner`].
+    /// The admission-time owner check over [`Self::admission_owner`].
     async fn admission_owner_decision(
         &self,
         world: &WorldName,
         row: Option<&WorldRow>,
         actor: &Address,
     ) -> PermissionDecision {
-        match self.current_owner(world, row).await {
+        match self.admission_owner(world, row).await {
             Ok(Some(owner)) if owner == *actor => PermissionDecision::Allowed,
             Ok(Some(_)) => PermissionDecision::refused(NOT_OWNER_MSG),
             Ok(None) if self.ownable(world) && !self.has_live_authority(world) => {
@@ -952,24 +1088,22 @@ impl Policy {
             .world(world)
             .await
             .map_err(|e| store_unavailable("worlds.worlds", &e))?;
-        // An authority fault denies owner-level entry, never the access setting's.
-        let owner_fault = match self
-            .admission_owner_decision(world, row.as_ref(), actor)
-            .await
-        {
-            PermissionDecision::Allowed => return Ok(Access::Allowed(AccessGrant::Owner)),
-            PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority {
-                ..
-            }) => None,
-            PermissionDecision::Refused(undetermined) => Some(undetermined),
-        };
+        // The owner is asked only when the setting refuses; a fault then is undetermined.
         let by_setting = self
             .setting_access(world, row.as_ref(), actor, secret)
             .await?;
-        match (by_setting, owner_fault) {
-            (granted @ Access::Allowed(_), _) => Ok(granted),
-            (refused, None) => Ok(refused),
-            (_, Some(undetermined)) => Err(undetermined),
+        if matches!(by_setting, Access::Allowed(_)) {
+            return Ok(by_setting);
+        }
+        match self
+            .admission_owner_decision(world, row.as_ref(), actor)
+            .await
+        {
+            PermissionDecision::Allowed => Ok(Access::Allowed(AccessGrant::Owner)),
+            PermissionDecision::Refused(AuthorityNotEstablished::RefusedLacksAuthority {
+                ..
+            }) => Ok(by_setting),
+            PermissionDecision::Refused(undetermined) => Err(undetermined),
         }
     }
 
@@ -1139,7 +1273,7 @@ impl Policy {
             .await
             .map_err(|e| store_unavailable("worlds.worlds", &e))?;
         let mut out = BTreeSet::new();
-        match self.current_owner(world, row.as_ref()).await {
+        match self.admission_owner(world, row.as_ref()).await {
             Ok(owner) => out.extend(owner),
             // Undetermined protects the stored owner too: no ban or kick on a fault.
             Err(e) => {
@@ -1199,10 +1333,19 @@ impl crate::comms::interfaces::AccessPolicy for Policy {
         &self,
         world: &WorldName,
     ) -> Result<Option<Address>, AuthorityNotEstablished> {
-        Policy::world(self, world)
+        let row = Policy::world(self, world)
             .await
-            .map(|row| row.and_then(|row| row.owner))
-            .map_err(|e| store_unavailable("worlds.worlds", &e))
+            .map_err(|e| store_unavailable("worlds.worlds", &e))?;
+        if !self.ownable(world) {
+            return Ok(row.and_then(|row| row.owner));
+        }
+        match self.admission_owner(world, row.as_ref()).await {
+            Ok(owner) => Ok(owner),
+            Err(e) => {
+                tracing::warn!(%world, error = %e, "world owner undetermined; stored owner used");
+                Ok(row.and_then(|row| row.owner))
+            }
+        }
     }
 
     async fn land_document(
@@ -1347,7 +1490,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn world_owner_seam_reads_only_stored_owner_even_for_personal_worlds() {
+    async fn world_owner_seam_reports_the_live_holder_and_the_stored_one_on_a_fault() {
         use crate::comms::interfaces::AccessPolicy;
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
@@ -1355,30 +1498,22 @@ mod tests {
         let p = Policy::new(pool, policy(1), None);
         let personal = wallet();
         let world = WorldName::parse(&format!("{}.dcl.eth", personal.as_str())).unwrap();
-        assert_eq!(
-            p.world_owner(&world).await.unwrap(),
-            None,
-            "personal ownership is not a stored row"
-        );
-        seed_world(&p, &world, None, AccessType::Unrestricted, None).await;
-        assert_eq!(
-            p.world_owner(&world).await.unwrap(),
-            None,
-            "null stored owner stays unknown"
-        );
-        let stored = wallet();
-        sqlx::query("UPDATE worlds.worlds SET owner = $2 WHERE name = $1")
-            .bind(world.key())
-            .bind(&stored)
-            .execute(p.pool())
-            .await
-            .unwrap();
-        assert_eq!(p.world_owner(&world).await.unwrap(), Some(stored.clone()));
-        assert_eq!(
-            p.known_owner(&world, p.world(&world).await.unwrap().as_ref()),
-            Some(personal),
-            "the broader helper would answer differently"
-        );
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(personal));
+
+        let Some((p, names, _)) = scratch_with_names().await else {
+            return;
+        };
+        let (world, stored, holder) = (world_name(), wallet(), wallet());
+        seed_world(&p, &world, Some(&stored), AccessType::Unrestricted, None).await;
+        names.set(&holder, world.label());
+        assert_eq!(p.world_owner(&world).await.unwrap(), Some(holder));
+
+        let Some(down) = scratch_with_names_down().await else {
+            return;
+        };
+        let world = world_name();
+        seed_world(&down, &world, Some(&stored), AccessType::Unrestricted, None).await;
+        assert_eq!(down.world_owner(&world).await.unwrap(), Some(stored));
     }
 
     #[tokio::test]
@@ -1802,7 +1937,11 @@ mod tests {
         .execute(p.pool())
         .await
         .unwrap();
-        assert_eq!(p.world_limits(&world).await.unwrap().max_size_bytes, 99);
+        assert_eq!(
+            p.world_limits(&world).await.unwrap().max_size_bytes,
+            4096,
+            "ENS_MAX_SIZE wins over an override, as upstream"
+        );
         assert_eq!(
             p.may_have_published(&world, &owner)
                 .await
@@ -1858,6 +1997,93 @@ mod tests {
                 .unwrap(),
             Access::NotAllowed
         );
+    }
+
+    /// A hanging authority is never asked for an open world, and bounds a
+    /// burst of refused admissions to one lookup and one short wait.
+    #[tokio::test]
+    async fn a_hanging_authority_delays_admission_once_and_briefly() {
+        use std::sync::atomic::Ordering;
+        let Some((p, ens)) = scratch_with_ens().await else {
+            return;
+        };
+        let p = Arc::new(p);
+        let (open, listed, stranger) = (ens_world(), ens_world(), wallet());
+        seed_world(&p, &open, None, AccessType::Unrestricted, None).await;
+        seed_world(&p, &listed, None, AccessType::AllowList, None).await;
+        ens.hang.store(true, Ordering::Relaxed);
+        assert_eq!(
+            p.can_access(&open, &stranger, None, None, None, now())
+                .await
+                .unwrap(),
+            Access::Allowed(AccessGrant::Unrestricted)
+        );
+        assert_eq!(ens.requests.load(Ordering::Relaxed), 0, "not asked");
+
+        let started = std::time::Instant::now();
+        let burst: Vec<_> = (0..16)
+            .map(|_| {
+                let (p, listed, stranger) = (p.clone(), listed.clone(), stranger.clone());
+                tokio::spawn(async move {
+                    p.can_access(&listed, &stranger, None, None, None, now())
+                        .await
+                })
+            })
+            .collect();
+        for joined in futures::future::join_all(burst).await {
+            assert_eq!(joined.unwrap().unwrap_err().http_status(), 503);
+        }
+        let waited = started.elapsed();
+        assert!(
+            waited >= ADMISSION_OWNER_TIMEOUT && waited < ADMISSION_OWNER_TIMEOUT * 2,
+            "{waited:?}"
+        );
+        let started = std::time::Instant::now();
+        assert!(
+            p.can_access(&listed, &stranger, None, None, None, now())
+                .await
+                .is_err()
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "the fault is memoized"
+        );
+        assert_eq!(
+            ens.requests.load(Ordering::Relaxed),
+            1,
+            "one lookup in flight"
+        );
+    }
+
+    /// An unheld name's "nobody" is memoized like a holder; a name that fails
+    /// validation is never looked up.
+    #[tokio::test]
+    async fn owner_by_name_memoizes_nobody_and_skips_invalid_names() {
+        let Some((p, _names, market)) = scratch_with_names().await else {
+            return;
+        };
+        let unheld = world_name();
+        assert_eq!(p.owner_by_name(&unheld, None).await, None);
+        let label = unheld.owner_label().unwrap().to_lowercase();
+        assert_eq!(
+            market.graph.name_owner.get_fresh(&label).as_deref(),
+            Some(&None)
+        );
+        let invalid = WorldName::parse("foo-bar.dcl.eth").unwrap();
+        assert_eq!(p.owner_by_name(&invalid, None).await, None);
+        assert_eq!(
+            market.graph.name_owner.len(),
+            1,
+            "no lookup for an invalid name"
+        );
+
+        let Some((p, ens)) = scratch_with_ens().await else {
+            return;
+        };
+        let rewritten = WorldName::parse("xn--caf-dma.eth").unwrap();
+        ens.register(rewritten.key(), &wallet());
+        assert_eq!(p.owner_by_name(&rewritten, None).await, None);
+        assert!(ens.calls.lock().unwrap().is_empty());
     }
 
     /// Without a names reader every non-personal publish is refused (the old

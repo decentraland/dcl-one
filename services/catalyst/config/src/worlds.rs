@@ -126,7 +126,7 @@ pub struct WorldsConfig {
     #[arg(
         long,
         env = "WORLDS_OWNER_RECONCILE_INTERVAL_SECS",
-        default_value_t = 3600,
+        default_value_t = 12 * 3600,
         value_parser = clap::value_parser!(u64).range(60..)
     )]
     pub worlds_owner_reconcile_interval_secs: u64,

@@ -539,11 +539,13 @@ async fn missing_stored_file(
         }))
 }
 
+/// Persists one scene deploy; `Ok(Some(previous))` when it replaced the
+/// world's stored owner with a different one.
 pub async fn deploy_scene(
     pool: &PgPool,
     storage: &Storage,
     deployment: SceneDeployment<'_>,
-) -> Result<(), ApiError> {
+) -> Result<Option<Address>, ApiError> {
     let SceneDeployment {
         world,
         name_owner,
@@ -570,7 +572,8 @@ pub async fn deploy_scene(
         return Err(error);
     }
 
-    let (is_insert, disabled): (bool, bool) = sqlx::query_as(
+    // The RETURNING subquery reads the statement's snapshot: the owner before this write.
+    let (is_insert, disabled, previous_owner): (bool, bool, Option<String>) = sqlx::query_as(
         r#"INSERT INTO worlds.worlds AS w (
                name, owner, blocked_since, spawn_coordinates,
                title, description, content_rating, skybox_time, categories,
@@ -583,7 +586,8 @@ pub async fn deploy_scene(
              mirror_source = NULL,
              spawn_coordinates = COALESCE(w.spawn_coordinates, EXCLUDED.spawn_coordinates),
              updated_at = timezone('UTC', now())
-           RETURNING (xmax = 0), blocked_since IS NOT NULL"#,
+           RETURNING (xmax = 0), blocked_since IS NOT NULL,
+                     (SELECT p.owner FROM worlds.worlds p WHERE p.name = $1)"#,
     )
     .bind(world.key())
     .bind(name_owner)
@@ -774,7 +778,9 @@ pub async fn deploy_scene(
     }
 
     tx.commit().await?;
-    Ok(())
+    Ok(previous_owner
+        .and_then(|p| Address::parse(&p).ok())
+        .filter(|p| name_owner.is_some_and(|owner| owner != p)))
 }
 
 /// Refused publish to a world the operator disabled (`/admin/worlds/{w}/disable`).
