@@ -3,7 +3,7 @@
 //! path: its file must hash to its id and the entity, under its auth chain (the peer's
 //! `/audit`), must pass the content validator sync runs before anything is stored; its content
 //! files are hash-verified as sync downloads them, the validator runs again over them (a refusal
-//! then removes the entity file), and [`LiveSyncDeployer`] writes the row as a synced
+//! then removes the entity file; so does an undecided verdict, recorded for the retry worker), and [`LiveSyncDeployer`] writes the row as a synced
 //! deployment (the newest timestamp wins, nothing is marked local). What sync skips is skipped here too: entity types
 //! outside `SYNC_ENTITY_TYPES` (only `SYNC_PROFILE_MAX_AGE_DAYS` is not applied, so an old
 //! profile is still found), and a content file every local reference to which is a profile
@@ -35,8 +35,10 @@ use super::deploy_remote_entity::{
 };
 use super::queries::{self, EntityDoc};
 use super::sync::{parse_entity_types, parse_sync_sources};
-use super::sync_deployer::{LiveSyncDeployer, SyncValidation, is_buffered, is_entity_deployed};
-use super::sync_types::{AuthChain, DeploymentContext, SyncError};
+use super::sync_deployer::{
+    LiveFailedDeploymentsStore, LiveSyncDeployer, SyncValidation, is_buffered, is_entity_deployed,
+};
+use super::sync_types::{AuthChain, DeploymentContext, FailedDeployment, FailureReason, SyncError};
 use super::validator::{Sources, SyncedContent};
 use crate::auth::is_canonical_cid;
 use crate::storage::{Denylist, Storage};
@@ -778,7 +780,9 @@ impl Upstream {
         self.deployer
             .verify_entity(&bytes, id, &chain, SyncedContent::Pending)
             .await?;
-        let pointers = entity_pointers(&serde_json::from_slice(&bytes)?);
+        let doc: Value = serde_json::from_slice(&bytes)?;
+        let pointers = entity_pointers(&doc);
+        let entity_type = doc["type"].as_str().unwrap_or(entity_type).to_string();
         self.storage.store(id, bytes.into()).await?;
         drop((hold, slot));
 
@@ -799,16 +803,49 @@ impl Upstream {
             },
         )
         .await;
-        if let Err(e @ SyncError::DeploymentRejected(_)) = deployed {
-            // Refused once its content was in: the entity file goes too, unless sync holds it.
-            self.evict_refused(id).await;
+        if let Err(e) = deployed {
+            self.settle_unvalidated(id, &entity_type, &chain, &e).await;
             return Err(e);
         }
-        deployed?;
         Ok(pointers)
     }
 
-    /// Removes a refused entity's file unless a deployment row or a sync buffer refers to it.
+    /// After a copy failed once its files were in: a refused or undecided entity's file goes,
+    /// unless sync holds it, and an undecided one is recorded for the retry worker.
+    async fn settle_unvalidated(
+        &self,
+        id: &str,
+        entity_type: &str,
+        chain: &AuthChain,
+        error: &SyncError,
+    ) {
+        match error {
+            SyncError::DeploymentRejected(_) => {}
+            SyncError::ValidationUndecided(_) => {
+                let failure = FailedDeployment {
+                    entity_type: entity_type.to_string(),
+                    entity_id: id.to_string(),
+                    reason: FailureReason::ValidationUndecided,
+                    auth_chain: chain.clone(),
+                    error_description: error.to_string(),
+                    failure_timestamp: chrono::Utc::now().timestamp_millis(),
+                    snapshot_hash: None,
+                    retry_count: 0,
+                    next_retry_at: 0,
+                };
+                if let Err(e) = LiveFailedDeploymentsStore::new(self.pool.clone())
+                    .report_failure(failure)
+                    .await
+                {
+                    tracing::warn!(entity_id = id, error = %e, "read-through: undecided entity not recorded");
+                }
+            }
+            _ => return,
+        }
+        self.evict_refused(id).await;
+    }
+
+    /// Removes an unvalidated entity's file unless a deployment row or a sync buffer refers to it.
     async fn evict_refused(&self, id: &str) {
         if is_buffered(id) {
             return;

@@ -573,6 +573,59 @@ async fn a_refused_entity_file_stays_while_a_row_or_a_sync_buffer_refers_to_it()
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_entity_undecided_once_its_content_is_in_is_recorded_and_its_file_removed() {
+    let fake = start_fake().await;
+    require_test_db!(Some(node) = Node::new("undecided-late", &fake, HANG_GUARD, true).await);
+    let fx = Fixture::new("wearable", &pointer(), now_ms());
+    node.storage
+        .store(&fx.id, fx.bytes.clone().into())
+        .await
+        .unwrap();
+    let chain = signed_chain(&fx.id).await;
+    node.read_through
+        .upstream
+        .settle_unvalidated(
+            &fx.id,
+            "wearable",
+            &chain,
+            &SyncError::ValidationUndecided("no RPC".into()),
+        )
+        .await;
+
+    assert!(
+        !node.holds(&fx.id).await,
+        "no unvalidated entity file is served"
+    );
+    let (reason, retry_count): (String, i32) = sqlx::query_as(
+        "SELECT reason, retry_count FROM content.failed_deployments WHERE entity_id = $1",
+    )
+    .bind(&fx.id)
+    .fetch_one(&node.pool)
+    .await
+    .expect("the retry worker owns it");
+    assert_eq!((reason.as_str(), retry_count), ("Validation undecided", 0));
+
+    let other = Fixture::new("wearable", &pointer(), now_ms());
+    node.storage
+        .store(&other.id, other.bytes.clone().into())
+        .await
+        .unwrap();
+    node.read_through
+        .upstream
+        .settle_unvalidated(
+            &other.id,
+            "wearable",
+            &chain,
+            &SyncError::Other("peer down".into()),
+        )
+        .await;
+    assert!(
+        node.holds(&other.id).await,
+        "a verified file kept for the next read"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_content_file_that_does_not_hash_to_its_name_is_refused() {
     let fake = start_fake().await;
     require_test_db!(Some(node) = Node::new("forged-file", &fake, HANG_GUARD, true).await);
