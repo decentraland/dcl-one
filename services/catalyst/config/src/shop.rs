@@ -20,8 +20,9 @@ pub struct MarketUpstreamsConfig {
     #[arg(long, env = "MARKETPLACE_SUBGRAPH_URL")]
     pub marketplace_subgraph_url: Option<String>,
 
-    /// Land-manager subgraph: parcel operators and update-operator lookups
-    /// before the land-authz index is published; unset answers the envelope.
+    /// Land-manager subgraph: parcel operators, permissions and
+    /// update-operator lookups before the land-authz index is published;
+    /// unset answers the envelope (lamb2's 500 on the permissions route).
     #[arg(long, env = "LAND_SUBGRAPH_URL")]
     pub land_subgraph_url: Option<String>,
 

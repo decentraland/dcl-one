@@ -12,27 +12,32 @@
 //! Where each consumer reads:
 //! - `GET /lambdas/parcels/{x}/{y}/operators` (comms' `COMMS_LAND_OPERATORS_URL`
 //!   shape): **index** once [`indexer::index_ready`]; before that the
-//!   unavailable envelope (`Source::LandAuthzIndex`), never owner-only
-//!   presented as the operators.
+//!   land-manager subgraph (`LAND_SUBGRAPH_URL`, `chain_index::land_graph`),
+//!   never owner-only presented as the operators; the unavailable envelope
+//!   (`Source::LandAuthzIndex`) without it.
 //! - `GET /lambdas/users/{address}/lands-permissions`: **index** (the
-//!   `token_right_update_operator_idx` reverse lookup, paged); envelope
-//!   before readiness. The old route's second source, the land-manager
-//!   subgraph (`LAND_SUBGRAPH_URL`), is not configured in v2.
-//! - `GET /lambdas/users/{address}/parcels/{x}/{y}/permissions` and the
-//!   `POST .../parcels/permissions` batch: **index** for every leg once
-//!   ready; before that the owner leg from the marketplace subgraph reader
-//!   (`marketplace::graph::parcels_at`) and the four operator legs
-//!   undecided: denied for the write decision (fail-closed, the old
-//!   validator's behaviour with no resolver attached) and serialized as
-//!   `null` on the permissions routes (the marketplace subgraph's Parcel
-//!   and Estate carry no operator, updateOperator, updateManager or
-//!   approvedForAll; the old fallback read them from the land-manager
-//!   subgraph, `LAND_SUBGRAPH_URL`, which v2 does not configure); the
-//!   `x-land-authz-source` header says which. Envelope when neither source
-//!   exists.
+//!   `token_right_update_operator_idx` reverse lookup, paged); before
+//!   readiness the land-manager subgraph, else the envelope.
+//! - `GET /lambdas/users/{address}/parcels/{x}/{y}/permissions`: five
+//!   booleans from the **index** once ready; before that from the
+//!   land-manager subgraph's operators, as lamb2 computes them; with
+//!   neither, lamb2's bare 500. The `x-land-authz-source` header names the
+//!   source.
+//! - `POST .../parcels/permissions` (the batch, this tree's own): **index**
+//!   for every leg once ready; before that the owner leg from the
+//!   marketplace subgraph reader (`chain_index::graph::parcels_at`) and the
+//!   four operator legs undecided: denied for the write decision
+//!   (fail-closed, the old validator's behaviour with no resolver attached)
+//!   and serialized as `null` (the marketplace subgraph's Parcel and Estate
+//!   carry no operator, updateOperator, updateManager or approvedForAll);
+//!   the `x-land-authz-source` header says which. Envelope when neither
+//!   source exists.
 //! - `GET /lambdas/land-authz/status`: the cursor row, readiness and lag.
-//! - [`can_deploy`]: the same decision as the permissions route, for the
-//!   write paths; [`owns_land_at`]: the LAND leg of `worlds::policy`.
+//! - [`can_deploy`]: the decision the batch route reports, for the write
+//!   paths; once the index is ready, the single permissions route's flags
+//!   too. Before that the write paths stay owner-only and fail-closed, so a
+//!   subgraph-reported operator leg does not yet grant a deploy;
+//!   [`owns_land_at`]: the LAND leg of `worlds::policy`.
 //!
 //! What changed against the old crate: its resolver joined
 //! `squid_marketplace.parcel` and `.estate` for coordinates, ownership and
@@ -44,9 +49,10 @@
 //! `index_cursor.folded_block` is set (a completed full replay, folded within
 //! 25 blocks of the chain head) and `folded_at` is at most 30 minutes old;
 //! until then the marketplace subgraph reader (`marketplace::graph::parcels_at`,
-//! `owns_land_at`) answers the owner leg and nothing answers the operator
-//! legs. The job runs only with `LAND_AUTHZ_INDEX_ENABLED=true` and
-//! `ETH_RPC_URL`; off, the readers keep using the fallback.
+//! `owns_land_at`) answers the owner leg for the write paths and the
+//! land-manager subgraph answers the read routes above. The job runs only
+//! with `LAND_AUTHZ_INDEX_ENABLED=true` and `ETH_RPC_URL`; off, the readers
+//! keep using the fallbacks.
 
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
@@ -480,6 +486,8 @@ mod unit_tests {
         assert_eq!(decode_land_token_id(id).unwrap(), (37, 55));
         let negative = "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe";
         assert_eq!(decode_land_token_id(negative).unwrap(), (-1, -2));
+        let exception_block = "0x000000000000000000000000000000a30000000000000000000000000000003b";
+        assert_eq!(decode_land_token_id(exception_block).unwrap(), (163, 59));
         assert_eq!(decode_land_token_id("0x12"), None);
     }
 
