@@ -206,7 +206,7 @@ pub(crate) async fn instrument_metrics(
         } else {
             handler.unwrap_or("")
         };
-        metrics::histogram!("http_request_size_bytes", "method" => method.clone(), "handler" => handler, "code" => code.as_u16().to_string()).record(size);
+        metrics::histogram!("http_request_size_bytes", "method" => super::metrics::http_method_label(&method), "handler" => handler, "code" => code.as_u16().to_string()).record(size);
         super::metrics::http_finished(method, handler, code.as_u16(), started);
     }
     response

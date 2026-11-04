@@ -16,7 +16,7 @@ use crate::shared::rpc::ws::SocketClose;
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
@@ -62,6 +62,8 @@ pub struct ContextInner {
     /// Every open socket of both protocols, from the moment it opens
     /// (upstream's `ws-pool`): the pool cap counts them and shutdown ends them.
     sockets: parking_lot::Mutex<HashMap<u64, (Protocol, Arc<SocketClose>)>>,
+    /// Updated under `sockets`' lock so both gauges follow the same pool state.
+    socket_counts: [AtomicUsize; 2],
     next_socket: AtomicU64,
     /// `SOCIAL_WRITES_ENABLED` (`social::writes`): false refuses every
     /// mutating procedure with `SocialError::WritesDisabled`.
@@ -116,19 +118,21 @@ pub struct OpenSocket {
 impl Drop for OpenSocket {
     fn drop(&mut self) {
         let mut sockets = self.ctx.0.sockets.lock();
-        sockets.remove(&self.id);
+        if sockets.remove(&self.id).is_none() {
+            return;
+        }
         metrics::gauge!("ws_active_connections").set(sockets.len() as f64);
+        let count = &self.ctx.0.socket_counts[match self.protocol {
+            Protocol::Rpc => 0,
+            Protocol::Stream => 1,
+        }];
         metrics::gauge!("ws_active_connections_by_protocol", "protocol" => self.protocol.label())
-            .set(
-                sockets
-                    .values()
-                    .filter(|(protocol, _)| *protocol == self.protocol)
-                    .count() as f64,
-            );
+            .set((count.fetch_sub(1, Ordering::Relaxed) - 1) as f64);
         drop(sockets);
         let protocol = self.protocol.label();
         if matches!(self.protocol, Protocol::Rpc) {
-            let code = self.close.observed_code().unwrap_or(1006).to_string();
+            let code =
+                super::metrics::ws_close_code_label(self.close.observed_code().unwrap_or(1006));
             metrics::counter!("ws_close_codes", "code" => code).increment(1);
         }
         metrics::histogram!("ws_connection_duration_seconds")
@@ -163,6 +167,7 @@ impl Context {
             connectivity_operations: tokio::sync::Semaphore::new(4),
             kill_handles: DashMap::new(),
             sockets: parking_lot::Mutex::new(HashMap::new()),
+            socket_counts: [AtomicUsize::new(0), AtomicUsize::new(0)],
             next_socket: AtomicU64::new(0),
             writes_enabled: AtomicBool::new(true),
         }))
@@ -221,12 +226,12 @@ impl Context {
         }
         let id = self.0.next_socket.fetch_add(1, Ordering::Relaxed);
         sockets.insert(id, (protocol, close.clone()));
-        metrics::gauge!("ws_active_connections_by_protocol", "protocol" => protocol.label()).set(
-            sockets
-                .values()
-                .filter(|(active, _)| *active == protocol)
-                .count() as f64,
-        );
+        let count = &self.0.socket_counts[match protocol {
+            Protocol::Rpc => 0,
+            Protocol::Stream => 1,
+        }];
+        metrics::gauge!("ws_active_connections_by_protocol", "protocol" => protocol.label())
+            .set((count.fetch_add(1, Ordering::Relaxed) + 1) as f64);
         metrics::gauge!("ws_active_connections").set(sockets.len() as f64);
         drop(sockets);
         super::metrics::log("ws-pool", "debug");
@@ -858,14 +863,35 @@ mod tests {
         assert!(ctx.open_socket(Protocol::Rpc, Some(2)).is_none());
         let rendered = handle.render();
         assert!(rendered.contains("ws_active_connections 2"));
+        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"rpc\"} 1"));
+        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"stream\"} 1"));
         assert!(rendered.contains("ws_connections_rejected 1"));
         rpc.close.peer_closed(1000);
+        rpc.close.peer_closed(4000);
+        rpc.close.end(1011, "already closed");
+        assert_eq!(
+            ctx.live_connections(),
+            2,
+            "a close signal holds its pool slot until drop"
+        );
         drop(rpc);
+        assert_eq!(ctx.live_connections(), 1);
+        let rendered = handle.render();
+        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"rpc\"} 0"));
+        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"stream\"} 1"));
+        let replacement = ctx.open_socket(Protocol::Rpc, Some(2)).unwrap();
+        replacement
+            .close
+            .end(3005, "Replaced by a newer connection");
+        drop(replacement);
         drop(stream);
         let rendered = handle.render();
         assert!(rendered.contains("ws_active_connections 0"));
-        assert!(rendered.contains("ws_connection_duration_seconds_count 2"));
+        assert!(rendered.contains("ws_connection_duration_seconds_count 3"));
         assert!(rendered.contains("ws_close_codes{code=\"1000\"} 1"));
+        assert!(rendered.contains("ws_close_codes{code=\"3005\"} 1"));
+        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"rpc\"} 0"));
+        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"stream\"} 0"));
         ctx.mark_online("fixture");
         ctx.mark_online("fixture");
         ctx.mark_online("other");
@@ -897,5 +923,51 @@ mod tests {
                 observation["value"]
             )));
         }
+    }
+
+    #[tokio::test]
+    async fn socket_drops_bound_client_close_codes_and_keep_mixed_protocol_counts() {
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let _recording = metrics::set_default_local_recorder(&recorder);
+        let ctx = Context::new(
+            VoiceSettings::default(),
+            Db::new(
+                sqlx::postgres::PgPoolOptions::new()
+                    .connect_lazy("postgres://localhost/unused")
+                    .unwrap(),
+            ),
+            Profiles::new(None),
+            Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
+        );
+        let stream = ctx.open_socket(Protocol::Stream, None).unwrap();
+        let codes = [1004, 1016, 2000, 2999, 3000, 3002, 3006, 3999]
+            .into_iter()
+            .chain(4000..4128);
+        for code in codes {
+            let socket = ctx.open_socket(Protocol::Rpc, Some(2)).unwrap();
+            socket.close.peer_closed(code);
+            socket.close.peer_closed(1000);
+            drop(socket);
+            assert_eq!(ctx.live_connections(), 1);
+        }
+        let rendered = handle.render();
+        let close_samples = rendered
+            .lines()
+            .filter(|line| line.starts_with("ws_close_codes{"))
+            .collect::<Vec<_>>();
+        assert_eq!(close_samples, ["ws_close_codes{code=\"other\"} 136"]);
+        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"rpc\"} 0"));
+        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"stream\"} 1"));
+        ctx.end_sockets(1001, "shutdown", Duration::ZERO).await;
+        assert_eq!(stream.close.observed_code(), Some(1001));
+        assert_eq!(ctx.live_connections(), 1);
+        drop(stream);
+        let rendered = handle.render();
+        assert!(rendered.contains("ws_active_connections 0"));
+        assert!(rendered.contains("ws_active_connections_by_protocol{protocol=\"stream\"} 0"));
+        assert!(rendered.contains("ws_connection_duration_seconds_count 137"));
     }
 }

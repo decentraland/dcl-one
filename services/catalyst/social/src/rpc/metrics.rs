@@ -250,14 +250,65 @@ pub(super) fn register() {
     metrics::counter!("friendship_rate_limiter_unavailable").increment(0);
 }
 
+// Preserve the two source transports' casing without admitting extension methods
+// as labels. This also bounds callers that bypass the HTTP middleware.
+pub(super) fn http_method_label(method: &str) -> &'static str {
+    match method {
+        "GET" => "GET",
+        "HEAD" => "HEAD",
+        "POST" => "POST",
+        "PUT" => "PUT",
+        "PATCH" => "PATCH",
+        "DELETE" => "DELETE",
+        "CONNECT" => "CONNECT",
+        "OPTIONS" => "OPTIONS",
+        "TRACE" => "TRACE",
+        "get" => "get",
+        "head" => "head",
+        "post" => "post",
+        "put" => "put",
+        "patch" => "patch",
+        "delete" => "delete",
+        "connect" => "connect",
+        "options" => "options",
+        "trace" => "trace",
+        _ => "other",
+    }
+}
+
+pub(super) fn ws_close_code_label(code: u16) -> &'static str {
+    match code {
+        1000 => "1000",
+        1001 => "1001",
+        1002 => "1002",
+        1003 => "1003",
+        1005 => "1005",
+        1006 => "1006",
+        1007 => "1007",
+        1008 => "1008",
+        1009 => "1009",
+        1010 => "1010",
+        1011 => "1011",
+        1012 => "1012",
+        1013 => "1013",
+        1014 => "1014",
+        1015 => "1015",
+        3003 => "3003",
+        3004 => "3004",
+        3005 => "3005",
+        _ => "other",
+    }
+}
+
 pub(super) fn http_finished(
     method: String,
     handler: &'static str,
     code: u16,
     started: std::time::Instant,
 ) {
+    let method = http_method_label(&method);
     let code = code.to_string();
-    metrics::counter!("http_requests_total", "method" => method.clone(), "handler" => handler, "code" => code.clone()).increment(1);
+    metrics::counter!("http_requests_total", "method" => method, "handler" => handler, "code" => code.clone()).increment(1);
     metrics::histogram!("http_request_duration_seconds", "method" => method, "handler" => handler, "code" => code).record(started.elapsed().as_secs_f64());
 }
 
@@ -502,6 +553,187 @@ pub(super) fn filter_families(rendered: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn samples<'a>(rendered: &'a str, name: &str) -> Vec<&'a str> {
+        rendered
+            .lines()
+            .filter(|line| {
+                line.strip_prefix(name)
+                    .is_some_and(|rest| rest.starts_with('{'))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn http_method_labels_preserve_source_casing_and_bound_direct_callers() {
+        for method in [
+            "GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "CONNECT", "OPTIONS", "TRACE",
+        ] {
+            assert_eq!(http_method_label(method), method);
+            let lower = method.to_ascii_lowercase();
+            assert_eq!(http_method_label(&lower), lower);
+        }
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            for i in 0..256 {
+                let method = format!("X-METRIC-{i}");
+                assert_eq!(http_method_label(&method), "other");
+                http_finished(method, "", 501, std::time::Instant::now());
+            }
+        });
+        let rendered = handle.render();
+        for family in ["http_requests_total", "http_request_duration_seconds_count"] {
+            let samples = samples(&rendered, family);
+            assert_eq!(samples.len(), 1, "{rendered}");
+            assert!(samples[0].contains("method=\"other\""));
+            assert!(samples[0].ends_with(" 256"));
+        }
+        let buckets = samples(&rendered, "http_request_duration_seconds_bucket");
+        assert_eq!(buckets.len(), 12, "{rendered}");
+        assert!(
+            buckets
+                .iter()
+                .all(|sample| sample.contains("method=\"other\""))
+        );
+    }
+
+    #[test]
+    fn websocket_close_code_labels_have_a_fixed_standard_and_source_allowlist() {
+        let known = [
+            1000, 1001, 1002, 1003, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014,
+            1015, 3003, 3004, 3005,
+        ];
+        for code in 0..=u16::MAX {
+            if known.contains(&code) {
+                assert_eq!(ws_close_code_label(code), code.to_string());
+            } else {
+                assert_eq!(ws_close_code_label(code), "other", "{code}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn real_http_extension_methods_share_bounded_counter_and_histogram_labels() {
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let _recording = metrics::set_default_local_recorder(&recorder);
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/unused")
+            .unwrap();
+        let state = Arc::new(RpcState::new(
+            pool,
+            super::super::Settings::default(),
+            None,
+            Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
+        ));
+        // Match the source gateway and native root mounts used in social::router.
+        let app = super::super::router(state.clone())
+            .merge(
+                super::super::http::router(state.clone()).layer(axum::middleware::from_fn(
+                    super::super::http::instrument_metrics,
+                )),
+            )
+            .nest(
+                "/social-api",
+                crate::social_api_gateway(super::super::http::router(state)),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+        for i in 0..128 {
+            let method =
+                axum::http::Method::from_bytes(format!("X-METRIC-{i}").as_bytes()).unwrap();
+            for (path, status) in [
+                ("/v2/friends", StatusCode::METHOD_NOT_ALLOWED),
+                ("/social-api/v2/friends", StatusCode::NOT_IMPLEMENTED),
+                ("/social-rpc/health/live", StatusCode::OK),
+            ] {
+                let response = client
+                    .request(method.clone(), format!("http://{address}{path}"))
+                    .body("payload")
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), status, "{method} {path}");
+                response.bytes().await.unwrap();
+            }
+        }
+        let rendered = handle.render();
+        for (family, count) in [
+            ("http_requests_total", 3),
+            ("http_request_duration_seconds_count", 3),
+            ("http_request_size_bytes_count", 2),
+        ] {
+            let samples = samples(&rendered, family);
+            assert_eq!(samples.len(), count, "{family}\n{rendered}");
+            assert!(
+                samples.iter().all(|sample| {
+                    sample.contains("method=\"other\"") && sample.ends_with(" 128")
+                }),
+                "{rendered}"
+            );
+            for code in [405, 501] {
+                assert_eq!(
+                    samples
+                        .iter()
+                        .filter(|sample| sample.contains(&format!("code=\"{code}\"")))
+                        .count(),
+                    1,
+                    "{family}\n{rendered}"
+                );
+            }
+        }
+        for (family, count) in [
+            ("http_request_duration_seconds_bucket", 36),
+            ("http_request_size_bytes_bucket", 24),
+        ] {
+            let buckets = samples(&rendered, family);
+            assert_eq!(buckets.len(), count, "{family}\n{rendered}");
+            assert!(
+                buckets
+                    .iter()
+                    .all(|sample| sample.contains("method=\"other\""))
+            );
+        }
+        for (path, status) in [
+            ("/v2/friends", StatusCode::BAD_REQUEST),
+            ("/social-rpc/status", StatusCode::OK),
+        ] {
+            assert_eq!(
+                client
+                    .get(format!("http://{address}{path}"))
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                status
+            );
+        }
+        let rendered = handle.render();
+        assert!(
+            samples(&rendered, "http_requests_total")
+                .iter()
+                .any(|sample| sample.contains("method=\"GET\""))
+        );
+        assert!(
+            samples(&rendered, "http_requests_total")
+                .iter()
+                .any(|sample| sample.contains("method=\"get\""))
+        );
+        server.abort();
+        let _ = server.await;
+    }
+
     #[test]
     fn source_registration_has_exact_metadata_and_only_sixteen_initial_zeros() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"), "/services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json"))).unwrap();
