@@ -28,7 +28,10 @@ use super::{
     TransportType,
 };
 use common::{
-    profile::{AvatarColor, AvatarEmote, AvatarSnapshots, LambdaProfiles, SerializedProfile},
+    profile::{
+        AvatarColor, AvatarEmote, AvatarSnapshots, CompactProfile, LambdaProfiles,
+        SerializedProfile,
+    },
     rpc::{RpcCallEvent, RpcEventSender, RpcResultSender, RpcStreamSender},
     sets::SceneSets,
     structs::{AppConfig, PrimaryUser},
@@ -54,7 +57,12 @@ impl Plugin for UserProfilePlugin {
         app.add_systems(
             Update,
             (
-                (drive_profile_fetches, request_missing_profiles).chain(),
+                (
+                    drive_profile_fetches,
+                    request_missing_profiles,
+                    serve_compact_profiles,
+                )
+                    .chain(),
                 process_profile_events,
             )
                 .before(process_transport_updates), // .in_set(TODO)
@@ -75,13 +83,14 @@ impl Plugin for UserProfilePlugin {
                 title: "Entity requests / profiles",
                 query: "/profile_requests",
                 fields: &[
-                    ("Registry POSTs", "posts"),
+                    ("Catalyst POSTs", "posts"),
                     ("Single-profile POSTs", "single"),
                     ("Aggregated POSTs", "aggregated"),
                     ("Last batch size", "lastBatch"),
                     ("Mean batch size", "meanBatch"),
-                    ("Registry batches in flight", "inFlight"),
-                    ("Catalyst fallbacks in flight", "fallbacks"),
+                    ("Batches in flight", "inFlight"),
+                    ("Compact POSTs", "compact"),
+                    ("Compact route missing", "compactUnsupported"),
                     ("Unresolved cached profiles", "unresolved"),
                 ],
                 actions: &[],
@@ -89,7 +98,6 @@ impl Plugin for UserProfilePlugin {
             });
         app.insert_resource(CurrentUserProfile::default());
         app.init_resource::<ProfileCache>()
-            .init_resource::<ProfileMetaCache>()
             .add_event::<ProfileDeployedEvent>();
     }
 }
@@ -97,9 +105,9 @@ impl Plugin for UserProfilePlugin {
 /// Pacing for the fetch cascade: how long an unsatisfied entry waits after its last
 /// cascade concluded before running another. Covers both failure retry (without it one
 /// transient error would leave an address unresolvable for the engine's whole uptime)
-/// and the convergence re-probe of data the registry hasn't confirmed yet.
+/// and the re-probe of data still behind the announced version.
 const PROFILE_FETCH_RETRY: std::time::Duration = std::time::Duration::from_secs(30);
-/// The registry serves many ids per request; keep a batch well under any server-side cap
+/// The catalyst serves many ids per request; keep a batch well under any server-side cap
 /// and split anything longer across requests.
 const PROFILE_REQUEST_BATCH: usize = 100;
 /// An entry nobody has asked about for this long is dropped (and its fetch retries with
@@ -114,7 +122,17 @@ const PROFILE_EVICT_AFTER: std::time::Duration = std::time::Duration::from_secs(
 enum ProfileSource {
     Peer,
     Catalyst,
-    Registry,
+}
+
+/// How much of a profile a reader needs. Declared smallest first so the derived `Ord`
+/// keeps the larger of two asks.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+enum ProfileTier {
+    /// Name, claimed-name flag, name colour and face: a list row
+    #[default]
+    Compact,
+    /// The whole profile: an avatar to render, a passport
+    Full,
 }
 
 fn profile_is_guest(profile: &UserProfile) -> bool {
@@ -127,9 +145,13 @@ struct ProfileEntry {
     announced: u32,
     /// best data we hold and where it came from
     data: Option<(Box<UserProfile>, ProfileSource)>,
-    /// fetch strategy currently in flight (`Registry` = member of a batch POST,
-    /// `Catalyst` = a single GET); p2p is fire-and-forget, tracked by `last_p2p`
-    fetching: Option<ProfileSource>,
+    /// the most any reader has asked of this address
+    wanted: ProfileTier,
+    /// the compact tier's answer, held only while no full data is
+    compact: Option<CompactProfile>,
+    /// the tier of the catalyst POST holding this address, while one is in flight; p2p is
+    /// fire-and-forget, tracked by `last_p2p`
+    fetching: Option<ProfileTier>,
     /// when the next cascade may start; None = due now. Irrelevant once satisfied.
     next_fetch: Option<web_time::Instant>,
     /// `time.elapsed_secs_f64()` of the last `ProfileRequest` sent to the peer
@@ -143,12 +165,16 @@ impl ProfileEntry {
         self.data.as_ref().map(|(profile, _)| profile.as_ref())
     }
 
-    /// nothing better to look for: registry-confirmed data, or a guest peer's own
-    /// answer (which no registry will ever hold), at the announced version
+    /// nothing better to look for. A compact reader takes any data; a full reader takes
+    /// the catalyst's answer, or a guest peer's own answer (which the catalyst never
+    /// holds), at the announced version
     fn satisfied(&self) -> bool {
+        if self.wanted == ProfileTier::Compact {
+            return self.data.is_some() || self.compact.is_some();
+        }
         self.data.as_ref().is_some_and(|(profile, source)| {
             profile.version >= self.announced
-                && (*source == ProfileSource::Registry
+                && (*source == ProfileSource::Catalyst
                     || (*source == ProfileSource::Peer && profile_is_guest(profile)))
         })
     }
@@ -161,24 +187,35 @@ impl ProfileEntry {
         !self.satisfied() && self.fetching.is_none() && self.due(now)
     }
 
+    /// a cascade has concluded with nothing to show, and its retry isn't due yet
+    fn missing(&self, now: web_time::Instant) -> bool {
+        self.data.is_none() && self.compact.is_none() && self.fetching.is_none() && !self.due(now)
+    }
+
+    /// the POST this entry's next fetch goes in: full for everyone once the catalyst has
+    /// shown it serves no compact profiles
+    fn fetch_tier(&self, compact_unsupported: bool) -> ProfileTier {
+        if compact_unsupported {
+            ProfileTier::Full
+        } else {
+            self.wanted
+        }
+    }
+
+    /// raise what readers need; asking for more than was fetched makes the next fetch due
+    fn want(&mut self, tier: ProfileTier) {
+        if tier > self.wanted {
+            self.wanted = tier;
+            self.next_fetch = None;
+        }
+    }
+
     /// nobody has accessed it within `PROFILE_EVICT_AFTER`, and no fetch is in flight
     fn evictable(&self, now: web_time::Instant) -> bool {
         self.fetching.is_none()
             && self
                 .last_access
                 .is_none_or(|at| now.saturating_duration_since(at) >= PROFILE_EVICT_AFTER)
-    }
-
-    /// catalyst is worth asking when we hold nothing, hold only p2p data, or are behind
-    /// the announcement; catalyst-sourced data at the announced version re-probes the
-    /// registry alone
-    fn include_catalyst(&self) -> bool {
-        match &self.data {
-            None => true,
-            Some((profile, _)) if profile.version < self.announced => true,
-            Some((_, ProfileSource::Peer)) => true,
-            _ => false,
-        }
     }
 
     /// accept a newer version from anywhere, and an equal version only from a more
@@ -195,8 +232,25 @@ impl ProfileEntry {
         };
         if improvement {
             self.data = Some((Box::new(profile), source));
+            self.compact = None;
         }
         improvement
+    }
+
+    /// a compact POST holding this address has landed; full data, once held, is never
+    /// replaced by it. A reader that asked for the full profile meanwhile gets that fetch
+    /// at once, anything else unsatisfied waits out the retry.
+    fn apply_compact(&mut self, compact: Option<CompactProfile>, now: web_time::Instant) {
+        self.fetching = None;
+        if self.data.is_none() {
+            if let Some(compact) = compact {
+                self.compact = Some(compact);
+            }
+        }
+        if !self.satisfied() {
+            self.next_fetch =
+                (self.wanted == ProfileTier::Compact).then(|| now + PROFILE_FETCH_RETRY);
+        }
     }
 
     /// hold the data one version behind the announcement so the fetch cascade comes due:
@@ -238,15 +292,29 @@ impl ProfileEntry {
     }
 }
 
-type CatalystFetch = Task<Result<Option<UserProfile>, anyhow::Error>>;
-type RegistryBatch = Task<Vec<(Address, Result<Option<UserProfile>, anyhow::Error>)>>;
+type ProfileBatch = Task<Vec<(Address, Result<Option<UserProfile>, anyhow::Error>)>>;
+type CompactAnswer = Result<Vec<(Address, Option<CompactProfile>)>, CompactFetchError>;
+
+struct CompactBatch {
+    addresses: Vec<Address>,
+    task: Task<CompactAnswer>,
+}
+
+enum CompactFetchError {
+    /// The catalyst has no compact route (Decentraland's catalysts)
+    Unsupported,
+    Failed(anyhow::Error),
+}
 
 #[derive(Resource, Default)]
 pub struct ProfileCache {
     entries: HashMap<Address, ProfileEntry>,
     requests: ProfileRequestCounts,
-    registry_batches: Vec<RegistryBatch>,
-    catalyst_fetches: HashMap<Address, CatalystFetch>,
+    batches: Vec<ProfileBatch>,
+    compact_batches: Vec<CompactBatch>,
+    /// the catalyst answered a compact POST as an unknown route: compact readers are served
+    /// from full profiles for the rest of the session, as Unity does on a catalyst
+    compact_unsupported: bool,
 }
 
 #[derive(Default)]
@@ -255,9 +323,10 @@ struct ProfileRequestCounts {
     aggregated: u64,
     addresses: u64,
     last_batch: usize,
+    compact: u64,
 }
 
-/// Read profile registry batching and outstanding fetches.
+/// Read profile batching and outstanding fetches.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/profile_requests")]
 struct ProfileRequestsCommand;
@@ -268,18 +337,75 @@ fn profile_requests(mut input: ConsoleCommand<ProfileRequestsCommand>, cache: Re
         let posts = counts.single + counts.aggregated;
         input.reply_ok(serde_json::json!({"posts": posts, "single": counts.single, "aggregated": counts.aggregated,
             "lastBatch": counts.last_batch, "meanBatch": (posts > 0).then(|| counts.addresses as f64 / posts as f64),
-            "unavailable": {"meanBatch": "No profile registry requests yet"},
-            "inFlight": cache.registry_batches.len(), "fallbacks": cache.catalyst_fetches.len(),
-            "unresolved": cache.entries.values().filter(|entry| entry.data.is_none()).count()}).to_string());
+            "unavailable": {"meanBatch": "No profile requests yet"},
+            "compact": counts.compact, "compactUnsupported": cache.compact_unsupported,
+            "inFlight": cache.batches.len() + cache.compact_batches.len(),
+            "unresolved": cache.entries.values().filter(|entry| entry.data.is_none() && entry.compact.is_none()).count()}).to_string());
     }
 }
 
 impl ProfileCache {
-    /// the entry for `address`, created if missing, marked as accessed now
-    fn touch(&mut self, address: Address) -> &mut ProfileEntry {
+    /// the entry for `address`, created if missing, marked as accessed now by a reader that
+    /// needs `tier` of it
+    fn touch(&mut self, address: Address, tier: ProfileTier) -> &mut ProfileEntry {
         let entry = self.entries.entry(address).or_default();
         entry.last_access = Some(web_time::Instant::now());
+        entry.want(tier);
         entry
+    }
+
+    fn get_compact(
+        &mut self,
+        address: Address,
+    ) -> Result<Option<CompactProfile>, ProfileMissingError> {
+        let entry = self.touch(address, ProfileTier::Compact);
+        if entry.missing(web_time::Instant::now()) {
+            return Err(ProfileMissingError);
+        }
+        Ok(entry
+            .profile()
+            .map(|profile| CompactProfile::from(&profile.content))
+            .or_else(|| entry.compact.clone()))
+    }
+
+    /// One `getCompactProfiles` request: None while any of its addresses is still being
+    /// fetched (all of them are asked each time, so they batch together), then the compact
+    /// profiles of those that resolved, in request order.
+    fn compact_answer(&mut self, addresses: &[Address]) -> Option<Vec<CompactProfile>> {
+        let mut settled = true;
+        let mut found = Vec::with_capacity(addresses.len());
+        for address in addresses {
+            match self.get_compact(*address) {
+                Ok(Some(profile)) => found.push(profile),
+                Ok(None) => settled = false,
+                Err(ProfileMissingError) => (),
+            }
+        }
+        settled.then_some(found)
+    }
+
+    fn update(&mut self, profile: UserProfile) {
+        if let Some(address) = profile.content.eth_address.as_h160() {
+            let entry = self.touch(address, ProfileTier::Full);
+            entry.announced = entry.announced.max(profile.version);
+            entry.data = Some((Box::new(profile), ProfileSource::Catalyst));
+            entry.compact = None;
+        }
+    }
+
+    /// the catalyst has no compact route: from now on every fetch is full, and the
+    /// addresses of the refused POST are due again at once
+    fn compact_endpoint_missing(&mut self, addresses: &[Address]) {
+        if !self.compact_unsupported {
+            warn!("the catalyst serves no compact profiles; reading full profiles instead");
+            self.compact_unsupported = true;
+        }
+        for address in addresses {
+            if let Some(entry) = self.entries.get_mut(address) {
+                entry.fetching = None;
+                entry.next_fetch = None;
+            }
+        }
     }
 
     fn server_snapshots(&self, profile: &UserProfile) -> Option<AvatarSnapshots> {
@@ -292,13 +418,9 @@ impl ProfileCache {
     }
 }
 
-#[derive(Resource, Default)]
-pub struct ProfileMetaCache(pub HashMap<Address, String>);
-
 #[derive(SystemParam)]
 pub struct ProfileManager<'w, 's> {
     cache: ResMut<'w, ProfileCache>,
-    meta_cache: ResMut<'w, ProfileMetaCache>,
     ipfs: IpfsAssetServer<'w, 's>,
 }
 
@@ -312,18 +434,27 @@ impl ProfileManager<'_, '_> {
         &mut self,
         address: Address,
     ) -> Result<Option<&UserProfile>, ProfileMissingError> {
-        let entry = self.cache.touch(address);
-        if entry.data.is_none() && entry.fetching.is_none() && !entry.due(web_time::Instant::now())
-        {
+        let entry = self.cache.touch(address, ProfileTier::Full);
+        if entry.missing(web_time::Instant::now()) {
             return Err(ProfileMissingError);
         }
         Ok(entry.profile())
     }
 
+    /// The compact tier: name, claimed-name flag, name colour and face, for a list row.
+    /// Served from the full profile when one is held, else fetched compact from the
+    /// catalyst. Same Ok(None) / Err semantics as `get_data`.
+    pub fn get_compact(
+        &mut self,
+        address: Address,
+    ) -> Result<Option<CompactProfile>, ProfileMissingError> {
+        self.cache.get_compact(address)
+    }
+
     /// Record that this address' profile is claimed to exist at `version`; a version
     /// ahead of what we hold makes the fetch cascade due immediately.
     pub fn announce(&mut self, address: Address, version: u32) {
-        let entry = self.cache.touch(address);
+        let entry = self.cache.touch(address, ProfileTier::Full);
         if version > entry.announced {
             entry.announced = version;
             entry.next_fetch = None;
@@ -334,42 +465,34 @@ impl ProfileManager<'_, '_> {
         &mut self,
         address: Address,
     ) -> Result<Option<Handle<Image>>, ProfileMissingError> {
-        let profile = self.get_data(address)?;
-        let Some(profile) = profile else {
+        let Some(profile) = self.get_compact(address)? else {
             return Ok(None);
         };
-        let Some(path) = profile
-            .content
-            .avatar
-            .snapshots
-            .as_ref()
-            .and_then(|snapshots| {
-                if snapshots.face256.is_empty() {
-                    None
-                } else {
-                    // let url = format!("{}{}", profile.base_url, snapshots.face256);
-                    let ipfs_path = IpfsPath::new_from_url(&snapshots.face256, "png");
-                    Some(PathBuf::from(&ipfs_path))
-                }
-            })
-        else {
+        if profile.thumbnail_url.is_empty() {
             return Err(ProfileMissingError);
-        };
-        Ok(Some(self.ipfs.asset_server().load(path)))
+        }
+        let ipfs_path = IpfsPath::new_from_url(&profile.thumbnail_url, "png");
+        Ok(Some(
+            self.ipfs.asset_server().load(PathBuf::from(&ipfs_path)),
+        ))
     }
 
     pub fn get_name(&mut self, address: Address) -> Result<Option<&String>, ProfileMissingError> {
-        Ok(self.get_data(address)?.map(|profile| &profile.content.name))
+        let entry = self.cache.touch(address, ProfileTier::Compact);
+        if entry.missing(web_time::Instant::now()) {
+            return Err(ProfileMissingError);
+        }
+        Ok(entry
+            .data
+            .as_ref()
+            .map(|(profile, _)| &profile.content.name)
+            .or(entry.compact.as_ref().map(|compact| &compact.name)))
     }
 
     /// Record an authoritative profile (our own, which we deploy ourselves).
     /// Unconditional: even a same-version edit replaces what the cache holds.
     pub fn update(&mut self, profile: UserProfile) {
-        if let Some(address) = profile.content.eth_address.as_h160() {
-            let entry = self.cache.touch(address);
-            entry.announced = entry.announced.max(profile.version);
-            entry.data = Some((Box::new(profile), ProfileSource::Registry));
-        }
+        self.cache.update(profile);
     }
 
     /// Our own profile is deployed at `version`: read it back, since server-generated
@@ -388,11 +511,11 @@ impl ProfileManager<'_, '_> {
 
     /// Record a profile received directly from the owning peer. `apply`'s authority
     /// ranking keeps a room-broadcast response from displacing an equal-version
-    /// registry answer; a guest's own answer counts as final via `satisfied`.
+    /// catalyst answer; a guest's own answer counts as final via `satisfied`.
     pub fn update_from_peer(&mut self, profile: UserProfile) {
         if let Some(address) = profile.content.eth_address.as_h160() {
             self.cache
-                .touch(address)
+                .touch(address, ProfileTier::Full)
                 .apply(profile, ProfileSource::Peer);
         }
     }
@@ -569,29 +692,53 @@ pub struct CurrentUserProfile {
     pub deploy_held: bool,
 }
 
-/// Run the fetch cascade for every entry that wants one: registry batches (grouped by
-/// registry host, since .zone and .org hold separate namespaces), escalating a registry
-/// miss to a single catalyst fetch where that's worth asking, and pacing unsatisfied
-/// entries with `PROFILE_FETCH_RETRY`. All fetch policy lives here — the fetchers
-/// themselves are dumb HTTP. Entries nobody has asked about recently are dropped here
-/// too, so departed peers and one-off lookups (unknown addresses especially, which never
-/// satisfy) stop being re-fetched for the rest of the session.
+/// Run the fetch cascade for every entry that wants one: catalyst batches of the tier its
+/// readers need, pacing unsatisfied entries with `PROFILE_FETCH_RETRY`. All fetch policy
+/// lives here — the fetchers themselves are dumb HTTP. Entries nobody has asked about
+/// recently are dropped here too, so departed peers and one-off lookups (unknown addresses
+/// especially, which never satisfy) stop being re-fetched for the rest of the session.
 fn drive_profile_fetches(mut manager: ProfileManager, wallet: Res<Wallet>) {
-    let ProfileManager {
-        cache,
-        meta_cache,
-        ipfs,
-    } = &mut manager;
-    let ProfileCache {
-        entries,
-        registry_batches,
-        catalyst_fetches,
-        requests,
-    } = &mut **cache;
-    let own_endpoint = ipfs.ipfs().lambda_endpoint();
+    let ProfileManager { cache, ipfs } = &mut manager;
 
-    // apply landed registry batches, escalating misses to a catalyst fetch
-    registry_batches.retain_mut(|batch| {
+    // apply landed compact batches; a catalyst without the route turns every fetch full
+    let mut landed = Vec::new();
+    cache
+        .compact_batches
+        .retain_mut(|batch| match batch.task.complete() {
+            Some(result) => {
+                landed.push((std::mem::take(&mut batch.addresses), result));
+                false
+            }
+            None => true,
+        });
+    let now = web_time::Instant::now();
+    for (addresses, result) in landed {
+        match result {
+            Ok(found) => {
+                for (address, compact) in found {
+                    if let Some(entry) = cache.entries.get_mut(&address) {
+                        entry.apply_compact(compact, now);
+                    }
+                }
+            }
+            Err(CompactFetchError::Unsupported) => cache.compact_endpoint_missing(&addresses),
+            Err(CompactFetchError::Failed(e)) => {
+                debug!("compact profile fetch failed: {e}");
+                for address in addresses {
+                    if let Some(entry) = cache.entries.get_mut(&address) {
+                        entry.apply_compact(None, now);
+                    }
+                }
+            }
+        }
+    }
+
+    let ProfileCache {
+        entries, batches, ..
+    } = &mut **cache;
+
+    // apply landed batches; the cascade concludes here either way
+    batches.retain_mut(|batch| {
         let Some(results) = batch.complete() else {
             return true;
         };
@@ -599,52 +746,6 @@ fn drive_profile_fetches(mut manager: ProfileManager, wallet: Res<Wallet>) {
             let Some(entry) = entries.get_mut(&address) else {
                 continue;
             };
-            entry.fetching = None;
-            match result {
-                Ok(Some(profile)) => {
-                    debug!("applying registry response for {address:#x}");
-                    entry.apply(profile, ProfileSource::Registry);
-                }
-                Ok(None) => debug!("registry has no profile for {address:#x}"),
-                Err(e) => {
-                    if entry.data.is_none() {
-                        warn!("profile fetch failed for {address:#x}: {e}");
-                    } else {
-                        debug!("profile re-fetch failed for {address:#x}: {e}");
-                    }
-                }
-            }
-            if entry.satisfied() {
-                continue;
-            }
-            let endpoint = meta_cache
-                .0
-                .get(&address)
-                .cloned()
-                .or_else(|| own_endpoint.clone());
-            if let Some(endpoint) = entry.include_catalyst().then_some(endpoint).flatten() {
-                entry.fetching = Some(ProfileSource::Catalyst);
-                catalyst_fetches.insert(
-                    address,
-                    IoTaskPool::get().spawn_compat(fetch_catalyst_profile(
-                        endpoint,
-                        address,
-                        ipfs.ipfs().clone(),
-                    )),
-                );
-            } else {
-                entry.next_fetch = Some(web_time::Instant::now() + PROFILE_FETCH_RETRY);
-            }
-        }
-        false
-    });
-
-    // apply landed catalyst fetches; the cascade concludes here either way
-    catalyst_fetches.retain(|address, task| {
-        let Some(result) = task.complete() else {
-            return true;
-        };
-        if let Some(entry) = entries.get_mut(address) {
             entry.fetching = None;
             match result {
                 Ok(Some(profile)) => {
@@ -667,47 +768,60 @@ fn drive_profile_fetches(mut manager: ProfileManager, wallet: Res<Wallet>) {
     });
 
     // evict stale entries, except the local player's (so a same-version local edit isn't
-    // replaced by a lagging registry answer), and collect due entries into registry
-    // batches, one set per registry host
-    let now = web_time::Instant::now();
+    // replaced by a lagging catalyst answer), and collect due entries into batches
     let local = wallet.address();
-    let mut wants: HashMap<String, Vec<Address>> = HashMap::default();
-    entries.retain(|address, entry| {
+    let compact_unsupported = cache.compact_unsupported;
+    let mut full = Vec::new();
+    let mut compact = Vec::new();
+    cache.entries.retain(|address, entry| {
         if entry.evictable(now) && Some(*address) != local {
             debug!("evicting stale profile entry for {address:#x}");
-            // meta is only written for live peers, which never go stale
-            meta_cache.0.remove(address);
             return false;
         }
         if entry.wants_fetch(now) {
-            entry.fetching = Some(ProfileSource::Registry);
-            let endpoint = meta_cache
-                .0
-                .get(address)
-                .map(String::as_str)
-                .or(own_endpoint.as_deref());
-            wants
-                .entry(registry_url(endpoint))
-                .or_default()
-                .push(*address);
+            let tier = entry.fetch_tier(compact_unsupported);
+            entry.fetching = Some(tier);
+            match tier {
+                ProfileTier::Full => full.push(*address),
+                ProfileTier::Compact => compact.push(*address),
+            }
         }
         true
     });
-    for (url, addresses) in wants {
-        for chunk in addresses.chunks(PROFILE_REQUEST_BATCH) {
-            requests.last_batch = chunk.len();
-            requests.addresses += chunk.len() as u64;
-            if chunk.len() == 1 {
-                requests.single += 1;
-            } else {
-                requests.aggregated += 1;
-            }
-            registry_batches.push(IoTaskPool::get().spawn_compat(fetch_registry_profiles(
-                url.clone(),
+    if full.is_empty() && compact.is_empty() {
+        return;
+    }
+    let lambdas = lambdas_url();
+    let ProfileCache {
+        batches,
+        compact_batches,
+        requests,
+        ..
+    } = &mut **cache;
+    for chunk in full.chunks(PROFILE_REQUEST_BATCH) {
+        requests.last_batch = chunk.len();
+        requests.addresses += chunk.len() as u64;
+        if chunk.len() == 1 {
+            requests.single += 1;
+        } else {
+            requests.aggregated += 1;
+        }
+        batches.push(IoTaskPool::get().spawn_compat(fetch_profiles(
+            lambdas.clone(),
+            chunk.to_vec(),
+            ipfs.ipfs().clone(),
+        )));
+    }
+    for chunk in compact.chunks(PROFILE_REQUEST_BATCH) {
+        requests.compact += 1;
+        compact_batches.push(CompactBatch {
+            addresses: chunk.to_vec(),
+            task: IoTaskPool::get().spawn_compat(fetch_compact_profiles(
+                lambdas.clone(),
                 chunk.to_vec(),
                 ipfs.ipfs().clone(),
-            )));
-        }
+            )),
+        });
     }
 }
 
@@ -784,6 +898,40 @@ fn request_missing_profiles(
             entry.last_p2p = Some(now);
         }
     }
+}
+
+/// Answers `getCompactProfiles` (the HUD's list rows) once every address of a request has
+/// settled. Runs after `drive_profile_fetches`, so a batch that lands answers in that frame.
+#[allow(clippy::type_complexity)]
+fn serve_compact_profiles(
+    mut requests: EventReader<RpcCallEvent>,
+    mut pending: Local<Vec<(Vec<Address>, RpcResultSender<Vec<CompactProfile>>)>>,
+    mut cache: ResMut<ProfileCache>,
+) {
+    pending.extend(requests.read().filter_map(|ev| {
+        match &ev.call {
+            RpcCall::GetCompactProfiles {
+                addresses,
+                response,
+            } => Some((
+                addresses
+                    .iter()
+                    .filter_map(|address| address.as_h160())
+                    .collect(),
+                response.clone(),
+            )),
+            _ => None,
+        }
+    }));
+    pending.retain(
+        |(addresses, response)| match cache.compact_answer(addresses) {
+            Some(found) => {
+                response.send(found);
+                false
+            }
+            None => true,
+        },
+    );
 }
 
 /// Pick a transport at request time rather than remembering one. `player.transports` is the
@@ -1115,54 +1263,38 @@ async fn deploy_profile(
     }
 }
 
-const REGISTRY_ORG: &str = "https://asset-bundle-registry.decentraland.org/profiles";
-const REGISTRY_ZONE: &str = "https://asset-bundle-registry.decentraland.zone/profiles";
-
-/// The .zone and .org registries hold separate profile namespaces, so the registry must
-/// match the profile owner's environment, judged by their announced lambdas endpoint:
-/// a host under the custom base domain uses that domain's registry, else a host under
-/// the zone tld uses the zone registry. An explicit registry override serves everyone.
-fn registry_url(endpoint: Option<&str>) -> String {
-    let host = endpoint
-        .and_then(|e| reqwest::Url::parse(e).ok())
-        .and_then(|url| url.host_str().map(str::to_owned));
-    let registry = common::base_domain::Service::AssetBundleRegistry;
-    if common::base_domain::service_override(registry).is_some() {
-        return common::base_domain::url(registry, "/profiles");
-    }
-    if let Some(host) = host {
-        let base = common::base_domain::get();
-        if common::base_domain::is_custom() && (host == base || host.ends_with(&format!(".{base}")))
-        {
-            return common::base_domain::url(registry, "/profiles");
-        }
-        if host.rsplit('.').next() == Some("zone") {
-            return REGISTRY_ZONE.to_owned();
-        }
-    }
-    REGISTRY_ORG.to_owned()
+/// The centralized catalyst's lambdas, the one source of profiles: no registry, and no
+/// catalyst named by a peer.
+fn lambdas_url() -> String {
+    common::base_domain::url(common::base_domain::Service::Catalyst, "/lambdas")
 }
 
-/// One registry POST for a chunk of ids, reported per item: Ok(Some) found, Ok(None)
-/// authoritatively absent, Err a chunk-wide transport/parse failure. Results only cover
-/// the addresses that were asked for — the response identifies each profile by its
-/// deployed metadata, which is written by whoever deployed it.
-async fn fetch_registry_profiles(
-    registry_url: String,
+/// The content endpoint of the catalyst serving `lambdas`, which carries the profile's files.
+fn content_base(lambdas: &str) -> Option<String> {
+    lambdas
+        .trim_end_matches('/')
+        .strip_suffix("/lambdas")
+        .map(|catalyst| format!("{catalyst}/content/contents/"))
+}
+
+/// One catalyst POST for a chunk of ids, reported per item: Ok(Some) found, Ok(None)
+/// authoritatively absent, Err a chunk-wide transport/parse failure.
+async fn fetch_profiles(
+    lambdas: String,
     addresses: Vec<Address>,
-    ipfs: std::sync::Arc<IpfsIo>,
+    ipfs: Arc<IpfsIo>,
 ) -> Vec<(Address, Result<Option<UserProfile>, anyhow::Error>)> {
-    let base_url = ipfs.contents_endpoint().unwrap_or_default();
+    let url = format!("{}/profiles", lambdas.trim_end_matches('/'));
     let ids = addresses
         .iter()
         .map(|address| format!("{address:#x}"))
         .collect::<Vec<_>>();
-    debug!("requesting {} profiles from {registry_url}", ids.len());
+    debug!("requesting {} profiles from {url}", ids.len());
 
     let outcome: Result<Vec<LambdaProfiles>, anyhow::Error> = async {
         let response = ipfs
             .client()
-            .post(&registry_url)
+            .post(&url)
             .timeout(std::time::Duration::from_secs(10))
             .body(serde_json::json!({ "ids": ids }).to_string())
             .header("content-type", "application/json")
@@ -1177,47 +1309,113 @@ async fn fetch_registry_profiles(
 
     match outcome {
         Err(e) => {
-            let message = format!("registry fetch from {registry_url}: {e}");
+            let message = format!("profile fetch from {url}: {e}");
             addresses
                 .into_iter()
                 .map(|address| (address, Err(anyhow!(message.clone()))))
                 .collect()
         }
         Ok(batches) => {
-            let mut found = HashMap::<Address, SerializedProfile>::default();
-            for batch in batches {
-                let Some(content) = batch.avatars.into_iter().next() else {
-                    continue;
-                };
-                let Some(address) = content.eth_address.as_h160() else {
-                    continue;
-                };
-                // never let a later entry displace an earlier one
-                found.entry(address).or_insert(content);
-            }
-            addresses
+            let base_url = content_base(&lambdas)
+                .unwrap_or_else(|| ipfs.contents_endpoint().unwrap_or_default());
+            profiles_from_lambdas(batches, addresses, &base_url)
                 .into_iter()
-                .map(|address| {
-                    let profile = found.remove(&address).map(|content| UserProfile {
-                        version: content.version as u32,
-                        content,
-                        base_url: base_url.clone(),
-                    });
-                    (address, Ok(profile))
-                })
+                .map(|(address, profile)| (address, Ok(profile)))
                 .collect()
         }
     }
 }
 
-/// One catalyst lambdas GET for one address: Ok(None) means the catalyst
-/// authoritatively has no profile.
-async fn fetch_catalyst_profile(
-    endpoint: String,
-    address: Address,
-    ipfs: std::sync::Arc<IpfsIo>,
-) -> Result<Option<UserProfile>, anyhow::Error> {
-    fetch_catalyst_profile_by_id(endpoint, format!("{address:#x}"), ipfs).await
+/// The asked addresses, in order, each with the profile the response holds for it. A
+/// profile is matched by its deployed metadata, which is written by whoever deployed it,
+/// so only asked-for addresses are kept and a later entry never displaces an earlier one.
+fn profiles_from_lambdas(
+    batches: Vec<LambdaProfiles>,
+    addresses: Vec<Address>,
+    base_url: &str,
+) -> Vec<(Address, Option<UserProfile>)> {
+    let mut found = HashMap::<Address, SerializedProfile>::default();
+    for batch in batches {
+        let Some(content) = batch.avatars.into_iter().next() else {
+            continue;
+        };
+        let Some(address) = content.eth_address.as_h160() else {
+            continue;
+        };
+        found.entry(address).or_insert(content);
+    }
+    addresses
+        .into_iter()
+        .map(|address| {
+            let profile = found.remove(&address).map(|content| UserProfile {
+                version: content.version as u32,
+                content,
+                base_url: base_url.to_owned(),
+            });
+            (address, profile)
+        })
+        .collect()
+}
+
+/// One catalyst POST of the compact tier for a chunk of ids: the asked addresses, in
+/// order, each with what the catalyst holds for it. A catalyst without the route
+/// (Decentraland's answer 404; one whose `/profiles/{id}` takes the path, 405) is
+/// `Unsupported`.
+async fn fetch_compact_profiles(
+    lambdas: String,
+    addresses: Vec<Address>,
+    ipfs: Arc<IpfsIo>,
+) -> CompactAnswer {
+    let url = format!("{}/profiles/metadata", lambdas.trim_end_matches('/'));
+    let ids = addresses
+        .iter()
+        .map(|address| format!("{address:#x}"))
+        .collect::<Vec<_>>();
+    debug!("requesting {} compact profiles from {url}", ids.len());
+
+    let response = ipfs
+        .client()
+        .post(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .body(serde_json::json!({ "ids": ids }).to_string())
+        .header("content-type", "application/json")
+        .send()
+        .await
+        .map_err(|e| CompactFetchError::Failed(anyhow!("compact profile fetch from {url}: {e}")))?;
+    match response.status() {
+        StatusCode::OK => (),
+        StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED => {
+            return Err(CompactFetchError::Unsupported)
+        }
+        status => {
+            return Err(CompactFetchError::Failed(anyhow!(
+                "compact profile fetch from {url}: bad response: {status}"
+            )))
+        }
+    }
+    let found = response
+        .json::<Vec<CompactProfile>>()
+        .await
+        .map_err(|e| CompactFetchError::Failed(anyhow!("compact profile fetch from {url}: {e}")))?;
+    Ok(compact_profiles_for(found, addresses))
+}
+
+/// The asked addresses, in order, each with the compact profile whose `pointer` is that
+/// address; a later entry never displaces an earlier one.
+fn compact_profiles_for(
+    found: Vec<CompactProfile>,
+    addresses: Vec<Address>,
+) -> Vec<(Address, Option<CompactProfile>)> {
+    let mut by_address = HashMap::<Address, CompactProfile>::default();
+    for profile in found {
+        if let Some(address) = profile.pointer.as_h160() {
+            by_address.entry(address).or_insert(profile);
+        }
+    }
+    addresses
+        .into_iter()
+        .map(|address| (address, by_address.remove(&address)))
+        .collect()
 }
 
 async fn fetch_catalyst_profile_by_id(
@@ -1286,53 +1484,23 @@ pub async fn get_default_look(
     ipfs: std::sync::Arc<IpfsIo>,
     index: u32,
 ) -> Result<Option<UserProfile>, anyhow::Error> {
-    let endpoint = common::base_domain::url(common::base_domain::Service::Catalyst, "/lambdas");
-    fetch_catalyst_profile_by_id(endpoint, format!("default{index}"), ipfs).await
+    fetch_catalyst_profile_by_id(lambdas_url(), format!("default{index}"), ipfs).await
 }
 
-/// Resolve one profile through the registry -> catalyst chain without the engine cache
-/// (used at login, before any player entities exist). Ok(None) means both sources
-/// authoritatively report no profile; a failure with no other source answering is an
-/// Err, so callers can tell "no profile" from "couldn't fetch".
+/// Resolve one profile from the catalyst without the engine cache (used at login, before
+/// any player entities exist): `lambdas` is the sign-in's catalyst, else the centralized
+/// one. Ok(None) means the catalyst authoritatively has no profile, so callers can tell
+/// "no profile" from "couldn't fetch".
 pub async fn get_remote_profile(
     address: Address,
-    ipfs: std::sync::Arc<IpfsIo>,
-    endpoint: Option<String>,
+    ipfs: Arc<IpfsIo>,
+    lambdas: Option<String>,
 ) -> Result<Option<UserProfile>, anyhow::Error> {
-    let endpoint = endpoint.or_else(|| ipfs.lambda_endpoint());
-
-    let mut fetch_error = None;
-    match fetch_registry_profiles(
-        registry_url(endpoint.as_deref()),
-        vec![address],
-        ipfs.clone(),
-    )
-    .await
-    .pop()
-    {
-        Some((_, Ok(Some(profile)))) => return Ok(Some(profile)),
-        Some((_, Err(e))) => fetch_error = Some(e),
-        _ => (),
-    }
-
-    if let Some(endpoint) = endpoint {
-        match fetch_catalyst_profile(endpoint, address, ipfs).await {
-            Ok(Some(profile)) => return Ok(Some(profile)),
-            Ok(None) => (),
-            Err(e) => {
-                if fetch_error.is_none() {
-                    fetch_error = Some(e);
-                }
-            }
-        }
-    } else if fetch_error.is_none() {
-        fetch_error = Some(anyhow!("not connected"));
-    }
-
-    match fetch_error {
-        Some(e) => Err(e),
-        None => Ok(None),
-    }
+    let lambdas = lambdas.unwrap_or_else(lambdas_url);
+    fetch_profiles(lambdas, vec![address], ipfs)
+        .await
+        .pop()
+        .map_or(Ok(None), |(_, result)| result)
 }
 
 enum ProcessProfileState {
@@ -1493,7 +1661,7 @@ mod tests {
         assert!(!entry.evictable(now + PROFILE_EVICT_AFTER / 2));
         assert!(entry.evictable(now + PROFILE_EVICT_AFTER));
 
-        entry.fetching = Some(ProfileSource::Registry);
+        entry.fetching = Some(ProfileTier::Full);
         assert!(!entry.evictable(now + PROFILE_EVICT_AFTER));
     }
 
@@ -1501,11 +1669,11 @@ mod tests {
     fn touch_refreshes_access() {
         let address = Address::ZERO;
         let mut cache = ProfileCache::default();
-        cache.touch(address).last_access = None;
+        cache.touch(address, ProfileTier::Full).last_access = None;
         let now = web_time::Instant::now();
         assert!(cache.entries[&address].evictable(now));
 
-        cache.touch(address);
+        cache.touch(address, ProfileTier::Full);
         assert!(!cache.entries[&address].evictable(now));
     }
 
@@ -1531,7 +1699,8 @@ mod tests {
         // as `ProfileManager::update` records a local edit
         let mut entry = ProfileEntry {
             announced: 5,
-            data: Some((Box::new(profile(5, "local")), ProfileSource::Registry)),
+            data: Some((Box::new(profile(5, "local")), ProfileSource::Catalyst)),
+            wanted: ProfileTier::Full,
             ..Default::default()
         };
         assert!(!entry.wants_fetch(now));
@@ -1540,19 +1709,241 @@ mod tests {
         assert!(entry.wants_fetch(now));
         assert_eq!(entry.profile().unwrap().content.version, 5);
 
-        // a lagging registry answer ties and loses; the catalyst is asked next
-        assert!(!entry.apply(profile(4, "stale"), ProfileSource::Registry));
+        // a lagging answer ties and loses, and the read-back stays due
+        assert!(!entry.apply(profile(4, "stale"), ProfileSource::Catalyst));
         assert_eq!(held_name(&entry), "local");
-        assert!(entry.include_catalyst());
-
-        // the catalyst's answer displaces the local copy; the registry is re-probed alone
-        assert!(entry.apply(profile(5, "catalyst"), ProfileSource::Catalyst));
         assert!(!entry.satisfied());
-        assert!(!entry.include_catalyst());
 
-        assert!(entry.apply(profile(5, "registry"), ProfileSource::Registry));
+        // the deployed version's answer displaces the local copy and settles it
+        assert!(entry.apply(profile(5, "catalyst"), ProfileSource::Catalyst));
         assert!(entry.satisfied());
-        assert_eq!(held_name(&entry), "registry");
+        assert_eq!(held_name(&entry), "catalyst");
+    }
+
+    #[test]
+    fn own_profile_is_read_back_after_its_deploy() {
+        let address = Address::repeat_byte(7);
+        let mut own = profile(5, "local");
+        own.content.eth_address = format!("{address:#x}");
+        let mut cache = ProfileCache::default();
+        cache.update(own);
+
+        let entry = cache.entries.get_mut(&address).unwrap();
+        entry.refetch_deployed(5);
+        assert!(entry.wants_fetch(web_time::Instant::now()));
+        assert_eq!(entry.fetch_tier(false), ProfileTier::Full);
+    }
+
+    #[test]
+    fn catalyst_answer_satisfies_the_announced_version() {
+        let mut entry = ProfileEntry {
+            announced: 5,
+            wanted: ProfileTier::Full,
+            ..Default::default()
+        };
+        entry.apply(profile(4, "behind"), ProfileSource::Catalyst);
+        assert!(!entry.satisfied());
+        entry.apply(profile(5, "current"), ProfileSource::Catalyst);
+        assert!(entry.satisfied());
+
+        // a non-guest peer's own answer is only a stand-in until the catalyst confirms it
+        let mut peer = ProfileEntry {
+            announced: 5,
+            wanted: ProfileTier::Full,
+            ..Default::default()
+        };
+        let mut connected = profile(5, "peer");
+        connected.content.has_connected_web3 = Some(true);
+        peer.apply(connected, ProfileSource::Peer);
+        assert!(!peer.satisfied());
+    }
+
+    #[test]
+    fn profiles_from_lambdas_matches_by_address() {
+        let address = |n: u8| Address::repeat_byte(n);
+        let lambdas = |n: u8, version: i64| LambdaProfiles {
+            avatars: vec![SerializedProfile {
+                eth_address: format!("{:#x}", address(n)),
+                version,
+                ..Default::default()
+            }],
+        };
+        let batches = vec![lambdas(2, 7), lambdas(1, 3), lambdas(9, 1), lambdas(1, 4)];
+
+        let found = profiles_from_lambdas(
+            batches,
+            vec![address(1), address(2), address(3)],
+            "https://peer.example/content/contents/",
+        );
+        let versions: Vec<_> = found
+            .iter()
+            .map(|(address, profile)| (*address, profile.as_ref().map(|p| p.version)))
+            .collect();
+        assert_eq!(
+            versions,
+            vec![
+                (address(1), Some(3)),
+                (address(2), Some(7)),
+                (address(3), None)
+            ]
+        );
+        assert_eq!(
+            found[0].1.as_ref().unwrap().base_url,
+            "https://peer.example/content/contents/"
+        );
+    }
+
+    #[test]
+    fn content_base_is_the_catalyst_of_the_lambdas() {
+        assert_eq!(
+            content_base("https://peer.example/lambdas/").as_deref(),
+            Some("https://peer.example/content/contents/")
+        );
+        assert_eq!(content_base("https://peer.example/other"), None);
+    }
+
+    fn compact(name: &str) -> CompactProfile {
+        CompactProfile {
+            pointer: format!("{:#x}", Address::ZERO),
+            name: name.to_owned(),
+            has_claimed_name: false,
+            name_color: None,
+            thumbnail_url: String::new(),
+        }
+    }
+
+    #[test]
+    fn compact_read_is_satisfied_by_either_tier() {
+        let now = web_time::Instant::now();
+        let mut compact_only = ProfileEntry::default();
+        assert!(compact_only.wants_fetch(now));
+        compact_only.apply_compact(Some(compact("row")), now);
+        assert!(compact_only.satisfied());
+
+        let mut full_only = ProfileEntry::default();
+        full_only.apply(profile(1, "full"), ProfileSource::Catalyst);
+        assert!(full_only.satisfied());
+
+        // a full reader is not served by the compact answer
+        compact_only.want(ProfileTier::Full);
+        assert!(!compact_only.satisfied());
+        assert!(compact_only.wants_fetch(now));
+    }
+
+    #[test]
+    fn compact_answer_never_replaces_full_data() {
+        let now = web_time::Instant::now();
+        let mut entry = ProfileEntry::default();
+        entry.apply(profile(3, "full"), ProfileSource::Catalyst);
+        entry.apply_compact(Some(compact("row")), now);
+        assert_eq!(held_name(&entry), "full");
+        assert!(entry.compact.is_none());
+
+        // full data landing drops a compact answer held before it
+        let mut entry = ProfileEntry::default();
+        entry.apply_compact(Some(compact("row")), now);
+        assert!(entry.compact.is_some());
+        entry.apply(profile(3, "full"), ProfileSource::Catalyst);
+        assert!(entry.compact.is_none());
+    }
+
+    #[test]
+    fn a_full_read_promotes_a_compact_entry() {
+        let now = web_time::Instant::now();
+        let mut entry = ProfileEntry {
+            fetching: Some(ProfileTier::Compact),
+            ..Default::default()
+        };
+        entry.want(ProfileTier::Full);
+        entry.apply_compact(Some(compact("row")), now);
+        assert_eq!(entry.next_fetch, None);
+        assert!(entry.wants_fetch(now));
+        assert_eq!(entry.fetch_tier(false), ProfileTier::Full);
+
+        // a compact read the catalyst can't answer waits out the retry instead
+        let mut absent = ProfileEntry {
+            fetching: Some(ProfileTier::Compact),
+            ..Default::default()
+        };
+        absent.apply_compact(None, now);
+        assert!(!absent.wants_fetch(now));
+        assert!(absent.missing(now));
+    }
+
+    #[test]
+    fn compact_requests_fall_back_to_full_after_a_missing_endpoint() {
+        let now = web_time::Instant::now();
+        let mut cache = ProfileCache::default();
+        let entry = cache.touch(Address::ZERO, ProfileTier::Compact);
+        entry.fetching = Some(ProfileTier::Compact);
+        entry.next_fetch = Some(now + PROFILE_FETCH_RETRY);
+
+        cache.compact_endpoint_missing(&[Address::ZERO]);
+        assert!(cache.compact_unsupported);
+        let entry = &cache.entries[&Address::ZERO];
+        assert!(entry.wants_fetch(now));
+        assert_eq!(
+            entry.fetch_tier(cache.compact_unsupported),
+            ProfileTier::Full
+        );
+    }
+
+    #[test]
+    fn compact_requests_answer_once_every_address_settles() {
+        let now = web_time::Instant::now();
+        let (a, b) = (Address::repeat_byte(1), Address::repeat_byte(2));
+        let row = |address: Address, name: &str| CompactProfile {
+            pointer: format!("{address:#x}"),
+            ..compact(name)
+        };
+        let names = |found: Vec<CompactProfile>| -> Vec<String> {
+            found.into_iter().map(|profile| profile.name).collect()
+        };
+        let mut cache = ProfileCache::default();
+
+        // first sight: both addresses become compact entries due for a fetch
+        assert_eq!(cache.compact_answer(&[a, b]), None);
+        assert_eq!(cache.entries[&a].fetch_tier(false), ProfileTier::Compact);
+
+        // `a` resolves while `b` is still in flight: the answer waits for `b`
+        cache
+            .entries
+            .get_mut(&a)
+            .unwrap()
+            .apply_compact(Some(row(a, "A")), now);
+        cache.entries.get_mut(&b).unwrap().fetching = Some(ProfileTier::Compact);
+        assert_eq!(cache.compact_answer(&[a, b]), None);
+
+        // `b` concludes with nothing: answered without it
+        cache.entries.get_mut(&b).unwrap().apply_compact(None, now);
+        assert_eq!(names(cache.compact_answer(&[a, b]).unwrap()), ["A"]);
+
+        // a held full profile answers a compact request too, in request order
+        let mut full = profile(4, "B");
+        full.content.eth_address = format!("{b:#x}");
+        cache.update(full);
+        assert_eq!(names(cache.compact_answer(&[b, a]).unwrap()), ["B", "A"]);
+    }
+
+    #[test]
+    fn compact_profiles_parse_upstream_shape() {
+        let address = Address::repeat_byte(0xab);
+        let body = r#"[{"pointer":"0xABABABABABABABABABABABABABABABABABABABAB","hasClaimedName":true,
+            "name":"Ryumi","thumbnailUrl":"https://cdn.example/entities/bafy/face.png"}]"#;
+        let found: Vec<CompactProfile> = serde_json::from_str(body).unwrap();
+
+        let matched = compact_profiles_for(found, vec![address, Address::ZERO]);
+        assert_eq!(matched[0].0, address);
+        let row = matched[0].1.as_ref().unwrap();
+        assert_eq!(
+            (row.name.as_str(), row.has_claimed_name, row.name_color),
+            ("Ryumi", true, None)
+        );
+        assert_eq!(
+            row.thumbnail_url,
+            "https://cdn.example/entities/bafy/face.png"
+        );
+        assert_eq!(matched[1], (Address::ZERO, None));
     }
 
     #[test]
@@ -1571,9 +1962,9 @@ mod tests {
         // our edit at v5 still carries the snapshots of the version before it
         let mut current = with_face(5, "old");
         let mut cache = ProfileCache::default();
-        let entry = cache.touch(Address::ZERO);
+        let entry = cache.touch(Address::ZERO, ProfileTier::Full);
         entry.announced = 5;
-        entry.data = Some((Box::new(current.clone()), ProfileSource::Registry));
+        entry.data = Some((Box::new(current.clone()), ProfileSource::Catalyst));
         assert_eq!(cache.server_snapshots(&current), None);
 
         let entry = cache.entries.get_mut(&Address::ZERO).unwrap();
@@ -1595,7 +1986,8 @@ mod tests {
     fn refetch_deployed_leaves_newer_edit() {
         let mut entry = ProfileEntry {
             announced: 6,
-            data: Some((Box::new(profile(6, "newer")), ProfileSource::Registry)),
+            data: Some((Box::new(profile(6, "newer")), ProfileSource::Catalyst)),
+            wanted: ProfileTier::Full,
             ..Default::default()
         };
         entry.refetch_deployed(5);

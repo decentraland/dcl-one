@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use bevy::{log::debug, math::Vec4};
 use common::{
     inputs::{Action, BindingsData, HudPanel, InputIdentifier, SystemActionEvent},
-    profile::SerializedProfile,
+    profile::{CompactProfile, SerializedProfile},
     rpc::{RpcCall, RpcResultReceiver, RpcResultSender, RpcStreamReceiver, RpcStreamSender},
     structs::{
         MicState, PermissionLevel, PermissionStrings, PermissionType, PermissionUsed,
@@ -665,6 +665,32 @@ pub async fn op_get_user_profile(
     rx.await
         .map_err(|e| anyhow::anyhow!(e))?
         .map_err(|_| anyhow::anyhow!("Not found"))
+}
+
+/// The compact profiles (name, claimed-name flag, name colour, face) of a list of addresses
+/// in one call, through the engine's profile cache: what a list row shows, without fetching
+/// whole profiles. In request order; an address that can't be resolved is left out.
+pub async fn op_get_compact_profiles(
+    state: Rc<RefCell<impl State>>,
+    addresses: Vec<String>,
+) -> Result<Vec<CompactProfile>, anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+
+    let scene = state.borrow().borrow::<CrdtContext>().scene_id.0;
+    debug!(
+        "[{scene:?}] -> op_get_compact_profiles ({} addresses)",
+        addresses.len()
+    );
+
+    state
+        .borrow_mut()
+        .borrow_mut::<RpcCalls>()
+        .push(RpcCall::GetCompactProfiles {
+            addresses,
+            response: sx,
+        })?;
+
+    rx.await.map_err(|e| anyhow::anyhow!(e))
 }
 
 pub fn op_quit(state: Rc<RefCell<impl State>>) {

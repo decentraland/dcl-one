@@ -265,6 +265,22 @@ pub async fn op_get_user_profile(
 }
 
 #[wasm_bindgen]
+pub async fn op_get_compact_profiles(
+    state: &WorkerContext,
+    addresses: JsValue,
+) -> Result<JsValue, WasmError> {
+    let addresses = serde_wasm_bindgen::from_value(addresses)
+        .map_err(|e| WasmError::from(anyhow::anyhow!("getCompactProfiles: {e}")))?;
+    let profiles = dcl_js::system_api::op_get_compact_profiles(state.rc(), addresses).await;
+    profiles
+        .map(|v| {
+            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
 pub fn op_quit(state: &WorkerContext) {
     dcl_js::system_api::op_quit(state.rc());
 }

@@ -78,7 +78,6 @@ impl Plugin for LivekitParticipantPlugin {
         app.add_observer(participant_entity_removed);
         app.add_observer(participant_connection_quality_changed);
         app.add_observer(participant_payload);
-        app.add_observer(participant_metadata_changed);
         app.add_observer(active_speakers_changed);
         app.add_observer(is_now_speaking);
         app.add_observer(is_no_longer_speaking);
@@ -427,46 +426,6 @@ fn retire_unannounced_participants(
             }
             false
         });
-    }
-}
-
-fn participant_metadata_changed(
-    trigger: Trigger<ParticipantMetadataChanged>,
-    transport_senders: crate::global_crdt::TransportSenders,
-    mut player_update_tasks: PlayerUpdateTasksMut,
-    livekit_runtime: LivekitRuntimeRes,
-) {
-    let ParticipantMetadataChanged { room, participant } = trigger.event();
-
-    let meta = participant.metadata();
-    if !meta.is_empty() {
-        debug!(
-            "Metadata of {} ({}) changed.",
-            participant.sid(),
-            participant.identity()
-        );
-        if let Some(address) = participant.identity().as_str().as_h160() {
-            let room = *room;
-            let Some(sender) = transport_senders.get(room) else {
-                return;
-            };
-            let task = livekit_runtime.spawn(async move {
-                sender
-                    .send(
-                        PlayerUpdate {
-                            transport_id: room,
-                            message: PlayerMessage::MetaData(meta),
-                            address,
-                        }
-                        .into(),
-                    )
-                    .await
-            });
-            player_update_tasks.push(PlayerUpdateTask {
-                runtime: (*livekit_runtime).clone(),
-                task,
-            });
-        }
     }
 }
 

@@ -128,6 +128,21 @@ module.exports.getUserProfile = async function(address) {
     return await Deno.core.ops.op_get_user_profile(address);
 }
 
+// the compact profiles of a list of addresses in one call, through the engine's profile cache:
+// what a list row shows, without fetching whole profiles. In request order; an address that
+// can't be resolved is left out.
+// addresses: string[] => CompactProfile[]
+// type CompactProfile = {
+//   pointer: string,               // lowercase 0x address
+//   name: string,
+//   hasClaimedName: boolean,
+//   nameColor: Color3 | null,      // the claimed name's colour, if one is set
+//   thumbnailUrl: string,          // the face snapshot's url; empty when there is none
+// }
+module.exports.getCompactProfiles = async function(addresses) {
+    return await Deno.core.ops.op_get_compact_profiles(addresses);
+}
+
 // get the next key/button pressed by the user, identified as a string
 // -> string
 module.exports.getNativeInput = async function() {
