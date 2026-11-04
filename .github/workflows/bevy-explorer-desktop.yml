@@ -179,7 +179,6 @@ jobs:
           tar -czvf ../${{ env.PACKAGE_FILE }} ./*
       - name: Package AppImage
         if: runner.os == 'linux'
-        continue-on-error: true
         run: |-
           cd deploy/linux
           mkdir -p BevyExplorer.AppDir/usr/bin BevyExplorer.AppDir/usr/lib
@@ -198,7 +197,8 @@ jobs:
           cp "$cef"/*.bin "$cef"/*.pak "$cef"/*.dat "$cef"/*.json BevyExplorer.AppDir/usr/lib/
           cp -r "$cef/locales" BevyExplorer.AppDir/usr/lib/locales
           wget https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
-          wget https://github.com/AppImage/appimagetool/releases/latest/download/appimagetool-x86_64.AppImage
+          wget https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool-x86_64.AppImage" | sha256sum -c
           chmod +x ./linuxdeploy-x86_64.AppImage ./appimagetool-x86_64.AppImage
           PATH="$(pwd):$PATH"
           export PATH

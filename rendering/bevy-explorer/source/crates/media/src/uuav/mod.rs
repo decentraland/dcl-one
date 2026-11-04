@@ -22,7 +22,7 @@ use std::{
     os::raw::{c_char, c_void},
     sync::{
         Arc, Mutex, MutexGuard,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -130,6 +130,8 @@ pub(crate) struct Shared {
     retired: Mutex<Vec<PlayerId>>,
     /// Whether a render world presents frames: with none, a closed player is freed at once.
     render_world: AtomicBool,
+    /// The render device's texture edge limit, once the render world has read it; 0 before.
+    pub max_dimension: AtomicU32,
 }
 
 impl Shared {
@@ -469,7 +471,7 @@ struct Player {
 
 impl Player {
     /// One frame of service; `false` once the player is closed.
-    fn serve(&mut self) -> bool {
+    fn serve(&mut self, max_dimension: u32) -> bool {
         if let Some(receiver) = &mut self.audio_handle {
             match receiver.try_recv() {
                 Ok(mut handle) => {
@@ -519,7 +521,7 @@ impl Player {
         }
 
         if self.video.is_some() {
-            if let Some((width, height)) = self.size() {
+            if let Some((width, height)) = self.size(max_dimension) {
                 let rate = ffi::framerate(self.id).unwrap_or(0.0);
                 // live streams have no duration
                 let length = ffi::duration(self.id).unwrap_or(-1.0);
@@ -557,12 +559,23 @@ impl Player {
     }
 
     /// The size the image is kept at: the planes the render world presents once it has read
-    /// them, the stream header until then.
-    fn size(&self) -> Option<(u32, u32)> {
-        self.target
-            .as_ref()
-            .and_then(|target| unpack_size(target.presented_size.load(Ordering::Acquire)))
-            .or_else(|| ffi::video_size(self.id))
+    /// them, the stream header until then. A header out of bounds (the helper passes it through
+    /// unchecked) fails the player instead of sizing the image.
+    fn size(&self, max_dimension: u32) -> Option<(u32, u32)> {
+        let target = self.target.as_ref()?;
+        if let Some(presented) = unpack_size(target.presented_size.load(Ordering::Acquire)) {
+            return Some(presented);
+        }
+        let (width, height) = ffi::video_size(self.id)?;
+        match render::check_bounds(width, height, max_dimension) {
+            Ok(()) => Some((width, height)),
+            Err(e) => {
+                if !target.failed.swap(true, Ordering::AcqRel) {
+                    warn!("uuav player {}: stream header refused: {e}", self.id);
+                }
+                None
+            }
+        }
     }
 
     fn apply(&mut self, command: AVCommand) {
@@ -634,8 +647,9 @@ fn serve_uuav_players(
 
     let runtime = &mut *runtime;
     let shared = &runtime.shared;
+    let max_dimension = shared.max_dimension.load(Ordering::Acquire);
     runtime.players.retain_mut(|player| {
-        let keep = player.serve();
+        let keep = player.serve(max_dimension);
         if !keep {
             shared.retire(player.id);
         }

@@ -1161,11 +1161,13 @@ pub unsafe extern "C" fn uuav_player_open_media_async(
         Err(_) => return ResultFFI::error("url is not valid UTF-8"),
     };
 
-    // new media, new info: drop the cached one until the helper re-announces
+    // new media, new info: drop the cached one until the helper re-announces, and a
+    // presentation failure of the previous media with it
     if let Some(client) = CLIENT.load().as_ref()
         && let Some(mirror) = client.mirror(player_id)
     {
         mirror.media_info.store(None);
+        mirror.present_failed.store(false, Ordering::Release);
     }
     // buffered audio belongs to the previous media
     clear_jitter_ring(player_id);
@@ -1228,7 +1230,9 @@ pub extern "C" fn uuav_player_state(player_id: PlayerId) -> UUAVState {
         }
         Lifecycle::Failed | Lifecycle::ShutDown => UUAVState::UUAV_ERROR,
         Lifecycle::Running => {
-            if mirror.awaiting_snapshot.load(Ordering::Acquire)
+            if mirror.present_failed.load(Ordering::Acquire) {
+                UUAVState::UUAV_ERROR
+            } else if mirror.awaiting_snapshot.load(Ordering::Acquire)
                 || (mirror.helper_id().is_none() && has_media)
             {
                 // restored/created player the fresh helper has not
@@ -1530,11 +1534,16 @@ extern "C" fn uuav_render_event(event_id: i32) {
             return;
         };
         match video.present(&client.unity) {
-            Ok(ack) => ack,
+            Ok(ack) => {
+                mirror.present_failed.store(false, Ordering::Release);
+                ack
+            }
             Err(e) => {
-                client
-                    .sinks
-                    .on_player_error(Some(player_id), &format!("present failed: {e:#}"));
+                if !mirror.present_failed.swap(true, Ordering::AcqRel) {
+                    client
+                        .sinks
+                        .on_player_error(Some(player_id), &format!("present failed: {e:#}"));
+                }
                 return;
             }
         }

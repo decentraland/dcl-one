@@ -67,7 +67,18 @@ pub fn av_sinks<T: AVPlayer>(
             ),
             Err(e) => {
                 warn!("av source `{source}`: {e}");
-                drop(command_receiver);
+                // the commands keep a receiver until the sender goes, so each send succeeds
+                // silently instead of reporting a closed channel every time (a thread where
+                // no task pool runs, as in a test)
+                let mut command_receiver = command_receiver;
+                match bevy::tasks::IoTaskPool::try_get() {
+                    Some(pool) => pool
+                        .spawn(async move { while command_receiver.recv().await.is_some() {} })
+                        .detach(),
+                    None => drop(std::thread::spawn(move || {
+                        while command_receiver.blocking_recv().is_some() {}
+                    })),
+                }
                 if T::has_video() {
                     video_sender
                         .try_send(VideoData::State(VideoState::VsError))

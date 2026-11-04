@@ -23,6 +23,9 @@ use super::{Shared, ffi, ffi::PlayerId, platform};
 /// Pixels a player's planes may hold: DCI 4K and a little more. A larger stream is refused
 /// before it reaches the device.
 const MAX_PIXELS: u64 = 4096 * 4096;
+/// The smallest edge a video may have: what the `av` sink keeps its image at, so a smaller video
+/// would never match the image and never be drawn.
+const MIN_EDGE: u32 = 16;
 
 /// The player table the main world maintains ([`super::UuavRuntime`]), read here.
 #[derive(Resource)]
@@ -42,9 +45,17 @@ pub fn build(render_app: &mut SubApp, shared: Arc<Shared>) {
         );
 }
 
-/// Runs once the render device exists.
+/// Runs once the render device exists; the main world learns the device's texture edge limit
+/// through [`Shared`] here.
 pub fn finish(render_app: &mut SubApp) {
-    if render_app.world().contains_resource::<RenderDevice>() {
+    if let Some(device) = render_app.world().get_resource::<RenderDevice>() {
+        let max_dimension = device.limits().max_texture_dimension_2d;
+        render_app
+            .world()
+            .resource::<UuavRenderShared>()
+            .0
+            .max_dimension
+            .store(max_dimension, std::sync::atomic::Ordering::Release);
         render_app.init_resource::<Nv12Pipeline>();
     } else {
         warn!("no render device: uuav video frames will not be presented");
@@ -206,13 +217,13 @@ impl Planes {
 #[derive(Resource, Default)]
 struct PlayerPlanes(HashMap<PlayerId, Planes>);
 
-/// Why planes of this size cannot become textures: not an NV12 size, or more than the device
-/// (`max_dimension` per edge) or [`MAX_PIXELS`] take.
-fn check_size(width: u32, height: u32, max_dimension: u32) -> Result<(), String> {
-    if width < 2 || height < 2 || !width.is_multiple_of(2) || !height.is_multiple_of(2) {
-        return Err(format!("{width}x{height} is not an NV12 size"));
+/// Why a video of this size cannot be shown: an edge under [`MIN_EDGE`], over the device's
+/// `max_dimension` (0 for a device not known yet: no edge limit), or more than [`MAX_PIXELS`].
+pub(super) fn check_bounds(width: u32, height: u32, max_dimension: u32) -> Result<(), String> {
+    if width < MIN_EDGE || height < MIN_EDGE {
+        return Err(format!("{width}x{height} is under {MIN_EDGE} px"));
     }
-    if width > max_dimension || height > max_dimension {
+    if max_dimension != 0 && (width > max_dimension || height > max_dimension) {
         return Err(format!(
             "{width}x{height} exceeds the device's {max_dimension} texture edge"
         ));
@@ -221,6 +232,16 @@ fn check_size(width: u32, height: u32, max_dimension: u32) -> Result<(), String>
         return Err(format!(
             "{width}x{height} exceeds the {MAX_PIXELS} pixel cap"
         ));
+    }
+    Ok(())
+}
+
+/// Why planes of this size cannot become textures: out of [`check_bounds`], or not an NV12
+/// size.
+fn check_size(width: u32, height: u32, max_dimension: u32) -> Result<(), String> {
+    check_bounds(width, height, max_dimension)?;
+    if !width.is_multiple_of(2) || !height.is_multiple_of(2) {
+        return Err(format!("{width}x{height} is not an NV12 size"));
     }
     Ok(())
 }
@@ -399,25 +420,47 @@ fn present_uuav_frames(
 
 #[cfg(test)]
 mod tests {
-    use super::check_size;
+    use super::{check_bounds, check_size};
 
     #[test]
     fn an_nv12_size_within_the_limits_passes() {
         assert_eq!(check_size(852, 480, 8192), Ok(()));
         assert_eq!(check_size(4096, 4096, 8192), Ok(()));
+        assert_eq!(check_size(16, 16, 8192), Ok(()));
     }
 
     #[test]
-    fn an_odd_or_degenerate_size_is_refused() {
+    fn an_odd_size_is_refused_as_planes_but_passes_the_bounds() {
         assert!(check_size(853, 480, 8192).is_err());
         assert!(check_size(852, 481, 8192).is_err());
+        assert_eq!(check_bounds(853, 480, 8192), Ok(()));
+    }
+
+    #[test]
+    fn an_edge_under_16_px_is_refused() {
+        assert!(
+            check_bounds(8, 8, 8192)
+                .unwrap_err()
+                .contains("under 16 px")
+        );
+        assert!(check_bounds(1920, 8, 8192).is_err());
         assert!(check_size(0, 480, 8192).is_err());
+    }
+
+    #[test]
+    fn an_unknown_device_limit_keeps_the_pixel_cap() {
+        assert_eq!(check_bounds(4096, 4096, 0), Ok(()));
+        assert!(
+            check_bounds(8192, 4096, 0)
+                .unwrap_err()
+                .contains("pixel cap")
+        );
     }
 
     #[test]
     fn a_size_past_the_device_or_the_pixel_cap_is_refused() {
         assert!(
-            check_size(8194, 2, 8192)
+            check_size(8194, 16, 8192)
                 .unwrap_err()
                 .contains("texture edge")
         );

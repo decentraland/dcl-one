@@ -68,7 +68,10 @@ From then on the helper adapts IPC messages onto the core's C API:
   for (the decoded frame's, even-rounded, which the stream header of
   `uuav_player_get_video_size` need not match) and a count of presented
   frames, so a host reads the planes at their own size and skips its upload
-  while nothing new was presented. The host converts NV12 to RGB itself.
+  while nothing new was presented. The host converts NV12 to RGB itself. A frame the client
+  cannot present (a generation past 4096x4096 pixels, a failed wrap or
+  copy) is reported once through the error callback and the player reads
+  `UUAV_ERROR` until a frame presents or new media is opened.
 - **Audio** crosses the boundary as messages: the helper pulls interleaved
   `f32` from the core every 10 ms and the client feeds a ~50 ms jitter ring
   that the host's audio callback drains with `uuav_player_read_audio`

@@ -68,6 +68,9 @@ fi
 # resolve from the helper's own directory. Signed before the app seal like the CEF helper.
 echo "Stage the UUAV runtime set"
 python3 ../../../../../tooling/uuav/stage-dist.py macos-universal "${APP_NAME}.app/Contents/MacOS"
+# the license texts are not code: they go with the other resources
+mkdir -p "${APP_NAME}.app/Contents/Resources"
+mv "${APP_NAME}.app/Contents/MacOS"/LICENSE-*.txt "${APP_NAME}.app/Contents/Resources/"
 for LIBRARY in "${APP_NAME}.app/Contents/MacOS"/*.dylib; do
     echo "Signing lib $LIBRARY"
     codesign --remove-signature "$LIBRARY"
