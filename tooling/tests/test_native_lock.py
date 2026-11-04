@@ -513,5 +513,86 @@ class GateBTests(unittest.TestCase):
         self.assertEqual(self.outcome(), "DID NOT REPRODUCE")
 
 
+FAKE_CONFIGURE = b"--prefix=/opt/ffmpeg --enable-shared --enable-version3 --disable-static"
+
+
+def make_pending_asset_repo() -> str:
+    """A pending target whose FFmpeg is a fetched release asset: no builder, no recipe yet."""
+    root = tempfile.mkdtemp(prefix="native-lock-test-")
+    os.makedirs(os.path.join(root, "scripts", "test-plugin"))
+    os.makedirs(os.path.join(root, "native", "src"))
+    os.makedirs(os.path.join(root, "native", "out"))
+    with open(os.path.join(root, "native", "src", "lib.rs"), "w",
+              encoding="utf-8") as handle:
+        handle.write("pub fn probe() {}\n")
+    with open(os.path.join(root, "native", "out", "plugin.bin"), "wb") as handle:
+        handle.write(bytes(range(256)) * 16)
+    with open(os.path.join(root, "native", "out", "avfake.dll"), "wb") as handle:
+        handle.write(b"\x00" * 64 + FAKE_CONFIGURE + b"\x00" * 64)
+
+    lock = {
+        "schema": 1,
+        "name": "test-plugin",
+        "docs": "README.md",
+        "rust_source": {"path": "native/src", "suffix": ".rs"},
+        "build_inputs": {},
+        "targets": {TARGET: {
+            "pending": "no binaries committed yet",
+            "runtime_dir": "native/out",
+            "ffmpeg": {"provenance": "third-party-release-asset",
+                       "configure_expected": [],
+                       "configure_observed": [],
+                       "drift_acknowledged": False},
+            "rust": {"target": "x86_64-pc-windows-msvc",
+                     "rustc": "rustc 0.0.0-test",
+                     "source_digest": "", "source_files": 0},
+            "artifacts": [{"path": "native/out/plugin.bin", "sha256": "",
+                           "bytes": 0, "produced_by": "cargo"},
+                          {"path": "native/out/avfake.dll", "sha256": "",
+                           "bytes": 0, "produced_by": "ffmpeg"}],
+        }},
+    }
+    with open(os.path.join(root, LOCK_REL), "w", encoding="utf-8") as handle:
+        json.dump(lock, handle, indent=2)
+        handle.write("\n")
+    return root
+
+
+class PendingTargetTests(unittest.TestCase):
+    """A target's first build has no recipe in the lock to be held to; its first relock seeds one."""
+
+    def setUp(self):
+        self.root = make_pending_asset_repo()
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_report_on_a_pending_target_skips_the_recipe_check(self):
+        result = run(self.root, "--report", TARGET)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("recipe not checked", result.stdout)
+
+    def test_report_on_a_relocked_target_still_fails_a_changed_recipe(self):
+        relock = run(self.root, "--update", "--only", TARGET)
+        self.assertEqual(relock.returncode, 0, relock.stdout + relock.stderr)
+        lock = read_lock(self.root)
+        lock["targets"][TARGET]["ffmpeg"]["configure_expected"] = ["--enable-shared"]
+        with open(os.path.join(self.root, LOCK_REL), "w", encoding="utf-8") as handle:
+            json.dump(lock, handle, indent=2)
+        result = run(self.root, "--report", TARGET)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("recipe specifies", result.stdout + result.stderr)
+
+    def test_relocking_a_release_asset_seeds_the_recipe_from_the_asset(self):
+        relock = run(self.root, "--update", "--only", TARGET)
+        self.assertEqual(relock.returncode, 0, relock.stdout + relock.stderr)
+        ffmpeg = read_lock(self.root)["targets"][TARGET]["ffmpeg"]
+        self.assertNotIn("pending", read_lock(self.root)["targets"][TARGET])
+        self.assertTrue(ffmpeg["configure_observed"])
+        self.assertEqual(ffmpeg["configure_expected"], ffmpeg["configure_observed"])
+        verify = run(self.root)
+        self.assertEqual(verify.returncode, 0, verify.stdout + verify.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -893,6 +893,11 @@ def check_provenance(repo: str, target: str, spec: dict, update: bool) -> list[s
     actual = sorted(next(iter(distinct), ()))
     if update:
         spec["ffmpeg"]["configure_observed"] = actual
+        # A fetched release asset has no build script to derive a recipe
+        # from: the asset is the recipe, so what it was configured with is
+        # what the lock expects of it from this relock on.
+        if spec["ffmpeg"].get("provenance") == "third-party-release-asset":
+            spec["ffmpeg"]["configure_expected"] = actual
         return problems
 
     if actual and actual != recorded:
@@ -976,7 +981,14 @@ def report_fresh_build(repo: str, lock: dict, target: str) -> int:
     if missing:
         fail(f"[{target}] {missing} artifact(s) missing after the build")
         return 1
-    if built is not None and expected is not None and built != expected:
+    if spec.get("pending"):
+        # Nothing has been relocked for this target, so the lock holds no
+        # recipe to hold the build to yet; the first relock seeds it from
+        # this very build (the builder script, or the asset itself).
+        print(f"::notice::[{target}] recipe not checked: the target is pending "
+              f"({spec['pending']}); the first relock records what this build "
+              f"was configured with.")
+    elif built is not None and expected is not None and built != expected:
         fail(f"[{target}] the freshly built FFmpeg does not carry the configure "
              f"line the recipe specifies\n"
              f"    recipe {expected}\n"
