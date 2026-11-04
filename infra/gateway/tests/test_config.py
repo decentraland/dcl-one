@@ -18,6 +18,7 @@ class ConfigurationTest(unittest.TestCase):
             "GATEWAY_SITES_UPSTREAMS": ["unix:/tmp/socket", "sites:5212/path"],
             "GATEWAY_ADMIN_CIDRS": ["allow all;", "example.org", "203.0.113.1/33", "fe80::1%eth0/128"],
             "GATEWAY_TRUSTED_PROXY_CIDRS": ["0.0.0.0/0;"],
+            "GATEWAY_TRUSTED_SYNC_PEER_IPS": ["203.0.113.1;", "peer.example", "fe80::1%eth0"],
             "GATEWAY_RESOLVERS": ["127.0.0.1;include", "resolver.example", "fe80::1%eth0"],
             "GATEWAY_STORAGE_ROOT": ["relative", "/data;include", "/data\nroot"],
         }
@@ -41,6 +42,18 @@ class ConfigurationTest(unittest.TestCase):
         self.assertEqual(cfg["admins"], ["203.0.113.0/24", "2001:db8::/64"])
         self.assertEqual(cfg["apis"], ["apis-a:5210", "[::1]:5211"])
         self.assertEqual(cfg["resolvers"], "[::1] 127.0.0.1")
+
+    def test_sync_peers_get_an_uncounted_limit_key(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1",
+                                "GATEWAY_TRUSTED_SYNC_PEER_IPS": "203.0.113.7, 2001:db8::1"})
+        self.assertEqual(cfg["sync_peers"], ["203.0.113.7/32", "2001:db8::1/128"])
+        text = gateway.render({"sites": [], "internal": [], "node": [], "aliases": [], "deploy": []},
+                              cfg, "/mime.types")
+        self.assertIn("geo $sync_peer { default 0; 203.0.113.7/32 1; 2001:db8::1/128 1; }", text)
+        self.assertIn('map $sync_peer $read_limit_key { default $binary_remote_addr; 1 ""; }', text)
+        self.assertIn("limit_req_zone $read_limit_key zone=read:10m rate=30r/s;", text)
+        self.assertIn("limit_req_zone $read_limit_key zone=content:10m rate=100r/s;", text)
+        self.assertIn("limit_req_zone $binary_remote_addr zone=deploy:10m rate=2r/s;", text)
 
     def test_uses_container_dns_without_a_fixed_host_address(self):
         with tempfile.TemporaryDirectory() as folder:

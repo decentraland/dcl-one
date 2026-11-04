@@ -78,6 +78,7 @@ def settings(env, resolv_conf="/etc/resolv.conf"):
         "sites": [upstream(value) for value in words(env.get("GATEWAY_SITES_UPSTREAMS", "sites:5212"))],
         "admins": networks(env.get("GATEWAY_ADMIN_CIDRS", "")),
         "trusted": networks(env.get("GATEWAY_TRUSTED_PROXY_CIDRS", "")),
+        "sync_peers": networks(env.get("GATEWAY_TRUSTED_SYNC_PEER_IPS", "")),
         "storage": storage.rstrip("/"),
     }
 
@@ -105,6 +106,7 @@ def render(table, cfg, mime):
     domain_names = " ".join(dict.fromkeys([cfg["domain"], "~^[a-z0-9-]+\\." + domain + "$", *cfg["hosts"]]))
     admin_geo = " ".join(f'{net} "admitted";' for net in cfg["admins"])
     trusted_geo = " ".join(f"{net} 1;" for net in cfg["trusted"])
+    sync_peer_geo = " ".join(f"{net} 1;" for net in cfg["sync_peers"])
     real_ip = "\n".join(f"set_real_ip_from {net};" for net in cfg["trusted"])
     blocked = "|".join(re.escape(path.lstrip("/")) for path in table["internal"])
     upstreams = ""
@@ -254,8 +256,12 @@ http {{
         "~*^/telemetry/dash/admin(/|\\\\.|$)" 1;
     }}
     map "$operator_path:$admin_gate" $operator_denied {{ volatile; default 0; "1:" 1; }}
-    limit_req_zone $binary_remote_addr zone=read:10m rate=30r/s;
-    limit_req_zone $binary_remote_addr zone=content:10m rate=100r/s;
+    # Listed sync peers (the API's TRUSTED_SYNC_PEER_IPS) get an empty key, which
+    # nginx does not count: upstream never limits a peer that syncs from it.
+    geo $sync_peer {{ default 0; {sync_peer_geo} }}
+    map $sync_peer $read_limit_key {{ default $binary_remote_addr; 1 ""; }}
+    limit_req_zone $read_limit_key zone=read:10m rate=30r/s;
+    limit_req_zone $read_limit_key zone=content:10m rate=100r/s;
     limit_req_zone $binary_remote_addr zone=deploy:10m rate=2r/s;
     limit_req_status 429;
     proxy_http_version 1.1;

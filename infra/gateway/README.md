@@ -34,6 +34,7 @@ docker run --rm --network dcl-one --read-only --cap-drop ALL --security-opt no-n
 | `GATEWAY_SITES_UPSTREAMS` | `sites:5212` | Sites destinations |
 | `GATEWAY_ADMIN_CIDRS` | empty | Operator networks; empty denies all |
 | `GATEWAY_TRUSTED_PROXY_CIDRS` | empty | Proxies trusted for client IP and scheme |
+| `GATEWAY_TRUSTED_SYNC_PEER_IPS` | empty | Sync peers exempt from the `read` and `content` request limits; list the API's `TRUSTED_SYNC_PEER_IPS` |
 | `GATEWAY_RESOLVERS` | resolv.conf | DNS servers |
 | `GATEWAY_STORAGE_ROOT` | empty | Content mount; API sets `STORAGE_X_ACCEL_BASE=/__protected_storage` |
 
