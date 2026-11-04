@@ -834,6 +834,7 @@ export const componentDefinitionByName: {
     "core::CameraMode": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBCameraMode>>;
     "core::CameraModeArea": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBCameraModeArea>>;
     "core::EngineInfo": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBEngineInfo>>;
+    "core::ExplorerConfiguration": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBExplorerConfiguration>>;
     "core::ExplorerItemPurchaseResult": GSetComponentGetter<GrowOnlyValueSetComponentDefinition<PBExplorerItemPurchaseResult>>;
     "core::ExplorerUiEventsResult": GSetComponentGetter<GrowOnlyValueSetComponentDefinition<PBExplorerUiEventsResult>>;
     "core::GlobalLight": LwwComponentGetter<LastWriteWinElementSetComponentDefinition<PBGlobalLight>>;
@@ -1395,6 +1396,9 @@ export type ExcludeUndefined<T> = {
 
 // @public
 export const executeTask: (task: Task<unknown>) => void;
+
+// @public (undocumented)
+export const ExplorerConfiguration: LastWriteWinElementSetComponentDefinition<PBExplorerConfiguration>;
 
 // @public (undocumented)
 export const ExplorerItemPurchaseResult: GrowOnlyValueSetComponentDefinition<PBExplorerItemPurchaseResult>;
@@ -3051,6 +3055,19 @@ export namespace PBEngineInfo {
     export function decode(input: _m0.Reader | Uint8Array, length?: number): PBEngineInfo;
     // (undocumented)
     export function encode(message: PBEngineInfo, writer?: _m0.Writer): _m0.Writer;
+}
+
+// @public (undocumented)
+export interface PBExplorerConfiguration {
+    locale?: string | undefined;
+}
+
+// @public (undocumented)
+export namespace PBExplorerConfiguration {
+    // (undocumented)
+    export function decode(input: _m0.Reader | Uint8Array, length?: number): PBExplorerConfiguration;
+    // (undocumented)
+    export function encode(message: PBExplorerConfiguration, writer?: _m0.Writer): _m0.Writer;
 }
 
 // @public (undocumented)
