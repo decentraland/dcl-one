@@ -6,6 +6,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -226,12 +227,33 @@ pub async fn start(
 /// version. It runs under the `sync` lease so it never overlaps a leader's
 /// flushes; while another process holds that lease the leader's own bootstrap
 /// repair covers the database. Losing the lease rolls the repair back.
+fn repair_outcome(result: Result<(), crate::sync::SyncError>) -> anyhow::Result<bool> {
+    result
+        .map(|()| true)
+        .map_err(|e| anyhow::anyhow!("deleter repair: {e}"))
+}
+
+/// Cancels the statement the repair's backend runs, so its locks go with the rollback
+/// rather than when the statement would have finished.
+async fn cancel_backend(pool: &PgPool, pid: i32) {
+    if pid == 0 {
+        return;
+    }
+    if let Err(e) = sqlx::query("SELECT pg_cancel_backend($1)")
+        .bind(pid)
+        .execute(pool)
+        .await
+    {
+        tracing::warn!(error = %e, pid, "could not cancel the deleter repair's statement");
+    }
+}
+
 pub fn spawn_startup_repair(jobs: &Arc<Jobs>, pool: PgPool) {
     let leases = jobs.leases().cloned();
     jobs.spawn_leased("deleter-repair", move |ctx| {
         let (leases, pool) = (leases.clone(), pool.clone());
         async move {
-            let repo = LiveDeploymentRepository::new(pool, Arc::new(SyncStatus::default()));
+            let repo = LiveDeploymentRepository::new(pool.clone(), Arc::new(SyncStatus::default()));
             if repo.deleter_repair_done().await? {
                 ctx.progress("skipped: this database already had this repair");
                 return Ok(());
@@ -253,13 +275,19 @@ pub fn spawn_startup_repair(jobs: &Arc<Jobs>, pool: PgPool) {
             let result = if repo.deleter_repair_done().await? {
                 Ok(false)
             } else {
-                tokio::select! {
-                    result = repo.resolve_deleter_deployments() => result
-                        .map(|()| true)
-                        .map_err(|e| anyhow::anyhow!("deleter repair: {e}")),
+                let backend = AtomicI32::new(0);
+                let repair = repo.resolve_deleter_deployments_reporting(Some(&backend));
+                tokio::pin!(repair);
+                // Stopped before the repair future drops, while its connection is still checked out.
+                let stopped = tokio::select! {
+                    result = &mut repair => repair_outcome(result),
                     _ = lost.cancelled() => Err(anyhow::anyhow!("deleter repair: the sync lease was lost")),
                     _ = ctx.cancel.cancelled() => Err(anyhow::anyhow!("deleter repair: cancelled")),
+                };
+                if stopped.is_err() {
+                    cancel_backend(&pool, backend.load(Ordering::SeqCst)).await;
                 }
+                stopped
             };
             if let Some(guard) = guard {
                 guard.release().await;

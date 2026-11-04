@@ -155,9 +155,25 @@ impl LiveDeploymentRepository {
     /// empty); a row the repair gives a deleter gives up its pointers, and the snapshot windows
     /// that may still list it are marked for regeneration, in the same transaction.
     pub async fn resolve_deleter_deployments(&self) -> Result<(), SyncError> {
+        self.resolve_deleter_deployments_reporting(None).await
+    }
+
+    /// [`Self::resolve_deleter_deployments`], storing its transaction's backend pid in
+    /// `backend` so the caller can cancel the statement in progress.
+    pub async fn resolve_deleter_deployments_reporting(
+        &self,
+        backend: Option<&std::sync::atomic::AtomicI32>,
+    ) -> Result<(), SyncError> {
         let start = std::time::Instant::now();
         let storage = |e: sqlx::Error| SyncError::Storage(e.to_string());
         let mut tx = self.pool.begin().await.map_err(storage)?;
+        if let Some(backend) = backend {
+            let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(storage)?;
+            backend.store(pid, std::sync::atomic::Ordering::SeqCst);
+        }
         // Waits out a window write in progress, so its row takes the mark below.
         sqlx::query("SELECT pg_advisory_xact_lock($1)")
             .bind(crate::snapshot_gen::SNAPSHOT_ROWS_LOCK)
@@ -585,13 +601,39 @@ mod tests {
             );
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        hold.rollback().await.unwrap();
-        while waiters().await > 0 {
-            assert!(std::time::Instant::now() < deadline, "a waiter is stuck");
+        // The repair's statement is cancelled on the server while the row is still held:
+        // nothing waits, its transaction is gone and the snapshot lock is free.
+        let repair_running = || async {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM pg_stat_activity
+                 WHERE datname = current_database() AND pid <> pg_backend_pid()
+                   AND query LIKE '%pointer_successors%' AND state <> 'idle'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        while waiters().await > 0 || repair_running().await > 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the repair's statement still runs on the server"
+            );
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let mut probe = pool.acquire().await.unwrap();
+        let free: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(crate::snapshot_gen::SNAPSHOT_ROWS_LOCK)
+            .fetch_one(&mut *probe)
+            .await
+            .unwrap();
+        assert!(free, "the repair still holds the snapshot lock");
+        sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(crate::snapshot_gen::SNAPSHOT_ROWS_LOCK)
+            .execute(&mut *probe)
+            .await
+            .unwrap();
+        drop(probe);
+        hold.rollback().await.unwrap();
         assert_eq!(
             deleters(&pool).await,
             vec![("bafynewer".into(), None), ("bafyolder".into(), None)]
