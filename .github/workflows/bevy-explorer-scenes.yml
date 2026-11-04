@@ -69,6 +69,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.changes.outputs.sha }}
+          lfs: false
+      - name: Fetch the UUAV runtime set
+        run: git lfs pull --include 'library/uuav/dist/**'
       - name: Reserve disk space on the hosted Linux runner
         if: runner.os == 'Linux'
         working-directory: .
@@ -93,7 +96,6 @@ jobs:
         run: |
           sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py \
             libasound2-dev libudev-dev libxkbcommon-x11-0 ninja-build clang curl pkg-config \
-            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev \
             libssl-dev libx11-dev libgl1-mesa-dev libxext-dev pulseaudio libasound2-plugins alsa-utils \
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
@@ -113,6 +115,9 @@ jobs:
         run: cargo build --release --locked --timings -p dcl_deno_ipc
       - name: Build the graphical test engine
         run: cargo build --release --locked --timings --bin decentra-bevy
+      - name: Stage the UUAV runtime set
+        # the engine spawns the video helper as a sibling (library/uuav/dist, Git LFS)
+        run: python3 "$GITHUB_WORKSPACE/tooling/uuav/stage-dist.py" linux-x86_64 target/release
       - name: Configure virtual audio for graphical tests
         run: |
           pulseaudio --start --exit-idle-time=-1
@@ -137,6 +142,53 @@ jobs:
           set -o pipefail
           xvfb-run -s "-screen 0 320x240x24" target/release/decentra-bevy --realm https://decentraland.github.io/scene-explorer-tests/scene-explorer-tests --test_scenes "$SCENE_PARCELS" --no_fog --distance 1 --scene_log_to_console 2>&1 | tee scene-tests.log
           grep -Eq 'all tests passed!|all failures were allowed' scene-tests.log
+      # Scene video through the UUAV player: the end-to-end suite's `video` scene, played by the
+      # standalone just built and driven through its console under xvfb
+      # (apps/bevy-explorer/e2e/specs/visual/video.test.ts), in software decode (the hosted runner
+      # has no VA driver). The e2e workflow runs the same spec against the web app, whose video is
+      # the browser's; this is the native player's only run in CI.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: inputs.suite != 'snapshots'
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/bevy-explorer/e2e/package-lock.json
+      - name: Fetch the end-to-end scenes' assets
+        if: inputs.suite != 'snapshots'
+        run: git lfs pull --include 'apps/bevy-explorer/e2e/scenes/**'
+      - name: Install the end-to-end suite
+        if: inputs.suite != 'snapshots'
+        working-directory: apps/bevy-explorer/e2e
+        run: npm ci
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: inputs.suite != 'snapshots'
+        with:
+          workspaces: apps/dcl-scene-cli
+          key: e2e-scene-cli
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build dcl-scene-cli
+        if: inputs.suite != 'snapshots'
+        working-directory: apps/dcl-scene-cli
+        # The crate is a member of the catalyst workspace (services/catalyst), whose target folder
+        # would otherwise take the binary; its own keeps the path below and the cache local.
+        run: cargo build --release --locked --target-dir target
+      - name: Build the end-to-end scenes
+        if: inputs.suite != 'snapshots'
+        working-directory: apps/bevy-explorer/e2e
+        env:
+          DCL_SCENE_CLI: ${{ github.workspace }}/apps/dcl-scene-cli/target/release/dcl-scene-cli
+        run: npm run build-scenes
+      - name: Video playback through the UUAV player
+        id: video
+        if: inputs.suite != 'snapshots'
+        continue-on-error: true
+        timeout-minutes: 20
+        working-directory: apps/bevy-explorer/e2e
+        env:
+          DCL_E2E_TRANSPORT: native
+          DCL_E2E_NATIVE_BIN: ${{ github.workspace }}/rendering/bevy-explorer/source/target/release/decentra-bevy
+          UUAV_FORCE_SW_DECODE: '1'
+        run: xvfb-run -s "-screen 0 960x540x24" npm run e2e -- --visual --filter 'video plays'
       - name: Record graphical scene result
         if: always() && steps.scenes.outcome != '' && steps.scenes.outcome != 'skipped'
         env:
@@ -144,6 +196,12 @@ jobs:
           SCENE_SUITE: ${{ inputs.suite || 'full' }}
         run: |
           printf 'Graphical scene tests (%s): **%s**. Only the full suite establishes graphical acceptance. See the scene-test log artifact.\n' "$SCENE_SUITE" "$SCENE_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+      - name: Record the video playback result
+        if: always() && steps.video.outcome != '' && steps.video.outcome != 'skipped'
+        env:
+          VIDEO_OUTCOME: ${{ steps.video.outcome }}
+        run: |
+          printf 'Video playback through the UUAV player (the end-to-end `video` scene, software decode): **%s**. See the end-to-end report artifact.\n' "$VIDEO_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -154,6 +212,16 @@ jobs:
             rendering/bevy-explorer/source/target/cargo-timings/*.html
           if-no-files-found: ignore
           retention-days: 14
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && steps.video.outcome != '' && steps.video.outcome != 'skipped'
+        with:
+          name: bevy-explorer-video-e2e-${{ needs.changes.outputs.sha }}
+          path: apps/bevy-explorer/e2e/report/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Fail on a video playback failure
+        if: always() && steps.video.outcome == 'failure'
+        run: exit 1
     defaults:
       run:
         working-directory: rendering/bevy-explorer/source
