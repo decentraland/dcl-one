@@ -356,9 +356,21 @@ impl Settings {
             land_subgraph_url: checked("LAND_SUBGRAPH_URL", &upstreams.land_subgraph_url)?,
             eth_rpc_url: config.content.eth_rpc_url().context("ETH_RPC_URL")?,
             polygon_rpc_url: non_empty(&config.economy.rpc_endpoint_polygon),
-            third_party_registry_subgraph_url: non_empty(
+            third_party_registry_subgraph_url: checked(
+                "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
                 &config.validator.third_party_registry_l2_subgraph_url,
-            ),
+            )?
+            .map(|url| {
+                if url.starts_with("https://") {
+                    Ok(url)
+                } else {
+                    anyhow::bail!(
+                        "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL is not https: the approved \
+                         third-party providers are refused over plaintext"
+                    )
+                }
+            })
+            .transpose()?,
             land_image_base_url: config.map_urls().land_image_base,
             trades_sync_upstream_url: checked(
                 "TRADES_SYNC_UPSTREAM_URL",
@@ -595,6 +607,26 @@ impl MarketplaceState {
     /// `ETH_RPC_URL` when that list has none.
     pub fn chain_rpc_url(&self, net: chain_walk::ChainNet) -> Option<String> {
         self.rpc_url_for(net, net.chain_id())
+    }
+
+    /// The endpoint the settlement venues of `chain_id` (1 or 137) are read
+    /// over. Their addresses are mainnet's, so off mainnet `ETH_RPC_URL`,
+    /// which serves `ETH_NETWORK`, does not stand in for chain 1.
+    pub fn venue_rpc_url(&self, chain_id: u64) -> Option<String> {
+        let net = match chain_id {
+            1 => chain_walk::ChainNet::Ethereum,
+            137 => chain_walk::ChainNet::Matic,
+            _ => return None,
+        };
+        if self.settings.eth_network.trim() != "mainnet" {
+            return self
+                .settings
+                .market
+                .trade_rpc_urls
+                .for_chain(chain_id as i64)
+                .map(str::to_string);
+        }
+        self.chain_rpc_url(net)
     }
 
     /// The endpoint the trade-events walk of `net` reads: the

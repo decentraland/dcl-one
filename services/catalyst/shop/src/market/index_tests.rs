@@ -1377,6 +1377,14 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
     )
         .abi_encode_params();
     let reg = nft_index::DCL_REGISTRAR;
+    // PixelGolf on sale for 5,000 wei, under the parcel's 9,000: the NAME browse's price range.
+    let name_order = (
+        FixedBytes::<32>::repeat_byte(0x08),
+        Address::from_str(reg).unwrap(),
+        U256::from(5_000u64),
+        U256::from(4_000_000_000u64),
+    )
+        .abi_encode_params();
     let logs = vec![
         transfer(v1, ZERO, ALICE, U256::from(0u8), s + 100, 0),
         log_at(
@@ -1439,6 +1447,17 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
             s + 400,
             0,
         ),
+        log_at(
+            market,
+            vec![
+                nft_index::TOPIC_ORDER_CREATED.into(),
+                topic_word(name_token),
+                topic_addr(BOB),
+            ],
+            name_order,
+            s + 401,
+            0,
+        ),
     ];
     let head = s + 1_000;
     let chain = FakeChain::new(head, logs, 1_000_000, 100);
@@ -1480,6 +1499,41 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
         ),
         (Some("PixelGolf"), Some("PixelGolf"), Some(BOB))
     );
+    // The NAME browse's price range is in wei and bounds the open listing; `cheapest` sorts by it.
+    // A search reads this index (without one the subgraph serves, its `where` checked in nfts.rs).
+    for (range, listed) in [
+        ("minPrice=5000&maxPrice=5000", true),
+        ("minPrice=1&maxPrice=9000", true),
+        ("minPrice=5001", false),
+        ("maxPrice=4999", false),
+    ] {
+        let (code, body) = get_json(
+            &app,
+            &format!("/v1/nfts?category=ens&search=pixel&isOnSale=true&sortBy=cheapest&{range}"),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{range}: {body}");
+        let names: Vec<_> = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["nft"]["name"].as_str())
+            .collect();
+        assert_eq!(
+            names,
+            if listed {
+                vec![Some("PixelGolf")]
+            } else {
+                vec![]
+            },
+            "{range}: {body}"
+        );
+        if listed {
+            assert_eq!(body["data"][0]["order"]["price"], "5000", "{range}: {body}");
+        }
+    }
+    let (code, body) = get_json(&app, "/v1/nfts?category=ens&isOnSale=true&minPrice=abc").await;
+    assert_eq!(code, StatusCode::BAD_REQUEST, "{body}");
     let (code, body) = get_json(&app, "/v1/nfts?search=jester&network=ETHEREUM").await;
     assert_eq!(
         (

@@ -7,6 +7,7 @@ import { t } from "../intl";
 import { CATEGORIES, type Sub, type Top } from "../lib/categories";
 import { PRICE_SLIDER_MAX, PRICE_SLIDER_STEPS, priceToSliderPct, priceToSliderPos, sliderPosToPrice } from "../lib/price-slider";
 import { RARITIES, rarityColor, rarityLabel } from "../lib/rarity";
+import { CollectionFilter, CreatorFilter, useCollectionName, useCreatorNames } from "./PickerFilters";
 import Icon from "./Icon";
 import "./filters.css";
 
@@ -227,6 +228,13 @@ export type FiltersProps = {
   hidePrice?: boolean;
   collections?: boolean;
   onCollections?: () => void;
+  /** The creators and collection pickers, offered when their handlers are given. */
+  creators?: string[];
+  onCreators?: (creators: string[]) => void;
+  collection?: string | null;
+  onCollection?: (collection: string | null) => void;
+  /** The collection search offers only collections on primary sale (the grid shows creator listings only). */
+  collectionOnSale?: boolean;
 };
 
 export default function Filters(props: FiltersProps) {
@@ -235,7 +243,12 @@ export default function Filters(props: FiltersProps) {
   const [openPrice, setOpenPrice] = useState(true);
   const [openRarity, setOpenRarity] = useState(false);
   const [openStatus, setOpenStatus] = useState(true);
+  const [openCreators, setOpenCreators] = useState(true);
+  const [openCollection, setOpenCollection] = useState(true);
   const statusName = useId();
+  const creators = props.onCreators ? (props.creators ?? []) : [];
+  const creatorNames = useCreatorNames(creators);
+  const collectionName = useCollectionName(props.onCollection ? (props.collection ?? null) : null);
 
   const min = priceMin && !Number.isNaN(Number(priceMin)) ? Number(priceMin) : undefined;
   const max = priceMax && !Number.isNaN(Number(priceMax)) ? Number(priceMax) : undefined;
@@ -345,6 +358,23 @@ export default function Filters(props: FiltersProps) {
       <hr className="shop-filters__divider" />
         </>
       )}
+
+      {props.onCreators ? (
+        <>
+          <FilterSection title={t("picker.creators")} open={openCreators} onToggle={() => setOpenCreators((o) => !o)} summary={creators.map((a) => creatorNames[a]).join(", ")}>
+            <CreatorFilter creators={creators} onChange={props.onCreators} />
+          </FilterSection>
+          <hr className="shop-filters__divider" />
+        </>
+      ) : null}
+      {props.onCollection ? (
+        <>
+          <FilterSection title={t("picker.collection")} open={openCollection} onToggle={() => setOpenCollection((o) => !o)} summary={collectionName ?? ""}>
+            <CollectionFilter collection={props.collection ?? null} onSale={!!props.collectionOnSale} onChange={props.onCollection} />
+          </FilterSection>
+          <hr className="shop-filters__divider" />
+        </>
+      ) : null}
 
       <FilterSection title={t("assets.rarity")} open={openRarity} onToggle={() => setOpenRarity((o) => !o)} summary={raritySummary} testId="sidebar-section-toggle">
         <div className="shop-filters__rarities" data-testid="rarity-filter">

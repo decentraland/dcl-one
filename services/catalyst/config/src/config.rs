@@ -1,5 +1,7 @@
 use clap::Args;
 
+use crate::posture::Posture::Mirror;
+
 pub use crate::{
     content::{AboutCommsConfig, ContentConfig, ValidatorConfig},
     create::CreateConfig,
@@ -22,6 +24,20 @@ pub const DEFAULT_MANA_PRICE_MAX_STALENESS_SECS: i64 = 900;
 /// The legacy `secondary`/`auto` values fulfilled a credits debit from resale
 /// listings; they run as `primary` and say so at startup.
 pub const DEFAULT_CHECKOUT_FULFILLMENT_MODE: &str = "primary";
+
+/// The L1 and L2 RPCs a node reads unless the operator names others
+/// (`L1_HTTP_PROVIDER_URL` and `L2_HTTP_PROVIDER_URL` in the reference): mainnet
+/// with polygon on mainnet, sepolia with amoy on any other `ETH_NETWORK`.
+pub fn default_rpc_urls(eth_network: &str) -> (String, String) {
+    let (l1, l2) = if eth_network.trim() == "mainnet" {
+        ("mainnet", "polygon")
+    } else {
+        ("sepolia", "amoy")
+    };
+    let url =
+        |chain: &str| format!("https://rpc.decentraland.org/{chain}?project=catalyst-content");
+    (url(l1), url(l2))
+}
 
 /// See [`Config::map_urls`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,8 +119,42 @@ impl Config {
             Self::refuse_plain_signing_key(name, slot.as_deref(), from_file)?;
             Self::read_secret_file(name, slot)?;
         }
+        self.default_rpc_urls();
         self.derive_trade_rpc_urls();
         crate::posture::refuse_remote_secrets(self)
+    }
+
+    /// `ETH_RPC_URL` and `RPC_ENDPOINT_POLYGON` left unset or empty read
+    /// Decentraland's public RPCs for `ETH_NETWORK`, as the reference catalyst
+    /// does ([`default_rpc_urls`]). Under island and journey, which dial no
+    /// outside host, they stay unset. Runs once the secret files are read, so
+    /// a `_FILE` still wins; an empty one fails startup instead of defaulting.
+    pub fn default_rpc_urls(&mut self) {
+        let posture = self
+            .node
+            .node_posture
+            .as_deref()
+            .filter(|p| !p.trim().is_empty());
+        if posture.is_some_and(|p| crate::posture::Posture::parse(p).ok() != Some(Mirror)) {
+            return;
+        }
+        let (l1, l2) = default_rpc_urls(&self.node.eth_network);
+        for (name, slot, url) in [
+            ("ETH_RPC_URL", &mut self.content.eth_rpc_url, l1),
+            (
+                "RPC_ENDPOINT_POLYGON",
+                &mut self.economy.rpc_endpoint_polygon,
+                l2,
+            ),
+        ] {
+            if Self::non_empty(slot).is_none() {
+                tracing::info!(
+                    "{name} unset: reading Decentraland's public RPC for ETH_NETWORK={}",
+                    self.node.eth_network.trim()
+                );
+                *slot = Some(url);
+            }
+        }
     }
 
     /// A mirror's `TRADE_RPC_URLS` is this node's own two endpoints,
@@ -169,6 +219,7 @@ impl Config {
 
     pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 62] {
         [
+            ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
             (
                 "CATALYRST_CONTENT_ADMIN_TOKEN",
                 &mut self.writes.catalyrst_content_admin_token,
@@ -326,10 +377,6 @@ impl Config {
                 "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
                 &mut self.validator.third_party_registry_l2_subgraph_url,
             ),
-            (
-                "BLOCKS_L2_SUBGRAPH_URL",
-                &mut self.validator.blocks_l2_subgraph_url,
-            ),
             ("ONBOARDING_API_KEY", &mut self.node.onboarding_api_key),
             (
                 "PLACES_ADMIN_AUTH_TOKEN",
@@ -354,17 +401,36 @@ impl Config {
         "RELAYER_PRIVATE_KEY",
     ];
 
+    /// Secrets that fall back to a network default when unset
+    /// ([`Config::default_rpc_urls`]), so an empty `_FILE` is refused.
+    pub const NETWORK_DEFAULTED_SECRETS: [&'static str; 2] =
+        ["ETH_RPC_URL", "RPC_ENDPOINT_POLYGON"];
+
     fn read_secret_file(name: &str, slot: &mut Option<String>) -> anyhow::Result<()> {
         let file_var = format!("{name}_FILE");
         let Some(path) = std::env::var_os(&file_var).filter(|p| !p.is_empty()) else {
             return Ok(());
         };
+        Self::read_secret_from(name, std::path::Path::new(&path), slot)
+    }
+
+    fn read_secret_from(
+        name: &str,
+        path: &std::path::Path,
+        slot: &mut Option<String>,
+    ) -> anyhow::Result<()> {
+        let file_var = format!("{name}_FILE");
         if slot.as_deref().is_some_and(|v| !v.trim().is_empty()) {
             anyhow::bail!("{name} and {file_var} are both set; keep one");
         }
-        let contents = std::fs::read_to_string(&path)
+        let contents = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("{file_var}: cannot read the file: {e}"))?;
         let value = contents.trim().to_string();
+        if value.is_empty() && Self::NETWORK_DEFAULTED_SECRETS.contains(&name) {
+            anyhow::bail!(
+                "{file_var} names an empty file; fill it or unset {file_var} to read the network's default RPC"
+            );
+        }
         *slot = if value.is_empty() { None } else { Some(value) };
         Ok(())
     }
@@ -1014,6 +1080,40 @@ mod tests {
             "{err}"
         );
         unsafe { std::env::remove_var(format!("{name}_FILE")) };
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An empty RPC file fails startup instead of silently reading the
+    /// network default; other secrets still read an empty file as unset.
+    #[test]
+    fn an_empty_rpc_file_is_refused_instead_of_defaulting() {
+        let dir = std::env::temp_dir().join(format!(
+            "catalyst-config-rpc-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let blank = dir.join("blank");
+        std::fs::write(&blank, " \n\t").unwrap();
+        for name in Config::NETWORK_DEFAULTED_SECRETS {
+            let mut slot = None;
+            let err = Config::read_secret_from(name, &blank, &mut slot)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains(&format!("{name}_FILE")) && err.contains("empty"),
+                "{err}"
+            );
+            assert_eq!(slot, None);
+        }
+        let mut other = None;
+        Config::read_secret_from("SESSION_SECRET", &blank, &mut other).unwrap();
+        assert_eq!(other, None);
+
+        let filled = dir.join("filled");
+        std::fs::write(&filled, "https://eth.example.org/key\n").unwrap();
+        let mut slot = None;
+        Config::read_secret_from("ETH_RPC_URL", &filled, &mut slot).unwrap();
+        assert_eq!(slot.as_deref(), Some("https://eth.example.org/key"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

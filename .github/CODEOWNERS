@@ -97,6 +97,13 @@
 /.github/workflows/bevy-explorer-*.yml @decentraland/client
 /.github/actions/bevy-explorer-*/ @decentraland/client
 
+# uuav-native
+/library/uuav/ @decentraland/client
+/tooling/uuav/ @decentraland/client
+/tooling/native-lock/ @decentraland/client
+/.github/workflows/uuav-native.yml @decentraland/client
+/.github/workflows/uuav-verify.yml @decentraland/client
+
 # quality
 /services/catalyst/tests/ @decentraland/qa
 
