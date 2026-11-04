@@ -16,7 +16,10 @@ use crate::errors::AppError;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Erc721Trait {
     pub trait_type: String,
-    pub value: String,
+    /// `None` only for an item without a category: upstream still lists the
+    /// trait, and `JSON.stringify` drops the undefined `value`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,22 +95,18 @@ pub fn format_erc721_entity(
     let mut attributes = Vec::new();
     attributes.push(Erc721Trait {
         trait_type: "Rarity".to_string(),
-        value: rarity.to_string(),
+        value: Some(rarity.to_string()),
     });
-
-    let category = extract_item_category(metadata);
-    if let Some(cat) = category {
-        attributes.push(Erc721Trait {
-            trait_type: "Category".to_string(),
-            value: cat,
-        });
-    }
+    attributes.push(Erc721Trait {
+        trait_type: "Category".to_string(),
+        value: extract_item_category(metadata),
+    });
 
     let tags = extract_item_tags(metadata);
     for tag in tags {
         attributes.push(Erc721Trait {
             trait_type: "Tag".to_string(),
-            value: tag,
+            value: Some(tag),
         });
     }
 
@@ -115,7 +114,7 @@ pub fn format_erc721_entity(
     for shape in body_shapes {
         attributes.push(Erc721Trait {
             trait_type: "Body Shape".to_string(),
-            value: shape,
+            value: Some(shape),
         });
     }
 
@@ -374,13 +373,46 @@ mod tests {
             result
                 .attributes
                 .iter()
-                .any(|a| a.trait_type == "Rarity" && a.value == "epic")
+                .any(|a| a.trait_type == "Rarity" && a.value.as_deref() == Some("epic"))
         );
         assert!(
             result
                 .attributes
                 .iter()
-                .any(|a| a.trait_type == "Category" && a.value == "hat")
+                .any(|a| a.trait_type == "Category" && a.value.as_deref() == Some("hat"))
+        );
+    }
+
+    /// Upstream always lists the `Category` trait, second, and leaves out its
+    /// `value` when the item has no category (`logic/entities/component.ts:89-94`).
+    #[test]
+    fn a_missing_category_keeps_the_trait_without_a_value() {
+        let entity = Entity {
+            id: "bafkrei".to_string(),
+            entity_type: EntityType::Wearable,
+            pointers: vec!["urn:decentraland:matic:collections-v2:0xabc:0".to_string()],
+            timestamp: 1700000000000,
+            content: vec![],
+            version: "v3".to_string(),
+            metadata: Some(serde_json::json!({
+                "i18n": [{"code": "en", "text": "Cool Hat"}],
+                "rarity": "epic",
+                "data": {"tags": ["cool"], "representations": []}
+            })),
+        };
+        let result = format_erc721_entity(
+            "urn:decentraland:matic:collections-v2:0xabc:0",
+            &entity,
+            "https://peer.decentraland.org/content",
+            None,
+        );
+        assert_eq!(
+            serde_json::to_value(&result.attributes).unwrap(),
+            serde_json::json!([
+                {"trait_type": "Rarity", "value": "epic"},
+                {"trait_type": "Category"},
+                {"trait_type": "Tag", "value": "cool"}
+            ])
         );
     }
 }
