@@ -104,9 +104,10 @@ fn loopback_host() -> enet::Host<std::net::UdpSocket> {
     .unwrap()
 }
 
-/// A driver that gives up on a connection tells the server at once, as unity-explorer does on a
-/// connect timeout. Otherwise the server holds the peer until its own timeout notices, which takes
-/// ENet at least 5 s.
+/// A driver that gives up on a connected peer, its inbound backlog over a cap or ENet's service
+/// failing, tells the server at once. Otherwise the server holds the peer until its own timeout
+/// notices, which takes ENet at least 5 s. This covers a connected peer only: before VERIFY_CONNECT
+/// the notice cannot reach the server (see `abandon`).
 #[test]
 fn abandoning_a_connection_tells_the_server_at_once() {
     let mut server = loopback_host();

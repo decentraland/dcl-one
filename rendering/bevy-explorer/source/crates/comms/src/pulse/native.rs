@@ -405,9 +405,13 @@ fn fail(channels: &mut PulseDriverChannels, message: String) {
     let _ = channels.status.try_send(PulseStatus::Failed(message));
 }
 
-/// [`fail`], for a connection `host.connect` has started: the server is told at once, with
-/// `NONE` (0), as unity-explorer tells it when its connect times out (`ForceDisconnectAsync` in
-/// `ENetTransport.cs`). Otherwise it would hold the peer until its own timeout noticed.
+/// [`fail`], for a connection `host.connect` has started, ending the peer with `NONE` (0) as
+/// unity-explorer's `ForceDisconnectAsync` (`ENetTransport.cs`) does. The server hears it only once
+/// the peer is connected, on the backlog-cap and service-error paths, and then lets the peer go at
+/// once rather than at its own timeout. Until VERIFY_CONNECT the peer has no id from the server,
+/// and ENet drops any command but CONNECT that carries the unassigned one (`src/c/protocol.rs` in
+/// the vendored port, which dcl-one's server runs too). So on a connect timeout the notice never
+/// arrives, as in unity-explorer, and the server keeps its half-open peer until its own timeout.
 fn abandon<S: enet::Socket>(
     host: &mut enet::Host<S>,
     peer: enet::PeerID,
