@@ -1,0 +1,399 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+  },
+  "runtime": {
+    "node": "v26.12.0",
+    "uws_source_commit": "fbdac03ee398031f304ddeb6764358d2eaa6fe29"
+  },
+  "scope": "Executed env provider, both actual WS handler registrations, ordinary transport capacity and overflow, and native uWS sends through Unix sockets with at most 8 MiB. native_u32 is the Int32Value-to-unsigned-field conversion; native probes independently distinguish small wrapped thresholds from disabled/large thresholds, not exact kernel byte counts. Nonfinite/zero native limits remain unsupported by the bounded target.",
+  "cases": [
+    {
+      "raw": null,
+      "number": 131072,
+      "handler_numbers": {
+        "/": 131072,
+        "/v1/stream": 131072
+      },
+      "native_u32": 131072,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 2
+      },
+      "capacity": 128,
+      "send_calls": 1,
+      "overflow_at": 129,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": true,
+      "target_gap": null
+    },
+    {
+      "raw": "1024bytes",
+      "number": 1024,
+      "handler_numbers": {
+        "/": 1024,
+        "/v1/stream": 1024
+      },
+      "native_u32": 1024,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 2
+      },
+      "capacity": 100,
+      "send_calls": 1,
+      "overflow_at": 101,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": true,
+      "target_gap": null
+    },
+    {
+      "raw": "131072.25tail",
+      "number": 131072.25,
+      "handler_numbers": {
+        "/": 131072.25,
+        "/v1/stream": 131072.25
+      },
+      "native_u32": 131072,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 2
+      },
+      "capacity": 129,
+      "send_calls": 1,
+      "overflow_at": 130,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": true,
+      "target_gap": null
+    },
+    {
+      "raw": "4294967297.5suffix",
+      "number": 4294967297.5,
+      "handler_numbers": {
+        "/": 4294967297.5,
+        "/v1/stream": 4294967297.5
+      },
+      "native_u32": 1,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 2
+      },
+      "capacity": 1000,
+      "send_calls": 1,
+      "overflow_at": 1001,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": true,
+      "target_gap": null
+    },
+    {
+      "raw": "4295098368.25",
+      "number": 4295098368.25,
+      "handler_numbers": {
+        "/": 4295098368.25,
+        "/v1/stream": 4295098368.25
+      },
+      "native_u32": 131072,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 2
+      },
+      "capacity": 1000,
+      "send_calls": 1,
+      "overflow_at": 1001,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": true,
+      "target_gap": null
+    },
+    {
+      "raw": "-4294966272.5",
+      "number": -4294966272.5,
+      "handler_numbers": {
+        "/": -4294966272.5,
+        "/v1/stream": -4294966272.5
+      },
+      "native_u32": 1024,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 2
+      },
+      "capacity": 100,
+      "send_calls": 1,
+      "overflow_at": 101,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": true,
+      "target_gap": null
+    },
+    {
+      "raw": "-1.5",
+      "number": -1.5,
+      "handler_numbers": {
+        "/": -1.5,
+        "/v1/stream": -1.5
+      },
+      "native_u32": 4294967295,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 0
+      },
+      "capacity": 100,
+      "send_calls": 1,
+      "overflow_at": 101,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": true,
+      "target_gap": null
+    },
+    {
+      "raw": "+1.9tail",
+      "number": 1.9,
+      "handler_numbers": {
+        "/": 1.9,
+        "/v1/stream": 1.9
+      },
+      "native_u32": 1,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 2
+      },
+      "capacity": 100,
+      "send_calls": 1,
+      "overflow_at": 101,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": true,
+      "target_gap": null
+    },
+    {
+      "raw": "0",
+      "number": 0,
+      "handler_numbers": {
+        "/": 0,
+        "/v1/stream": 0
+      },
+      "native_u32": 0,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 0
+      },
+      "capacity": 1000,
+      "send_calls": 1,
+      "overflow_at": 1001,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": false,
+      "target_gap": "Native zero disables the buffer bound; finite nonzero native thresholds are required."
+    },
+    {
+      "raw": "0.5",
+      "number": 0.5,
+      "handler_numbers": {
+        "/": 0.5,
+        "/v1/stream": 0.5
+      },
+      "native_u32": 0,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 0
+      },
+      "capacity": 100,
+      "send_calls": 1,
+      "overflow_at": 101,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": false,
+      "target_gap": "Native zero disables the buffer bound; finite nonzero native thresholds are required."
+    },
+    {
+      "raw": "-0.5",
+      "number": -0.5,
+      "handler_numbers": {
+        "/": -0.5,
+        "/v1/stream": -0.5
+      },
+      "native_u32": 0,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 0
+      },
+      "capacity": 100,
+      "send_calls": 1,
+      "overflow_at": 101,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": false,
+      "target_gap": "Native zero disables the buffer bound; finite nonzero native thresholds are required."
+    },
+    {
+      "raw": "4294967296",
+      "number": 4294967296,
+      "handler_numbers": {
+        "/": 4294967296,
+        "/v1/stream": 4294967296
+      },
+      "native_u32": 0,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 0
+      },
+      "capacity": 1000,
+      "send_calls": 1,
+      "overflow_at": 1001,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": false,
+      "target_gap": "Native zero disables the buffer bound; finite nonzero native thresholds are required."
+    },
+    {
+      "raw": "-4294967296",
+      "number": -4294967296,
+      "handler_numbers": {
+        "/": -4294967296,
+        "/v1/stream": -4294967296
+      },
+      "native_u32": 0,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 0
+      },
+      "capacity": 100,
+      "send_calls": 1,
+      "overflow_at": 101,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": false,
+      "target_gap": "Native zero disables the buffer bound; finite nonzero native thresholds are required."
+    },
+    {
+      "raw": "Infinity",
+      "number": "Infinity",
+      "handler_numbers": {
+        "/": "Infinity",
+        "/v1/stream": "Infinity"
+      },
+      "native_u32": 0,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 0
+      },
+      "capacity": 1000,
+      "send_calls": 1,
+      "overflow_at": 1001,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": false,
+      "target_gap": "Native zero disables the buffer bound; finite nonzero native thresholds are required."
+    },
+    {
+      "raw": "-Infinity",
+      "number": "-Infinity",
+      "handler_numbers": {
+        "/": "-Infinity",
+        "/v1/stream": "-Infinity"
+      },
+      "native_u32": 0,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 0
+      },
+      "capacity": 100,
+      "send_calls": 1,
+      "overflow_at": 101,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": false,
+      "target_gap": "Native zero disables the buffer bound; finite nonzero native thresholds are required."
+    },
+    {
+      "raw": "1e999",
+      "number": "Infinity",
+      "handler_numbers": {
+        "/": "Infinity",
+        "/v1/stream": "Infinity"
+      },
+      "native_u32": 0,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 0
+      },
+      "capacity": 1000,
+      "send_calls": 1,
+      "overflow_at": 1001,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": false,
+      "target_gap": "Native zero disables the buffer bound; finite nonzero native thresholds are required."
+    },
+    {
+      "raw": "1e300",
+      "number": 1e+300,
+      "handler_numbers": {
+        "/": 1e+300,
+        "/v1/stream": 1e+300
+      },
+      "native_u32": 0,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 0
+      },
+      "capacity": 1000,
+      "send_calls": 1,
+      "overflow_at": 1001,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": false,
+      "target_gap": "Native zero disables the buffer bound; finite nonzero native thresholds are required."
+    },
+    {
+      "raw": "0x10",
+      "number": 0,
+      "handler_numbers": {
+        "/": 0,
+        "/v1/stream": 0
+      },
+      "native_u32": 0,
+      "native": {
+        "saw_native_backpressure": true,
+        "next_send_result": 0
+      },
+      "capacity": 1000,
+      "send_calls": 1,
+      "overflow_at": 1001,
+      "errors": [
+        "Message queue size limit reached"
+      ],
+      "bounded_target_supported": false,
+      "target_gap": "Native zero disables the buffer bound; finite nonzero native thresholds are required."
+    },
+    {
+      "raw": "NaN",
+      "error": "Configuration: config \"WS_MAX_BACKPRESSURE\" should be a number, got string (NaN) instead"
+    },
+    {
+      "raw": "",
+      "error": "Configuration: config \"WS_MAX_BACKPRESSURE\" should be a number, got string () instead"
+    }
+  ]
+}

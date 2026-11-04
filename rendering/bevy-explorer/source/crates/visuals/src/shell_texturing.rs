@@ -120,7 +120,7 @@ struct ParcelGrassFlat(bool);
 
 /// Huge plane that covers a huge area
 #[derive(Component)]
-struct Ground;
+pub(super) struct Ground;
 
 #[derive(Clone, Asset, TypePath, AsBindGroup)]
 pub struct ShellTexture {
