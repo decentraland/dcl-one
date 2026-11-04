@@ -246,6 +246,8 @@ const RANKING_RECENT_AGE: chrono::TimeDelta = chrono::TimeDelta::minutes(10);
 const RANKING_TICK: Duration = Duration::from_secs(60);
 const RANKING_COLD_RETRY: Duration = Duration::from_secs(60 * 60);
 const RANKING_PASS_BUDGET: Duration = Duration::from_secs(3);
+// Candidate slow-row isolation budget; the pass deadline still takes priority.
+const RANKING_ROW_BUDGET: Duration = Duration::from_secs(1);
 const RANKING_MAX_PAGES: usize = 32;
 
 pub(crate) struct RankingSweep {
@@ -327,11 +329,16 @@ impl crate::State {
                     };
             }
             for (id, image, thumbnail, created_at) in rows {
+                if Instant::now() >= deadline {
+                    progress.timed_out = true;
+                    break;
+                }
                 if (created_at < cutoff) != cold {
                     progress.deferred += 1;
                 } else {
                     // No database transaction or row lock is held during storage I/O.
-                    let publication: anyhow::Result<bool> = async {
+                    let row_deadline = Instant::now() + RANKING_ROW_BUDGET;
+                    let publication = async {
                         progress.probes += 1;
                         if !self.storage.exist(&image).await? {
                             return Ok(false);
@@ -340,10 +347,22 @@ impl crate::State {
                         if !self.storage.exist(&thumbnail).await? {
                             return Ok(false);
                         }
-                        self.db.publish_ranking(id).await?;
-                        Ok(true)
+                        self.db
+                            .publish_ranking_before(id, Some(row_deadline))
+                            .await?;
+                        Ok::<_, anyhow::Error>(true)
+                    };
+                    let publication = match tokio::time::timeout_at(row_deadline, publication).await
+                    {
+                        Ok(result) => result,
+                        Err(error) => Err(error.into()),
+                    };
+                    // A row budget is a completed retryable failure. A global
+                    // deadline retains this row even when both timers fire together.
+                    if Instant::now() >= deadline {
+                        progress.timed_out = true;
+                        break;
                     }
-                    .await;
                     match publication {
                         Ok(true) => progress.published += 1,
                         Ok(false) => {}

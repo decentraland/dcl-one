@@ -700,6 +700,102 @@ async fn wait_for_repair_block(pool: &sqlx::PgPool, blocker: i32) {
 }
 
 #[tokio::test]
+async fn ranking_repair_slow_row_does_not_starve_healthy_tail_while_lock_stays_held() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let owner = s.owner(&random_address());
+    let start = u128::MAX - 50_000;
+    let bytes = bytes::Bytes::from(format!("repair slow row {}", tag()));
+    let hash = hash_bytes_v1(&bytes);
+    s.state.storage.store(&hash, bytes).await.unwrap();
+    for index in 1..=100 {
+        repair_photo(&s, &owner, Uuid::from_u128(start + index), &hash, &hash).await;
+    }
+    sqlx::query("UPDATE camera_reel.images SET created_at=timezone('UTC',now())-interval '1 day' WHERE user_address=$1 AND id>$2")
+        .bind(&owner).bind(Uuid::from_u128(start+3)).execute(s.db().pool()).await.unwrap();
+    let mut lock = s.db().pool().begin().await.unwrap();
+    let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *lock)
+        .await
+        .unwrap();
+    sqlx::query("SELECT id FROM camera_reel.images WHERE id=$1 FOR UPDATE")
+        .bind(Uuid::from_u128(start + 2))
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let mut sweep = RankingSweep::new(Instant::now());
+    sweep.after = Uuid::from_u128(start);
+    let started = std::time::Instant::now();
+    let result = {
+        let repair = s.state.repair_ranking_publications(
+            &mut sweep,
+            false,
+            Instant::now() + Duration::from_secs(3),
+        );
+        tokio::pin!(repair);
+        tokio::select! {
+            result=&mut repair=>panic!("repair finished before the real row-lock barrier: {result:?}"),
+            _=wait_for_repair_block(s.db().pool(),blocker)=>{},
+        }
+        repair.await.unwrap()
+    };
+    let markers: Vec<bool> = sqlx::query_scalar(
+        "SELECT ranking_published FROM camera_reel.images WHERE user_address=$1 ORDER BY id",
+    )
+    .bind(&owner)
+    .fetch_all(s.db().pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        markers,
+        [vec![true, false, true], vec![false; 97]].concat(),
+        "the healthy row after a persistently blocked row must publish before its lock is released"
+    );
+    assert!(!result.timed_out);
+    assert_eq!(
+        (result.inspected, result.published, result.errors),
+        (3, 2, 1)
+    );
+    assert_eq!(sweep.after, Uuid::from_u128(start + 100));
+    // The real blocked server statement must end while the lock is still held.
+    // Dropping its SQLx future without SET LOCAL would leave it waiting here.
+    tokio::time::timeout(Duration::from_millis(500), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND query LIKE 'UPDATE camera_reel.images SET ranking_published=true%')")
+                .bind(blocker).fetch_one(s.db().pool()).await.unwrap();
+            if !waiting { break; }
+            tokio::task::yield_now().await;
+        }
+    }).await.expect("the actual server statement timed out without releasing its blocker");
+    eprintln!(
+        "slow-row repair completed healthy tail with lock held in {:.3}ms; inspected={}, published={}, errors={}",
+        started.elapsed().as_secs_f64() * 1000.0,
+        result.inspected,
+        result.published,
+        result.errors
+    );
+    lock.rollback().await.unwrap();
+    sweep.after = Uuid::from_u128(start);
+    s.state
+        .repair_ranking_publications(&mut sweep, false, Instant::now() + Duration::from_secs(3))
+        .await
+        .unwrap();
+    let pending: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM camera_reel.images WHERE user_address=$1 AND NOT ranking_published",
+    )
+    .bind(&owner)
+    .fetch_one(s.db().pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        pending, 97,
+        "only the deferred cold rows remain after retrying the timed-out row"
+    );
+    s.done().await;
+}
+
+#[tokio::test]
 async fn ranking_repair_deadline_cancellation_and_restart_retain_unvisited_tail() {
     let Some(mut s) = scratch(Settings::new(API_URL)).await else {
         return;
@@ -741,7 +837,7 @@ async fn ranking_repair_deadline_cancellation_and_restart_retain_unvisited_tail(
     let progress = {
         let repair = s
             .state
-            .repair_ranking_pass(&mut schedule, Instant::now() + Duration::from_secs(3));
+            .repair_ranking_pass(&mut schedule, Instant::now() + Duration::from_millis(500));
         tokio::pin!(repair);
         tokio::select! {
             result = &mut repair => panic!("repair finished before the row-lock barrier: {result:?}"),
@@ -751,8 +847,8 @@ async fn ranking_repair_deadline_cancellation_and_restart_retain_unvisited_tail(
     };
     assert!(progress.timed_out);
     assert!(
-        pass_started.elapsed() < Duration::from_secs(4),
-        "all pages share the same three-second deadline"
+        pass_started.elapsed() < Duration::from_secs(2),
+        "all pages share a global deadline shorter than the one-second row budget"
     );
     assert_eq!(
         (progress.pages, progress.published, progress.inspected),

@@ -461,7 +461,27 @@ impl Database {
     /// Blob I/O finishes before this transaction. The marker, local receipt and
     /// all attached communities' counters either commit together or remain due.
     pub async fn publish_ranking(&self, id: Uuid) -> Result<(), sqlx::Error> {
+        self.publish_ranking_before(id, None).await
+    }
+
+    pub(crate) async fn publish_ranking_before(
+        &self,
+        id: Uuid,
+        deadline: Option<tokio::time::Instant>,
+    ) -> Result<(), sqlx::Error> {
         let mut tx = self.pool.begin().await?;
+        if let Some(deadline) = deadline {
+            // Cancel the actual server statement too: dropping a SQLx future
+            // alone can leave a locked query occupying its pooled connection.
+            let milliseconds = deadline
+                .saturating_duration_since(tokio::time::Instant::now())
+                .as_millis()
+                .max(1);
+            sqlx::query("SELECT set_config('statement_timeout',$1,true)")
+                .bind(format!("{milliseconds}ms"))
+                .execute(&mut *tx)
+                .await?;
+        }
         let row: Option<(String, NaiveDateTime)> = sqlx::query_as(
             "UPDATE camera_reel.images SET ranking_published=true WHERE id=$1 AND NOT ranking_published RETURNING COALESCE(place_id,''),created_at")
             .bind(id).fetch_optional(&mut *tx).await?;
