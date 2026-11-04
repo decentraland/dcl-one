@@ -482,8 +482,9 @@ impl Database {
     pub async fn pending_rankings(
         &self,
         after: Uuid,
-    ) -> Result<Vec<(Uuid, String, String)>, sqlx::Error> {
-        sqlx::query_as("SELECT id,image_hash,thumbnail_hash FROM camera_reel.images WHERE NOT ranking_published AND id>$1 ORDER BY id LIMIT 100")
+    ) -> Result<Vec<(Uuid, String, String, NaiveDateTime)>, sqlx::Error> {
+        // Bound the pending-key read before the caller applies its frozen age cohort.
+        sqlx::query_as("SELECT id,image_hash,thumbnail_hash,created_at FROM camera_reel.images WHERE NOT ranking_published AND id>$1 ORDER BY id LIMIT 100")
             .bind(after).fetch_all(&self.pool).await
     }
 

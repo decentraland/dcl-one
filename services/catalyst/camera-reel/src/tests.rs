@@ -21,6 +21,7 @@ use uuid::Uuid;
 
 use super::db::{BlobVerdict, Database, NewImage, Page, WITHHELD_DELETED, WITHHELD_REJECTED};
 use super::dto::{Image, Metadata, User};
+use super::handlers::images::{RankingSchedule, RankingSweep};
 use super::http::{ApiError, ForbiddenError, ForbiddenReason};
 use super::{Settings, SharedState, State, router};
 use crate::auth::{AuthLink, AuthLinkType, hash_bytes_v1};
@@ -29,6 +30,7 @@ use crate::shared::signed_fetch::{
     build_payload_v6,
 };
 use crate::storage::Storage;
+use tokio::time::{Duration, Instant};
 
 const API_URL: &str = "http://127.0.0.1:5149/camera-reel-service";
 const PREFIX: &str = "/camera-reel-service";
@@ -449,9 +451,10 @@ async fn photo_ranking_finalization_is_atomic_repairable_and_never_counts_incomp
         .store(&photo.image_hash, bytes)
         .await
         .unwrap();
-    let mut cursor = Uuid::from_u128(u128::MAX - 2);
+    let mut sweep = RankingSweep::new(Instant::now());
+    sweep.after = Uuid::from_u128(u128::MAX - 2);
     s.state
-        .repair_ranking_publications(&mut cursor)
+        .repair_ranking_publications(&mut sweep, false, Instant::now() + Duration::from_secs(3))
         .await
         .unwrap();
     let pending: bool =
@@ -461,12 +464,19 @@ async fn photo_ranking_finalization_is_atomic_repairable_and_never_counts_incomp
             .await
             .unwrap();
     assert!(pending, "a missing thumbnail does not publish an upload");
-    assert_eq!(cursor, photo.id, "an incomplete upload advances the cursor");
+    assert_eq!(
+        sweep.after, photo.id,
+        "an incomplete upload advances the cursor"
+    );
     s.state
-        .repair_ranking_publications(&mut cursor)
+        .repair_ranking_publications(&mut sweep, false, Instant::now() + Duration::from_secs(3))
         .await
         .unwrap();
-    assert_eq!(cursor, Uuid::nil(), "the empty final page wraps the cursor");
+    assert_eq!(
+        sweep.after,
+        Uuid::nil(),
+        "the empty final page wraps the cursor"
+    );
     s.state
         .storage
         .store(&photo.thumbnail_hash, thumb)
@@ -498,12 +508,17 @@ async fn photo_ranking_finalization_is_atomic_repairable_and_never_counts_incomp
     .execute(s.db().pool())
     .await
     .unwrap();
-    cursor = Uuid::from_u128(u128::MAX - 2);
-    s.state
-        .repair_ranking_publications(&mut cursor)
-        .await
-        .unwrap();
-    s.db().publish_ranking(photo.id).await.unwrap();
+    sweep.after = Uuid::from_u128(u128::MAX - 2);
+    let (repair, direct) = tokio::join!(
+        s.state.repair_ranking_publications(
+            &mut sweep,
+            false,
+            Instant::now() + Duration::from_secs(3)
+        ),
+        s.db().publish_ranking(photo.id),
+    );
+    repair.unwrap();
+    direct.unwrap();
     let count: i32 =
         sqlx::query_scalar("SELECT ranking_photos_count FROM social.communities WHERE id=$1")
             .bind(community)
@@ -524,6 +539,477 @@ async fn photo_ranking_finalization_is_atomic_repairable_and_never_counts_incomp
         .execute(s.db().pool())
         .await
         .unwrap();
+    s.done().await;
+}
+
+// The reserved, contiguous high UUID ranges keep each first page isolated from
+// other camera tests, which use random IDs and separate real blob stores.
+async fn repair_photo(s: &Scratch, owner: &str, id: Uuid, hash: &str, thumb: &str) {
+    let mut photo = image(owner, hash, thumb, true, "");
+    photo.id = id;
+    s.db()
+        .insert_image_within_limit(&photo, 500)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn ranking_repair_continues_after_first_middle_and_last_row_faults() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let owner = s.owner(&random_address());
+    let start = u128::MAX - 10_000;
+    let bytes = bytes::Bytes::from(format!("repair complete {}", tag()));
+    let hash = hash_bytes_v1(&bytes);
+    s.state.storage.store(&hash, bytes).await.unwrap();
+    let broken_hash = hash_bytes_v1(tag().as_bytes());
+    let broken_path =
+        crate::storage::resolve_file_path(s.state.storage.root(), &broken_hash).unwrap();
+    // A directory at a canonical blob path is a real stat fault, not a miss.
+    tokio::fs::create_dir_all(&broken_path).await.unwrap();
+    assert!(s.state.storage.exist(&broken_hash).await.is_err());
+    for index in 1..=101 {
+        let image = if index == 1 || index == 50 || index == 100 {
+            &broken_hash
+        } else {
+            &hash
+        };
+        repair_photo(&s, &owner, Uuid::from_u128(start + index), image, &hash).await;
+    }
+    let failed = Uuid::from_u128(start + 75);
+    let community = Uuid::new_v4();
+    let place = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO social.communities(id,name,owner_address) VALUES($1,'Repair row failure',$2)",
+    )
+    .bind(community)
+    .bind(&owner)
+    .execute(s.db().pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO social.community_places(community_id,place_id,added_by) VALUES($1,$2,$3)",
+    )
+    .bind(community)
+    .bind(&place)
+    .bind(&owner)
+    .execute(s.db().pool())
+    .await
+    .unwrap();
+    sqlx::query("UPDATE camera_reel.images SET metadata=jsonb_set(metadata,'{placeId}',to_jsonb($1::text)) WHERE id=$2")
+        .bind(&place).bind(failed).execute(s.db().pool()).await.unwrap();
+    let function = format!("repair_failure_{}", tag());
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE FUNCTION social.{function}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='{community}'::uuid THEN RAISE EXCEPTION 'injected repair publication failure'; END IF; RETURN NEW; END $$")))
+        .execute(s.db().pool()).await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER {function} BEFORE UPDATE ON social.communities FOR EACH ROW EXECUTE FUNCTION social.{function}()")))
+        .execute(s.db().pool()).await.unwrap();
+    let mut sweep = RankingSweep::new(Instant::now());
+    sweep.after = Uuid::from_u128(start);
+    let progress = s
+        .state
+        .repair_ranking_publications(&mut sweep, false, Instant::now() + Duration::from_secs(3))
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            progress.fetched,
+            progress.inspected,
+            progress.errors,
+            progress.published
+        ),
+        (100, 100, 4, 96)
+    );
+    assert_eq!(progress.probes, 197);
+    assert!(!progress.timed_out);
+    assert_eq!(sweep.after, Uuid::from_u128(start + 100));
+    let pending: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM camera_reel.images WHERE user_address=$1 AND NOT ranking_published ORDER BY id")
+        .bind(&owner).fetch_all(s.db().pool()).await.unwrap();
+    assert_eq!(
+        pending,
+        vec![
+            Uuid::from_u128(start + 1),
+            Uuid::from_u128(start + 50),
+            failed,
+            Uuid::from_u128(start + 100),
+            Uuid::from_u128(start + 101)
+        ]
+    );
+    let progress = s
+        .state
+        .repair_ranking_publications(&mut sweep, false, Instant::now() + Duration::from_secs(3))
+        .await
+        .unwrap();
+    assert!(
+        progress.published >= 1,
+        "the next page is not starved by faulty rows"
+    );
+    let published: bool =
+        sqlx::query_scalar("SELECT ranking_published FROM camera_reel.images WHERE id=$1")
+            .bind(Uuid::from_u128(start + 101))
+            .fetch_one(s.db().pool())
+            .await
+            .unwrap();
+    assert!(published);
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP TRIGGER {function} ON social.communities"
+    )))
+    .execute(s.db().pool())
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP FUNCTION social.{function}()"
+    )))
+    .execute(s.db().pool())
+    .await
+    .unwrap();
+    let facts: (i32,i64) = sqlx::query_as("SELECT ranking_photos_count,(SELECT count(*) FROM social.community_ranking_events WHERE community_id=$1) FROM social.communities WHERE id=$1")
+        .bind(community).fetch_one(s.db().pool()).await.unwrap();
+    assert_eq!(
+        facts,
+        (0, 0),
+        "the failed row retained no counter or receipt"
+    );
+    sqlx::query("DELETE FROM social.communities WHERE id=$1")
+        .bind(community)
+        .execute(s.db().pool())
+        .await
+        .unwrap();
+    s.done().await;
+}
+
+async fn wait_for_repair_block(pool: &sqlx::PgPool, blocker: i32) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let blocked: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) AND query LIKE 'UPDATE camera_reel.images SET ranking_published=true%')",
+            )
+            .bind(blocker)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+            if blocked {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("repair reaches the real PostgreSQL row-lock barrier");
+}
+
+#[tokio::test]
+async fn ranking_repair_deadline_cancellation_and_restart_retain_unvisited_tail() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let owner = s.owner(&random_address());
+    let start = u128::MAX - 20_000;
+    let bytes = bytes::Bytes::from(format!("repair deadline {}", tag()));
+    let hash = hash_bytes_v1(&bytes);
+    s.state.storage.store(&hash, bytes).await.unwrap();
+    let missing = hash_bytes_v1(tag().as_bytes());
+    for index in 1..=103 {
+        let image_hash = if index <= 100 { &missing } else { &hash };
+        repair_photo(
+            &s,
+            &owner,
+            Uuid::from_u128(start + index),
+            image_hash,
+            &hash,
+        )
+        .await;
+    }
+    sqlx::query("UPDATE camera_reel.images SET created_at=timezone('UTC',now())-interval '1 day' WHERE user_address=$1 AND id<=$2")
+        .bind(&owner).bind(Uuid::from_u128(start + 100)).execute(s.db().pool()).await.unwrap();
+    let mut lock = s.db().pool().begin().await.unwrap();
+    let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *lock)
+        .await
+        .unwrap();
+    sqlx::query("SELECT id FROM camera_reel.images WHERE id=$1 FOR UPDATE")
+        .bind(Uuid::from_u128(start + 102))
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    let mut schedule = RankingSchedule::new(Instant::now());
+    for sweep in &mut schedule.sweeps {
+        sweep.after = Uuid::from_u128(start);
+    }
+    let pass_started = std::time::Instant::now();
+    let progress = {
+        let repair = s
+            .state
+            .repair_ranking_pass(&mut schedule, Instant::now() + Duration::from_secs(3));
+        tokio::pin!(repair);
+        tokio::select! {
+            result = &mut repair => panic!("repair finished before the row-lock barrier: {result:?}"),
+            _ = wait_for_repair_block(s.db().pool(), blocker) => {},
+        }
+        repair.await.unwrap()
+    };
+    assert!(progress.timed_out);
+    assert!(
+        pass_started.elapsed() < Duration::from_secs(4),
+        "all pages share the same three-second deadline"
+    );
+    assert_eq!(
+        (progress.pages, progress.published, progress.inspected),
+        (3, 1, 101)
+    );
+    assert_eq!(schedule.sweeps[0].after, Uuid::from_u128(start + 101));
+    // Finish the timed-out query's rollback before installing a new cancellation
+    // barrier; the second observation must belong to this new blocked repair.
+    lock.rollback().await.unwrap();
+    let mut lock = s.db().pool().begin().await.unwrap();
+    let blocker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *lock)
+        .await
+        .unwrap();
+    sqlx::query("SELECT id FROM camera_reel.images WHERE id=$1 FOR UPDATE")
+        .bind(Uuid::from_u128(start + 102))
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    // Dropping the same in-flight future models the leased job's cancellation select.
+    {
+        let repair = s
+            .state
+            .repair_ranking_pass(&mut schedule, Instant::now() + Duration::from_secs(30));
+        tokio::pin!(repair);
+        tokio::select! {
+            result = &mut repair => panic!("repair finished before cancellation: {result:?}"),
+            _ = wait_for_repair_block(s.db().pool(), blocker) => {},
+        }
+    }
+    assert_eq!(schedule.sweeps[0].after, Uuid::from_u128(start + 101));
+    lock.rollback().await.unwrap();
+    let markers: Vec<bool> = sqlx::query_scalar(
+        "SELECT ranking_published FROM camera_reel.images WHERE user_address=$1 ORDER BY id",
+    )
+    .bind(&owner)
+    .fetch_all(s.db().pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        markers,
+        [vec![false; 100], vec![true], vec![false; 2]].concat()
+    );
+    // A process restart discards scalar cursors, but never the durable marker.
+    let restarted = State::new(
+        s.db().pool().clone(),
+        Arc::new(Storage::from_config(&s.dir).await.unwrap()),
+        Settings::new(API_URL),
+        None,
+    );
+    let mut fresh = RankingSchedule::new(Instant::now());
+    for sweep in &mut fresh.sweeps {
+        sweep.after = Uuid::from_u128(start);
+    }
+    let result = restarted
+        .repair_ranking_pass(&mut fresh, Instant::now() + Duration::from_secs(30))
+        .await
+        .unwrap();
+    assert!(result.published >= 2);
+    let markers: Vec<bool> = sqlx::query_scalar(
+        "SELECT ranking_published FROM camera_reel.images WHERE user_address=$1 ORDER BY id",
+    )
+    .bind(&owner)
+    .fetch_all(s.db().pool())
+    .await
+    .unwrap();
+    assert_eq!(markers, [vec![false; 100], vec![true; 3]].concat());
+    s.done().await;
+}
+
+#[tokio::test]
+async fn ranking_repair_pass_caps_pages_and_shares_progress_between_due_cohorts() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let owners: Vec<String> = (0..7).map(|_| s.owner(&random_address())).collect();
+    let start = u128::MAX - 40_000;
+    let hash = hash_bytes_v1(tag().as_bytes());
+    // A real pending backlog spread across owners, each below the upload limit.
+    let ids: Vec<Uuid> = (1..=3300)
+        .map(|offset| Uuid::from_u128(start + offset))
+        .collect();
+    sqlx::query("INSERT INTO camera_reel.images(id,user_address,image_hash,thumbnail_hash,metadata,ranking_published,created_at) SELECT id,($2::text[])[((ordinality-1)/500+1)::int],$3,$3,jsonb_build_object('userAddress',($2::text[])[((ordinality-1)/500+1)::int]),false,timezone('UTC',now())-interval '1 day' FROM unnest($1::uuid[]) WITH ORDINALITY AS pending(id,ordinality)")
+        .bind(&ids).bind(&owners).bind(&hash).execute(s.db().pool()).await.unwrap();
+    let mut schedule = RankingSchedule::new(Instant::now());
+    for sweep in &mut schedule.sweeps {
+        sweep.after = Uuid::from_u128(start);
+    }
+    let progress = s
+        .state
+        .repair_ranking_pass(&mut schedule, Instant::now() + Duration::from_secs(30))
+        .await
+        .unwrap();
+    assert!(!progress.timed_out);
+    assert_eq!(
+        (
+            progress.pages,
+            progress.fetched,
+            progress.deferred,
+            progress.inspected,
+            progress.probes
+        ),
+        (32, 3200, 1600, 1600, 1600)
+    );
+    assert_eq!((progress.published, progress.errors), (0, 0));
+    assert_eq!(schedule.sweeps[0].after, Uuid::from_u128(start + 1600));
+    assert_eq!(schedule.sweeps[1].after, Uuid::from_u128(start + 1600));
+    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM camera_reel.images WHERE user_address=ANY($1) AND NOT ranking_published")
+        .bind(&owners).fetch_one(s.db().pool()).await.unwrap();
+    assert_eq!(pending, 3300);
+    s.done().await;
+}
+
+#[tokio::test]
+async fn ranking_repair_bounds_keys_before_age_filter_and_retries_late_cold_blobs() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let owner = s.owner(&random_address());
+    let start = u128::MAX - 30_000;
+    let bytes = bytes::Bytes::from(format!("repair late cold {}", tag()));
+    let hash = hash_bytes_v1(&bytes);
+    let missing = hash_bytes_v1(tag().as_bytes());
+    let late_bytes = bytes::Bytes::from(format!("late completed {}", tag()));
+    let late_hash = hash_bytes_v1(&late_bytes);
+    s.state.storage.store(&hash, bytes).await.unwrap();
+    for index in 1..=101 {
+        repair_photo(
+            &s,
+            &owner,
+            Uuid::from_u128(start + index),
+            &hash,
+            if index == 101 {
+                &hash
+            } else if index == 1 {
+                &late_hash
+            } else {
+                &missing
+            },
+        )
+        .await;
+    }
+    sqlx::query("UPDATE camera_reel.images SET created_at=timezone('UTC',now())-interval '11 minutes' WHERE user_address=$1 AND id<$2")
+        .bind(&owner).bind(Uuid::from_u128(start + 101)).execute(s.db().pool()).await.unwrap();
+    let mut schedule = RankingSchedule::new(Instant::now());
+    for sweep in &mut schedule.sweeps {
+        sweep.after = Uuid::from_u128(start);
+    }
+    assert_eq!(schedule.due(Instant::now()), Some(0));
+    let recent = s
+        .state
+        .repair_ranking_publications(
+            &mut schedule.sweeps[0],
+            false,
+            Instant::now() + Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (recent.fetched, recent.deferred, recent.probes),
+        (100, 100, 0)
+    );
+    assert_eq!(schedule.sweeps[0].after, Uuid::from_u128(start + 100));
+    let frozen = schedule.sweeps[0].cutoff;
+    let boundary_row_time = frozen.unwrap() + chrono::TimeDelta::microseconds(1);
+    sqlx::query("UPDATE camera_reel.images SET created_at=$1 WHERE id=$2")
+        .bind(boundary_row_time)
+        .bind(Uuid::from_u128(start + 101))
+        .execute(s.db().pool())
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    assert!(boundary_row_time < chrono::Utc::now().naive_utc() - chrono::TimeDelta::minutes(10));
+    let recent = s
+        .state
+        .repair_ranking_publications(
+            &mut schedule.sweeps[0],
+            false,
+            Instant::now() + Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+    assert!(
+        recent.published >= 1,
+        "the recent row after 100 cold keys is reached on the next page"
+    );
+    assert_eq!(
+        schedule.sweeps[0].cutoff, frozen,
+        "a sweep freezes its age boundary across pages"
+    );
+    assert_eq!(
+        schedule.due(Instant::now()),
+        Some(1),
+        "due cohorts alternate"
+    );
+    let cold = s
+        .state
+        .repair_ranking_publications(
+            &mut schedule.sweeps[1],
+            true,
+            Instant::now() + Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        (cold.fetched, cold.inspected, cold.probes, cold.published),
+        (100, 100, 200, 0)
+    );
+    assert!(
+        schedule.sweeps[1].next_due <= Instant::now(),
+        "a nonempty cold page has no hour delay"
+    );
+    // Supply the previously missing thumbnail after the cold cohort passed it.
+    s.state.storage.store(&late_hash, late_bytes).await.unwrap();
+    // Skip unrelated tests' key ranges to exercise the real empty-page completion.
+    schedule.sweeps[1].after = Uuid::from_u128(u128::MAX);
+    let before_end = Instant::now();
+    s.state
+        .repair_ranking_publications(
+            &mut schedule.sweeps[1],
+            true,
+            Instant::now() + Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+    assert_eq!(schedule.sweeps[1].after, Uuid::nil());
+    assert!(schedule.sweeps[1].cutoff.is_none());
+    let cold_due = schedule.sweeps[1].next_due;
+    assert!(cold_due >= before_end + Duration::from_secs(3600));
+    schedule.sweeps[0].next_due = cold_due + Duration::from_secs(60);
+    assert_eq!(schedule.due(cold_due - Duration::from_millis(1)), None);
+    assert_eq!(schedule.due(cold_due), Some(1));
+    schedule.sweeps[1].after = Uuid::from_u128(start);
+    let cold = s
+        .state
+        .repair_ranking_publications(
+            &mut schedule.sweeps[1],
+            true,
+            Instant::now() + Duration::from_secs(3),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        cold.published, 1,
+        "a late cold upload is repaired on the next sweep"
+    );
+    let retained: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM camera_reel.images WHERE user_address=$1 AND NOT ranking_published",
+    )
+    .bind(&owner)
+    .fetch_one(s.db().pool())
+    .await
+    .unwrap();
+    assert_eq!(
+        retained, 99,
+        "missing uploads remain pending, never deleted or marked published"
+    );
     s.done().await;
 }
 
