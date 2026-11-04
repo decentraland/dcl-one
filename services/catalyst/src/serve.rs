@@ -319,22 +319,32 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     // the old catalyrst-validator rules over the ONE pool (the escrow
     // overlay), store and client, the shared EIP-1654 validator and the
     // chain access checks over ETH_RPC_URL and RPC_ENDPOINT_POLYGON.
+    let validator_settings = content::validator::Settings::parse(
+        config.validator.ignore_blockchain_access_checks,
+        config.writes.content_writes_enabled,
+        config.validator.additional_decentraland_address.as_deref(),
+        &config.node.eth_network,
+        config.content.eth_rpc_url()?,
+        config.economy.rpc_endpoint_polygon.as_deref(),
+    )
+    .context("content validator configuration")?;
+    // Sync and the read-through validate every entity a peer serves.
+    let judges_peer_entities = sync_settings.is_some() || config.content.read_through_enabled;
+    if judges_peer_entities {
+        validator_settings
+            .require_chain_for_peer_entities()
+            .context("content validator configuration")?;
+    }
     let content_validator = Arc::new(content::validator::Sources::new(
         pool.clone(),
         storage.clone(),
         http_client.clone(),
         eip1654.clone(),
-        content::validator::Settings::parse(
-            config.validator.ignore_blockchain_access_checks,
-            config.writes.content_writes_enabled,
-            config.validator.additional_decentraland_address.as_deref(),
-            &config.node.eth_network,
-            config.content.eth_rpc_url()?,
-            config.economy.rpc_endpoint_polygon.as_deref(),
-        )
-        .context("content validator configuration")?,
+        validator_settings,
     ));
-    if config.writes.content_writes_enabled && !config.validator.ignore_blockchain_access_checks {
+    if (config.writes.content_writes_enabled || judges_peer_entities)
+        && !config.validator.ignore_blockchain_access_checks
+    {
         content_validator
             .verify_chain_ids()
             .await
