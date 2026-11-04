@@ -1,8 +1,9 @@
-//! The worlds content server's error envelope: `{ok: false, error, message}`
-//! (the lambdas-style `ApiErrorBody` the old service answered on every
-//! non-deploy route), with the two upload-limit shapes (`{error, message}`
-//! with 503 + `Retry-After` and 408) the multipart routes share with
-//! `POST /entities`. Internal detail never reaches the wire. Shared by
+//! The worlds content server's error envelope: `{error: <label>, message}`
+//! as @dcl/http-commons' error handler answers (`Bad request`, `Not
+//! Authorized`, `Not Found`; a 403 carries its message as `error`, like the
+//! old handlers' own 403s; a 500 is `{error: "Internal Server Error"}`), with
+//! the two upload-limit shapes (503 + `Retry-After` and 408) the multipart
+//! routes share with `POST /entities`. Internal detail never reaches the wire. Shared by
 //! worlds (its routes, through `worlds::core::http`) and the world comms
 //! mints in comms, which answer in the worlds service's envelope.
 
@@ -119,12 +120,23 @@ impl From<crate::shared::identity::AuthorityNotEstablished> for ApiError {
     }
 }
 
+/// The `error` label of a status (http-commons spells 400 `Bad request`).
+pub fn error_label(status: StatusCode) -> &'static str {
+    match status.as_u16() {
+        400 => "Bad request",
+        401 => "Not Authorized",
+        404 => "Not Found",
+        _ => status.canonical_reason().unwrap_or("Error"),
+    }
+}
+
 pub fn envelope(status: StatusCode, message: &str) -> Response {
-    (
-        status,
-        Json(json!({ "ok": false, "error": message, "message": message })),
-    )
-        .into_response()
+    let body = match status.as_u16() {
+        403 => json!({ "error": message, "message": message }),
+        500 => json!({ "error": "Internal Server Error" }),
+        _ => json!({ "error": error_label(status), "message": message }),
+    };
+    (status, Json(body)).into_response()
 }
 
 /// The `{error, message}` body of the shed and timeout answers (the deploy
@@ -176,7 +188,7 @@ impl IntoResponse for ApiError {
             } => (
                 StatusCode::TOO_MANY_REQUESTS,
                 [("Retry-After", retry_after.to_string())],
-                Json(json!({ "ok": false, "error": message, "message": message })),
+                Json(json!({ "error": "Too Many Requests", "message": message })),
             )
                 .into_response(),
             ApiError::UploadShed(m) => shed_response(&m),
@@ -218,7 +230,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
-            json!({"ok": false, "error": expected, "message": expected})
+            json!({"error": "Service Unavailable", "message": expected})
         );
         assert!(
             !ApiError::forbidden("denied")
@@ -246,8 +258,30 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(
             v,
-            json!({ "ok": false, "error": "world not found", "message": "world not found" })
+            json!({ "error": "Not Found", "message": "world not found" })
         );
+        for (error, wire) in [
+            (
+                ApiError::bad_request("bad"),
+                json!({ "error": "Bad request", "message": "bad" }),
+            ),
+            (
+                ApiError::unauthorized("who"),
+                json!({ "error": "Not Authorized", "message": "who" }),
+            ),
+            (
+                ApiError::forbidden("no"),
+                json!({ "error": "no", "message": "no" }),
+            ),
+        ] {
+            let bytes = axum::body::to_bytes(error.into_response().into_body(), 1024)
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+                wire
+            );
+        }
     }
 
     #[tokio::test]
@@ -256,10 +290,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
         let bytes = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
         let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(
-            v,
-            json!({ "ok": false, "error": "internal error", "message": "internal error" })
-        );
+        assert_eq!(v, json!({ "error": "Internal Server Error" }));
     }
 
     #[test]

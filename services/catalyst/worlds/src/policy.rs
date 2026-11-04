@@ -411,6 +411,39 @@ impl Policy {
             .or_else(|| row.and_then(|r| r.owner.clone()))
     }
 
+    /// The owner a public read reports: [`Self::known_owner`], else the DCL
+    /// NAME holder by name; `None` when nobody is known or the reader fails.
+    pub async fn owner_by_name(
+        &self,
+        world: &WorldName,
+        row: Option<&WorldRow>,
+    ) -> Option<Address> {
+        if let Some(owner) = self.known_owner(world, row) {
+            return Some(owner);
+        }
+        if !world.is_dcl_world_name() || self.names_reader().is_none() {
+            return None;
+        }
+        self.live_name_owner(world).await.unwrap_or_else(|_| {
+            tracing::warn!(%world, "owner by name unresolved");
+            None
+        })
+    }
+
+    /// The DCL NAME labels `actor` holds now; `Ok(None)` without a names reader.
+    pub async fn held_name_labels(
+        &self,
+        actor: &Address,
+    ) -> Result<Option<Vec<String>>, AuthorityNotEstablished> {
+        let Some(market) = self.names_reader() else {
+            return Ok(None);
+        };
+        crate::chain_index::graph::owned_names(market, actor.as_str())
+            .await
+            .map(|names| Some(names.iter().map(|n| n.name.to_lowercase()).collect()))
+            .map_err(|e| reader_unavailable("marketplace names reader", &e))
+    }
+
     /// The names reader, when one is configured (the old node's squid pool).
     fn names_reader(&self) -> Option<&Arc<ChainIndex>> {
         self.marketplace

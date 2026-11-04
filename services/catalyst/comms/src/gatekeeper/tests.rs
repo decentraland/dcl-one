@@ -1135,8 +1135,8 @@ async fn undetermined_world_token_routes_request_retry() {
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(response.headers()["retry-after"], "1");
         let (_, body) = body_json(response).await;
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], body["message"]);
+        assert_eq!(body["error"], "Service Unavailable");
+        assert!(body["message"].is_string());
     }
 }
 

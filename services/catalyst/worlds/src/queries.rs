@@ -5,7 +5,7 @@
 use chrono::NaiveDateTime;
 use serde_json::Value;
 use sqlx::postgres::PgRow;
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Postgres, QueryBuilder, Row};
 
 use crate::content::errors::AppResult;
 
@@ -106,18 +106,92 @@ pub async fn world_about(pool: &PgPool, world_name: &str) -> AppResult<WorldAbou
     Ok(WorldAbout { world, scenes })
 }
 
-pub async fn list_scenes_full(pool: &PgPool, world_name: &str) -> AppResult<Vec<WorldSceneRow>> {
-    let rows = sqlx::query(
-        r#"SELECT world_name, entity_id, deployment_auth_chain, entity, deployer,
-                  parcels, size, created_at, updated_at
-           FROM worlds.world_scenes
-           WHERE world_name = lower($1)
-           ORDER BY entity_id"#,
-    )
-    .bind(world_name)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
+/// The filters of `GET`/`POST /world/{name}/scenes` (the old `GetWorldScenesFilters`).
+#[derive(Debug, Clone, Default)]
+pub struct SceneFilters {
+    pub entity_id: Option<String>,
+    /// Canonical `x,y`: scenes standing on any of them.
+    pub coordinates: Vec<String>,
+    /// `(x1, x2, y1, y2)`: scenes with a parcel inside the rectangle.
+    pub bounding_box: Option<(f64, f64, f64, f64)>,
+    /// Lowercase address: scenes of worlds it owns or holds a deployment grant in.
+    pub authorized_deployer: Option<String>,
+}
+
+impl SceneFilters {
+    pub fn is_empty(&self) -> bool {
+        self.entity_id.is_none()
+            && self.coordinates.is_empty()
+            && self.bounding_box.is_none()
+            && self.authorized_deployer.is_none()
+    }
+}
+
+fn push_scene_filters(qb: &mut QueryBuilder<Postgres>, world_name: &str, f: &SceneFilters) {
+    qb.push(" FROM worlds.world_scenes WHERE world_name = lower(")
+        .push_bind(world_name)
+        .push(")");
+    if let Some(id) = &f.entity_id {
+        qb.push(" AND entity_id = ").push_bind(id);
+    }
+    if !f.coordinates.is_empty() {
+        qb.push(" AND parcels && ")
+            .push_bind(&f.coordinates)
+            .push("::text[]");
+    }
+    if let Some((x1, x2, y1, y2)) = f.bounding_box {
+        qb.push(
+            " AND EXISTS (SELECT 1 FROM unnest(parcels) AS coord, \
+               LATERAL (SELECT string_to_array(coord, ',') AS arr) a \
+             WHERE (a.arr)[1]::int BETWEEN ",
+        )
+        .push_bind(x1.min(x2))
+        .push(" AND ")
+        .push_bind(x1.max(x2))
+        .push(" AND (a.arr)[2]::int BETWEEN ")
+        .push_bind(y1.min(y2))
+        .push(" AND ")
+        .push_bind(y1.max(y2))
+        .push(")");
+    }
+    if let Some(deployer) = &f.authorized_deployer {
+        qb.push(
+            " AND EXISTS (SELECT 1 FROM worlds.worlds w \
+             WHERE w.name = world_scenes.world_name AND (w.owner = ",
+        )
+        .push_bind(deployer)
+        .push(
+            " OR EXISTS (SELECT 1 FROM worlds.world_permissions wp \
+             WHERE wp.world_name = w.name AND wp.permission = 'deployment' AND wp.address = ",
+        )
+        .push_bind(deployer)
+        .push(")))");
+    }
+}
+
+/// One page of a world's matching scenes, oldest first, and the full match count.
+pub async fn list_scenes_full(
+    pool: &PgPool,
+    world_name: &str,
+    filters: &SceneFilters,
+    limit: i64,
+    offset: i64,
+) -> AppResult<(Vec<WorldSceneRow>, i64)> {
+    let mut count = QueryBuilder::new("SELECT count(*)");
+    push_scene_filters(&mut count, world_name, filters);
+    let total: i64 = count.build_query_scalar().fetch_one(pool).await?;
+
+    let mut page = QueryBuilder::new(
+        "SELECT world_name, entity_id, deployment_auth_chain, entity, deployer, \
+         parcels, size, created_at, updated_at",
+    );
+    push_scene_filters(&mut page, world_name, filters);
+    page.push(" ORDER BY created_at, entity_id LIMIT ")
+        .push_bind(limit)
+        .push(" OFFSET ")
+        .push_bind(offset);
+    let rows = page.build().fetch_all(pool).await?;
+    let scenes = rows
         .into_iter()
         .map(|r| WorldSceneRow {
             world_name: r.get("world_name"),
@@ -130,7 +204,8 @@ pub async fn list_scenes_full(pool: &PgPool, world_name: &str) -> AppResult<Vec<
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
         })
-        .collect())
+        .collect();
+    Ok((scenes, total))
 }
 
 /// The scenes of one page of unblocked worlds (name order), projected to

@@ -446,7 +446,7 @@ async fn acl_deployer_cannot_take_over_an_existing_world_owner() {
         Case::new("post", &path)
             .signed_meta(&acl_deployer, &meta)
             .await,
-        403,
+        401,
     )
     .await;
 }
@@ -575,7 +575,7 @@ async fn a_name_transfer_moves_ownership_on_the_next_publish() {
     expect(
         &f.app,
         Case::new("post", &path).signed_meta(&old, &meta).await,
-        403,
+        401,
     )
     .await;
     assert_eq!(
@@ -840,7 +840,7 @@ async fn unpublishing_requires_authority_over_the_whole_scene_footprint() {
     expect(
         &f.app,
         Case::new("delete", &path).signed(&grantee).await,
-        403,
+        401,
     )
     .await;
     assert_eq!(
@@ -3728,7 +3728,7 @@ async fn every_route_answers_its_contract() {
         Case::new("post", &deploy_perm_path)
             .signed_meta(&stranger, &meta)
             .await,
-        403,
+        401,
     )
     .await;
 
@@ -4148,7 +4148,7 @@ async fn every_route_answers_its_contract() {
         Case::new("delete", format!("/world/{w}/scenes/0,0"))
             .signed(&outsider)
             .await,
-        403,
+        401,
     )
     .await;
     expect(
@@ -4159,24 +4159,44 @@ async fn every_route_answers_its_contract() {
         200,
     )
     .await;
-    expect(
+    // Nothing left standing there still answers 200 with the same message.
+    let again = expect(
         app,
         Case::new("delete", format!("/world/{w}/scenes/0,0"))
             .signed(&owner)
             .await,
-        404,
+        200,
+    )
+    .await;
+    assert_eq!(
+        again,
+        json!({ "message": "Scene at parcel 0,0 undeployed successfully" })
+    );
+    expect(
+        app,
+        Case::new("delete", format!("/world/{w}/scenes/1,x"))
+            .signed(&owner)
+            .await,
+        400,
     )
     .await;
     post_entity(app, &good, 200).await;
-    expect(
+    let refused = expect(
         app,
         Case::new("delete", format!("/entities/{w}"))
             .signed(&outsider)
             .await,
-        403,
+        400,
     )
     .await;
-    expect(
+    assert_eq!(
+        refused,
+        json!({
+            "error": "Bad request",
+            "message": "Invalid request. You must have world-wide deployment permission to undeploy the entire world."
+        })
+    );
+    let undeployed = expect(
         app,
         Case::new("delete", format!("/entities/{w}"))
             .signed(&owner)
@@ -4184,6 +4204,7 @@ async fn every_route_answers_its_contract() {
         200,
     )
     .await;
+    assert_eq!(undeployed, json!({}));
     assert!(deployed_entity_ids(&f.pool, &world).await.is_empty());
 }
 
@@ -5148,4 +5169,233 @@ async fn worlds_health_probes_answer_under_the_prefix() {
     }
     let (status, _, _) = served(&app, "GET", "/health/live").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+fn cid(tag: char) -> String {
+    format!("ba{}", tag.to_string().repeat(57))
+}
+
+#[tokio::test]
+async fn world_scenes_page_filter_and_count_like_the_old_listing() {
+    let Some(f) = fixture().await else { return };
+    let app = served_app(&f).await;
+    let (world, owner, stranger) = (world_name(), Wallet::random(), Wallet::random());
+    let w = world.display().to_string();
+    let (a, b, c) = (cid('a'), cid('b'), cid('c'));
+    for (i, (id, footprint)) in [
+        (&a, &["0,0"][..]),
+        (&b, &["5,5", "5,6"][..]),
+        (&c, &["-3,2"][..]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        deploy(
+            &f,
+            &world,
+            &owner.address,
+            id,
+            &scene_at(1000 + i as i64, footprint),
+            footprint,
+            &Deploy::Owner,
+        )
+        .await
+        .unwrap();
+    }
+    let ids = |body: &Value| -> Vec<String> {
+        body["scenes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["entityId"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let list = |query: &str| Case::new("get", format!("/world/{w}/scenes{query}"));
+
+    let page = expect(&app, list("?limit=2"), 200).await;
+    assert_eq!(
+        (ids(&page), page["total"].clone()),
+        (vec![a.clone(), b.clone()], json!(3))
+    );
+    let page = expect(&app, list("?limit=2&offset=2"), 200).await;
+    assert_eq!(
+        (ids(&page), page["total"].clone()),
+        (vec![c.clone()], json!(3))
+    );
+    let page = expect(&app, list("?limit=abc&offset=-1"), 200).await;
+    assert_eq!(ids(&page).len(), 3);
+    assert!(
+        page["scenes"][0]["createdAt"]
+            .as_str()
+            .unwrap()
+            .ends_with('Z')
+    );
+
+    let page = expect(&app, list("?x1=6&x2=4&y1=4&y2=6"), 200).await;
+    assert_eq!(
+        (ids(&page), page["total"].clone()),
+        (vec![b.clone()], json!(1))
+    );
+    assert_eq!(
+        expect(&app, list("?x1=1"), 400).await,
+        json!({ "error": "Bad request", "message": "Bounding box requires all of x1, x2, y1, y2 to be provided." })
+    );
+    let page = expect(&app, list(&format!("?entity_id={c}")), 200).await;
+    assert_eq!(ids(&page), vec![c.clone()]);
+    expect(&app, list("?entity_id=Qm1"), 400).await;
+    expect(&app, list("?authorized_deployer=0x12"), 400).await;
+
+    let by = |who: &Wallet| list(&format!("?authorized_deployer={}", who.display()));
+    assert_eq!(expect(&app, by(&owner), 200).await["total"], json!(3));
+    assert_eq!(expect(&app, by(&stranger), 200).await["total"], json!(0));
+    grant_parcels(&f.pool, &world, &stranger.address, &["9,9"]).await;
+    assert_eq!(expect(&app, by(&stranger), 200).await["total"], json!(3));
+
+    let post = |body: Value| Case::new("post", format!("/world/{w}/scenes")).json(&body);
+    let page = expect(&app, post(json!({ "coordinates": ["5,06", "-3,2"] })), 200).await;
+    assert_eq!(
+        (ids(&page), page["total"].clone()),
+        (vec![b.clone(), c.clone()], json!(2))
+    );
+    let page = expect(
+        &app,
+        Case::new("post", format!("/world/{w}/scenes?limit=1&offset=1"))
+            .json(&json!({ "coordinates": ["0,0", "5,5"] })),
+        200,
+    )
+    .await;
+    assert_eq!((ids(&page), page["total"].clone()), (vec![b], json!(2)));
+    expect(&app, post(json!({ "coordinates": [] })), 400).await;
+    expect(
+        &app,
+        Case::new("post", format!("/world/{w}/scenes")).body(b"{}".to_vec(), "text/plain"),
+        415,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn wallet_contribute_lists_the_signer_grants() {
+    let Some(f) = fixture().await else { return };
+    let (scoped, wide, contributor) = (world_name(), world_name(), Wallet::random());
+    grant_parcels(&f.pool, &scoped, &contributor.address, &["0,0", "0,1"]).await;
+    grant_parcels(&f.pool, &wide, &contributor.address, &[]).await;
+    sqlx::query(
+        "INSERT INTO worlds.world_permissions (world_name, permission, address) VALUES ($1, 'streaming', $2)",
+    )
+    .bind(wide.key())
+    .bind(&contributor.address)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+
+    expect(&f.app, Case::new("get", "/wallet/contribute"), 400).await;
+    let body = expect(
+        &f.app,
+        Case::new("get", "/wallet/contribute")
+            .signed(&contributor)
+            .await,
+        200,
+    )
+    .await;
+    assert_eq!(body["count"], json!(2));
+    let mut domains = body["domains"].as_array().unwrap().clone();
+    domains.sort_by_key(|d| d["name"].as_str().unwrap().to_string());
+    let expected = |w: &WorldName, perms: Value, parcels: i64| json!({ "name": w.key(), "user_permissions": perms, "size": "0", "owner": null, "parcelCount": parcels });
+    let mut want = vec![
+        expected(&scoped, json!(["deployment"]), 2),
+        expected(&wide, json!(["deployment", "streaming"]), 0),
+    ];
+    want.sort_by_key(|d| d["name"].as_str().unwrap().to_string());
+    assert_eq!(domains, want);
+}
+
+#[tokio::test]
+async fn wallet_stats_report_names_space_and_block() {
+    let Some(f) = fixture().await else { return };
+    let (held, other, owner) = (world_name(), world_name(), Wallet::random());
+    f.names.set(&owner.address, held.label());
+    f.names.set(&owner.address, other.label());
+    deploy(
+        &f,
+        &held,
+        &owner.address,
+        &cid('d'),
+        &scene_at(1, &["0,0"]),
+        &["0,0"],
+        &Deploy::Owner,
+    )
+    .await
+    .unwrap();
+    let path = format!("/wallet/{}/stats", owner.address.as_str());
+    let body = expect(&f.app, Case::new("get", &path), 200).await;
+    let cap = crate::policy::MAX_WORLD_SIZE_BYTES;
+    assert_eq!(
+        body,
+        json!({
+            "wallet": owner.address.as_str(),
+            "dclNames": [{ "name": held.key(), "size": "1" }],
+            "ensNames": [],
+            "usedSpace": "1",
+            "maxAllowedSpace": (2 * cap).to_string(),
+        })
+    );
+    sqlx::query("INSERT INTO worlds.blocked_wallets (wallet) VALUES ($1)")
+        .bind(&owner.address)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let body = expect(&f.app, Case::new("get", &path), 200).await;
+    assert!(body["blockedSince"].as_str().unwrap().ends_with('Z'));
+    assert_eq!(
+        expect(&f.app, Case::new("get", "/wallet/0x12/stats"), 400).await,
+        json!({ "error": "Bad request", "message": "Invalid request. Missing or invalid wallet in request url param." })
+    );
+}
+
+#[tokio::test]
+async fn permissions_owner_falls_back_to_the_name_holder() {
+    let Some(f) = fixture().await else { return };
+    let (world, unheld, holder) = (world_name(), world_name(), Wallet::random());
+    f.names.set(&holder.address, world.label());
+    let body = expect(
+        &f.app,
+        Case::new("get", format!("/world/{}/permissions", world.display())),
+        200,
+    )
+    .await;
+    assert_eq!(body["owner"], json!(holder.address.as_str()));
+    let body = expect(
+        &f.app,
+        Case::new("get", format!("/world/{}/permissions", unheld.display())),
+        200,
+    )
+    .await;
+    assert_eq!(body["owner"], Value::Null);
+}
+
+#[tokio::test]
+async fn worlds_listing_pages_leniently_with_millisecond_timestamps() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random().address);
+    deploy(
+        &f,
+        &world,
+        &owner,
+        &cid('e'),
+        &scene_at(1, &["0,0"]),
+        &["0,0"],
+        &Deploy::Owner,
+    )
+    .await
+    .unwrap();
+    let path = format!("/worlds?limit=abc&offset=-4&search={}", world.label());
+    let body = expect(&f.app, Case::new("get", path), 200).await;
+    assert_eq!(body["total"], json!(1));
+    let at = body["worlds"][0]["last_deployed_at"].as_str().unwrap();
+    assert!(
+        at.ends_with('Z') && at.len() == "2026-01-01T00:00:00.000Z".len(),
+        "{at}"
+    );
+    expect(&f.app, Case::new("get", "/worlds?limit=5000"), 200).await;
 }

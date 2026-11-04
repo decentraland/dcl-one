@@ -43,6 +43,7 @@ pub mod settings;
 pub mod settings_policy;
 pub mod store;
 pub mod upload_limits;
+pub mod wallet;
 
 #[cfg(test)]
 mod tests;
@@ -528,6 +529,8 @@ fn timed_routes() -> Router<SharedState> {
             "/world/{world_name}/scenes/{scene_coord}",
             delete(scenes::delete_scene),
         )
+        .route("/wallet/contribute", get(wallet::get_contributable_domains))
+        .route("/wallet/{wallet}/stats", get(wallet::get_wallet_stats))
         .route("/admin/worlds", get(admin::list_worlds))
         .route("/admin/worlds/{world_name}", get(admin::world_detail))
         .route(
