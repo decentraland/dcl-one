@@ -335,7 +335,7 @@ time this node stored the deployment, so it differs between any two nodes (upstr
 | `Access-Control-Allow-Headers` | reflects `Access-Control-Request-Headers` | reflects it; a fixed list when absent (`cors.rs:17,38-41`) |
 | `Access-Control-Max-Age` | `600` | `86400` (`cors.rs:18`) |
 | `Vary` | `Access-Control-Request-Headers` on preflight (`cors.spec.ts:52-54`) | `Origin` (`cors.rs:46,59`) |
-| extra | none from the application; the public peer's gateway adds `X-Content-Type-Options: nosniff` to every captured response ([`captures/README.md`](captures/README.md), Sanitization) | `X-Content-Type-Options: nosniff` on every response (`cors.rs:81-86`) |
+| extra | none from the application code; every response captured from the public peer carried `X-Content-Type-Options: nosniff`, so a layer in front of it adds the header ([`captures/README.md`](captures/README.md), Sanitization) | `X-Content-Type-Options: nosniff` on every response (`cors.rs:81-86`) |
 
 The upstream column is confirmed by capture: the preflight for `POST /content/entities/active` answered
 `204` with `access-control-allow-headers: content-type`, `access-control-allow-methods: GET,HEAD,POST,OPTIONS`,
@@ -564,8 +564,9 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
 - `POST /entities/active?fields=...` masking (`services/catalyst/content/src/active_entities.rs:112-116`).
 - Read-through fills on entity and content misses (`READ_THROUGH_ENABLED`, `services/catalyst/content/src/read_through.rs:466-521`).
 - `localProvenance` in `/audit` for entities published to this node (`services/catalyst/content/src/queries.rs:919-923`).
-- `X-Content-Type-Options: nosniff`, `Connection: keep-alive` / `Keep-Alive: timeout=70`
-  (`services/catalyst/shared/src/cors.rs:81-86`, `content/src/connection.rs:16-30`), the NUL-byte 400
+- `Connection: keep-alive` / `Keep-Alive: timeout=70` (`content/src/connection.rs:16-30`;
+  `X-Content-Type-Options: nosniff` from `services/catalyst/shared/src/cors.rs:81-86` is not here because the
+  public peer sends it too, see X3), the NUL-byte 400
   (`services/catalyst/shared/src/nul_guard.rs:12-22`), and a 408 when `request_timeout` is configured
   (`services/catalyst/content/src/lib.rs:720-725`).
 - `X-Accel-Redirect` delivery when `STORAGE_X_ACCEL_BASE` is set (`services/catalyst/content/src/get_content.rs:177-191`).

@@ -69,7 +69,7 @@ These problems show up in several files, so one fix can close several rows.
 - **Validation error bodies.** Upstream uses the `@dcl/schema-validator-component` body:
   `400 {"ok":false,"message":"Invalid JSON body","data":[...]}`. It is used on `POST /entities/active` and
   `POST /crypto/validate-signature`. `POST /entities/active` answers that shape here, with a `data` array
-  rebuilt from AJV's rules and not yet confirmed by a capture (CR-2). The other handlers have their own
+  rebuilt from AJV's rules; the eleven captured schema cases match it value for value, and key order differs (CR-2). The other handlers have their own
   message, or axum's plain-text 400/415/422 (LP validate-signature, CW-8).
 - **Failure statuses.**
   - When a source fails, upstream lambdas answer 502 or 500. This tree answers:
