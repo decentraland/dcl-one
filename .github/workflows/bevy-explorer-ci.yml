@@ -9,6 +9,7 @@
       - apps/bevy-explorer/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/bevy-http2-test.mjs
       - tooling/play-artifact.py
       - tooling/tests/test_play_*.py
       - tooling/tests/test_bevy_*.py
@@ -38,6 +39,7 @@
       - apps/bevy-explorer/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/bevy-http2-test.mjs
       - tooling/play-artifact.py
       - tooling/tests/test_play_*.py
       - tooling/tests/test_bevy_*.py
@@ -106,7 +108,7 @@ jobs:
       test: ${{ steps.plan.outputs.test }}
       headless: ${{ steps.plan.outputs.headless }}
       web: ${{ steps.plan.outputs.web }}
-      native-matrix: ${{ steps.plan.outputs.native-matrix }}
+      native-matrix: ${{ steps.plan.outputs.native-matrix == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:macos') }}
       images: ${{ steps.consumers.outputs.images }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -254,6 +256,9 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+      - name: Verify native HTTP protocol negotiation
+        if: runner.os == 'Linux'
+        run: node "$GITHUB_WORKSPACE/tooling/bevy-http2-test.mjs" target/native-test-artifacts.jsonl
       - name: Test the web driver
         # The web driver against the runner's Chrome: real input through the DevTools pipe into the
         # HUD's test commands, with the app frame out of and in the page's process. (A comment
@@ -261,6 +266,8 @@ jobs:
         env:
           DCL_WEB_DRIVER_REQUIRE_CHROME: '1'
         run: node --test local-harness/web-driver/driver.test.mjs
+      - name: Test scene signed fetch
+        run: node --test crates/dcl_js/src/modules/SignedFetch.test.cjs
       - name: Build the benchmark runner
         # The benchmark runner, for each OS: the fleet's laptops (Windows and macOS) run the legs with
         # it and Bevy Explorer / Benchmark writes the report with the Linux one. Name:

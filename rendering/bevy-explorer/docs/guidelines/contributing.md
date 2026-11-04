@@ -108,6 +108,9 @@ fails the check. For a targeted run, `--filter TEXT` selects matching tests and
 | Dropping a reader preserves other claims and dropping the last one cancels queue waits and retry timers | `dropping_shared_readers_withdraws_only_the_last_claim_of_each_owner`, `last_shared_reader_cancels_a_queued_attempt_and_a_retry_timer` |
 | Concurrent writers publish complete cache files, preserve occupied staging files, and remove their own staging file after a failed publish | `concurrent_writes_to_one_cache_key_publish_complete_files`, `cache_writer_skips_a_stale_staging_file`, `failed_cache_publish_removes_its_staging_file` |
 | Readiness polls obey server delays and their deadline | `readiness_poll_respects_retry_after_and_remaining_deadline` |
+| Keys are published while a slot is in use, since its release can choose between newcomers | `keys_are_read_while_a_slot_is_in_use` |
+| A departed hash ranks last while any request of it is alive, including a retry after its queue drained | `a_departed_hash_ranks_last_for_a_retry_after_its_queue_drained` |
+| The gate keeps granting after a poisoned lock, and a release skips a queue entry without its ticket instead of panicking in a destructor | `a_poisoned_gate_keeps_granting_and_releasing`, `a_queue_entry_without_its_ticket_is_skipped_inside_a_release` |
 
 Give each test its own gate and counters so it can run alongside other tests. Trace destructor
 paths for nested locks or file I/O under a lock. When changing diagnostics, check the units

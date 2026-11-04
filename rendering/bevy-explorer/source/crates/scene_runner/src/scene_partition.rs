@@ -148,9 +148,10 @@ pub fn update_scene_partitions(
 /// avatars' bodies and wearables, nearest avatar first, a shared wearable at the best of its
 /// avatars; then the other scenes by partition, a scene with no partition yet last among them.
 /// Which hashes are registered is the hooks' business (`register_scene_hash`,
-/// `register_partitioned_downloads`). Runs only on a frame in which a download waits for a
-/// slot: the keys are read at a grant, so the steady state costs nothing, and a grant reads
-/// keys at most a frame old.
+/// `register_partitioned_downloads`). Runs only on a frame in which a download waits for or
+/// holds a slot: a grant that chooses between downloads happens at an enqueue while others wait
+/// or at a release, so it reads this frame's keys unless the gate was idle when the frame began,
+/// and the steady state costs nothing.
 pub fn publish_download_priorities(
     scenes: Query<(Entity, &SceneHash, Option<&Partition>)>,
     partitioned: Query<(&Partition, &PartitionedDownloads)>,
@@ -158,7 +159,7 @@ pub fn publish_download_priorities(
     containing_scene: ContainingScene,
     ipfs: Res<IpfsResource>,
 ) {
-    if !ipfs.has_pending_downloads() {
+    if !ipfs.reads_download_priorities() {
         return;
     }
     let active = player

@@ -197,7 +197,8 @@ pub struct ShopCatalogFilters {
     pub category: Option<String>,
     pub contract_address: Option<String>,
     pub item_id: Option<String>,
-    pub creator: Option<String>,
+    /// `creator`: one or more comma-separated creator addresses, any of which matches.
+    pub creator: Vec<String>,
     pub rarities: Vec<String>,
     pub wearable_categories: Vec<String>,
     pub is_smart: bool,
@@ -209,6 +210,12 @@ pub struct ShopCatalogFilters {
     pub discounted: Option<bool>,
     pub include_social_emotes: bool,
     pub listing_type: Option<ShopListingType>,
+    /// `emotePlayMode` (`loop` | `simple`): `Some(true)` loops only, `Some(false)`
+    /// plays once only; both or neither is no filter (as `/v3/catalog/items`).
+    pub emote_loop: Option<bool>,
+    /// `emoteHasSound` / `emoteHasGeometry`: emotes with sound / with props.
+    pub emote_has_sound: bool,
+    pub emote_has_geometry: bool,
 }
 
 impl Default for ShopCatalogFilters {
@@ -219,7 +226,7 @@ impl Default for ShopCatalogFilters {
             category: None,
             contract_address: None,
             item_id: None,
-            creator: None,
+            creator: Vec::new(),
             rarities: Vec::new(),
             wearable_categories: Vec::new(),
             is_smart: false,
@@ -231,6 +238,9 @@ impl Default for ShopCatalogFilters {
             discounted: None,
             include_social_emotes: true,
             listing_type: None,
+            emote_loop: None,
+            emote_has_sound: false,
+            emote_has_geometry: false,
         }
     }
 }
@@ -411,7 +421,7 @@ pub fn parse_shop_filters(pairs: &[(String, String)]) -> ShopCatalogFilters {
         category: p.get_string("category", None),
         contract_address: p.get_string("contractAddress", None),
         item_id: p.get_string("itemId", None),
-        creator: p.get_string("creator", None),
+        creator: csv(p.get_string("creator", None)),
         rarities: csv(p.get_string("rarity", None)),
         wearable_categories: csv(p.get_string("wearableCategory", None)),
         is_smart: p.get_boolean("isSmart"),
@@ -427,6 +437,11 @@ pub fn parse_shop_filters(pairs: &[(String, String)]) -> ShopCatalogFilters {
         include_social_emotes: p.get_string("includeSocialEmotes", None).as_deref()
             != Some("false"),
         listing_type: parse_listing_type(&p),
+        emote_loop: super::items::emote_play_mode_clause(
+            &p.get_list("emotePlayMode", &["loop", "simple"]),
+        ),
+        emote_has_sound: p.get_boolean("emoteHasSound"),
+        emote_has_geometry: p.get_boolean("emoteHasGeometry"),
     }
 }
 
@@ -949,7 +964,7 @@ fn branch_base(
             format!(
                 "SELECT '{source}'::text AS source, 'trade'::text AS acquisition, u.id::text AS trade_id, u.type AS trade_type, u.signer, \
                         i.contract_address, i.item_id::text AS item_id, u.token_id::text AS token_id, i.name, i.image, i.rarity, i.item_type, \
-                        i.category AS wearable_category, i.body_shapes, i.emote_loop, i.emote_outcome_type, i.creator, \
+                        i.category AS wearable_category, i.body_shapes, i.emote_loop, i.emote_outcome_type, i.emote_has_sound, i.emote_has_geometry, i.creator, \
                         CASE WHEN u.type = 'public_item_order' THEN i.available END AS available, \
                         u.amount_received::numeric AS amount, i.network, u.created_at, i.search_is_collection_approved AS approved, \
                         u.chain_id, lower(u.trade_contract) AS trade_contract, \
@@ -965,7 +980,7 @@ fn branch_base(
         UnifiedAcquisition::Store => format!(
             "SELECT 'legacy'::text AS source, 'store'::text AS acquisition, i.contract_address || '-' || i.item_id::text AS trade_id, 'public_item_order'::text AS trade_type, i.creator AS signer, \
                     i.contract_address, i.item_id::text AS item_id, NULL::text AS token_id, i.name, i.image, i.rarity, i.item_type, \
-                    i.category AS wearable_category, i.body_shapes, i.emote_loop, i.emote_outcome_type, i.creator, \
+                    i.category AS wearable_category, i.body_shapes, i.emote_loop, i.emote_outcome_type, i.emote_has_sound, i.emote_has_geometry, i.creator, \
                     i.available, i.price::numeric AS amount, i.network, (to_timestamp(i.created_at) AT TIME ZONE 'UTC') AS created_at, i.search_is_collection_approved AS approved, \
                     NULL::integer AS chain_id, NULL::text AS trade_contract, \
                     NULL::text AS seller, NULL::text AS issued_id \
@@ -1039,9 +1054,14 @@ fn append_unified_filters(
         let p = b.bind_string(iid.clone());
         wheres.push(format!("mv.item_id = {p}"));
     }
-    if let Some(creator) = f.creator.as_deref().filter(|c| !c.is_empty()) {
-        let p = b.bind_string(creator.to_lowercase());
-        wheres.push(format!("lower(mv.creator) = {p}"));
+    if !f.creator.is_empty() {
+        let p = b.bind_strings(
+            &f.creator
+                .iter()
+                .map(|c| c.to_lowercase())
+                .collect::<Vec<_>>(),
+        );
+        wheres.push(format!("lower(mv.creator) = ANY({p})"));
     }
     match f.category.as_deref() {
         Some("emote") => wheres.push("mv.item_type ILIKE 'emote%'".to_string()),
@@ -1068,6 +1088,16 @@ fn append_unified_filters(
     }
     if f.is_smart {
         wheres.push("mv.item_type = 'smart_wearable_v1'".to_string());
+    }
+    // A wearable's emote columns are NULL, so these keep emotes only.
+    if let Some(looped) = f.emote_loop {
+        wheres.push(format!("mv.emote_loop = {looped}"));
+    }
+    if f.emote_has_sound {
+        wheres.push("mv.emote_has_sound = true".to_string());
+    }
+    if f.emote_has_geometry {
+        wheres.push("mv.emote_has_geometry = true".to_string());
     }
     if let Some(shapes) = body_shapes_for_genders(&f.wearable_genders) {
         let p = b.bind_strings(&shapes);

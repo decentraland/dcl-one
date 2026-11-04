@@ -570,3 +570,93 @@ async fn removing_the_last_reader_wakes_a_queued_attempt_without_a_free_slot() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn keys_are_read_while_a_slot_is_in_use() {
+    let gate = PriorityGate::new(1);
+    assert!(!gate.reads_keys());
+    // nothing waits, but the release of this slot can go to a request that arrives meanwhile
+    let permit = gate.acquire(gate.ticket(None)).await.unwrap();
+    assert!(!gate.has_waiters());
+    assert!(gate.reads_keys());
+    drop(permit);
+    assert!(!gate.reads_keys());
+
+    let permit = gate.try_acquire().unwrap();
+    assert!(gate.reads_keys());
+    drop(permit);
+    assert!(!gate.reads_keys());
+}
+
+#[tokio::test]
+async fn a_departed_hash_ranks_last_for_a_retry_after_its_queue_drained() {
+    let gate = PriorityGate::new(1);
+    gate.register("left", key(1, false, 100.0));
+    let (registration, mut attempts) = DownloadReaders::first(&gate, scene("left"), None);
+    // the first attempt holds the slot; nothing of "left" waits when its scene goes
+    let permit = attempts.acquire().await.unwrap();
+    gate.unregister("left");
+    drop(permit);
+    let blocker = gate.try_acquire().unwrap();
+
+    let log = Log::default();
+    let retry = {
+        let log = log.clone();
+        tokio::spawn(async move {
+            let permit = attempts.acquire().await.unwrap();
+            log.lock().unwrap().push("left-retry");
+            drop(permit);
+        })
+    };
+    settle(&gate, 1).await;
+    // younger than the retry, but its scene has not left
+    let other = reader(&gate, "no-hash", gate.ticket(None), &log);
+    settle(&gate, 2).await;
+    drop(blocker);
+    retry.await.unwrap();
+    other.await.unwrap();
+    assert_eq!(*log.lock().unwrap(), vec!["no-hash", "left-retry"]);
+
+    // the mark lasts only while a request of the hash is alive
+    assert!(gate.state().departed.contains("left"));
+    drop(registration);
+    assert!(gate.state().departed.is_empty());
+}
+
+#[tokio::test]
+async fn a_poisoned_gate_keeps_granting_and_releasing() {
+    let gate = PriorityGate::new(1);
+    let poisoner = gate.clone();
+    let _ = std::thread::spawn(move || {
+        let _held = poisoner.state.lock().unwrap();
+        panic!("poison the gate");
+    })
+    .join();
+    assert!(gate.state.is_poisoned());
+
+    let permit = gate.acquire(gate.ticket(None)).await.unwrap();
+    let waiting = gate.ticket(scene("s"));
+    drop(permit);
+    let permit = gate.acquire(waiting).await.unwrap();
+    drop(permit);
+    assert!(gate.try_acquire().is_some());
+}
+
+#[tokio::test]
+async fn a_queue_entry_without_its_ticket_is_skipped_inside_a_release() {
+    let gate = PriorityGate::new(1);
+    gate.register("near", key(0, false, 0.0));
+    let blocker = gate.try_acquire().unwrap();
+    let ticket = gate.ticket(None);
+    // a stale entry that outranks the real ticket
+    gate.state()
+        .scenes
+        .entry("near".to_owned())
+        .or_default()
+        .insert(u64::MAX);
+    // the release runs the grant inside the permit's destructor
+    drop(blocker);
+    let permit = gate.acquire(ticket).await.unwrap();
+    assert_eq!(gate.waiting(), 0);
+    drop(permit);
+}

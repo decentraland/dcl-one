@@ -16,6 +16,9 @@ fn lazy_deployer() -> LiveSyncDeployer {
         backlog: Arc::new(Semaphore::new(DEFAULT_FLUSH_BACKLOG_MAX)),
         flush_backlog_max: DEFAULT_FLUSH_BACKLOG_MAX,
         inflight_bytes: Arc::new(ByteBudget::new(DEFAULT_INFLIGHT_BYTES_MAX)),
+        validation: SyncValidation::AuthChainOnly,
+        validations: Arc::new(Semaphore::new(1)),
+        access_passed: Arc::default(),
     }
 }
 
@@ -310,7 +313,12 @@ use crate::sync_types::AuthLink;
 
 #[test]
 fn a_failure_reason_survives_the_column_round_trip() {
-    for reason in [FailureReason::DeploymentError, FailureReason::NoEntity] {
+    for reason in [
+        FailureReason::DeploymentError,
+        FailureReason::NoEntity,
+        FailureReason::ValidationUndecided,
+        FailureReason::Rejected,
+    ] {
         let label = reason_label(&reason);
         assert_eq!(reason_from_label(label), reason);
     }
@@ -346,7 +354,7 @@ async fn the_batch_ticker_is_a_job_of_the_shared_lifecycle() {
         return;
     };
     let jobs = std::sync::Arc::new(crate::jobs::Jobs::new());
-    let deployer = LiveSyncDeployer::new(pool, 1);
+    let deployer = LiveSyncDeployer::new(pool, 1, SyncValidation::AuthChainOnly);
     let parent = jobs.spawn("sync", {
         let jobs = jobs.clone();
         move |ctx| async move {
@@ -388,7 +396,7 @@ async fn flushed_batches_write_rows_and_resolve_pointer_succession() {
         return;
     };
     let prefix = unique();
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2);
+    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let p = |n: &str| format!("{prefix}:{n}");
     let (older, newer) = (format!("{prefix}-older"), format!("{prefix}-newer"));
 
@@ -549,7 +557,7 @@ async fn an_equal_timestamp_pair_settles_on_the_lowercase_winner_in_any_batching
     let Some(pool) = test_pool(3).await else {
         return;
     };
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2);
+    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let prefix = unique();
     let batchings: [&[&[&str]]; 4] = [
         &[&["Z", "a"]],
@@ -589,7 +597,7 @@ async fn the_deleter_is_the_nearest_successor_in_any_arrival_order() {
     let Some(pool) = test_pool(3).await else {
         return;
     };
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2);
+    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let prefix = unique();
     let orders = [
         ["A", "B", "C"],
@@ -626,14 +634,15 @@ async fn the_deleter_is_the_nearest_successor_in_any_arrival_order() {
     pool.close().await;
 }
 
-/// An unpublished local scene is nobody's successor: a peer scene older than it that
-/// arrives after the unpublish takes the pointer instead of being stored as replaced.
+/// An unpublished local scene still succeeds older scenes: a peer scene older than it that
+/// arrives after the unpublish is stored as replaced and the parcel stays empty; a newer one
+/// takes the parcel.
 #[tokio::test]
-async fn a_peer_scene_arriving_after_an_unpublish_is_not_superseded_by_the_tombstone() {
+async fn a_peer_scene_arriving_after_an_unpublish_is_superseded_by_the_tombstone() {
     let Some(pool) = test_pool(3).await else {
         return;
     };
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2);
+    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let prefix = unique();
     let pointer = format!("{prefix}:0,0");
     let (local, peer) = (format!("{prefix}-local"), format!("{prefix}-peer"));
@@ -644,15 +653,21 @@ async fn a_peer_scene_arriving_after_an_unpublish_is_not_superseded_by_the_tombs
         .execute(&pool)
         .await
         .unwrap();
-    let out = crate::land_publish::tombstone_and_repoint(&pool, &pointer)
+    let out = crate::land_publish::unpublish_local_scene(&pool, &pointer, &local)
         .await
         .unwrap();
-    assert_eq!(out.repointed, vec![(pointer.clone(), None)]);
+    assert_eq!(out.parcels, vec![pointer.clone()]);
 
     buffer_scene(&deployer, &peer, 1_000, &pointer).await;
     deployer.flush().await.unwrap();
-    assert_eq!(deleter_of(&pool, &peer).await, None);
-    assert_eq!(active_on(&pool, &pointer).await, Some(peer.clone()));
+    assert_eq!(deleter_of(&pool, &peer).await, Some(local.clone()));
+    assert_eq!(active_on(&pool, &pointer).await, None);
+
+    let newer = format!("{prefix}-newer");
+    buffer_scene(&deployer, &newer, 3_000, &pointer).await;
+    deployer.flush().await.unwrap();
+    assert_eq!(deleter_of(&pool, &local).await, Some(newer.clone()));
+    assert_eq!(active_on(&pool, &pointer).await, Some(newer.clone()));
 
     sqlx::query("DELETE FROM content.local_entities WHERE entity_id = $1")
         .bind(&local)
@@ -667,13 +682,13 @@ async fn a_peer_scene_arriving_after_an_unpublish_is_not_superseded_by_the_tombs
 /// write path's functions do. With an unpublish of the scene it would name as deleter
 /// still open on the byte-first pointer, the flush waits there holding nothing (in the
 /// database collation's order it would hold the other one), and once the unpublish
-/// commits the peer scene takes both pointers instead of keeping the tombstone as deleter.
+/// commits the peer scene is stored as replaced by the tombstone, both pointers empty.
 #[tokio::test]
 async fn a_flush_waits_in_byte_order_for_an_open_unpublish_of_its_successor() {
     let Some(pool) = test_pool(4).await else {
         return;
     };
-    let deployer = LiveSyncDeployer::new(pool.clone(), 2);
+    let deployer = LiveSyncDeployer::new(pool.clone(), 2, SyncValidation::AuthChainOnly);
     let prefix = unique();
     let (first, second) = (format!("{prefix}:0,-2"), format!("{prefix}:0,10"));
     assert!(first < second, "byte order");
@@ -691,16 +706,16 @@ async fn a_flush_waits_in_byte_order_for_an_open_unpublish_of_its_successor() {
         .fetch_one(&mut *unpublish)
         .await
         .unwrap();
-    let repointed: Vec<(Option<String>, Option<String>)> =
-        sqlx::query_as(sqlx::AssertSqlSafe(format!(
-            "SELECT pointer, replacement FROM content.{}($1)",
-            crate::land_publish::unpublish_function_name()
-        )))
-        .bind(&first)
-        .fetch_all(&mut *unpublish)
-        .await
-        .unwrap();
-    assert_eq!(repointed, vec![(Some(first.clone()), None)]);
+    let freed: Vec<(Option<String>, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT pointer, tombstoned FROM content.{}($1, $2)",
+        crate::land_publish::unpublish_function_name()
+    )))
+    .bind(&first)
+    .bind(&local)
+    .fetch_all(&mut *unpublish)
+    .await
+    .unwrap();
+    assert_eq!(freed, vec![(Some(first.clone()), 1)]);
 
     buffer_scene_on(&deployer, &peer, 1_000, &[&second, &first]).await;
     let mut flush = tokio::spawn({
@@ -754,9 +769,9 @@ async fn a_flush_waits_in_byte_order_for_an_open_unpublish_of_its_successor() {
         Err(done) => done.unwrap().unwrap(),
     }
 
-    assert_eq!(deleter_of(&pool, &peer).await, None);
-    assert_eq!(active_on(&pool, &first).await, Some(peer.clone()));
-    assert_eq!(active_on(&pool, &second).await, Some(peer.clone()));
+    assert_eq!(deleter_of(&pool, &peer).await, Some(local.clone()));
+    assert_eq!(active_on(&pool, &first).await, None);
+    assert_eq!(active_on(&pool, &second).await, None);
 
     sqlx::query("DELETE FROM content.local_entities WHERE entity_id = $1")
         .bind(&local)

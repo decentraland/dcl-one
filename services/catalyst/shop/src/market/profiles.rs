@@ -708,6 +708,7 @@ mod tests {
             vec![source],
             None,
             crate::content::read_through::Fills::new(1, std::time::Duration::from_secs(30)),
+            crate::content::sync_deployer::SyncValidation::AuthChainOnly,
         ));
         let address = format!("0x{}{}", uuid::Uuid::new_v4().simple(), "00000000");
 

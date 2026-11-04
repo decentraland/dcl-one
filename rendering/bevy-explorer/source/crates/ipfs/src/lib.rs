@@ -1016,7 +1016,7 @@ impl IpfsIo {
             static_files: static_paths,
             #[cfg(not(target_arch = "wasm32"))]
             allowed_file_roots: Default::default(),
-            client: reqwest::Client::builder()
+            client: platform::http_client_builder()
                 .connect_timeout(Duration::from_secs(5))
                 .use_native_tls()
                 .user_agent("DCLExplorer/0.1")
@@ -1106,9 +1106,10 @@ impl IpfsIo {
         self.request_slots.scene_priority(scene)
     }
 
-    /// Whether any download waits for a request slot.
-    pub fn has_pending_downloads(&self) -> bool {
-        self.request_slots.has_waiters()
+    /// Whether a grant before the next frame may read the download priorities: a download
+    /// waits for a request slot, or holds one whose release can go to a newcomer.
+    pub fn reads_download_priorities(&self) -> bool {
+        self.request_slots.reads_keys()
     }
 
     /// The request slots themselves, for callers that queue their own tickets (tests).

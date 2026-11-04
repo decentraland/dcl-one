@@ -170,7 +170,7 @@ async fn recipients(
     Ok(rows)
 }
 
-fn metadata(intent: &Intent, recipient: &Recipient, base: &str) -> Value {
+fn metadata(intent: &Intent, recipient: &Recipient, base: &str, asset_base: &str) -> Value {
     let name = text(&intent.event, "name");
     let description =
         crate::explore::sanitize::sanitize_event_description(text(&intent.event, "description"));
@@ -204,7 +204,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, base: &str) -> Value {
         ),
         _ => (name.to_string(), description),
     };
-    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":text(&intent.event,"image"),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
+    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":catalyst_explore::events::posters::absolute_default_image(text(&intent.event,"image"),asset_base),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
     if let Some(start) = intent.occurrence_start {
         let duration = intent
             .event
@@ -234,7 +234,9 @@ fn metadata(intent: &Intent, recipient: &Recipient, base: &str) -> Value {
 
 /// PostgreSQL cancels blocked or slow statements even if the Rust future is
 /// dropped. SET LOCAL is transaction-scoped and never leaks into pooled users.
-async fn timed_transaction(pool: &PgPool) -> Result<Transaction<'_, Postgres>, sqlx::Error> {
+pub(super) async fn timed_transaction(
+    pool: &PgPool,
+) -> Result<Transaction<'_, Postgres>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET LOCAL statement_timeout = '500ms'")
         .execute(&mut *tx)
@@ -254,6 +256,7 @@ async fn dispatch_page(
     pool: &PgPool,
     base: &str,
     now: NaiveDateTime,
+    asset_base: &str,
 ) -> anyhow::Result<Option<u64>> {
     // Commit fair rotation separately from delivery. If a later page times out
     // or rolls back, another intent gets the next turn instead of starvation.
@@ -325,7 +328,7 @@ async fn dispatch_page(
                 id: Uuid::new_v5(&intent.id, address.as_str().as_bytes()),
                 address,
                 kind: intent.kind.clone(),
-                metadata: metadata(&intent, recipient, base),
+                metadata: metadata(&intent, recipient, base, asset_base),
                 occurred_at: delivered_at,
             })
         })
@@ -431,7 +434,12 @@ async fn within_scan_budget(
 /// survives a timed-out page. Non-timeout scan failures surface after dispatch;
 /// expected scan deferrals and maintenance failures are error-logged without
 /// delaying the normal delivery cadence.
-pub async fn run_once(pool: &PgPool, base: &str, now: NaiveDateTime) -> anyhow::Result<u64> {
+pub async fn run_once(
+    pool: &PgPool,
+    base: &str,
+    now: NaiveDateTime,
+    asset_base: &str,
+) -> anyhow::Result<u64> {
     match tokio::time::timeout(CLEANUP_BUDGET, cleanup(pool, now)).await {
         Ok(Err(error)) => {
             tracing::error!(%error, "event intent cleanup deferred")
@@ -439,14 +447,17 @@ pub async fn run_once(pool: &PgPool, base: &str, now: NaiveDateTime) -> anyhow::
         Ok(Ok(())) => {}
         Err(_) => tracing::error!("event intent cleanup exceeded budget"),
     }
-    let (reminders, starts) = tokio::join!(
+    let (reminders, starts, ended) = tokio::join!(
         scan_with_budget(pool, "events_starts_soon", 3600, now),
         scan_with_budget(pool, "events_started", 0, now),
+        within_scan_budget("events_ended", async {
+            super::event_ended::run_once(pool, now).await.map(|_| ())
+        }),
     );
     let deadline = tokio::time::Instant::now() + PASS_BUDGET;
     let mut emitted = 0;
     loop {
-        match tokio::time::timeout_at(deadline, dispatch_page(pool, base, now)).await {
+        match tokio::time::timeout_at(deadline, dispatch_page(pool, base, now, asset_base)).await {
             Ok(Err(error)) if timed_out(&error) => {
                 tracing::warn!(%error, "event notification page deferred")
             }
@@ -459,18 +470,19 @@ pub async fn run_once(pool: &PgPool, base: &str, now: NaiveDateTime) -> anyhow::
     }
     reminders?;
     starts?;
+    ended?;
     Ok(emitted)
 }
 
-pub fn spawn(pool: PgPool, base: String, jobs: &crate::jobs::Jobs) {
+pub fn spawn(pool: PgPool, base: String, asset_base: String, jobs: &crate::jobs::Jobs) {
     jobs.spawn_periodic_leased(
         "event-notifications",
         crate::jobs::PeriodicCfg::every(Duration::from_secs(60))
             .with_error_backoff(Duration::from_secs(300)),
         move |ctx| {
-            let (pool, base) = (pool.clone(), base.clone());
+            let (pool, base, asset_base) = (pool.clone(), base.clone(), asset_base.clone());
             async move {
-                let emitted = run_once(&pool, &base, Utc::now().naive_utc()).await?;
+                let emitted = run_once(&pool, &base, Utc::now().naive_utc(), &asset_base).await?;
                 if emitted > 0 {
                     ctx.progress(format!("{emitted} event notices emitted"));
                 }
@@ -508,6 +520,7 @@ mod tests {
 
     #[tokio::test]
     async fn event_notices_recover_without_duplicates_respect_consent_and_separate_channels() {
+        let _guard = super::super::event_ended::TEST_LOCK.lock().await;
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
         };
@@ -531,9 +544,15 @@ mod tests {
                 .bind(member).bind(community.to_string()).execute(&pool).await.unwrap();
         }
         let body: CreateEvent = serde_json::from_value(json!({"name":"Calendar event","start_at":"2099-06-01T18:00:00Z","duration":3600000,"x":0,"y":0,"community_id":community.to_string(),"recurrent":true,"recurrent_frequency":"DAILY","recurrent_count":3})).unwrap();
-        let event = moderation::create_as(&pool, &body, HOST, HOST)
-            .await
-            .unwrap();
+        let event = moderation::create_as(
+            &pool,
+            &body,
+            HOST,
+            HOST,
+            &catalyst_explore::Settings::for_tests(),
+        )
+        .await
+        .unwrap();
         let pending: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM social.event_notification_intents WHERE event_id=$1",
         )
@@ -554,6 +573,7 @@ mod tests {
                     ..Default::default()
                 },
                 "moderator",
+                &catalyst_explore::Settings::for_tests(),
             )
             .await
             .unwrap();
@@ -583,7 +603,9 @@ mod tests {
         crate::explore::events::attendees::rsvp_going(&pool, &historical, RSVP, None)
             .await
             .unwrap();
-        run_once(&pool, base, t0).await.unwrap();
+        run_once(&pool, base, t0, "https://events.decentraland.org")
+            .await
+            .unwrap();
         assert_eq!(
             count(&pool, &historical, "events_started", RSVP).await,
             0,
@@ -611,8 +633,10 @@ mod tests {
         );
 
         let soon = t0 + Span::hours(1) + Span::seconds(1);
-        let (first, second) =
-            tokio::join!(run_once(&pool, base, soon), run_once(&pool, base, soon));
+        let (first, second) = tokio::join!(
+            run_once(&pool, base, soon, "https://events.decentraland.org"),
+            run_once(&pool, base, soon, "https://events.decentraland.org")
+        );
         first.unwrap();
         second.unwrap();
         assert_eq!(count(&pool, &event, "events_starts_soon", RSVP).await, 1);
@@ -628,8 +652,12 @@ mod tests {
             "upstream preview is not local consent"
         );
         let started = t0 + Span::hours(2) + Span::seconds(1);
-        run_once(&pool, base, started).await.unwrap();
-        run_once(&pool, base, started).await.unwrap();
+        run_once(&pool, base, started, "https://events.decentraland.org")
+            .await
+            .unwrap();
+        run_once(&pool, base, started, "https://events.decentraland.org")
+            .await
+            .unwrap();
         assert_eq!(
             count(&pool, &event, "events_started", DUAL).await,
             1,
@@ -649,7 +677,14 @@ mod tests {
             "occurrence duration, not series finish"
         );
         assert_eq!(metadata["link"], format!("{base}/whats-on/{event}"));
-        run_once(&pool, base, soon + Span::days(1)).await.unwrap();
+        run_once(
+            &pool,
+            base,
+            soon + Span::days(1),
+            "https://events.decentraland.org",
+        )
+        .await
+        .unwrap();
         assert_eq!(
             count(&pool, &event, "events_starts_soon", RSVP).await,
             2,
@@ -665,10 +700,18 @@ mod tests {
                 ..Default::default()
             },
             "moderator",
+            &catalyst_explore::Settings::for_tests(),
         )
         .await
         .unwrap();
-        run_once(&pool, base, soon + Span::days(1)).await.unwrap();
+        run_once(
+            &pool,
+            base,
+            soon + Span::days(1),
+            "https://events.decentraland.org",
+        )
+        .await
+        .unwrap();
         assert_eq!(count(&pool, &event, "event_rejected", HOST).await, 1);
 
         let queued: i64 = sqlx::query_scalar(
@@ -685,6 +728,7 @@ mod tests {
             None,
             &json!({"approved":true,"user":HOST}),
             true,
+            &catalyst_explore::Settings::for_tests(),
         )
         .await
         .unwrap();
@@ -704,9 +748,15 @@ mod tests {
         // A high-degree audience advances in bounded pages. A restart or
         // concurrent worker resumes after the committed recipient key.
         let body: CreateEvent = serde_json::from_value(json!({"name":"Paged","start_at":"2100-01-01T12:00:00Z","duration":3600000,"x":0,"y":0})).unwrap();
-        let paged = moderation::create_as(&pool, &body, HOST, HOST)
-            .await
-            .unwrap();
+        let paged = moderation::create_as(
+            &pool,
+            &body,
+            HOST,
+            HOST,
+            &catalyst_explore::Settings::for_tests(),
+        )
+        .await
+        .unwrap();
         sqlx::query("UPDATE explore.event SET approved=true,raw=raw || '{\"approved\":true}'::jsonb WHERE id=$1")
             .bind(&paged).execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO explore.event_attendance_local (event_id,signer,action) SELECT $1,'0x'||lpad(to_hex(n),40,'0'),'going' FROM generate_series(1000,1104) n")
@@ -717,13 +767,15 @@ mod tests {
             .naive_utc();
         sqlx::query("INSERT INTO social.event_notification_intents (id,event_id,kind,event,local_event,occurrence_start,occurred_at) SELECT $1,id,'events_started',raw,true,$3,$3 FROM explore.event WHERE id=$2")
             .bind(intent_id).bind(&paged).bind(paged_start).execute(&pool).await.unwrap();
-        dispatch_page(&pool, base, paged_start).await.unwrap();
+        dispatch_page(&pool, base, paged_start, "https://events.decentraland.org")
+            .await
+            .unwrap();
         let pending: bool = sqlx::query_scalar("SELECT processed_at IS NULL AND recipient_after <> '' FROM social.event_notification_intents WHERE id=$1")
             .bind(intent_id).fetch_one(&pool).await.unwrap();
         assert!(pending, "a full page persists its resume key");
         let (left, right) = tokio::join!(
-            dispatch_page(&pool, base, paged_start),
-            dispatch_page(&pool, base, paged_start)
+            dispatch_page(&pool, base, paged_start, "https://events.decentraland.org"),
+            dispatch_page(&pool, base, paged_start, "https://events.decentraland.org")
         );
         left.unwrap();
         right.unwrap();
@@ -741,6 +793,31 @@ mod tests {
         catch_up_pages_live_audiences_and_retention(&pool).await;
         bounded_work_preserves_fairness_cleanup_and_polling(&pool).await;
         drain_waits_for_an_intent_claimed_by_another_transaction(&pool).await;
+        blocked_metrics_preserve_notification_delivery(&pool).await;
+    }
+
+    async fn blocked_metrics_preserve_notification_delivery(pool: &PgPool) {
+        let id = Uuid::new_v4();
+        let event_id = format!("metric-lock-{id}");
+        let now = Utc::now().naive_utc();
+        let address = format!("0x{}00000000", Uuid::new_v4().simple());
+        sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at) VALUES($1,$2,'event_approved',$3,false,$4)")
+            .bind(id).bind(&event_id).bind(json!({"user":address})).bind(now).execute(pool).await.unwrap();
+        let mut held = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE social.event_ended_activation IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *held)
+            .await
+            .unwrap();
+        let result = run_once(
+            pool,
+            "https://example.org",
+            now,
+            "https://assets.example.org/events",
+        )
+        .await;
+        held.rollback().await.unwrap();
+        result.expect("metric lock deferral preserves normal notification cadence");
+        assert_eq!(count(pool, &event_id, "event_approved", &address).await, 1);
     }
 
     async fn drain_waits_for_an_intent_claimed_by_another_transaction(pool: &PgPool) {
@@ -827,8 +904,16 @@ mod tests {
                 .await;
             }
             passes += 1;
-            match tokio::time::timeout_at(deadline, run_once(pool, "https://example.org", now))
-                .await
+            match tokio::time::timeout_at(
+                deadline,
+                run_once(
+                    pool,
+                    "https://example.org",
+                    now,
+                    "https://events.decentraland.org",
+                ),
+            )
+            .await
             {
                 Ok(result) => {
                     result.unwrap();
@@ -950,9 +1035,14 @@ mod tests {
             SELECT $1,id,'event_created',raw,true,$3 FROM explore.event WHERE id=$2")
             .bind(large_intent).bind(&large_event).bind(now).execute(pool).await.unwrap();
         let large_before = std::time::Instant::now();
-        dispatch_page(pool, "https://example.org", now)
-            .await
-            .unwrap();
+        dispatch_page(
+            pool,
+            "https://example.org",
+            now,
+            "https://events.decentraland.org",
+        )
+        .await
+        .unwrap();
         let (cursor, completed): (String, bool) = sqlx::query_as(
             "SELECT recipient_after,processed_at IS NOT NULL FROM social.event_notification_intents WHERE id=$1",
         ).bind(large_intent).fetch_one(pool).await.unwrap();
@@ -962,7 +1052,12 @@ mod tests {
         );
         if let Ok(result) = tokio::time::timeout(
             Duration::from_millis(1),
-            run_once(pool, "https://example.org", now),
+            run_once(
+                pool,
+                "https://example.org",
+                now,
+                "https://events.decentraland.org",
+            ),
         )
         .await
         {
@@ -998,9 +1093,23 @@ mod tests {
             crate::explore::events::attendees::rsvp_going(pool, &id, &address, None)
                 .await
                 .unwrap();
-            run_once(pool, "https://example.org", now).await.unwrap();
+            run_once(
+                pool,
+                "https://example.org",
+                now,
+                "https://events.decentraland.org",
+            )
+            .await
+            .unwrap();
             sqlx::query("UPDATE explore.event SET approved=true,raw=raw || '{\"approved\":true}'::jsonb WHERE id=$1").bind(&id).execute(pool).await.unwrap();
-            run_once(pool, "https://example.org", now).await.unwrap();
+            run_once(
+                pool,
+                "https://example.org",
+                now,
+                "https://events.decentraland.org",
+            )
+            .await
+            .unwrap();
             let kind = if suffix == "late-start" {
                 "events_started"
             } else {
@@ -1019,7 +1128,14 @@ mod tests {
         crate::explore::events::attendees::rsvp_going(pool, &moved, &address, None)
             .await
             .unwrap();
-        run_once(pool, "https://example.org", now).await.unwrap();
+        run_once(
+            pool,
+            "https://example.org",
+            now,
+            "https://events.decentraland.org",
+        )
+        .await
+        .unwrap();
         let old_intent = Uuid::new_v4();
         sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurrence_start,occurred_at) VALUES($1,$2,'events_starts_soon',$3,false,$4,$5)")
             .bind(old_intent).bind(&moved).bind(&body).bind(start).bind(now).execute(pool).await.unwrap();
@@ -1028,7 +1144,14 @@ mod tests {
         crate::explore::events::mirror::upsert_event(pool, &body)
             .await
             .unwrap();
-        run_once(pool, "https://example.org", now).await.unwrap();
+        run_once(
+            pool,
+            "https://example.org",
+            now,
+            "https://events.decentraland.org",
+        )
+        .await
+        .unwrap();
         assert_eq!(count(pool, &moved, "events_starts_soon", &address).await, 1);
 
         // A queued started notice can become stale during an outage, and is
@@ -1038,7 +1161,14 @@ mod tests {
         sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurrence_start,occurred_at)
             SELECT $1,id,'events_started',raw,false,$3,$3 FROM explore.event WHERE id=$2")
             .bind(stale_id).bind(&stale_event).bind(now-Span::hours(3)).execute(pool).await.unwrap();
-        run_once(pool, "https://example.org", now).await.unwrap();
+        run_once(
+            pool,
+            "https://example.org",
+            now,
+            "https://events.decentraland.org",
+        )
+        .await
+        .unwrap();
         assert_eq!(
             count(pool, &stale_event, "events_started", &address).await,
             0
@@ -1071,9 +1201,14 @@ mod tests {
                 .unwrap();
         assert!(retained.contains(&recent) && retained.contains(&pending));
         assert!(!retained.contains(&old));
-        run_once(pool, "https://example.org", now + Span::days(40))
-            .await
-            .unwrap();
+        run_once(
+            pool,
+            "https://example.org",
+            now + Span::days(40),
+            "https://events.decentraland.org",
+        )
+        .await
+        .unwrap();
         assert_eq!(
             count(pool, &stale_event, "events_started", &address).await,
             0,
@@ -1113,9 +1248,14 @@ mod tests {
             .execute(&mut *held)
             .await
             .unwrap();
-        let error = dispatch_page(pool, "https://example.org", now)
-            .await
-            .unwrap_err();
+        let error = dispatch_page(
+            pool,
+            "https://example.org",
+            now,
+            "https://events.decentraland.org",
+        )
+        .await
+        .unwrap_err();
         assert!(
             timed_out(&error),
             "PostgreSQL must cancel the blocked page: {error}"
@@ -1126,9 +1266,14 @@ mod tests {
             rotated,
             "claim rotation commits even when the delivery transaction rolls back"
         );
-        dispatch_page(pool, "https://example.org", now)
-            .await
-            .unwrap();
+        dispatch_page(
+            pool,
+            "https://example.org",
+            now,
+            "https://events.decentraland.org",
+        )
+        .await
+        .unwrap();
         assert_eq!(
             count(pool, &fast, "event_approved", &address).await,
             1,
@@ -1138,7 +1283,14 @@ mod tests {
         sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at,processed_at)
             VALUES($1,'expired','event_approved','{}',false,$2,$2)")
             .bind(expired).bind(now-Span::days(40)).execute(pool).await.unwrap();
-        run_once(pool, "https://example.org", now).await.unwrap();
+        run_once(
+            pool,
+            "https://example.org",
+            now,
+            "https://events.decentraland.org",
+        )
+        .await
+        .unwrap();
         let retained: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM social.event_notification_intents WHERE id=$1)",
         )
@@ -1203,14 +1355,26 @@ mod tests {
             .execute(pool).await.unwrap();
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER {trigger} BEFORE INSERT ON social.event_notification_intents FOR EACH ROW EXECUTE FUNCTION social.{function}()")))
             .execute(pool).await.unwrap();
-        let result = run_once(pool, "https://example.org", now).await;
+        let result = run_once(
+            pool,
+            "https://example.org",
+            now,
+            "https://events.decentraland.org",
+        )
+        .await;
         // Unlike deadline deferrals, an ordinary scan database failure remains
         // a failed job, but queued host notices still receive their turn.
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE OR REPLACE FUNCTION social.{function}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_id='{reminder}' AND NEW.kind='events_starts_soon' THEN RAISE EXCEPTION 'test scan failure'; END IF; RETURN NEW; END $$"))).execute(pool).await.unwrap();
         let queued_event = format!("{prefix}-scan-error-delivery");
         sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at) VALUES($1,$2,'event_approved',$3,false,$4)")
             .bind(Uuid::new_v4()).bind(&queued_event).bind(json!({"user":address})).bind(now).execute(pool).await.unwrap();
-        let failed_scan = run_once(pool, "https://example.org", now).await;
+        let failed_scan = run_once(
+            pool,
+            "https://example.org",
+            now,
+            "https://events.decentraland.org",
+        )
+        .await;
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP TRIGGER {trigger} ON social.event_notification_intents"
         )))
@@ -1240,7 +1404,14 @@ mod tests {
             0
         );
         let from = (now - Span::minutes(5)).and_utc().timestamp_millis();
-        run_once(pool, "https://example.org", now).await.unwrap();
+        run_once(
+            pool,
+            "https://example.org",
+            now,
+            "https://events.decentraland.org",
+        )
+        .await
+        .unwrap();
         let store = super::super::NotificationsStore::new(pool.clone());
         let fresh = store
             .list(&address.parse().unwrap(), 100, Some(from), false)
@@ -1340,7 +1511,13 @@ mod tests {
         let function = format!("fail_cleanup_{prefix}");
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE FUNCTION social.{function}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF OLD.event_id='{cleanup_event}' THEN RAISE EXCEPTION 'test cleanup failure'; END IF; RETURN OLD; END $$"))).execute(pool).await.unwrap();
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER {function} BEFORE DELETE ON social.event_notification_intents FOR EACH ROW EXECUTE FUNCTION social.{function}()"))).execute(pool).await.unwrap();
-        let result = run_once(pool, "https://example.org", now).await;
+        let result = run_once(
+            pool,
+            "https://example.org",
+            now,
+            "https://events.decentraland.org",
+        )
+        .await;
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP TRIGGER {function} ON social.event_notification_intents"
         )))
@@ -1406,6 +1583,39 @@ mod tests {
         assert_eq!(
             count(pool, &lock_event, "events_starts_soon", &address).await,
             1
+        );
+    }
+    #[test]
+    fn queued_relative_defaults_use_the_asset_origin_and_keep_the_notice_link_origin() {
+        let now = Utc::now().naive_utc();
+        let intent = Intent {
+            id: Uuid::new_v4(),
+            event_id: "legacy-event".into(),
+            kind: "event_approved".into(),
+            event: json!({"name":"Legacy","image":catalyst_explore::events::posters::DEFAULT_EVENT_IMAGE}),
+            local_event: true,
+            occurrence_start: None,
+            occurred_at: now,
+            recipient_after: String::new(),
+        };
+        let recipient = Recipient {
+            address: "0x1111111111111111111111111111111111111111".into(),
+            community: false,
+            community_name: None,
+        };
+        let payload = metadata(
+            &intent,
+            &recipient,
+            "https://web.example.org",
+            "https://assets.example.org/events/",
+        );
+        assert_eq!(
+            payload["image"],
+            "https://assets.example.org/events/assets/event-default.webp"
+        );
+        assert_eq!(
+            payload["link"],
+            "https://web.example.org/whats-on/legacy-event"
         );
     }
 }
