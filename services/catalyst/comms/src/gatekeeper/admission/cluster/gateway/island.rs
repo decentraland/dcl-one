@@ -389,6 +389,7 @@ mod tests {
                     .to_string(),
                 ),
                 can_update_metadata: Some(false),
+                joined_at: None,
             };
             match invalid {
                 "writable" => participant.can_update_metadata = Some(true),

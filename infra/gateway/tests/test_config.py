@@ -67,10 +67,63 @@ class ConfigurationTest(unittest.TestCase):
                  "deploy": ["/entities", "/content/entities"]}
         text = gateway.render(table, cfg, "/mime.types")
         deploy = re.search(r'location ~ "([^"]+)" \{\n[^}]*client_max_body_size 200m;', text)[1]
-        for path in ["/entities", "/content/entities", "/worlds-content-server/entities"]:
+        for path in ["/entities", "/content/entities"]:
             with self.subTest(path=path):
                 self.assertTrue(re.search(deploy, path))
-        self.assertIsNone(re.search(deploy, "/worlds-content-server/entities/active"))
+        self.assertIsNone(re.search(deploy, "/worlds-content-server/entities"))
+        worlds = re.search(r'location ~ "([^"]+)" \{\n[^}]*client_max_body_size 360m; '
+                           r'client_body_timeout 300s; limit_req zone=deploy', text)[1]
+        for path in ["/worlds-content-server/entities", "/worlds-content-server/entities/"]:
+            with self.subTest(path=path):
+                self.assertTrue(re.search(worlds, path))
+        for path in ["/worlds-content-server/entities/active", "/entities"]:
+            with self.subTest(path=path):
+                self.assertIsNone(re.search(worlds, path))
+
+    def test_worlds_caps_match_the_service_wire_limits(self):
+        worlds = Path(__file__).parents[3] / "services/catalyst/worlds/src/core"
+
+        def mib(path, name):
+            source = (worlds / path).read_text()
+            expr = re.search(rf"const {name}: usize = ([^;]+);", source)[1]
+            for ref, value in re.findall(r"const (\w+): usize = ([^;]+);", source):
+                expr = expr.replace(ref, f"({value})")
+            self.assertRegex(expr, r"^[\d\s()*+]+$")
+            total = eval(expr)
+            self.assertEqual(total % (1024 * 1024), 0, name)
+            return f"{total // (1024 * 1024)}m"
+
+        self.assertEqual(gateway.WORLDS_DEPLOY_CAP, mib("deploy.rs", "MAX_UPLOAD_WIRE_SIZE_BYTES"))
+        self.assertEqual(gateway.WORLDS_SETTINGS_CAP, mib("settings.rs", "MAX_SETTINGS_UPLOAD_WIRE_BYTES"))
+
+    def worlds_locations(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})
+        table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
+                 "deploy": ["/entities", "/content/entities"]}
+        text = gateway.render(table, cfg, "/mime.types")
+        return text, [(re.compile(m[1].strip('"')), m[2]) for m in
+                      re.finditer(r'location ~ ("[^"]+"|\S+) \{\n(.*?)\n\}', text, re.S)]
+
+    def test_worlds_settings_get_the_service_settings_cap(self):
+        _, regexes = self.worlds_locations()
+        for path in ["/world/w.dcl.eth/settings", "/worlds-content-server/world/w.dcl.eth/settings",
+                     "/worlds-content-server/world/w.dcl.eth/settings/"]:
+            with self.subTest(path=path):
+                body = next(body for regex, body in regexes if regex.search(path))
+                self.assertIn("client_max_body_size 12m;", body)
+        for path in ["/world/w.dcl.eth/settings/x", "/x/world/w.dcl.eth/settings", "/world/settings"]:
+            with self.subTest(path=path):
+                self.assertFalse(any("12m" in body for regex, body in regexes if regex.search(path)))
+
+    def test_worlds_content_reads_use_the_content_rate_zone(self):
+        _, regexes = self.worlds_locations()
+        for path in ["/worlds-content-server/contents/bafy", "/worlds-content-server/ipfs/bafy"]:
+            with self.subTest(path=path):
+                body = next(body for regex, body in regexes if regex.search(path))
+                self.assertIn("limit_req zone=content burst=1000 nodelay;", body)
+        for path in ["/worlds-content-server/status", "/worlds-content-server/contentsx/a"]:
+            with self.subTest(path=path):
+                self.assertFalse(any("zone=content" in body for regex, body in regexes if regex.search(path)))
 
     def test_the_deploy_zone_sits_above_the_content_servers_burst_limit(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})

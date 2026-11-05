@@ -2,17 +2,22 @@
   "description": "GET /lambdas/profiles/{id} with a syntactically valid but never-deployed address returns 404 'Profile not found'.",
   "request": {
     "method": "GET",
-    "path": "/lambdas/profiles/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    "path": "/lambdas/profiles/0x0000000000000000000000000000000000000001",
     "query": {},
     "headers": {},
     "body": null
   },
   "response": {
     "status": 404,
-    "headers": {"content-type": "application/json"},
-    "body_json": {"error": "Not Found", "message": "Profile not found"}
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Not Found",
+      "message": "Profile not found"
+    }
   },
-  "captured_from": "hand-authored from handler source (lambdas.rs::profile_by_id)",
-  "captured_at": "2026-05-23T20:00:00Z",
+  "captured_from": "services/catalyst/tests/fixtures/conformance/content-lambdas/captures/lambdas-profiles/LP-31-profile-not-found.json (peer.decentraland.org, lamb2 02a37f5)",
+  "captured_at": "2026-11-04T00:00:00Z",
   "volatile_paths": []
 }

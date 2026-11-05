@@ -328,6 +328,21 @@ async fn post_json(router: Router, uri: &str, body: Value) -> (StatusCode, Value
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
+/// With the check on a busy host only loses `acceptingUsers`: `/about`
+/// still answers 200 and `healthy` follows the sync state.
+#[tokio::test]
+async fn about_with_the_resource_check_keeps_healthy() {
+    let mut settings = crate::Settings::for_tests();
+    settings.about_resource_check = true;
+    let node = TestNode::without_db_settings("about-check", settings).await;
+    node.state.sync.set_state(SyncState::Syncing);
+    node.state.sync.beat();
+    let (status, body) = get_json(node.router(), "/about").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["healthy"], true);
+    assert!(body["acceptingUsers"].is_boolean(), "{body}");
+}
+
 #[tokio::test]
 async fn about_and_status_report_the_sync_state_honestly() {
     let node = TestNode::without_db("about").await;
@@ -359,6 +374,12 @@ async fn about_and_status_report_the_sync_state_honestly() {
     let (status, body) = get_json(node.router(), "/about").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["healthy"], true);
+    let (lambdas_status, lambdas_body) = get_json(node.router(), "/lambdas/about").await;
+    assert_eq!(
+        (lambdas_status, lambdas_body),
+        (status, body),
+        "/lambdas/about is the root /about"
+    );
     let (_, body) = get_json(node.router(), "/status").await;
     assert_eq!(body["synchronizationStatus"]["up"], true);
     assert_eq!(body["synchronizationStatus"]["syncFrontier"], 42);

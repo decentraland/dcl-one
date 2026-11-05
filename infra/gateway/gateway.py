@@ -8,6 +8,11 @@ from pathlib import Path
 import re
 import subprocess
 
+# The worlds service's wire caps (worlds `MAX_UPLOAD_WIRE_SIZE_BYTES`,
+# `MAX_SETTINGS_UPLOAD_WIRE_BYTES`); a worlds test pins them.
+WORLDS_DEPLOY_CAP = "360m"
+WORLDS_SETTINGS_CAP = "12m"
+
 
 def words(value):
     return [word for word in re.split(r"[\s,]+", value.strip()) if word]
@@ -143,14 +148,21 @@ def render(table, cfg, mime):
         # These aliases belong to APIs. Re-selecting a location after the
         # rewrite could send /social/... to the Sites /social page instead.
         locations += location(row["key"], f"rewrite {rewrite} break;\n" + proxy("apis"))
-    # Worlds deploys reach this match already rewritten under their host prefix.
-    # The deploy zone is only a coarse abuse guard: 200 at once, then 5 r/s
-    # per address, above the content server's own per-client burst limit
+    # Worlds deploys reach these matches already rewritten under their host prefix.
+    # The content deploy zone is only a coarse abuse guard: 200 at once, then
+    # 5 r/s per address, above the content server's own per-client burst limit
     # (upstream's 200 per 60 s, answered as JSON with Retry-After), so a
     # client within that limit never meets nginx's HTML 429.
-    deploy = "|".join(re.escape(path) for path in [*table["deploy"], "/worlds-content-server/entities"])
+    deploy = "|".join(re.escape(path) for path in table["deploy"])
     locations += location(f'~ "^({deploy})/*$"', proxy("apis",
         "client_max_body_size 200m; client_body_timeout 300s; limit_req zone=deploy burst=200 nodelay;"))
+    locations += location('~ "^/worlds-content-server/entities/*$"', proxy("apis",
+        f"client_max_body_size {WORLDS_DEPLOY_CAP}; client_body_timeout 300s; "
+        "limit_req zone=deploy burst=4 nodelay;"))
+    locations += location('~ "^(/worlds-content-server)?/world/[^/]+/settings/*$"', proxy("apis",
+        f"client_max_body_size {WORLDS_SETTINGS_CAP};"))
+    locations += location("~ ^/worlds-content-server/(contents|ipfs)/", proxy("apis",
+        "limit_req zone=content burst=1000 nodelay;"))
     locations += location("~ ^/comms-gatekeeper/reports/players/[^/]+/evidence/", proxy("apis",
         "client_max_body_size 11m;"))
     locations += location("~ ^(/builder-api)?/v1/(projects/[^/]+/(blobs/[^/]+|manifest|files)|items/[^/]+/files)/*$",

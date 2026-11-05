@@ -62,6 +62,11 @@ boots a second one on its own realm.
 | `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added); the UUAV runtime set must be staged next to it (`tooling/uuav/stage-dist.py`) for scene video to play | unset |
 | `DCL_E2E_NATIVE_PORT`, `DCL_E2E_NATIVE_TOKEN` | A running standalone's loopback console and the token it was started with | `15702`, unset |
 
+To run the native Explorer against a gateway, set
+`DCL_E2E_NATIVE_ARGS="--gateway https://gateway.example.test"`.
+The [running guide](../../../rendering/bevy-explorer/docs/guidelines/running.md#gateway-routing)
+describes the gateway layouts and service overrides.
+
 The report goes to `report/`: `junit-<groups>.xml`, and per scenario `commands.jsonl` (every
 console command, its reply or error and its time; `/login_identity` payloads redacted) and
 `final.png` (the engine's frame as the scenario left it). A failed visual scenario adds
@@ -87,7 +92,13 @@ with their replies parsed. It asserts through the engine where it can (`/world_s
 first. Every wait is bounded and says what it waits for; nothing asserts zone's live listings as
 literals. A scenario that changes account state restores it.
 
-The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, observes a live FPS-target change and verifies an avatar action against the engine. The chat scenarios in `specs/chat.test.ts` also check that a slash keypress and Unicode text reach the composer.
+The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug button in development builds and Sidebar settings → Debug panel in release builds. It reads the current realm, observes a live FPS-target change and verifies an avatar action against the engine. The same spec reads `/client_login_state` for unsigned guest sessions and checks that authenticated
+login delivery is inactive. The **Client login events** section is included in the registered-reading
+check. `test/client-login-storage.test.ts` checks the browser queue's transaction acknowledgment,
+abort handling, concurrent-instance merging, shared capacity, acknowledgment replay and restart read. `test/client-login-browser.test.ts` runs the production storage adapter in two independent
+same-origin Chrome page contexts, recreates those contexts to check recovery, and aborts an actual
+IndexedDB transaction. These checks do not substitute for running the debug panel against a built
+Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash keypress and Unicode text reach the composer.
 
 ## Scenario map
 
@@ -251,3 +262,16 @@ change on the left updates what is on the right in the same change, then runs th
 cd apps/bevy-explorer/e2e && npm run typecheck && npm test
 python3 -m unittest discover -s tooling/tests -p 'test_bevy_*.py'
 ```
+
+The login-storage adapter and real-Chrome tests exercise corrupt/empty store recovery and mixed
+valid/invalid records and additions as well as independent-context merge/ack behavior. Native Rust
+storage tests also force a failed quarantine copy and verify that valid records are still repaired. The Rust `system_ui`
+`login::client_login::tests` drive signed requests to a localhost stub for acceptance, rejection,
+deployment-order retries and explicit memory-only delivery; they also check save-before-send,
+account cancellation and storage recovery. These are focused runtime tests, not a built Explorer
+signed-in journey. `/client_login_state` exposes `memoryOnly` and `storageFailures` for HUD diagnosis.
+
+The Rust login sender regression also checks gateway routing: the HTTP request uses the public
+`/social-api/v1/client-login` path while its signature binds the forwarded `/v1/client-login` path.
+The direct-origin retry test checks that its signature retains the full request path. These tests
+run in the Bevy CI native suite (`cargo test --all --profile ci-test --locked -- --test-threads=1`).
