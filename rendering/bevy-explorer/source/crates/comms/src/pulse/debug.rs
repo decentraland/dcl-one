@@ -111,10 +111,7 @@ fn pulse_state(
             })
             .unwrap_or_default();
         let emote = lookup.0.map(|wallet| {
-            match session
-                .as_ref()
-                .and_then(|s| s.decoder.selected_emote(wallet))
-            {
+            match session.as_ref().and_then(|s| s.decoder.emote_of(wallet)) {
                 None => "peer not present",
                 Some(None) => "not emoting",
                 Some(Some(urn)) => urn,

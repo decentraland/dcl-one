@@ -51,6 +51,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **IPv6 when no IPv4 address resolves.** The native driver connects to the first IPv4 address and
   falls back to the first IPv6 one, on an IPv6 socket, only when there is none. unity-explorer
   fails without an IPv4 address, and the servers bind IPv4 by default.
+- **One Pulse subject per wallet.** A newer join for a wallet replaces the subject it held: the
+  avatar snaps to the newcomer, or leaves the older subject's realm when the newcomer joined in
+  another. unity-explorer keeps the older subject and promotes it if the newer one leaves. Both
+  servers evict a wallet's older session once the newer one authenticates, so the older subject
+  is always a session already gone, and promoting it would show its last pose and ask for a
+  resync the server never answers.
 
 ## Deliberate choices that look like mistakes
 
