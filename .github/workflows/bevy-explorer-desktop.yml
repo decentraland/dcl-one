@@ -28,10 +28,28 @@ jobs:
       # truthy `'1'` has to be the selected branch.
       BEVY_SEGMENT_WRITE_KEY: ${{ vars.BEVY_SEGMENT_WRITE_KEY }}
       BEVY_ANALYTICS_DEV: ${{ (github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/')) && '1' || '' }}
+      # the lock target this package ships
+      UUAV_TARGET: ${{ startsWith(matrix.build_name, 'windows') && 'windows-x86_64' || startsWith(matrix.build_name, 'macos')
+        && 'macos-universal' || 'linux-x86_64' }}
     runs-on: ${{ matrix.os }}
     steps:
       - name: Clone repo
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: false
+      - name: Restore this runner's UUAV runtime set
+        # The set is the lock's bytes for one target (library/uuav/dist/<target>, Git LFS, 30 to
+        # 105 MiB); the other targets are never read here. LFS traffic from Actions counts against
+        # the organisation's bandwidth, so a miss pulls only this target and the hit skips LFS.
+        # stage-dist.py checks every staged file against the lock, whichever way it arrived.
+        id: uuav-dist
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: library/uuav/dist/${{ env.UUAV_TARGET }}
+          key: uuav-dist-${{ env.UUAV_TARGET }}-${{ hashFiles('tooling/uuav/uuav-binaries.lock.json') }}
+      - name: Fetch this runner's UUAV runtime set
+        if: steps.uuav-dist.outputs.cache-hit != 'true'
+        run: git lfs pull --include 'library/uuav/dist/${{ env.UUAV_TARGET }}/**'
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
@@ -93,43 +111,12 @@ jobs:
         if: runner.os == 'linux'
         run: sudo apt update -y; sudo apt install -y libssl-dev libx11-dev libgl1-mesa-dev libxext-dev fuse libfuse2t64
           libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
-      - name: install ffmpeg deps (linux)
-        run: sudo apt install -y --no-install-recommends clang curl pkg-config libavcodec-dev libavformat-dev libavutil-dev
-          libavfilter-dev libavdevice-dev
+      - name: install build deps (linux)
+        run: sudo apt install -y --no-install-recommends clang curl pkg-config
         if: runner.os == 'linux'
       - name: Install clang for webrtc-sys
         if: runner.os == 'linux'
         run: ../../../apps/bevy-explorer/install-clang.sh
-      - name: install ffmpeg deps (macOs)
-        if: runner.os == 'macos'
-        run: |-
-          brew install ffmpeg@6 pkg-config;
-          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@6/lib/pkgconfig" >> "$GITHUB_ENV"
-      - name: install ffmpeg deps (windows)
-        if: runner.os == 'windows' && matrix.os != 'self-hosted-windows'
-        run: |-
-          # Prefer the standalone LLVM install (stable across runner image rolls); fall back to the VS-bundled Clang toolset, whose version moves with the image and has produced opaque bindgen structs on rollover.
-          $vsLlvm = "$(& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath)\VC\Tools\LLVM\x64\bin"
-          $libclang = @("C:\Program Files\LLVM\bin", $vsLlvm) | Where-Object { Test-Path "$_\libclang.dll" } | Select-Object -First 1
-          if (-not $libclang) { throw "libclang.dll not found (checked standalone LLVM and VS Clang toolset)" }
-          Write-Host "Using LIBCLANG_PATH=$libclang"
-          Add-Content $env:GITHUB_ENV "LIBCLANG_PATH=$libclang`n"
-          $ffUrl = "https://github.com/GyanD/codexffmpeg/releases/download/6.0/ffmpeg-6.0-full_build-shared.7z"
-          for ($i = 1; $i -le 3; $i++) {
-            try { Invoke-WebRequest $ffUrl -OutFile ffmpeg-6.0-full_build-shared.7z; break }
-            catch { if ($i -eq 3) { throw }; Write-Host "ffmpeg download failed (attempt $i), retrying..."; Start-Sleep -Seconds 5 }
-          }
-          7z x ffmpeg-6.0-full_build-shared.7z
-          mkdir ffmpeg
-          mv ffmpeg-*/* ffmpeg/
-          if (-not (Test-Path "ffmpeg\include")) { throw "ffmpeg headers missing after extract (ffmpeg\include not found)" }
-          Add-Content $env:GITHUB_ENV "FFMPEG_DIR=${pwd}\ffmpeg`n"
-          Add-Content $env:GITHUB_PATH "${pwd}\ffmpeg\bin`n"
-        shell: pwsh
-      - name: install ffmpeg deps (windows)
-        if: runner.os == 'windows' && matrix.os == 'self-hosted-windows'
-        run: Add-Content $env:GITHUB_ENV "FFMPEG_DIR=c:\ffmpeg-6.0`n"
-        shell: pwsh
       - name: Cargo build (windows)
         if: runner.os == 'windows'
         run: cargo build --release --locked --package dcl_deno_ipc && cargo build --release --locked
@@ -144,12 +131,9 @@ jobs:
           mkdir package
           cp readme.md package/README.md
           cp LICENSE package/LICENSE
-      - name: (macos) Preparing binary and librarys
+      - name: (macos) Preparing binary
         if: runner.os == 'macos'
-        run: |-
-          brew install dylibbundler
-          mv ${{ env.CARGO_BUILD_DIR }}/decentra-bevy .
-          dylibbundler -cd -b -x decentra-bevy -d ./libs
+        run: mv ${{ env.CARGO_BUILD_DIR }}/decentra-bevy .
       - name: Package Macos
         if: runner.os == 'macos'
         env:
@@ -181,7 +165,9 @@ jobs:
           cp "$cef\*.dat" package/
           cp "$cef\*.json" package/
           cp -r "$cef\locales" package/locales
-          cp ${{ env.FFMPEG_DIR }}/bin/*.dll package
+          # the video helper and its FFmpeg, spawned as siblings of the exe
+          python ../../../tooling/uuav/stage-dist.py windows-x86_64 package
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           7z a ${{ env.PACKAGE_FILE }} ./package/*
         shell: pwsh
       - name: Package Linux
@@ -200,12 +186,13 @@ jobs:
           cp "$cef"/*.so* "$cef"/*.bin "$cef"/*.pak "$cef"/*.dat "$cef"/*.json package/
           cp -r "$cef/locales" package/locales
           if [ -f "$cef/chrome-sandbox" ]; then cp "$cef/chrome-sandbox" package/; fi
+          # the video helper and its FFmpeg/libva, spawned as siblings of the binary
+          python3 ../../../tooling/uuav/stage-dist.py linux-x86_64 package
           # We must enter the package/ directory in order to create a flat tarball (i.e. without a directory in it).
           cd package
           tar -czvf ../${{ env.PACKAGE_FILE }} ./*
       - name: Package AppImage
         if: runner.os == 'linux'
-        continue-on-error: true
         run: |-
           cd deploy/linux
           mkdir -p BevyExplorer.AppDir/usr/bin BevyExplorer.AppDir/usr/lib
@@ -223,8 +210,17 @@ jobs:
           cp -r ../../assets BevyExplorer.AppDir/usr/bin/assets
           cp "$cef"/*.bin "$cef"/*.pak "$cef"/*.dat "$cef"/*.json BevyExplorer.AppDir/usr/lib/
           cp -r "$cef/locales" BevyExplorer.AppDir/usr/lib/locales
+          # the three downloads are pinned to a release and checked: linuxdeploy rewrites the
+          # RUNPATH of the AppDir's binaries, appimagetool packs it, and the type2 runtime is
+          # the ELF the AppImage starts with (appimagetool would otherwise fetch it at run time)
           wget https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
-          wget https://github.com/AppImage/appimagetool/releases/latest/download/appimagetool-x86_64.AppImage
+          wget https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          wget https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          sha256sum -c <<'SUMS'
+          c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d  linuxdeploy-x86_64.AppImage
+          ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool-x86_64.AppImage
+          2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  runtime-x86_64
+          SUMS
           chmod +x ./linuxdeploy-x86_64.AppImage ./appimagetool-x86_64.AppImage
           PATH="$(pwd):$PATH"
           export PATH
@@ -232,18 +228,24 @@ jobs:
           export APPIMAGETOOL
           export LD_LIBRARY_PATH="$cef:$LD_LIBRARY_PATH"
           # libxkbcommon must NOT be bundled: it ships as a matched pair with the host's
-          # libxkbcommon-x11 (private struct layouts shared between the two), and only the
-          # base lib is a transitive dep here (ffmpeg -> SDL2), so bundling it pairs our
-          # build machine's copy with the host's -x11 half — the keymap winit builds
-          # through that mix is corrupt (hangs on every keypress, SEGV in
+          # libxkbcommon-x11 (private struct layouts shared between the two), so bundling
+          # it would pair our build machine's copy with the host's -x11 half — the keymap
+          # winit builds through that mix is corrupt (hangs on every keypress, SEGV in
           # xkb_keymap_unref at exit). winit dlopens both from the host instead.
-          ./linuxdeploy-x86_64.AppImage --appdir BevyExplorer.AppDir --output appimage --create-desktop-file \
+          # linuxdeploy fills usr/lib and rewrites the RUNPATH of every ELF it finds in the
+          # AppDir, so the video helper and its FFmpeg/libva are staged after it: they resolve
+          # from the helper's own directory ($ORIGIN, checked below) and appimagetool packs
+          # the AppDir as it stands.
+          ./linuxdeploy-x86_64.AppImage --appdir BevyExplorer.AppDir --create-desktop-file \
             --executable=../../target/release/decentra-bevy \
             --executable=../../target/release/dcl_deno_ipc \
             --executable=../../target/release/decentra-bevy-cef \
             --exclude-library="libxkbcommon*" \
             --icon-file=decentra-bevy.png
-          mv ./decentra-bevy-x86_64.AppImage ${{ env.APPIMAGE_FILE }}
+          python3 ../../../../../tooling/uuav/stage-dist.py linux-x86_64 BevyExplorer.AppDir/usr/bin
+          readelf -d BevyExplorer.AppDir/usr/bin/uuav-helper | grep -E 'R(UN)?PATH' | tee runpath.txt
+          grep -q '\$ORIGIN' runpath.txt
+          ./appimagetool-x86_64.AppImage --runtime-file runtime-x86_64 BevyExplorer.AppDir ${{ env.APPIMAGE_FILE }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Collect desktop artifacts

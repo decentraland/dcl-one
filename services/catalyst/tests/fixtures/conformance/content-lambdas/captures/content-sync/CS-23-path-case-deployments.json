@@ -1,0 +1,18 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/content/Deployments?limit=1",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "<elided: same bytes as the trailing-slash capture taken one second earlier>"
+  },
+  "note": "Body elided: it is the newest deployment, a user profile."
+}

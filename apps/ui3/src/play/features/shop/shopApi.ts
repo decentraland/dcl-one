@@ -1,10 +1,10 @@
-// Client for the public marketplace catalog (marketplace-api.<base domain>/v1/catalog). Buying is a
+// Client for the public marketplace catalog (<marketplace api>/v1/catalog). Buying is a
 // wallet transaction, so purchases finish on the web marketplace (as in Unity).
 
-import { BASE_DOMAIN, ONE_GATEWAY_HOST, hostUrl, siteUrl } from '../../lib/baseDomain'
+import { BASE_DOMAIN, ONE_GATEWAY_HOST, serviceUrl, siteUrl } from '../../lib/baseDomain'
 import { withUtm } from '../../lib/utm'
 
-const CATALOG_API = hostUrl('marketplace-api', '/v1/catalog')
+const CATALOG_API = `${serviceUrl('marketplaceApi')}/v1/catalog`
 const MARKETPLACE = siteUrl('/marketplace')
 export const SHOP_PAGE_SIZE = 24
 

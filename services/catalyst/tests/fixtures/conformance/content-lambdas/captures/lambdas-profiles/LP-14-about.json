@@ -1,0 +1,82 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/about",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "964"
+    },
+    "body": {
+      "healthy": true,
+      "content": {
+        "healthy": true,
+        "version": "8.3.2",
+        "synchronizationStatus": "Syncing",
+        "commitHash": "a416565db1e705cff9523540a2578af642598a29",
+        "publicUrl": "https://peer-ec1.decentraland.org/content/"
+      },
+      "lambdas": {
+        "healthy": true,
+        "version": "4.14.2",
+        "commitHash": "02a37f5d88fb895339c20e84c2470be68cdf3f57",
+        "publicUrl": "https://peer-ec1.decentraland.org/lambdas/"
+      },
+      "configurations": {
+        "networkId": 1,
+        "globalScenesUrn": [],
+        "scenesUrn": [],
+        "realmName": "hephaestus",
+        "map": {
+          "minimapEnabled": true,
+          "sizes": [
+            {
+              "left": -150,
+              "top": 150,
+              "right": 150,
+              "bottom": -150
+            },
+            {
+              "left": 62,
+              "top": 158,
+              "right": 162,
+              "bottom": 151
+            },
+            {
+              "left": 151,
+              "top": 150,
+              "right": 163,
+              "bottom": 59
+            }
+          ],
+          "satelliteView": {
+            "version": "v1",
+            "baseUrl": "https://genesis.city/map/latest",
+            "suffixUrl": ".jpg",
+            "topLeftOffset": {
+              "x": -2,
+              "y": -6
+            }
+          },
+          "parcelView": {
+            "version": "v1",
+            "imageUrl": "https://api.decentraland.org/v1/minimap.png"
+          }
+        }
+      },
+      "bff": {
+        "healthy": true,
+        "protocolVersion": "1.0_0",
+        "userCount": 0,
+        "publicUrl": "/bff"
+      },
+      "acceptingUsers": true
+    }
+  }
+}

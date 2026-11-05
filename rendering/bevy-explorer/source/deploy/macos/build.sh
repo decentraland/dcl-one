@@ -48,7 +48,6 @@ mv AppIcon.icns "${APP_NAME}.app/Contents/Resources/AppIcon.icns"
 
 echo "Copy assets and binary"
 cp -a ../../assets "${APP_NAME}.app/Contents/MacOS/"
-cp -a ../../libs "${APP_NAME}.app/Contents/"
 cp -a ../../decentra-bevy "${APP_NAME}.app/Contents/MacOS/${APP_NAME}"
 cp -a ../../LICENSE "${APP_NAME}.app/Contents/MacOS/"
 
@@ -65,11 +64,26 @@ if [ -f ../../target/release/decentra-bevy-cef ]; then
 fi
 
 
-for LIBRARY in $APP_NAME.app/Contents/libs/*.dylib; do
+# The video helper and its FFmpeg: spawned as a sibling of the main binary, the libraries
+# resolve from the helper's own directory. Signed before the app seal like the CEF helper.
+echo "Stage the UUAV runtime set"
+python3 ../../../../../tooling/uuav/stage-dist.py macos-universal "${APP_NAME}.app/Contents/MacOS"
+# the license texts are not code: they go with the other resources
+mkdir -p "${APP_NAME}.app/Contents/Resources"
+mv "${APP_NAME}.app/Contents/MacOS"/LICENSE-*.txt "${APP_NAME}.app/Contents/Resources/"
+for LIBRARY in "${APP_NAME}.app/Contents/MacOS"/*.dylib; do
     echo "Signing lib $LIBRARY"
     codesign --remove-signature "$LIBRARY"
-    codesign --force --verify --verbose --sign "Developer ID Application: $MACOS_DEVELOPER_ID" "$LIBRARY"
+    codesign --force --verify --options runtime --verbose --sign "Developer ID Application: $MACOS_DEVELOPER_ID" "$LIBRARY"
 done
+echo "Sign the video helper"
+# hardened runtime and no entitlements: it parses untrusted media and must not take the app's
+# JIT, library-validation or dyld-environment allowances
+codesign --force --verify --options runtime --verbose --sign "Developer ID Application: $MACOS_DEVELOPER_ID" "${APP_NAME}.app/Contents/MacOS/uuav-helper"
+
+echo "Sign the scene runtime sidecar"
+# runs V8: the app's entitlements (JIT, unsigned executable memory)
+codesign --entitlements entitlements.plist --force --verify --options runtime --verbose --sign "Developer ID Application: $MACOS_DEVELOPER_ID" "${APP_NAME}.app/Contents/MacOS/dcl_deno_ipc"
 
 # best-effort: the CEF framework and helper must be signed before the app seal. A notarized CEF
 # app formally wants the helper as its own .app bundle with restricted entitlements; this flat
@@ -77,15 +91,20 @@ done
 if [ -d "${APP_NAME}.app/Contents/Frameworks/Chromium Embedded Framework.framework" ]; then
     echo "Sign CEF framework + helper"
     codesign --force --verbose --sign "Developer ID Application: $MACOS_DEVELOPER_ID" "${APP_NAME}.app/Contents/Frameworks/Chromium Embedded Framework.framework"
-    codesign --force --verify --options runtime --verbose --sign "Developer ID Application: $MACOS_DEVELOPER_ID" "${APP_NAME}.app/Contents/MacOS/${APP_NAME}-cef"
+    # the renderer helper runs Chromium's JIT: the app's entitlements
+    codesign --entitlements entitlements.plist --force --verify --options runtime --verbose --sign "Developer ID Application: $MACOS_DEVELOPER_ID" "${APP_NAME}.app/Contents/MacOS/${APP_NAME}-cef"
 fi
 
 echo "Sign the main binary"
-codesign --entitlements entitlements.plist --deep --force --verify --options runtime --verbose --sign "Developer ID Application: $MACOS_DEVELOPER_ID" "$APP_NAME.app"
+# no --deep: every nested executable above carries its own signature and entitlements, and a
+# deep signature would re-sign them all with the app's
+codesign --entitlements entitlements.plist --force --verify --options runtime --verbose --sign "Developer ID Application: $MACOS_DEVELOPER_ID" "$APP_NAME.app"
 
 echo "Checking is signed"
 codesign --verify --verbose "$APP_NAME.app"
 codesign --display --entitlements :- $APP_NAME.app
+echo "The video helper's entitlements (expected: none)"
+codesign --display --entitlements :- "$APP_NAME.app/Contents/MacOS/uuav-helper"
 
 echo "Notarize app"
 ditto -c -k --sequesterRsrc --keepParent "$APP_NAME.app" "$APP_NAME.zip"

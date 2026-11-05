@@ -2,6 +2,7 @@
 // status dot. Shared across chat bubbles, member rows, friends, and the profile.
 
 import { useSyncExternalStore } from 'react'
+import { nativeProfileImage } from '../lib/baseDomain'
 import styles from './Avatar.module.css'
 
 /** A failed picture is probed again after each of these: a fresh profile's snapshot URL is published
@@ -82,7 +83,7 @@ function initialOf(name: string): string {
 }
 
 export function Avatar({
-  src,
+  src: snapshot,
   name,
   color = 'var(--fill-4)',
   size = 32,
@@ -91,6 +92,7 @@ export function Avatar({
   dotPosition = 'bottom',
   className = ''
 }: AvatarProps): React.JSX.Element {
+  const src = nativeProfileImage(snapshot)
   const isFailed = useSyncExternalStore(subscribe, () => src != null && failedAttempts.has(src))
   const showImg = src && !isFailed
   const dot = Math.max(6, Math.round(size * (dotPosition === 'top' ? 0.15 : 0.18)))
