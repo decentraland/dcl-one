@@ -38,16 +38,40 @@ jobs:
           GH_REPO: ${{ github.repository }}
           SOURCE_RUN: ${{ github.event.workflow_run.id }}
         run: python3 tooling/bevy-ci.py source --consumer images
-  build:
+  arches:
+    # PRs build amd64 only unless an input that can differ by architecture changes.
     if: github.event_name != 'workflow_run'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 2
+          sparse-checkout: .github
+          persist-credentials: false
+      - id: select
+        run: |
+          both='[{"arch":"amd64","runner":"ubuntu-26.04"},{"arch":"arm64","runner":"ubuntu-26.04-arm"}]'
+          matrix=$both
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && git diff --quiet HEAD^1 HEAD -- \
+              'flake.*' 'rust-toolchain*' .cargo infra/packages infra/containers/images.nix \
+              'services/catalyst/rust-toolchain*' 'services/catalyst/Cargo.*' 'services/catalyst/**/Cargo.toml' \
+              'library/**/Cargo.toml' apps/dcl-scene-cli/Cargo.toml \
+              apps/sites/package.json apps/sites/pnpm-lock.yaml apps/sites/pnpm-workspace.yaml apps/sites/.npmrc \
+              'tooling/image-*' .github/workflows/apis-sites-images.yml; then
+            matrix='[{"arch":"amd64","runner":"ubuntu-26.04"}]'
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "Image architectures: $matrix"
+  build:
+    needs: arches
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            runner: ubuntu-26.04
-          - arch: arm64
-            runner: ubuntu-26.04-arm
+        include: ${{ fromJSON(needs.arches.outputs.matrix) }}
     # Cancel only compilation; publishing holds a separate non-cancelable slot.
     concurrency:
       group: apis-sites-build-${{ github.event_name }}-${{ github.ref }}-${{ matrix.arch }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || '' }}
@@ -77,6 +101,13 @@ jobs:
           python3 -m unittest discover -s tooling/tests -p 'test_image_publish.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_image_cache.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_ci_publication.py' -v
+      - name: Require the reviewed Sites HUD before compiling
+        run: |
+          locked=$(python3 -c 'import json; print(json.load(open("rendering/bevy-explorer/upstream.lock.json"))["hud_source_sha256"])')
+          if [ "$(python3 tooling/play-artifact.py hud-inputs)" != "$locked" ]; then
+            echo "::error::Sites HUD adaptation must be reviewed against the current Explorer HUD source"
+            exit 1
+          fi
       - name: Validate packaged docs before compiling applications
         run: nix build 'git+file:.?lfs=1#sites.docsContent' --no-link -L
       - name: Identify exact Nix cache inputs
@@ -135,8 +166,9 @@ jobs:
             rm -rf "$cache"
           done
           df -h /
-      - name: Build the complete Sites toolchain
-        run: nix build .#sites-toolchain --no-link -L
+      - name: Build the complete Sites toolchain and dependencies
+        # runtime-deps, unlike the fixed-output sites-deps, rebuilds when the lockfile changes.
+        run: nix build .#sites-toolchain .#sites-runtime-deps --no-link -L
       - name: Build the APIs image
         run: |
           mkdir -p .cache/images
