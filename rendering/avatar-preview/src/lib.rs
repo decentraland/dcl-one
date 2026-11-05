@@ -1,6 +1,9 @@
 //! Avatar preview renderer: the Explorer's avatar look as a standalone, single-threaded wasm
 //! module. It boots the shared Explorer plugins (embedded shaders, scene material, collectibles
-//! over ipfs, the avatar renderer) and renders one avatar from a body shape and wearable urns.
+//! over ipfs, the avatar renderer) and renders one avatar that the page drives through the host
+//! surface in `host` (commands in, events out).
+
+mod host;
 
 use assets::EmbedAssetsPlugin;
 use avatar::{AvatarRenderPlugin, AvatarSelection, AvatarShape};
@@ -12,82 +15,44 @@ use bevy::{
     window::WindowResolution,
 };
 use boimp::bake::ImposterPhaseItem;
-use collectibles::{base_wearables, wearables::WearableUrn, CollectiblesPlugin};
+use collectibles::CollectiblesPlugin;
 use common::structs::{AppConfig, AvatarDynamicState, PreviewMode, ShowOutOfBounds};
-use dcl_component::proto_components::sdk::components::PbAvatarShape;
 use ipfs::{EndpointConfig, IpfsIoPlugin, IpfsResource, ServerAbout};
 use scene_material::SceneBoundPlugin;
 
-/// What the page asked for.
+pub use host::{Command, Event, OrbitCamera};
+use host::{HostPlugin, PreviewCamera};
+
+/// Where content comes from.
 #[derive(Resource, Clone, Debug)]
 pub struct PreviewRequest {
-    pub body_shape: WearableUrn,
-    pub wearables: Vec<String>,
     pub content_url: String,
     pub lambdas_url: String,
 }
 
-/// Diagnostic switches from the page (`?flags=cube`).
-#[derive(Resource, Default, Debug)]
-pub struct PreviewFlags {
-    /// spawn a reference cube at the origin
-    pub cube: bool,
-}
-
 /// The root of the previewed avatar.
 #[derive(Component)]
-struct PreviewAvatar;
+pub struct PreviewAvatar;
 
+/// Starts the renderer on `canvas` (a CSS selector). `base_domain` picks the catalyst
+/// (`peer.<domain>`); `on_event` receives every event as a JSON string. The avatar appears with
+/// the first `outfit` command (`preview_command`).
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
-pub fn start(
-    canvas: String,
-    body_shape: Option<String>,
-    wearables: Option<String>,
-    base_domain: Option<String>,
-    flags: Option<String>,
-) {
+pub fn start(canvas: String, base_domain: Option<String>, on_event: js_sys::Function) {
     console_error_panic_hook::set_once();
-    let flags = flags.unwrap_or_default();
-    let flags = PreviewFlags {
-        cube: flags.split(',').any(|f| f == "cube"),
-    };
-    let wearables = wearables
-        .unwrap_or_default()
-        .split(',')
-        .map(str::trim)
-        .filter(|urn| !urn.is_empty())
-        .map(str::to_owned)
-        .collect();
-    run(
-        &canvas,
-        body_shape.as_deref(),
-        wearables,
-        base_domain.as_deref(),
-        flags,
-    );
+    host::set_event_callback(on_event);
+    run(&canvas, base_domain.as_deref());
 }
 
-pub fn run(
-    canvas: &str,
-    body_shape: Option<&str>,
-    wearables: Vec<String>,
-    base_domain: Option<&str>,
-    flags: PreviewFlags,
-) {
-    info!("{flags:?}");
+pub fn run(canvas: &str, base_domain: Option<&str>) {
     if let Some(domain) = base_domain {
         if let Err(e) = common::base_domain::set(domain) {
             error!("{e}");
         }
     }
     let catalyst = common::base_domain::url(common::base_domain::Service::Catalyst, "");
-    let body_shape = body_shape
-        .and_then(|urn| WearableUrn::new(urn).ok())
-        .unwrap_or_else(base_wearables::default_bodyshape_urn);
     let request = PreviewRequest {
-        body_shape,
-        wearables,
         content_url: format!("{catalyst}/content"),
         lambdas_url: format!("{catalyst}/lambdas"),
     };
@@ -100,6 +65,8 @@ pub fn run(
                     canvas: Some(canvas.to_owned()),
                     fit_canvas_to_parent: true,
                     resolution: WindowResolution::new(512.0, 768.0),
+                    // the page decides the background: a colour, or none through the canvas
+                    transparent: true,
                     ..default()
                 }),
                 ..default()
@@ -131,6 +98,7 @@ pub fn run(
         bevy_kira_audio::AudioPlugin,
         CollectiblesPlugin,
         AvatarRenderPlugin,
+        HostPlugin,
     ));
     app.insert_resource(AppConfig::default())
         .insert_resource(PreviewMode::default())
@@ -140,10 +108,9 @@ pub fn run(
             brightness: 575.0,
             ..default()
         })
-        .insert_resource(request)
-        .insert_resource(flags);
-    app.add_systems(Startup, (point_at_catalyst, setup_stage, spawn_avatar));
-    app.add_systems(Update, (spin, debug_meshes));
+        .insert_resource(request);
+    app.add_systems(Startup, (point_at_catalyst, setup_stage));
+    app.add_systems(Update, spawn_avatar_on_first_outfit);
     app.run();
 }
 
@@ -186,19 +153,7 @@ fn point_at_catalyst(ipfs: Res<IpfsResource>, request: Res<PreviewRequest>) {
     info!("content server: {}", request.content_url);
 }
 
-fn setup_stage(
-    mut commands: Commands,
-    flags: Res<PreviewFlags>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    if flags.cube {
-        commands.spawn((
-            Mesh3d(meshes.add(Cuboid::new(0.5, 0.5, 0.5))),
-            MeshMaterial3d(materials.add(Color::srgb(0.2, 0.9, 0.3))),
-            Transform::from_xyz(0.0, 1.0, 0.0),
-        ));
-    }
+fn setup_stage(mut commands: Commands, orbit: Res<OrbitCamera>) {
     commands.spawn((
         Camera3d::default(),
         Camera {
@@ -206,13 +161,10 @@ fn setup_stage(
             clear_color: ClearColorConfig::Custom(Color::srgb(0.16, 0.14, 0.2)),
             ..default()
         },
-        Projection::from(PerspectiveProjection {
-            fov: 26.2f32.to_radians(),
-            near: 0.05,
-            ..default()
-        }),
-        Transform::from_xyz(0.0, 1.1, 6.0).looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
+        host::projection_for(&orbit),
+        Transform::from_xyz(0.0, 1.0, 6.0).looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
         platform::default_camera_components(),
+        PreviewCamera,
     ));
     commands.spawn((
         DirectionalLight {
@@ -224,18 +176,27 @@ fn setup_stage(
     ));
 }
 
-/// The avatar: a selection the Explorer's renderer dresses, animates and emotes, exactly as a
-/// scene-placed avatar in the world, minus the scene.
-fn spawn_avatar(mut commands: Commands, request: Res<PreviewRequest>) {
-    let shape = PbAvatarShape {
-        id: "preview".to_owned(),
-        body_shape: Some(request.body_shape.as_str().to_owned()),
-        wearables: request.wearables.clone(),
-        ..Default::default()
+/// The avatar entity exists from the first `outfit` command on: a selection the Explorer's
+/// renderer dresses, animates and emotes, exactly as a scene-placed avatar in the world, minus
+/// the scene. `host::apply_commands` updates its shape afterwards.
+fn spawn_avatar_on_first_outfit(
+    mut commands: Commands,
+    avatars: Query<(), With<PreviewAvatar>>,
+    mut pending: ResMut<host::PendingOutfit>,
+) {
+    if !avatars.is_empty() {
+        pending.0 = None;
+        return;
+    }
+    let Some(shape) = pending.0.take() else {
+        return;
     };
+    info!(
+        "avatar {:?} with {} wearables",
+        shape.body_shape,
+        shape.wearables.len()
+    );
     commands.spawn((
-        // the shape component itself, as on the Explorer's player and NPC entities: the
-        // attach-point observer keys on it
         AvatarShape(shape.clone()),
         AvatarSelection {
             scene: None,
@@ -248,38 +209,4 @@ fn spawn_avatar(mut commands: Commands, request: Res<PreviewRequest>) {
         Visibility::default(),
         PreviewAvatar,
     ));
-    info!(
-        "avatar {} with {} wearables",
-        request.body_shape.as_str(),
-        request.wearables.len()
-    );
-}
-
-/// Once, a few seconds in: what every mesh looks like to the renderer.
-#[allow(clippy::type_complexity)]
-fn debug_meshes(
-    mut frames: Local<u32>,
-    meshes: Query<(Entity, Option<&Name>, &ViewVisibility, &Mesh3d)>,
-    assets: Res<Assets<Mesh>>,
-) {
-    *frames += 1;
-    if *frames != 300 {
-        return;
-    }
-    for (entity, name, view, mesh) in meshes.iter() {
-        let data = assets.get(&mesh.0);
-        info!(
-            "mesh {entity} {:?} view={} usage={:?} verts={:?}",
-            name.map(|n| n.as_str()),
-            view.get(),
-            data.map(|d| d.asset_usage),
-            data.map(|d| d.count_vertices()),
-        );
-    }
-}
-
-fn spin(time: Res<Time>, mut avatars: Query<&mut Transform, With<PreviewAvatar>>) {
-    for mut transform in avatars.iter_mut() {
-        transform.rotate_y(time.delta_secs() * 0.4);
-    }
 }
