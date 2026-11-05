@@ -32,7 +32,6 @@
 //! resets them. Each bucket tracks at most [`MAX_SOURCES`] clients; a new
 //! client past that evicts the oldest window.
 
-use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
@@ -46,6 +45,7 @@ use ipnet::IpNet;
 
 use super::SharedState;
 use super::errors::json_error;
+use super::fixed_windows::FixedWindows;
 use crate::shared::client_ip::{is_trusted_proxy, single_real_ip};
 
 /// Clients each bucket tracks at once.
@@ -84,22 +84,10 @@ impl Default for Config {
     }
 }
 
-struct Window {
-    started: Instant,
-    count: u32,
-}
-
 /// One fixed-window budget per client key.
 struct Bucket {
     max: u32,
-    window: Duration,
-    state: Mutex<Windows>,
-}
-
-#[derive(Default)]
-struct Windows {
-    by_key: HashMap<String, Window>,
-    by_age: VecDeque<String>,
+    state: Mutex<FixedWindows>,
 }
 
 /// What a bucket answered: its limit, what is left and the seconds until its
@@ -116,42 +104,15 @@ impl Bucket {
     fn new(max: u32, window: Duration) -> Self {
         Self {
             max,
-            window,
-            state: Mutex::new(Windows::default()),
+            state: Mutex::new(FixedWindows::new(window, MAX_SOURCES)),
         }
     }
 
     fn consume(&self, key: &str, now: Instant) -> Verdict {
         let mut state = self.state.lock();
-        while let Some(oldest) = state.by_age.front() {
-            match state.by_key.get(oldest) {
-                Some(w) if now.saturating_duration_since(w.started) < self.window => break,
-                _ => {
-                    let oldest = state.by_age.pop_front().expect("front exists");
-                    state.by_key.remove(&oldest);
-                }
-            }
-        }
-        if !state.by_key.contains_key(key) {
-            if state.by_key.len() >= MAX_SOURCES
-                && let Some(oldest) = state.by_age.pop_front()
-            {
-                state.by_key.remove(&oldest);
-            }
-            state.by_key.insert(
-                key.to_string(),
-                Window {
-                    started: now,
-                    count: 0,
-                },
-            );
-            state.by_age.push_back(key.to_string());
-        }
-        let w = state.by_key.get_mut(key).expect("inserted above");
-        let left = self
-            .window
-            .saturating_sub(now.saturating_duration_since(w.started));
-        let reset_secs = left.as_secs() + u64::from(left.subsec_nanos() > 0);
+        state.prune(now);
+        let length = state.length();
+        let w = state.window(key, now);
         let allowed = w.count < self.max;
         if allowed {
             w.count += 1;
@@ -160,7 +121,7 @@ impl Bucket {
             allowed,
             limit: self.max,
             remaining: self.max - w.count,
-            reset_secs: reset_secs.max(1),
+            reset_secs: w.reset_secs(length, now),
         }
     }
 }
@@ -557,10 +518,10 @@ mod tests {
         for i in 1..MAX_SOURCES {
             assert!(bucket.consume(&format!("k{i}"), now).allowed);
         }
-        assert_eq!(bucket.state.lock().by_key.len(), MAX_SOURCES);
+        assert_eq!(bucket.state.lock().len(), MAX_SOURCES);
         assert!(bucket.consume("newest", now).allowed);
-        assert_eq!(bucket.state.lock().by_key.len(), MAX_SOURCES);
-        assert!(!bucket.state.lock().by_key.contains_key("oldest"));
+        assert_eq!(bucket.state.lock().len(), MAX_SOURCES);
+        assert!(bucket.state.lock().get("oldest").is_none());
         assert!(!bucket.consume("k1", now).allowed, "k1 keeps its window");
         assert!(
             bucket.consume("oldest", now).allowed,
