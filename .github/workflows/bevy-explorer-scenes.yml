@@ -147,16 +147,19 @@ jobs:
       - name: Prepare screenshot output directory
         # References are embedded; the upstream comparator writes captures relative to cwd.
         run: mkdir -p assets/images/screenshots
-      - name: Test Scenes
+      - name: Run the four functional scenes for the build benchmark
         id: scenes
         # Leave time to preserve diagnostics if scene execution stalls.
         timeout-minutes: 20
         env:
-          SCENE_PARCELS: ${{ inputs.suite == 'snapshots' && '52,-62;52,-64;52,-66' || '52,-52;52,-54;52,-56;52,-58;52,-60;52,-62;52,-64;52,-66;52,-68;54,-52;54,-54;54,-56;54,-58;54,-60' }}
+          SCENE_PARCELS: '52,-52;52,-54;52,-56;52,-58'
         run: |
           set -o pipefail
           xvfb-run -s "-screen 0 320x240x24" target/release/decentra-bevy --realm https://decentraland.github.io/scene-explorer-tests/scene-explorer-tests --test_scenes "$SCENE_PARCELS" --no_fog --distance 1 --scene_log_to_console 2>&1 | tee scene-tests.log
-          grep -Eq 'all tests passed!|all failures were allowed' scene-tests.log
+          grep -Fq 'all tests passed!' scene-tests.log
+          passed=$(grep -Ec 'automatic_testing: test .*: true \[[0-9]+ remaining\]' scene-tests.log)
+          echo "Functional scene benchmark: $passed passing assertions across four parcels"
+          test "$passed" -eq 24
       # Scene video through the UUAV player: the end-to-end suite's `video` scene, played by the
       # standalone just built and driven through its console under xvfb
       # (apps/bevy-explorer/e2e/specs/visual/video.test.ts), in software decode (the hosted runner
