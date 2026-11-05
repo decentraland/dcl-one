@@ -14,6 +14,7 @@ on:
       - tooling/dev-regressions*
       - tooling/uuav/**
       - tooling/bevy-ci.py
+      - tooling/bevy-mtimes.py
       - tooling/tests/test_bevy_*.py
       - .github/workflows/bevy-explorer-scenes.yml
   workflow_dispatch:
@@ -104,6 +105,8 @@ jobs:
           cache-on-failure: true
           workspaces: rendering/bevy-explorer/source -> target
           key: bevy-explorer-native
+      - name: Restore the vendored Bevy's cached file times
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install protoc
         run: python ../../../apps/bevy-explorer/install-protoc.py
       - name: Install Linux build dependencies
@@ -129,6 +132,8 @@ jobs:
         run: cargo build --release --locked --timings -p dcl_deno_ipc
       - name: Build the graphical test engine
         run: cargo build --release --locked --timings --bin decentra-bevy
+      - name: Record the vendored Bevy's file times for the cache
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Stage the UUAV runtime set
         id: engine
         # the engine spawns the video helper as a sibling (library/uuav/dist, Git LFS)

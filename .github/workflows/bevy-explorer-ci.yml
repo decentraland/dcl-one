@@ -9,6 +9,7 @@
       - apps/bevy-explorer/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/bevy-mtimes.py
       - tooling/play-artifact.py
       - tooling/tests/test_play_*.py
       - tooling/tests/test_bevy_*.py
@@ -40,6 +41,7 @@
       - apps/bevy-explorer/**
       - tooling/dev-regressions*
       - tooling/bevy-ci.py
+      - tooling/bevy-mtimes.py
       - tooling/play-artifact.py
       - tooling/tests/test_play_*.py
       - tooling/tests/test_bevy_*.py
@@ -191,6 +193,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: rendering/bevy-explorer/source -> target
           key: bevy-explorer-native-ci-test
+      - name: Restore the vendored Bevy's cached file times
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install protoc
         if: matrix.os != 'self-hosted-windows'
         run: python ../../../apps/bevy-explorer/install-protoc.py
@@ -277,6 +281,8 @@ jobs:
             export RUSTC_WRAPPER=
             cargo build --package benchmark --release --locked
           fi
+      - name: Record the vendored Bevy's file times for the cache
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Name the benchmark runner
         id: benchmark
         run: |
@@ -336,6 +342,8 @@ jobs:
           key: bevy-explorer-headless-linux-x64
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: rendering/bevy-explorer/source -> target
+      - name: Restore the vendored Bevy's cached file times
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install protoc
         run: python ../../../apps/bevy-explorer/install-protoc.py
       - name: Install build dependencies
@@ -347,6 +355,8 @@ jobs:
         run: ../../../apps/bevy-explorer/install-clang.sh
       - name: Build headless engine and sidecar
         run: python3 ../../../apps/bevy-explorer/build-headless.py
+      - name: Record the vendored Bevy's file times for the cache
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Strip the Linux distribution before testing
         run: strip ../../../apps/bevy-explorer/dist/headless/native/headless ../../../apps/bevy-explorer/dist/headless/native/dcl_deno_ipc
       - name: Smoke test
@@ -469,6 +479,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           workspaces: rendering/bevy-explorer/source -> target
           key: bevy-explorer-native
+      - name: Restore the vendored Bevy's cached file times
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install protoc
         run: python ../../../apps/bevy-explorer/install-protoc.py
       - name: Install Linux build dependencies
@@ -480,6 +492,8 @@ jobs:
         run: ../../../apps/bevy-explorer/install-clang.sh
       - run: cargo clippy --locked -- -D warnings
         shell: bash
+      - name: Record the vendored Bevy's file times for the cache
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
     defaults:
       run:
         working-directory: rendering/bevy-explorer/source
@@ -577,8 +591,11 @@ jobs:
             ~/.cargo/git/db/
             rendering/bevy-explorer/source/target/
           key: bevy-explorer-web-${{ hashFiles('rendering/bevy-explorer/source/Cargo.lock', 'rendering/bevy-explorer/source/Cargo.toml',
-            'rendering/bevy-explorer/source/.cargo/config.toml') }}
+            'rendering/bevy-explorer/source/.cargo/config.toml', 'rendering/bevy-explorer/bevy/**') }}
           restore-keys: bevy-explorer-web-
+      - name: Restore the vendored Bevy's cached file times
+        if: steps.engine-cache.outputs.cache-matched-key == ''
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
       - name: Install protoc
         if: steps.engine-cache.outputs.cache-matched-key == ''
         run: python ../../../apps/bevy-explorer/install-protoc.py
@@ -592,6 +609,9 @@ jobs:
         run: sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py libasound2-dev libudev-dev clang
       - name: Build and test the local web app
         run: python3 ../../../apps/bevy-explorer/build-web.py --engine-cache ../../../.cache/bevy-engine
+      - name: Record the vendored Bevy's file times for the cache
+        if: steps.engine-cache.outputs.cache-matched-key == ''
+        run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Save wasm target cache
         if: github.ref == 'refs/heads/main' && steps.engine-cache.outputs.cache-matched-key == '' && steps.wasm-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
