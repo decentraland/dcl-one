@@ -26,9 +26,7 @@ use crate::chain_index::source::{Source, unavailable};
 use crate::chain_index::{ChainIndex, land_graph};
 use crate::shared::http_util::{bad_request, fetcher_error, internal_server_error, lambdas_error};
 use crate::shared::parcel::is_inside_world_limits;
-use crate::shared::query_params::{
-    NonPositivePolicy, OversizePolicy, Pagination, parse_pagination_with, parse_query_string,
-};
+use crate::shared::query_params::{JsPagination, js_parse_int, parse_query_string};
 use crate::shared::{cors, nul_guard};
 
 const COORDS_ERR: &str = "Coordinates X and Y must be valid numbers in a valid range";
@@ -118,6 +116,17 @@ pub(crate) fn validate_coords(x: &str, y: &str) -> Result<(i64, i64), Box<Respon
     Ok((xi, yi))
 }
 
+/// The single-parcel routes' coordinates as lamb2 reads them: `parseInt(x)`
+/// (white space, a sign, a `0x` prefix; anything after the digits ignored),
+/// then the same [`is_inside_world_limits`]. The batch keeps
+/// [`validate_coords`].
+fn validate_path_coords(x: &str, y: &str) -> Result<(i64, i64), Box<Response>> {
+    match (js_parse_int(x, true), js_parse_int(y, true)) {
+        (Some(xi), Some(yi)) if is_inside_world_limits(xi, yi) => Ok((xi, yi)),
+        _ => Err(Box::new(bad_request(COORDS_ERR))),
+    }
+}
+
 /// `GET /lambdas/parcels/{x}/{y}/operators`: the subject and the four legs
 /// from the index; 404 for an unindexed parcel; before the index is ready
 /// the land-manager subgraph, as the old route (owner-only from the
@@ -127,7 +136,7 @@ async fn parcel_operators(
     State(state): State<SharedState>,
     Path((x, y)): Path<(String, String)>,
 ) -> Response {
-    let (xi, yi) = match validate_coords(&x, &y) {
+    let (xi, yi) = match validate_path_coords(&x, &y) {
         Ok(c) => c,
         Err(resp) => return *resp,
     };
@@ -169,8 +178,8 @@ async fn parcel_operators(
 }
 
 /// `GET /lambdas/users/{address}/lands-permissions`: the parcels whose own
-/// update operator is `address`, paged (no `pageSize` maximum, as lamb2's
-/// `Number.MAX_VALUE`; a non-positive page or size clamps to 1),
+/// update operator is `address`, paged as lamb2's `fetchAndPaginate`
+/// ([`JsPagination`], no `pageSize` maximum: `Number.MAX_VALUE`),
 /// `totalAmount` from the same query. A failed LAND subgraph answers
 /// lamb2's 502 `FetcherError`.
 async fn user_lands_permissions(
@@ -180,19 +189,10 @@ async fn user_lands_permissions(
 ) -> Response {
     let update_operator = addr.to_lowercase();
     let params = parse_query_string(req.uri().query().unwrap_or(""));
-    let p = parse_pagination_with(
-        &params,
-        i64::MAX,
-        OversizePolicy::Clamp,
-        NonPositivePolicy::ClampToOne,
-    )
-    .unwrap_or(Pagination {
-        page_size: 1,
-        page_num: 1,
-        offset: 0,
-        limit: 1,
-    });
-    let offset = p.page_num.saturating_sub(1).saturating_mul(p.page_size);
+    let p = match JsPagination::parse(&params, i64::MAX) {
+        Ok(p) => p,
+        Err(msg) => return bad_request(&msg),
+    };
     if state.ready().await.is_none() {
         let Some(market) = land_graph_reader(&state) else {
             return not_ready();
@@ -200,12 +200,7 @@ async fn user_lands_permissions(
         return match land_graph::parcels_by_update_operator(market, &update_operator).await {
             Ok(elements) => {
                 let total = elements.len() as i64;
-                let page: Vec<Value> = elements
-                    .iter()
-                    .skip(offset.max(0) as usize)
-                    .take(p.page_size.max(0) as usize)
-                    .cloned()
-                    .collect();
+                let page: Vec<Value> = elements[p.range(elements.len())].to_vec();
                 Json(json!({ "elements": page, "totalAmount": total, "pageNum": p.page_num, "pageSize": p.page_size })).into_response()
             }
             Err(e) => {
@@ -214,11 +209,27 @@ async fn user_lands_permissions(
             }
         };
     }
-    match state
-        .store()
-        .parcels_with_update_operator_page(&update_operator, p.page_size, offset)
-        .await
-    {
+    let store = state.store();
+    // A negative bound counts from the end of the list: its length first.
+    let window = match p.sql_window() {
+        Some(window) => Ok(window),
+        None => store
+            .parcels_with_update_operator_page(&update_operator, 0, 0)
+            .await
+            .map(|(_, total)| {
+                let r = p.range(total.max(0) as usize);
+                (r.start as i64, r.len() as i64)
+            }),
+    };
+    let page = match window {
+        Ok((offset, limit)) => {
+            store
+                .parcels_with_update_operator_page(&update_operator, limit, offset)
+                .await
+        }
+        Err(e) => Err(e),
+    };
+    match page {
         Ok((parcels, total)) => {
             let elements: Vec<Value> = parcels
                 .into_iter()
@@ -237,7 +248,7 @@ async fn user_lands_permissions(
         }
         Err(e) => {
             tracing::error!(update_operator = %update_operator, error = %e, "land-authz: lands-permissions lookup failed");
-            internal_server_error()
+            upstream_internal_error()
         }
     }
 }
@@ -280,14 +291,15 @@ async fn parcel_permissions(
     State(state): State<SharedState>,
     Path((address, x, y)): Path<(String, String, String)>,
 ) -> Response {
-    let (xi, yi) = match validate_coords(&x, &y) {
+    let (xi, yi) = match validate_path_coords(&x, &y) {
         Ok(c) => c,
         Err(resp) => return *resp,
     };
-    let addr = address.to_lowercase();
-    if !is_address(&addr) {
+    // `EthAddress.validate`: `^0x[a-fA-F0-9]{40}$`, so `0X…` is refused.
+    if !(address.starts_with("0x") && is_address(&address)) {
         return bad_request("Address must be a valid Ethereum address");
     }
+    let addr = address.to_lowercase();
     if state.ready().await.is_none() {
         let Some(market) = land_graph_reader(&state) else {
             tracing::warn!(

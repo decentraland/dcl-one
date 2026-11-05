@@ -27,6 +27,16 @@ pub fn service_unavailable(message: &str) -> Response {
     )
 }
 
+/// lamb2's answer to an error its `errorHandler` does not map:
+/// `500 {"error":"Internal Server Error"}`, with no `message`.
+pub fn lambdas_internal_error() -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "error": "Internal Server Error" })),
+    )
+        .into_response()
+}
+
 pub fn internal_server_error() -> Response {
     lambdas_error(
         StatusCode::INTERNAL_SERVER_ERROR,
