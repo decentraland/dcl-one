@@ -132,14 +132,14 @@ Query parsing uses `qs.parse(..., {parseArrays:true, parameterLimit:2000, arrayL
 | `entityId` (repeatable) | Case-sensitive `entity_id = ANY(...)`. A single empty value (`?entityId=`) is absent, so no filter; an empty element in a list (`entityId=a&entityId=`) is kept. | The same (`qs_get_filter_array`). MATCH. |
 | `pointer` (repeatable) | Lowercased, then `entity_pointers && $pointers` (`deployments-repository/component.ts:118-121`). A single empty value (`?pointer=`) is absent, so no filter; an empty element in a list is kept. | Lowercased (`deployments.rs:139-142`); empty values as upstream (`qs_get_filter_array`). MATCH. |
 | `deployedBy` | **Not read by the handler.** `DeploymentFilters.deployedBy` exists in `deployment-types.ts:7`, but the handler never fills it. | Read, lowercased, and filtered with `LOWER(deployer_address) = ANY(...)` (`deployments.rs:144-147`, `queries.rs:540-543`). Also echoed in `filters.deployedBy` and in `next`. |
-| `onlyCurrentlyPointed` | `qsGetBoolean`: `undefined` when missing or empty; otherwise `=== 'true'`. When true, adds `deleter_deployment IS NULL`. | `qs_get_bool`: an empty value gives `Some(false)`, which is echoed as `"onlyCurrentlyPointed": false` where upstream omits the key. |
-| `from`, `to` | `parseInt(v, 10)`, so `10abc` → 10 and `1.5` → 1. A falsy value (0) adds no bound (`deployments-repository/component.ts:156-188`). | `str::parse::<i64>`, so `10abc` and `1.5` are ignored. `0` adds a `>= 0` bound, which returns the same rows. |
-| `offset` | `parseInt`. More than 5000 → 400. A negative value is treated as 0 (`logic/deployments/component.ts:237-239`). | Same, at `deployments.rs:195-199` and `queries.rs:30-35`. |
+| `onlyCurrentlyPointed` | `qsGetBoolean`: `undefined` when missing or empty; otherwise `=== 'true'`. When true, adds `deleter_deployment IS NULL`. | `qs_get_js_bool`, the same rule (`shared/src/query_params.rs`). MATCH (CS-08). |
+| `from`, `to` | `parseInt(v, 10)`, so `10abc` → 10 and `1.5` → 1. A falsy value (0) adds no bound (`deployments-repository/component.ts:156-188`). | `qs_get_js_number`, `parseInt`'s reading (`10abc` → 10, `1.5` → 1). `0` adds a `>= 0` bound, which returns the same rows. MATCH (CS-08). |
+| `offset` | `parseInt`. More than 5000 → 400. A negative value is treated as 0 (`logic/deployments/component.ts:237-239`). | Same (`deployments.rs` `parse_deployment_query_options`, `queries.rs`). |
 | `limit` | `parseInt`. A value of 1..500 is used as given; anything else (missing, 0, negative, more than 500) becomes **500** (`logic/deployments/component.ts:235-242`). | Same (`queries.rs:21-28`). |
 | `lastId` | Lowercased. Only used as a tiebreak on the bound in the direction of travel (`createOrClause`, `deployments-repository/component.ts:145-241`). | Lowercased. The tuple cursor is `(ts, lower(id)) < (ts of the lastId row, or T, lower(lastId))` (`queries.rs:374-453`). It returns the same rows, and it also handles sub-millisecond ties. |
-| `fields` | Comma split, **no trim**. Only `content`, `pointers`, `metadata` and `auditInfo` are kept, and unknown values are dropped silently. Empty or whitespace means the default `pointers,content,metadata`. | Same, but each item is trimmed, so `pointers, content` keeps `content` where upstream drops it (`deployments.rs:165-172`). |
-| `sortingField` | camelCase → snake_case; must be `local_timestamp` or `entity_timestamp`. An empty value is ignored. Any other value → 400 `Found an unrecognized sort field param`. | Same mapping. **An empty value gives a 400**, because `camel_to_snake("")` is not a valid field (`deployments.rs:174-183`). |
-| `sortingOrder` | `ASC` or `DESC`, case-sensitive. An empty value is ignored (`|| undefined`). | Case-sensitive. **An empty value gives a 400** (`deployments.rs:185-193`). |
+| `fields` | Comma split, **no trim**. Only `content`, `pointers`, `metadata` and `auditInfo` are kept, and unknown values are dropped silently. Empty or whitespace means the default `pointers,content,metadata`. | Same, untrimmed (`deployments.rs` `parse_deployment_query_options`). MATCH (CS-08). |
+| `sortingField` | camelCase → snake_case; must be `local_timestamp` or `entity_timestamp`. An empty value is ignored. Any other value → 400 `Found an unrecognized sort field param`. | Same mapping; an empty value is ignored (`deployments.rs` `parse_sort`). MATCH (CS-06). |
+| `sortingOrder` | `ASC` or `DESC`, case-sensitive. An empty value is ignored (`|| undefined`). | Case-sensitive; an empty value is ignored, a repeated one is a 400 (`deployments.rs` `parse_sort`). MATCH (CS-06). |
 
 **Filter caps and limits**
 
@@ -151,8 +151,8 @@ Query parsing uses `qs.parse(..., {parseArrays:true, parameterLimit:2000, arrayL
 **Validation order**
 
 - Upstream: entityType → offset → too many → sortingField → sortingOrder.
-- dcl-one: entityType → too many → sortingField → sortingOrder → offset.
-- The two only differ when a request has more than one error.
+- dcl-one: the same (`deployments.rs` `parse_deployment_query_options`; test
+  `offset_is_checked_before_the_caps_and_the_sort`) (CS-21).
 
 **Auth and rate limits**
 
@@ -167,11 +167,11 @@ Query parsing uses `qs.parse(..., {parseArrays:true, parameterLimit:2000, arrayL
 |---|---|---|---|---|---|---|
 | Success | 200 | Example below. | `content-type: application/json` (http-server default) in both; the dcl-one memo adds no header. | `get-deployments-handler.ts:136-139` | `deployments.rs` `get_deployments` | DIVERGENT: `deployedBy` filter. Field shape: see notes. |
 | Unknown entity type | 400 | `{"error":"Found an unrecognized entity type"}` | | `get-deployments-handler.ts:55-60` | `deployments.rs:130-135` | MATCH, `?entityType=` included (no filter, 200) |
-| `offset` > 5000 | 400 | `{"error":"Offset can't be higher than 5000. Please use the 'next' property for pagination."}` | | `:62-67` | `:188-192` | MATCH |
+| `offset` > 5000 | 400 | `{"error":"Offset can't be higher than 5000. Please use the 'next' property for pagination."}` | | `:62-67` | `deployments.rs` `parse_deployment_query_options` | MATCH |
 | More than 1000 values in a filter | 400 | `{"error":"Too many filter values; the maximum allowed per filter is 1000"}` | | `:69-78` | `:142-149` | MATCH |
-| Bad `sortingField` | 400 | `{"error":"Found an unrecognized sort field param"}` | | `:92-98` | `:167-176` | MATCH. An empty value differs. |
-| Bad `sortingOrder` | 400 | `{"error":"Found an unrecognized sort order param"}` | | `:99-105` | `:178-186` | MATCH. An empty value differs. |
-| Repeated `sortingOrder` | 400 upstream (the value is an array, so `asEnumValue` returns `unknown`) | as above | | `utils.ts:36-45` | dcl-one reads the first value and returns 200 | DIVERGENT, P2 |
+| Bad `sortingField` | 400 | `{"error":"Found an unrecognized sort field param"}` | | `:92-98` | `deployments.rs` `parse_sort` | MATCH; an empty value is ignored in both. A repeated value is upstream's 500 (`fromCamelCaseToSnakeCase` on an array); dcl-one reads the first |
+| Bad `sortingOrder` | 400 | `{"error":"Found an unrecognized sort order param"}` | | `:99-105` | `deployments.rs` `parse_sort` | MATCH; an empty value is ignored in both |
+| Repeated `sortingOrder` | 400 upstream (the value is an array, so `asEnumValue` returns `unknown`) | as above | | `utils.ts:36-45` | `deployments.rs` `parse_sort` | MATCH |
 | Query exceeds the time budget | 503 | `{"error":"deployments query exceeded server-side time budget; narrow the time range or filters"}`, no `Retry-After` | | none | `deployments.rs:75-85` | dcl-one only |
 | Database or unexpected error | 500 | `{"error":"Internal Server Error"}` | | `middlewares.ts:72-81` | `errors.rs` `AppError::Internal` | MATCH |
 
@@ -210,8 +210,8 @@ dcl-one `wire_types.rs:20-37`, `queries.rs:571-596`):
 - `metadata`:
   - upstream omits the key when the stored `{v}` is falsy (`row.entity_metadata ? .v : undefined`,
     then `metadata && ...`);
-  - dcl-one omits it when the column is NULL but emits `"metadata": null` when the stored value is
-    `{"v": null}` (`queries.rs:108-110`).
+  - dcl-one the same: a NULL column or a falsy `v` (`null`, `false`, `0`, `""`) leaves the key out
+    (`queries.rs` `js_truthy`) (CS-22).
 - `auditInfo`:
   - upstream: `{version, authChain, localTimestamp}`. `overwrittenBy` is never selected, so the key
     is always absent (`deployments-repository/component.ts:84-98`, `logic/deployments/component.ts:256-262`);
@@ -250,12 +250,13 @@ dcl-one `wire_types.rs:20-37`, `queries.rs:571-596`):
     from, to, fields (if not the default array instance), sortingField, sortingOrder, lastId, limit (raw request value, if truthy)`.
   - The timestamp written to `from` (ASC) or `to` (DESC) is the last row's `localTimestamp` or
     `entityTimestamp`, depending on the sort field.
-- dcl-one (`deployments.rs:237-310`, `shared/src/query_params.rs:74-92`):
-  - The same pairs, plus `deployedBy`.
-  - **Keys are sorted alphabetically.**
-  - `fields` is left out when the set equals the default, even when the client passed it explicitly.
+- dcl-one (`deployments.rs` `calculate_next_relative_path`, `shared/src/query_params.rs`
+  `to_ordered_query_string`):
+  - The same pairs in the same order, falsy values dropped, plus `deployedBy` after `entityId`.
+  - `fields` is sent whenever the client listed fields that survive the filter, the default set included.
   - Percent-encoding uses the same unreserved set as `qs` (RFC 3986).
-- Following `next` gives the same rows in both trees. The string differs (CS-07).
+- The string matches, except for `deployedBy` (CS-03) and a `from`/`to` that upstream writes as a
+  fractional double (CS-19) (test `next_keeps_upstreams_key_order_and_fields_rule`) (CS-07).
 
 ### Data dependency
 
@@ -276,25 +277,24 @@ Logic: `decentraland/catalyst:src/logic/deployments/component.ts:381-420`.
 
 - **Parameters.** `entityType`, `from`, `to`, `offset` (max 5000), `limit` (1..500, default and
   fallback 500), `lastId` (lowercased), `sortingField`, `sortingOrder` and `includeAuthChain`.
-  Parsing matches §1 and has the same empty-value difference: an empty `sortingField` or
-  `sortingOrder` → dcl-one 400 (CS-06).
+  Parsing matches §1: an empty `sortingField` or `sortingOrder` is ignored in both (CS-06).
 - **No cap.** There is no 1000-value cap on `entityType` in either tree.
 - **`includeAuthChain`.** Upstream parses it (default `false`) and only echoes it in `filters`.
   `authChain` is **always** included in each delta. dcl-one does the same
   (`pointer_changes.rs:58`, `queries.rs:656-668`).
-- **Validation order.** Both trees check entityType → offset → sortingField → sortingOrder.
-  dcl-one checks offset last (`pointer_changes.rs:81-85`).
+- **Validation order.** Both trees check entityType → offset → sortingField → sortingOrder
+  (`pointer_changes.rs` `parse_pointer_changes_options`) (CS-21).
 - **No auth.** dcl-one memoizes for 5 s (`pointer_changes.rs:23-41`).
 
 ### Responses
 
 | trigger | status | body | headers | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
-| Success | 200 | Example below. | `content-type: application/json` | `pointer-changes-handler.ts:90-94` | `pointer_changes.rs:36-40` | DIVERGENT: `next` drops `includeAuthChain=true`; `pagination.lastId` is echoed; locally tombstoned scenes are left out. |
+| Success | 200 | Example below. | `content-type: application/json` | `pointer-changes-handler.ts:90-94` | `pointer_changes.rs` `fetch_pointer_changes` | MATCH on the shape and `next` (CS-09); locally tombstoned scenes are left out (dcl-one only). |
 | Unknown entity type | 400 | `{"error":"Found an unrecognized entity type"}` | | `:41-43` | `:46-52` | MATCH, `?entityType=` included |
 | `offset` > 5000 | 400 | `{"error":"Offset can't be higher than 5000. Please use the 'next' property for pagination."}` | | `:45-47` | `:81-85` | MATCH |
-| Bad `sortingField` | 400 | `{"error":"Found an unrecognized sort field param"}` | | `:51-57` | `:60-69` | MATCH (except the empty-value case) |
-| Bad `sortingOrder` | 400 | `{"error":"Found an unrecognized sort order param"}` | | `:58-64` | `:71-79` | MATCH (except the empty-value case) |
+| Bad `sortingField` | 400 | `{"error":"Found an unrecognized sort field param"}` | | `:51-57` | `deployments.rs` `parse_sort` | MATCH |
+| Bad `sortingOrder` | 400 | `{"error":"Found an unrecognized sort order param"}` | | `:58-64` | `deployments.rs` `parse_sort` | MATCH |
 | Unexpected error | 500 | `{"error":"Internal Server Error"}` | | `middlewares.ts:72-81` | `errors.rs` | MATCH |
 
 ```json
@@ -344,10 +344,9 @@ Logic: `decentraland/catalyst:src/logic/deployments/component.ts:381-420`.
     true), limit=<curated limit>, lastId=<last.entityId>`.
   - It always writes `to` and never carries `sortingField` or `sortingOrder`, so a client that
     asked for ASC is sent back DESC.
-- dcl-one (`pointer_changes.rs:110-125`):
-  - The same pairs and order, **without `includeAuthChain=true`**.
-  - The values are not percent-encoded. Entity ids and type names are URL-safe, so the result is
-    the same.
+- dcl-one (`pointer_changes.rs` `next_relative_path`): the same pairs and order, `includeAuthChain=true`
+  included, `from=0` dropped as upstream drops a falsy value, encoded as `qs` does (test
+  `next_carries_include_auth_chain`) (CS-09).
 - The ASC behaviour matches upstream. dcl-one's own sync client builds its own keyset URL and does
   not follow `next` (`content/src/sync/pointer_changes.rs:200-221`).
 
@@ -384,7 +383,7 @@ Logic: `decentraland/catalyst:src/logic/deployments/component.ts:381-420`.
 
 | trigger | status | body | headers | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
-| Success | 200 | Bare array; example below. | `content-type: application/json` | `failed-deployments-handler.ts:24-37` | `failed_deployments.rs:33-34`, `queries.rs:798-854` | DIVERGENT: order, `snapshotHash`, `reason` values. |
+| Success | 200 | Bare array; example below. | `content-type: application/json` | `failed-deployments-handler.ts:24-37` | `failed_deployments.rs`, `queries.rs` `failed_deployments` | MATCH on `snapshotHash` and `reason` (CS-10); the order follows the table, see below. |
 | Unexpected error | 500 | `{"error":"Internal Server Error"}` | | `middlewares.ts` | `errors.rs` | MATCH |
 
 ```json
@@ -408,16 +407,18 @@ Field by field:
 - **Source.**
   - Upstream answers from an in-memory map: rows loaded from the DB at start (no ORDER BY), then
     failures in the order they happened (`adapters/failed-deployments/component.ts:176-187`).
-  - dcl-one reads the table with `ORDER BY failure_time, entity_id` (`queries.rs:828`).
+  - dcl-one reads the table in physical order (`ORDER BY ctid`, `queries.rs` `failed_deployments`): the
+    order upstream reads it in at start. A failure reported again while upstream runs keeps its place
+    in the map; here the update moves its row (CS-10).
 - **`snapshotHash`.**
   - Upstream: absent for failures that did not come from a snapshot. Those are cached but not
     persisted (`component.ts:241-254`).
-  - dcl-one: always present, `""` for those failures (`sync_deployer.rs:1168`, column `NOT NULL`
-    in `schemas/00_content.sql:106`).
+  - dcl-one: the key is left out when the stored value is `""` (column `NOT NULL`, `sync_deployer.rs`
+    writes `""` for those failures) (CS-10).
 - **`reason`.**
   - Upstream: only `"Deployment error"` (`FailureReason`, `adapters/failed-deployments/types.ts:5-7`).
-  - dcl-one: `"No entity"` is passed through; every other stored reason is mapped to
-    `"Deployment error"` (`queries.rs:842-846`).
+  - dcl-one: every stored reason is answered as `"Deployment error"` (`queries.rs` `failed_deployments`);
+    `errorDescription` says which kind (CS-10).
 - **`failureTimestamp` and `nextRetryAt`.** Upstream emits the raw doubles; dcl-one emits
   truncated integers.
 - **Per-replica state.** With several upstream replicas, each one answers its own in-memory set.
@@ -576,7 +577,7 @@ no snapshot in either tree:
 
 | field | upstream | dcl-one |
 |---|---|---|
-| `version` | `process.env.CURRENT_VERSION ?? 'Unknown'` (`Environment.ts:270`) | `CARGO_PKG_VERSION` (`content/src/lib.rs:214`) |
+| `version` | `process.env.CURRENT_VERSION ?? 'Unknown'` (`Environment.ts:270`) | `CURRENT_VERSION` when set and not blank, else this build's `CARGO_PKG_VERSION` (`content/src/lib.rs` `Settings::from_config`, read through `config/src/social.rs` `social_rpc_current_version`) (CS-15) |
 | `commitHash` | `process.env.COMMIT_HASH ?? 'Unknown'` (`Environment.ts:269`) | The configured or build-time hash, otherwise `"Unknown"` (`status.rs`) |
 | `ethNetwork` | `ETH_NETWORK` config | `config.node.eth_network` |
 | `synchronizationStatus.lastSyncWithDAO` | Time of the last successful DAO server-list refresh; 0 before the first one (`logic/peer-cluster/component.ts:43,79,123-125`) | The last sync heartbeat (this node's equivalent: it follows `SYNC_SOURCE` peers, not a DAO list); 0 before the first one (`status.rs`) |
@@ -636,11 +637,11 @@ Upstream: `decentraland/catalyst:src/controllers/handlers/get-entity-thumbnail-h
 | No active entity at the pointer, or the entity is denylisted | 404 | `{"error":"Entity not found."}` | | `:15-20` | `:47-62` | MATCH |
 | `metadata.thumbnail` (or `.image`) is missing, the file is not in `content`, or the hash is denylisted | 404 | `{"error":"Entity has no thumbnail."}` / `{"error":"Entity has no image."}` | | `:22-26` | `:106-110`, `:128-132` | MATCH |
 | `If-None-Match` is `*` or matches `"<hash>"` (weak tags allowed) | 304 | empty | `ETag: "<hash>"`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Access-Control-Expose-Headers: ETag` | `:28-29`, `utils.ts:88-113` | `:114-116`, `formatters.rs:9-33` | MATCH |
-| The blob is not in storage | 404 | upstream `{"error":"Entity has no thumbnail."}` / `"Entity has no image."` | | `:33-35` | `:171-173`: `{"error":"Content not found."}` | DIVERGENT, P2 |
+| The blob is not in storage | 404 | upstream `{"error":"Entity has no thumbnail."}` / `"Entity has no image."` | | `:33-35` | `entity_thumbnail.rs` `serve_content_blob`: the same messages | MATCH (CS-18) |
 | Unsatisfiable `Range` | 416 | empty | `Content-Range: bytes */<total>`, `Access-Control-Expose-Headers: Content-Range` | `:37-42`, `utils.ts:187-195` | `:182-192` | MATCH |
 | Satisfiable `Range` | 206 | the byte range (empty for HEAD) | the content headers plus `Content-Range: bytes s-e/total` and `Content-Length` | `:44-54`, `utils.ts:197-211` | `:193-209` | MATCH |
 | Plain GET or HEAD | 200 | the bytes (empty for HEAD) | `Content-Type` (sniffed; `application/octet-stream` fallback), `ETag: "<hash>"`, `Access-Control-Expose-Headers: ETag, Content-Range, Accept-Ranges, Content-Length`, `Accept-Ranges: bytes`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Content-Length`. Upstream also sends `Content-Encoding` when the blob is stored compressed. | `utils.ts:115-154` | `:210-231`, `formatters.rs:85-102` | MATCH. Sniffing: upstream uses `file-type` on the stream; dcl-one sniffs the first 32 bytes (`get_content::detect_content_type`). These agree for PNG, JPEG and WebP. dcl-one never sends `Content-Encoding`. |
-| `?width=` on the thumbnail route, not 80/160/320/640/960 | — | upstream ignores it and serves 200 | | — | `:98-104`: 400 `text/plain` `width must be 80, 160, 320, 640 or 960`. A non-numeric value is rejected by axum `Query` with its plain-text 400. | DIVERGENT, P2 |
+| `?width=` on the thumbnail route, not 80/160/320/640/960 | — | upstream ignores it and serves 200 | | — | `entity_thumbnail.rs` `requested_width`: ignored, the stored file is served | MATCH (CS-18) |
 | `?width=` valid | — | upstream serves the original | | — | `:111-113,255-301`: a resized PNG, WebP or JPEG with `ETag: "thumbnail-v1-<w>-<hash>"` and `Cache-Control: public, max-age=300, stale-while-revalidate=86400` | dcl-one only |
 | Pointer or file not local, read-through on | — | upstream 404 | | — | dcl-one fills it from the sync sources first (`:47-52,150-163`) | dcl-one only (a superset) |
 
@@ -673,12 +674,12 @@ dcl-one: `services/catalyst/content/src/validator/erc721.rs:48-131,198-222,295-3
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| `chainId` is not all digits | 400 | `{"error":"Invalid chainId '<chainId>'"}` | `:19-21` | `:299-300` (`u64::parse`) | MATCH, except `+1`: Rust accepts it, upstream rejects it (P2) |
+| `chainId` is not all digits | 400 | `{"error":"Invalid chainId '<chainId>'"}` | `:19-21` | `erc721.rs` `get_erc721_entity` (digits only) | MATCH (CS-17) |
 | Unknown chain | 400 | same | `:23-27` | `:198-210,301`. Table: 1 ethereum, 3 ropsten, 4 rinkeby, 5 goerli, 137 matic, 80001 mumbai, 80002 amoy, 11155111 sepolia. | MATCH if `@dcl/schemas` maps the same set (not checked: the package is not in the clone) |
-| No active entity, entity denylisted, or no metadata | 404 | `{"error":"Entity does not exist"}` | `:32-34` | `:308-316` | MATCH |
-| `metadata.rarity` is falsy | 400 | `{"error":"Wearable is not standard."}` | `:36-38` (`!rarity`) | `:317-319` (`is_none()`) | DIVERGENT, P2: `"rarity": null` or `""` → upstream 400; dcl-one 200 with `"value": ""` |
-| Success | 200 | Example below. | `:40-43` | `:322-327` | DIVERGENT: see the field list |
-| `metadata.i18n` is missing | upstream 500 (`i18ns.filter` on undefined) | | `component.ts:159-162` | `"name": null`, 200 | DIVERGENT, P2 |
+| No active entity, entity denylisted, or a falsy metadata | 404 | `{"error":"Entity does not exist"}` | `:32-34` | `erc721.rs` `get_erc721_entity` | MATCH |
+| `metadata.rarity` is falsy (absent, `null`, `""`) | 400 | `{"error":"Wearable is not standard."}` | `:36-38` (`!rarity`) | `erc721.rs` `get_erc721_entity` (`js_truthy`) | MATCH (CS-17) |
+| Success | 200 | Example below. | `:40-43` | `erc721.rs` `format_erc721_entity` | MATCH on the fields below |
+| `metadata.i18n` is missing, or the item data lacks `tags` or `representations` | upstream 500 (`i18ns.filter`, `itemData.tags.reduce` or the `representations` loop on undefined) | | `component.ts:159-180` | 200 without `name`, with no `Tag` trait | DIVERGENT: upstream's crash on a malformed item is not reproduced; a deployed wearable or emote has all three |
 
 ```json
 {
@@ -700,11 +701,10 @@ Field by field:
 
 - **`description` with an unknown rarity.**
   - Upstream: `DCL Wearable <em>/undefined`.
-  - dcl-one: `DCL Wearable <em>/0` (`erc721.rs:77-83`).
+  - dcl-one: the same (`erc721.rs` `format_erc721_entity`) (CS-17).
 - **Item data source.**
   - Upstream reads `emoteDataADR74 ?? data` (`component.ts:178-180`).
-  - dcl-one reads `data` first, then `emoteDataADR74` (`erc721.rs:145-165`).
-  - These differ only for an entity that has both.
+  - dcl-one the same (`erc721.rs` `item_data`) (CS-17).
 - **`Category` trait.**
   - Upstream always emits it, even when the category is undefined; `{"trait_type":"Category"}`
     then has no `value` key.
@@ -726,7 +726,7 @@ Field by field:
   - Both omit the key when the hash is missing.
 - **`name`.**
   - Upstream: the `en` entry, otherwise the first entry; the key is absent if the text is undefined.
-  - dcl-one: the same choice, but `"name": null` instead of an absent key (`erc721.rs:23-33`).
+  - dcl-one: the same choice, and no key when there is no text (`erc721.rs` `Erc721Metadata`) (CS-17).
 
 ### Data dependency
 
@@ -792,11 +792,12 @@ catalyst list and its `/about` is healthy.
 
 3. **CS-03 · `/deployments` · the `deployedBy` filter is dcl-one only.**
    - Gap: upstream ignores `deployedBy`; dcl-one filters on it and echoes it in `filters` and `next`.
-   - Expected: either ignore it, or keep it as a documented superset. A client that passes it
-     against upstream gets unfiltered rows.
-   - Where: `services/catalyst/content/src/deployments.rs:144-147,267-269`,
-     `services/catalyst/content/src/queries.rs:540-543`, `services/catalyst/content/src/wire_types.rs:63-64`.
-   - Severity: P2.
+   - Kept as a documented superset: the creator hub lists a wallet's deployments with it
+     (`apps/sites/src/data/lib/catalyst/creator-hub/discover-deployed.test.ts`). A request without the
+     parameter answers as upstream; a client that passes it to upstream gets unfiltered rows.
+   - Where: `services/catalyst/content/src/deployments.rs` `parse_deployment_query_options`,
+     `services/catalyst/content/src/queries.rs`, `services/catalyst/content/src/wire_types.rs`.
+   - Severity: P2 (by design).
 
 4. **CS-04 · `/deployments` · extra response headers.** Status: MATCH, no work.
    - Upstream: no `cache-control` and no `x-cache`
@@ -810,44 +811,46 @@ catalyst list and its `/about` is healthy.
    - dcl-one: the same through `qs_get_filter_array` (CS-02).
    - Severity: none (closed).
 
-6. **CS-06 · `/deployments` and `/pointer-changes` · an empty `sortingField` or `sortingOrder` gives a 400.**
-   - Gap: upstream treats `''` as missing (`decentraland/catalyst:src/controllers/handlers/get-deployments-handler.ts:44-50`).
-   - Expected: treat an empty string as `None`.
-   - Where: `services/catalyst/content/src/deployments.rs:174-193`, `services/catalyst/content/src/pointer_changes.rs:60-79`.
-   - Severity: P2.
+6. **CS-06 · `/deployments` and `/pointer-changes` · an empty `sortingField` or `sortingOrder`.** Status: MATCH, no work.
+   - Upstream: `''` is missing (`decentraland/catalyst:src/controllers/handlers/get-deployments-handler.ts:44-50`);
+     a repeated `sortingOrder` is an array, which reads as unknown (400).
+   - dcl-one: the same (`deployments.rs` `parse_sort`, shared by both routes; tests
+     `values_read_as_upstreams_query_params`, `values_and_checks_follow_upstream`).
+   - Severity: none (closed).
 
-7. **CS-07 · `/deployments` · `pagination.next` key order and `fields` rule.**
-   - Gap: dcl-one sorts keys alphabetically, and leaves `fields` out when the set equals the
-     default even if the client sent it.
-   - Expected: the upstream order `pointer, entityType, entityId, onlyCurrentlyPointed, from, to,
-     fields, sortingField, sortingOrder, lastId, limit`
-     (`decentraland/catalyst:src/controllers/handlers/get-deployments-handler.ts:185-196`).
-   - Where: `services/catalyst/content/src/deployments.rs:237-310`. Use an ordered list, not a `HashMap`.
-   - Severity: P2.
+7. **CS-07 · `/deployments` · `pagination.next` key order and `fields` rule.** Status: MATCH, no work.
+   - Upstream: the order `pointer, entityType, entityId, onlyCurrentlyPointed, from, to, fields, sortingField,
+     sortingOrder, lastId, limit`, falsy values dropped, `fields` whenever the client listed some
+     (`decentraland/catalyst:src/controllers/handlers/get-deployments-handler.ts:161-196`).
+   - dcl-one: the same (`deployments.rs` `calculate_next_relative_path`, `shared/src/query_params.rs`
+     `to_ordered_query_string`; test `next_keeps_upstreams_key_order_and_fields_rule`); `deployedBy` (CS-03)
+     follows `entityId`.
+   - Severity: none (closed).
 
-8. **CS-08 · `/deployments` and `/pointer-changes` · number and boolean parsing.**
-   - Gap: `parseInt` semantics (`10abc` → 10, `1.5` → 1) are not reproduced, and an empty
-     `onlyCurrentlyPointed` gives `false` instead of absent. `fields` items are trimmed; upstream
-     does not trim them.
-   - Expected: upstream `qsGetNumber` and `qsGetBoolean` (`decentraland/catalyst:src/logic/query-params/component.ts:32-39`).
-   - Where: `services/catalyst/shared/src/query_params.rs:48-54`, `services/catalyst/content/src/deployments.rs:165-172`.
-   - Severity: P2.
+8. **CS-08 · `/deployments` and `/pointer-changes` · number and boolean parsing.** Status: MATCH, no work.
+   - Upstream: `qsGetNumber` (`parseInt`: `10abc` → 10, `1.5` → 1) and `qsGetBoolean` (empty is absent),
+     `fields` items untrimmed (`decentraland/catalyst:src/logic/query-params/component.ts:32-39`).
+   - dcl-one: `qs_get_js_number`, `qs_get_js_bool` (`services/catalyst/shared/src/query_params.rs`) on
+     `/deployments`, `/pointer-changes` and `/failed-deployments`; `fields` untrimmed (tests
+     `js_number_and_bool_follow_qs_get_number_and_boolean`, `values_read_as_upstreams_query_params`).
+   - Severity: none (closed).
 
-9. **CS-09 · `/pointer-changes` · `next` drops `includeAuthChain=true`.**
-   - Expected: append `includeAuthChain=true` after `to` when the flag is true
+9. **CS-09 · `/pointer-changes` · `next` carries `includeAuthChain=true`.** Status: MATCH, no work.
+   - Upstream: `includeAuthChain=true` after `to` when the flag is true
      (`decentraland/catalyst:src/controllers/handlers/pointer-changes-handler.ts:97-114`).
-   - Where: `services/catalyst/content/src/pointer_changes.rs:114-124`.
-   - Severity: P2.
+   - dcl-one: the same (`pointer_changes.rs` `next_relative_path`; test `next_carries_include_auth_chain`).
+   - Severity: none (closed).
 
 10. **CS-10 · `/failed-deployments` · `snapshotHash`, `reason` and order.**
-    - Gap:
-      - `snapshotHash: ""` where upstream leaves the key out;
-      - the `"No entity"` reason is passed through;
-      - rows are sorted by time where upstream uses insertion order.
-    - Expected: leave out `snapshotHash` when it is empty, and always use `"Deployment error"`
-      (`decentraland/catalyst:src/adapters/failed-deployments/types.ts:5-25`).
-    - Where: `services/catalyst/content/src/queries.rs:798-854`, `services/catalyst/content/src/wire_types.rs:162-174`.
-    - Severity: P2.
+    - Upstream: `snapshotHash` absent outside a snapshot, `reason` always `"Deployment error"`
+      (`decentraland/catalyst:src/adapters/failed-deployments/types.ts:5-25`); the in-memory map's order:
+      the table read at start (no ORDER BY), then report order.
+    - Done: `snapshotHash` left out when empty, `reason` always `"Deployment error"`, rows in table order
+      (`ORDER BY ctid`, the order upstream loads them in) (`services/catalyst/content/src/queries.rs`
+      `failed_deployments`, `wire_types.rs`; test `history_reads_over_seeded_rows`).
+    - Left: a failure reported again keeps its place in upstream's running map; here the upsert moves its
+      row. Matching that needs a report sequence column (a schema step); not worth it for an operator list.
+    - Severity: P2 (order of re-reported failures only).
 
 11. **CS-11 · `/snapshots` · array order.** Status: MATCH, no work.
     - Upstream: division order, oldest window first (`decentraland/catalyst:src/logic/snapshots/component.ts:67-164`).
@@ -872,30 +875,47 @@ catalyst list and its `/about` is healthy.
       with `authChain` in stored key order
       (`decentraland/catalyst:src/adapters/snapshots-repository/component.ts:9-33`,
       `decentraland/catalyst:src/logic/snapshots/component.ts:42-46`).
-    - Where: `services/catalyst/content/src/snapshot_gen.rs:502-510,529`. This needs `preserve_order`
-      or raw `json` text for `authChain`. The fixtures in `tests/fixtures/snapshots/` must be re-pinned.
+    - Not changed here: upstream orders by `entity_timestamp` only, so its tie order is the plan's and two
+      upstream nodes need not agree either; equal CIDs are not reachable for windows with ties. Changing
+      the bytes changes every CID this tree has published, so every peer re-downloads every window once,
+      and the golden `tests/fixtures/snapshots/old-generator.json` (the old generator's output) must be
+      re-pinned. Options: (a) keep the bytes (recommended while upstream's own order is not deterministic);
+      (b) read `auth_chain::text` into an order-keeping value and write `entityTimestamp` with `js_millis`,
+      keeping the `entity_id` tie-break, and re-pin the golden.
+    - Where: `services/catalyst/content/src/snapshot_gen.rs` `SnapshotLine`, `WINDOW_SQL`.
     - Severity: P2. Sync is still correct; the cost is bandwidth and bootstrap work.
 
 14. **CS-14 · snapshots · no "inactive entities after a month" regeneration.**
-    - Gap: windows that list overwritten entities are rebuilt only on an admin request.
+    - Gap: windows that list overwritten entities are rebuilt only on an admin request
+      (`POST /admin/api/content/snapshots/regenerate`), a choice the generator documents
+      (`snapshot_gen.rs` module comment).
     - Expected: regenerate a window older than one month whose active count is below
       `numberOfEntities`, and set `replacedSnapshotHashes` to the old hash
       (`decentraland/catalyst:src/logic/snapshots/component.ts:81-87,124-125`).
-    - Where: `services/catalyst/content/src/snapshot_gen.rs:375-400`.
+    - Not changed here: it adds, every pass, a count of the active deployments of each window generated
+      over a month ago (the year windows included), a new workload on `content.deployments` that
+      `METRICS.md` would have to measure first. Options: (a) port upstream's check as is; (b) count only
+      when a deployment in the window gained a deleter since the generation (needs the deleter's time,
+      a schema step); (c) keep the admin rebuild. Recommended: (a), after measuring the count on a
+      mainnet-sized table.
+    - Where: `services/catalyst/content/src/snapshot_gen.rs` `pass`.
     - Severity: P2.
 
 15. **CS-15 · `/status` · field values.**
-    - Gap:
-      - `version` is the crate version, where upstream reports `CURRENT_VERSION` or `"Unknown"`;
-      - there are extra keys `syncFrontier`, `lastHeartbeat` and `up` (dcl-one sync health);
-      - `lastSyncWithDAO` is the last sync heartbeat (0 before the first): this node has no DAO list.
-    - Matching now: always 200 (a `Failed` sync state included), and the `commitHash` fallback `"Unknown"`
+    - Done: `version` is `CURRENT_VERSION` when set (upstream's variable), else this build's version
+      (`content/src/lib.rs` `Settings::from_config`, `config/src/social.rs`; test
+      `current_version_overrides_the_build_version`). The variable is the one the social RPC `/status`
+      reads too.
+    - Left, by design: unset, `version` is this build's version where upstream says `"Unknown"`; the
+      extra keys `syncFrontier`, `lastHeartbeat` and `up` (dcl-one sync health, read by the conformance
+      tooling, `testing/src/conformance/volatility.toml`); `lastSyncWithDAO` is the last sync heartbeat,
+      as this node has no DAO list. A client reading the upstream keys sees the same types.
+    - Matching: always 200 (a `Failed` sync state included), and the `commitHash` fallback `"Unknown"`
       (`services/catalyst/content/src/status.rs`).
     - Expected: `decentraland/catalyst:src/controllers/handlers/status-handler.ts:6-25`,
       `decentraland/catalyst:src/logic/peer-cluster/component.ts:123-125`,
       `decentraland/catalyst:src/Environment.ts:269-270`.
-    - Where: `services/catalyst/content/src/status.rs`, `services/catalyst/content/src/wire_types.rs:106-120`.
-    - Severity: P2.
+    - Severity: P2 (by design).
 
 16. **CS-16 · `/queries/erc721` · Category and Body Shape traits.** Status: MATCH, no work.
     - Upstream: `Rarity`, `Category` (always, `{"trait_type":"Category"}` without a category), one `Tag`
@@ -907,27 +927,24 @@ catalyst list and its `/about` is healthy.
       `validator::tests` `the_erc721_route_formats_the_active_wearable`).
     - Severity: none (closed).
 
-17. **CS-17 · `/queries/erc721` · edge values.**
-    - Gap:
-      - an unknown rarity gives `/0` (upstream `/undefined`);
-      - `"rarity": null` or `""` is accepted (upstream returns 400 `Wearable is not standard.`);
-      - `name: null` is emitted where upstream omits the key (or returns 500);
-      - `data` is read before `emoteDataADR74`;
-      - `+1` is accepted as a chainId.
-    - Expected: `decentraland/catalyst:src/logic/entities/component.ts:59-63,159-180` and
-      `decentraland/catalyst:src/controllers/handlers/get-erc721-entity-handler.ts:19-38`.
-    - Where: `services/catalyst/content/src/validator/erc721.rs:23-33,77-83,145-165,299-319`.
-    - Severity: P2.
+17. **CS-17 · `/queries/erc721` · edge values.** Status: MATCH, no work.
+    - Upstream: an unknown rarity gives `/undefined`; a falsy `rarity` (`null`, `""`) is 400 `Wearable is not
+      standard.`; no `name` key without an i18n text; `emoteDataADR74 ?? data`; `chainId` must match `^\d+$`
+      (`decentraland/catalyst:src/logic/entities/component.ts:59-63,159-180`,
+      `decentraland/catalyst:src/controllers/handlers/get-erc721-entity-handler.ts:19-38`).
+    - dcl-one: the same (`services/catalyst/content/src/validator/erc721.rs`; tests `edge_values_follow_upstream`,
+      `validator::tests` `the_erc721_route_formats_the_active_wearable`). Upstream's 500 on an item without
+      `i18n`, `tags` or `representations` is not reproduced (section 11).
+    - Severity: none (closed).
 
-18. **CS-18 · `/queries/items/*` · message for a missing blob, and `?width=`.**
-    - Gap:
-      - a missing blob gives `{"error":"Content not found."}` (upstream: `Entity has no thumbnail.`
-        or `Entity has no image.`);
-      - an invalid `?width=` gives a plain-text 400 where upstream ignores the parameter.
-    - Expected: `decentraland/catalyst:src/controllers/handlers/get-entity-thumbnail-handler.ts:33-35`
-      and `decentraland/catalyst:src/controllers/handlers/get-entity-image-handler.ts:33-35`.
-    - Where: `services/catalyst/content/src/entity_thumbnail.rs:98-104,171-173`.
-    - Severity: P2.
+18. **CS-18 · `/queries/items/*` · message for a missing blob, and `?width=`.** Status: MATCH, no work.
+    - Upstream: a missing blob is `Entity has no thumbnail.` or `Entity has no image.`; `?width=` is ignored
+      (`decentraland/catalyst:src/controllers/handlers/get-entity-thumbnail-handler.ts:33-35`,
+      `get-entity-image-handler.ts:33-35`).
+    - dcl-one: the same messages; a `width` that is not a served size is ignored and the stored file served
+      (`services/catalyst/content/src/entity_thumbnail.rs` `requested_width`, `serve_content_blob`; tests
+      `a_missing_blob_answers_the_routes_message`, `an_items_thumbnail_and_image_are_served_by_pointer`).
+    - Severity: none (closed).
 
 19. **CS-19 · history timestamps · double vs integer.**
     - Gap: upstream emits `date_part(...) * 1000` doubles as they are; dcl-one truncates them to
@@ -944,17 +961,17 @@ catalyst list and its `/about` is healthy.
       (`challenge_is_one_uuid_per_process`).
     - Severity: none (closed).
 
-21. **CS-21 · `/deployments` and `/pointer-changes` · validation order.**
-    - Gap: dcl-one checks `offset` after the sort checks (and after "too many" on `/deployments`).
-    - Expected: the upstream order (`decentraland/catalyst:src/controllers/handlers/get-deployments-handler.ts:55-105`).
-    - Where: `services/catalyst/content/src/deployments.rs:128-199`, `services/catalyst/content/src/pointer_changes.rs:43-85`.
-    - Severity: P2.
+21. **CS-21 · `/deployments` and `/pointer-changes` · validation order.** Status: MATCH, no work.
+    - Upstream: entity types, `offset`, the filter caps (`/deployments`), then the sort field and order
+      (`decentraland/catalyst:src/controllers/handlers/get-deployments-handler.ts:55-105`).
+    - dcl-one: the same (`deployments.rs`, `pointer_changes.rs`; test `offset_is_checked_before_the_caps_and_the_sort`).
+    - Severity: none (closed).
 
-22. **CS-22 · `/deployments` · `metadata: null`.**
-    - Gap: a stored `{"v": null}` is emitted as `"metadata": null`. Upstream leaves the key out.
-    - Expected: `decentraland/catalyst:src/controllers/handlers/get-deployments-handler.ts:151-153`.
-    - Where: `services/catalyst/content/src/queries.rs:108-110`, or skip `Value::Null` in projection.
-    - Severity: P2.
+22. **CS-22 · `/deployments` · `metadata: null`.** Status: MATCH, no work.
+    - Upstream: a falsy `metadata` leaves the key out
+      (`decentraland/catalyst:src/controllers/handlers/get-deployments-handler.ts:151-153`).
+    - dcl-one: the same (`services/catalyst/content/src/queries.rs` `js_truthy`; test `js_truthy_reads_as_javascript`).
+    - Severity: none (closed).
 
 23. **CS-23 · all routes · trailing slash and path case.** Status: MATCH, no work.
     - Capture: `GET /content/deployments/?limit=1` and `GET /content/Deployments?limit=1` both answer
@@ -979,6 +996,7 @@ catalyst list and its `/about` is healthy.
   (`services/catalyst/content/src/lib.rs:701-709`):
   - the same handlers as `/queries/items/*`, served with bytes, not a redirect;
   - lamb2 at the pinned revision has no `/collections/contents/*` route.
-- `?width=` derivatives on the thumbnail routes (`services/catalyst/content/src/entity_thumbnail.rs:235-301`).
+- `?width=` derivatives on the thumbnail routes for the served sizes 80, 160, 320, 640 and 960; any
+  other value is ignored as upstream ignores the parameter (`services/catalyst/content/src/entity_thumbnail.rs`).
 - The 503 on `/deployments` when the query runs past its time budget
   (`services/catalyst/content/src/deployments.rs:75-85`).
