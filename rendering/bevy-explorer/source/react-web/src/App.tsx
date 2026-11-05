@@ -108,7 +108,7 @@ const EDITOR = EDITOR_BUILD && MODE === 'engine' && editorOffered(location.hostn
 const ENTRY_SEARCH = location.search
 // Entry-url params nothing reads (lib/entryParams.ts) — told to the user once the HUD is up.
 const UNRECOGNISED_PARAMS = unrecognisedEntryParams(params, [
-  ...(EDITOR_BUILD && EDITOR ? ['editor', 'editor-projects', 'editor-worlds', FEATURES_PARAM] : []),
+  ...(EDITOR_BUILD && EDITOR ? ['editor', 'editor-projects', 'editor-worlds', 'editor-tag', FEATURES_PARAM] : []),
   // the benchmark's switches are known only where they do something (lib/bootMode.ts)
   ...(benchmarkSwitchesHonoured() ? BENCHMARK_PARAMS : [])
 ])

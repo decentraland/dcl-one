@@ -27,7 +27,12 @@ export interface EditorFeatures {
   advanced: boolean
 }
 export function editorFeatures(search: string): EditorFeatures {
-  const named = new Set((new URLSearchParams(search).get(FEATURES_PARAM) ?? '').split(',').map((name) => name.trim()))
+  const named = new Set(
+    new URLSearchParams(search)
+      .getAll(FEATURES_PARAM)
+      .flatMap((value) => value.split(','))
+      .map((name) => name.trim().toLowerCase())
+  )
   return { experimental: named.has('experimental'), advanced: named.has('advanced') }
 }
 

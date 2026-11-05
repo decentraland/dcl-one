@@ -107,7 +107,7 @@ const EDITOR = EDITOR_BUILD && MODE === 'engine' && editorOffered(location.hostn
 // the ENTRY url: the engine's url sync rewrites it
 const ENTRY_SEARCH = location.search
 // Entry-url params nothing reads (lib/entryParams.ts) — told to the user once the HUD is up.
-const UNRECOGNISED_PARAMS = unrecognisedEntryParams(params, EDITOR_BUILD && EDITOR ? ['editor', 'editor-projects', 'editor-worlds', FEATURES_PARAM] : [])
+const UNRECOGNISED_PARAMS = unrecognisedEntryParams(params, EDITOR_BUILD && EDITOR ? ['editor', 'editor-projects', 'editor-worlds', 'editor-tag', FEATURES_PARAM] : [])
 
 export function App(): React.JSX.Element {
   const showFps = useFpsToggle()

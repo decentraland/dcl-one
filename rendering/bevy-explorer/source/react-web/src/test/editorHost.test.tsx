@@ -57,6 +57,8 @@ describe('editor host', () => {
     expect(editorFeatures('?editor-features=experimental')).toEqual({ experimental: true, advanced: false })
     expect(editorFeatures('?editor-features=experimental,advanced')).toEqual({ experimental: true, advanced: true })
     expect(editorFeatures('?editor-features=advanced-ish&editor=advanced')).toEqual({ experimental: false, advanced: false })
+    // repeated, and in any case
+    expect(editorFeatures('?editor-features=advanced&editor-features=Experimental')).toEqual({ experimental: true, advanced: true })
   })
 
   it('reads the project and the local service overrides from the entry url', async () => {
