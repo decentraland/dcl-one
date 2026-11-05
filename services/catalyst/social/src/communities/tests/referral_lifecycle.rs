@@ -508,7 +508,7 @@ async fn native_login_http_bounds_receipts_and_obeys_write_and_restore_gates() {
         .await
         .unwrap();
     let now = chrono::Utc::now().timestamp_millis();
-    for occurred_at in [now - 86_401_000, now + 31_000, i64::MIN, i64::MAX] {
+    for occurred_at in [now - 86_401_000, now + 301_000, i64::MIN, i64::MAX] {
         assert_eq!(
             hit(
                 &rig.app,
@@ -639,6 +639,26 @@ async fn native_login_contention_returns_retryable_error_without_partial_receipt
         .execute(&mut *held)
         .await
         .unwrap();
+    // Recording days and replaying an ID do not acquire the referrer lock.
+    let first = Uuid::new_v4();
+    let occurred = chrono::Utc::now().timestamp_millis();
+    for _ in 0..2 {
+        assert_eq!(
+            hit(&rig.app, login_case(&invited, first, occurred).await)
+                .await
+                .0,
+            StatusCode::NO_CONTENT
+        );
+    }
+    sqlx::query("UPDATE social.referral_progress SET login_days=ARRAY[CURRENT_DATE-2,CURRENT_DATE-1,CURRENT_DATE] WHERE invited_user=$1")
+        .bind(&invited.address).execute(&rig.pool).await.unwrap();
+    assert_eq!(
+        hit(&rig.app, login_case(&invited, first, occurred).await)
+            .await
+            .0,
+        StatusCode::NO_CONTENT,
+        "a duplicate ready-to-grant login still bypasses the referrer lock"
+    );
     let (id, now) = (Uuid::new_v4(), chrono::Utc::now().timestamp_millis());
     let status = tokio::time::timeout(
         std::time::Duration::from_secs(3),
@@ -647,7 +667,7 @@ async fn native_login_contention_returns_retryable_error_without_partial_receipt
     .await
     .unwrap()
     .0;
-    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     let count: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM social.referral_login_receipts WHERE invited_user=$1",
     )
@@ -655,11 +675,67 @@ async fn native_login_contention_returns_retryable_error_without_partial_receipt
     .fetch_one(&rig.pool)
     .await
     .unwrap();
-    assert_eq!(count, 0);
+    assert_eq!(count, 1);
     held.rollback().await.unwrap();
     assert_eq!(
         hit(&rig.app, login_case(&invited, id, now).await).await.0,
         StatusCode::NO_CONTENT
     );
+    rig.finish();
+}
+
+#[tokio::test]
+async fn native_login_banned_referrer_is_private_and_clock_skew_matches_signed_fetch() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let (referrer, invited) = (wallet(), wallet());
+    rig.state
+        .referral
+        .create(&referrer.address, &invited.address, "192.0.2.123")
+        .await
+        .unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    assert_eq!(
+        hit(
+            &rig.app,
+            login_case(&invited, Uuid::new_v4(), now + 299_000).await
+        )
+        .await
+        .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        hit(
+            &rig.app,
+            login_case(&invited, Uuid::new_v4(), now + 301_000).await
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    sqlx::query("INSERT INTO explore_api.denylist_users_local(wallet,present) VALUES($1,true)")
+        .bind(&referrer.address)
+        .execute(&rig.pool)
+        .await
+        .unwrap();
+    let denylist = Arc::new(crate::explore::api::denylist::Snapshot::default());
+    denylist.reload(&rig.pool).await.unwrap();
+    rig.state.referral.set_denylist(denylist);
+    let (status, body) = hit(&rig.app, login_case(&invited, Uuid::new_v4(), now).await).await;
+    assert_eq!((status, body), (StatusCode::NO_CONTENT, Value::Null));
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.referral_login_receipts WHERE invited_user=$1",
+    )
+    .bind(&invited.address)
+    .fetch_one(&rig.pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 1, "banned attribution writes no further receipt");
+    sqlx::query("DELETE FROM explore_api.denylist_users_local WHERE wallet=$1")
+        .bind(&referrer.address)
+        .execute(&rig.pool)
+        .await
+        .unwrap();
     rig.finish();
 }

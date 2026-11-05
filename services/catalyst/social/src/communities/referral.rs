@@ -34,6 +34,27 @@ fn database_error(error: sqlx::Error) -> CommError {
     )
 }
 
+// Native ingress exposes contention as retryable service unavailability.
+fn login_database_error(error: sqlx::Error) -> CommError {
+    if matches!(
+        error
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("55P03" | "57014")
+    ) {
+        return CommError::MessageOnly(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Login progress is temporarily busy".into(),
+        );
+    }
+    database_error(error)
+}
+
+const LOGIN_MAX_AGE_MS: i64 = 86_400_000;
+// Match the existing signed-fetch symmetric clock tolerance.
+const LOGIN_FUTURE_SKEW_MS: i64 = 300_000;
+
 /// node-pg sends a JavaScript numeric parameter as Number.toString(). In
 /// particular fractional MAX values reach bigint parsing and are refused; they
 /// must not silently round, and Infinity must not become an unbounded quota.
@@ -330,70 +351,75 @@ impl Referral {
         .bind(&invited)
         .fetch_optional(&self.pool)
         .await
-        .map_err(database_error)?;
+        .map_err(login_database_error)?;
         let Some((referrer, ip)) = progress else {
             return Ok(());
         };
-        self.assert_not_banned(&referrer, ip.as_deref()).await?;
-        let mut tx = self.pool.begin().await.map_err(database_error)?;
+        if let Err(error) = self.assert_not_banned(&referrer, ip.as_deref()).await {
+            if event.is_some() && matches!(error, CommError::BadRequest(_)) {
+                // Native callers must not learn the referrer's stored IP or ban status.
+                return Ok(());
+            }
+            return Err(error);
+        }
+        let mut tx = self.pool.begin().await.map_err(login_database_error)?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
             .execute(&mut *tx)
             .await
-            .map_err(database_error)?;
+            .map_err(login_database_error)?;
         if event.is_some() {
             sqlx::raw_sql("SET LOCAL lock_timeout='1s'; SET LOCAL statement_timeout='2s'")
                 .execute(&mut *tx)
                 .await
-                .map_err(database_error)?;
+                .map_err(login_database_error)?;
         }
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
-            .bind(format!("social-referral-tier:{referrer}"))
-            .execute(&mut *tx)
-            .await
-            .map_err(database_error)?;
         let (status,granted,mut days): (String,bool,Vec<chrono::NaiveDate>) = sqlx::query_as("SELECT status,tier_granted,login_days FROM social.referral_progress WHERE invited_user=$1 FOR UPDATE")
-            .bind(&invited).fetch_one(&mut *tx).await.map_err(database_error)?;
+            .bind(&invited).fetch_one(&mut *tx).await.map_err(login_database_error)?;
+        if granted || status == "tier_granted" || status == "rejected_ip_match" {
+            tx.commit().await.map_err(login_database_error)?;
+            return Ok(());
+        }
         if let Some((login_id, occurred_at)) = event {
             let now: chrono::NaiveDateTime =
                 sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())")
                     .fetch_one(&mut *tx)
                     .await
-                    .map_err(database_error)?;
+                    .map_err(login_database_error)?;
             let now_ms = now.and_utc().timestamp_millis();
-            if occurred_at < now_ms - 86_400_000 || occurred_at > now_ms + 30_000 {
+            if occurred_at < now_ms - LOGIN_MAX_AGE_MS
+                || occurred_at > now_ms + LOGIN_FUTURE_SKEW_MS
+            {
                 return Err(CommError::bad_request(
                     "Login occurrence is outside the accepted time window",
                 ));
             }
             let duplicate: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.referral_login_receipts WHERE invited_user=$1 AND login_id=$2)")
-                .bind(&invited).bind(login_id).fetch_one(&mut *tx).await.map_err(database_error)?;
+                .bind(&invited).bind(login_id).fetch_one(&mut *tx).await.map_err(login_database_error)?;
             if duplicate {
                 return Ok(());
             }
             sqlx::query("DELETE FROM social.referral_login_receipts WHERE invited_user=$1 AND expires_at<$2")
-                .bind(&invited).bind(now).execute(&mut *tx).await.map_err(database_error)?;
+                .bind(&invited).bind(now).execute(&mut *tx).await.map_err(login_database_error)?;
             let count: i64 = sqlx::query_scalar(
-                "SELECT count(*) FROM social.referral_login_receipts WHERE invited_user=$1",
+                "SELECT count(*) FROM social.referral_login_receipts WHERE invited_user=$1 AND received_at > $2::timestamp - interval '24 hours'",
             )
             .bind(&invited)
+            .bind(now)
             .fetch_one(&mut *tx)
             .await
-            .map_err(database_error)?;
+            .map_err(login_database_error)?;
             if count >= 120 {
                 return Err(CommError::MessageOnly(
                     StatusCode::TOO_MANY_REQUESTS,
                     "Login event limit reached".into(),
                 ));
             }
-            let expires_at = chrono::DateTime::from_timestamp_millis(occurred_at + 86_400_000)
-                .ok_or_else(|| CommError::bad_request("Invalid login occurrence"))?
-                .naive_utc();
-            sqlx::query("INSERT INTO social.referral_login_receipts(invited_user,login_id,expires_at) VALUES($1,$2,$3)")
-                .bind(&invited).bind(login_id).bind(expires_at).execute(&mut *tx).await.map_err(database_error)?;
-        }
-        if granted || status == "tier_granted" || status == "rejected_ip_match" {
-            tx.commit().await.map_err(database_error)?;
-            return Ok(());
+            let expires_at =
+                chrono::DateTime::from_timestamp_millis(now_ms.max(occurred_at) + LOGIN_MAX_AGE_MS)
+                    .ok_or_else(|| CommError::bad_request("Invalid login occurrence"))?
+                    .naive_utc();
+            sqlx::query("INSERT INTO social.referral_login_receipts(invited_user,login_id,expires_at,received_at) VALUES($1,$2,$3,$4)")
+                .bind(&invited).bind(login_id).bind(expires_at).bind(now).execute(&mut *tx).await.map_err(login_database_error)?;
         }
         if (days.len() as f64) < self.settings.min_login_days {
             let today = match today {
@@ -401,7 +427,7 @@ impl Referral {
                 None => sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())::date")
                     .fetch_one(&mut *tx)
                     .await
-                    .map_err(database_error)?,
+                    .map_err(login_database_error)?,
             };
             if !days.contains(&today) {
                 days.push(today);
@@ -411,19 +437,27 @@ impl Referral {
                 .bind(&days)
                 .execute(&mut *tx)
                 .await
-                .map_err(database_error)?;
-            tx.commit().await.map_err(database_error)?;
+                .map_err(login_database_error)?;
+            tx.commit().await.map_err(login_database_error)?;
             return Ok(());
         }
+        // Every finalizer locks its own invitee before the referrer tier key.
+        // Attribution's IP-quota key and reward's per-invitee key never acquire
+        // this tier key, so they cannot reverse this lock order.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!("social-referral-tier:{referrer}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(login_database_error)?;
         sqlx::query("UPDATE social.referral_progress SET status='tier_granted',tier_granted=true,tier_granted_at=timezone('UTC',now()),updated_at=timezone('UTC',now()),login_days='{}' WHERE invited_user=$1 AND NOT tier_granted")
-            .bind(&invited).execute(&mut *tx).await.map_err(database_error)?;
+            .bind(&invited).execute(&mut *tx).await.map_err(login_database_error)?;
         let total: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM social.referral_progress WHERE referrer=$1 AND tier_granted",
         )
         .bind(&referrer)
         .fetch_one(&mut *tx)
         .await
-        .map_err(database_error)?;
+        .map_err(login_database_error)?;
         let tier = REWARD_TIERS.contains(&total);
         if tier {
             sqlx::query("UPDATE social.referral_progress SET reward_tier=$2 WHERE invited_user=$1")
@@ -431,19 +465,15 @@ impl Referral {
                 .bind(total as i32)
                 .execute(&mut *tx)
                 .await
-                .map_err(database_error)?;
+                .map_err(login_database_error)?;
         }
         let notification = self.notification(&referrer, invited.as_str(), total, None)?;
         crate::notifications::insert_notifications(&mut *tx, &[notification])
             .await
-            .map_err(database_error)?;
-        tx.commit().await.map_err(database_error)?;
+            .map_err(login_database_error)?;
+        tx.commit().await.map_err(login_database_error)?;
         if total == TIERS_IRL_SWAG {
-            let slack = self.slack.clone();
-            let message = slack.milestone(&referrer);
-            tokio::spawn(async move {
-                slack.send(message).await;
-            });
+            self.slack.send_milestone(&referrer);
         }
         Ok(())
     }
@@ -453,8 +483,10 @@ impl Referral {
         if crate::shared::writes::refusal(true).is_some() {
             return Ok(());
         }
-        sqlx::query("DELETE FROM social.referral_login_receipts WHERE (invited_user,login_id) IN (SELECT invited_user,login_id FROM social.referral_login_receipts WHERE expires_at < timezone('UTC',clock_timestamp()) ORDER BY expires_at,invited_user,login_id LIMIT 1000)")
-            .execute(&self.pool).await.map_err(database_error)?;
+        if let Err(error) = sqlx::query("DELETE FROM social.referral_login_receipts WHERE (invited_user,login_id) IN (SELECT invited_user,login_id FROM social.referral_login_receipts WHERE expires_at < timezone('UTC',clock_timestamp()) ORDER BY expires_at,invited_user,login_id LIMIT 1000 FOR UPDATE SKIP LOCKED)")
+            .execute(&self.pool).await {
+            tracing::warn!(%error, "login receipt cleanup failed; continuing reward delivery");
+        }
         let rows: Vec<(String, String, i32)> = sqlx::query_as(
             "SELECT referrer,invited_user,reward_tier FROM social.referral_progress \
              WHERE reward_tier IS NOT NULL \
@@ -864,7 +896,9 @@ pub async fn client_login(
         })?;
     // Check even wallets with no referral, before the domain's no-op path.
     let now = chrono::Utc::now().timestamp_millis();
-    if metadata.occurred_at < now - 86_400_000 || metadata.occurred_at > now + 30_000 {
+    if metadata.occurred_at < now - LOGIN_MAX_AGE_MS
+        || metadata.occurred_at > now + LOGIN_FUTURE_SKEW_MS
+    {
         return Err(CommError::bad_request(
             "Login occurrence is outside the accepted time window",
         ));

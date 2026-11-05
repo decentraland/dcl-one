@@ -97,9 +97,12 @@ async fn wait_for_locks(pool: &sqlx::PgPool, keys: &[i64], expected: i64) {
 
 #[tokio::test]
 async fn concurrent_ip_creates_enforce_the_cap_and_keep_rejected_retry_receipts() {
-    let Some(pool) = crate::db::scratch::pool(12).await else {
+    // Trigger DDL must not queue a table lock behind another test's grant
+    // reservations while that test waits on its own advisory-lock barrier.
+    let Some(database) = reward_database().await else {
         return;
     };
+    let pool = database.pool.clone();
     let referral = Arc::new(Referral::new(
         repeatable_read_writers(&pool).await,
         Outbound::for_tests(),
@@ -164,6 +167,9 @@ async fn concurrent_ip_creates_enforce_the_cap_and_keep_rejected_retry_receipts(
     .execute(&pool)
     .await
     .unwrap();
+    referral.pool.close().await;
+    drop(referral);
+    database.teardown().await;
 }
 
 #[tokio::test]
@@ -1032,4 +1038,166 @@ async fn native_login_receipt_upgrade_preserves_attribution_and_is_idempotent() 
         .unwrap();
     assert_eq!(remaining, 0);
     database.teardown().await;
+}
+
+#[tokio::test]
+async fn native_backdated_logins_share_a_server_timed_concurrent_quota_and_terminal_noop() {
+    let Some(database) = reward_database().await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let (referrer, invited) = (wallet(), wallet());
+    let referral = Arc::new(Referral::new(
+        pool.clone(),
+        Outbound::for_tests(),
+        Settings::for_tests(),
+    ));
+    referral
+        .create(&referrer, &invited, "192.0.2.1")
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO social.referral_login_receipts(invited_user,login_id,expires_at) SELECT $1,gen_random_uuid(),timezone('UTC',now())+interval '24 hours' FROM generate_series(1,119)")
+        .bind(&invited).execute(&pool).await.unwrap();
+    let old = chrono::Utc::now().timestamp_millis() - 86_395_000;
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..8 {
+        let referral = referral.clone();
+        let invited = invited.clone();
+        tasks.spawn(async move {
+            referral
+                .record_authenticated_login(invited.as_str(), uuid::Uuid::new_v4(), old)
+                .await
+        });
+    }
+    let mut accepted = 0;
+    while let Some(result) = tasks.join_next().await {
+        match result.unwrap() {
+            Ok(()) => accepted += 1,
+            Err(CommError::MessageOnly(StatusCode::TOO_MANY_REQUESTS, _)) => {}
+            other => panic!("unexpected admission: {other:?}"),
+        }
+    }
+    assert_eq!(accepted, 1);
+    let retention: bool = sqlx::query_scalar("SELECT bool_and(expires_at >= received_at+interval '23 hours 59 minutes') FROM social.referral_login_receipts WHERE invited_user=$1")
+        .bind(&invited).fetch_one(&pool).await.unwrap();
+    assert!(
+        retention,
+        "backdating cannot expire server quota receipts early"
+    );
+    for status in ["tier_granted", "rejected_ip_match"] {
+        sqlx::query("UPDATE social.referral_progress SET status=$2,tier_granted=($2='tier_granted') WHERE invited_user=$1")
+            .bind(&invited).bind(status).execute(&pool).await.unwrap();
+        referral
+            .record_authenticated_login(
+                invited.as_str(),
+                uuid::Uuid::new_v4(),
+                chrono::Utc::now().timestamp_millis(),
+            )
+            .await
+            .unwrap();
+    }
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.referral_login_receipts WHERE invited_user=$1",
+    )
+    .bind(&invited)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 120,
+        "terminal logins neither write nor fail the full quota"
+    );
+    sqlx::query("UPDATE social.referral_progress SET status='pending',tier_granted=false WHERE invited_user=$1")
+        .bind(&invited).execute(&pool).await.unwrap();
+    // A future-dated prior occurrence may outlive its server quota window.
+    sqlx::query("UPDATE social.referral_login_receipts SET received_at=timezone('UTC',now())-interval '24 hours 1 second',expires_at=timezone('UTC',now())+interval '4 minutes' WHERE invited_user=$1")
+        .bind(&invited).execute(&pool).await.unwrap();
+    referral
+        .record_authenticated_login(
+            invited.as_str(),
+            uuid::Uuid::new_v4(),
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .await
+        .unwrap();
+    let count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.referral_login_receipts WHERE invited_user=$1",
+    )
+    .bind(&invited)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        count, 121,
+        "retained receipts outside the server quota window do not count"
+    );
+    drop(referral);
+    database.teardown().await;
+}
+
+#[tokio::test]
+async fn native_receipt_cleanup_skips_locked_rows_and_failures_do_not_stop_rewards() {
+    for failure in [false, true] {
+        let Some(database) = reward_database().await else {
+            return;
+        };
+        let pool = database.pool.clone();
+        let (referrer, invited) = (wallet(), wallet());
+        sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,status,tier_granted,reward_tier,reward_response) VALUES($1,$2,'tier_granted',true,5,$3)")
+            .bind(&referrer).bind(&invited).bind(json!({"image":"https://reward.example.org/confirmed.png"})).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO social.referral_login_receipts(invited_user,login_id,expires_at) VALUES($1,gen_random_uuid(),timezone('UTC',now())-interval '1 second')")
+            .bind(&invited).execute(&pool).await.unwrap();
+        let mut held = pool.begin().await.unwrap();
+        if failure {
+            sqlx::raw_sql("CREATE FUNCTION social.reject_receipt_cleanup() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'cleanup fixture'; END $$; CREATE TRIGGER reject_receipt_cleanup BEFORE DELETE ON social.referral_login_receipts FOR EACH ROW EXECUTE FUNCTION social.reject_receipt_cleanup()")
+                .execute(&pool).await.unwrap();
+        } else {
+            sqlx::query(
+                "SELECT * FROM social.referral_login_receipts WHERE invited_user=$1 FOR UPDATE",
+            )
+            .bind(&invited)
+            .execute(&mut *held)
+            .await
+            .unwrap();
+        }
+        let referral = Referral::new(pool.clone(), Outbound::for_tests(), Settings::for_tests());
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            referral.drain_pending_rewards(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let pending: Option<i32> = sqlx::query_scalar(
+            "SELECT reward_tier FROM social.referral_progress WHERE invited_user=$1",
+        )
+        .bind(&invited)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            pending, None,
+            "cleanup failure={failure}: confirmed reward completes"
+        );
+        let remaining: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM social.referral_login_receipts")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(remaining, 1);
+        held.rollback().await.unwrap();
+        if failure {
+            sqlx::raw_sql("DROP TRIGGER reject_receipt_cleanup ON social.referral_login_receipts; DROP FUNCTION social.reject_receipt_cleanup()")
+                .execute(&pool).await.unwrap();
+        }
+        referral.drain_pending_rewards().await.unwrap();
+        let remaining: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM social.referral_login_receipts")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(remaining, 0);
+        drop(referral);
+        database.teardown().await;
+    }
 }

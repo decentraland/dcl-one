@@ -34,6 +34,7 @@ pub(super) struct Adapter {
     settings: Settings,
     endpoint: String,
     slots: tokio::sync::Semaphore,
+    milestone_slots: std::sync::Arc<tokio::sync::Semaphore>,
     paused_until: tokio::sync::Mutex<Option<Instant>>,
 }
 impl Adapter {
@@ -43,6 +44,7 @@ impl Adapter {
             settings,
             endpoint: "https://slack.com/api/chat.postMessage".into(),
             slots: tokio::sync::Semaphore::new(100),
+            milestone_slots: std::sync::Arc::new(tokio::sync::Semaphore::new(8)),
             paused_until: Default::default(),
         }
     }
@@ -58,6 +60,22 @@ impl Adapter {
     }
     pub fn milestone(&self, referrer: &str) -> Value {
         milestone_message(&self.settings, referrer)
+    }
+    /// Optional milestone alerts never queue unbounded background tasks.
+    pub fn send_milestone(self: &std::sync::Arc<Self>, referrer: &str) {
+        if self.settings.token.is_none() {
+            return;
+        }
+        let Ok(permit) = self.milestone_slots.clone().try_acquire_owned() else {
+            tracing::warn!("referral milestone alert omitted: all eight delivery slots are busy");
+            return;
+        };
+        let adapter = self.clone();
+        let message = self.milestone(referrer);
+        tokio::spawn(async move {
+            let _permit = permit;
+            adapter.send(message).await;
+        });
     }
     pub async fn send(&self, message: Value) {
         let delays = retry_delays(|| {
@@ -633,6 +651,35 @@ mod tests {
             release.send(()).unwrap();
             server.await.unwrap();
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn milestone_background_admission_is_bounded_before_spawning() {
+        let adapter = Arc::new(Adapter::new(
+            Outbound::for_tests(),
+            Settings {
+                token: Some("fixture-token".into()),
+                ..Default::default()
+            },
+        ));
+        let held = adapter.slots.acquire_many(100).await.unwrap();
+        for _ in 0..1000 {
+            adapter.send_milestone("fixture-wallet");
+        }
+        assert_eq!(adapter.milestone_slots.available_permits(), 0);
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(EFFECT_TIMEOUT + Duration::from_secs(1)).await;
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            adapter.milestone_slots.available_permits(),
+            8,
+            "every admitted background effect times out and releases its permit"
+        );
+        drop(held);
     }
 
     #[tokio::test(start_paused = true)]
