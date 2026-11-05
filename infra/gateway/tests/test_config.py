@@ -50,9 +50,19 @@ class ConfigurationTest(unittest.TestCase):
         text = gateway.render({"sites": [], "internal": [], "node": [], "aliases": [], "deploy": []},
                               cfg, "/mime.types")
         self.assertIn("geo $sync_peer { default 0; 203.0.113.7/32 1; 2001:db8::1/128 1; }", text)
-        self.assertIn('map $sync_peer $read_limit_key { default $binary_remote_addr; 1 ""; }', text)
-        self.assertIn("limit_req_zone $read_limit_key zone=read:10m rate=30r/s;", text)
-        self.assertIn("limit_req_zone $read_limit_key zone=content:10m rate=100r/s;", text)
+        self.assertIn("limit_req_zone $binary_remote_addr zone=read:10m rate=30r/s;", text)
+        self.assertIn("limit_req_zone $content_limit_key zone=content:10m rate=100r/s;", text)
+        key_map = re.search(r'map "\$sync_peer:\$request_method:\$uri" \$content_limit_key \{(.*?)\}', text, re.S)[1]
+        exempt = re.search(r'"(~[^"]+)" ""', key_map)[1][1:]
+        # Upstream exempts sync peers on GET /contents/{hash} only.
+        for subject in ["1:GET:/content/contents/bafy1", "1:HEAD:/contents/bafy1", "1:GET:/contents/bafy1/"]:
+            with self.subTest(subject=subject):
+                self.assertTrue(re.search(exempt, subject))
+        for subject in ["0:GET:/content/contents/bafy1", "1:POST:/content/contents/bafy1",
+                        "1:GET:/content/entities/active", "1:GET:/content/contents/bafy1/active-entities",
+                        "1:GET:/worlds-content-server/contents/bafy1", "1:GET:/lambdas/profiles"]:
+            with self.subTest(subject=subject):
+                self.assertIsNone(re.search(exempt, subject))
         self.assertIn("limit_req_zone $binary_remote_addr zone=deploy:10m rate=2r/s;", text)
 
     def test_uses_container_dns_without_a_fixed_host_address(self):
