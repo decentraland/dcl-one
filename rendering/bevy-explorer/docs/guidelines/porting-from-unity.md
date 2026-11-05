@@ -30,9 +30,9 @@ checking its licence and provenance.
    is animated, what is gated, what cleans it up, and which other systems branch on it
    (nametags, visibility, tests).
 3. **Keep Unity's numbers and names.** Durations, offsets, thresholds and colours go in as
-   Unity has them, with the Unity file named in a doc comment or the PR description. A changed
-   number is a divergence (step 7), never a tweak made in passing. Read the `.mat` too: it can
-   override the `.shader` defaults.
+   Unity has them, with the Unity file named in the PR description, never in a code comment
+   ([contributing](contributing.md#the-diff)). A changed number is a divergence (step 7), never a
+   tweak made in passing. Read the `.mat` too: it can override the `.shader` defaults.
 4. **Map each Unity piece to its shape here** (tables below), reading the crate that owns the
    area and its guideline page before choosing. No new schedule sets, no side maps, no
    per-frame respawns.
@@ -105,6 +105,8 @@ pipeline-compile test each have a recipe in [recipes](recipes.md).
 - Designing from the C# alone and getting the rendered thing wrong: static where Unity is
   skinned, a pass the shader does not have, a material the renderer does not carry.
 - Rounding Unity's constants or widening a range without naming it as a divergence.
+- Citing a Unity file, type or constant in a code comment. Name it in the PR description, and
+  give the code's own reason in the comment.
 - Testing only the transition's happy path, not the rebuilds, despawns and setting toggles
   that can land mid-way.
 - Per-avatar material properties on a shared, cached material: breaks the cache and the
