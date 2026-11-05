@@ -1,0 +1,220 @@
+//! The console surface and debug-panel section of photo mode.
+
+use bevy::prelude::*;
+use bevy_console::ConsoleCommand;
+use common::structs::{CursorLocks, PrimaryCamera};
+use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+use serde_json::json;
+
+use crate::{
+    capture::{
+        capture_blocker, phase, EncodingPhoto, PendingPhoto, PhotoStats, TakePhotoRequest,
+        UploadingPhoto,
+    },
+    mode::PhotoModeRequest,
+    photo_camera::{PhotoCamera, PhotoModeSource},
+    storage::CameraReelStorage,
+};
+
+pub(crate) fn register(app: &mut App) {
+    app.add_console_command::<PhotoModeCommand, _>(photo_mode_command)
+        .add_console_command::<TakePhotoCommand, _>(take_photo_command)
+        .add_debug_section(DebugSection {
+            title: "Photo mode",
+            query: "/photo_mode",
+            fields: &[
+                ("Position (X / Y / Z)", "position"),
+                ("Yaw (degrees)", "yaw"),
+                ("Pitch (degrees)", "pitch"),
+                ("Roll (degrees)", "roll"),
+                ("Vertical FOV (degrees)", "fov"),
+                ("Cursor locked", "cursorLocked"),
+                ("Camera HUD hidden", "hudHidden"),
+                ("Opened by", "source"),
+                ("Photos kept (current / max)", "storage"),
+                ("Photo in flight", "phase"),
+                ("Captures this session", "captures"),
+                ("Uploads this session", "uploaded"),
+                ("Failures this session", "failed"),
+                ("Last photo id", "lastPhotoId"),
+                ("Last error", "lastError"),
+            ],
+            actions: &[("Take photo", "/take_photo")],
+            inputs: &[DebugInput {
+                label: "Photo mode",
+                field: "active",
+                command: "/photo_mode {value}",
+                kind: DebugInputKind::Toggle,
+            }],
+        });
+}
+
+/// Read photo mode, or open (`on`/`true`) or close (`off`/`false`) it.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/photo_mode")]
+struct PhotoModeCommand {
+    state: Option<String>,
+}
+
+/// Take a photo in photo mode.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/take_photo")]
+struct TakePhotoCommand;
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn take_photo_command(
+    mut cmd: ConsoleCommand<TakePhotoCommand>,
+    mut requests: EventWriter<TakePhotoRequest>,
+    camera: Query<(
+        &Transform,
+        &PrimaryCamera,
+        Option<&PhotoCamera>,
+        Has<PendingPhoto>,
+        Has<EncodingPhoto>,
+        Has<UploadingPhoto>,
+    )>,
+    locks: Res<CursorLocks>,
+    storage: Res<CameraReelStorage>,
+    stats: Res<PhotoStats>,
+    time: Res<Time>,
+) {
+    let Some(Ok(_)) = cmd.take() else {
+        return;
+    };
+    let Ok((transform, primary, photo, pending, encoding, uploading)) = camera.single() else {
+        cmd.reply_failed("no primary camera");
+        return;
+    };
+    let busy = pending || encoding || uploading;
+    if let Some(reason) = capture_blocker(
+        photo.is_some(),
+        busy,
+        &storage,
+        stats.effect_until,
+        time.elapsed_secs_f64(),
+    ) {
+        cmd.reply_failed(format!("photo not taken: {reason}"));
+        return;
+    }
+    requests.write(TakePhotoRequest {
+        source: PhotoModeSource::Console,
+    });
+    cmd.reply_ok(
+        state_json(
+            transform,
+            primary,
+            photo,
+            &locks,
+            &storage,
+            &stats,
+            phase(pending, encoding, uploading),
+            None,
+        )
+        .to_string(),
+    );
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+fn photo_mode_command(
+    mut cmd: ConsoleCommand<PhotoModeCommand>,
+    mut requests: EventWriter<PhotoModeRequest>,
+    camera: Query<(
+        &Transform,
+        &PrimaryCamera,
+        Option<&PhotoCamera>,
+        Has<PendingPhoto>,
+        Has<EncodingPhoto>,
+        Has<UploadingPhoto>,
+    )>,
+    locks: Res<CursorLocks>,
+    storage: Res<CameraReelStorage>,
+    stats: Res<PhotoStats>,
+) {
+    let Some(Ok(args)) = cmd.take() else {
+        return;
+    };
+    let requested = match args
+        .state
+        .as_deref()
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        None => None,
+        Some("on" | "true") => Some(true),
+        Some("off" | "false") => Some(false),
+        Some(other) => {
+            cmd.reply_failed(format!("expected on or off, got {other}"));
+            return;
+        }
+    };
+    let Ok((transform, primary, photo, pending, encoding, uploading)) = camera.single() else {
+        cmd.reply_failed("no primary camera");
+        return;
+    };
+    if let Some(enable) = requested {
+        requests.write(if enable {
+            PhotoModeRequest::Enable(PhotoModeSource::Console)
+        } else {
+            PhotoModeRequest::Disable
+        });
+    }
+    cmd.reply_ok(
+        state_json(
+            transform,
+            primary,
+            photo,
+            &locks,
+            &storage,
+            &stats,
+            phase(pending, encoding, uploading),
+            requested,
+        )
+        .to_string(),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn state_json(
+    transform: &Transform,
+    primary: &PrimaryCamera,
+    photo: Option<&PhotoCamera>,
+    locks: &CursorLocks,
+    storage: &CameraReelStorage,
+    stats: &PhotoStats,
+    phase: &str,
+    requested: Option<bool>,
+) -> serde_json::Value {
+    let mut state = json!({
+        "active": photo.is_some(),
+        "requested": requested,
+        "position": [transform.translation.x, transform.translation.y, transform.translation.z],
+        "storage": [storage.current, storage.max],
+        "storageLoaded": storage.loaded,
+        "phase": phase,
+        "captures": stats.captures,
+        "uploaded": stats.uploaded,
+        "failed": stats.failed,
+        "lastPhotoId": stats.last_photo_id,
+        "lastError": stats.last_error,
+    });
+    match photo {
+        Some(photo) => {
+            state["yaw"] = json!(photo.yaw);
+            state["pitch"] = json!(photo.pitch);
+            state["roll"] = json!(photo.roll);
+            state["fov"] = json!(photo.fov.current);
+            state["cursorLocked"] = json!(locks.0.contains("photo"));
+            state["hudHidden"] = json!(photo.hud_hidden);
+            state["source"] = json!(photo.source);
+        }
+        None => {
+            let reason = if primary.scene_override.is_some() {
+                "a scene controls the camera"
+            } else {
+                "photo mode is off"
+            };
+            state["unavailable"] = json!({ "": reason });
+        }
+    }
+    state
+}

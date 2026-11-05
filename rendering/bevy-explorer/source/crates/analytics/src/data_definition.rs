@@ -90,6 +90,8 @@ pub enum SegmentEvent {
     FirstMoveInWorld(SegmentEventFirstMoveInWorld),
     TimeSpentInWorld(SegmentEventTimeSpentInWorld),
     ScreenViewed(SegmentEventScreenViewed),
+    OpenCamera(SegmentEventOpenCamera),
+    TakePhoto(SegmentEventTakePhoto),
     /// An event the host page reports through `/track`: its name, properties and time as sent.
     Page {
         name: String,
@@ -131,6 +133,8 @@ impl SegmentEvent {
                 ("time_spent_in_world", serde_json::to_value(event))
             }
             SegmentEvent::ScreenViewed(event) => ("Screen Viewed", serde_json::to_value(event)),
+            SegmentEvent::OpenCamera(event) => ("open_camera", serde_json::to_value(event)),
+            SegmentEvent::TakePhoto(event) => ("take_photo", serde_json::to_value(event)),
             SegmentEvent::Page { .. } => return None,
         };
         Some((name.to_string(), properties.unwrap()))
@@ -333,5 +337,52 @@ pub fn build_segment_event_batch_item(
         timestamp,
         message_id,
         properties,
+    }
+}
+
+/// Photo mode opened, from the key or a button.
+#[derive(Serialize)]
+pub struct SegmentEventOpenCamera {
+    pub source: String,
+}
+
+impl SegmentEventOpenCamera {
+    pub fn new(source: impl ToString) -> Self {
+        Self {
+            source: source.to_string(),
+        }
+    }
+}
+
+/// A photo was uploaded, with the people in it.
+#[derive(Serialize)]
+pub struct SegmentEventTakePhoto {
+    #[serde(rename = "Photo UUID")]
+    pub photo_uuid: String,
+    #[serde(rename = "Profiles Enhanced")]
+    pub profiles_enhanced: Vec<SegmentEventPhotoProfile>,
+    pub source: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SegmentEventPhotoProfile {
+    pub address: String,
+    pub is_emoting: bool,
+}
+
+impl SegmentEventTakePhoto {
+    pub fn new(photo_uuid: String, people: &[(String, bool)], source: impl ToString) -> Self {
+        Self {
+            photo_uuid,
+            profiles_enhanced: people
+                .iter()
+                .map(|(address, is_emoting)| SegmentEventPhotoProfile {
+                    address: address.clone(),
+                    is_emoting: *is_emoting,
+                })
+                .collect(),
+            source: source.to_string(),
+        }
     }
 }

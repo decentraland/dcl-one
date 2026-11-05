@@ -97,7 +97,7 @@ The in-world scenario in `specs/debug-panel.test.ts` uses the lower-right bug bu
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
-test is in the spec file's header. Port 40, Partial 32, Gap 15, Drop 2.
+test is in the spec file's header. Port 43, Partial 32, Gap 12, Drop 2.
 
 | Unity fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -111,7 +111,7 @@ test is in the spec file's header. Port 40, Partial 32, Gap 15, Drop 2.
 | Communities (4) | `communities` | | 3 | 1 | | No invites view, titles or counts; the detail is a modal |
 | Chat (6) | `chat` | 2 | 4 | | | Escape leaves the input but keeps the panel; history checked through `/chat_history` |
 | EmoteWheel (3) | `emote-wheel` | 2 | 1 | | | The emote playing is asserted through `/avatar_state` |
-| Camera (3) | `camera` | | | 3 | | No photo mode or capture |
+| Camera (3) | `camera` | 3 | | | | Photo mode and the capture are the engine's (`/photo_mode`, `/take_photo`); the HUD overlay's Shoot, Close and the rail's Camera button |
 | Skybox (2) | `skybox` | | 2 | | | The slider has no name; the time is set with `/time` |
 | BackpackWearables (3) | `backpack-wearables` | 2 | 1 | | | An equip is a draft until the Backpack closes; then the profile version and `/avatar_state` |
 | BackpackEmotes (4) | `backpack-emotes` | | 4 | | | Slots read `<n> <emote>`; a base-only account has one page |

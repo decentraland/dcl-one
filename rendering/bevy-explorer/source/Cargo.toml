@@ -129,6 +129,7 @@ system_bridge = { path = "crates/system_bridge" }
 system_api_types = { path = "crates/system_api_types" }
 scene_inspector = { path = "crates/scene_inspector" }
 texture_camera = { path = "crates/texture_camera" }
+camera_reel = { path = "crates/camera_reel" }
 platform = { path = "crates/platform" }
 image_processing = { path = "crates/image_processing" }
 cef_offscreen = { path = "crates/cef_offscreen" }
@@ -259,6 +260,11 @@ zip06 = { package = "zip", version = "0.6", default-features = false, features =
   "deflate",
 ] }
 image = "0.25"
+multipart = { version = "0.18.0", default-features = false, features = [
+  "client",
+  "lazy_static",
+] }
+mime = "0.3"
 ttf-parser = { version = "0.21", default-features = false }
 opener = { version = "0.8", git = "https://github.com/robtfm/opener" }
 chrono = { version = "0.4.31", features = ["serde"] }
@@ -401,6 +407,7 @@ imposters = { workspace = true }
 system_bridge = { workspace = true }
 scene_inspector = { workspace = true }
 texture_camera = { workspace = true }
+camera_reel = { workspace = true }
 platform = { workspace = true }
 image_processing = { workspace = true }
 particle_system = { workspace = true }

@@ -1,0 +1,107 @@
+.root {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-hud);
+  pointer-events: none;
+}
+
+/* the screen outside the photo */
+.mask {
+  position: absolute;
+  background: var(--scrim-40);
+}
+
+.frame {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid var(--ink-6);
+}
+.gridV,
+.gridH {
+  position: absolute;
+  background: var(--white-10);
+}
+.gridV {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+.gridH {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+.topBar,
+.bottomBar {
+  position: absolute;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: auto;
+  transform: translateX(-50%) scale(var(--ui-scale));
+}
+.topBar {
+  top: 16px;
+  transform-origin: top center;
+  width: calc(100% - 32px);
+  justify-content: space-between;
+}
+.bottomBar {
+  bottom: 24px;
+  transform-origin: bottom center;
+}
+.title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--text);
+  text-shadow: 0 1px 2px var(--scrim);
+}
+.shoot {
+  min-width: 180px;
+}
+.galleryAnchor {
+  display: inline-flex;
+}
+
+.notice {
+  position: absolute;
+  left: 50%;
+  bottom: 96px;
+  max-width: 420px;
+  padding: 12px 16px;
+  font-size: var(--fs-sm);
+  color: var(--error-text);
+  transform: translateX(-50%) scale(var(--ui-scale));
+  transform-origin: bottom center;
+  pointer-events: auto;
+}
+
+/* the capture effect: the flash fades out, then the photo shrinks into the gallery button */
+.flash {
+  position: absolute;
+  inset: 0;
+  background: var(--white);
+  animation: flash var(--dur-capture) var(--ease-in-out) forwards;
+}
+@keyframes flash {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+.fly {
+  position: absolute;
+  object-fit: cover;
+  border-radius: var(--r-control);
+  transition:
+    left var(--dur-capture) var(--ease-in-out),
+    top var(--dur-capture) var(--ease-in-out),
+    width var(--dur-capture) var(--ease-in-out),
+    height var(--dur-capture) var(--ease-in-out),
+    opacity var(--dur-capture) var(--ease-in-out);
+}

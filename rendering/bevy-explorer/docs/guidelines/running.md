@@ -177,6 +177,14 @@ State, in every build:
   coordinates `/click_at` takes, `null` behind the camera. The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
   centre of its visible meshes instead of its origin.
+- `/photo_mode [on|off]`: the camera reel's in-world camera as JSON: `active`, the camera's
+  `position`, `yaw`, `pitch`, `roll` and `fov` while on, `storage` (`[current, max]` photos kept,
+  once `storageLoaded`), `phase`, and this session's `captures`, `uploaded`, `failed`,
+  `lastPhotoId` and `lastError`. With `on` or `off` it opens or closes the mode, which lands a
+  frame later. The debug panel's "Photo mode" section binds it.
+- `/take_photo`: a photo in photo mode, captured from the window, cut to the photo frame, encoded
+  and uploaded to the camera-reel service; the reply is the same state, and a refusal names why
+  (mode off, a photo in flight, the storage unknown or full, the capture effect playing).
 - `/open_deep_link <url>` (standalone): applies a `decentraland://` place link (realm, position)
   as `--deep-link` does at launch, and answers once the realm or the teleport is set. Sign-in links
   are not handled.

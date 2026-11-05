@@ -69,6 +69,23 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   floor would send every refused client back together again. The Pulse server's documentation
   calls jitter mandatory for those codes.
 
+- **Photo mode follows the engine's cursor convention.** unity-explorer's in-world camera has its
+  own Lock/Unlock cursor actions. Here right-click toggles the lock as everywhere else, left-drag
+  looks while the cursor is free (Unity's drag), and Escape closes photo mode. The gallery key (G,
+  Unity's K) closes photo mode and opens the gallery, where Unity's K only closes it.
+- **Photo mode is not feature-flagged.** unity-explorer gates the camera reel behind
+  `alfa-camera-reel`; the Gallery already ships ungated here and photo mode does the same.
+- **A photo's `screenRect` is sent and dropped.** Each visible person carries the rectangle they
+  cover in the saved image, as unity-explorer computes it; the catalyst's camera-reel service parses
+  the metadata into a struct without that field, so it is not stored. Kept for parity with the
+  upstream service's clients.
+- **The photo camera stops at scene geometry instead of sliding.** unity-explorer moves a capsule
+  character controller, which slides along walls; here the move is refused when the camera's sphere
+  would intersect a scene collider.
+- **The photo camera's wheel zoom is normalised to lines.** unity-explorer scales the scroll delta
+  by 50 everywhere but macOS, in its input system's units; here a wheel line counts as one unit
+  on other platforms and a pixel on macOS, with the same scale, until measured against Unity.
+
 ## Deliberate choices that look like mistakes
 
 - **`UnapprovedPathMode::Allow`** in the asset server: bevy's check only admits paths under

@@ -150,6 +150,7 @@ pub enum SystemApi {
     GetVoiceStream(RpcStreamSender<VoiceMessage>),
     GetHoverStream(RpcStreamSender<HoverEvent>),
     GetProximityStream(RpcStreamSender<ProximityEvent>),
+    GetPhotoModeStream(RpcStreamSender<PhotoModeState>),
     GetProfileChangedStream(RpcStreamSender<ProfileChangedEvent>),
     GetSceneLoadingUiStream(RpcStreamSender<SceneLoadingUi>),
     GetAnalyticsEventStream(RpcStreamSender<AnalyticsEvent>),

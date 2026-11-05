@@ -178,7 +178,9 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
   after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`,
-  `/voice_state`, `/entity_screen_position <entity> [--bounds]`, plus the older `/player_position`,
+  `/voice_state`, `/entity_screen_position <entity> [--bounds]`, `/photo_mode [on|off]` (the camera
+  reel's in-world camera: its state, or open or close it) and `/take_photo` (a photo, captured
+  and uploaded; the reply is the state, a refusal names why), plus the older `/player_position`,
   `/get_user_data`, `/connected_players`, `/time` and the scene commands.
 - In development builds the lower-right bug button toggles the debug panel. In all builds,
   open **Sidebar settings (•••) → Debug panel** or type `/debug` in chat. Search by

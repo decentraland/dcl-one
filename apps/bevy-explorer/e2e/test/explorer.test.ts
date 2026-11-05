@@ -68,6 +68,25 @@ describe('Explorer', () => {
     assert.deepEqual(await explorer.position(), { x: 8, y: 0.5, z: -3 })
   })
 
+  test('photoMode and takePhoto parse the JSON replies and wait for the mode', async () => {
+    let active = false
+    const fake = new FakeConsole({
+      photo_mode: (line) => {
+        if (line.endsWith(' on')) active = true
+        if (line.endsWith(' off')) active = false
+        return JSON.stringify({ active, requested: null, position: [1, 2, 3], storage: [0, 500], storageLoaded: true, phase: 'idle', captures: 0, uploaded: 0, failed: 0, lastPhotoId: null, lastError: null })
+      },
+      take_photo: () => JSON.stringify({ active: true, requested: null, position: [1, 2, 3], storage: [0, 500], storageLoaded: true, phase: 'idle', captures: 1, uploaded: 0, failed: 0, lastPhotoId: null, lastError: null })
+    })
+    const explorer = new Explorer(fake)
+    assert.equal((await explorer.photoMode()).active, false)
+    await explorer.photoMode('on')
+    assert.equal((await explorer.waitPhotoMode(true, 1000)).active, true)
+    assert.equal((await explorer.takePhoto()).captures, 1)
+    await explorer.photoMode('off')
+    assert.equal((await explorer.waitPhotoMode(false, 1000)).active, false)
+  })
+
   test('connectedPlayers is empty on the no-players text', async () => {
     const fake = new FakeConsole({ connected_players: 'no other players connected' })
     assert.deepEqual(await new Explorer(fake).connectedPlayers(), [])

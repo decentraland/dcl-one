@@ -6,6 +6,31 @@ import { type AuthIdentity, encodeIdentity } from './identity.ts'
 import { type Selector, describeSelector, selectorArg, toSelectorObject } from './selectors.ts'
 import { until } from './wait.ts'
 
+/** `/photo_mode` and `/take_photo`: whether the in-world camera is open, where it is, the
+ *  player's photo storage and this session's capture counters. */
+export interface PhotoModeState {
+  active: boolean
+  requested: boolean | null
+  position: [number, number, number]
+  /** `[current, max]` photos kept, once `storageLoaded`. */
+  storage: [number, number]
+  storageLoaded: boolean
+  phase: 'idle' | 'capturing' | string
+  captures: number
+  uploaded: number
+  failed: number
+  lastPhotoId: string | null
+  lastError: string | null
+  yaw?: number
+  pitch?: number
+  roll?: number
+  fov?: number
+  cursorLocked?: boolean
+  hudHidden?: boolean
+  source?: string
+  unavailable?: Record<string, string>
+}
+
 export interface WorldState {
   inWorld: boolean
   arrivals: number
@@ -208,6 +233,30 @@ export class Explorer {
 
   worldState(): Promise<WorldState> {
     return this.json<WorldState>('/world_state')
+  }
+
+  // --- photo mode ---------------------------------------------------------------------------
+
+  /** Photo mode (the camera reel's in-world camera) as `/photo_mode` reports it; `state` opens or
+   *  closes it first (the change lands a frame later: `waitPhotoMode`). */
+  photoMode(state?: 'on' | 'off'): Promise<PhotoModeState> {
+    return this.json<PhotoModeState>(state ? `/photo_mode ${state}` : '/photo_mode')
+  }
+
+  waitPhotoMode(active: boolean, timeoutMs = 5000): Promise<PhotoModeState> {
+    return until(() => this.photoMode(), (state) => state.active === active, {
+      timeoutMs,
+      what: `photo mode to be ${active ? 'on' : 'off'}`
+    })
+  }
+
+  waitPhotoState(ready: (state: PhotoModeState) => boolean, what: string, timeoutMs = 10_000): Promise<PhotoModeState> {
+    return until(() => this.photoMode(), ready, { timeoutMs, what })
+  }
+
+  /** Take a photo in photo mode; rejects with the engine's reason when it cannot start. */
+  takePhoto(): Promise<PhotoModeState> {
+    return this.json<PhotoModeState>('/take_photo')
   }
 
   /** Wait until the player is in the world (signed in, realm connected, not out of world). */

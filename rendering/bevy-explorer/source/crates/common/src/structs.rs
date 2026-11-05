@@ -1527,6 +1527,11 @@ pub struct PlayerTeleported {
 #[derive(Component)]
 pub struct OutOfWorld;
 
+/// The primary camera is the camera reel's free photo camera: the player camera systems leave its
+/// transform and projection alone until it is removed.
+#[derive(Component)]
+pub struct PhotoMode;
+
 /// The player is let back into the world (`OutOfWorld` removed), and why: the parcel scene is
 /// ready (or there is none), or it never will be and they go in regardless.
 #[derive(Event, Clone, Copy, Debug, PartialEq, Eq)]

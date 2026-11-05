@@ -3208,6 +3208,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "camera_reel"
+version = "0.1.0"
+dependencies = [
+ "analytics",
+ "avatar",
+ "base64 0.22.1",
+ "bevy",
+ "bevy_console",
+ "clap",
+ "common",
+ "comms",
+ "console 0.1.0",
+ "dcl_component",
+ "image",
+ "input_manager",
+ "ipfs",
+ "mime",
+ "multipart",
+ "platform",
+ "rapier3d-f64",
+ "reqwest",
+ "scene_runner",
+ "serde",
+ "serde_json",
+ "system_api_types",
+ "system_bridge",
+ "tokio",
+ "tween",
+ "wallet",
+ "web-time",
+]
+
+[[package]]
 name = "cap"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4503,6 +4536,7 @@ dependencies = [
  "bevy_kira_audio",
  "bevy_simple_text_input",
  "build-time",
+ "camera_reel",
  "cap",
  "cef_offscreen",
  "chrono",

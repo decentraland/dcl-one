@@ -31,6 +31,7 @@ import { registerGallery } from './domains/gallery'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
 import { registerPointer } from './domains/pointer'
+import { registerPhotoMode } from './domains/photoMode'
 import { registerProximity } from './domains/proximity'
 import { registerSystemAction } from './domains/systemAction'
 import { registerBindings } from './domains/bindings'
@@ -68,6 +69,7 @@ export function main(): void {
     registerWorld(ctx)
     registerPointer(ctx)
     registerProximity(ctx)
+    registerPhotoMode(ctx)
     registerSystemAction(ctx)
     registerBindings(ctx)
     registerAvatarPointer(ctx)

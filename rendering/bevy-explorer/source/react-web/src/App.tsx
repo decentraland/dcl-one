@@ -27,6 +27,7 @@ import { GalleryPage } from './features/gallery/GalleryPage'
 import { Sidebar } from './features/sidebar/Sidebar'
 import { Minimap } from './features/minimap/Minimap'
 import { Pointer } from './features/pointer/Pointer'
+import { PhotoModeOverlay } from './features/photoMode/PhotoModeOverlay'
 import { openPassport } from './features/profile/Passport'
 import { openWorldVisit } from './components/WorldVisitModal'
 import { openPermissionDialog } from './features/permissions/PermissionDialog'
@@ -313,7 +314,8 @@ function Hud(): React.JSX.Element {
   // The scene editor owns the screen: no chrome in 'edit', only the reticle and prompts in 'play',
   // and no loading overlay in either (a scene reloads on every edit).
   const editorMode = session.editor.mode
-  const chrome = !pageOpen && editorMode === 'off'
+  // photo mode shows only its own overlay (and the reticle) over the world
+  const chrome = !pageOpen && editorMode === 'off' && !session.photoMode.active
 
   // Tell the engine how much of the screen the persistent HUD occupies. A full-screen page is
   // transient, so the last in-world value stands while one is open.
@@ -367,6 +369,9 @@ function Hud(): React.JSX.Element {
           )}
           {/* The full-screen menu pages own the whole screen; hide the rail + chat so
               they don't show through (the map page's body is transparent). */}
+          {session.photoMode.active && !pageOpen && (
+            <PhotoModeOverlay photoMode={session.photoMode} onOpenGallery={session.gallery.toggle} />
+          )}
           {chrome && <Sidebar session={session} onViewProfile={viewMyProfile} />}
           {chrome && (
             <Minimap

@@ -497,6 +497,21 @@ module.exports.getProximityStream = async function() {
   return streamGenerator();
 }
 
+// photo mode (the camera reel's in-world camera) as a stream of its state; see PhotoModeState
+module.exports.getPhotoModeStream = async function() {
+  const rid = await Deno.core.ops.op_get_photo_mode_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_photo_mode_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
 // profile changes (any player the engine holds a profile for, including the local player) as a stream
 // type ProfileChangedEvent = {
 //   address: string,   // lowercase 0x address

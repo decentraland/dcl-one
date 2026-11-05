@@ -10,7 +10,7 @@ use avatar::animate::{is_emoting, ActiveEmote, MaskedEmote};
 use common::{
     inputs::{Action, SystemAction, CAMERA_SET, CAMERA_ZOOM, POINTER_SET},
     structs::{
-        AppConfig, AvatarDynamicState, CameraOverride, CursorLocks, HeadSync, MoveKind,
+        AppConfig, AvatarDynamicState, CameraOverride, CursorLocks, HeadSync, MoveKind, PhotoMode,
         PrimaryCamera, PrimaryUser, PLAYER_CAMERA_FOV,
     },
     terrain::PlayerTerrainHeight,
@@ -33,7 +33,7 @@ pub struct CinematicInitialData {
 #[allow(clippy::too_many_arguments)]
 pub fn update_camera(
     time: Res<Time>,
-    mut camera: Query<(&Transform, &mut PrimaryCamera)>,
+    mut camera: Query<(&Transform, &mut PrimaryCamera), Without<PhotoMode>>,
     locks: Res<CursorLocks>,
     mut cinematic_data: Local<Option<CinematicInitialData>>,
     input_manager: InputManager,
@@ -144,13 +144,16 @@ pub fn update_camera(
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn update_camera_position(
     mut commands: Commands,
-    mut camera: Query<(
-        Entity,
-        &Transform,
-        &PrimaryCamera,
-        &mut Projection,
-        Option<&mut SystemTween>,
-    )>,
+    mut camera: Query<
+        (
+            Entity,
+            &Transform,
+            &PrimaryCamera,
+            &mut Projection,
+            Option<&mut SystemTween>,
+        ),
+        Without<PhotoMode>,
+    >,
     mut player: Query<
         (
             &Transform,

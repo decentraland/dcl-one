@@ -61,6 +61,7 @@ type Item =
   | { kind: 'skybox'; icon: IconName; label: string }
   | { kind: 'permissions'; icon: IconName; label: string }
   | { kind: 'gallery'; icon: IconName; label: string; hotkey?: string }
+  | { kind: 'camera'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'create'; icon: IconName; label: string }
   | { kind: 'link'; icon: IconName; label: string; url: string | (() => string) }
   | { kind: 'divider' }
@@ -100,6 +101,7 @@ const TOP: Item[] = [
   { kind: 'communities', icon: 'communities', label: 'Communities', hotkey: 'Communities' },
   { kind: 'backpack', icon: 'backpack', label: 'Backpack', hotkey: 'Backpack' },
   { kind: 'link', icon: 'marketplace', label: 'Shop', url: () => withUtm(siteUrl('/shop')) },
+  { kind: 'camera', icon: 'camera', label: 'Camera', hotkey: 'PhotoMode' },
   { kind: 'gallery', icon: 'gallery', label: 'Gallery', hotkey: 'Gallery' },
   { kind: 'settings', icon: 'settings', label: 'Settings', hotkey: 'Settings' },
   { kind: 'create', icon: 'create', label: 'Create' },
@@ -205,6 +207,17 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
         shortcut={shortcut}
         active={session.places.open}
         onClick={session.places.toggle}
+      />
+    )
+  if (item.kind === 'camera')
+    return (
+      <RailButton
+        key="camera"
+        icon={item.icon}
+        label={item.label}
+        shortcut={shortcut}
+        active={session.photoMode.active}
+        onClick={session.photoMode.toggle}
       />
     )
   if (item.kind === 'gallery')
