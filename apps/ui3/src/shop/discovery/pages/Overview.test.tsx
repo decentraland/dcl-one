@@ -5,7 +5,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { PRIMARY_WEARABLE, RESALE_WEARABLE, ShopHarness, type CatalogAnswers, type CatalogScenario, type SessionKind } from "../fixtures";
+import { PRIMARY_WEARABLE, RESALE_WEARABLE, saleWearable, ShopHarness, type CatalogAnswers, type CatalogScenario, type SessionKind } from "../fixtures";
 import { invalidateShopQueries } from "../query";
 import Overview from "./Overview";
 
@@ -15,9 +15,9 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-function overview(scenario: CatalogScenario = "ok", session: SessionKind = "signedOut", overrides?: CatalogAnswers) {
+function overview(scenario: CatalogScenario = "ok", session: SessionKind = "signedOut", overrides?: CatalogAnswers, remoteFlags?: Record<string, boolean>) {
   return render(
-    <ShopHarness path="/shop/overview" entry="/shop/overview" scenario={scenario} session={session} overrides={overrides}>
+    <ShopHarness path="/shop/overview" entry="/shop/overview" scenario={scenario} session={session} overrides={overrides} remoteFlags={remoteFlags}>
       <Overview />
     </ShopHarness>,
   );
@@ -55,6 +55,27 @@ describe("the Shop overview", () => {
     expect(resale).toBeDefined();
     expect(within(resale!).getByTestId("card-price")).toHaveTextContent("MANA");
     expect(resale!.textContent).not.toMatch(/Credit/);
+  });
+
+  it("shows Best Deals once decentraland.org's creator-sales rollout is on, and not before", async () => {
+    const deals = [1, 2, 3].map((n) => ({ ...saleWearable(), tradeId: `trade-sale-${n}`, itemId: `${n}` }));
+    const asked: string[] = [];
+    const answers: CatalogAnswers = {
+      "/v3/catalog/unified": (url: URL) => {
+        asked.push(url.search);
+        return url.searchParams.get("discounted") === "true" ? { data: deals, total: deals.length } : { data: [PRIMARY_WEARABLE], total: 1 };
+      },
+    };
+    const off = overview("ok", "signedOut", answers, {});
+    await screen.findByRole("region", { name: "New Creations" });
+    expect(screen.queryByTestId("best-deals-rail")).toBeNull();
+    expect(asked.some((q) => q.includes("discounted=true"))).toBe(false);
+    off.unmount();
+
+    invalidateShopQueries();
+    overview("ok", "signedOut", answers, { "dapps-shop-creator-sales": true });
+    expect(await screen.findByTestId("best-deals-rail")).toBeTruthy();
+    expect(asked.some((q) => q.includes("discounted=true"))).toBe(true);
   });
 
   it("hides the credits CTA in the iOS web view", async () => {

@@ -152,6 +152,9 @@ pub struct Upstreams {
     /// `<base>/entities/<id>/{face,body}.png` as the old lambdas did;
     /// unset, at this node's `profile-images/entities/<id>/{face,body}.png`.
     pub profile_cdn_base_url: Option<String>,
+    /// `NFT_WORKER_BASE_URL`: the NFT ownership indexer the old lambdas asked
+    /// for an owner's third-party holdings; unset, they are read from the chain.
+    pub nft_worker_base_url: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -169,11 +172,13 @@ pub struct Settings {
     /// `Config::eth_rpc_url()`: the contracts registry is read over the same
     /// TLS JSON-RPC endpoint the EIP-1654 validator uses.
     pub eth_rpc_url: Option<String>,
-    /// `RPC_ENDPOINT_POLYGON`: the POI list and third-party ownership on
-    /// polygon (the `TRADE_RPC_URLS` 137 entry otherwise).
+    /// `RPC_ENDPOINT_POLYGON`: the POI list, and third-party ownership on
+    /// the L2 of `ETH_NETWORK` (its `TRADE_RPC_URLS` entry otherwise).
     pub polygon_rpc_url: Option<String>,
     /// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`: the approved third-party providers.
     pub third_party_registry_subgraph_url: Option<String>,
+    /// `NFT_WORKER_BASE_URL`: the owner's third-party holdings (`third_party`).
+    pub nft_worker_base_url: Option<String>,
     /// `LAND_IMAGE_BASE_URL`: the map service `/lambdas/users/{a}/lands` points its images at.
     pub land_image_base_url: String,
     pub trades_sync_upstream_url: Option<String>,
@@ -371,6 +376,7 @@ impl Settings {
                 }
             })
             .transpose()?,
+            nft_worker_base_url: checked("NFT_WORKER_BASE_URL", &upstreams.nft_worker_base_url)?,
             land_image_base_url: config.map_urls().land_image_base,
             trades_sync_upstream_url: checked(
                 "TRADES_SYNC_UPSTREAM_URL",
@@ -428,6 +434,7 @@ impl Settings {
             eth_rpc_url: None,
             polygon_rpc_url: None,
             third_party_registry_subgraph_url: None,
+            nft_worker_base_url: None,
             land_image_base_url: "https://api.decentraland.org".to_string(),
             trades_sync_upstream_url: None,
             trades_sync_interval: Duration::from_secs(900),

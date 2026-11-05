@@ -20,6 +20,8 @@ const BACKOFF_MS = 10_000;
 export const REMOTE_FLAG = {
   /** Whether the Shop asks for personalised suggestions at all; the row still hides itself without a signal. */
   suggestedForYou: "shop-suggested-for-you",
+  /** Creators' running sales: discounted prices, the Best Deals rail and the deals filter (shop@94584a5c useCreatorSalesEnabled). */
+  creatorSales: "shop-creator-sales",
 } as const;
 
 export type RemoteFlag = (typeof REMOTE_FLAG)[keyof typeof REMOTE_FLAG];
@@ -92,13 +94,30 @@ export function refreshRemoteFlags(now = Date.now()): Promise<void> {
   return read;
 }
 
-/** Hold these flags as the service's answer: a host that knows them, and tests, skip the read. Null forgets them. */
+/** Whether the flags were primed (by a server render, a host or a test) rather than read here. */
+export function remoteFlagsPrimed(): boolean {
+  return snapshot?.primed === true;
+}
+
+/**
+ * Hold these flags as the service's answer: a host that knows them, and tests, skip the read. Null forgets them. A
+ * primed answer is kept for the document's life (every server-rendered Shop page primes one): a flag switched off
+ * upstream reaches an open tab on its next full load, not within the session.
+ */
 export function primeRemoteFlags(flags: Record<string, boolean> | null): void {
   generation++;
   failedAt = null;
   // A read already running belongs to the old generation; the next refresh starts its own.
   inflight = null;
   publish(flags ? { at: Date.now(), primed: true, flags: { ...flags } } : null);
+}
+
+/**
+ * One rollout flag as last answered, outside React: false until an answer says yes. A page the server rendered has
+ * its answer primed before its first render (sites primes the loader's flags on both sides), so the two agree.
+ */
+export function remoteFlag(flag: RemoteFlag): boolean {
+  return snapshot?.flags[`${APP}-${flag}`] === true;
 }
 
 /** One rollout flag; false until the service answers yes. */

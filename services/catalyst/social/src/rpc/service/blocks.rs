@@ -22,6 +22,7 @@ pub(crate) async fn block(
     if !ctx
         .friendship_limiter()
         .allow(me, other, PairScope::Directional)
+        .await
     {
         tracing::warn!(actor = %me, target = %other, "block mutation rate limited");
         return Err(Refusal::RateLimited(FRIENDSHIP_RATE_LIMIT_MESSAGE.into()));
@@ -29,26 +30,32 @@ pub(crate) async fn block(
     let (blocked_at, ended_friendship) = ctx.db().block_user_recording_action(me, other).await?;
     let pubsub = ctx.pubsub();
     if ended_friendship {
-        ctx.publish_friendship(me, other, |_| FriendshipUpdate {
-            stream_closed: None,
-            update: Some(friendship_update::Update::Block(
-                friendship_update::BlockResponse {
-                    user: Some(User {
-                        address: me.to_string(),
-                    }),
-                },
-            )),
-        })
-        .await;
+        ctx.pubsub()
+            .publish_mutation(
+                other,
+                SocialEvent::Friendship(FriendshipUpdate {
+                    stream_closed: None,
+                    update: Some(friendship_update::Update::Block(
+                        friendship_update::BlockResponse {
+                            user: Some(User {
+                                address: me.to_string(),
+                            }),
+                        },
+                    )),
+                }),
+            )
+            .await;
     }
-    pubsub.publish(
-        other,
-        SocialEvent::Block(BlockUpdate {
-            stream_closed: None,
-            address: me.to_string(),
-            is_blocked: true,
-        }),
-    );
+    pubsub
+        .publish_mutation(
+            other,
+            SocialEvent::Block(BlockUpdate {
+                stream_closed: None,
+                address: me.to_string(),
+                is_blocked: true,
+            }),
+        )
+        .await;
     Ok(blocked_at)
 }
 
@@ -61,6 +68,7 @@ pub(crate) async fn unblock(ctx: &Context, me: &str, other: &str) -> Result<(), 
     if !ctx
         .friendship_limiter()
         .allow(me, other, PairScope::Directional)
+        .await
     {
         tracing::warn!(actor = %me, target = %other, "block mutation rate limited");
         return Err(Refusal::RateLimited(FRIENDSHIP_RATE_LIMIT_MESSAGE.into()));
@@ -69,26 +77,32 @@ pub(crate) async fn unblock(ctx: &Context, me: &str, other: &str) -> Result<(), 
         return Ok(());
     };
     if deleted_friendship {
-        ctx.publish_friendship(me, other, |_| FriendshipUpdate {
-            stream_closed: None,
-            update: Some(friendship_update::Update::Delete(
-                friendship_update::DeleteResponse {
-                    user: Some(User {
-                        address: me.to_string(),
-                    }),
-                },
-            )),
-        })
-        .await;
+        ctx.pubsub()
+            .publish_mutation(
+                other,
+                SocialEvent::Friendship(FriendshipUpdate {
+                    stream_closed: None,
+                    update: Some(friendship_update::Update::Delete(
+                        friendship_update::DeleteResponse {
+                            user: Some(User {
+                                address: me.to_string(),
+                            }),
+                        },
+                    )),
+                }),
+            )
+            .await;
     }
-    ctx.pubsub().publish(
-        other,
-        SocialEvent::Block(BlockUpdate {
-            stream_closed: None,
-            address: me.to_string(),
-            is_blocked: false,
-        }),
-    );
+    ctx.pubsub()
+        .publish_mutation(
+            other,
+            SocialEvent::Block(BlockUpdate {
+                stream_closed: None,
+                address: me.to_string(),
+                is_blocked: false,
+            }),
+        )
+        .await;
     Ok(())
 }
 
@@ -179,6 +193,13 @@ impl SocialServiceImpl {
                 });
             }
         };
+        if other == me {
+            return Ok(UnblockUserResponse {
+                response: Some(unblock_user_response::Response::InvalidRequest(
+                    invalid_req("Cannot unblock yourself"),
+                )),
+            });
+        }
         match unblock(&context.server_context, &me, &other).await {
             Ok(()) => {}
             Err(Refusal::Internal(m) | Refusal::Failed(m)) => {
@@ -229,14 +250,37 @@ impl SocialServiceImpl {
             }
         };
         let addrs: Vec<String> = rows.iter().map(|r| r.address.clone()).collect();
-        let map = context.server_context.profiles().get_profiles(&addrs).await;
-        let profiles = rows
+        let resolved = match context
+            .server_context
+            .profiles()
+            .get_profiles_list_result(&addrs)
+            .await
+        {
+            Ok(profiles) => profiles,
+            Err(error) => {
+                tracing::error!(%error, "blocked profiles unavailable");
+                return Ok(GetBlockedUsersResponse {
+                    profiles: Vec::new(),
+                    pagination_data: Some(PaginatedResponse { total: 0, page: 1 }),
+                });
+            }
+        };
+        let blocked_at = rows
             .iter()
-            .map(|r| {
+            .map(|row| {
+                (
+                    row.address.to_lowercase(),
+                    row.blocked_at.timestamp_millis(),
+                )
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        let profiles = resolved
+            .iter()
+            .map(|profile| {
                 profiles::blocked_profile(
-                    &r.address,
-                    map.get(&r.address.to_lowercase()),
-                    Some(r.blocked_at.timestamp_millis()),
+                    &profile.address,
+                    Some(profile),
+                    blocked_at.get(&profile.address).copied(),
                 )
             })
             .collect();

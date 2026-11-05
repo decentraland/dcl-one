@@ -1,0 +1,165 @@
+//! Player control of the currently assigned, credentialed LiveKit room.
+
+use bevy::{
+    ecs::{component::HookContext, system::SystemParam, world::DeferredWorld},
+    prelude::*,
+};
+use common::structs::NoRenderApp;
+
+use super::{ConnectFailed, Connecting, LivekitRoom};
+use crate::{
+    livekit::{ConnectionAvailability, LivekitNetworkMessage, LivekitRuntimeRes, LivekitTransport},
+    private_chat::PrivateChatRoom,
+    SceneRoom, Transport,
+};
+
+/// A fresh assignment has its own entity and starts with its connection enabled.
+#[derive(Component)]
+#[component(on_remove = Self::on_remove)]
+pub(super) struct RoomPaused;
+
+impl RoomPaused {
+    fn on_remove(mut world: DeferredWorld, context: HookContext) {
+        // Drop anything enqueued since the last Update before publishing can resume.
+        if let Some(mut messages) = world.get_mut::<LivekitNetworkMessage>(context.entity) {
+            messages.discard_queued();
+        }
+    }
+}
+
+impl LivekitNetworkMessage {
+    fn discard_queued(&mut self) {
+        while self.try_recv().is_ok() {}
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum RoomKind {
+    Island,
+    Scene,
+    Chat,
+}
+
+impl RoomKind {
+    pub(super) fn for_room(scene: bool, private: bool, transport: bool) -> Option<Self> {
+        if private {
+            Some(Self::Chat)
+        } else if !transport {
+            None
+        } else if scene {
+            Some(Self::Scene)
+        } else {
+            Some(Self::Island)
+        }
+    }
+}
+
+pub(super) fn client_can_control(no_render: bool) -> bool {
+    !no_render && !common::structs::server_mode()
+}
+
+pub(super) fn room_control_block(
+    policy: ConnectionAvailability,
+    no_render: bool,
+) -> Option<&'static str> {
+    if !client_can_control(no_render) {
+        Some("Only a graphical player client can control room connections")
+    } else if policy == ConnectionAvailability::Unavailable {
+        Some("Room connections are controlled by session policy")
+    } else {
+        None
+    }
+}
+
+#[derive(SystemParam)]
+pub(super) struct RoomConnections<'w, 's> {
+    commands: Commands<'w, 's>,
+    policy: Res<'w, State<ConnectionAvailability>>,
+    no_render: Option<Res<'w, NoRenderApp>>,
+    #[allow(clippy::type_complexity)]
+    rooms: Query<
+        'w,
+        's,
+        (
+            Entity,
+            Has<SceneRoom>,
+            Has<PrivateChatRoom>,
+            Has<Transport>,
+            Has<RoomPaused>,
+            Has<ConnectFailed>,
+            Option<&'static LivekitRoom>,
+        ),
+        With<LivekitTransport>,
+    >,
+}
+
+impl RoomConnections<'_, '_> {
+    pub(super) fn set_enabled(
+        &mut self,
+        kind: Option<RoomKind>,
+        enabled: bool,
+    ) -> Result<(), &'static str> {
+        if let Some(reason) = room_control_block(*self.policy.get(), self.no_render.is_some()) {
+            return Err(reason);
+        }
+        let kind = kind.ok_or("No current room")?;
+        let mut matching = self
+            .rooms
+            .iter()
+            .filter(|(_, scene, private, transport, ..)| {
+                RoomKind::for_room(*scene, *private, *transport) == Some(kind)
+            });
+        let (entity, _, _, _, paused, failed, room) = matching.next().ok_or("No current room")?;
+        if matching.next().is_some() {
+            return Err("More than one room matches");
+        }
+        let mut entity = self.commands.entity(entity);
+        if enabled && (paused || failed) {
+            entity.remove::<RoomPaused>();
+            // Re-add Connecting to trigger a new dial after a refusal.
+            if failed {
+                entity.remove::<Connecting>();
+            }
+            // While an SDK close is in flight, its Disconnected event will restart the room
+            // after retiring participants from the previous connection.
+            if failed || room.is_none_or(|room| room.closed) {
+                entity.insert(Connecting);
+            }
+        } else if !enabled && !paused {
+            entity.insert(RoomPaused).remove::<Connecting>();
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn register(app: &mut App) {
+    if client_can_control(app.world().contains_resource::<NoRenderApp>()) {
+        app.add_observer(close_paused_room)
+            .add_systems(Update, discard_paused_messages);
+    }
+}
+
+// The pause and the completed dial can arrive in either order, including on re-dial
+// when the same transport entity already has a (closed) SDK room.
+fn close_paused_room(
+    trigger: Trigger<OnInsert, (RoomPaused, LivekitRoom)>,
+    rooms: Query<&LivekitRoom, With<RoomPaused>>,
+    runtime: LivekitRuntimeRes,
+) {
+    if let Ok(room) = rooms.get(trigger.target()) {
+        if !room.closed {
+            let room = room.room.clone();
+            runtime.spawn(async move {
+                if let Err(err) = room.close().await {
+                    warn!("Unable to close paused room: {err}");
+                }
+            });
+        }
+    }
+}
+
+fn discard_paused_messages(mut rooms: Query<&mut LivekitNetworkMessage, With<RoomPaused>>) {
+    for mut messages in &mut rooms {
+        messages.discard_queued();
+    }
+}

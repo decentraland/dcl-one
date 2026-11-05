@@ -241,7 +241,7 @@ impl Default for AvatarMovement {
 }
 
 #[derive(Component, Clone, Debug)]
-pub struct AvatarLocomotionSettings(PbAvatarLocomotionSettings);
+pub struct AvatarLocomotionSettings(pub(crate) PbAvatarLocomotionSettings);
 
 impl From<PbAvatarLocomotionSettings> for AvatarLocomotionSettings {
     fn from(value: PbAvatarLocomotionSettings) -> Self {

@@ -1,0 +1,220 @@
+{
+  "source": "decentraland/social-service-ea",
+  "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+  "node": "v26.12.0",
+  "cap": 2097152,
+  "observationMs": 200,
+  "sources": [
+    {
+      "path": "src/controllers/routes/http.routes.ts",
+      "sha256": "8cc00231469eb83019a985068b76342280f267c89e7a625c079261249f98393a"
+    },
+    {
+      "path": "src/controllers/handlers/http/update-community-partially-handler.ts",
+      "sha256": "6bded407379605ea402555fe32df83d9735230de18c0492a59b7363d52e7eb44"
+    },
+    {
+      "path": "src/controllers/handlers/http/create-community-request-handler.ts",
+      "sha256": "2cb5cd9cfaf4189d1890f6d2db0806cdd7c7e98f1d1fbd4d3920c8d46f706afa"
+    },
+    {
+      "path": "src/components.ts",
+      "sha256": "9878788adb18eeff8b80ac24f392b945239533fe5e88550d1334123002c60e68"
+    }
+  ],
+  "scope": "Actual server/router/auth/schema/multipart middleware. Domain mutators are local stubs, with real PostgreSQL P0001 injected after successful auth/schema for the marked fault case. Header-only cases are observed for 2s; EOF is observed for 200ms after complete response. No inference about longer transport lifetime.",
+  "cases": [
+    {
+      "name": "unsigned-create-no-content-type",
+      "method": "POST",
+      "path": "/v1/communities",
+      "status": 400,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-type": "application/json",
+        "connection": "keep-alive"
+      },
+      "body": "{\"error\":\"Invalid Auth Chain\",\"message\":\"This endpoint requires a signed fetch request. See ADR-44.\"}",
+      "domainCalls": 0,
+      "closedWithinObservation": false
+    },
+    {
+      "name": "unsigned-create-json",
+      "method": "POST",
+      "path": "/v1/communities",
+      "contentType": "application/json",
+      "status": 400,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-type": "application/json",
+        "connection": "keep-alive"
+      },
+      "body": "{\"error\":\"Invalid Auth Chain\",\"message\":\"This endpoint requires a signed fetch request. See ADR-44.\"}",
+      "domainCalls": 0,
+      "closedWithinObservation": false
+    },
+    {
+      "name": "unsigned-patch-json",
+      "method": "PATCH",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001",
+      "contentType": "application/json",
+      "status": 400,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-type": "application/json",
+        "connection": "keep-alive"
+      },
+      "body": "{\"error\":\"Invalid Auth Chain\",\"message\":\"This endpoint requires a signed fetch request. See ADR-44.\"}",
+      "domainCalls": 0,
+      "closedWithinObservation": false
+    },
+    {
+      "name": "unsigned-patch-real-database-fault",
+      "method": "PATCH",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001",
+      "contentType": "application/json",
+      "fault": true,
+      "status": 400,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-type": "application/json",
+        "connection": "keep-alive"
+      },
+      "body": "{\"error\":\"Invalid Auth Chain\",\"message\":\"This endpoint requires a signed fetch request. See ADR-44.\"}",
+      "domainCalls": 0,
+      "closedWithinObservation": false
+    },
+    {
+      "name": "unsigned-request-real-database-fault",
+      "method": "POST",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001/requests",
+      "contentType": "application/json",
+      "fault": true,
+      "status": 400,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-type": "application/json",
+        "connection": "keep-alive"
+      },
+      "body": "{\"error\":\"Invalid Auth Chain\",\"message\":\"This endpoint requires a signed fetch request. See ADR-44.\"}",
+      "domainCalls": 0,
+      "closedWithinObservation": false
+    },
+    {
+      "name": "signed-patch-real-database-fault",
+      "method": "PATCH",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001",
+      "contentType": "application/json",
+      "fault": true,
+      "signed": true,
+      "sendBody": true,
+      "length": 22,
+      "status": 500,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-type": "application/json",
+        "connection": "keep-alive"
+      },
+      "body": "{\"message\":\"permission denied for table communities\"}",
+      "domainCalls": 1,
+      "closedWithinObservation": false
+    },
+    {
+      "name": "signed-join-json-header-only",
+      "method": "POST",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001/members",
+      "contentType": "application/json",
+      "signed": true,
+      "status": 204,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "connection": "keep-alive"
+      },
+      "body": "",
+      "domainCalls": 0,
+      "closedWithinObservation": false
+    },
+    {
+      "name": "signed-create-json-header-only",
+      "method": "POST",
+      "path": "/v1/communities",
+      "contentType": "application/json",
+      "signed": true,
+      "responseTimeoutAfterMs": 2000,
+      "domainCalls": 0,
+      "closedWithinObservation": false
+    },
+    {
+      "name": "signed-patch-524289-declared",
+      "method": "PATCH",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001",
+      "contentType": "application/json",
+      "signed": true,
+      "length": 524289,
+      "chunked": false,
+      "sendBody": true,
+      "status": 204,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "connection": "keep-alive"
+      },
+      "body": "",
+      "domainCalls": 1,
+      "closedWithinObservation": false
+    },
+    {
+      "name": "signed-patch-524289-chunked",
+      "method": "PATCH",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001",
+      "contentType": "application/json",
+      "signed": true,
+      "length": 524289,
+      "chunked": true,
+      "sendBody": true,
+      "status": 204,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "connection": "keep-alive"
+      },
+      "body": "",
+      "domainCalls": 1,
+      "closedWithinObservation": false
+    },
+    {
+      "name": "signed-patch-1048577-declared",
+      "method": "PATCH",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001",
+      "contentType": "application/json",
+      "signed": true,
+      "length": 1048577,
+      "chunked": false,
+      "sendBody": true,
+      "status": 204,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "connection": "keep-alive"
+      },
+      "body": "",
+      "domainCalls": 1,
+      "closedWithinObservation": false
+    },
+    {
+      "name": "signed-patch-1048577-chunked",
+      "method": "PATCH",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001",
+      "contentType": "application/json",
+      "signed": true,
+      "length": 1048577,
+      "chunked": true,
+      "sendBody": true,
+      "status": 204,
+      "headers": {
+        "access-control-allow-origin": "*",
+        "connection": "keep-alive"
+      },
+      "body": "",
+      "domainCalls": 1,
+      "closedWithinObservation": false
+    }
+  ]
+}

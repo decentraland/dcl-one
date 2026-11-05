@@ -3,6 +3,7 @@
 //! place so live particles survive; removing the component purges them.
 
 mod config;
+mod debug_panel;
 mod material;
 mod simulate;
 
@@ -64,6 +65,7 @@ impl Plugin for ParticleSystemPlugin {
 
         app.init_resource::<ActiveScenes>();
         app.init_resource::<ParticleMeshes>();
+        debug_panel::register(app);
 
         app.add_crdt_lww_component::<PbParticleSystem, ParticleSystem>(
             SceneComponentId::PARTICLE_SYSTEM,

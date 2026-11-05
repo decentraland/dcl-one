@@ -1,5 +1,6 @@
 pub mod avatar_movement;
 pub mod camera;
+mod debug_panel;
 pub mod point_at;
 
 use bevy::{app::Propagate, ecs::query::Has, prelude::*, render::view::RenderLayers};
@@ -29,6 +30,7 @@ pub struct UserInputPlugin;
 impl Plugin for UserInputPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((AvatarMovementPlugin, PointAtPlugin));
+        debug_panel::register(app);
         app.add_systems(
             Update,
             update_camera

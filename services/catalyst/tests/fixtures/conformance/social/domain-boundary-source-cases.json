@@ -1,0 +1,150 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+  },
+  "node": "v26.12.0",
+  "scope": "Actual pinned adapters and referral component on PostgreSQL TEMP relations. Provider failures and independent Promise.all operations use explicit barriers; SNS/rewards/email/Slack are controlled in-process implementations. Member exclusion captures the source ANY bug; it is not a source claim that ALL is equivalent. Signed-up adapter edge captures unguarded source SQL, not a full concurrent updateProgress proof.",
+  "sources": [
+    {
+      "path": "src/adapters/communities-db.ts",
+      "sha256": "0748e0d7f408e5565a89ff87975eea64fd84ff9c2213bb1038149a3473f0ad8a"
+    },
+    {
+      "path": "src/adapters/referral-db.ts",
+      "sha256": "ff70fd3508826ced642c9877f642989c5b14cb6da8b677678ed6bcbef824f5ce"
+    },
+    {
+      "path": "src/logic/referral/referral.ts",
+      "sha256": "b0020c89a7e69b428771c2fbe3902a5254ec822b2bf40bcb6e5c0777a8edf466"
+    },
+    {
+      "path": "src/utils/client-ip.ts",
+      "sha256": "e27d4cae4c87dcddc02073122f9b6b2a617ade5846652599f4d42eac4a1fa993"
+    },
+    {
+      "path": "node_modules/@dcl/sns-component/dist/src/component.js",
+      "sha256": "3a92418f11414b5bfab022b63c70a415c8362caa37e15e93b6eaa5ec6ff061f7"
+    }
+  ],
+  "membership": {
+    "excluded": [
+      "0x000000000000000000000000000000000000000a",
+      "0x000000000000000000000000000000000000000b"
+    ],
+    "returned_excluded": [
+      "0x000000000000000000000000000000000000000b",
+      "0x000000000000000000000000000000000000000a"
+    ],
+    "sql": "WITH members AS (SELECT member_address FROM (SELECT member_address FROM community_members WHERE community_id = $1) AS members) SELECT cm.community_id AS \"communityId\", cm.member_address AS \"memberAddress\", cm.role AS \"role\", cm.joined_at AS \"joinedAt\" FROM community_members cm WHERE cm.community_id = $2 AND cm.member_address <> ANY($3) ORDER BY CASE cm.role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END ASC, cm.joined_at ASC LIMIT $4 OFFSET $5",
+    "bound_exclusions": [
+      "0x000000000000000000000000000000000000000a",
+      "0x000000000000000000000000000000000000000b"
+    ]
+  },
+  "failures": [
+    {
+      "scenario": "first-sns-failure",
+      "error": "fixture SNS failure",
+      "before_release": [
+        "sns-1",
+        "handler-error"
+      ],
+      "trace": [
+        "sns-1",
+        "handler-error"
+      ],
+      "state": {
+        "status": "tier_granted",
+        "tier_granted": true
+      },
+      "images": [],
+      "sns_calls": 1
+    },
+    {
+      "scenario": "reward-failure",
+      "error": "fixture reward failure",
+      "before_release": [
+        "sns-1",
+        "sns-1-completed",
+        "reward",
+        "handler-error"
+      ],
+      "trace": [
+        "sns-1",
+        "sns-1-completed",
+        "reward",
+        "handler-error"
+      ],
+      "state": {
+        "status": "tier_granted",
+        "tier_granted": true
+      },
+      "images": [],
+      "sns_calls": 1
+    },
+    {
+      "scenario": "tier-sns-failure",
+      "error": "fixture SNS failure",
+      "before_release": [
+        "sns-1",
+        "sns-1-completed",
+        "reward",
+        "sns-2",
+        "image-start",
+        "handler-error"
+      ],
+      "trace": [
+        "sns-1",
+        "sns-1-completed",
+        "reward",
+        "sns-2",
+        "image-start",
+        "handler-error",
+        "image-committed"
+      ],
+      "state": {
+        "status": "tier_granted",
+        "tier_granted": true
+      },
+      "images": [
+        5
+      ],
+      "sns_calls": 2
+    },
+    {
+      "scenario": "image-failure-first",
+      "error": "fixture image failure",
+      "before_release": [
+        "sns-1",
+        "sns-1-completed",
+        "reward",
+        "sns-2",
+        "image-start",
+        "handler-error"
+      ],
+      "trace": [
+        "sns-1",
+        "sns-1-completed",
+        "reward",
+        "sns-2",
+        "image-start",
+        "handler-error",
+        "sns-2-completed"
+      ],
+      "state": {
+        "status": "tier_granted",
+        "tier_granted": true
+      },
+      "images": [],
+      "sns_calls": 2
+    }
+  ],
+  "signed_up_adapter": {
+    "sql": "UPDATE referral_progress SET status = $1, signed_up_at = $2, updated_at = $3 WHERE invited_user = $4",
+    "state": {
+      "status": "signed_up",
+      "tier_granted": true
+    }
+  }
+}

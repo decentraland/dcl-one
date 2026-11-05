@@ -88,6 +88,7 @@ type TransportEvent<T, M> = (T, M);
 enum ServerEvents<T: Transport + ?Sized> {
     AttachTransport(Arc<T>),
     NewTransport(TransportID, Arc<T>),
+    CloseTransport(TransportID),
 }
 
 enum TransportNotification<T: Transport + ?Sized> {
@@ -179,34 +180,56 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
     /// Takes `&mut self`, so only the thread owning the [`RpcServer`] can call it; from
     /// anywhere else use [`ServerEventsSender::send_attach_transport`].
     pub async fn attach_transport(&mut self, transport: Arc<T>) -> ServerResult<()> {
-        self.new_transport_attached(transport).await
+        let id = self.next_transport_id;
+        self.next_transport_id += 1;
+        self.register_transport(id, transport.clone());
+        Self::announce_transport(self.server_events_sender.clone(), id, transport).await
     }
 
-    async fn new_transport_attached(&mut self, transport: Arc<T>) -> ServerResult<()> {
-        let current_id = self.next_transport_id;
+    /// Sends `ServerReady` and only then starts reading the transport, so it is the first
+    /// message the client sees (the client refuses any other). Transport callbacks run
+    /// before this send, preserving attach order even when a handshake stalls.
+    async fn announce_transport(
+        events: ServerEventsSender<T>,
+        id: TransportID,
+        transport: Arc<T>,
+    ) -> ServerResult<()> {
         if let Err(error) = transport.send(server_ready_message().encode_to_vec()).await {
             error!(
                 "> RpcServer > new_transport_attached > Error while sending server ready message: {error:?}"
             );
-            if matches!(error, TransportError::Closed) {
-                return Err(ServerResultError::Internal(
-                    ServerInternalError::TransportError,
-                ));
-            } else {
+            let _ = events.0.send(ServerEvents::CloseTransport(id));
+            if !matches!(error, TransportError::Closed) {
                 transport.close().await;
-                return Err(ServerResultError::Internal(
-                    ServerInternalError::TransportError,
-                ));
             }
+            return Err(ServerResultError::Internal(
+                ServerInternalError::TransportError,
+            ));
         }
-        self.server_events_sender
-            .send_new_transport(current_id, transport.clone())?;
+        events.send_new_transport(id, transport)
+    }
+
+    fn register_transport(&mut self, id: TransportID, transport: Arc<T>) {
         if let Some(handler) = &self.on_transport_connected_handler {
-            handler(transport.clone(), current_id);
+            handler(transport.clone(), id);
         }
-        self.transports.insert(current_id, transport);
+        self.transports.insert(id, transport);
+    }
+
+    /// The server loop never awaits a send: one client whose socket stops admitting bytes
+    /// must not hold up any other client's attach, `CreatePort` or `RequestModule`.
+    fn new_transport_attached(&mut self, transport: Arc<T>) {
+        let id = self.next_transport_id;
         self.next_transport_id += 1;
-        Ok(())
+        self.register_transport(id, transport.clone());
+        let events = self.server_events_sender.clone();
+        tokio::spawn(async move {
+            if let Err(error) = Self::announce_transport(events, id, transport).await {
+                error!(
+                    "> RpcServer > Error on attaching transport to the server in order to receive message from it: {error:?}"
+                );
+            }
+        });
     }
 
     pub async fn run(&mut self) {
@@ -269,12 +292,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                         }
                     }
                     TransportNotification::MustAttachTransport(transport) => {
-                        if let Err(error) = self.new_transport_attached(transport).await {
-                            error!(
-                                "> RpcServer > Error on attaching transport to the server in order to receive message from it: {error:?}"
-                            );
-                            continue;
-                        }
+                        self.new_transport_attached(transport);
                     }
                     TransportNotification::CloseTransport(id) => {
                         if let Some(transport) = self.transports.remove(&id) {
@@ -355,6 +373,9 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                 }
                             }
                         });
+                    }
+                    ServerEvents::CloseTransport(id) => {
+                        let _ = transports_notifier.send(TransportNotification::CloseTransport(id));
                     }
                     ServerEvents::AttachTransport(transport) => {
                         if transports_notifier
@@ -438,69 +459,65 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                             request.port_id,
                             request.client_stream,
                         );
-
                         let msg_handler = self.messages_handler.clone();
-                        match stream_protocol
-                            .start_processing(move || async move {
-                                msg_handler.unregister_listener(client_stream_id).await
-                            })
-                            .await
-                        {
-                            Ok(listener) => {
-                                self.messages_handler
-                                    .clone()
-                                    .process_client_streams_request(
-                                        transport_cloned,
-                                        message_number,
-                                        client_stream_id,
-                                        procedure_handler(
-                                            stream_protocol.to_generator(Some),
-                                            procedure_ctx,
-                                        ),
-                                        listener,
-                                    );
+                        // The open acknowledgement is a send, so it leaves the server loop.
+                        tokio::spawn(async move {
+                            let unregister = msg_handler.clone();
+                            match stream_protocol
+                                .start_processing(move || async move {
+                                    unregister.unregister_listener(client_stream_id).await
+                                })
+                                .await
+                            {
+                                Ok(listener) => msg_handler.process_client_streams_request(
+                                    transport_cloned,
+                                    message_number,
+                                    client_stream_id,
+                                    procedure_handler(
+                                        stream_protocol.to_generator(Some),
+                                        procedure_ctx,
+                                    ),
+                                    listener,
+                                ),
+                                Err(error) => error!(
+                                    "> RpcServer > Error on acknowledging a client stream: {error:?}"
+                                ),
                             }
-                            Err(_) => {
-                                return Err(ServerResultError::Internal(
-                                    ServerInternalError::TransportError,
-                                ));
-                            }
-                        }
+                        });
                     }
                     ProcedureDefinition::BiStreams(procedure_handler) => {
                         let client_stream_id = request.client_stream;
+                        let port_id = request.port_id;
                         let stream_protocol = StreamProtocol::new(
                             transport.clone(),
                             request.port_id,
                             request.client_stream,
                         );
-
                         let msg_handler = self.messages_handler.clone();
-                        match stream_protocol
-                            .start_processing(move || async move {
-                                msg_handler.unregister_listener(client_stream_id).await
-                            })
-                            .await
-                        {
-                            Ok(listener) => {
-                                self.messages_handler.clone().process_bidir_streams_request(
+                        tokio::spawn(async move {
+                            let unregister = msg_handler.clone();
+                            match stream_protocol
+                                .start_processing(move || async move {
+                                    unregister.unregister_listener(client_stream_id).await
+                                })
+                                .await
+                            {
+                                Ok(listener) => msg_handler.process_bidir_streams_request(
                                     transport_cloned,
                                     message_number,
-                                    request.port_id,
+                                    port_id,
                                     client_stream_id,
                                     listener,
                                     procedure_handler(
                                         stream_protocol.to_generator(Some),
                                         procedure_ctx,
                                     ),
-                                );
+                                ),
+                                Err(error) => error!(
+                                    "> RpcServer > Error on acknowledging a bidirectional stream: {error:?}"
+                                ),
                             }
-                            Err(_) => {
-                                return Err(ServerResultError::Internal(
-                                    ServerInternalError::TransportError,
-                                ));
-                            }
-                        }
+                        });
                     }
                 }
 
@@ -512,7 +529,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         }
     }
 
-    async fn handle_request_module(
+    fn handle_request_module(
         &mut self,
         transport: Arc<T>,
         message_number: u32,
@@ -539,11 +556,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                     ),
                     procedures,
                 };
-                let response = response.encode_to_vec();
-                transport
-                    .send(response)
-                    .await
-                    .map_err(|_| ServerResultError::Internal(ServerInternalError::TransportError))?
+                spawn_reply(transport, response.encode_to_vec());
             } else {
                 return Err(ServerResultError::External(ServerError::LoadModuleError));
             }
@@ -558,7 +571,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
 
     /// Calls the handler registered with
     /// [`RpcServer::set_module_registrator_handler`](#method.set_module_registrator_handler).
-    async fn handle_create_port(
+    fn handle_create_port(
         &mut self,
         transport: Arc<T>,
         transport_id: TransportID,
@@ -582,19 +595,15 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
             ),
             port_id,
         };
-        let response = response.encode_to_vec();
-
-        transport
-            .send(response)
-            .await
-            .map_err(|_| ServerResultError::Internal(ServerInternalError::TransportError))?;
-
+        // The client needs the port id before it can address the port, so replying after
+        // registering it keeps the order the protocol needs.
         self.next_port_id += 1;
         self.ports.insert(port_id, port);
         self.ports_by_transport_id
             .entry(transport_id)
             .and_modify(|ports| ports.push(port_id))
             .or_insert_with(|| vec![port_id]);
+        spawn_reply(transport, response.encode_to_vec());
 
         Ok(())
     }
@@ -627,12 +636,10 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                     .await?
             }
             RpcMessageTypes::RequestModule => {
-                self.handle_request_module(transport, message_number, payload)
-                    .await?
+                self.handle_request_module(transport, message_number, payload)?
             }
             RpcMessageTypes::CreatePort => {
-                self.handle_create_port(transport, transport_id, message_number, payload)
-                    .await?
+                self.handle_create_port(transport, transport_id, message_number, payload)?
             }
             RpcMessageTypes::DestroyPort => self.handle_destroy_port(payload)?,
             RpcMessageTypes::StreamAck => self
@@ -651,6 +658,16 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
 
         Ok(())
     }
+}
+
+/// Sends a reply off the server loop, like a unary response: a socket that stops admitting
+/// bytes stalls only its own replies.
+fn spawn_reply<T: Transport + ?Sized + 'static>(transport: Arc<T>, reply: Vec<u8>) {
+    tokio::spawn(async move {
+        if let Err(error) = transport.send(reply).await {
+            error!("> RpcServer > Error on sending a port or module reply: {error:?}");
+        }
+    });
 }
 
 pub struct RpcServerPort<Context> {
@@ -762,3 +779,6 @@ pub struct ServerModuleProcedure {
 pub struct ServerModuleDeclaration {
     pub procedures: Vec<ServerModuleProcedure>,
 }
+
+#[cfg(test)]
+mod tests;
