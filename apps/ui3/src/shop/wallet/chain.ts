@@ -15,7 +15,9 @@ export const AMOY_ADD_PARAMS = {
   chainId: "0x13882",
   chainName: "Polygon Amoy",
   nativeCurrency: { name: "POL", symbol: "POL", decimals: 18 },
-  rpcUrls: ["https://rpc.decentraland.org/amoy"],
+  // A wallet keeps this as its Amoy endpoint and sends through it, so it must accept writes and fee history:
+  // Decentraland's relay is read-only.
+  rpcUrls: ["https://polygon-amoy-bor-rpc.publicnode.com"],
   blockExplorerUrls: ["https://amoy.polygonscan.com"],
 };
 

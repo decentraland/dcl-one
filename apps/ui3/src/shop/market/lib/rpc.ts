@@ -2,8 +2,9 @@
 // Reads go to the TARGET chain's RPC, never the wallet's current network: a wallet on Ethereum must still
 // be able to see a Polygon approval, and the wallet's RPC is also the flakiest one in the path (upstream's
 // -32002 "too many errors"). One JSON-RPC URL per chain, overridable by the host
-// (`window.__SHOP_RPC__ = { 137: "https://…" }` or `setShopRpc`), with the public endpoints the contract
-// boundary reads used (tests/fixtures/shop/chain-reads.json) as defaults.
+// (`window.__SHOP_RPC__ = { 137: "https://…" }` or `setShopRpc`). The mainnet defaults are the public endpoints
+// the contract boundary reads used (tests/fixtures/shop/chain-reads.json); Amoy, which that fixture does not
+// cover, reads through Decentraland's relay.
 
 import { decodeFunctionResult, encodeFunctionData, type Abi, type ContractFunctionName } from "viem";
 
