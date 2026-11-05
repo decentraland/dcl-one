@@ -173,6 +173,13 @@ const ROWS: &[Row] = &[
     ),
     upstream("sync", "SYNC_SOURCE", DCL_PEERS),
     mirrored("sync", "READ_THROUGH_ENABLED"),
+    // Decentraland's moderation list, hidden from the content reads as the
+    // upstream catalyst hides it (its DENYLIST_URLS default).
+    upstream(
+        "sync",
+        "DENYLIST_URLS",
+        "https://asset-bundle-registry.decentraland.org/denylist",
+    ),
     same("sync", "PHASED_SYNC", "true"),
     row(
         "sync",

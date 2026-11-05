@@ -139,6 +139,15 @@ pub struct ContentConfig {
     #[arg(long, env = "READ_THROUGH_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub read_through_enabled: bool,
 
+    /// Remote moderation denylists, separated by commas or whitespace: each
+    /// answers a JSON array of `{"entity_id": ...}` (the asset-bundle-registry's
+    /// `GET /denylist`), fetched at boot and every 120 s through the outbound
+    /// guard. The ids are hidden from the reads as the operator's
+    /// `content.denylist` is, but kept in memory only; a failed fetch keeps
+    /// that URL's last good list. Empty: none.
+    #[arg(long, env = "DENYLIST_URLS", default_value = "")]
+    pub denylist_urls: String,
+
     /// Non-file fields a `POST /entities` form may carry: `entityId` and the
     /// `type`/`payload`/`signature` of up to ten auth-chain links, and one spare.
     #[arg(long, env = "MAX_UPLOAD_FIELD_COUNT", default_value_t = 2 + 3 * 10)]

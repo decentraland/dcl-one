@@ -127,6 +127,36 @@ fn read_through_copies_a_miss_on_a_mirror_only() {
     }
 }
 
+/// A mirror hides what Decentraland's moderation list names, as the upstream
+/// catalyst does by default; island and journey ask no one, and a list
+/// naming an outside host is refused there.
+#[test]
+fn a_mirror_reads_decentralands_moderation_denylist() {
+    const ABR: &str = "https://asset-bundle-registry.decentraland.org/denylist";
+    assert_eq!(expanded(Posture::Mirror, &[])["DENYLIST_URLS"], ABR);
+    let mirror = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert_eq!(mirror.content.denylist_urls, ABR);
+    let unset = parsed(&[("DATABASE_URL", "postgres:///catalyst")]);
+    assert_eq!(unset.content.denylist_urls, "", "no posture, no list");
+    for posture in [Posture::Island, Posture::Journey] {
+        assert_eq!(expanded(posture, &[])["DENYLIST_URLS"], "");
+        let pairs = [
+            ("DATABASE_URL", "postgres:///catalyst"),
+            (ENV, posture.name()),
+        ];
+        assert_eq!(parsed(&pairs).content.denylist_urls, "");
+        let pairs = [
+            ("DATABASE_URL", "postgres:///catalyst"),
+            (ENV, posture.name()),
+            ("DENYLIST_URLS", ABR),
+        ];
+        let err = check(&parsed(&pairs), &lookup(&env(&pairs)))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("DENYLIST_URLS names"), "{err}");
+    }
+}
+
 #[test]
 fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
     let got = expanded(Posture::Island, &[]);
