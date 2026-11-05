@@ -17,8 +17,8 @@ export const RELEASED_EDITOR = {
  *  player's identity, so production checks it against a hash and ignores `?editor-tag`. Printed by
  *  the editor repo's `node packages/web/scripts/pin.mjs <version> <host...>`; a new version is a PR here. */
 export const PINNED_EDITOR = {
-  base: 'https://cdn.jsdelivr.net/npm/@dcl-regenesislabs/web-editor@0.3.26/',
-  editorJsIntegrity: 'sha384-1Ke8Ka2/a4PoSe+CjJ2rnf2YAxNh3neG71MmKGX4QwwjHJm977DgD+g020y09ocb',
+  base: 'https://cdn.jsdelivr.net/npm/@dcl-regenesislabs/web-editor@0.3.27/',
+  editorJsIntegrity: 'sha384-u1wBe2wxlnt7eJwk0SGrXXwLQjxtqTd3IKj/G8rQQsHilTzfJ/MOsZ07t3SzwpXw',
   editorSceneEntity: 'bafkreiggnrw7rgpjgljpbnvnppvxysckstguvp4s7zf65nfsm34vsenit4',
   hosts: ['decentraland.org']
 } as (EditorPin & { hosts: string[] }) | null
