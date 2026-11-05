@@ -1203,6 +1203,9 @@ async fn canonical_world_revocation_reaches_a_connected_room_after_redeployment(
         if access_changed {
             state.policy = Arc::new(StubPolicy {
                 access: Ok(crate::access::Access::NotAllowed),
+                admission: Some(crate::access::WorldAdmission::Open(
+                    crate::access::AccessType::AllowList,
+                )),
                 ..Default::default()
             });
         }
@@ -1270,4 +1273,419 @@ async fn canonical_world_revocation_reaches_a_connected_room_after_redeployment(
         );
         server.abort();
     }
+}
+
+/// `can_access` per wallet over a [`StubPolicy`]: `undetermined` errors
+/// (for its first `undetermined_failures` calls, then is refused), `denied`
+/// is refused, everyone else admitted.
+struct PerWalletPolicy {
+    inner: StubPolicy,
+    denied: Address,
+    undetermined: Address,
+    undetermined_failures: std::sync::Mutex<usize>,
+}
+
+#[async_trait::async_trait]
+impl crate::interfaces::AccessPolicy for PerWalletPolicy {
+    async fn access_type(
+        &self,
+        world: &WorldName,
+    ) -> Result<Option<crate::access::AccessType>, crate::AuthorityNotEstablished> {
+        self.inner.access_type(world).await
+    }
+    async fn world_admission(
+        &self,
+        world: &WorldName,
+        now: chrono::NaiveDateTime,
+    ) -> Result<crate::access::WorldAdmission, crate::AuthorityNotEstablished> {
+        self.inner.world_admission(world, now).await
+    }
+    async fn world_owner(
+        &self,
+        world: &WorldName,
+    ) -> Result<Option<Address>, crate::AuthorityNotEstablished> {
+        self.inner.world_owner(world).await
+    }
+    async fn land_document(
+        &self,
+        parcel: Parcel,
+    ) -> Result<Option<Arc<Option<crate::access::LandOperators>>>, crate::AuthorityNotEstablished>
+    {
+        self.inner.land_document(parcel).await
+    }
+    async fn can_access(
+        &self,
+        _world: &WorldName,
+        actor: &Address,
+        _secret: Option<&str>,
+        _scene: Option<&SceneId>,
+        _device_id: Option<&str>,
+        _now: chrono::NaiveDateTime,
+    ) -> Result<crate::access::Access, crate::AuthorityNotEstablished> {
+        let undetermined = *actor == self.undetermined && {
+            let mut left = self.undetermined_failures.lock().unwrap();
+            let fails = *left > 0;
+            if fails && *left != usize::MAX {
+                *left -= 1;
+            }
+            fails
+        };
+        if *actor == self.denied || (*actor == self.undetermined && !undetermined) {
+            Ok(crate::access::Access::InvalidSecret)
+        } else if undetermined {
+            Err(
+                crate::AuthorityNotEstablished::UndeterminedStoreUnavailable {
+                    store: "worlds.worlds",
+                    reason_for_operators: "down".into(),
+                },
+            )
+        } else {
+            Ok(crate::access::Access::Allowed(
+                crate::access::AccessGrant::AllowListed,
+            ))
+        }
+    }
+    async fn is_blocked(&self, actor: &Address) -> Result<bool, crate::AuthorityNotEstablished> {
+        self.inner.is_blocked(actor).await
+    }
+    async fn is_admin(
+        &self,
+        scene: &crate::access::SceneRef<'_>,
+        actor: &Address,
+    ) -> PermissionDecision {
+        self.inner.is_admin(scene, actor).await
+    }
+    async fn protected_addresses(
+        &self,
+        world: &WorldName,
+        parcels: &crate::world_identity::ParcelSet,
+    ) -> Result<std::collections::BTreeSet<Address>, crate::AuthorityNotEstablished> {
+        self.inner.protected_addresses(world, parcels).await
+    }
+}
+
+#[tokio::test]
+async fn an_access_change_evicts_only_who_lost_access_and_never_the_protected() {
+    use crate::access::{AccessType, WorldAdmission};
+    let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
+    let (owner, deployer, denied, undetermined, admitted) =
+        (wallet(1), wallet(2), wallet(3), wallet(4), wallet(5));
+    for (admission, expected) in [
+        (AccessType::Unrestricted, vec![]),
+        (AccessType::SharedSecret, vec![denied.clone()]),
+        (AccessType::AllowList, vec![denied.clone()]),
+    ] {
+        let requests = Arc::new(std::sync::Mutex::new(
+            Vec::<(String, serde_json::Value)>::new(),
+        ));
+        let capture = requests.clone();
+        let everyone: Vec<serde_json::Value> =
+            [&owner, &deployer, &denied, &undetermined, &admitted]
+                .iter()
+                .map(|a| serde_json::json!({"identity": a.as_str(), "sid": "PA", "metadata": "{}"}))
+                .collect();
+        let fixture = axum::Router::new().route(
+            "/twirp/livekit.RoomService/{method}",
+            axum::routing::post(
+                move |Path(method): Path<String>, Json(body): Json<serde_json::Value>| {
+                    let (capture, everyone) = (capture.clone(), everyone.clone());
+                    async move {
+                        capture.lock().unwrap().push((method.clone(), body));
+                        match method.as_str() {
+                            "ListRooms" => Json(
+                                serde_json::json!({"rooms": [{"name": "w1:d:mixed.dcl.ethSceneA", "sid": "RM_a", "metadata": "{}"}]}),
+                            ),
+                            "ListParticipants" => {
+                                Json(serde_json::json!({"participants": everyone}))
+                            }
+                            _ => Json(serde_json::json!({})),
+                        }
+                    }
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut state = canonical_state();
+        state.livekit.configured = true;
+        state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+        state.policy = Arc::new(PerWalletPolicy {
+            inner: StubPolicy {
+                admission: Some(WorldAdmission::Open(admission)),
+                protected: Ok([owner.clone(), deployer.clone()].into_iter().collect()),
+                ..Default::default()
+            },
+            denied: denied.clone(),
+            undetermined: undetermined.clone(),
+            undetermined_failures: usize::MAX.into(),
+        });
+        let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+        let complete = scene::readmit_world_rooms(
+            &state,
+            &WorldName::parse("mixed.dcl.eth").unwrap(),
+            i64::MAX,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            complete,
+            admission == AccessType::Unrestricted,
+            "{admission:?}"
+        );
+        let removed: Vec<Address> = requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, _)| method == "RemoveParticipant")
+            .map(|(_, body)| Address::parse(body["identity"].as_str().unwrap()).unwrap())
+            .collect();
+        assert_eq!(removed, expected, "{admission:?}");
+        server.abort();
+    }
+}
+
+/// `Catalogue` whose `SceneB` lookup fails.
+struct FlakySceneB;
+
+#[async_trait::async_trait]
+impl SceneIdentity for FlakySceneB {
+    async fn classify_room(
+        &self,
+        room: &str,
+    ) -> Result<crate::rooms::RoomClassification, ResolveError> {
+        Catalogue.classify_room(room).await
+    }
+    async fn resolve(&self, request: RoomRequest<'_>) -> Result<ResolvedRoom, ResolveError> {
+        Catalogue.resolve(request).await
+    }
+    async fn world_scene(
+        &self,
+        world: &WorldName,
+        scene: &SceneId,
+    ) -> Result<Option<ActiveDeployment>, ResolveError> {
+        if scene.as_str() == "SceneB" {
+            return Err(ResolveError::Db(sqlx::Error::PoolTimedOut));
+        }
+        Catalogue.world_scene(world, scene).await
+    }
+    async fn world_active_scene(
+        &self,
+        world: &WorldName,
+    ) -> Result<Option<ActiveDeployment>, ResolveError> {
+        Catalogue.world_active_scene(world).await
+    }
+}
+
+#[tokio::test]
+async fn a_failed_scene_lookup_keeps_that_room_and_the_pass_goes_on() {
+    use crate::access::{AccessType, WorldAdmission};
+    let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
+    let (owner, denied) = (wallet(1), wallet(3));
+    let requests = Arc::new(std::sync::Mutex::new(
+        Vec::<(String, serde_json::Value)>::new(),
+    ));
+    let capture = requests.clone();
+    let everyone: Vec<serde_json::Value> = [&owner, &denied]
+        .iter()
+        .map(|a| serde_json::json!({"identity": a.as_str(), "sid": "PA", "metadata": "{}"}))
+        .collect();
+    let fixture = axum::Router::new().route(
+        "/twirp/livekit.RoomService/{method}",
+        axum::routing::post(
+            move |Path(method): Path<String>, Json(body): Json<serde_json::Value>| {
+                let (capture, everyone) = (capture.clone(), everyone.clone());
+                async move {
+                    capture.lock().unwrap().push((method.clone(), body));
+                    match method.as_str() {
+                        "ListRooms" => Json(serde_json::json!({"rooms": [
+                            {"name": "w1:d:mixed.dcl.ethSceneA", "sid": "RM_a", "metadata": "{}"},
+                            {"name": "w1:d:mixed.dcl.ethSceneB", "sid": "RM_b", "metadata": "{}"}
+                        ]})),
+                        "ListParticipants" => Json(serde_json::json!({"participants": everyone})),
+                        _ => Json(serde_json::json!({})),
+                    }
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut state = canonical_state();
+    state.scenes = Arc::new(FlakySceneB);
+    state.livekit.configured = true;
+    state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    state.policy = Arc::new(PerWalletPolicy {
+        inner: StubPolicy {
+            admission: Some(WorldAdmission::Open(AccessType::SharedSecret)),
+            protected: Ok([owner.clone()].into_iter().collect()),
+            ..Default::default()
+        },
+        denied: denied.clone(),
+        undetermined: wallet(4),
+        undetermined_failures: usize::MAX.into(),
+    });
+    let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    assert!(
+        !scene::readmit_world_rooms(
+            &state,
+            &WorldName::parse("mixed.dcl.eth").unwrap(),
+            i64::MAX,
+        )
+        .await
+        .unwrap(),
+        "an undecided room leaves the pass incomplete"
+    );
+    let removed: Vec<(String, String)> = requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(method, _)| method == "RemoveParticipant")
+        .map(|(_, body)| {
+            (
+                body["room"].as_str().unwrap().to_string(),
+                body["identity"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        removed,
+        vec![(
+            "w1:d:mixed.dcl.ethSceneA".to_string(),
+            denied.as_str().to_string()
+        )]
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn an_undetermined_access_decision_is_retried_until_it_evicts() {
+    use crate::access::{AccessType, WorldAdmission};
+    let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
+    let (owner, flaky) = (wallet(1), wallet(4));
+    let requests = Arc::new(std::sync::Mutex::new(
+        Vec::<(String, serde_json::Value)>::new(),
+    ));
+    let capture = requests.clone();
+    let everyone: Vec<serde_json::Value> = [&owner, &flaky]
+        .iter()
+        .map(|a| serde_json::json!({"identity": a.as_str(), "sid": "PA", "metadata": "{}"}))
+        .collect();
+    let fixture = axum::Router::new().route(
+        "/twirp/livekit.RoomService/{method}",
+        axum::routing::post(
+            move |Path(method): Path<String>, Json(body): Json<serde_json::Value>| {
+                let (capture, everyone) = (capture.clone(), everyone.clone());
+                async move {
+                    capture.lock().unwrap().push((method.clone(), body));
+                    match method.as_str() {
+                        "ListRooms" => Json(serde_json::json!({"rooms": [
+                            {"name": "w1:d:mixed.dcl.ethSceneA", "sid": "RM_a", "metadata": "{}"}
+                        ]})),
+                        "ListParticipants" => Json(serde_json::json!({"participants": everyone})),
+                        _ => Json(serde_json::json!({})),
+                    }
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut state = canonical_state();
+    state.livekit.configured = true;
+    state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    state.policy = Arc::new(PerWalletPolicy {
+        inner: StubPolicy {
+            admission: Some(WorldAdmission::Open(AccessType::AllowList)),
+            protected: Ok([owner.clone()].into_iter().collect()),
+            ..Default::default()
+        },
+        denied: wallet(3),
+        undetermined: flaky.clone(),
+        undetermined_failures: 2.into(),
+    });
+    let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let world = WorldName::parse("mixed.dcl.eth").unwrap();
+    let removed = || -> Vec<String> {
+        requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(method, _)| method == "RemoveParticipant")
+            .map(|(_, body)| body["identity"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    let delay = [std::time::Duration::from_millis(1)];
+    assert!(!scene::readmit_until_settled(&state, &world, &delay).await);
+    assert!(removed().is_empty(), "two undetermined passes evict nobody");
+    assert!(scene::readmit_until_settled(&state, &world, &delay).await);
+    assert_eq!(removed(), vec![flaky.as_str().to_string()]);
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_readmission_pass_spares_later_joiners_and_counts_a_failed_roster_as_incomplete() {
+    use crate::access::{AccessType, WorldAdmission};
+    use axum::response::IntoResponse;
+    let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
+    let (stale, rejoined) = (wallet(3), wallet(5));
+    let requests = Arc::new(std::sync::Mutex::new(
+        Vec::<(String, serde_json::Value)>::new(),
+    ));
+    let capture = requests.clone();
+    let roster = serde_json::json!({"participants": [
+        {"identity": stale.as_str(), "sid": "PA_a", "metadata": "{}", "joinedAt": "100"},
+        {"identity": rejoined.as_str(), "sid": "PA_b", "metadata": "{}", "joinedAt": "201"},
+    ]});
+    let fixture = axum::Router::new().route(
+        "/twirp/livekit.RoomService/{method}",
+        axum::routing::post(
+            move |Path(method): Path<String>, Json(body): Json<serde_json::Value>| {
+                let (capture, roster) = (capture.clone(), roster.clone());
+                async move {
+                    capture.lock().unwrap().push((method.clone(), body.clone()));
+                    match method.as_str() {
+                        "ListRooms" => Json(serde_json::json!({"rooms": [
+                            {"name": "w1:d:mixed.dcl.ethSceneA", "sid": "RM_a", "metadata": "{}"},
+                            {"name": "w1:d:mixed.dcl.ethSceneB", "sid": "RM_b", "metadata": "{}"}
+                        ]}))
+                        .into_response(),
+                        "ListParticipants" if body["room"] == "w1:d:mixed.dcl.ethSceneB" => {
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                        }
+                        "ListParticipants" => Json(roster).into_response(),
+                        _ => Json(serde_json::json!({})).into_response(),
+                    }
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut state = canonical_state();
+    state.livekit.configured = true;
+    state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    state.policy = Arc::new(PerWalletPolicy {
+        inner: StubPolicy {
+            admission: Some(WorldAdmission::Open(AccessType::SharedSecret)),
+            protected: Ok(Default::default()),
+            ..Default::default()
+        },
+        denied: rejoined.clone(),
+        undetermined: stale.clone(),
+        undetermined_failures: 0.into(),
+    });
+    let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+
+    let complete =
+        scene::readmit_world_rooms(&state, &WorldName::parse("mixed.dcl.eth").unwrap(), 200)
+            .await
+            .unwrap();
+
+    assert!(!complete, "a failed roster leaves the pass incomplete");
+    let removed: Vec<String> = requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(method, _)| method == "RemoveParticipant")
+        .map(|(_, body)| body["identity"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(removed, vec![stale.as_str().to_string()]);
+    server.abort();
 }

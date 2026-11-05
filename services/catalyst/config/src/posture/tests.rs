@@ -91,6 +91,70 @@ fn a_mirror_reads_the_subgraphs_lamb2_defaults_to() {
     );
 }
 
+/// lamb2's defaults for a mirror's profile snapshots and /about parcel
+/// view; island and journey leave both to the node's own routes.
+#[test]
+fn a_mirror_names_lamb2_snapshot_and_parcel_view_hosts() {
+    let mirror = expanded(Posture::Mirror, &[]);
+    assert_eq!(
+        mirror["PROFILE_CDN_BASE_URL"],
+        "https://profile-images.decentraland.org"
+    );
+    assert_eq!(
+        mirror["MAP_PARCEL_VIEW_URL"],
+        "https://api.decentraland.org/v1/minimap.png"
+    );
+    for posture in [Posture::Island, Posture::Journey] {
+        let got = expanded(posture, &[]);
+        assert!(!got.contains_key("PROFILE_CDN_BASE_URL"), "{posture:?}");
+        assert!(!got.contains_key("MAP_PARCEL_VIEW_URL"), "{posture:?}");
+    }
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert_eq!(
+        c.market_upstreams.profile_cdn_base_url.as_deref(),
+        Some("https://profile-images.decentraland.org")
+    );
+    assert_eq!(
+        c.map_urls().parcel_view,
+        "https://api.decentraland.org/v1/minimap.png"
+    );
+    let island = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "island")]);
+    assert!(island.market_upstreams.profile_cdn_base_url.is_none());
+}
+
+/// A mirror may not blank the readers that filter its profiles; an island
+/// has none and serves the items as deployed.
+#[test]
+fn a_mirror_refuses_blank_profile_ownership_readers() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    let check_of = |pairs: &[(&str, &str)]| {
+        let c = parsed(pairs);
+        let map = env(pairs);
+        check(&c, &lookup(&map))
+    };
+    check_of(&[db, (ENV, "mirror")]).unwrap();
+    let err = check_of(&[db, (ENV, "mirror"), ("MARKETPLACE_SUBGRAPH_URL", "")])
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("MARKETPLACE_SUBGRAPH_URL is empty: unset it"),
+        "{err}"
+    );
+    let err = check_of(&[
+        db,
+        (ENV, "mirror"),
+        ("ETH_COLLECTIONS_SUBGRAPH_URL", " "),
+        ("MATIC_COLLECTIONS_SUBGRAPH_URL", ""),
+    ])
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("ETH_COLLECTIONS_SUBGRAPH_URL, MATIC_COLLECTIONS_SUBGRAPH_URL are empty"),
+        "{err}"
+    );
+    check_of(&[db, (ENV, "island")]).unwrap();
+}
+
 #[test]
 fn a_mirror_reads_third_party_holdings_from_the_nft_worker() {
     assert_eq!(
@@ -957,4 +1021,17 @@ fn the_chain_rpcs_default_by_network_outside_island_and_journey() {
     let mut c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "journey")]);
     c.default_rpc_urls();
     refuse_remote_secrets(&mut c).unwrap();
+}
+
+/// lamb2's /about CPU and memory check is opt-in: off under every posture
+/// and with none, on only when `ABOUT_RESOURCE_CHECK` says so.
+#[test]
+fn about_resource_check_is_off_unless_set() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    assert!(!parsed(&[db]).node.about_resource_check);
+    for posture in ["mirror", "island", "journey"] {
+        assert!(!parsed(&[db, (ENV, posture)]).node.about_resource_check);
+        let on = parsed(&[db, (ENV, posture), ("ABOUT_RESOURCE_CHECK", "true")]);
+        assert!(on.node.about_resource_check, "{posture}");
+    }
 }

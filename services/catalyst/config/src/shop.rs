@@ -48,7 +48,7 @@ pub struct MarketUpstreamsConfig {
     pub trades_serve_partial: bool,
 
     /// Avatar snapshots become `<base>/entities/<id>/{face,body}.png` when
-    /// set; unset they point at this node's `contents/<hash>`.
+    /// set; unset they point at this node's `/profile-images`.
     #[arg(long, env = "PROFILE_CDN_BASE_URL")]
     pub profile_cdn_base_url: Option<String>,
 

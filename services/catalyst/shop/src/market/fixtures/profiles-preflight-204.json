@@ -1,0 +1,26 @@
+{
+  "description": "OPTIONS /lambdas/profiles preflight: lamb2's http-server CORS (maxAge 36000), the requested headers reflected, origin '*'.",
+  "request": {
+    "method": "OPTIONS",
+    "path": "/lambdas/profiles",
+    "query": {},
+    "headers": {
+      "origin": "https://example.org",
+      "access-control-request-method": "POST",
+      "access-control-request-headers": "content-type"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 204,
+    "headers": {
+      "access-control-allow-headers": "content-type",
+      "access-control-allow-origin": "*",
+      "access-control-max-age": "36000",
+      "vary": "Access-Control-Request-Headers"
+    }
+  },
+  "captured_from": "services/catalyst/tests/fixtures/conformance/content-lambdas/captures/lambdas-profiles/LP-31-preflight.json (peer.decentraland.org, lamb2 02a37f5)",
+  "captured_at": "2026-11-04T00:00:00Z",
+  "volatile_paths": []
+}

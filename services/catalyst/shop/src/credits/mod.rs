@@ -378,6 +378,16 @@ impl Settings {
                 "CREDITS_ONCHAIN_AUTHORIZE_ENABLED is true but CREDITS_SIGNER_KEY or CREDITS_MANAGER_CONTRACT is unset: POST /credits/authorize stays unavailable (503)"
             );
         }
+        // The mock card grants credits for nothing. On a chain where credits are worth something, the
+        // on-chain authorization, or any later spending path, would turn those into real MANA paid by the
+        // treasury, so the mock routes run only where the credits chain is a testnet (Amoy).
+        if raw.mock_card && raw.usage_chain_id != usage::CHAIN_AMOY {
+            anyhow::bail!(
+                "CREDITS_MOCK_CARD grants credits without a charge and runs only on Amoy ({}); COLLECTIONS_CHAIN_ID is {}",
+                usage::CHAIN_AMOY,
+                raw.usage_chain_id
+            );
+        }
         if stripe_secret_key.is_none() {
             tracing::warn!(
                 "STRIPE_SECRET_KEY unset: card-purchase routes are disabled (POST /packs/{{sku}}/intent answers 501, /credits/checkout 503)"
@@ -1003,6 +1013,43 @@ mod schema_tests {
             })
             .is_ok(),
             "no secret, no endpoint check"
+        );
+    }
+
+    #[test]
+    fn the_mock_card_runs_only_on_amoy() {
+        for chain in [usage::CHAIN_POLYGON, 1, 0] {
+            let err = Settings::parse(RawSettings {
+                mock_card: true,
+                usage_chain_id: chain,
+                ..RawSettings::default()
+            })
+            .err()
+            .expect("free credits are refused where credits are worth something")
+            .to_string();
+            assert!(err.contains("CREDITS_MOCK_CARD"), "{err}");
+        }
+        // Also with the treasury signing on chain: the pair that would pay real MANA for free credits.
+        assert!(
+            Settings::parse(RawSettings {
+                mock_card: true,
+                credits_onchain_authorize_enabled: true,
+                credits_signer_key: Some(format!("0x{}", "11".repeat(32))),
+                credits_manager_contract: Some(format!("0x{}", "22".repeat(20))),
+                ..RawSettings::default()
+            })
+            .is_err()
+        );
+        let amoy = Settings::parse(RawSettings {
+            mock_card: true,
+            usage_chain_id: usage::CHAIN_AMOY,
+            ..RawSettings::default()
+        })
+        .expect("the testnet keeps its mock card");
+        assert!(amoy.mock_card);
+        assert!(
+            Settings::parse(RawSettings::default()).is_ok(),
+            "off by default, so mainnet parses"
         );
     }
 
