@@ -1,0 +1,133 @@
+name: Web previews / Publish
+on:
+  workflow_run:
+    workflows: ['Web previews / Build']
+    types: [completed]
+permissions: {}
+jobs:
+  source:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.source.outputs.pr }}
+      publish: ${{ steps.source.outputs.publish }}
+      reviewer: ${{ steps.source.outputs.reviewer }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: tooling/web-preview.py
+          sparse-checkout-cone-mode: false
+      - id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: python3 tooling/web-preview.py resolve >> "$GITHUB_OUTPUT"
+  reviewer:
+    needs: source
+    if: needs.source.outputs.publish == 'true' && needs.source.outputs.reviewer == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: web-preview-reviewer-publish-${{ needs.source.outputs.pr }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+      id-token: write
+    outputs:
+      url: ${{ steps.cdn.outputs.url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+    steps:
+      # Only trusted publication code is checked out. The PR contributes static assets.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            tooling/web-preview.py
+            library/ui/figma/key-guard.mjs
+            library/ui/figma/key-guard-allow.json
+          sparse-checkout-cone-mode: false
+      - name: Require the CDN publication configuration
+        env:
+          CDN_TOKEN: ${{ secrets.GITLAB_CDN_DEPLOYER_TOKEN }}
+          CDN_URL: ${{ secrets.GITLAB_CDN_DEPLOYER_URL }}
+        run: |
+          if [ -z "$CDN_TOKEN" ] || [ -z "$CDN_URL" ]; then
+            echo '::error::Configure GITLAB_CDN_DEPLOYER_TOKEN and GITLAB_CDN_DEPLOYER_URL for reviewer previews.'
+            exit 1
+          fi
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: web-preview-reviewer
+          path: .preview/input
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Scan static output using the trusted Figma key guard
+        env:
+          FIGMA_FILE_KEY: ${{ secrets.FIGMA_FILE_KEY }}
+        run: |
+          set -o pipefail
+          node library/ui/figma/key-guard.mjs --no-worktree --no-range \
+            --artifact .preview/input | tee "$RUNNER_TEMP/preview-key-scan.txt"
+          grep -qx 'check key: ran' "$RUNNER_TEMP/preview-key-scan.txt"
+      - name: Validate the source and prepare a package without lifecycle scripts
+        run: python3 tooling/web-preview.py package-reviewer .preview/input .preview/package
+      - name: Publish reviewer to the existing CDN pipeline
+        id: publish
+        uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
+        with:
+          cwd: .preview/package
+          registry-url: https://registry.npmjs.org
+          access: public
+          provenance: false
+          custom-tag: pr-${{ needs.source.outputs.pr }}
+          branch-to-custom-tag: web-preview-publication
+          gitlab-token: ${{ secrets.GITLAB_CDN_DEPLOYER_TOKEN }}
+          gitlab-pipeline-url: ${{ secrets.GITLAB_CDN_DEPLOYER_URL }}
+        env:
+          BRANCH_NAME: web-preview-publication
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Verify CDN propagation and source identity before linking
+        id: cdn
+        env:
+          VERSION: ${{ steps.publish.outputs.version }}
+        run: python3 tooling/web-preview.py verify-cdn "$VERSION" >> "$GITHUB_OUTPUT"
+  report:
+    needs: [source, reviewer]
+    if: always() && needs.source.outputs.pr != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    concurrency:
+      group: web-previews-comment-${{ needs.source.outputs.pr }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: tooling/web-preview.py
+          sparse-checkout-cone-mode: false
+      - name: Update this PR's preview comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          REVIEWER_URL: ${{ needs.reviewer.outputs.url }}
+          PUBLICATION_RESULT: ${{ needs.reviewer.result }}
+        run: python3 tooling/web-preview.py report

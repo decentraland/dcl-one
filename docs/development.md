@@ -65,6 +65,46 @@ See [production rules](../infra/containers/README.md#sites-explorer-build-input)
 
 ## Validation
 
+### Pull request previews
+
+`Web previews / Build` selects two independent products: changes under
+`apps/sites/` build Sites, and changes under `library/ui/` build its standalone
+UI reviewer. Other apps and API-only changes do not select previews. Changes
+to the preview pipeline select both products. `apps/ui3/` remains a Sites build
+dependency but does not trigger this workflow.
+
+The reviewer requires `library/ui/package.json` with `review:build`, producing
+`library/ui/figma/review/review-dist/dcl-ui-review/index.html`. The complete
+output must support a versioned CDN subdirectory, including navigation,
+reference images and JSON requests, when built with `--base ./`.
+
+`Web previews / Publish` uses trusted publication code and validated static
+artifacts, without running pull request lifecycle scripts with credentials.
+Same-repository, open pull requests receive one updated status comment; forks
+build artifacts without publishing. A reviewer link appears only after the
+CDN serves the matching source receipt and HTML entry.
+
+Publication needs `GITLAB_CDN_DEPLOYER_TOKEN` and `GITLAB_CDN_DEPLOYER_URL`, as
+used by Bevy, and `FIGMA_FILE_KEY` for the trusted artifact key scan. The
+reviewer and its dependency-free key guard must already be on the default
+branch before publication can run. No Figma key is passed to the PR build.
+The public npm package
+`@dcl-regenesislabs/dcl-one-ui-review` needs a trusted publisher for this
+repository and `web-previews-publish.yml`, or a publishing `NPM_TOKEN`.
+Publication uses timestamp versions so a retry can publish after a previous
+npm upload succeeded. The version's commit suffix identifies trusted
+publication code; `preview-source.json` records the built PR head and source
+build run.
+GitHub artifacts expire after seven days; this does not delete immutable npm
+versions or CDN copies.
+
+Sites uploads its SSR build, documentation content, fixtures and dependency
+manifests as `web-preview-sites`. It does not currently deploy an SSR preview
+or implement a dev/prod service selector. Those require the SSR hosting
+integration; the PR comment explicitly reports that deployment is pending.
+
+### Local checks
+
 ```sh
 nix develop --command bash tooling/dev-smoke.sh
 nix develop --command bash tooling/dev-test.sh [rust|e2e]   # rust: PostgreSQL only
