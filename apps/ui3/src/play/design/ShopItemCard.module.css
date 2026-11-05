@@ -8,13 +8,27 @@
   border-radius: var(--r-lg);
   transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
 }
-.card:hover,
 .selected {
-  box-shadow: 0 0 0 2px var(--brand), 0 0 18px var(--glow-pink);
+  box-shadow: 0 0 0 2px var(--brand);
 }
+/* Hovered: lifted, ringed in the brand ramp (a masked gradient border) and glowing. */
 .card:hover {
   z-index: 1;
-  transform: scale(1.02);
+  transform: scale(1.05);
+  box-shadow: 0 0 18px var(--glow-pink);
+}
+.card:hover::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  z-index: 3;
+  padding: 3px;
+  border-radius: calc(var(--r-lg) + 3px);
+  background: linear-gradient(180deg, var(--brand) 0%, var(--lavender) 100%);
+  mask: linear-gradient(var(--black) 0 0) content-box, linear-gradient(var(--black) 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  pointer-events: none;
 }
 
 /* The whole tile selects; the actions sit above it. */
@@ -81,7 +95,7 @@
   flex-direction: column;
   gap: 6px;
   margin-top: -14px;
-  padding: 22px 11px 12px;
+  padding: 22px 11px 14px;
   border-radius: 0 0 var(--r-lg) var(--r-lg);
   background: var(--black-40);
 }
@@ -89,6 +103,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: normal;
   font-size: var(--type-14);
   font-weight: var(--fw-semibold);
   color: var(--text);
@@ -121,7 +136,9 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  min-height: 28px;
+}
+.meta {
+  height: 25px;
 }
 .rarity {
   padding: 3px 6px;
@@ -135,17 +152,29 @@
 .price {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  padding: 4px;
   font-size: var(--type-14);
   font-weight: var(--fw-semibold);
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
 
-/* Hover or focus swaps the rarity and price for the actions. */
+.price > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Hover or focus swaps the creator, rarity and price for the taller actions, in the same height. */
 .actions {
   position: relative;
   z-index: 2;
+  display: none;
+  height: 40px;
+  margin-top: 11px;
+}
+.hasActions:hover .creator,
+.hasActions:focus-within .creator {
   display: none;
 }
 .actions > * {

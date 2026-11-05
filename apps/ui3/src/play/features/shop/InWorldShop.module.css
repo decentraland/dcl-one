@@ -10,7 +10,7 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: linear-gradient(90deg, var(--lava-1) 0%, var(--lava-1) 30%, color-mix(in srgb, var(--lava-1) 55%, var(--lava-2)) 65%, var(--lava-2) 100%);
+  background: var(--lava-4) url('../../assets/shop/background.jpg') center / cover no-repeat;
   /* The avatar preview's 960×960 frame is the engine's. */
   mask:
     linear-gradient(var(--black), var(--black)) 0 0 / 100% 100% no-repeat,
@@ -24,7 +24,7 @@
   z-index: 2;
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 21px;
   height: 68px;
   padding: 0 20px;
   background: var(--black-40);
@@ -43,23 +43,39 @@
   gap: 14px;
   margin-left: auto;
 }
-.sortWrap {
+.menuWrap {
   position: relative;
 }
 .toolBtn {
   width: 150px;
-  justify-content: space-between;
+  justify-content: center;
   gap: 8px;
+  padding: 6px 6px 6px 14px;
   text-transform: uppercase;
 }
-.sortMenu {
+.sortBtn {
+  justify-content: space-between;
+}
+.menu {
   position: absolute;
-  right: 0;
+  left: 0;
   top: 52px;
   z-index: 5;
 }
 .searchWrap {
   width: 396px;
+}
+.cart {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--surface-light);
+  color: var(--ink-on-light);
 }
 
 .stage {
@@ -77,6 +93,13 @@
   width: 960px;
   height: 960px;
 }
+/* Over the avatar while the Shop's first page loads, where the preview avatar will stand. */
+.avatarLoading {
+  position: absolute;
+  left: 260px;
+  top: 460px;
+  transform: translate(-50%, -50%);
+}
 
 .content {
   position: absolute;
@@ -87,7 +110,7 @@
   display: flex;
   flex-direction: column;
   gap: 20px;
-  padding-top: 20px;
+  padding-top: 24px;
   pointer-events: auto;
 }
 .chips {
@@ -125,18 +148,27 @@
 
 /* The HUD's list scrollbar (Friends, Chat): the standard property, which the compositor paints; a
    ::-webkit-scrollbar is painted on the main thread the engine keeps busy. */
+.body {
+  display: flex;
+  flex: 1;
+  gap: 20px;
+  min-height: 0;
+}
 .scroller {
   flex: 1;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 4px 16px 20px 4px;
+  /* Room for a hovered card's ring, taken back so the grid starts where the design's does. */
+  margin-left: -4px;
+  /* Six 197px columns and their gaps fill what is left beside the scrollbar's gutter. */
+  padding: 4px 13px 20px 4px;
   scrollbar-width: thin;
   scrollbar-color: var(--divider-strong) transparent;
 }
 .grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(6, 197px);
   gap: 20px;
   align-content: start;
   transition: opacity var(--dur-fast) var(--ease-out);
@@ -153,4 +185,29 @@
   display: flex;
   justify-content: center;
   padding: 20px 0;
+}
+/* With the item panel open the grid narrows to four columns and the panel sits at the right, 8px in. */
+.withPanel .grid {
+  grid-template-columns: repeat(4, 197px);
+  column-gap: 26px;
+}
+.withPanel .scroller {
+  flex: none;
+  width: 883px;
+}
+.withPanel > aside {
+  margin: 0 8px 0 auto;
+}
+.pager {
+  justify-content: center;
+  margin-top: 20px;
+}
+.cardAction {
+  flex: 1;
+  gap: 8px;
+  padding: 0 8px;
+  font-size: var(--type-14);
+}
+.link {
+  color: var(--chat-link);
 }

@@ -1,0 +1,83 @@
+/* The All home: the outfits carousel (four to a page), then the rows of six cards. */
+.home {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.outfits {
+  flex: none;
+}
+.outfit {
+  position: relative;
+  flex: none;
+  width: 294px;
+  height: 352px;
+  padding: 0;
+  overflow: hidden;
+  border: none;
+  border-radius: var(--r-lg);
+  background: linear-gradient(180deg, var(--from, var(--accent)) 0%, var(--to, var(--brand)) 100%);
+  cursor: pointer;
+}
+.outfit img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.outfit:hover,
+.outfit:focus-visible {
+  box-shadow: 0 0 0 2px var(--brand), 0 0 18px var(--glow-pink);
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.rowHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.rowTitle {
+  margin: 0;
+  font-size: var(--type-24);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.viewAll {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.viewAll > svg {
+  color: var(--brand);
+}
+.rail {
+  padding: 4px 0;
+}
+.slot {
+  flex: none;
+  width: 197px;
+}
+.skeletons {
+  display: grid;
+  grid-template-columns: repeat(6, 197px);
+  gap: 20px;
+}
+.skeleton {
+  aspect-ratio: 197 / 299;
+  border-radius: var(--r-lg);
+  background: linear-gradient(180deg, var(--skeleton) 0%, var(--skeleton) 66%, var(--black-40) 66%, var(--black-40) 100%);
+}

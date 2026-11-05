@@ -315,6 +315,17 @@ export function Showcase(): React.JSX.Element {
               { id: 'blocked', label: 'Blocked', disabled: true }
             ]}
           />
+          <Tabs
+            variant="shop"
+            aria-label="Shop example"
+            value={pillTab}
+            onChange={setPillTab}
+            items={[
+              { id: 'wearables', label: 'Wearables', icon: <Bag size={18} /> },
+              { id: 'emotes', label: 'Emotes' },
+              { id: 'outfits', label: 'Outfits' }
+            ]}
+          />
         </div>
       </Section>
 
@@ -489,6 +500,7 @@ export function Showcase(): React.JSX.Element {
       </Section>
       <Section title="Pager">
         <Pager page={2} count={9} onChange={() => undefined} />
+        <Pager variant="shop" page={0} count={9} onChange={() => undefined} />
       </Section>
 
       <Section title="ColorPicker (avatar colors)">

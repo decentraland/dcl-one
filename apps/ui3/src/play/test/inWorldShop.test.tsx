@@ -2,17 +2,39 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop'
-import { nextWearablesPage, serverSort, SHOP_PAGE_SIZE, shopQueries, type WearableFilters } from '../features/shop/wearablesQuery'
+import InWorldShop, { tryOnUrn, webShopUrl, type InWorldShopProps } from '../features/shop/InWorldShop'
+import { defaultFilters, pageCount, readsListings, serverSort, SHOP_PAGE_SIZE, shopQueries, type CatalogueFilters } from '../features/shop/catalogueQuery'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
+import { PopupHost, resetPopups } from '../design'
 import type { Wearable } from '../engine/protocol'
 import { fakeProfileState } from './harness'
 
 const CONTRACT = '0x1111111111111111111111111111111111111111'
 const CREATOR = '0x2222222222222222222222222222222222222222'
+const ARMOR_URN = `urn:decentraland:matic:collections-v2:${CONTRACT}:1`
 
-// A row of the web Shop's unified feed (/v3/catalog/unified).
-const listing = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+// A row of the catalogue (/v3/catalog/items), the feed of every status but "on sale".
+const catalogueRow = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  id: `${CONTRACT}-1`,
+  name: 'Golden Armor',
+  creator: CREATOR,
+  contractAddress: CONTRACT,
+  itemId: '1',
+  category: 'wearable',
+  rarity: 'epic',
+  network: 'MATIC',
+  chainId: 137,
+  thumbnail: 'https://example.com/armor.png',
+  priceCredits: 500,
+  price: '5000000000000000000',
+  available: 35,
+  isOnSale: true,
+  data: { wearable: { category: 'upper_body', bodyShapes: [], isSmart: false } },
+  ...over
+})
+
+// A row of the listings feed (/v3/catalog/unified): what is on sale, trending and new.
+const listingRow = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   tradeId: null,
   listingType: 'primary',
   source: 'native',
@@ -28,41 +50,62 @@ const listing = (over: Record<string, unknown> = {}): Record<string, unknown> =>
   creator: CREATOR,
   priceCredits: 500,
   manaWei: null,
-  available: 10,
+  available: 35,
   network: 'MATIC',
   chainId: 137,
   ...over
 })
 
-type Reply = Record<string, unknown>[] | 'down'
+type Feed = Record<string, unknown>[] | 'down'
+interface Routes {
+  catalogue?: Feed[]
+  listings?: Feed[]
+  trending?: Record<string, unknown>[]
+  outfits?: unknown[]
+  byIds?: Record<string, unknown>[]
+  entity?: { description: string; hides: string[] }
+  total?: number
+}
 
-/** Serves the feed's answers in order; every other request (profiles, flags) is a 404. */
-function serveFeed(...replies: Reply[]): ReturnType<typeof vi.fn> {
-  const queue = [...replies]
-  const f = vi.fn(async (input: RequestInfo | URL) => {
-    const url = String(input instanceof Request ? input.url : input)
-    if (!url.includes('/v3/catalog/unified')) return new Response('', { status: 404 })
-    const next = queue.length > 1 ? queue.shift()! : queue[0]!
-    if (next === 'down') return new Response('', { status: 503 })
-    return new Response(JSON.stringify({ data: next, total: next.length }), { headers: { 'Content-Type': 'application/json' } })
+const answer = (queue: Feed[] | undefined, total?: number): Response => {
+  const next = queue == null || queue.length === 0 ? [] : queue.length > 1 ? queue.shift()! : queue[0]!
+  if (next === 'down') return new Response('', { status: 503 })
+  return Response.json({ data: next, total: total ?? next.length })
+}
+
+/** The Shop's endpoints by path; anything else (profiles, flags) is a 404. */
+function serve(routes: Routes): ReturnType<typeof vi.fn> {
+  const f = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input instanceof Request ? input.url : input), location.href)
+    const path = url.pathname
+    if (path.endsWith('/v3/catalog/items')) return url.searchParams.has('id') ? Response.json({ data: routes.byIds ?? [] }) : answer(routes.catalogue, routes.total)
+    if (path.endsWith('/v3/catalog/unified')) return answer(routes.listings, routes.total)
+    if (path.endsWith('/v3/catalog/trending')) return Response.json({ data: routes.trending ?? [] })
+    if (path.endsWith('/v1/outfits')) return Response.json({ outfits: routes.outfits ?? [] })
+    if (path.endsWith('/content/entities/active') && init?.method === 'POST') {
+      const e = routes.entity
+      return Response.json(e == null ? [] : [{ metadata: { description: e.description, data: { hides: e.hides } } }])
+    }
+    return new Response('', { status: 404 })
   })
   vi.stubGlobal('fetch', f)
   return f
 }
 
-const feedCalls = (f: ReturnType<typeof vi.fn>): URL[] =>
-  f.mock.calls.map(([input]) => new URL(String(input instanceof Request ? input.url : input), location.href)).filter((u) => u.pathname.endsWith('/v3/catalog/unified'))
+const calls = (f: ReturnType<typeof vi.fn>, suffix: string): URL[] =>
+  f.mock.calls.map(([input]) => new URL(String(input instanceof Request ? input.url : input), location.href)).filter((u) => u.pathname.endsWith(suffix))
 
 // The look the engine reports: the body shape first, then the wearables.
+const BODY = 'urn:decentraland:off-chain:base-avatars:BaseMale'
 const LOOK = [
-  { urn: 'urn:body', category: 'body_shape' },
+  { urn: BODY, category: 'body_shape' },
   { urn: 'urn:old-shirt', category: 'upper_body' },
   { urn: 'urn:jeans', category: 'lower_body' }
 ] as Wearable[]
-const ARMOR_URN = `urn:decentraland:matic:collections-v2:${CONTRACT}:1`
 
-/** The first card on screen: the page loads its chunk, its feed and its profiles first, so it may take a while under load. */
+/** The page loads its chunk, its feed and its profiles first, so the first card may take a while under load. */
 const findCard = (name = 'Golden Armor'): Promise<HTMLElement> => screen.findByText(name, {}, { timeout: 5000 })
+const cardOf = async (name = 'Golden Armor'): Promise<HTMLElement> => (await findCard(name)).closest('[data-rarity]') as HTMLElement
 
 function renderShop(over: Partial<InWorldShopProps> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -79,132 +122,181 @@ function renderShop(over: Partial<InWorldShopProps> = {}) {
   const view = render(
     <QueryClientProvider client={client}>
       <InWorldShop {...props} />
+      <PopupHost />
     </QueryClientProvider>
   )
   const rerender = (next: Partial<InWorldShopProps>): void =>
     view.rerender(
       <QueryClientProvider client={client}>
         <InWorldShop {...props} {...next} />
+        <PopupHost />
       </QueryClientProvider>
     )
   return { props, rerender, unmount: view.unmount }
 }
 
-// The rollout flags as the service answers them; a test that needs one on primes it.
-beforeEach(() => primeRemoteFlags({}))
+async function openTab(name: 'Wearables' | 'Emotes' | 'All'): Promise<void> {
+  await userEvent.click(screen.getByRole('tab', { name }))
+}
+
+// The rollout flags as the service answers them; a test that needs one on primes it. jsdom has no
+// element scrolling, which the home's rails use.
+const scrollTo = HTMLElement.prototype.scrollTo
+beforeEach(() => {
+  primeRemoteFlags({})
+  HTMLElement.prototype.scrollTo = function (): void {}
+})
 afterEach(() => {
+  HTMLElement.prototype.scrollTo = scrollTo
   primeRemoteFlags(null)
+  resetPopups()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
-describe('in-world shop query factory', () => {
-  const base: WearableFilters = { category: 'all', sort: 'newest', search: '' }
+describe('in-world shop catalogue query', () => {
+  const base = defaultFilters('wearable')
 
-  it('keys every input that changes the feed, the creator-sales flag included', () => {
-    const key = (f: WearableFilters, creatorSales = false): string => JSON.stringify(shopQueries.wearables(f, { creatorSales }).queryKey)
-    const keys = [key(base), key({ ...base, category: 'Feet' }), key({ ...base, sort: 'cheapest' }), key({ ...base, search: 'armor' }), key(base, true)]
-    expect(new Set(keys).size).toBe(5)
+  it('keys every input that changes a page: the filters, the page and the creator-sales flag', () => {
+    const key = (f: CatalogueFilters, page = 0, creatorSales = false): string => JSON.stringify(shopQueries.catalogue(f, page, { creatorSales }).queryKey)
+    const keys = [key(base), key({ ...base, category: 'Feet' }), key({ ...base, sort: 'cheapest' }), key({ ...base, search: 'armor' }), key({ ...base, rarities: ['epic'] }), key({ ...base, status: 'on_sale' }), key(base, 1), key(base, 0, true)]
+    expect(new Set(keys).size).toBe(keys.length)
   })
 
-  it('pages by the rows loaded, until a short page or the total', () => {
-    const page = (n: number, total: number) => ({ items: Array.from({ length: n }, () => ({})), total, meta: { freshness: null } })
-    const first = page(SHOP_PAGE_SIZE, 120)
-    expect(nextWearablesPage(first, [first])).toBe(SHOP_PAGE_SIZE)
-    const second = page(SHOP_PAGE_SIZE, 120)
-    expect(nextWearablesPage(second, [first, second])).toBe(2 * SHOP_PAGE_SIZE)
-    const last = page(24, 120)
-    expect(nextWearablesPage(last, [first, second, last])).toBeUndefined()
-    const exact = page(SHOP_PAGE_SIZE, SHOP_PAGE_SIZE)
-    expect(nextWearablesPage(exact, [exact])).toBeUndefined()
+  it('reads the listings feed for what is on sale and deals, the catalogue otherwise', () => {
+    expect(readsListings({ ...base, status: 'on_sale' }, false)).toBe(true)
+    expect(readsListings({ ...base, deals: true }, true)).toBe(true)
+    expect(readsListings({ ...base, deals: true }, false)).toBe(false)
+    expect(readsListings(base, true)).toBe(false)
   })
 
-  it('orders a search by relevance unless another sort was picked', () => {
-    expect(serverSort({ ...base, search: 'armor' })).toBe('relevance')
-    expect(serverSort({ ...base, search: 'armor', sort: 'cheapest' })).toBe('cheapest')
-    expect(serverSort(base)).toBe('newest')
+  it('orders a search by relevance unless another sort was picked, and counts pages', () => {
+    expect(serverSort({ search: 'armor', sort: 'newest' })).toBe('relevance')
+    expect(serverSort({ search: 'armor', sort: 'cheapest' })).toBe('cheapest')
+    expect(pageCount(0)).toBe(1)
+    expect(pageCount(SHOP_PAGE_SIZE)).toBe(1)
+    expect(pageCount(SHOP_PAGE_SIZE + 1)).toBe(2)
+  })
+
+  it('tries on an item by its own URN, else its Polygon collection URN', () => {
+    const item = { contractAddress: CONTRACT, itemId: '1', chainId: 137, category: 'wearable' } as Parameters<typeof tryOnUrn>[0]
+    expect(tryOnUrn(item)).toBe(ARMOR_URN)
+    expect(tryOnUrn({ ...item, chainId: 1 })).toBeNull()
+    expect(tryOnUrn({ ...item, chainId: 1, urn: 'urn:own' })).toBe('urn:own')
+    expect(webShopUrl(item)).toContain(`/shop/item/${CONTRACT}/1`)
   })
 })
 
 describe('in-world shop', () => {
-  it('opens from the menu, right after Places', () => {
-    serveFeed([listing()])
+  it('opens on the All home with its sections', async () => {
+    serve({ trending: [listingRow()], listings: [[listingRow({ itemId: '2', name: 'Pixel Hoodie' })]] })
     renderShop()
-    const labels = within(screen.getByRole('navigation')).getAllByRole('button').map((b) => b.textContent?.replace(/\s*\[.*\]$/, ''))
-    expect(labels.slice(0, 3)).toEqual(['Places', 'Shop', 'Events'])
+    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true')
+    expect(await findCard('Golden Armor')).toBeInTheDocument()
+    expect(await findCard('Pixel Hoodie')).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Trending' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'New' })).toBeInTheDocument()
   })
 
-  it('lists the wearables on sale with their credits price and creator', async () => {
-    const f = serveFeed([listing()])
+  it('sends VIEW ALL to the wearables on sale, newest first', async () => {
+    const f = serve({ trending: [listingRow()], listings: [[listingRow()]] })
     renderShop()
-    const card = (await findCard()).closest('[data-rarity]') as HTMLElement
+    await screen.findAllByText('Golden Armor', {}, { timeout: 5000 })
+    await userEvent.click(within(screen.getByRole('region', { name: 'Trending' })).getByRole('button', { name: /view all/i }))
+    expect(screen.getByRole('tab', { name: 'Wearables' })).toHaveAttribute('aria-selected', 'true')
+    await waitFor(() => expect(calls(f, '/v3/catalog/unified').at(-1)!.searchParams.get('category')).toBe('wearable'))
+    expect(calls(f, '/v3/catalog/unified').at(-1)!.searchParams.get('sortBy')).toBe('newest')
+  })
+
+  it('dresses the avatar in an outfit, keeping the body shape', async () => {
+    serve({
+      outfits: [{ id: 'o1', name: 'Neon Night', thumbnailHash: '', items: [{ contractAddress: CONTRACT, itemId: '1' }], gradientFrom: '#ff0000', gradientTo: '#0000ff' }],
+      byIds: [catalogueRow()]
+    })
+    const { props } = renderShop()
+    await userEvent.click(await screen.findByRole('button', { name: 'Try on Neon Night' }, { timeout: 5000 }))
+    await waitFor(() => expect(props.preview).toHaveBeenLastCalledWith([BODY, ARMOR_URN]))
+  })
+
+  it('lists every wearable a page at a time, with its credits price and creator', async () => {
+    const f = serve({ catalogue: [[catalogueRow()]], total: 120 })
+    renderShop()
+    await openTab('Wearables')
+    const card = await cardOf()
     expect(within(card).getByText('500')).toBeInTheDocument()
     expect(within(card).getByText('epic')).toBeInTheDocument()
     expect(within(card).getByText('0x2222…2222')).toBeInTheDocument()
-    const q = feedCalls(f)[0]!.searchParams
+    const q = calls(f, '/v3/catalog/items').at(-1)!.searchParams
     expect(q.get('category')).toBe('wearable')
-    expect(q.get('onSale')).toBe('true')
-    expect(q.get('sortBy')).toBe('newest')
-    expect(q.get('first')).toBe('48')
+    expect(q.get('first')).toBe(String(SHOP_PAGE_SIZE))
     expect(q.get('skip')).toBe('0')
+    await userEvent.click(screen.getByRole('button', { name: '2' }))
+    await waitFor(() => expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('skip')).toBe(String(SHOP_PAGE_SIZE)))
   })
 
   it('prices a resale in MANA', async () => {
-    serveFeed([listing({ listingType: 'secondary', tokenId: '7', tradeId: 'trade-1', priceCredits: 0, manaWei: '12500000000000000000' })])
+    serve({ listings: [[listingRow({ listingType: 'secondary', tokenId: '7', tradeId: 'trade-1', priceCredits: 0, manaWei: '12500000000000000000' })]] })
     renderShop()
-    const card = (await findCard()).closest('[data-rarity]') as HTMLElement
-    expect(within(card).getByText('12.5')).toBeInTheDocument()
+    await openTab('Wearables')
+    await userEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    await userEvent.click(screen.getByRole('radio', { name: 'On sale' }))
+    expect(within(await cardOf()).getByText('12.5')).toBeInTheDocument()
   })
 
   it('tags a discounted credits price while creator sales are on', async () => {
     primeRemoteFlags({ 'dapps-shop-creator-sales': true })
-    serveFeed([listing({ priceCredits: 400, compareAtCredits: 500 })])
+    serve({ listings: [[listingRow({ priceCredits: 400, compareAtCredits: 500 })]] })
     renderShop()
-    const card = (await findCard()).closest('[data-rarity]') as HTMLElement
+    await openTab('Wearables')
+    await userEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    await userEvent.click(screen.getByRole('radio', { name: 'On sale' }))
+    const card = await cardOf()
     expect(within(card).getByText('-20%')).toBeInTheDocument()
     expect(within(card).getByText('400')).toBeInTheDocument()
   })
 
-  it('shows the full price, untagged, while creator sales are off', async () => {
-    serveFeed([listing({ priceCredits: 400, compareAtCredits: 500 })])
+  it('narrows by category, rarity and price', async () => {
+    const f = serve({ catalogue: [[catalogueRow()]] })
     renderShop()
-    const card = (await findCard()).closest('[data-rarity]') as HTMLElement
-    expect(within(card).getByText('500')).toBeInTheDocument()
-    expect(within(card).queryByText('-20%')).toBeNull()
-  })
-
-  it('narrows the feed to a category', async () => {
-    const f = serveFeed([listing()])
-    renderShop()
+    await openTab('Wearables')
     await findCard()
     await userEvent.click(screen.getByRole('button', { name: 'Upper body' }))
-    await waitFor(() => expect(feedCalls(f).at(-1)!.searchParams.get('wearableCategory')).toBe('upper_body'))
-    expect(screen.getByRole('button', { name: 'Upper body' })).toHaveAttribute('aria-pressed', 'true')
+    await waitFor(() => expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('wearableCategory')).toBe('upper_body'))
+    await userEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    await userEvent.click(screen.getByRole('button', { name: 'epic' }))
+    await waitFor(() => expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('rarity')).toBe('epic'))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Minimum price' }), { target: { value: '100' } })
+    fireEvent.blur(screen.getByRole('textbox', { name: 'Minimum price' }))
+    await waitFor(() => expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('minPriceCredits')).toBe('100'))
   })
 
   it('sorts by the option picked', async () => {
-    const f = serveFeed([listing()])
+    const f = serve({ catalogue: [[catalogueRow()]] })
     renderShop()
+    await openTab('Wearables')
     await findCard()
     await userEvent.click(screen.getByRole('button', { name: 'Sort by: Newest' }))
     await userEvent.click(screen.getByText('Cheapest'))
-    await waitFor(() => expect(feedCalls(f).at(-1)!.searchParams.get('sortBy')).toBe('cheapest'))
+    await waitFor(() => expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('sortBy')).toBe('cheapest'))
   })
 
-  it('searches, counts the results and clears the search', async () => {
-    const f = serveFeed([listing()])
+  it('searches, counts the results and leaves the search', async () => {
+    const f = serve({ catalogue: [[catalogueRow()]] })
     renderShop()
+    await openTab('Wearables')
     await findCard()
     fireEvent.change(screen.getByPlaceholderText('Search'), { target: { value: '  Armor ' } })
-    await waitFor(() => expect(feedCalls(f).at(-1)!.searchParams.get('search')).toBe('armor'))
-    expect(feedCalls(f).at(-1)!.searchParams.get('sortBy')).toBe('relevance')
+    await waitFor(() => expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('search')).toBe('armor'))
+    expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('sortBy')).toBe('relevance')
     expect(await screen.findByText('Results for ‘armor’ (1)')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Exit search' }))
     await waitFor(() => expect(screen.queryByText(/Results for/)).toBeNull())
   })
 
-  it('offers to explore every wearable when a search matches nothing', async () => {
-    serveFeed([listing()], [])
+  it('offers to explore every wearable when a narrowed list is empty', async () => {
+    serve({ catalogue: [[catalogueRow()], []] })
     renderShop()
+    await openTab('Wearables')
     await findCard()
     await userEvent.click(screen.getByRole('button', { name: 'Feet' }))
     expect(await screen.findByText('No matches found', {}, { timeout: 5000 })).toBeInTheDocument()
@@ -213,80 +305,121 @@ describe('in-world shop', () => {
     expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('says nothing is on sale when the whole feed is empty', async () => {
-    serveFeed([])
+  it('says nothing is on sale when the whole list is empty', async () => {
+    serve({ catalogue: [[]] })
     renderShop()
+    await openTab('Wearables')
     expect(await screen.findByText('Nothing on sale right now', {}, { timeout: 5000 })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'EXPLORE WEARABLES' })).toBeNull()
   })
 
   it('shows the error and retries', async () => {
-    serveFeed('down', [listing()])
+    serve({ catalogue: ['down', [catalogueRow()]] })
     renderShop()
+    await openTab('Wearables')
     expect(await screen.findByText("Couldn't load the Shop", {}, { timeout: 5000 })).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(await findCard()).toBeInTheDocument()
   })
 
-  it('frames the whole avatar when it opens', async () => {
-    serveFeed([listing()])
+  it('opens the panel of a selected item, with its stock, description and what it hides, and tries it on', async () => {
+    serve({ catalogue: [[catalogueRow()]], entity: { description: 'No flesh, just bones!', hides: ['eyebrows', 'tiara'] } })
     const { props } = renderShop()
+    await openTab('Wearables')
     await findCard()
+    await userEvent.click(screen.getByRole('button', { name: 'Golden Armor' }))
+    const panel = screen.getByRole('complementary', { name: 'Golden Armor' })
+    expect(within(panel).getByText(/epic\s*35\/1000/i)).toBeInTheDocument()
+    expect(await within(panel).findByText('No flesh, just bones!')).toBeInTheDocument()
+    expect(within(panel).getByText('tiara')).toBeInTheDocument()
+    expect(within(panel).getByRole('button', { name: /buy item/i })).toBeInTheDocument()
+    expect(props.preview).toHaveBeenLastCalledWith([BODY, 'urn:jeans', ARMOR_URN])
+    await userEvent.click(within(panel).getByRole('button', { name: 'Close item' }))
+    expect(screen.queryByRole('complementary', { name: 'Golden Armor' })).toBeNull()
+    expect(props.preview).toHaveBeenLastCalledWith(null)
+  })
+
+  it('sends what is not for sale here to the web Shop, after asking', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    serve({ catalogue: [[catalogueRow({ isOnSale: false, price: '0', priceCredits: 0 })]] })
+    renderShop()
+    await openTab('Wearables')
+    await userEvent.click(within(await cardOf()).getByRole('button', { name: /view/i }))
+    const dialog = await screen.findByRole('dialog', {}, { timeout: 5000 })
+    expect(within(dialog).getByText('You will be redirected to the web Shop')).toBeInTheDocument()
+    await userEvent.click(within(dialog).getByRole('button', { name: 'CONTINUE' }))
+    expect(open).toHaveBeenCalledWith(expect.stringContaining(`/shop/item/${CONTRACT}/1`), '_blank', 'noopener')
+  })
+
+  it('frames the whole avatar when it opens', () => {
+    serve({})
+    const { props } = renderShop()
     expect(props.focus).toHaveBeenCalledWith('body')
   })
 
-  it('tries an item on over the current look, swapping its category, and restores the look on close', async () => {
-    serveFeed([listing()])
+  it('tries an item on over the current look and takes it off again, then restores the look on close', async () => {
+    serve({ catalogue: [[catalogueRow()]] })
     const { props, rerender } = renderShop()
+    await openTab('Wearables')
     await findCard()
     await userEvent.click(screen.getByRole('button', { name: 'TRY ON' }))
-    expect(props.preview).toHaveBeenLastCalledWith(['urn:body', 'urn:jeans', ARMOR_URN])
-    expect(screen.getByRole('button', { name: 'Golden Armor' })).toHaveAttribute('aria-pressed', 'true')
+    expect(props.preview).toHaveBeenLastCalledWith([BODY, 'urn:jeans', ARMOR_URN])
+    await userEvent.click(screen.getByRole('button', { name: 'TAKE OFF' }))
+    expect(props.preview).toHaveBeenLastCalledWith(null)
+    await userEvent.click(screen.getByRole('button', { name: 'TRY ON' }))
     rerender({ shop: { open: false, toggle: vi.fn() } })
     expect(props.preview).toHaveBeenLastCalledWith(null)
   })
 
-  it('takes a tried-on item off again', async () => {
-    serveFeed([listing()])
-    const { props } = renderShop()
-    await findCard()
-    await userEvent.click(screen.getByRole('button', { name: 'TRY ON' }))
-    await userEvent.click(screen.getByRole('button', { name: 'TAKE OFF' }))
-    expect(props.preview).toHaveBeenLastCalledWith(null)
-    expect(screen.getByRole('button', { name: 'Golden Armor' })).toHaveAttribute('aria-pressed', 'false')
-  })
-
   it('waits for the look before trying anything on', async () => {
-    serveFeed([listing()])
+    serve({ catalogue: [[catalogueRow()]] })
     const { props } = renderShop({ equipped: [] })
+    await openTab('Wearables')
     await findCard()
-    const tryOn = screen.getByRole('button', { name: 'TRY ON' })
-    expect(tryOn).toBeDisabled()
-    expect(screen.queryByRole('button', { name: 'Golden Armor' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'TRY ON' })).toBeDisabled()
     expect(props.preview).not.toHaveBeenCalled()
   })
 
   it('offers no try-on for an item without a Polygon collection URN', async () => {
-    serveFeed([listing({ chainId: 1, network: 'ETHEREUM' })])
+    serve({ catalogue: [[catalogueRow({ chainId: 1, network: 'ETHEREUM' })]] })
     renderShop()
-    expect(await findCard()).toBeInTheDocument()
+    await openTab('Wearables')
+    await findCard()
     expect(screen.queryByRole('button', { name: 'TRY ON' })).toBeNull()
   })
 
-  it('restores the look when it unmounts while trying something on', async () => {
-    serveFeed([listing()])
-    const { props, unmount } = renderShop()
+  it('leaves the preview avatar alone when nothing was tried on, and restores it on unmount when something was', async () => {
+    serve({ catalogue: [[catalogueRow()]] })
+    const first = renderShop()
+    await openTab('Wearables')
+    await findCard()
+    first.rerender({ shop: { open: false, toggle: vi.fn() } })
+    expect(first.props.preview).not.toHaveBeenCalled()
+    first.unmount()
+    serve({ catalogue: [[catalogueRow()]] })
+    const second = renderShop()
+    await openTab('Wearables')
     await findCard()
     await userEvent.click(screen.getByRole('button', { name: 'TRY ON' }))
-    unmount()
-    expect(props.preview).toHaveBeenLastCalledWith(null)
+    second.unmount()
+    expect(second.props.preview).toHaveBeenLastCalledWith(null)
   })
 
-  it('leaves the preview avatar alone when nothing was tried on', async () => {
-    serveFeed([listing()])
-    const { props, rerender } = renderShop()
-    await findCard()
-    rerender({ shop: { open: false, toggle: vi.fn() } })
-    expect(props.preview).not.toHaveBeenCalled()
+  it('browses emotes by their own categories', async () => {
+    const f = serve({ catalogue: [[catalogueRow({ category: 'emote', name: 'Moonwalk', data: { emote: { category: 'dance' } } })]] })
+    renderShop()
+    await openTab('Emotes')
+    expect(await findCard('Moonwalk')).toBeInTheDocument()
+    expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('category')).toBe('emote')
+    await userEvent.click(screen.getByRole('button', { name: 'Dance' }))
+    await waitFor(() => expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('emoteCategory')).toBe('dance'))
+  })
+
+  it('opens from the menu, right after Places', () => {
+    serve({})
+    renderShop()
+    const nav = screen.getAllByRole('navigation').find((n) => n.getAttribute('aria-label') !== 'Pages')!
+    const labels = within(nav).getAllByRole('button').map((b) => b.textContent?.replace(/\s*\[.*\]$/, ''))
+    expect(labels.slice(0, 3)).toEqual(['Places', 'Shop', 'Events'])
   })
 })
