@@ -218,7 +218,8 @@ python3 -m unittest discover -s tooling/tests -p 'test_bevy_*.py'
 ```
 
 The login-storage adapter and real-Chrome tests exercise corrupt/empty store recovery and mixed
-valid/invalid records as well as independent-context merge/ack behavior. The Rust `system_ui`
+valid/invalid records and additions as well as independent-context merge/ack behavior. Native Rust
+storage tests also force a failed quarantine copy and verify that valid records are still repaired. The Rust `system_ui`
 `login::client_login::tests` drive signed requests to a localhost stub for acceptance, rejection,
 deployment-order retries and explicit memory-only delivery; they also check save-before-send,
 account cancellation and storage recovery. These are focused runtime tests, not a built Explorer

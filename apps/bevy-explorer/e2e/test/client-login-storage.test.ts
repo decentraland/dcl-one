@@ -142,3 +142,14 @@ test('browser storage policy stays aligned with the shared Rust limits', async (
   assert.match(source, /TOMBSTONE_MS = MAX_AGE_MS \+ 300_000/)
   assert.match(source, /MAX_PENDING = 32/)
 })
+
+
+test('invalid additions do not block valid additions or acknowledgment in the same commit', async () => {
+  await withDatabase(async (_db, finish) => {
+    await finish(clientLoginsWrite(delta([event('removed')])))
+    const good = event('good')
+    const changes = JSON.stringify({ additions: [null, { login_id: 'bad' }, good, { occurred_at: Date.now() }], removals: ['removed'] })
+    assert.deepEqual(JSON.parse(await finish(clientLoginsWrite(changes))), ['good'])
+    assert.deepEqual(JSON.parse(await finish(clientLoginsRead())), [good])
+  })
+})

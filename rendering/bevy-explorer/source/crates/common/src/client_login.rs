@@ -129,6 +129,9 @@ impl DurableLogins {
         self.record_removals(&before);
     }
     pub fn expire(&mut self, now: u64) -> usize {
+        if self.events.iter().all(|event| event.unexpired(now)) {
+            return 0;
+        }
         let before = self.events.clone();
         self.events.retain(|event| event.unexpired(now));
         self.record_removals(&before);

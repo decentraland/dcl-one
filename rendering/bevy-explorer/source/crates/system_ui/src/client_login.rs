@@ -94,8 +94,10 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn endpoint() -> String {
-    base_domain::url(Service::SocialApi, "/v1/client-login")
+fn endpoint() -> &'static str {
+    // Launch options latch service resolution before the delivery systems run.
+    static ENDPOINT: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ENDPOINT.get_or_init(|| base_domain::url(Service::SocialApi, "/v1/client-login"))
 }
 
 impl ClientLoginDelivery {
@@ -116,7 +118,7 @@ impl ClientLoginDelivery {
         let address = format!("{address:#x}");
         self.discarded += self.queue.push(PendingClientLogin {
             wallet: address.clone(),
-            endpoint: endpoint(),
+            endpoint: endpoint().to_owned(),
             login_id: uuid::Uuid::new_v4().to_string(),
             occurred_at: now_ms(),
         });
@@ -125,7 +127,7 @@ impl ClientLoginDelivery {
     }
 
     pub(super) fn drive(&mut self, wallet: &Wallet) {
-        self.drive_at(wallet, now_ms(), &endpoint());
+        self.drive_at(wallet, now_ms(), endpoint());
     }
 
     fn storage_failed(&mut self, now: u64) {
@@ -244,7 +246,6 @@ impl ClientLoginDelivery {
             .events
             .iter()
             .find(|event| event.eligible(active, endpoint, now))
-            .cloned()
         else {
             return;
         };
@@ -256,6 +257,7 @@ impl ClientLoginDelivery {
         if now < self.next_attempt {
             return;
         }
+        let event = event.clone();
         self.attempts = self.attempts.saturating_add(1);
         let wallet = wallet.snapshot();
         self.task = Some(IoTaskPool::get().spawn_compat(async move {

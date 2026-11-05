@@ -71,8 +71,10 @@ test('real IndexedDB preserves independent page occurrences, acknowledgment and 
         const emptyRecovered = JSON.parse(await final.contentWindow.queue.read());
         await seed(JSON.stringify([eventB, null, { login_id: 'bad', occurred_at: Date.now() }]));
         const mixedRecovered = JSON.parse(await final.contentWindow.queue.read());
+        await final.contentWindow.queue.write(JSON.stringify({ additions: [null, { login_id: 'bad' }, eventA], removals: ['b'] }));
+        const afterInvalidAddition = JSON.parse(await final.contentWindow.queue.read());
         final.remove();
-        return JSON.stringify({ first: first.map(JSON.parse), afterRestart, afterAck, aborted, afterAbortRestart, emptyRecovered, mixedRecovered });
+        return JSON.stringify({ first: first.map(JSON.parse), afterRestart, afterAck, aborted, afterAbortRestart, emptyRecovered, mixedRecovered, afterInvalidAddition });
       };
     </script>`)
     const server = await serveWebApp(root, 0)
@@ -81,7 +83,7 @@ test('real IndexedDB preserves independent page occurrences, acknowledgment and 
       web = await WebConsole.launch({ url: server.url, chrome, headless: true, readyTimeoutMs: 60_000, commandTimeoutMs: 20_000 })
       const result = JSON.parse(await web.run('/login_storage')) as {
         first: unknown[][]; afterRestart: { login_id: string }[]; afterAck: { login_id: string }[];
-        aborted: boolean; afterAbortRestart: { login_id: string }[]; emptyRecovered: unknown[]; mixedRecovered: { login_id: string }[]
+        aborted: boolean; afterAbortRestart: { login_id: string }[]; emptyRecovered: unknown[]; mixedRecovered: { login_id: string }[]; afterInvalidAddition: { login_id: string }[]
       }
       assert.deepEqual(result.first, [[], []])
       assert.deepEqual(result.afterRestart.map(event => event.login_id).sort(), ['a', 'b'])
@@ -90,6 +92,7 @@ test('real IndexedDB preserves independent page occurrences, acknowledgment and 
       assert.deepEqual(result.afterAbortRestart.map(event => event.login_id), ['b'])
       assert.deepEqual(result.emptyRecovered, [])
       assert.deepEqual(result.mixedRecovered.map(event => event.login_id), ['b'])
+      assert.deepEqual(result.afterInvalidAddition.map(event => event.login_id), ['a'])
     } finally {
       await web?.close()
       await server.close()

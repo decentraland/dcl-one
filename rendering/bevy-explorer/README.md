@@ -101,8 +101,9 @@ the latest stored state; a busy native lock defers persistence instead of blocki
 Removal records remain for 24 hours and five minutes so an uncertain earlier save cannot restore
 an acknowledged or discarded occurrence. The engine awaits the queue save before
 sending. Empty/corrupt stores are repaired, with one `.corrupt` file or IndexedDB `corrupt`
-record retaining the previous contents; malformed records are dropped individually while valid
-records survive. Three consecutive storage failures (ten-second timeout per asynchronous operation,
+record retaining the previous contents when quarantine succeeds. Native quarantine failure is logged
+and does not block repair. Malformed records and additions are dropped individually while valid
+records and acknowledgments survive. Three consecutive storage failures (ten-second timeout per asynchronous operation,
 five seconds between retries) enable visibly degraded memory-only delivery without delaying login.
 Unsaved changes remain in memory and storage recovery retries every minute. Normal persistence
 gating resumes after recovery; events accepted in memory mode are removed during reconciliation.
@@ -116,8 +117,8 @@ failures, HTTP 408, 429 and server errors use randomized exponential backoff bou
 one second and five minutes. HTTP 204
 acknowledges the event. HTTP 404/405 retain it with a randomized 150–300 second backoff so client
 and server deployments can arrive in either order. Other client-error statuses stop its delivery
-and log only the status code. Response bodies are drained up to 16 KiB or one second for connection
-reuse; their contents are never logged. Records expire after 24 hours. At most 32 pending records are retained per runtime and in shared storage;
+and log only the status code. Native response bodies are drained up to 16 KiB or one second for
+connection reuse; browser fetch manages its connections. Response contents are never logged. Records expire after 24 hours. At most 32 pending records are retained per runtime and in shared storage;
 adding one beyond the limit discards the oldest. The debug panel's **Client login events**
 section and `/client_login_state` expose pending count, persistence, memory-only mode, consecutive storage failures, attempts, result and
 session discard count. Concurrent processes and browser tabs share the durable queue without

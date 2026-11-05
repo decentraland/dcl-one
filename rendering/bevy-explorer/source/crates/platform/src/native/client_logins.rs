@@ -75,8 +75,10 @@ fn read_store(path: &Path) -> Result<Store, String> {
     }
     if damaged {
         // Keep one bounded recovery snapshot, never log its contents.
-        std::fs::copy(path, path.with_extension("json.corrupt")).map_err(|e| e.to_string())?;
-        bevy::log::warn!("recovered damaged login event storage; invalid records quarantined");
+        if let Err(error) = std::fs::copy(path, path.with_extension("json.corrupt")) {
+            bevy::log::warn!(%error, "login event quarantine unavailable; continuing recovery");
+        }
+        bevy::log::warn!("recovered damaged login event storage; invalid records discarded");
     }
     Ok(store)
 }
@@ -152,7 +154,8 @@ pub(super) fn write(directory: &Path, json: &str, now: u64) -> Result<String, St
         prune(&mut store, now);
         for event in changes.additions {
             if !valid_event(&event) {
-                return Err("invalid login event".into());
+                bevy::log::warn!("discarded invalid login event addition");
+                continue;
             }
             let id = event["login_id"]
                 .as_str()
@@ -184,15 +187,55 @@ mod tests {
             .to_string()
     }
     fn directory() -> std::path::PathBuf {
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         std::env::temp_dir().join(format!(
-            "dcl-login-store-{}-{}",
+            "dcl-login-store-{}-{}-{}",
             std::process::id(),
+            SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_nanos()
         ))
     }
+    #[test]
+    fn invalid_additions_do_not_block_valid_additions_or_removals() {
+        let dir = directory();
+        write(&dir, &change("removed", 1000), 1000).unwrap();
+        let good: Value = serde_json::from_str(&change("good", 1000)).unwrap();
+        let changes = serde_json::json!({
+            "additions": [null, {"login_id":"bad"}, good["additions"][0], {"occurred_at":1000}],
+            "removals": ["removed"]
+        });
+        let receipt: Vec<String> =
+            serde_json::from_str(&write(&dir, &changes.to_string(), 1000).unwrap()).unwrap();
+        assert_eq!(receipt, ["good"]);
+        let restored: Vec<Value> = serde_json::from_str(&read(&dir, 1000).unwrap()).unwrap();
+        assert_eq!(restored, vec![good["additions"][0].clone()]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unavailable_quarantine_does_not_prevent_salvage_and_repair() {
+        let dir = directory();
+        std::fs::create_dir_all(&dir).unwrap();
+        let good: Value = serde_json::from_str(&change("good", 1000)).unwrap();
+        let path = dir.join("client-logins.json");
+        std::fs::write(
+            &path,
+            serde_json::json!([good["additions"][0], null]).to_string(),
+        )
+        .unwrap();
+        // This destination deterministically fails copy, independent of the process's permissions.
+        std::fs::create_dir(dir.join("client-logins.json.corrupt")).unwrap();
+        let recovered: Vec<Value> = serde_json::from_str(&read(&dir, 1000).unwrap()).unwrap();
+        assert_eq!(recovered, vec![good["additions"][0].clone()]);
+        let repaired: Store = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        assert_eq!(repaired.events.len(), 1);
+        assert!(repaired.events.contains_key("good"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn empty_and_mixed_stores_quarantine_only_invalid_records() {
         let dir = directory();

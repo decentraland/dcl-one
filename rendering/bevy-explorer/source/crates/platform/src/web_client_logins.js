@@ -83,7 +83,10 @@ async function mutate(changes, readEvents) {
           const now = Date.now()
           prune(store, now)
           for (const event of changes.additions) {
-            if (!validEvent(event)) throw new Error('invalid login event')
+            if (!validEvent(event)) {
+              console.warn('discarded invalid login event addition')
+              continue
+            }
             if (!Object.hasOwn(store.removed, event.login_id) && !Object.hasOwn(store.events, event.login_id)) {
               store.events[event.login_id] = event
             }
