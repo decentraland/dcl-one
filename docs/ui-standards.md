@@ -198,10 +198,10 @@ the shared foundations and components. The app itself, under `apps/<app>`,
 keeps its pages, routes and data wiring and imports its UI from there. Until
 `library/ui` is implemented, app-specific UI stays where it is in the app.
 
-Until `library/ui` is implemented, Sites currently imports proof-of-concept
-source (`apps/ui3`) through the `@ui/*` alias (`apps/sites/tsconfig.json`), so a
-component that Sites imports from it is used by more than one app. Verify a change to
-it in every app that imports it.
+Until `library/ui` is implemented, Sites imports proof-of-concept source
+(`apps/ui3`) through the `@ui/*` alias (`apps/sites/tsconfig.json`). Verify the
+actual importing surfaces of a component before assuming it has more than one
+consumer, and verify a change to it in every app that imports it.
 
 - Follow the same CSS Modules, accessibility, migration and verification rules
   as shared UI.
