@@ -7,7 +7,7 @@
 import { useSyncExternalStore } from 'react'
 import { LANGUAGES } from '../../engine/generated'
 import type { Setting } from '../../engine/protocol'
-import { hostUrl } from '../../lib/baseDomain'
+import { serviceUrl } from '../../lib/baseDomain'
 import { PREF, getPref, setPref } from '../../lib/prefs'
 import { parseMessage } from './chatText'
 
@@ -83,7 +83,7 @@ export function hasTranslatableText(text: string): boolean {
   return splitForTranslation(text).some((p) => p.translate)
 }
 
-export const TRANSLATE_URL = hostUrl('autotranslate-server', '/translate')
+export const TRANSLATE_URL = `${serviceUrl('autotranslate')}/translate`
 const TIMEOUT_MS = 20_000
 
 interface BatchResponse {

@@ -662,6 +662,9 @@ fn op_error(state: Rc<RefCell<OpState>>, #[string] message: String) {
 
 #[cfg(test)]
 mod tests {
+    mod system_scene_network {
+        include!("system_scene_network_tests.rs");
+    }
     use std::sync::Arc;
 
     use common::structs::SceneJsFile;
