@@ -743,7 +743,8 @@ export function parseLoginArgs(rest: string): HudLoginRequest {
         if (!/^-?\d+,-?\d+$/.test(position)) throw new Error(`--position takes a parcel as x,y, not \`${position}\``)
         break
       default:
-        throw new Error(`unknown flag \`${flag}\`: ${LOGIN_USAGE}`)
+        // a word that is no flag is quoted by nothing: it may be a second identity
+        throw new Error(flag.startsWith('--') ? `unknown flag \`${flag}\`: ${LOGIN_USAGE}` : `unexpected argument: ${LOGIN_USAGE}`)
     }
   }
   if (name != null || look != null) {

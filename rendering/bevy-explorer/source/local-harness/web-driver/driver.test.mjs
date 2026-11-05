@@ -62,6 +62,8 @@ describe('redact', () => {
     assert.equal(secretOf('login_identity eyJhIjoxfQ== --name tester'), 'eyJhIjoxfQ==');
     assert.equal(secretOf('/teleport 1 2'), undefined);
     assert.equal(secretOf('/hud_login --guest eyJhIjoxfQ== --look 1'), 'eyJhIjoxfQ==');
+    assert.equal(secretOf('/hud_login --name tester --look 1 eyJhIjoxfQ== --guest'), 'eyJhIjoxfQ==');
+    assert.equal(secretOf('/login_identity --profiles https://x.example/lambdas eyJhIjoxfQ=='), 'eyJhIjoxfQ==');
     assert.equal(redact('/hud_login eyJhIjoxfQ== --guest', '/hud_login eyJhIjoxfQ== --guest did not finish: eyJhIjoxfQ=='), '/hud_login <redacted> --guest did not finish: <redacted>');
     assert.equal(redact('/teleport 1 2', 'failed to set location'), 'failed to set location');
   });

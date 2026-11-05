@@ -134,7 +134,9 @@ describe('/hud_login arguments', () => {
     expect(message(`${ENCODED} --position here`)).toBe('--position takes a parcel as x,y, not `here`')
     expect(message(`${ENCODED} --realm`)).toMatch(/^--realm takes a value/)
     expect(message(`${ENCODED} --jump`)).toMatch(/^unknown flag `--jump`/)
-    for (const rest of ['', '--guest', `${ENCODED} --name tester`, `${ENCODED} --jump`]) expect(message(rest)).not.toContain(ENCODED)
+    // a second word that is no flag may be another identity: never quoted
+    expect(message(`${ENCODED} ${ENCODED}`)).toMatch(/^unexpected argument: \/hud_login/)
+    for (const rest of ['', '--guest', `${ENCODED} --name tester`, `${ENCODED} --jump`, `${ENCODED} ${ENCODED}`]) expect(message(rest)).not.toContain(ENCODED)
   })
 
   it('fails when no session is mounted to take it, and without a test runner driving the browser', async () => {
@@ -177,6 +179,17 @@ describe('/hud_login through the session', () => {
     expect(driver.sentOf('acceptWelcome')).toEqual([{ kind: 'acceptWelcome', name: 'tester' }])
     expect(driver.sentOf('teleport')).toEqual([])
     expect(h.session().phase).toBe('lobby')
+  })
+
+  it('a parcel alone goes to the main realm from the lobby', async () => {
+    const driver = new IdentityDriver()
+    const h = await ready(driver)
+    const reply = await login(`${ENCODED} --position 3,-4`)
+    expect(reply).toMatchObject({ phase: 'entering' })
+    const teleport = driver.last('teleport') as { realm?: string; x: number; y: number } | undefined
+    expect(teleport).toMatchObject({ x: 3, y: -4 })
+    expect(teleport?.realm).toBeTruthy()
+    expect(h.session().phase).toBe('entering')
   })
 
   it('stands for the terms without a pick, for an account that has its profile', async () => {

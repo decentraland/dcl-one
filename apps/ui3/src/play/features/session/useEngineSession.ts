@@ -821,6 +821,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
 
   // Past login → waiting for the world.
   const [submitted, setSubmitted] = useState(false)
+  // for a /hud_login, which may come between a render and the effect that hands it over
+  const submittedRef = useRef(false)
+  submittedRef.current = submitted
   // The post-jump-in Places picker: stay in 'picking' until the user chooses a destination (or skips).
   const [destinationPicked, setDestinationPicked] = useState(false)
   // Signed in and shown the lobby, with the engine launched holding the world back (web) or already
@@ -1414,7 +1417,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           if (hudLogin != null) {
             hudLogin.welcomeAwaited = false
             setHudLoginTick((n) => n + 1)
-            if (msg.newProfile && guestPick.current == null) settleHudLogin(new Error('the account has no profile yet: a first login needs --name and --look'))
+            if (msg.newProfile && guestPick.current == null) settleHudLogin(new Error('the account has no profile yet: a first login needs --name and --look (/logout, then sign in again with them)'))
           }
           const chosen: { name?: string } | null = guestPick.current ?? (hudLoginPending.current != null ? {} : null)
           guestPick.current = null
@@ -2724,7 +2727,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const hudLogin = useCallback(
     (request: HudLoginRequest): Promise<HudLoginReply> =>
       new Promise((resolve, reject) => {
-        if (submitted) return reject(new Error('already signed in: /logout first'))
+        // the refs, as the command may come between a render and the effect that hands it over
+        if (submittedRef.current || busyRef.current) return reject(new Error('already signed in: /logout first'))
         if (!engineReady) return reject(new Error('the engine is not ready to take a sign-in yet'))
         if (hudLoginPending.current != null) return reject(new Error('a /hud_login is already under way'))
         const { identity, guest, defaultOnError, pick, destination } = request
@@ -2751,7 +2755,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           settleHudLogin(new Error('the sign-in could not start: another is under way'))
         }
       }),
-    [submitted, engineReady, submitLogin, settleHudLogin]
+    [engineReady, submitLogin, settleHudLogin]
   )
   useEffect(() => {
     provideHudLogin(hudLogin)
