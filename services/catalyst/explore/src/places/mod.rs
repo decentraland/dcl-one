@@ -131,6 +131,20 @@ impl PlacesComponent {
         let _ = self.land_authz.set(land);
     }
 
+    /// Current native estate membership for event authoring. An unattached or
+    /// unpublished authority leaves the caller's known source facts unchanged.
+    pub async fn estate_at(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        x: i32,
+        y: i32,
+    ) -> Result<Option<crate::land_authz::EstateMembership>, ApiError> {
+        let Some(land) = self.land_authz.get() else {
+            return Ok(None);
+        };
+        Ok(land.estate_at(conn, x, y).await?)
+    }
+
     /// Indexed LAND owner and direct update-operator parcels. An unavailable index
     /// never turns creator-authored catalogue metadata into ownership authority.
     pub async fn operated_positions(&self, owner: &str) -> Result<Vec<String>, ApiError> {
