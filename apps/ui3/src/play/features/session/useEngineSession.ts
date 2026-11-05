@@ -153,6 +153,11 @@ export interface BackpackState {
   preview: (urns: string[] | null) => void
   /** Frame part of the preview avatar (follows the selected category). */
   focus: (focus: PreviewFocus) => void
+  /** Where the Shop draws its stage image on screen, for the scene to draw behind the preview avatar;
+   *  null gives the preview the Backpack's backdrop back. */
+  stage: (rect: { x: number; y: number; width: number; height: number } | null) => void
+  /** Play an emote on the preview avatar (again for every call); null stops it. */
+  emote: (urn: string | null) => void
   /** Categories shown even though an equipped item hides them. */
   forceRender: string[]
   /** Replace the force-render list (shown at once, deployed with the look on close). */
@@ -2391,6 +2396,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const focusPreview = useCallback((focus: PreviewFocus) => {
     driverRef.current?.send({ kind: 'previewFocus', focus })
   }, [])
+  const stagePreview = useCallback((rect: { x: number; y: number; width: number; height: number } | null) => {
+    driverRef.current?.send({ kind: 'previewStage', rect })
+  }, [])
+  const emotePreview = useCallback((urn: string | null) => {
+    driverRef.current?.send({ kind: 'previewEmote', urn })
+  }, [])
   const setForceRender = useCallback((categories: string[]) => {
     setForceRenderState(categories)
     driverRef.current?.send({ kind: 'setForceRender', categories })
@@ -3265,7 +3276,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     emotes: { list: emotes, open: emotesOpen, toggle: toggleEmotes, play: playEmote, equip: equipEmote },
     backpack: {
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
-      equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, forceRender, setForceRender,
+      equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, stage: stagePreview, emote: emotePreview, forceRender, setForceRender,
       outfits: outfits.outfits, outfitSlots: ownedNames.length > 0 ? 10 : 5,
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit

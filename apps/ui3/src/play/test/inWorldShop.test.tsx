@@ -2,9 +2,10 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import InWorldShop, { tryOnUrn, webShopUrl, type InWorldShopProps } from '../features/shop/InWorldShop'
-import { defaultFilters, pageCount, readsListings, serverSort, SHOP_PAGE_SIZE, shopQueries, type CatalogueFilters } from '../features/shop/catalogueQuery'
+import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop'
+import { tryOnUrn, webShopUrl } from '../features/shop/itemLinks'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
+import { defaultFilters, pageCount, readsListings, serverSort, SHOP_PAGE_SIZE, shopQueries, type CatalogueFilters } from '../features/shop/catalogueQuery'
 import { PopupHost, resetPopups } from '../design'
 import type { Wearable } from '../engine/protocol'
 import { fakeProfileState } from './harness'
@@ -65,6 +66,8 @@ interface Routes {
   byIds?: Record<string, unknown>[]
   entity?: { description: string; hides: string[] }
   total?: number
+  /** The feature-flags service's dapps.json; without it the file is missing (every flag off). */
+  flags?: Record<string, boolean>
 }
 
 const answer = (queue: Feed[] | undefined, total?: number): Response => {
@@ -73,7 +76,7 @@ const answer = (queue: Feed[] | undefined, total?: number): Response => {
   return Response.json({ data: next, total: total ?? next.length })
 }
 
-/** The Shop's endpoints by path; anything else (profiles, flags) is a 404. */
+/** The Shop's endpoints by path, and the flags file; anything else (profiles) is a 404. */
 function serve(routes: Routes): ReturnType<typeof vi.fn> {
   const f = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input instanceof Request ? input.url : input), location.href)
@@ -82,6 +85,7 @@ function serve(routes: Routes): ReturnType<typeof vi.fn> {
     if (path.endsWith('/v3/catalog/unified')) return answer(routes.listings, routes.total)
     if (path.endsWith('/v3/catalog/trending')) return Response.json({ data: routes.trending ?? [] })
     if (path.endsWith('/v1/outfits')) return Response.json({ outfits: routes.outfits ?? [] })
+    if (path.endsWith('/dapps.json') && routes.flags != null) return Response.json({ flags: routes.flags })
     if (path.endsWith('/content/entities/active') && init?.method === 'POST') {
       const e = routes.entity
       return Response.json(e == null ? [] : [{ metadata: { description: e.description, data: { hides: e.hides } } }])
@@ -117,6 +121,8 @@ function renderShop(over: Partial<InWorldShopProps> = {}) {
     equipped: LOOK,
     preview: vi.fn(),
     focus: vi.fn(),
+    stage: vi.fn(),
+    emote: vi.fn(),
     ...over
   }
   const view = render(
@@ -139,15 +145,14 @@ async function openTab(name: 'Wearables' | 'Emotes' | 'All'): Promise<void> {
   await userEvent.click(screen.getByRole('tab', { name }))
 }
 
-// The rollout flags as the service answers them; a test that needs one on primes it. jsdom has no
-// element scrolling, which the home's rails use.
+// jsdom has no element scrolling, which the home's rails use.
 const scrollTo = HTMLElement.prototype.scrollTo
 beforeEach(() => {
-  primeRemoteFlags({})
   HTMLElement.prototype.scrollTo = function (): void {}
 })
 afterEach(() => {
   HTMLElement.prototype.scrollTo = scrollTo
+  // A flags answer is handed to the web Shop's fetchers' module (flagsQuery): forget it between tests.
   primeRemoteFlags(null)
   resetPopups()
   vi.restoreAllMocks()
@@ -188,10 +193,18 @@ describe('in-world shop catalogue query', () => {
 })
 
 describe('in-world shop', () => {
-  it('opens on the All home with its sections', async () => {
+  it('opens on the wearables catalogue, as the design does', async () => {
+    const f = serve({ catalogue: [[catalogueRow()]] })
+    renderShop()
+    expect(screen.getByRole('tab', { name: 'Wearables' })).toHaveAttribute('aria-selected', 'true')
+    expect(await findCard('Golden Armor')).toBeInTheDocument()
+    expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('category')).toBe('wearable')
+  })
+
+  it('shows the All home with its sections', async () => {
     serve({ trending: [listingRow()], listings: [[listingRow({ itemId: '2', name: 'Pixel Hoodie' })]] })
     renderShop()
-    expect(screen.getByRole('tab', { name: 'All' })).toHaveAttribute('aria-selected', 'true')
+    await openTab('All')
     expect(await findCard('Golden Armor')).toBeInTheDocument()
     expect(await findCard('Pixel Hoodie')).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Trending' })).toBeInTheDocument()
@@ -201,11 +214,23 @@ describe('in-world shop', () => {
   it('sends VIEW ALL to the wearables on sale, newest first', async () => {
     const f = serve({ trending: [listingRow()], listings: [[listingRow()]] })
     renderShop()
+    await openTab('All')
     await screen.findAllByText('Golden Armor', {}, { timeout: 5000 })
     await userEvent.click(within(screen.getByRole('region', { name: 'Trending' })).getByRole('button', { name: /view all/i }))
     expect(screen.getByRole('tab', { name: 'Wearables' })).toHaveAttribute('aria-selected', 'true')
     await waitFor(() => expect(calls(f, '/v3/catalog/unified').at(-1)!.searchParams.get('category')).toBe('wearable'))
     expect(calls(f, '/v3/catalog/unified').at(-1)!.searchParams.get('sortBy')).toBe('newest')
+  })
+
+  it('takes a sort picked on the All home into the wearables catalogue', async () => {
+    const f = serve({ trending: [listingRow()], listings: [[listingRow()]], catalogue: [[catalogueRow()]] })
+    renderShop()
+    await openTab('All')
+    await userEvent.click(screen.getByRole('button', { name: 'Sort by: Newest' }))
+    await userEvent.click(screen.getByText('Cheapest'))
+    expect(screen.getByRole('tab', { name: 'Wearables' })).toHaveAttribute('aria-selected', 'true')
+    await waitFor(() => expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('sortBy')).toBe('cheapest'))
+    expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('category')).toBe('wearable')
   })
 
   it('dresses the avatar in an outfit, keeping the body shape', async () => {
@@ -214,6 +239,7 @@ describe('in-world shop', () => {
       byIds: [catalogueRow()]
     })
     const { props } = renderShop()
+    await openTab('All')
     await userEvent.click(await screen.findByRole('button', { name: 'Try on Neon Night' }, { timeout: 5000 }))
     await waitFor(() => expect(props.preview).toHaveBeenLastCalledWith([BODY, ARMOR_URN]))
   })
@@ -244,12 +270,13 @@ describe('in-world shop', () => {
   })
 
   it('tags a discounted credits price while creator sales are on', async () => {
-    primeRemoteFlags({ 'dapps-shop-creator-sales': true })
-    serve({ listings: [[listingRow({ priceCredits: 400, compareAtCredits: 500 })]] })
+    serve({ listings: [[listingRow({ priceCredits: 400, compareAtCredits: 500 })]], flags: { 'dapps-shop-creator-sales': true } })
     renderShop()
     await openTab('Wearables')
     await userEvent.click(screen.getByRole('button', { name: 'Filters' }))
     await userEvent.click(screen.getByRole('radio', { name: 'On sale' }))
+    // The flag arrives with the flags file; the page asks again for the discounted prices once it has.
+    await screen.findByText('-20%', {}, { timeout: 5000 })
     const card = await cardOf()
     expect(within(card).getByText('-20%')).toBeInTheDocument()
     expect(within(card).getByText('400')).toBeInTheDocument()
@@ -413,6 +440,46 @@ describe('in-world shop', () => {
     expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('category')).toBe('emote')
     await userEvent.click(screen.getByRole('button', { name: 'Dance' }))
     await waitFor(() => expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('emoteCategory')).toBe('dance'))
+  })
+
+  it('plays a tried-on emote on the avatar, and STOP EMOTE stops it', async () => {
+    serve({ catalogue: [[catalogueRow({ category: 'emote', name: 'Moonwalk', data: { emote: { category: 'dance' } } })]] })
+    const { props } = renderShop({ equipped: [] })
+    await openTab('Emotes')
+    await findCard('Moonwalk')
+    // An emote plays over any look, so it doesn't wait for the equipped one.
+    await userEvent.click(screen.getByRole('button', { name: 'TRY ON' }))
+    expect(props.emote).toHaveBeenLastCalledWith(ARMOR_URN)
+    expect(props.preview).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: 'STOP EMOTE' }))
+    expect(props.emote).toHaveBeenLastCalledWith(null)
+    expect(screen.queryByRole('button', { name: 'STOP EMOTE' })).not.toBeInTheDocument()
+  })
+
+  it('stops the emote when the Shop closes', async () => {
+    serve({ catalogue: [[catalogueRow({ category: 'emote', name: 'Moonwalk', data: { emote: { category: 'dance' } } })]] })
+    const { props, rerender } = renderShop()
+    await openTab('Emotes')
+    await findCard('Moonwalk')
+    await userEvent.click(screen.getByRole('button', { name: 'TRY ON' }))
+    expect(props.emote).toHaveBeenLastCalledWith(ARMOR_URN)
+    rerender({ shop: { open: false, toggle: vi.fn() } })
+    expect(props.emote).toHaveBeenLastCalledWith(null)
+  })
+
+  it('tells the engine where its stage image is drawn, and takes it back on close', () => {
+    serve({})
+    const { props, rerender } = renderShop()
+    // jsdom lays nothing out: the image's 1920×1080 at scale 1, its top 70px above the page (under the top bar).
+    expect(props.stage).toHaveBeenLastCalledWith({ x: 0, y: -70, width: 1920, height: 1080 })
+    rerender({ shop: { open: false, toggle: vi.fn() } })
+    expect(props.stage).toHaveBeenLastCalledWith(null)
+  })
+
+  it('sends no stage without an engine to draw it', () => {
+    serve({})
+    const { props } = renderShop({ noEngine: true })
+    expect(props.stage).not.toHaveBeenCalled()
   })
 
   it('opens from the menu, right after Places', () => {

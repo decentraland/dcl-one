@@ -58,6 +58,9 @@ const THUMBNAIL_SIZE = 480
 const LOBBY_BASE = Color4.create(FLOOR.r / 255, FLOOR.g / 255, FLOOR.b / 255, 1)
 const LOBBY_BACKDROP = 'images/lobby-background.jpg'
 const LOBBY_VIGNETTE = 'images/lobby-vignette.png'
+// The Shop's stage (the HUD's assets/shop/stage.jpg, the same file): drawn behind the avatar where the page
+// says it draws it, so the avatar's window in the page shows no seam.
+const SHOP_STAGE = 'images/shop-stage.jpg'
 const LOBBY_SHADE_FROM = FLOOR_SHADE_STOPS[0][0]
 const LOBBY_SHADE_BAND_PX = 4
 const LOBBY_TARGET_Y = 0.8
@@ -117,6 +120,10 @@ const DISPOSE_FRAMES = 2
 let avatarEntity: Entity | null = null
 let cameraEntity: Entity | null = null
 let podiumEntities: Entity[] = []
+// The Shop's stage image on screen (previewStage), in place of the backdrop bands and the podium.
+let shopStage: Rect | null = null
+// Bumped for every emote the Shop plays: the engine plays a trigger whose timestamp is new.
+let emoteTrigger = 0
 let lastShapeKey = ''
 // The lobby stage swaps between two avatars, one on show and one standing by, so that a new look
 // loads out of sight and the one on show never goes missing: a look wanted on the stage goes on
@@ -305,6 +312,7 @@ function createPreview(): void {
   avatarEntity = a
   cameraEntity = c
   podiumEntities = podium
+  if (shopStage != null) showPodium(false)
   lastShapeKey = ''
   shownKey = ''
   standbyKey = ''
@@ -607,6 +615,23 @@ export function registerAvatarPreview(ctx: Ctx): void {
     if (stage === 'lobby') loadOnStandby()
   })
 
+  // The Shop draws its stage around the avatar's window: the same image goes behind the avatar, standing on
+  // the floor the image has, so the Backpack's podium steps aside.
+  ctx.on('previewStage', (msg) => {
+    shopStage = msg.rect
+    showPodium(shopStage == null)
+  })
+
+  // The Shop's emote try-on: played once on the preview avatar, again for every ask; null stops it (an
+  // empty trigger on a scene's avatar is the engine's stop).
+  ctx.on('previewEmote', (msg) => {
+    if (avatarEntity == null) return
+    const shape = AvatarShape.getMutableOrNull(avatarEntity)
+    if (shape == null) return
+    shape.expressionTriggerId = msg.urn ?? ''
+    shape.expressionTriggerTimestamp = ++emoteTrigger
+  })
+
   // Selecting an item in the Backpack previews it on the avatar without persisting (null reverts).
   ctx.on('previewAvatar', (msg) => {
     previewUrns = msg.urns
@@ -631,6 +656,14 @@ export function registerAvatarPreview(ctx: Ctx): void {
 export async function waitFrames(frames: number): Promise<void> {
   await new Promise<void>((resolve) => {
     frameWaiters.push({ frames, done: resolve })
+  })
+}
+
+function showPodium(visible: boolean): void {
+  if (stage !== 'backpack') return
+  podiumEntities.forEach((e, i) => {
+    const layer = PODIUM_LAYERS[i]
+    Transform.getMutable(e).scale = visible ? Vector3.create(layer.scale, layer.height, layer.scale) : Vector3.Zero()
   })
 }
 
@@ -664,10 +697,7 @@ export async function captureAvatarThumbnail(): Promise<string | null> {
       Transform.getMutable(avatar).rotation = rotation
       if (framingT >= 1) framing = framingTo
       applyFraming(framing)
-      podium.forEach((e, i) => {
-        const layer = PODIUM_LAYERS[i]
-        Transform.getMutable(e).scale = Vector3.create(layer.scale, layer.height, layer.scale)
-      })
+      showPodium(shopStage == null)
     }
   }
 }
@@ -737,17 +767,25 @@ export function renderAvatarPreview(): ReactEcs.JSX.Element | null {
     >
       {/* Framed two-tone backdrop + avatar, positioned at the React cutout rect. */}
       <UiEntity
-        uiTransform={{ positionType: 'absolute', position: { left: r.x, top: r.y }, width: r.width, height: r.height }}
+        uiTransform={{ positionType: 'absolute', position: { left: r.x, top: r.y }, width: r.width, height: r.height, overflow: 'hidden' }}
         uiBackground={{ color: BACKDROP_BOTTOM }}
       >
-        {/* The page's left-column purple, as thin bands so it reads as a smooth gradient. */}
-        {BACKDROP_BANDS.map((color, i) => (
+        {shopStage != null ? (
+          // The Shop's stage, placed as the page places it: its window into it shows the same pixels.
           <UiEntity
-            key={i}
-            uiTransform={{ positionType: 'absolute', position: { top: `${(i * 100) / BACKDROP_BANDS.length}%` }, width: '100%', height: `${100 / BACKDROP_BANDS.length + 0.5}%` }}
-            uiBackground={{ color }}
+            uiTransform={{ positionType: 'absolute', position: { left: shopStage.x - r.x, top: shopStage.y - r.y }, width: shopStage.width, height: shopStage.height }}
+            uiBackground={{ texture: { src: SHOP_STAGE }, textureMode: 'stretch' }}
           />
-        ))}
+        ) : (
+          // The page's left-column purple, as thin bands so it reads as a smooth gradient.
+          BACKDROP_BANDS.map((color, i) => (
+            <UiEntity
+              key={i}
+              uiTransform={{ positionType: 'absolute', position: { top: `${(i * 100) / BACKDROP_BANDS.length}%` }, width: '100%', height: `${100 / BACKDROP_BANDS.length + 0.5}%` }}
+              uiBackground={{ color }}
+            />
+          ))
+        )}
         {/* Avatar — camera resolution matches the rect aspect, so a 1:1 fill never distorts.
             Drag over it to rotate (the engine drag-lock passes through React's transparent cutout). */}
         <UiEntity

@@ -9,9 +9,10 @@
   background: var(--surface-light);
   color: var(--ink-on-light);
 }
+/* The Shop's pills: 10px a side, the selected one 12px on its icon's side. */
 .dark {
   height: 40px;
-  padding: 0 12px 0 10px;
+  padding: 0 10px;
   gap: 6px;
   border-radius: var(--r-pill);
   background: var(--white-10);
@@ -23,6 +24,9 @@
 .selected {
   background: var(--accent);
   color: var(--text);
+}
+.dark.selected {
+  padding-left: 12px;
 }
 .main {
   display: inline-flex;

@@ -7,19 +7,33 @@ import styles from './ScrollThumb.module.css'
 
 const MIN_THUMB = 40
 
-export function ScrollThumb({ target, className }: { target: React.RefObject<HTMLElement | null>; className?: string }): React.JSX.Element {
+export function ScrollThumb({
+  target,
+  length,
+  className
+}: {
+  target: React.RefObject<HTMLElement | null>
+  /** A fixed thumb length (px), as a design draws it; by default it shows how much of the content is in view. */
+  length?: number
+  className?: string
+}): React.JSX.Element {
+  const track = useRef<HTMLSpanElement>(null)
   const thumb = useRef<HTMLSpanElement>(null)
   useEffect(() => {
     const el = target.current
+    const tr = track.current
     const t = thumb.current
-    if (el == null || t == null) return
+    if (el == null || tr == null || t == null) return
     const sync = (): void => {
-      const track = el.clientHeight
-      const fits = el.scrollHeight <= track + 1
+      // The thumb travels its own track, which may be shorter than the scroller (one that bleeds past
+      // its box to leave room for a hovered card); the scroller only gives the proportions.
+      const view = el.clientHeight
+      const fits = el.scrollHeight <= view + 1
       t.style.visibility = fits ? 'hidden' : 'visible'
       if (fits) return
-      const height = Math.max(MIN_THUMB, (track * track) / el.scrollHeight)
-      const top = ((track - height) * el.scrollTop) / (el.scrollHeight - track)
+      const travel = tr.clientHeight
+      const height = Math.min(travel, length ?? Math.max(MIN_THUMB, (travel * view) / el.scrollHeight))
+      const top = ((travel - height) * el.scrollTop) / (el.scrollHeight - view)
       t.style.height = `${height}px`
       t.style.transform = `translateY(${top}px)`
     }
@@ -27,14 +41,15 @@ export function ScrollThumb({ target, className }: { target: React.RefObject<HTM
     el.addEventListener('scroll', sync, { passive: true })
     const ro = new ResizeObserver(sync)
     ro.observe(el)
+    ro.observe(tr)
     for (const child of Array.from(el.children)) ro.observe(child)
     return () => {
       el.removeEventListener('scroll', sync)
       ro.disconnect()
     }
-  }, [target])
+  }, [target, length])
   return (
-    <span className={`${styles.track} ${className ?? ''}`.trim()} aria-hidden="true">
+    <span ref={track} className={`${styles.track} ${className ?? ''}`.trim()} aria-hidden="true">
       <span ref={thumb} className={styles.thumb} />
     </span>
   )

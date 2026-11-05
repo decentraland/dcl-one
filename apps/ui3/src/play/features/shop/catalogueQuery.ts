@@ -7,7 +7,8 @@
 import { keepPreviousData, queryOptions, useQuery } from '@tanstack/react-query'
 import { fetchCatalogItems, fetchShopItems, type ShopSort } from '../../../shop/discovery/api'
 import { SUBCAT_MAP } from '../../../shop/discovery/lib/categories'
-import allIcon from '../../assets/category-icons/all.png'
+// The design's ALL pill: the icon library's 3×3 `apps` grid (16px of 4px squares in the 26px slot).
+import allIcon from '../../assets/shop/all.svg'
 import hairIcon from '../../assets/category-icons/hair.png'
 import upperBodyIcon from '../../assets/category-icons/upper_body.png'
 import handsWearIcon from '../../assets/category-icons/hands_wear.png'

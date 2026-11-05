@@ -27,7 +27,6 @@ import { DclLogo } from './DclLogo'
 import { Avatar } from './Avatar'
 import { WearableCard, type Rarity } from './WearableCard'
 import { EquippedItemCard } from './EquippedItemCard'
-import { ShopItemCard, ShopItemSkeleton } from './ShopItemCard'
 import { ScrollThumb } from './ScrollThumb'
 import { showConfirm, showDialog, PopupHost } from './popups'
 import { Icon, type IconName } from './icons'
@@ -563,33 +562,8 @@ export function Showcase(): React.JSX.Element {
         </div>
       </Section>
 
-      <Section title="ShopItemSkeleton · ScrollThumb (Shop grid)">
+      <Section title="ScrollThumb (fixed length, as the Shop draws it)">
         <ShowcaseScroller />
-      </Section>
-
-      <Section title="ShopItemCard (Shop grid)">
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 197px)', gap: 20 }}>
-          {(['epic', 'legendary', 'mythic', 'base'] as Rarity[]).map((r, i) => (
-            <ShopItemCard
-              key={r}
-              name={`${r[0].toUpperCase()}${r.slice(1)} Item`}
-              rarity={r}
-              creator="Aurora"
-              price={`${500 - i * 100}`}
-              discount={i === 1 ? '-20%' : undefined}
-              selected={i === 0}
-              categoryIcon={<Icon name="emotes" size={15} />}
-              actions={
-                i === 2 ? (
-                  <>
-                    <Button variant="secondary" size="sm">TRY ON</Button>
-                    <Button size="sm">BUY</Button>
-                  </>
-                ) : undefined
-              }
-            />
-          ))}
-        </div>
       </Section>
 
       <Section title="Chat components">
@@ -610,17 +584,17 @@ export function Showcase(): React.JSX.Element {
   )
 }
 
-// A short scroller with the Shop's thumb beside it, over loading cards.
+// A short scroller with a fixed-length thumb beside it.
 function ShowcaseScroller(): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   return (
     <div style={{ position: 'relative', width: 440, height: 320 }}>
       <div ref={ref} style={{ height: '100%', overflowY: 'auto', scrollbarWidth: 'none', display: 'grid', gridTemplateColumns: 'repeat(2, 197px)', gap: 20 }}>
         {Array.from({ length: 6 }, (_, i) => (
-          <ShopItemSkeleton key={i} />
+          <div key={i} style={{ height: 200, borderRadius: 16, background: 'var(--white-10)' }} />
         ))}
       </div>
-      <ScrollThumb target={ref} className={undefined} />
+      <ScrollThumb target={ref} length={80} className={undefined} />
     </div>
   )
 }

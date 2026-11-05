@@ -245,3 +245,6 @@
 .resale:hover {
   background: var(--white-10);
 }
+.creatorName {
+  color: var(--creator-color, var(--text));
+}

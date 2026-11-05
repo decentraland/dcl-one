@@ -1,0 +1,39 @@
+// A Shop card's actions, shown on hover in place of its price row: trying it on (TAKE OFF or STOP while
+// it is on), then BUY when it is bought in-world, else VIEW on the web Shop.
+
+import { Button, MaskIcon } from '../../../design'
+import externalIcon from '../../../assets/shop/external.svg'
+import styles from './ShopCardActions.module.css'
+
+export function ShopCardActions({
+  tryOn,
+  buyInWorld,
+  onBuy,
+  onView
+}: {
+  /** Absent when the item can't be tried on. */
+  tryOn?: { label: string; disabled?: boolean; title?: string; onClick: () => void }
+  buyInWorld: boolean
+  onBuy: () => void
+  onView: () => void
+}): React.JSX.Element {
+  return (
+    <>
+      {tryOn != null && (
+        <Button variant="secondary" size="card" className={styles.action} disabled={tryOn.disabled} title={tryOn.title} onClick={tryOn.onClick}>
+          {tryOn.label}
+        </Button>
+      )}
+      {buyInWorld ? (
+        <Button size="card" className={styles.action} onClick={onBuy}>
+          BUY
+        </Button>
+      ) : (
+        <Button variant="secondary" size="card" className={styles.action} onClick={onView}>
+          VIEW
+          <MaskIcon src={externalIcon} size={20} />
+        </Button>
+      )}
+    </>
+  )
+}

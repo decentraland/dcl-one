@@ -1,20 +1,36 @@
-/* In-world Shop on MainMenuShell's 1920-wide reference canvas: a 68px title bar, then the stage with
-   the engine's avatar preview on the left (the Backpack's geometry, seen through the backdrop's hole)
-   and the catalogue on the right. */
+/* In-world Shop on MainMenuShell's 1080-tall reference canvas, laid out as the design's 1920 frame and
+   anchored to its left edge: a 68px title bar, then the stage with the engine's avatar preview at the left
+   and the catalogue to the right edge. */
 .page {
   position: relative;
   height: 100%;
   pointer-events: none;
 }
+/* The design's stage (base glow, spotlight, dust, floor and the DCL floor logo), flattened from the Figma
+   ShopLayout background into one 1920×1080 image. Its top 70px sit under the top bar. The engine draws the
+   same image behind the avatar (setStage), so the avatar's window shows no seam. Past 1920px it continues
+   mirrored, which meets it without a seam. */
 .backdrop {
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: var(--lava-4) url('../../assets/shop/background.jpg') center / cover no-repeat;
-  /* The avatar preview's 960×960 frame is the engine's. */
+  background: var(--lava-4) url('../../assets/shop/stage.jpg') 0 -70px / 1920px 1080px no-repeat;
+}
+.backdrop::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 1920px;
+  width: 1920px;
+  background: inherit;
+  transform: scaleX(-1);
+}
+/* With an engine drawing the avatar, its 573×942 window (the design's Avatar slot) is cut out. */
+.cutout {
   mask:
     linear-gradient(var(--black), var(--black)) 0 0 / 100% 100% no-repeat,
-    linear-gradient(var(--black), var(--black)) calc(50% - 700px) calc(50% + 23px) / 960px 960px no-repeat;
+    linear-gradient(var(--black), var(--black)) 0 68px / 573px 942px no-repeat;
   mask-composite: exclude;
   -webkit-mask-composite: xor;
 }
@@ -81,31 +97,31 @@
 .stage {
   position: absolute;
   top: 68px;
-  left: 50%;
-  width: 1920px;
+  left: 0;
+  right: 0;
   height: 942px;
-  transform: translateX(-50%);
 }
 .preview {
   position: absolute;
-  left: -220px;
-  top: -20px;
-  width: 960px;
-  height: 960px;
+  left: 0;
+  top: 0;
+  width: 573px;
+  height: 942px;
 }
 /* Over the avatar while the Shop's first page loads, where the preview avatar will stand. */
 .avatarLoading {
   position: absolute;
-  left: 286px;
-  top: 470px;
+  display: flex;
+  left: 287px;
+  top: 471px;
   transform: translate(-50%, -50%);
 }
 
 .content {
   position: absolute;
   left: 605px;
+  right: 20px;
   top: 0;
-  width: 1295px;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -156,6 +172,8 @@
   position: relative;
   display: flex;
   flex: 1;
+  /* Without it the wrap grows to its widest content (a home rail's whole track of cards). */
+  min-width: 0;
   min-height: 0;
 }
 /* The design's own scroll thumb (ScrollThumb) stands in for the native bar, past the cards' edge. */
@@ -164,18 +182,21 @@
 }
 .scroller {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: none;
-  /* Room for a hovered card's ring, taken back so the grid starts where the design's does. */
-  margin-left: -4px;
+  /* A hovered card grows 5% and takes a 3px ring (~8px a side, ~11px top and bottom): the scroller
+     bleeds 12px up and left for it, taken back in padding so the grid starts where the design's does. */
+  margin: -8px 0 0 -12px;
   /* Six 197px columns and their gaps fill what is left beside the thumb's gutter. */
-  padding: 4px 13px 20px 4px;
+  padding: 12px 13px 20px 12px;
 }
+/* Six 197px columns at the design's 1920 width; as many as fit at any other. */
 .grid {
   display: grid;
-  grid-template-columns: repeat(6, 197px);
+  grid-template-columns: repeat(auto-fill, 197px);
   gap: 20px;
   align-content: start;
   transition: opacity var(--dur-fast) var(--ease-out);
@@ -183,14 +204,17 @@
 .stale {
   opacity: 0.5;
 }
-/* With the item panel open the grid narrows to four columns and the panel sits at the right, 8px in. */
+/* With the item panel open the grid narrows to four 203px columns (872px), the thumb 9px past them, and the
+   panel sits at the right, 8px in. */
 .withPanel .grid {
-  grid-template-columns: repeat(4, 197px);
-  column-gap: 26px;
+  grid-template-columns: repeat(auto-fill, 203px);
 }
 .withPanel .scrollWrap {
   flex: none;
-  width: 883px;
+  width: 882px;
+}
+.withPanel .scroller {
+  padding-right: 10px;
 }
 .withPanel > aside {
   margin: 0 8px 0 auto;
@@ -203,12 +227,14 @@
   justify-content: center;
   margin-top: 20px;
 }
-.cardAction {
-  flex: 1;
-  gap: 8px;
-  padding: 0 8px;
-  font-size: var(--type-14);
-}
 .link {
   color: var(--chat-link);
+}
+
+/* The EMOTE controls sit on the avatar (its 573px slot), 864px down. */
+.emoteControls {
+  position: absolute;
+  left: 60px;
+  top: 864px;
+  pointer-events: auto;
 }

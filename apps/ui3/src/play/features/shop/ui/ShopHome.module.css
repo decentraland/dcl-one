@@ -1,12 +1,14 @@
-/* The All home: the outfits carousel (four to a page), then the rows of six cards. */
+/* The All home: the outfits carousel (four to a page), then the rows (five whole cards and the sixth's
+   edge, clipped where the design clips them). */
 .home {
   display: flex;
   flex-direction: column;
   gap: 20px;
-  padding-top: 68px;
 }
+/* The outfits' renders rise above their cards; without outfits the first row starts at the top. */
 .outfits {
   flex: none;
+  margin-top: 68px;
 }
 .outfit {
   position: relative;
@@ -67,11 +69,6 @@
 .viewAll > svg {
   color: var(--brand);
 }
-/* Room above and below for a hovered card's ring (the rail clips), taken back from the layout. */
-.rail {
-  margin: -4px 0;
-  padding: 4px 0;
-}
 .slot {
   flex: none;
   width: 203px;
@@ -80,4 +77,5 @@
   display: grid;
   grid-template-columns: repeat(6, 203px);
   gap: 20px;
+  overflow: hidden;
 }

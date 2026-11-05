@@ -3,28 +3,36 @@
 // A primary sale priced in credits is bought in-world; anything else (a resale, MANA only, not for
 // sale) is offered on the web Shop's item page.
 
-import type { CardPrice } from '../../../shop/discovery/cardPrice'
-import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
-import { MAX_SUPPLY } from '../../../shop/discovery/lib/rarity'
-import { Close, Heart, MaskIcon, rarityPanel } from '../../design'
-import { shortAddr, userColor } from '../../lib/identity'
-import { CategoryIcon } from '../backpack/categoryIcons'
-import { useProfile } from '../session/profileStore'
-import hiddenIcon from '../../assets/backpack/icon-hidden.webp'
-import cartIcon from '../../assets/shop/cart.svg'
-import externalIcon from '../../assets/shop/external.svg'
-import { useItemEntity } from './itemEntity'
+import type { CardPrice } from '../../../../shop/discovery/cardPrice'
+import { Close, MaskIcon, rarityPanel } from '../../../design'
+import hiddenIcon from '../../../assets/backpack/icon-hidden.webp'
+import cartIcon from '../../../assets/shop/cart.svg'
+import favoriteIcon from '../../../assets/shop/favorite.svg'
+import externalIcon from '../../../assets/shop/external.svg'
 import { buyableInWorld, PriceTag } from './PriceTag'
 import styles from './ShopItemPanel.module.css'
 
-const CATEGORY_NAMES: Record<string, string> = { hands_wear: 'Handwear', body_shape: 'Body shape', upper_body: 'Upper body', lower_body: 'Lower body', top_head: 'Top head', facial_hair: 'Facial hair' }
-const categoryName = (c: string): string => CATEGORY_NAMES[c] ?? c.replace(/[_-]+/g, ' ')
+/** A part the item hides on the avatar, as its chip shows it. */
+export interface ShopItemHide {
+  key: string
+  label: string
+  icon: React.ReactNode
+}
 
 export interface ShopItemPanelProps {
-  item: CatalogItem
+  name: string
+  thumbnail?: string | null
+  /** Its rarity (the art and the tag); `base` without one. */
+  rarity: string
+  /** Its category's glyph, before the name. */
+  icon: React.ReactNode
   price: CardPrice
-  /** The item's URN, for its entity (description, hides); null when it has none. */
-  urn: string | null
+  /** What is left of its supply, as "35/1000", when known. */
+  stock?: string
+  creator: { name: string; picture?: string | null; color: string }
+  /** The item's own description and what it hides, once known. */
+  description?: string
+  hides?: readonly ShopItemHide[]
   onClose: () => void
   /** Offers the item on the web Shop (resales, MANA-only, not for sale). */
   onOpenOnWeb: () => void
@@ -33,28 +41,21 @@ export interface ShopItemPanelProps {
   onAddToCart?: () => void
 }
 
-export function ShopItemPanel({ item, price, urn, onClose, onOpenOnWeb, onBuy, onAddToCart }: ShopItemPanelProps): React.JSX.Element {
-  const rarity = item.rarity || 'base'
-  const creator = useProfile(item.creator)
-  const entity = useItemEntity(urn)
-  const max = MAX_SUPPLY[rarity]
-  const stock = item.available != null && max != null ? ` ${item.available}/${max}` : ''
-  const creatorName = creator?.name || shortAddr(item.creator)
-  const category = item.category === 'emote' ? 'emote' : (item.wearableCategory ?? item.category)
+export function ShopItemPanel({ name, thumbnail, rarity, icon, price, stock, creator, description, hides = [], onClose, onOpenOnWeb, onBuy, onAddToCart }: ShopItemPanelProps): React.JSX.Element {
   return (
-    <aside className={styles.panel} data-rarity={rarity} aria-label={item.name} style={{ '--panel-art': `url(${rarityPanel(rarity)})` } as React.CSSProperties}>
+    <aside className={styles.panel} data-rarity={rarity} aria-label={name} style={{ '--panel-art': `url(${rarityPanel(rarity)})` } as React.CSSProperties}>
       <button type="button" className={styles.favourite} aria-label="Add to favourites" disabled title="Favourites are coming soon">
-        <Heart size={20} />
+        <MaskIcon src={favoriteIcon} size={24} />
       </button>
       <button type="button" className={styles.close} aria-label="Close item" onClick={onClose}>
         <Close size={20} />
       </button>
-      <div className={styles.image}>{item.thumbnail && <img src={item.thumbnail} alt="" />}</div>
+      <div className={styles.image}>{thumbnail && <img src={thumbnail} alt="" />}</div>
       <div className={styles.info}>
         <div className={styles.title}>
           <span className={styles.name}>
-            <CategoryIcon category={category} size={28} />
-            <span>{item.name}</span>
+            {icon}
+            <span>{name}</span>
           </span>
           <span className={styles.price}>
             <PriceTag price={price} size={24} />
@@ -62,33 +63,34 @@ export function ShopItemPanel({ item, price, urn, onClose, onOpenOnWeb, onBuy, o
         </div>
         <span className={styles.rarity}>
           {rarity}
-          {stock}
+          {stock != null ? ` ${stock}` : ''}
         </span>
         <hr className={styles.rule} />
         <span className={styles.creator}>
-          {creator?.picture ? <img className={styles.face} src={creator.picture} alt="" /> : <span className={styles.face} aria-hidden="true" />}
+          {creator.picture ? <img className={styles.face} src={creator.picture} alt="" /> : <span className={styles.face} aria-hidden="true" />}
           <span>
-            By <span style={{ color: userColor(item.creator, creatorName, creator?.hasClaimedName) }}>{creatorName}</span>
+            {/* The creator's name colour is the HUD's per-user one, known only at run time. */}
+            By <span className={styles.creatorName} style={{ '--creator-color': creator.color } as React.CSSProperties}>{creator.name}</span>
           </span>
         </span>
         <hr className={styles.rule} />
-        {entity.data != null && entity.data.description !== '' && (
+        {description != null && description !== '' && (
           <div className={styles.section}>
             <span className={styles.label}>Description</span>
-            <p className={styles.description}>{entity.data.description}</p>
+            <p className={styles.description}>{description}</p>
           </div>
         )}
-        {entity.data != null && entity.data.hides.length > 0 && (
+        {hides.length > 0 && (
           <div className={`${styles.section} ${styles.hidesSection}`}>
             <span className={styles.label}>
               <MaskIcon src={hiddenIcon} size={20} />
               Hides
             </span>
             <div className={styles.hides}>
-              {entity.data.hides.map((h) => (
-                <span key={h} className={styles.hide}>
-                  <CategoryIcon category={h} size={22} />
-                  {categoryName(h)}
+              {hides.map((h) => (
+                <span key={h.key} className={styles.hide}>
+                  {h.icon}
+                  {h.label}
                 </span>
               ))}
             </div>

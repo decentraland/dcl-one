@@ -4,7 +4,7 @@
 // (TRY ON, BUY…); clicking the card selects it.
 
 import { useState } from 'react'
-import { rarityTile } from './rarityArt'
+import { rarityTile } from '../../../design'
 import styles from './ShopItemCard.module.css'
 
 export interface ShopItemCardProps {

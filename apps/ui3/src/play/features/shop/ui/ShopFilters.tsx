@@ -1,24 +1,33 @@
 // The Shop's FILTERS popover: a credits price range (typed, or dragged on the web Shop's price scale),
 // rarities, the sale status and the "show only" switches. Each change applies at once; an outside click
-// or Cancel closes it, like the HUD's other light popovers (OptionMenu).
+// closes it. Escape is the host's (the HUD's cancel stack, as its other popovers take it).
 
 import { useEffect, useRef, useState } from 'react'
-import { PRICE_SLIDER_MAX, PRICE_SLIDER_STEPS, priceToSliderPos, sliderPosToPrice } from '../../../shop/discovery/lib/price-slider'
-import { formatCreditsFull } from '../../../shop/checkout/lib/currency'
-import CreditMark from '../../../shop/credits/components/CreditMark'
-import { registerCancelLayer } from '../../lib/cancelLayers'
-import type { CatalogueFilters, CatalogueStatus } from './catalogueQuery'
+import { PRICE_SLIDER_MAX, PRICE_SLIDER_STEPS, priceToSliderPos, sliderPosToPrice } from '../../../../shop/discovery/lib/price-slider'
+import { formatCreditsFull } from '../../../../shop/checkout/lib/currency'
+import CreditMark from '../../../../shop/credits/components/CreditMark'
 import styles from './ShopFilters.module.css'
 
 /** In the order the design lists them. */
 const RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'exotic', 'mythic', 'unique'] as const
-const STATUSES: readonly { id: CatalogueStatus; label: string }[] = [
+export type ShopFilterStatus = 'all' | 'on_sale' | 'not_for_sale'
+/** What the popover sets: a price range in credits (null is no bound), rarities, status and switches. */
+export interface ShopFilterValues {
+  rarities: readonly string[]
+  minCredits: number | null
+  maxCredits: number | null
+  status: ShopFilterStatus
+  deals: boolean
+  smart: boolean
+}
+
+const STATUSES: readonly { id: ShopFilterStatus; label: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'on_sale', label: 'On sale' },
   { id: 'not_for_sale', label: 'Not for sale' }
 ]
 
-type FilterPatch = Partial<Pick<CatalogueFilters, 'rarities' | 'minCredits' | 'maxCredits' | 'status' | 'deals' | 'smart'>>
+export type ShopFilterPatch = Partial<Omit<ShopFilterValues, 'rarities'> & { rarities: string[] }>
 
 export function ShopFilters({
   filters,
@@ -28,8 +37,8 @@ export function ShopFilters({
   showSmart,
   className
 }: {
-  filters: CatalogueFilters
-  onChange: (patch: FilterPatch) => void
+  filters: ShopFilterValues
+  onChange: (patch: ShopFilterPatch) => void
   onClose: () => void
   /** Deals exist only while creator sales are on. */
   showDeals: boolean
@@ -44,11 +53,7 @@ export function ShopFilters({
       if (ref.current != null && !ref.current.contains(t) && !(ref.current.parentElement?.contains(t) ?? false)) onClose()
     }
     document.addEventListener('mousedown', onDown)
-    const off = registerCancelLayer(onClose)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      off()
-    }
+    return () => document.removeEventListener('mousedown', onDown)
   }, [onClose])
 
   const toggleRarity = (r: string): void => {

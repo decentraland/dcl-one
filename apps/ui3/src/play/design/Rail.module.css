@@ -7,6 +7,11 @@
   overflow-y: hidden;
   scrollbar-width: none;
   scroll-snap-type: x mandatory;
+  /* --rail-bleed (the bleed prop): the clip reaches that far past the cards, padded back so they stay
+     put; the end padding gives the last page's last card the same room on the right. */
+  margin: calc(-1 * var(--rail-bleed, 0px)) 0 calc(-1 * var(--rail-bleed, 0px)) calc(-1 * var(--rail-bleed, 0px));
+  padding: var(--rail-bleed, 0px);
+  scroll-padding-left: var(--rail-bleed, 0px);
 }
 .track {
   display: flex;
