@@ -24,10 +24,10 @@ monitor +9. An occupied saved port fails startup.
 | `wait --timeout 1800` | Wait for readiness |
 | `logs`, `restart <service>` | After lockfile changes restart `web-install`, then `sites` |
 | `up`, `down` | Start or attach, stop (`--postgres-only`) |
-| `profile mirror\|offline` | Switch profile while stopped |
+| `profile mirror\|testnet\|offline` | Switch profile while stopped |
 | `service install\|uninstall` | Login service (WSL: `systemd=true`) |
 | `trades-snapshot <file>` | Snapshot for `FOUNDATION_DEV_TRADES_SNAPSHOT` |
-| `env` | App URLs, `FOUNDATION_DEV_TEST_DATABASE_URL` |
+| `env` | App URLs, `FOUNDATION_DEV_TEST_DATABASE_URL`, `FOUNDATION_DEV_STACK_PROFILE` |
 
 Without this Chrome profile, `/play` logs `pulse: webtransport connect failed`
 and shows no other avatars:
@@ -45,6 +45,7 @@ and shows no other avatars:
 - `WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS` trusts the upstream's deployer list; it is not verification.
 - Deployments answer 503 except profiles (`SERVE_UNSYNCED_DEPLOY_TYPES=profile`); nothing is written upstream.
 - `offline` (`FOUNDATION_DEV_PROFILE=offline`) starts empty for local deployments.
+- `testnet` (`FOUNDATION_DEV_PROFILE=testnet`) mirrors the Shop's catalogue and order book from Decentraland's testnet (.zone, Amoy and Sepolia) and settles on Amoy, for [`tooling/shop-trade-journey`](../tooling/shop-trade-journey/README.md). Start it in its own worktree: a stack holding data of another profile refuses to switch to it, and a testnet stack refuses `trades-snapshot`. Credits settle through Amoy's CreditsManager with mock card top-ups; the stack signs them only when `.cache/dev/credits-signer.key` holds a key with that contract's signer role.
 - Never delete `.cache/dev` to fix a migration failure.
 - Keep `settings.json` with the database; without it startup refuses to create credentials.
 - Use Linux for exact `en_US.utf8` collation comparisons.

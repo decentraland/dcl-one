@@ -1004,13 +1004,48 @@ pub(crate) fn parse_world_scenes(body: &Value) -> Vec<WorldScene> {
         .collect()
 }
 
+/// The page size `GET /world/{name}/scenes` caps at.
+const WORLD_SCENES_PAGE: usize = 100;
+
+/// `url` for the world scenes page starting at `offset`.
+pub(crate) fn world_scenes_page_url(url: &str, offset: usize) -> String {
+    format!("{url}?limit={WORLD_SCENES_PAGE}&offset={offset}")
+}
+
+/// Every page of a world scenes list as one `{scenes, total}` body: pages are
+/// read until `total` (a server without one answers in a single page).
+pub(crate) async fn all_world_scene_pages<E, F, Fut>(mut page: F) -> std::result::Result<Value, E>
+where
+    F: FnMut(usize) -> Fut,
+    Fut: std::future::Future<Output = std::result::Result<Value, E>>,
+{
+    let mut scenes: Vec<Value> = Vec::new();
+    loop {
+        let body = page(scenes.len()).await?;
+        let batch = body
+            .get("scenes")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let empty = batch.is_empty();
+        scenes.extend(batch);
+        let total = body
+            .get("total")
+            .and_then(Value::as_u64)
+            .map_or(scenes.len(), |t| t as usize);
+        if empty || scenes.len() >= total {
+            return Ok(json!({ "scenes": scenes, "total": scenes.len() }));
+        }
+    }
+}
+
 async fn fetch_world_scenes(target: &str, world: &str) -> Result<Vec<WorldScene>> {
     let url = format!("{target}/world/{}/scenes", encode_segment(world));
-    let body = get_json(
-        &probe_client()?,
-        &url,
-        "parsing the world scenes list".to_string(),
-    )
+    let client = probe_client()?;
+    let body = all_world_scene_pages(|offset| {
+        let (client, url) = (&client, world_scenes_page_url(&url, offset));
+        async move { get_json(client, &url, "parsing the world scenes list".to_string()).await }
+    })
     .await?;
     Ok(parse_world_scenes(&body))
 }
@@ -1896,6 +1931,40 @@ pub(crate) static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_n
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn world_scenes_are_read_page_by_page_up_to_the_total() {
+        let total = 250;
+        let mut offsets = Vec::new();
+        let body = all_world_scene_pages(|offset| {
+            offsets.push(offset);
+            let scenes: Vec<Value> = (offset..total.min(offset + WORLD_SCENES_PAGE))
+                .map(|i| json!({ "parcels": [format!("{i},0")] }))
+                .collect();
+            async move { Ok::<_, ()>(json!({ "scenes": scenes, "total": total })) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(offsets, vec![0, 100, 200]);
+        assert_eq!(parse_world_scenes(&body).len(), total);
+        assert_eq!(
+            world_scenes_page_url("https://w/world/a.dcl.eth/scenes", 200),
+            "https://w/world/a.dcl.eth/scenes?limit=100&offset=200"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_world_scenes_body_without_a_total_is_one_page() {
+        let mut calls = 0;
+        let body = all_world_scene_pages(|_| {
+            calls += 1;
+            async { Ok::<_, ()>(json!({ "scenes": [{ "parcels": ["0,0"] }] })) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(parse_world_scenes(&body).len(), 1);
+    }
+
     #[test]
     fn upload_headlines_name_the_scene_destination() {
         let world = |multi_scene| UploadDestination::World {
@@ -2021,7 +2090,8 @@ mod tests {
     /// is removed so it cannot route a deploy again.
     #[test]
     fn a_leftover_remembered_target_is_removed() {
-        let root = std::env::temp_dir().join(format!("dcl-scene-cli-forget-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("dcl-scene-cli-forget-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join(".dcl-one")).unwrap();
         let file = root.join(".dcl-one").join("deploy-target");

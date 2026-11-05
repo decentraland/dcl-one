@@ -175,6 +175,7 @@ pub struct ContentConfig {
     #[arg(long, env = "POST_ENTITIES_DAILY_QUOTA_MAX", default_value_t = 300)]
     pub post_entities_daily_quota_max: u32,
 
+    // Worlds' partial uploads also read these (not the cleanup interval or pointer cap) as their own budget.
     /// Milliseconds a partial (multi-request) upload lives from its first
     /// batch; batches do not extend it.
     #[arg(long, env = "PENDING_DEPLOYMENT_TTL", default_value_t = 60 * 60 * 1000)]

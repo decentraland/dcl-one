@@ -257,6 +257,8 @@ pub struct ParticipantInfo {
     /// `permission.canUpdateMetadata` (either proto-JSON spelling); `None`
     /// when the two spellings disagree or the value is not a bool.
     pub can_update_metadata: Option<bool>,
+    /// `joinedAt`, unix seconds; `None` when absent or malformed.
+    pub joined_at: Option<i64>,
 }
 
 /// What a removal found in the room.
@@ -1349,6 +1351,10 @@ fn parse_participant(p: &serde_json::Value) -> ParticipantInfo {
                     (None, None) => Some(false),
                 },
             ),
+        joined_at: p.get("joinedAt").and_then(|t| match t {
+            serde_json::Value::String(s) => s.parse().ok(),
+            other => other.as_i64(),
+        }),
     }
 }
 
