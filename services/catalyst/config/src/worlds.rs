@@ -114,6 +114,23 @@ pub struct WorldsConfig {
     #[arg(long, env = "MAX_PARCELS", default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..))]
     pub max_parcels: u32,
 
+    /// Publish and own ENS (`*.eth`) worlds, their holder read on chain over ETH_RPC_URL.
+    #[arg(long, env = "ALLOW_ENS_DOMAINS", default_value_t = false, action = clap::ArgAction::Set)]
+    pub allow_ens_domains: bool,
+
+    /// Size cap of an ENS world, MiB, unless `worlds.world_limit_overrides` says otherwise.
+    #[arg(long, env = "ENS_MAX_SIZE", default_value_t = 36, value_parser = clap::value_parser!(u32).range(1..=300))]
+    pub ens_max_size: u32,
+
+    /// Pause between passes of the job that rewrites `worlds.owner` from the name authority.
+    #[arg(
+        long,
+        env = "WORLDS_OWNER_RECONCILE_INTERVAL_SECS",
+        default_value_t = 12 * 3600,
+        value_parser = clap::value_parser!(u64).range(60..)
+    )]
+    pub worlds_owner_reconcile_interval_secs: u64,
+
     /// Entries a deployed entity's `content` may list, at most the 10,000 file parts a deploy may upload.
     #[arg(long, env = "MAX_FILE_COUNT", default_value_t = 10_000, value_parser = clap::value_parser!(u32).range(1..=10_000))]
     pub max_file_count: u32,

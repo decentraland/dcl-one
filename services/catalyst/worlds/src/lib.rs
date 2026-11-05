@@ -39,6 +39,7 @@ pub(crate) use dcl_http as http;
 pub mod about;
 mod available_content;
 pub mod core;
+pub mod ens;
 pub mod fed;
 pub mod index;
 pub mod mirror;

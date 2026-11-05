@@ -838,6 +838,16 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .land_operators_url
         .as_deref()
         .map(|url| worlds::policy::LandOperatorsReader::new(http_client.clone(), url));
+    let ens = if config.worlds.allow_ens_domains {
+        let rpc = config.content.eth_rpc_url().context("ETH_RPC_URL")?;
+        Some(Arc::new(worlds::ens::EnsResolver::configured(
+            http_client.clone(),
+            rpc.as_deref(),
+            &config.node.eth_network,
+        )?))
+    } else {
+        None
+    };
     let ban_status: Arc<dyn comms::gatekeeper::moderation::BanStatus> =
         Arc::new(comms::gatekeeper::moderation::Moderation::new(pool.clone()));
     let policy = Arc::new(
@@ -845,7 +855,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .with_ban_status(ban_status.clone())
             .with_land_operators(land_operators)
             .with_land_authz(Some(land.clone()))
-            .with_max_parcels(config.worlds.max_parcels),
+            .with_max_parcels(config.worlds.max_parcels)
+            .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024),
     );
     // A world read-through holds each mirrored scene's signer to this policy and shares the
     // content read-through's download bound.
@@ -1663,6 +1674,9 @@ async fn worlds_states(
                     .with_scene_eviction_ttl_ms(config.worlds.scene_eviction_ttl_ms)
                     .with_public_url(&worlds::Settings::from_config(config).public_url)
                     .with_max_file_count(config.worlds.max_file_count)
+                    .with_owner_reconcile_interval_secs(
+                        config.worlds.worlds_owner_reconcile_interval_secs,
+                    )
             })
             .context(
                 "MAX_IN_FLIGHT_UPLOAD_* / MAX_CONCURRENT_UPLOADS / *_TIMEOUT_MS configuration",

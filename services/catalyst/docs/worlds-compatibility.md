@@ -60,6 +60,23 @@ difference not listed here is a gap, not a decision.
   `.dcl.eth` from `/about`'s `realmName` for worlds published here, so a
   stock client does not resolve them against Decentraland's registry.
   Mirrored worlds keep the suffix.
+- **Owner admission.** The owner is the name authority's current holder,
+  memoized for 30 seconds per DCL NAME (60 seconds per ENS name; upstream
+  one minute). It is asked only when the world's access setting refuses,
+  admission waits on it for at most 3 seconds, and its answer (a fault
+  included) is shared for 5 seconds. When the authority cannot answer,
+  nobody is admitted as owner: the stored owner's refusal answers 503
+  (upstream fails the whole mint), anyone else gets the access setting's
+  401/403. The scene host's re-admission (periodic and on access changes)
+  keeps a connected client whose answer is undetermined: an authority
+  fault for the stored owner or a client admitted as owner, and a database
+  fault reading the world, its grants or bans; a client admitted by the
+  shared secret keeps that grant until the secret or access type changes.
+  `GET /world/{name}/permissions` reports the live holder (no `owner` while
+  the authority cannot answer), and the comms owner read for stream-key
+  notices is unavailable then; neither falls back to the stored owner.
+  Publishes of one world are serialized, so a publish by a new holder
+  always sees the owner it replaces.
 - **Capacity check fails closed.** When the live occupancy of a world cannot
   be recovered, the comms mint answers 503 instead of counting zero
   participants and admitting the user.
@@ -90,11 +107,24 @@ difference not listed here is a gap, not a decision.
   it (including Genesis content) without uploading it again. Upstream could
   only reuse files from its own bucket.
 - **Thumbnails** are hashed as CIDv1.
-- **Publish names.** Only `.dcl.eth` worlds (and personal worlds) accept
-  publishes and owner routes. ENS (`*.eth`) and bare names have no owner,
-  so in comms nobody gets the owner's implicit scene-admin and streaming
-  rights over them (explicit grants still apply), and their limits route
-  answers 404.
+- **ENS names.** With `ALLOW_ENS_DOMAINS=true` the holder is read over
+  `ETH_RPC_URL` (required then; the process refuses to start without it).
+  Only names whose labels the upstream's UTS46 normalization leaves
+  unchanged resolve: lowercase ASCII letters, digits and inner `-`, with no
+  `--` at the third and fourth characters. Upstream decodes `xn--` labels
+  and resolves other Unicode names; here those have no owner. A wrapped
+  name has an owner only while the ENS Registry still gives its node to
+  the NameWrapper (upstream trusts the NameWrapper alone).
+- **Owner reconcile.** `worlds.owner` is rewritten from the name authority
+  every `WORLDS_OWNER_RECONCILE_INTERVAL_SECS` (default 12 hours, as
+  upstream) for worlds with a locally published scene, ENS worlds
+  included. A previous holder the world's access setting no longer admits
+  is removed from the world's live rooms, as it is when a new holder's
+  publish replaces the stored owner.
+- **Unowned names.** Bare names, and ENS names while `ALLOW_ENS_DOMAINS`
+  is off, have no owner, so in comms nobody gets the owner's implicit
+  scene-admin and streaming rights over them (explicit grants still
+  apply), and their limits route answers 404.
 - **Newer-entity check** compares against the lower of the stored entity's
   timestamp and its row's update time, so a future-dated mirrored or
   imported entity cannot block redeploys.
@@ -111,7 +141,9 @@ difference not listed here is a gap, not a decision.
   `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE`, the latter defaulting to one
   maximum-size upload).
 - **Per-world limits** come from `MAX_PARCELS`, `MAX_FILE_COUNT` and the
-  `worlds.world_limit_overrides` table; there is no `WHITELIST_URL`.
+  `worlds.world_limit_overrides` table; there is no `WHITELIST_URL`. As
+  upstream, an ENS world's size cap is `ENS_MAX_SIZE` whatever its override
+  row says.
 - **Retired scenes.** Replaced and undeployed scenes are kept for
   `SCENE_EVICTION_TTL_MS` and removed by an hourly sweep. Scenes a mirror
   pass retires are deleted at once.

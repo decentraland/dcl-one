@@ -495,6 +495,12 @@ async fn validate(
         })?;
     let world = match WorldName::parse(world_name) {
         Ok(parsed) if parsed.key().ends_with(DCL_ETH_SUFFIX) => parsed,
+        Ok(parsed) if parsed.is_ens_world() && state.policy.ens_enabled() => parsed,
+        _ if state.policy.ens_enabled() => {
+            return Err(failed(format!(
+                "Only .dcl.eth and .eth world names are supported for publishing (got \"{world_name}\")"
+            )));
+        }
         _ => {
             return Err(failed(format!(
                 "Only .dcl.eth world names are supported for publishing (got \"{world_name}\")"
@@ -745,6 +751,7 @@ async fn deploy_entity_inner(
         },
     )
     .await;
+    let replaced_owner = persisted.as_ref().ok().cloned().flatten();
     if let Err(e) = persisted {
         let reason = e.public_message();
         if e.is_conflict() {
@@ -765,6 +772,11 @@ async fn deploy_entity_inner(
         }
         tracing::error!(error = ?e, world = %world, entity_id = %entity_id, "deploy failed: DB tx error");
         return internal("Failed to persist deployment").into_response();
+    }
+    // A new holder's publish moved worlds.owner: re-decide the previous one now.
+    if let (Some(previous), Some(owner)) = (replaced_owner, name_owner) {
+        state.policy.note_owner(&world, Some(owner));
+        state.revoke_unless_admitted(&world, &previous).await;
     }
 
     tracing::info!(
