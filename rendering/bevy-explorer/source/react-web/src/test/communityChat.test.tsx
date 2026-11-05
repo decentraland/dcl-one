@@ -112,14 +112,18 @@ describe('community chat domain', () => {
     act(() => h.driver.emit({ kind: 'communityOnlineMembers', id: 'c1', members: [member(me(h), 'Me'), member(MOJITO, 'Mojito', 'moderator'), member(BOB, 'Bob')] }))
     expect(chat().communities.find((c) => c.id === 'c1')?.online).toBe(2)
     expect(chat().communities.find((c) => c.id === 'c1')?.members?.map((m) => m.name)).toEqual(['Mojito', 'Bob'])
-    // a member leaving and another arriving
+    // a member leaving and another arriving; a listed member's update (which names them only, so
+    // it carries the default role) keeps their listed role
     act(() => h.driver.emit({ kind: 'communityPresence', communityId: 'c1', member: member(BOB, 'Bob'), online: false }))
     act(() => h.driver.emit({ kind: 'communityPresence', communityId: 'c1', member: member('0x3333333333333333333333333333333333333333', 'Cy'), online: true }))
-    expect(chat().communities.find((c) => c.id === 'c1')?.members?.map((m) => m.name)).toEqual(['Mojito', 'Cy'])
-    // a line landing on the shown tab re-reads the store rather than counting
+    act(() => h.driver.emit({ kind: 'communityPresence', communityId: 'c1', member: member(MOJITO, 'Mojito'), online: true }))
+    expect(chat().communities.find((c) => c.id === 'c1')?.members?.map((m) => [m.name, m.role])).toEqual([['Cy', 'member'], ['Mojito', 'moderator']])
+    // a line landing on the shown tab is appended after the stored rows, neither counted nor read
+    // back from the store
     act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: 'again', channel: 'community:c1', messageId: `${MOJITO}:7` } }))
     expect(chat().communities.find((c) => c.id === 'c1')?.unread).toBe(0)
-    expect(h.driver.sent.filter((m) => m.kind === 'dmHistory').length).toBe(2)
+    expect(h.driver.sent.filter((m) => m.kind === 'dmHistory').length).toBe(1)
+    expect(chat().messages.map((m) => [m.sender, m.message, m.id])).toEqual([[MOJITO, 'hi', 0], [MOJITO, 'again', 1]])
     // sends and reactions name the community channel
     act(() => chat().send('hello all'))
     expect(h.driver.last('sendChat')).toEqual({ kind: 'sendChat', message: 'hello all', channel: 'community:c1' })
@@ -152,8 +156,14 @@ describe('community chat domain', () => {
   it('a community closed in an earlier session stays closed; a join opens a chat, a leave removes it', async () => {
     setPref(PREF.chatClosedCommunities, JSON.stringify({ [ME]: ['c8'] }))
     const h = renderSession()
-    await enterWithCommunities(h)
+    // the list is asked for once the account is known, so the closed chat is never listened to
+    await enterAsGuest(h, { keepSent: true })
+    expect(h.driver.last('getCommunityChannels')).toBeUndefined()
+    act(() => h.driver.emit({ kind: 'profile', profile: { address: ME, name: MY_NAME, hasClaimedName: false, isGuest: true } }))
+    expect(h.driver.last('getCommunityChannels')).toEqual({ kind: 'getCommunityChannels' })
+    act(() => h.driver.emit({ kind: 'communityChannels', communities: [FOUNDATION, BUILDERS] }))
     expect(h.session().chat.communities.map((c) => c.id)).toEqual(['c1'])
+    expect(h.driver.sent.filter((m) => m.kind === 'setCommunityChannels').map((m) => m.ids)).toEqual([[], ['c1']])
     // the user joined another community (their own online update)
     act(() => h.driver.emit({ kind: 'communityChannelAdded', community: { id: 'c5', name: 'Toxic Events', thumbnail: '', role: 'member' } }))
     expect(h.session().chat.communities.map((c) => c.id)).toEqual(['c1', 'c5'])
@@ -164,11 +174,34 @@ describe('community chat domain', () => {
     expect(h.session().chat.channel).toBe('Nearby')
   })
 
-  it('a community card opened from the chat fetches that community into the list', async () => {
+  it('a later list without the shown community returns the chat to Nearby', async () => {
+    const h = renderSession()
+    await enterWithCommunities(h)
+    act(() => h.session().chat.select('community:c8'))
+    act(() => h.driver.emit({ kind: 'dmHistory', address: 'community:c8', entries: [{ from: MOJITO, message: 'hi', receivedAt: 1000, messageId: `${MOJITO}:6`, reactions: [] }] }))
+    expect(h.session().chat.messages.map((m) => m.channel)).toEqual(['community:c8'])
+    // the user left it from another client: the next list lacks it
+    act(() => h.driver.emit({ kind: 'communityChannels', communities: [FOUNDATION] }))
+    const chat = () => h.session().chat
+    expect(chat().communities.map((c) => c.id)).toEqual(['c1'])
+    expect(chat().channel).toBe('Nearby')
+    expect(chat().messages.some((m) => m.channel === 'community:c8')).toBe(false)
+    act(() => chat().send('still here?'))
+    expect(h.driver.last('sendChat')).toEqual({ kind: 'sendChat', message: 'still here?', channel: 'Nearby' })
+    // a shown community that stays listed is kept shown
+    act(() => chat().select('community:c1'))
+    act(() => h.driver.emit({ kind: 'communityChannels', communities: [FOUNDATION, BUILDERS] }))
+    expect(chat().channel).toBe('community:c1')
+  })
+
+  it('a community card opened from the chat fetches that community into the list, and says when that fails', async () => {
     const h = renderSession()
     await enterWithCommunities(h)
     act(() => h.session().communities.fetch('c1'))
     expect(h.driver.last('getCommunity')).toEqual({ kind: 'getCommunity', id: 'c1' })
+    act(() => h.driver.emit({ kind: 'communityActionFailed', id: 'c1', action: 'fetch', message: 'HTTP 502' }))
+    expect(h.session().communities.error).toEqual({ id: 'c1', message: 'There was an error loading the community. Please try again.' })
+    expect(h.session().communities.list).toEqual([])
     const community = { id: 'c1', name: 'Decentraland Foundation', description: 'The official one', membersCount: 1242, role: 'member', ownerName: 'DCLOfficial', privacy: 'public' }
     act(() => h.driver.emit({ kind: 'community', community }))
     expect(h.session().communities.list).toEqual([community])

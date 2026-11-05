@@ -99,7 +99,8 @@ const COMMUNITY_ERROR: Record<CommunityAction, string> = {
   join: 'There was an error joining the community. Please try again.',
   requestToJoin: 'There was an error requesting to join community. Please try again.',
   cancelJoinRequest: 'There was an error cancelling join request. Please try again.',
-  leave: 'There was an error leaving the community. Please try again.'
+  leave: 'There was an error leaving the community. Please try again.',
+  fetch: 'There was an error loading the community. Please try again.'
 }
 
 // The engine's clock starts at 10:00 and runs at 12× (crates/visuals/src/day_night.rs start_clock).
@@ -1182,15 +1183,24 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             if (!communityConvosRef.current.some((c) => c.id === communityId) || closedCommunitiesRef.current.has(communityId)) break
             const shown = chatOpenRef.current && channelRef.current === key
             if (!shown && !(chatOpenRef.current && chatActiveRef.current)) setChatUnread((n) => n + 1)
-            // the shown tab re-reads the store (the line is already in it); any other counts it;
-            // either way the community moves to the top, as every non-Nearby line does in Unity
+            // the shown tab appends the line (the store has it too, as its next row, so a later
+            // re-read keeps the ids) rather than reading the whole store back for every line a busy
+            // community sends; any other tab counts it; either way the community moves to the top,
+            // as every non-Nearby line does in Unity
             setCommunityConvos((prev) => {
               const i = prev.findIndex((c) => c.id === communityId)
               if (i < 0) return prev
               const c = shown ? prev[i] : { ...prev[i], unread: prev[i].unread + 1, mention: prev[i].mention || mentioned }
               return [c, ...prev.slice(0, i), ...prev.slice(i + 1)]
             })
-            if (shown) driver.send({ kind: 'dmHistory', address: key })
+            if (shown) {
+              setDmLines((prev) => {
+                const lines = prev[key] ?? []
+                const id = lines.length > 0 ? lines[lines.length - 1].id + 1 : 0
+                const line: ChatLine = { sender: msg.chat.sender, message: msg.chat.message, channel: key, messageId: msg.chat.messageId, id, ts: Date.now(), reactions: [] }
+                return { ...prev, [key]: [...lines, line].slice(-MAX_CHAT_LINES) }
+              })
+            }
             ping(key)
             break
           }
@@ -1438,7 +1448,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'communityDetail':
           setCommunityDetail(msg)
           break
-        case 'communityChannels':
+        case 'communityChannels': {
           // the user's communities, in the order they already have (new ones last)
           setCommunityConvos((prev) => {
             const next = msg.communities.map((c) => {
@@ -1448,7 +1458,21 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             const order = new Map(prev.map((c, i) => [c.id, i]))
             return next.sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity))
           })
+          // the shown community gone from the list (left from elsewhere): back to Nearby, as when
+          // its removal arrives alone, or the Nearby header would front sends to the community
+          const shownId = communityIdOf(channelRef.current)
+          if (shownId != null && !msg.communities.some((c) => c.id === shownId)) {
+            const key = communityChannel(shownId)
+            setDmLines((prev) => {
+              if (!(key in prev)) return prev
+              const next = { ...prev }
+              delete next[key]
+              return next
+            })
+            setChannel('Nearby')
+          }
           break
+        }
         case 'communityChannelAdded':
           setCommunityConvos((prev) => (prev.some((c) => c.id === msg.community.id) ? prev.map((c) => (c.id === msg.community.id ? { ...c, name: msg.community.name, thumbnail: msg.community.thumbnail, role: msg.community.role } : c)) : [...prev, communityConversation(msg.community)]))
           break
@@ -1472,8 +1496,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setCommunityConvos((prev) =>
             prev.map((c) => {
               if (c.id !== msg.communityId || c.members == null) return c
-              const rest = c.members.filter((m) => m.address.toLowerCase() !== msg.member.address.toLowerCase())
-              return { ...c, members: msg.online ? [...rest, msg.member] : rest }
+              const same = (m: CommunityMember): boolean => m.address.toLowerCase() === msg.member.address.toLowerCase()
+              // the update names the member only: the role stays the listed one, if they were listed
+              const listed = c.members.find(same)
+              const rest = c.members.filter((m) => !same(m))
+              return { ...c, members: msg.online ? [...rest, listed != null ? { ...msg.member, role: listed.role } : msg.member] : rest }
             })
           )
           break
@@ -1732,11 +1759,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       fetchedRef.current.add('getNotifications')
       driverRef.current?.send({ kind: 'getNotifications' })
     }
-    // the community chats open from the start, as in Unity (the Communities page lists more)
-    if (!fetchedRef.current.has('getCommunityChannels')) {
-      fetchedRef.current.add('getCommunityChannels')
-      driverRef.current?.send({ kind: 'getCommunityChannels' })
-    }
   }, [playerReady])
 
   // The closed community chats are the account's: read when it is known, written on each change.
@@ -1744,6 +1766,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   useEffect(() => {
     setClosedCommunities(new Set(chatAccount == null ? [] : readClosedCommunities(chatAccount)))
   }, [chatAccount])
+  // The community chats open from the start, as in Unity (the Communities page lists more). Asked
+  // for once the account is known, so its closed chats are closed from the first list (the engine
+  // never listens to them) and a close made before the profile is not lost.
+  useEffect(() => {
+    if (!playerReady || chatAccount == null) return
+    if (!fetchedRef.current.has('getCommunityChannels')) {
+      fetchedRef.current.add('getCommunityChannels')
+      driverRef.current?.send({ kind: 'getCommunityChannels' })
+    }
+  }, [playerReady, chatAccount])
   const setCommunityClosed = useCallback((id: string, closed: boolean) => {
     setClosedCommunities((prev) => {
       if (prev.has(id) === closed) return prev

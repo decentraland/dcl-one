@@ -334,7 +334,17 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
     loadDetail(communityId)
   }, [listed, fetch, loadDetail, communityId])
 
-  if (!community) return null // not fetched yet, or gone from the list while open
+  const error = communities.error?.id === communityId ? communities.error.message : null
+  if (!community) {
+    // not fetched yet, or gone from the list while open; a failed fetch says so instead of nothing
+    if (error == null) return null
+    return (
+      <div className={styles.modal} onClick={(e) => e.stopPropagation()}>
+        <p className={styles.error} role="alert">{error}</p>
+        <button type="button" className={styles.close} aria-label="Close" onClick={onClose}>×</button>
+      </div>
+    )
+  }
 
   const detail = communities.detail != null && communities.detail.id === communityId ? communities.detail : null
 
@@ -342,7 +352,7 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
     <CommunityModal
       community={community}
       detail={detail}
-      error={communities.error?.id === communityId ? communities.error.message : null}
+      error={error}
       onJoin={communities.join}
       onRequestToJoin={communities.requestToJoin}
       onCancelRequest={communities.cancelRequest}

@@ -104,16 +104,20 @@ async function channel(c: CommunityRaw): Promise<CommunityChannel> {
   return { id: c.id, name: c.name, thumbnail: await thumbnail(c.id), role: c.role }
 }
 
-// The communities the user is a member of, paged as unity-explorer pages them (100 a call).
+// The communities the user is a member of, paged as unity-explorer pages them (100 a call; it
+// reads one page). The page count is capped so a server that ignores `offset` cannot keep this
+// going.
 const MEMBER_OF_PAGE = 100
+const MEMBER_OF_PAGES = 10
 async function memberOf(): Promise<CommunityChannel[]> {
   const b = await base('v2')
   const raw: CommunityRaw[] = []
-  for (let offset = 0; ; offset += MEMBER_OF_PAGE) {
+  for (let page = 0; page < MEMBER_OF_PAGES; page++) {
+    const offset = page * MEMBER_OF_PAGE
     const res = await signed<{ results?: CommunityRaw[]; total?: number }>(`${b}?onlyMemberOf=true&limit=${MEMBER_OF_PAGE}&offset=${offset}`)
-    const page = res?.results ?? []
-    raw.push(...page)
-    if (page.length < MEMBER_OF_PAGE || (res?.total != null && raw.length >= res.total)) break
+    const rows = res?.results ?? []
+    raw.push(...rows)
+    if (rows.length < MEMBER_OF_PAGE || (res?.total != null && raw.length >= res.total)) break
   }
   return await Promise.all(raw.map(channel))
 }
@@ -213,6 +217,7 @@ export function registerCommunities(ctx: Ctx): void {
   ctx.on('getCommunity', async (msg) => {
     const raw = await rawOne(msg.id).catch((e: unknown) => {
       console.error('[communities] community fetch failed', e)
+      ctx.send({ kind: 'communityActionFailed', id: msg.id, action: 'fetch', message: e instanceof Error ? e.message : String(e) })
       return undefined
     })
     if (raw == null) return
@@ -220,13 +225,17 @@ export function registerCommunities(ctx: Ctx): void {
     const [community] = await communities([raw])
     if (community != null) ctx.send({ kind: 'community', community })
   })
-  ctx.on('getCommunityChannels', async () => {
+  // The member-of list is authoritative when it arrives: an empty one closes every community
+  // chat. So a failed read sends nothing, and the page keeps the list it has (the next join, leave
+  // or login reads it again), rather than emptying it for a passing error.
+  const sendChannels = async (): Promise<void> => {
     const communities = await memberOf().catch((e: unknown) => {
       console.error('[communities] member-of list failed', e)
-      return []
+      return undefined
     })
-    ctx.send({ kind: 'communityChannels', communities })
-  })
+    if (communities != null) ctx.send({ kind: 'communityChannels', communities })
+  }
+  ctx.on('getCommunityChannels', sendChannels)
   ctx.on('setCommunityChannels', (msg) => {
     BevyApi.social.setCommunityChannels(msg.ids)
   })
@@ -256,9 +265,12 @@ export function registerCommunities(ctx: Ctx): void {
       }
       return
     }
-    void fetchIdentities([address]).then((identity) => {
-      ctx.send({ kind: 'communityPresence', communityId: u.communityId, member: mapMember({ memberAddress: address }, identity), online })
-    })
+    // the update names the member only; the page keeps the role it listed for them, if any
+    void fetchIdentities([address])
+      .then((identity) => {
+        ctx.send({ kind: 'communityPresence', communityId: u.communityId, member: mapMember({ memberAddress: address }, identity), online })
+      })
+      .catch((e: unknown) => console.error('[communities] presence identity failed', e))
   })
   ctx.on('createCommunity', async (msg) => {
     // Text-only multipart (no thumbnail — see signedForm). Matches Unity's create payload.
@@ -271,7 +283,7 @@ export function registerCommunities(ctx: Ctx): void {
       console.error('[communities] create failed', e)
     })
     ctx.send({ kind: 'communities', communities: await list() })
-    ctx.send({ kind: 'communityChannels', communities: await memberOf().catch(() => []) })
+    await sendChannels()
   })
   // Every write reports a rejection to the page (the modal shows it) and then re-reads the list,
   // so the buttons always reflect the server.
@@ -282,7 +294,7 @@ export function registerCommunities(ctx: Ctx): void {
     })
     ctx.send({ kind: 'communities', communities: await list() })
     // joining or leaving changes the chat channels too
-    ctx.send({ kind: 'communityChannels', communities: await memberOf().catch(() => []) })
+    await sendChannels()
   }
   ctx.on('joinCommunity', async (msg) => {
     await write(msg.id, 'join', async () => await signed(`${await base('v1')}/${encodeURIComponent(msg.id)}/members`, 'POST'))
