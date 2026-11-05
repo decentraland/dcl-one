@@ -23,7 +23,7 @@ function prune(store, now) {
     }
   }
   const oldest = Object.entries(store.events).sort(([a, x], [b, y]) =>
-    x.occurred_at - y.occurred_at || a.localeCompare(b))
+    x.occurred_at - y.occurred_at || (a < b ? -1 : a > b ? 1 : 0))
   for (const [id] of oldest.slice(0, Math.max(0, oldest.length - MAX_PENDING))) {
     delete store.events[id]
     store.removed[id] = now

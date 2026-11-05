@@ -32,16 +32,16 @@ impl PendingClientLogin {
 /// Every completed login is distinct, including a cached identity restored after restart.
 /// Existing pending events keep their IDs and timestamps until acknowledged or expired.
 pub fn enqueue(queue: &mut Vec<PendingClientLogin>, event: PendingClientLogin) -> usize {
-    let before = queue.len();
-    queue.retain(|pending| pending.unexpired(event.occurred_at));
-    let mut dropped = before - queue.len();
-    if queue.len() >= MAX_PENDING {
-        let overflow = queue.len() - MAX_PENDING + 1;
-        queue.drain(..overflow);
-        dropped += overflow;
-    }
+    let before = queue.len() + 1;
+    let now = event.occurred_at;
     queue.push(event);
-    dropped
+    queue.retain(|pending| pending.unexpired(now));
+    // Storage iteration order (UUID on native) does not describe occurrence age.
+    queue.sort_by(|a, b| (a.occurred_at, &a.login_id).cmp(&(b.occurred_at, &b.login_id)));
+    if queue.len() > MAX_PENDING {
+        queue.drain(..queue.len() - MAX_PENDING);
+    }
+    before - queue.len()
 }
 
 pub fn retry_delay_ms(attempt: u32, entropy: u64) -> u64 {
@@ -83,7 +83,8 @@ impl DurableLogins {
         let mut dropped = 0;
         for event in fresh {
             // Pre-load edits remain in changes; merging must not reinsert restored records.
-            let before = self.events.clone();
+            let mut before = self.events.clone();
+            before.push(event.clone());
             dropped += enqueue(&mut self.events, event);
             self.record_removals(&before);
         }
@@ -108,7 +109,8 @@ impl DurableLogins {
     }
     pub fn push(&mut self, event: PendingClientLogin) -> usize {
         self.changes.additions.push(event.clone());
-        let before = self.events.clone();
+        let mut before = self.events.clone();
+        before.push(event.clone());
         let dropped = enqueue(&mut self.events, event);
         self.record_removals(&before);
         dropped
@@ -208,6 +210,29 @@ mod tests {
         assert_eq!(enqueue(&mut queue, event("newest", MAX_AGE_MS)), 1);
         assert_eq!(queue.len(), MAX_PENDING);
         assert_eq!(queue.last().unwrap().login_id, "newest");
+    }
+
+    #[test]
+    fn restored_uuid_order_does_not_choose_the_eviction_victim() {
+        let mut queue = DurableLogins::default();
+        // Native BTreeMap restores UUID order, opposite the occurrence order here.
+        queue.load(
+            (0..MAX_PENDING)
+                .map(|i| event(&format!("{i:02}"), 1000 + (MAX_PENDING - i) as u64))
+                .collect(),
+        );
+        assert_eq!(queue.push(event("new", 2000)), 1);
+        assert!(queue.events.iter().any(|event| event.login_id == "00"));
+        assert!(!queue.events.iter().any(|event| event.login_id == "31"));
+        let changes = queue.begin_save().unwrap();
+        assert_eq!(changes.removals, ["31"]);
+        queue.finish_save(true);
+        // A clock adjustment can make the newly completed event the oldest itself.
+        assert_eq!(queue.push(event("older", 500)), 1);
+        assert!(!queue.events.iter().any(|event| event.login_id == "older"));
+        let changes = queue.begin_save().unwrap();
+        assert!(changes.additions.is_empty());
+        assert_eq!(changes.removals, ["older"]);
     }
 
     #[test]
