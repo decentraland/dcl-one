@@ -831,7 +831,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let personal_worlds = worlds::policy::PersonalWorldsPolicy::new(
         config.worlds.worlds_personal_worlds_max,
         config.worlds.worlds_personal_world_max_size_bytes,
-        worlds::policy::MAX_WORLD_SIZE_BYTES,
+        worlds::policy::MAX_SCENE_SIZE_BYTES,
     )
     .context("WORLDS_PERSONAL_WORLDS_MAX / WORLDS_PERSONAL_WORLD_MAX_SIZE_BYTES")?;
     let land_operators = comms_settings
@@ -858,6 +858,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .with_max_parcels(config.worlds.max_parcels)
             .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024),
     );
+    worlds.attach_policy(policy.clone());
     // A world read-through holds each mirrored scene's signer to this policy and shares the
     // content read-through's download bound.
     if let Some(read_through) = &read_through {
@@ -1684,6 +1685,19 @@ async fn worlds_states(
             eip1654.clone(),
         )
         .with_presence(presence)
+        .with_allowance(worlds::core::holdings::configured(
+            http_client.clone(),
+            config.content.eth_rpc_url()?.as_deref(),
+            non_empty(&config.economy.rpc_endpoint_polygon).as_deref(),
+            &config.node.eth_network,
+        ))
+        // World notices persist through social's directory, as comms' do.
+        .with_notices(worlds::core::notices::Notices::new(
+            Some(Arc::new(social::comms_directory::Directory::new(
+                pool.clone(),
+            ))),
+            &config.worlds.builder_url,
+        ))
         .with_forwarder(forwarder(
             "WORLDS_FORWARD_UPSTREAM_URL",
             config.worlds.worlds_forward_upstream_url.as_deref(),

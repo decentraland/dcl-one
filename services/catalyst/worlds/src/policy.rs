@@ -59,8 +59,7 @@ use crate::shared::identity::{
 
 // The access vocabulary `Policy` returns and reads lives in `comms::access`.
 pub use crate::comms::access::{
-    Access, AccessGrant, AccessType, Ban, LandOperators, SceneRef, WorldAdmission,
-    blocked_past_grace,
+    Access, AccessGrant, AccessType, Ban, LandOperators, SceneRef, WorldAdmission, world_blocked,
 };
 
 /// The permission-relevant columns of one `worlds.worlds` row.
@@ -72,11 +71,18 @@ pub struct WorldRow {
     pub access_type: AccessType,
     pub access_secret_hash: Option<String>,
     pub access_nft: Option<String>,
+    /// The operator disable.
     pub blocked_since: Option<NaiveDateTime>,
+    /// The stored owner's `worlds.quota_blocks.created_at` (admission reads
+    /// the live holder's through [`Policy::quota_blocked_since`]).
+    pub quota_blocked_since: Option<NaiveDateTime>,
+    /// A world an owner's quota block refuses (DCL NAME or ENS, local).
+    pub quota_blockable: bool,
     pub mirror_source: Option<String>,
 }
 
-pub const MAX_WORLD_SIZE_BYTES: i64 = 300 * 1024 * 1024;
+/// A scene's size cap (WCS `MAX_SCENE_SIZE`, 500 MiB).
+pub const MAX_SCENE_SIZE_BYTES: i64 = 500 * 1024 * 1024;
 /// `ENS_MAX_SIZE`'s default (36 MiB), as the old service's.
 pub const DEFAULT_ENS_MAX_SIZE_BYTES: i64 = 36 * 1024 * 1024;
 pub const DEFAULT_PERSONAL_WORLD_MAX_SIZE_BYTES: i64 = 50 * 1024 * 1024;
@@ -445,7 +451,7 @@ impl Policy {
             return self.ens_max_size_bytes;
         }
         self.personal_worlds
-            .size_cap_for(world, MAX_WORLD_SIZE_BYTES)
+            .size_cap_for(world, MAX_SCENE_SIZE_BYTES)
     }
 
     /// The parcel and size caps of a publish to `world`, the ones
@@ -472,10 +478,15 @@ impl Policy {
     }
 
     pub async fn world(&self, world: &WorldName) -> Result<Option<WorldRow>, sqlx::Error> {
-        let row = sqlx::query(
-            "SELECT name, owner, access_type, access_secret_hash, access_nft, blocked_since, mirror_source \
-             FROM worlds.worlds WHERE name = $1",
-        )
+        let row = sqlx::query(concat!(
+            "SELECT w.name, w.owner, w.access_type, w.access_secret_hash, w.access_nft, w.blocked_since, \
+                    q.created_at AS quota_blocked_since, w.mirror_source, ",
+            crate::core::quota::quota_blockable_world!(),
+            " AS quota_blockable \
+             FROM worlds.worlds w LEFT JOIN worlds.quota_blocks q ON q.wallet = w.owner AND ",
+            crate::core::quota::quota_blockable_world!(),
+            " WHERE w.name = $1"
+        ))
         .bind(world.key())
         .fetch_optional(&self.pool)
         .await?;
@@ -489,8 +500,42 @@ impl Policy {
             access_secret_hash: r.get("access_secret_hash"),
             access_nft: r.get("access_nft"),
             blocked_since: r.get("blocked_since"),
+            quota_blocked_since: r.get("quota_blocked_since"),
+            quota_blockable: r.get("quota_blockable"),
             mirror_source: r.get("mirror_source"),
         }))
+    }
+
+    /// `world`'s quota block as admission applies it; `None` without a row.
+    pub async fn quota_blocked_since(
+        &self,
+        world: &WorldName,
+    ) -> Result<Option<NaiveDateTime>, sqlx::Error> {
+        Ok(match self.world(world).await? {
+            Some(row) => self.live_quota_block(world, &row).await,
+            None => None,
+        })
+    }
+
+    /// The block of `world`'s live holder when the authority names one other
+    /// than the stored owner; else (or on a fault) the stored owner's.
+    async fn live_quota_block(&self, world: &WorldName, row: &WorldRow) -> Option<NaiveDateTime> {
+        let stored = row.quota_blocked_since;
+        if !row.quota_blockable || !self.ownable(world) || !self.has_live_authority(world) {
+            return stored;
+        }
+        let holder = match self.admission_owner(world, Some(row)).await {
+            Ok(Some(holder)) if Some(&holder) != row.owner.as_ref() => holder,
+            _ => return stored,
+        };
+        sqlx::query_scalar("SELECT created_at FROM worlds.quota_blocks WHERE wallet = $1")
+            .bind(&holder)
+            .fetch_optional(&self.pool)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(%world, error = %e, "live holder's quota block unread; stored owner's used");
+                stored
+            })
     }
 
     /// The owner the row names without the name authority: the personal
@@ -1339,8 +1384,14 @@ impl crate::comms::interfaces::AccessPolicy for Policy {
             .map_err(|e| store_unavailable("worlds.worlds", &e))?;
         Ok(match row {
             None => WorldAdmission::Unknown,
-            Some(row) if blocked_past_grace(row.blocked_since, now) => WorldAdmission::Blocked,
-            Some(row) => WorldAdmission::Open(row.access_type),
+            Some(row) => {
+                let quota = self.live_quota_block(world, &row).await;
+                if world_blocked(row.blocked_since, quota, now) {
+                    WorldAdmission::Blocked
+                } else {
+                    WorldAdmission::Open(row.access_type)
+                }
+            }
         })
     }
 
@@ -1743,6 +1794,36 @@ mod tests {
             .execute(p.pool())
             .await
             .unwrap();
+        assert_eq!(
+            p.world_admission(&world, now()).await.unwrap(),
+            WorldAdmission::Blocked
+        );
+    }
+
+    #[tokio::test]
+    async fn world_admission_refuses_a_quota_blocked_owner_only_after_two_days() {
+        use crate::comms::interfaces::AccessPolicy;
+        let Some(p) = scratch().await else {
+            return;
+        };
+        let _quota = crate::core::quota::test_support::QUOTA_DB.lock().await;
+        let (world, owner) = (world_name(), wallet());
+        seed_world(&p, &world, Some(&owner), AccessType::Unrestricted, None).await;
+        let block = |age: chrono::TimeDelta| {
+            sqlx::query(
+                "INSERT INTO worlds.quota_blocks (wallet, created_at, updated_at) VALUES ($1, $2, $2) \
+                 ON CONFLICT (wallet) DO UPDATE SET created_at = EXCLUDED.created_at",
+            )
+            .bind(&owner)
+            .bind(now() - age)
+            .execute(p.pool())
+        };
+        block(chrono::TimeDelta::hours(47)).await.unwrap();
+        assert_eq!(
+            p.world_admission(&world, now()).await.unwrap(),
+            WorldAdmission::Open(AccessType::Unrestricted)
+        );
+        block(chrono::TimeDelta::hours(49)).await.unwrap();
         assert_eq!(
             p.world_admission(&world, now()).await.unwrap(),
             WorldAdmission::Blocked

@@ -176,6 +176,14 @@ pub struct WorldsConfig {
     )]
     pub deployment_processing_timeout_ms: u64,
 
+    /// The Builder whose `/worlds?tab=dcl` page world notifications link to.
+    #[arg(
+        long,
+        env = "BUILDER_URL",
+        default_value = "https://decentraland.org/builder"
+    )]
+    pub builder_url: String,
+
     /// 64 hex characters (or ENCRYPTION_KEY_FILE): the AES-256-GCM key of the
     /// env values; unset, the `/env` routes answer 503 and the rest serve.
     #[arg(long, env = "ENCRYPTION_KEY", hide_env_values = true)]

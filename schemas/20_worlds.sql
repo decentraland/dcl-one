@@ -220,8 +220,8 @@ CREATE TABLE worlds.world_access_communities (
 CREATE INDEX world_access_communities_community_idx
     ON worlds.world_access_communities (community_id);
 
--- Wallets an operator blocked on this node (the old `blocked` table: the
--- over-storage / platform block the admin routes manage). A blocked wallet
+-- Wallets an operator blocked on this node: the platform block the admin
+-- routes manage (the old `blocked` table is `quota_blocks`). A blocked wallet
 -- is refused every world room join (policy.rs, "blocked"; the old comms
 -- mint's wallet_blocked probe); the old deploy path did not consult it and
 -- neither does can_deploy.
@@ -582,3 +582,27 @@ CREATE TABLE worlds.world_limit_overrides (
     CONSTRAINT world_limit_overrides_max_size_check CHECK (max_size_bytes > 0)
 );
 -- ==== end section: world-limits ====
+
+-- ==== section: world-quota ====
+-- Wallets over their storage allowance (the old `blocked` table): the
+-- block-if-over-quota pass inserts or refreshes `updated_at` every 12 hours
+-- and on demand; an unblock or a pass that no longer refreshes the row
+-- deletes it. `created_at` starts the 2-day grace after which the worlds
+-- the wallet holds (by the live NAME holder) are refused on /about and
+-- comms. Workload:
+-- tens to hundreds of rows; one primary-key probe per /about, comms
+-- admission, wallet stats and deploy, a join from the worlds listing, and a
+-- sweep per pass. Distinct from `blocked_wallets` (a platform-wide visitor
+-- ban) and `worlds.blocked_since` (an operator disable). No FK: the wallet
+-- need not own a worlds row.
+CREATE TABLE worlds.quota_blocks (
+    wallet text NOT NULL,
+    created_at timestamp without time zone NOT NULL,
+    updated_at timestamp without time zone NOT NULL,
+    CONSTRAINT quota_blocks_pkey PRIMARY KEY (wallet),
+    CONSTRAINT quota_blocks_lowercase_address CHECK (wallet ~ '^0x[0-9a-f]{40}$')
+);
+-- A wallet's worlds by stored owner: the storage usage read on every publish,
+-- GET /world/{name}/limits and GET /wallet/{wallet}/stats (core::quota::wallet_usage).
+CREATE INDEX worlds_owner_idx ON worlds.worlds (owner) WHERE owner IS NOT NULL;
+-- ==== end section: world-quota ====
