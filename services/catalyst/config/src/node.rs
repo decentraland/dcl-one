@@ -115,6 +115,13 @@ pub struct NodeConfig {
     #[arg(long, env = "COMMIT_HASH")]
     pub commit_hash: Option<String>,
 
+    /// lamb2's overload check: /about answers `acceptingUsers: false` while the
+    /// host's one-minute load average per CPU or its used memory is above
+    /// 90%. Off by default under every posture: the figures are host-wide,
+    /// and a node shares its host with sync, Postgres and builds.
+    #[arg(long, env = "ABOUT_RESOURCE_CHECK", default_value_t = false, action = clap::ArgAction::Set)]
+    pub about_resource_check: bool,
+
     /// Development only. Report `Syncing` (healthy, accepting users) although no
     /// sync worker is attached, so the content read contracts can be replayed
     /// against whatever the database holds. Without it a node without a worker

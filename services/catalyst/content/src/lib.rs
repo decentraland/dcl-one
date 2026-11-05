@@ -144,6 +144,9 @@ pub struct Settings {
     /// node: /about advertises it only while the tile grid it draws from is
     /// loaded ([`ContentState::attach_parcel_grid`]).
     pub map_parcel_view_needs_grid: bool,
+    /// `ABOUT_RESOURCE_CHECK`: /about stops accepting users while the host
+    /// is above 90% CPU or memory, as lamb2 does.
+    pub about_resource_check: bool,
     pub deployments_query_timeout: Duration,
     pub request_timeout: Option<Duration>,
     /// `CATALYRST_CONTENT_ADMIN_TOKEN`: the bearer of the operator routes
@@ -229,6 +232,7 @@ impl Settings {
                     config.node.node_posture.as_deref().map(str::trim),
                     Some("island" | "journey")
                 ),
+            about_resource_check: config.node.about_resource_check,
             deployments_query_timeout: Duration::from_secs(
                 config.node.deployments_query_timeout_secs,
             ),
@@ -265,6 +269,7 @@ impl Settings {
             map_satellite_base_url: Some("http://127.0.0.1:5162/satellite".to_string()),
             map_parcel_view_url: "http://127.0.0.1:5162/v1/minimap.png".to_string(),
             map_parcel_view_needs_grid: false,
+            about_resource_check: false,
             deployments_query_timeout: Duration::from_secs(10),
             request_timeout: None,
             admin_token: AdminToken::default(),
