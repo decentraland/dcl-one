@@ -616,13 +616,23 @@ impl MarketplaceState {
         self.rpc_url_for(net, net.chain_id())
     }
 
-    /// The endpoint the settlement venues of `chain_id` (1 or 137) are read
-    /// over. Their addresses are mainnet's, so off mainnet `ETH_RPC_URL`,
-    /// which serves `ETH_NETWORK`, does not stand in for chain 1.
+    /// The endpoint the settlement venues of `chain_id` (1, 137, or the
+    /// testnet book's 80002) are read over. Their addresses are mainnet's, so
+    /// off mainnet `ETH_RPC_URL`, which serves `ETH_NETWORK`, does not stand
+    /// in for chain 1. Amoy reads only its own `TRADE_RPC_URLS` entry: no
+    /// other chain's endpoint stands in for it.
     pub fn venue_rpc_url(&self, chain_id: u64) -> Option<String> {
         let net = match chain_id {
             1 => chain_walk::ChainNet::Ethereum,
             137 => chain_walk::ChainNet::Matic,
+            80002 => {
+                return self
+                    .settings
+                    .market
+                    .trade_rpc_urls
+                    .for_chain(80002)
+                    .map(str::to_string);
+            }
             _ => return None,
         };
         if self.settings.eth_network.trim() != "mainnet" {

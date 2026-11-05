@@ -415,7 +415,17 @@ pub async fn post_action(
             &format!("chain {chain_id} is not one the Shop settles on"),
         );
     };
-    let reader = state.reader(chain.chain_id);
+    let reader = match state.reader(chain.chain_id).await {
+        Ok(reader) => reader,
+        Err(refusal) => {
+            tracing::warn!(error = %refusal, "refusing to prepare an action through a mismatched chain endpoint");
+            return error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Service Unavailable",
+                &refusal.to_string(),
+            );
+        }
+    };
     let built = match build(&state, &chain, reader.as_ref(), actor, &req).await {
         Ok(b) => b,
         Err(r) => return r,
