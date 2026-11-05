@@ -231,9 +231,11 @@ impl<'de> serde::Deserialize<'de> for OrderedKeys {
                 self,
                 mut map: A,
             ) -> Result<OrderedKeys, A::Error> {
+                // The set keeps a body of many distinct keys linear.
                 let mut keys: Vec<String> = Vec::new();
+                let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
                 while let Some((key, _)) = map.next_entry::<String, serde::de::IgnoredAny>()? {
-                    if !keys.contains(&key) {
+                    if seen.insert(key.clone()) {
                         keys.push(key);
                     }
                 }
@@ -250,6 +252,26 @@ mod tests {
 
     fn strings(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// About 900k distinct keys, a 10 MiB body: the key dedup stays linear
+    /// and AJV's first extra key is still named.
+    #[test]
+    fn many_distinct_keys_are_read_in_linear_time() {
+        let mut body = String::from("{");
+        for i in 0..900_000 {
+            body.push_str(&format!("\"a{i:07}\":0,"));
+        }
+        body.push_str("\"ids\":[\"x\"]}");
+        let started = std::time::Instant::now();
+        let Err(BodyRefusal::Schema(answer)) = active_entities_body(body.as_bytes()) else {
+            panic!("extra keys fail the schema");
+        };
+        assert!(started.elapsed() < std::time::Duration::from_secs(20));
+        assert_eq!(
+            answer["data"][0]["params"]["additionalProperty"], "a0000000",
+            "{answer}"
+        );
     }
 
     fn validate(

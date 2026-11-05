@@ -1045,3 +1045,13 @@ async fn read_through_is_off_by_default_and_needs_a_source() {
     );
     let _ = std::fs::remove_dir_all(tmp);
 }
+
+#[test]
+fn a_long_key_enters_the_negative_cache_as_its_digest() {
+    assert_eq!(negative_key("bafkreiabc"), "bafkreiabc");
+    let long = "a".repeat(10_000);
+    let key = negative_key(&long);
+    assert!(key.starts_with("sha256:") && key.len() == 71, "{key}");
+    assert_eq!(key, negative_key(&long));
+    assert_ne!(key, negative_key(&"b".repeat(10_000)));
+}
