@@ -384,7 +384,30 @@ def testnet_env():
         # would read Sepolia through ETH_RPC_URL and store its logs as mainnet rows.
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         'VITE_SHOP_CHAIN_ID': '80002',
+        # Credits settle through Amoy's CreditsManager (contracts.decentraland.org, `amoy`). The usage index
+        # reads its CreditUsed events over RPC_ENDPOINT_POLYGON on COLLECTIONS_CHAIN_ID; POST /credits/authorize
+        # signs only while that index is ready. Mock card top-ups grant test credits with no charge.
+        'CREDITS_MANAGER_CONTRACT': '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3',
+        'CREDITS_USAGE_INDEX_ENABLED': 'true',
+        # Free test credits. With the signer key below they are spent through Amoy's shared CreditsManager, which
+        # pays testnet MANA only. This profile sets the mock card on Amoy alone, and the stack listens on 127.0.0.1.
+        'CREDITS_MOCK_CARD': 'true',
+        **credits_signer_env(),
     }
+
+
+def credits_signer_env():
+    """On-chain credit authorization, when the stack's state holds a signer key.
+
+    The operator places the key in the gitignored stack state (credits-signer.key). It has to hold
+    CREDITS_SIGNER_ROLE on Amoy's CreditsManager, or the contract rejects every credit it signs."""
+    key = STATE / 'credits-signer.key'
+    # An empty file reads as no key on the server, so it must not turn authorization on.
+    if not key.is_file() or not key.read_text().strip():
+        return {'CREDITS_ONCHAIN_AUTHORIZE_ENABLED': 'false'}
+    if key.stat().st_mode & 0o077:
+        print(f'Warning: {key} is readable by other users; chmod 600 it.', file=sys.stderr)
+    return {'CREDITS_ONCHAIN_AUTHORIZE_ENABLED': 'true', 'CREDITS_SIGNER_KEY_FILE': str(key)}
 
 
 def socket_path():

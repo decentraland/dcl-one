@@ -483,6 +483,32 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['MARKETPLACE_MIRRORS_ENABLED'], 'true')
         self.assertIn('index', dev.project({**self.config, 'profile': 'testnet'})['processes'])
 
+    def test_the_testnet_profile_settles_credits_on_amoy(self):
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        mirror = dev.runtime_env({**self.config, 'profile': 'mirror'})
+        self.assertEqual(env['CREDITS_MANAGER_CONTRACT'], '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3')
+        self.assertEqual((env['CREDITS_USAGE_INDEX_ENABLED'], env['CREDITS_MOCK_CARD']), ('true', 'true'))
+        for key in ('CREDITS_MANAGER_CONTRACT', 'CREDITS_MOCK_CARD', 'CREDITS_SIGNER_KEY_FILE'):
+            self.assertNotIn(key, mirror, key)
+        # Without a signer key in the stack's state, nothing signs credits on chain.
+        self.assertEqual(env['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'false')
+        self.assertNotIn('CREDITS_SIGNER_KEY_FILE', env)
+        key = self.state / 'credits-signer.key'
+        key.write_text('  \n')  # empty: the server would read no key, so authorization stays off
+        self.assertEqual(dev.runtime_env({**self.config, 'profile': 'testnet'})['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'false')
+        key.write_text('not a real key')
+        key.chmod(0o644)
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertIn('chmod 600', warning.getvalue())
+        key.chmod(0o600)
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertEqual(env['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'true')
+        self.assertEqual(env['CREDITS_SIGNER_KEY_FILE'], str(key))
+        # The file's path is passed, never its contents.
+        self.assertNotIn('not a real key', '\n'.join(env.values()))
+
     def test_testnet_data_never_shares_a_database_with_another_profile(self):
         (self.state / 'postgres').mkdir()
         (self.state / 'postgres' / 'PG_VERSION').write_text('18')
