@@ -60,16 +60,19 @@ def products(paths):
     ]
 
 
+def bot_account(account):
+    account = account or {}
+    return account.get('type') == 'Bot' or str(account.get('login', '')).endswith('[bot]')
+
+
 def publishable(run, pr, repository):
     return (
         run.get('event') == 'pull_request'
         and run.get('status') == 'completed'
         and run.get('conclusion') in ('success', 'failure')
         and run.get('path') == WORKFLOW
-        and all(
-            (run.get(field) or {}).get('login') != 'dependabot[bot]'
-            for field in ('actor', 'triggering_actor')
-        )
+        and not any(bot_account(run.get(field)) for field in ('actor', 'triggering_actor'))
+        and not bot_account(pr.get('user'))
         and (run.get('head_repository') or {}).get('full_name') == repository
         and pr.get('state') == 'open'
         and (pr.get('head', {}).get('repo') or {}).get('full_name') == repository
@@ -143,19 +146,36 @@ def api(path, *, method='GET', body=None, paginate=False):
         args += ['--paginate', '--slurp']
     if body is not None:
         args += ['--input', '-']
-    result = subprocess.run(
-        args,
-        input=json.dumps(body) if body is not None else None,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=120,
-    )
-    if result.returncode:
-        print(result.stderr, file=sys.stderr)
-        result.check_returncode()
-    value = json.loads(result.stdout)
-    return [item for page in value for item in page] if paginate else value
+    attempts = 3 if method in ('GET', 'PATCH') else 1
+    for attempt in range(attempts):
+        try:
+            result = subprocess.run(
+                args,
+                input=json.dumps(body) if body is not None else None,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+        except subprocess.TimeoutExpired:
+            if attempt == attempts - 1:
+                raise
+        else:
+            if result.returncode:
+                status = re.search(r'HTTP[ /](\d{3})', result.stderr or '')
+                if (status and int(status[1]) < 500) or attempt == attempts - 1:
+                    print(result.stderr, file=sys.stderr)
+                    result.check_returncode()
+            else:
+                try:
+                    value = json.loads(result.stdout)
+                except json.JSONDecodeError:
+                    if attempt == attempts - 1:
+                        raise
+                else:
+                    return [item for page in value for item in page] if paginate else value
+        print(f'Transient GitHub API failure; retrying ({attempt + 1}/{attempts})', file=sys.stderr)
+        time.sleep(2**attempt)
 
 
 def same_pull_request(candidate, pr):
@@ -164,10 +184,8 @@ def same_pull_request(candidate, pr):
     return bool(
         candidate.get('number') == pr.get('number')
         and base.get('ref')
-        and base.get('sha')
         and head.get('sha')
         and base.get('ref') == (pr.get('base') or {}).get('ref')
-        and base.get('sha') == (pr.get('base') or {}).get('sha')
         and head.get('sha') == (pr.get('head') or {}).get('sha')
     )
 
@@ -309,9 +327,9 @@ def report(repository, run_id, reviewer_url, publication_result):
         rows.append(f'| {label} | {result} | {link} |')
     if not rows and run.get('conclusion') == 'failure':
         rows.append(f'| Preview selection | failure | [Build run]({run["html_url"]}) |')
-    if not rows:
-        print('No selected web products to report')
-        return
+    no_products = not rows
+    if no_products:
+        rows.append('| Web previews | not selected | No web products in this commit |')
     receipt = f'<!-- source-run:{run_id}:{run["run_attempt"]} -->'
     body = '\n'.join(
         [
@@ -336,6 +354,9 @@ def report(repository, run_id, reviewer_url, publication_result):
         ),
         None,
     )
+    if no_products and current is None:
+        print('No selected web products to report')
+        return
     # Recheck after the API reads so an outdated source cannot replace the current preview.
     _, live = resolve(repository, run_id)
     if live is None or not same_pull_request(live, pr):

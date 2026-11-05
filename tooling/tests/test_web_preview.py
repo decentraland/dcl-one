@@ -346,7 +346,7 @@ class WebPreviewTests(unittest.TestCase):
                 )
 
     def test_api_prints_error_details_before_raising(self):
-        result = subprocess.CompletedProcess(['gh'], 1, '', 'permission denied')
+        result = subprocess.CompletedProcess(['gh'], 1, '', 'permission denied (HTTP 403)')
         with (
             patch.object(preview.subprocess, 'run', return_value=result),
             patch('sys.stderr', new_callable=io.StringIO) as stderr,
@@ -445,7 +445,9 @@ class WebPreviewTests(unittest.TestCase):
                 preview.report('example/one', 123, '', 'disabled')
                 self.assertIn(expected, api.call_args.kwargs['body']['body'])
 
-    def test_no_selected_products_post_no_comment(self):
+    def test_no_selected_products_post_no_new_comment(self):
+        pr = review_pr()
+        run = {**build_run(pr), 'run_attempt': 1, 'html_url': 'https://github.com/example/run'}
         jobs = {
             'jobs': [
                 {'name': 'Sites', 'conclusion': 'skipped'},
@@ -453,11 +455,11 @@ class WebPreviewTests(unittest.TestCase):
             ]
         }
         with (
-            patch.object(preview, 'resolve', return_value=({}, {'number': 9})),
-            patch.object(preview, 'api', return_value=jobs) as api,
+            patch.object(preview, 'resolve', return_value=(run, pr)),
+            patch.object(preview, 'api', side_effect=[jobs, []]) as api,
         ):
             preview.report('example/one', 123, '', 'skipped')
-            self.assertEqual(api.call_count, 1)
+            self.assertEqual(api.call_count, 2)
 
     def test_resolve_cli_emits_github_output_contract(self):
         run = {
@@ -544,7 +546,7 @@ class WebPreviewTests(unittest.TestCase):
     def test_resolve_rejects_changed_base_identity(self):
         pr = review_pr()
         run = build_run(pr)
-        for replacement in (review_pr(base='other'), review_pr(base_sha='c' * 40)):
+        for replacement in (review_pr(base='other'), {**pr, 'base': None}):
             with (
                 self.subTest(base=replacement['base']),
                 patch.object(preview, 'api', side_effect=[run, replacement]),
@@ -651,7 +653,7 @@ class WebPreviewTests(unittest.TestCase):
             {},
             {**pr, 'base': None},
             {**pr, 'head': None},
-            {**pr, 'base': {'ref': 'main'}},
+            {**pr, 'base': {'sha': 'b' * 40}},
         ):
             with self.subTest(candidate=candidate):
                 self.assertFalse(preview.same_pull_request(candidate, pr))
@@ -667,6 +669,113 @@ class WebPreviewTests(unittest.TestCase):
         pr = review_pr()
         with patch.object(preview, 'api', return_value={'workflow_runs': []}):
             self.assertFalse(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
+
+    def test_reverted_web_changes_clear_the_existing_preview_comment(self):
+        pr = review_pr()
+        run = {**build_run(pr), 'run_attempt': 1, 'html_url': 'https://github.com/example/run'}
+        jobs = {
+            'jobs': [
+                {'name': 'Sites', 'conclusion': 'skipped'},
+                {'name': 'UI reviewer', 'conclusion': 'skipped'},
+            ]
+        }
+        old = {
+            'id': 5,
+            'user': {'login': 'github-actions[bot]'},
+            'body': preview.MARKER + '\n[Preview](https://cdn.example/old)',
+        }
+        with (
+            patch.object(preview, 'resolve', return_value=(run, pr)),
+            patch.object(
+                preview, 'api', side_effect=[jobs, [old], {'workflow_runs': [{'id': 123}]}, {}]
+            ) as api,
+        ):
+            preview.report('example/one', 123, '', 'skipped')
+            self.assertEqual(api.call_args.kwargs['method'], 'PATCH')
+            body = api.call_args.kwargs['body']['body']
+            self.assertIn('| Web previews | not selected |', body)
+            self.assertNotIn('https://cdn.example/old', body)
+            self.assertIn('Commit `aaaaaaa`', body)
+
+    def test_resolve_accepts_a_base_tip_advance_without_retargeting_the_pr(self):
+        original = review_pr()
+        live = review_pr(base_sha='c' * 40)
+        run = build_run(original)
+        with patch.object(preview, 'api', side_effect=[run, live]):
+            self.assertEqual(preview.resolve('example/one', 123), (run, live))
+
+    def test_newest_run_counts_the_same_pr_after_a_base_tip_advance(self):
+        pr = review_pr()
+        runs = {
+            'workflow_runs': [
+                {'id': 123},
+                {'id': 124, 'pull_requests': [review_pr(base_sha='c' * 40)]},
+            ]
+        }
+        with patch.object(preview, 'api', return_value=runs):
+            self.assertFalse(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
+
+    def test_other_bot_actors_and_pr_authors_cannot_publish(self):
+        pr = review_pr()
+        run = build_run(pr)
+        for account in (
+            {'login': 'renovate[bot]', 'type': 'Bot'},
+            {'login': 'other-app', 'type': 'Bot'},
+            {'login': 'other[bot]'},
+        ):
+            for field in ('actor', 'triggering_actor'):
+                with self.subTest(account=account, field=field):
+                    self.assertFalse(
+                        preview.publishable({**run, field: account}, pr, 'example/one')
+                    )
+            self.assertFalse(preview.publishable(run, {**pr, 'user': account}, 'example/one'))
+
+    def test_api_retries_transient_server_errors(self):
+        failure = subprocess.CompletedProcess(['gh'], 1, '', 'HTTP 502: Bad Gateway')
+        success = subprocess.CompletedProcess(['gh'], 0, '{"ok": true}', '')
+        for method in ('GET', 'PATCH'):
+            with (
+                self.subTest(method=method),
+                patch.object(preview.subprocess, 'run', side_effect=[failure, success]) as request,
+                patch.object(preview.time, 'sleep') as sleep,
+            ):
+                self.assertEqual(preview.api('repos/example/one', method=method), {'ok': True})
+                self.assertEqual(request.call_count, 2)
+                sleep.assert_called_once_with(1)
+
+    def test_api_does_not_retry_permanent_errors_or_comment_creation(self):
+        for method, status in (('GET', 404), ('GET', 403), ('POST', 503)):
+            failure = subprocess.CompletedProcess(['gh'], 1, '', f'HTTP {status}: error')
+            with (
+                self.subTest(method=method, status=status),
+                patch.object(preview.subprocess, 'run', return_value=failure) as request,
+                patch.object(preview.time, 'sleep') as sleep,
+            ):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    preview.api('repos/example/one', method=method)
+                self.assertEqual(request.call_count, 1)
+                sleep.assert_not_called()
+
+    def test_api_timeout_retries_are_bounded(self):
+        error = subprocess.TimeoutExpired(['gh'], 30)
+        with (
+            patch.object(preview.subprocess, 'run', side_effect=error) as request,
+            patch.object(preview.time, 'sleep') as sleep,
+        ):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                preview.api('repos/example/one')
+            self.assertEqual(request.call_count, 3)
+            self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+
+    def test_api_retries_a_transient_invalid_json_response(self):
+        bad = subprocess.CompletedProcess(['gh'], 0, '<html>upstream error</html>', '')
+        good = subprocess.CompletedProcess(['gh'], 0, '[1, 2]', '')
+        with (
+            patch.object(preview.subprocess, 'run', side_effect=[bad, good]),
+            patch.object(preview.time, 'sleep') as sleep,
+        ):
+            self.assertEqual(preview.api('repos/example/one'), [1, 2])
+            sleep.assert_called_once_with(1)
 
 
 if __name__ == '__main__':

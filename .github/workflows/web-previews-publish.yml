@@ -8,6 +8,7 @@ jobs:
   source:
     if: github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     permissions:
       contents: read
       actions: read
@@ -34,8 +35,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     concurrency:
-      group: web-preview-reviewer-publish-${{ needs.source.outputs.pr }}-${{ github.event.workflow_run.id }}
+      group: web-preview-reviewer-publish-${{ needs.source.outputs.pr }}
       cancel-in-progress: false
+      queue: max
     permissions:
       contents: read
       actions: read
@@ -44,7 +46,6 @@ jobs:
     outputs:
       url: ${{ steps.cdn.outputs.url }}
     env:
-      GH_TOKEN: ${{ github.token }}
       SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
     steps:
       # Only trusted publication code is checked out. The PR contributes static assets.
@@ -84,8 +85,12 @@ jobs:
             --path .preview/input | tee "$RUNNER_TEMP/preview-key-scan.txt"
           grep -qx 'check key: ran' "$RUNNER_TEMP/preview-key-scan.txt"
       - name: Validate the source and prepare a package without lifecycle scripts
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: python3 tooling/web-preview.py package-reviewer .preview/input .preview/package
       - name: Recheck current source immediately before publication
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: python3 tooling/web-preview.py check-publication
       - name: Publish reviewer to the existing CDN pipeline
         id: publish
@@ -106,6 +111,7 @@ jobs:
       - name: Verify CDN propagation and source identity before linking
         id: cdn
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.publish.outputs.version }}
         run: python3 tooling/web-preview.py verify-cdn "$VERSION" >> "$GITHUB_OUTPUT"
   report:
@@ -114,8 +120,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     concurrency:
-      group: web-previews-comment-${{ github.event.workflow_run.head_branch }}-${{ github.event.workflow_run.id }}
+      group: web-previews-comment-${{ github.event.workflow_run.head_branch }}
       cancel-in-progress: false
+      queue: max
     permissions:
       contents: read
       actions: read
@@ -132,5 +139,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
           REVIEWER_URL: ${{ needs.reviewer.outputs.url }}
-          PUBLICATION_RESULT: ${{ vars.WEB_PREVIEW_REVIEWER_ENABLED != 'true' && 'disabled pending CDN base verification' || needs.reviewer.result }}
+          PUBLICATION_RESULT: ${{ vars.WEB_PREVIEW_REVIEWER_ENABLED != 'true' && 'disabled pending CDN base verification' || needs.source.result != 'success' && 'source validation failed' || needs.source.outputs.publish != 'true' && 'not eligible for publication' || needs.reviewer.result == 'skipped' && 'not eligible for publication' || needs.reviewer.result }}
         run: python3 tooling/web-preview.py report

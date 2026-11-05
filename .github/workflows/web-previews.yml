@@ -87,12 +87,6 @@ jobs:
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: web-preview-sites
-          path: |
-            apps/sites/build/
-            apps/sites/content/docs/
-            apps/sites/src/data/fixtures/
-            apps/sites/package.json
-            apps/sites/pnpm-lock.yaml
-            apps/sites/pnpm-workspace.yaml
+          path: apps/sites/build/
           if-no-files-found: error
           retention-days: 7
