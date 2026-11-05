@@ -56,7 +56,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   another. unity-explorer keeps the older subject and promotes it if the newer one leaves. Both
   servers evict a wallet's older session once the newer one authenticates, so the older subject
   is always a session already gone, and promoting it would show its last pose and ask for a
-  resync the server never answers.
+  resync the server never answers. One gap is accepted: the .NET server keeps the older session
+  visible for up to 5 s after the eviction, so an observer that first sees both then can hear the
+  older join last. The avatar then follows the dead session and leaves with it, and the live one
+  shows again only once it re-enters that observer's view. dcl-one's server removes the older
+  session before the newer one is visible, so it never happens there.
 
 ## Deliberate choices that look like mistakes
 
