@@ -283,6 +283,13 @@ fn decentraland_app_arguments() -> Result<DecentralandArguments, UserError> {
         args.launch.base_domain = args.launch.base_domain.take().or(place.base_domain);
     }
 
+    if let Some(gateway) = &args.gateway {
+        common::base_domain::set_gateway(gateway).map_err(|e| {
+            error!("{e}");
+            UserError(USAGE_ERROR)
+        })?;
+    }
+
     webgpu_build::launch::latch(&args.launch).map_err(|e| {
         error!("{e}");
         UserError(USAGE_ERROR)
@@ -470,6 +477,93 @@ mod tests {
         let args = DecentralandArguments::try_parse_from(warm_up).unwrap();
         assert!(args.client.autopilot && args.csv.is_none());
         assert_eq!(args.log_file.as_deref(), Some(Path::new("out/build_0.log")));
+    }
+
+    #[test]
+    fn gateway_requires_a_native_flag() {
+        let link = DecentralandArguments::try_parse_from([
+            "explorer",
+            "decentraland://?position=1,2&gateway=https://other.test",
+        ])
+        .unwrap();
+        assert!(link.gateway.is_none());
+        let args = DecentralandArguments::try_parse_from([
+            "explorer",
+            "--gateway",
+            "https://gateway.example.test",
+            "--places",
+            "https://custom.test/base",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.gateway.as_deref(),
+            Some("https://gateway.example.test")
+        );
+        assert_eq!(
+            args.launch.services.places.as_deref(),
+            Some("https://custom.test/base")
+        );
+    }
+
+    #[test]
+    fn signing_follows_the_resolved_gateway_route_including_explicit_overrides() {
+        use common::base_domain::{self, Service};
+        let gateway = "https://gateway.example.test";
+        base_domain::set_gateway(gateway).unwrap();
+        base_domain::set_services([
+            (Service::Places, gateway),
+            (
+                Service::SocialApi,
+                "https://private:secret@custom.example/override",
+            ),
+            (
+                Service::PreviewGatekeeper,
+                "https://gateway.example.test/comms-gatekeeper-local/custom",
+            ),
+        ])
+        .unwrap();
+        let bases: std::collections::HashMap<_, _> =
+            base_domain::hud_services().into_iter().collect();
+        assert_eq!(bases["socialApi"], "https://custom.example/override");
+        assert_eq!(bases["events"], format!("{gateway}/events"));
+        assert_eq!(
+            bases["cameraReel"],
+            format!("{gateway}/camera-reel-service")
+        );
+        assert_eq!(bases["reels"], "https://decentraland.org/reels");
+        let notices = format!(
+            "{}/notifications/read?private=value",
+            bases["notifications"]
+        );
+        assert_eq!(
+            base_domain::gateway_signed_path(&notices)
+                .unwrap()
+                .as_deref(),
+            Some("/notifications/read")
+        );
+        assert!(!serde_json::to_string(&bases).unwrap().contains("secret"));
+        let adapter = base_domain::url(Service::CommsGatekeeper, "/get-scene-adapter");
+        assert_eq!(
+            base_domain::gateway_signed_path(&adapter)
+                .unwrap()
+                .as_deref(),
+            Some("/get-scene-adapter")
+        );
+        let preview = base_domain::url(Service::PreviewGatekeeper, "/adapter");
+        assert_eq!(
+            base_domain::gateway_signed_path(&preview)
+                .unwrap()
+                .as_deref(),
+            Some("/custom/adapter")
+        );
+        assert_eq!(
+            base_domain::gateway_signed_path(&bases["socialApi"]).unwrap(),
+            None
+        );
+        assert_eq!(
+            base_domain::url(Service::Places, "/tiles"),
+            format!("{gateway}/tiles")
+        );
     }
 
     fn log_file_in_a_missing_folder() -> std::path::PathBuf {

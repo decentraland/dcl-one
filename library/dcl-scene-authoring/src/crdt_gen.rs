@@ -3,7 +3,7 @@
 //! the node + `@dcl/inspector` toolchain's, which stays as the fallback.
 //!
 //! Core components (`core::Foo`) are protobuf, encoded here against the
-//! vendored @dcl/protocol descriptors (see build.rs); everything else is
+//! @dcl/protocol descriptors in library/protocol (see build.rs); everything else is
 //! encoded by [`crate::schema_crdt`] against the `jsonSchema` the composite
 //! carries.
 //!
@@ -45,7 +45,7 @@ pub(crate) struct FieldDef {
     pub oneof: Option<&'static str>,
 }
 
-/// The proto3 scalar kinds the vendored descriptors use; build.rs rejects the
+/// The proto3 scalar kinds the protocol descriptors use; build.rs rejects the
 /// sint/fixed/sfixed ones.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum FieldKind {
@@ -221,7 +221,7 @@ fn register_schema(
     }
     if name.starts_with("core::") {
         return Err(GenError::Unsupported(format!(
-            "core component '{name}' is missing from the vendored @dcl/protocol descriptors"
+            "core component '{name}' is missing from the @dcl/protocol descriptors (library/protocol)"
         )));
     }
     let json_schema = ordered
@@ -748,7 +748,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unknown_core_component_points_at_the_vendored_descriptors() {
+    fn an_unknown_core_component_points_at_the_protocol_descriptors() {
         expect_unsupported(
             generate_from(json!({
                 "version": 1,

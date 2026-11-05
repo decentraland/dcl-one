@@ -158,10 +158,11 @@ npm test --prefix react-web           # HUD, deterministic (vitest, no engine)
 npm run test:e2e --prefix react-web   # HUD against a real engine (playwright, needs a GPU)
 ```
 
-CI's Test Suite builds the engine tests with the `ci-test` profile. The scene tests spawn the `dcl_deno_ipc` sidecar from the same profile directory, so build it first:
+CI's Test Suite builds the engine tests with the `ci-test` profile. The `dcl_deno_ipc` integration
+test makes Cargo build the runnable sidecar in the same profile directory, where the scene tests
+look for it.
 
 ```bash
-cargo build --package dcl_deno_ipc --profile ci-test --locked
 cargo test --all --profile ci-test --locked -- --test-threads=1
 ```
 
