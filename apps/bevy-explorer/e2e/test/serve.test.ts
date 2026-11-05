@@ -3,7 +3,13 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
-import { COMMON_HEADERS, headersFor, resolveFile, serveWebApp, type StaticServer } from '../driver/serve.ts'
+import { BRIDGE_ABOUT_PATH, COMMON_HEADERS, bridgeAbout, headersFor, resolveFile, serveWebApp, type StaticServer } from '../driver/serve.ts'
+
+const BRIDGE_HASH = 'bafkreiexample'
+const BRIDGE_ABOUT = {
+  comms: { fixedAdapter: 'offline:offline' },
+  configurations: { realmName: 'BevyExplorerUI', scenesUrn: [`urn:decentraland:entity:${BRIDGE_HASH}?=&baseUrl=/bridge-scene/static/`] }
+}
 
 describe('serveWebApp', () => {
   let dir: string
@@ -15,6 +21,8 @@ describe('serveWebApp', () => {
     await writeFile(path.join(dir, 'index.html'), '<!doctype html><title>shell</title>')
     await writeFile(path.join(dir, 'app.html'), '<!doctype html><title>app</title>')
     await writeFile(path.join(dir, 'engine', 'engine.js'), 'export {}')
+    await mkdir(path.join(dir, 'bridge-scene', 'static', 'BevyExplorerUI'), { recursive: true })
+    await writeFile(path.join(dir, ...BRIDGE_ABOUT_PATH.split('/').filter(Boolean)), JSON.stringify(BRIDGE_ABOUT))
     server = await serveWebApp(dir, 0)
   })
 
@@ -59,11 +67,37 @@ describe('serveWebApp', () => {
     assert.equal((await fetch(`${server.url}..%2Fx`)).status, 400)
   })
 
+  test("the bridge scene's realm names this origin's absolute content url, as Sites serves it", async () => {
+    const response = await fetch(server.url + BRIDGE_ABOUT_PATH.slice(1))
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('content-type'), 'application/json; charset=utf-8')
+    assert.equal(response.headers.get('cross-origin-embedder-policy'), 'credentialless')
+    const about = (await response.json()) as typeof BRIDGE_ABOUT
+    assert.deepEqual(about.comms, BRIDGE_ABOUT.comms)
+    assert.deepEqual(about.configurations, {
+      realmName: 'BevyExplorerUI',
+      scenesUrn: [`urn:decentraland:entity:${BRIDGE_HASH}?=&baseUrl=${server.url}bridge-scene/static/`]
+    })
+    const head = await fetch(server.url + BRIDGE_ABOUT_PATH.slice(1), { method: 'HEAD' })
+    assert.equal(head.headers.get('content-length'), String(Buffer.byteLength(JSON.stringify(about))))
+    assert.equal(await head.text(), '')
+  })
+
   test('HEAD carries the length and no body', async () => {
     const response = await fetch(`${server.url}app.html`, { method: 'HEAD' })
     assert.equal(response.status, 200)
     assert.equal(response.headers.get('content-length'), String(Buffer.byteLength('<!doctype html><title>app</title>')))
     assert.equal(await response.text(), '')
+  })
+})
+
+describe('bridgeAbout', () => {
+  test('leaves a document alone whose content url is absolute already, or that is not the bridge', () => {
+    const absolute = JSON.stringify({ configurations: { scenesUrn: [`urn:decentraland:entity:${BRIDGE_HASH}?=&baseUrl=https://cdn.example/bridge-scene/static/`] } })
+    assert.equal(bridgeAbout(absolute, 'http://127.0.0.1:1'), absolute)
+    const other = JSON.stringify({ configurations: { scenesUrn: ['urn:decentraland:entity:bafa?=&baseUrl=/x/', 'urn:decentraland:entity:bafb?=&baseUrl=/y/'] } })
+    assert.equal(bridgeAbout(other, 'http://127.0.0.1:1'), other)
+    assert.equal(bridgeAbout('{}', 'http://127.0.0.1:1'), '{}')
   })
 })
 

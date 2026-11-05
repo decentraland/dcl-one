@@ -36,7 +36,9 @@ npm run gpu-probe -- --adapter nvidia  # and once more on that adapter when the 
 ```
 
 The suite serves the web app on loopback (`driver/serve.ts`, with the isolation headers the app's
-own dev server sets per path: the shell plain, the app frame isolated on its own), starts Chrome
+own dev server sets per path: the shell plain, the app frame isolated on its own; and the bundled
+bridge scene's realm document with this origin's absolute content url, as Sites serves it, since
+the build's root-relative one is no url to the engine and the bridge scene would never load), starts Chrome
 through the web driver (`rendering/bevy-explorer/source/local-harness/web-driver`), opens
 `/?baseDomain=<domain>` (no realm or position on the url: a destination there makes the HUD launch
 the engine only once a sign-in is submitted on its start page, and the console the sign-in needs
