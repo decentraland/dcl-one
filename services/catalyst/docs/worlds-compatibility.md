@@ -130,6 +130,9 @@ difference not listed here is a gap, not a decision.
   imported entity cannot block redeploys.
 - **Validation errors** report the first failure only, and scene schema
   errors name the failing path.
+- **Scene pointers** are capped at 90,601 (every in-bounds parcel once); a
+  longer list fails with `must NOT have more than 90601 items`, which
+  upstream does not have.
 - **Grantee publishes** resolve the world's NAME holder live. If the names
   authority cannot answer, the publish is refused with 503.
 - **Per-source upload limits** key on the gateway's `X-Real-IP` (IPv6 by

@@ -1419,10 +1419,13 @@ async fn an_access_change_evicts_only_who_lost_access_and_never_the_protected() 
             undetermined_failures: usize::MAX.into(),
         });
         let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
-        let complete =
-            scene::readmit_world_rooms(&state, &WorldName::parse("mixed.dcl.eth").unwrap())
-                .await
-                .unwrap();
+        let complete = scene::readmit_world_rooms(
+            &state,
+            &WorldName::parse("mixed.dcl.eth").unwrap(),
+            i64::MAX,
+        )
+        .await
+        .unwrap();
         assert_eq!(
             complete,
             admission == AccessType::Unrestricted,
@@ -1521,9 +1524,13 @@ async fn a_failed_scene_lookup_keeps_that_room_and_the_pass_goes_on() {
     });
     let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
     assert!(
-        !scene::readmit_world_rooms(&state, &WorldName::parse("mixed.dcl.eth").unwrap())
-            .await
-            .unwrap(),
+        !scene::readmit_world_rooms(
+            &state,
+            &WorldName::parse("mixed.dcl.eth").unwrap(),
+            i64::MAX,
+        )
+        .await
+        .unwrap(),
         "an undecided room leaves the pass incomplete"
     );
     let removed: Vec<(String, String)> = requests
@@ -1610,5 +1617,75 @@ async fn an_undetermined_access_decision_is_retried_until_it_evicts() {
     assert!(removed().is_empty(), "two undetermined passes evict nobody");
     assert!(scene::readmit_until_settled(&state, &world, &delay).await);
     assert_eq!(removed(), vec![flaky.as_str().to_string()]);
+    server.abort();
+}
+
+#[tokio::test]
+async fn a_readmission_pass_spares_later_joiners_and_counts_a_failed_roster_as_incomplete() {
+    use crate::access::{AccessType, WorldAdmission};
+    use axum::response::IntoResponse;
+    let wallet = |n: u8| Address::parse(&format!("0x{n:040x}")).unwrap();
+    let (stale, rejoined) = (wallet(3), wallet(5));
+    let requests = Arc::new(std::sync::Mutex::new(
+        Vec::<(String, serde_json::Value)>::new(),
+    ));
+    let capture = requests.clone();
+    let roster = serde_json::json!({"participants": [
+        {"identity": stale.as_str(), "sid": "PA_a", "metadata": "{}", "joinedAt": "100"},
+        {"identity": rejoined.as_str(), "sid": "PA_b", "metadata": "{}", "joinedAt": "201"},
+    ]});
+    let fixture = axum::Router::new().route(
+        "/twirp/livekit.RoomService/{method}",
+        axum::routing::post(
+            move |Path(method): Path<String>, Json(body): Json<serde_json::Value>| {
+                let (capture, roster) = (capture.clone(), roster.clone());
+                async move {
+                    capture.lock().unwrap().push((method.clone(), body.clone()));
+                    match method.as_str() {
+                        "ListRooms" => Json(serde_json::json!({"rooms": [
+                            {"name": "w1:d:mixed.dcl.ethSceneA", "sid": "RM_a", "metadata": "{}"},
+                            {"name": "w1:d:mixed.dcl.ethSceneB", "sid": "RM_b", "metadata": "{}"}
+                        ]}))
+                        .into_response(),
+                        "ListParticipants" if body["room"] == "w1:d:mixed.dcl.ethSceneB" => {
+                            axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
+                        }
+                        "ListParticipants" => Json(roster).into_response(),
+                        _ => Json(serde_json::json!({})).into_response(),
+                    }
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut state = canonical_state();
+    state.livekit.configured = true;
+    state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    state.policy = Arc::new(PerWalletPolicy {
+        inner: StubPolicy {
+            admission: Some(WorldAdmission::Open(AccessType::SharedSecret)),
+            protected: Ok(Default::default()),
+            ..Default::default()
+        },
+        denied: rejoined.clone(),
+        undetermined: stale.clone(),
+        undetermined_failures: 0.into(),
+    });
+    let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+
+    let complete =
+        scene::readmit_world_rooms(&state, &WorldName::parse("mixed.dcl.eth").unwrap(), 200)
+            .await
+            .unwrap();
+
+    assert!(!complete, "a failed roster leaves the pass incomplete");
+    let removed: Vec<String> = requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(method, _)| method == "RemoveParticipant")
+        .map(|(_, body)| body["identity"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(removed, vec![stale.as_str().to_string()]);
     server.abort();
 }
