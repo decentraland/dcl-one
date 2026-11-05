@@ -75,7 +75,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 - Prefer the smallest readable implementation: no forwarding layers, internal HTTP hops or per-service pools; direct SQL and a passed transaction for atomic writes.
 - A new crate needs an independent consumer or a concrete build requirement.
 - Preserve external API paths and room names when code moves.
-- Shop absorbs every Marketplace feature. New and migrated Shop code does not go into the UI proof of concept (`apps/ui3`) except as `docs/web-app-standards.md` allows, and follows that document and `docs/ui-standards.md`.
+- Shop absorbs every Marketplace feature. New and migrated Shop code follows `docs/web-app-standards.md` and `docs/ui-standards.md`.
 - Credits are the main payment option; logged-in web3 wallets also see MANA.
 - LAND and every secondary sale are MANA-only, with guidance for web2 users.
 - Enforce eligibility in backend and settlement, including legacy routes; hiding a button is insufficient.

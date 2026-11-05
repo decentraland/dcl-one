@@ -1,6 +1,6 @@
 # Frontend testing standards
 
-Normative standards for tests of UI code in every current and future app under `apps/` and in `rendering/bevy-explorer/source/react-web`, the same [scope as the web app architecture standards](web-app-standards.md#scope-and-relation-to-the-contributor-guides). The apps named here are evidence of current practice, not an allowlist, and the UI proof of concept (`apps/ui3`) is not a destination for product code. The Explorer HUD is in scope; the mapping of its existing harness has no decision yet. Each section records a decision that has been made; areas without a decision say so instead of guessing. These standards replace the UI parts of the contributor guides' testing standards (`testing-uis`, and the Jest and `redux-saga-test-plan` rules in `writing-tests`). Architecture rules are in [Web app architecture standards](web-app-standards.md). The Explorer's console end-to-end suite is covered by `apps/bevy-explorer/e2e/README.md`.
+Normative standards for tests of UI code in every current and future app under `apps/` and in `rendering/bevy-explorer/source/react-web`, the same [scope as the web app architecture standards](web-app-standards.md#scope-and-relation-to-the-contributor-guides). The apps named here are evidence of current practice, not an allowlist. The Explorer HUD is in scope; the mapping of its existing harness has no decision yet. Each section records a decision that has been made; areas without a decision say so instead of guessing. These standards replace the UI parts of the contributor guides' testing standards (`testing-uis`, and the Jest and `redux-saga-test-plan` rules in `writing-tests`). Architecture rules are in [Web app architecture standards](web-app-standards.md). The Explorer's console end-to-end suite is covered by `apps/bevy-explorer/e2e/README.md`.
 
 ## Contents
 
@@ -17,8 +17,8 @@ Normative standards for tests of UI code in every current and future app under `
 ## Tooling
 
 - **Decision:** tests run on Vitest, and components are tested with Testing Library in jsdom. Do not add Jest, Enzyme or `redux-saga-test-plan`.
-- The UI proof of concept (`apps/ui3`) and `react-web` (`rendering/bevy-explorer/source/react-web/vitest.config.ts`) set jsdom for the whole app. `apps/sites` runs Vitest in node by default and opts into jsdom per test file with the `@vitest-environment jsdom` comment.
-- The UI proof of concept configures the runner in `apps/ui3/vitest.config.ts`, with the shared setup in `apps/ui3/src/test/setup.ts`. `apps/sites` merges its own config over the Vite config (`apps/sites/vitest.config.ts`). End-to-end route tests for Sites run through `apps/sites/vitest.e2e.config.ts` (`pnpm test:e2e`).
+- `apps/ui3/vitest.config.ts` and `rendering/bevy-explorer/source/react-web/vitest.config.ts` set jsdom for the whole app they configure. `apps/sites` runs Vitest in node by default and opts into jsdom per test file with the `@vitest-environment jsdom` comment.
+- The runner is configured in `apps/ui3/vitest.config.ts`, with the shared setup in `apps/ui3/src/test/setup.ts`. `apps/sites` merges its own config over the Vite config (`apps/sites/vitest.config.ts`). End-to-end route tests for Sites run through `apps/sites/vitest.e2e.config.ts` (`pnpm test:e2e`).
 - Mock with `vi.fn`, `vi.spyOn` and `vi.stubGlobal`, and restore in `afterEach`.
 
 ## Layout and naming
