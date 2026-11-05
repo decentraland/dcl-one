@@ -78,6 +78,8 @@ jobs:
           fi
           git -C "$RUNNER_TEMP/figma-base" lfs pull
           pnpm figma guard --base "$RUNNER_TEMP/figma-base/library/ui" --run-kind developer
+      # Fails on any mapping error or Figma drift between *.figma.ts and the saved capture.
+      - run: pnpm figma check-mappings
       - run: pnpm figma promotion-verify
       - run: pnpm figma review-manifest
       - run: git diff --exit-code -- figma/review/src/review/catalog.json figma/review/public/dcl-ui-review/icons

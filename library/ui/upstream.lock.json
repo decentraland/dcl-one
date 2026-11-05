@@ -14,6 +14,7 @@
         "dcl-mcp-figma/figma.config.json": "figma/figma.config.json",
         "dcl-ui-review/src, public, scripts, test, dcl-ui-review/index.html, review.vite.config.ts": "figma/review/",
         "component-library/agent-kit": "figma/agent-kit",
+        "component-library/src/components (FigmaView runtime)": "components/runtime (written by promote-reviewed)",
         "dcl-mcp-figma/scripts/freeze-test-snapshot.mjs": "figma/scripts/freeze-test-snapshot.mjs",
         ".github/workflows/ci.yml": ".github/workflows/ui-library.yml"
       },
@@ -38,6 +39,18 @@
         "The sealed Review promotion manifest (figma/review/src/review/promotion.json) is schema 2 and key-free; the stale-seal check of 6f1e800 compares the schema and the sealed entries, never a file key.",
         "The 58 orphaned Review assets ledgered when the Review was regenerated from the 9c6dfbe6 snapshot are drained with upstream's developer cleanup (sync --developer --apply-retirements): no consumer and no generated owner remains, the ledger is empty, and the Review promotion manifest is resealed over the remaining files. Nothing under components/ changes."
       ]
+    },
+    {
+      "package": "@fontsource-variable/inter",
+      "version": "5.3.0",
+      "license": {
+        "spdx": "OFL-1.1",
+        "path": "foundations/typography/fonts/OFL.txt"
+      },
+      "imported": {
+        "files/inter-*-wght-normal.woff2": "foundations/typography/fonts/",
+        "wght.css (family renamed to 'Inter', paths to ./fonts)": "foundations/typography/inter.css"
+      }
     }
   ]
 }

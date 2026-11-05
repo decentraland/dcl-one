@@ -5,13 +5,17 @@
   "description": "Shared UI foundations and components for dcl-one, with the Node-only Figma tooling in figma/.",
   "type": "module",
   "packageManager": "pnpm@10.19.0",
+  "exports": {
+    ".": "./index.ts",
+    "./foundations.css": "./foundations/foundations.css"
+  },
   "bin": {
     "dcl-figma": "./figma/src/cli.ts",
     "figma-agent-kit": "./figma/agent-kit/cli.mjs",
     "figma-key-guard": "./figma/key-guard.mjs"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json && tsc -p figma/tsconfig.json && tsc -p figma/review/tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json && tsc -p figma/tsconfig.json && tsc -p figma/review/tsconfig.json && pnpm typecheck:apps-ts",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
@@ -24,7 +28,8 @@
     "review": "vite --config figma/review/review.vite.config.ts --host 0.0.0.0 --port 6019 --strictPort",
     "review:build": "vite build --config figma/review/review.vite.config.ts",
     "review:capture": "node figma/review/scripts/capture-review.mjs",
-    "review:check": "node figma/review/scripts/check-review.mjs"
+    "review:check": "node figma/review/scripts/check-review.mjs",
+    "typecheck:apps-ts": "node node_modules/typescript-7/bin/tsc -p tsconfig.runtime.json"
   },
   "engines": {
     "node": ">=24"

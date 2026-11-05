@@ -11,9 +11,11 @@
     "isolatedModules": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "types": ["node", "@figma/code-connect/figma-types"]
+    "types": ["node", "@figma/code-connect/figma-types"],
+    "paths": { "@dcl/one-ui": ["./index.ts"] }
   },
   "include": [
+    "index.ts",
     "css-modules.d.ts",
     "components",
     "foundations",

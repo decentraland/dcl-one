@@ -5,8 +5,22 @@ The standards they follow are in [`docs/ui-standards.md`](../../docs/ui-standard
 
 | Path                   | What it is                                                                                                                                                                                                                                                         |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `foundations/`         | Design tokens per family (`colors`, `spacing`, `layout`, `typography`), `theme.ts`, icons and the Inter variable font. `foundations.css` loads every family.                                                                                                       |
+| `components/`          | Reviewed Figma previews promoted into `components/<Name>/`, with the FigmaView runtime in `components/runtime/`.                                                                                                                                                   |
+| `index.ts`             | Public exports.                                                                                                                                                                                                                                                    |
 | `figma/`               | Node-only: CLI and MCP server (`dcl-figma`), saved capture (`figma-snapshot/`), Review gallery (`review/`), consumer skill kit (`agent-kit/`), `key-guard.mjs`. Never imported by browser code. Maintenance notes: [`figma/MAINTENANCE.md`](figma/MAINTENANCE.md). |
 | `templates/component/` | Starting point for a new shared component.                                                                                                                                                                                                                         |
+
+## Use it from an app
+
+Import the public entry and load the foundations once from the app's global stylesheet entry:
+
+```tsx
+import '@dcl/one-ui/foundations.css'
+import { NavBar } from '@dcl/one-ui'
+```
+
+The consumer resolves `@dcl/one-ui` to `library/ui/index.ts` in TypeScript and its bundler, allows access to the library sources and deduplicates React and React DOM (peer dependencies).
 
 ## Work on it
 
