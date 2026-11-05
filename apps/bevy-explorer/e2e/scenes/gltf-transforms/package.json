@@ -4,6 +4,6 @@
   "private": true,
   "description": "Visual-regression scene: gltf-transforms",
   "scripts": {
-    "build": "dcl-scene-cli build --skip-install"
+    "build": "dcl-scene-cli build --built-in"
   }
 }
