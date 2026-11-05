@@ -6,7 +6,8 @@ use bevy::{
 use common::{debug_panic, util::AsH160};
 use livestream_manager::{
     ActiveAudioTransmitter, ActiveTransmitter, ActiveVideoCast, AudioTransmitterKind,
-    AudioTransmitterVolume, TransmissionUpdated, TransmitterKind,
+    AudioTransmitterVolume, PinnedBy, PinnedImage, PublishedVideoTrack, TransmissionUpdated,
+    TransmitterKind, VideoTrackLive, VideoTrackResized,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use {
@@ -75,10 +76,18 @@ impl Plugin for LivekitTrackPlugin {
         app.add_observer(audio_track_unpublished);
         app.add_observer(video_track_is_now_subscribed);
         #[cfg(target_arch = "wasm32")]
-        app.add_observer(video_track_is_now_unsubscribed);
+        {
+            app.add_observer(video_track_is_now_unsubscribed);
+            app.add_observer(video_target_gained_active);
+            app.add_observer(video_target_lost_active);
+            app.add_observer(video_target_gained_pinned);
+        }
 
+        // a track stays subscribed while the active transmitter or a pinned player wants it
         app.add_observer(active_transmitter_added);
         app.add_observer(active_transmitter_removed);
+        app.add_observer(pinned_by_added);
+        app.add_observer(pinned_by_removed);
 
         #[cfg(not(target_arch = "wasm32"))]
         app.add_systems(Update, copy_frame);
@@ -103,6 +112,7 @@ fn track_published(
     trigger: Trigger<TrackPublished>,
     mut commands: Commands,
     participants: Query<(Entity, &LivekitParticipant, &HostedBy, Has<ActiveSpeaker>)>,
+    scene_rooms: Query<&crate::SceneRoom>,
     transport_senders: crate::global_crdt::TransportSenders,
     mut player_update_tasks: PlayerUpdateTasksMut,
     livekit_runtime: LivekitRuntimeRes,
@@ -141,7 +151,18 @@ fn track_published(
             entity_cmd.try_insert(Audio);
         }
         TrackKind::Video => {
-            entity_cmd.try_insert(Video);
+            // what a scene's `getActiveVideoStreams` lists, and what a pinned player names
+            entity_cmd.try_insert((
+                Video,
+                PublishedVideoTrack {
+                    room: scene_rooms
+                        .get(room_entity)
+                        .map(|room| room.0.clone())
+                        .unwrap_or_default(),
+                    identity: identity_str.to_owned(),
+                    sid: track.sid().to_string(),
+                },
+            ));
         }
     }
     match track.source() {
@@ -583,33 +604,64 @@ fn video_track_is_now_subscribed(
         .try_insert((LivekitTrackTask(handle), VideoFrameReceiver { receiver }));
 }
 
+/// A track whose subscription is on or on its way.
+type Wanted = Or<(With<Subscribed>, With<Subscribing>)>;
+
+/// The image a video track's frames go into: the manager's while the track is the active
+/// transmitter, else its pinned players' own. `None` while nobody shows it.
+fn video_target(
+    active: Option<&ActiveTransmitter>,
+    pinned: Option<&PinnedImage>,
+) -> Option<Handle<Image>> {
+    active
+        .map(|image| (**image).clone())
+        .or_else(|| pinned.map(|image| (**image).clone()))
+}
+
 #[cfg(target_arch = "wasm32")]
 #[expect(clippy::type_complexity)]
 fn video_track_is_now_subscribed(
     trigger: Trigger<OnAdd, Subscribed>,
     mut commands: Commands,
-    tracks: Query<(&LivekitTrack, Has<Video>, Option<&ActiveTransmitter>), With<Subscribed>>,
+    tracks: Query<
+        (
+            &LivekitTrack,
+            Has<Video>,
+            Option<&ActiveTransmitter>,
+            Option<&PinnedImage>,
+        ),
+        With<Subscribed>,
+    >,
 ) {
     let entity = trigger.target();
-    let Ok((track, is_video, maybe_active_transmitter)) = tracks.get(entity) else {
+    let Ok((track, is_video, active, pinned)) = tracks.get(entity) else {
         debug_panic!("Subscribed track did not have LivekitTrack.");
     };
     if !is_video {
         trace!("Subscribed track was not a video track.");
         return;
     }
-    let Some(active_transmitter) = maybe_active_transmitter else {
-        debug!("Video subscribbed to without being active transmitter.");
+    let Some(image) = video_target(active, pinned) else {
+        debug!("Video subscribed to without a target image.");
         return;
     };
+    adopt_video(&mut commands, entity, track, image);
+}
 
+/// Attaches the track's page video element to the media host, writing frames into `image`.
+#[cfg(target_arch = "wasm32")]
+fn adopt_video(
+    commands: &mut Commands,
+    entity: Entity,
+    track: &LivekitTrack,
+    image: Handle<Image>,
+) {
     let Some(RemoteTrack::Video(video)) = track.track() else {
         debug_panic!("A subscribed video track did not have a video RemoteTrack.");
     };
 
     let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let (video_sender, video_receiver) = tokio::sync::mpsc::channel(10);
-    let image = (*active_transmitter).clone();
     // the page attaches the track's video element to the media host under this id
     let media_id = media::adopt_video(command_receiver, video_sender, &image);
     video.attach(media_id);
@@ -626,16 +678,108 @@ fn video_track_is_now_unsubscribed(
     mut commands: Commands,
 ) {
     let entity = trigger.target();
-    commands.entity(entity).try_remove::<HtmlMediaEntity>();
+    commands
+        .entity(entity)
+        .try_remove::<(HtmlMediaEntity, VideoTrackLive)>();
+}
+
+/// The target image of a subscribed track changed: the element is adopted again into the new
+/// one, or released when there is none.
+#[cfg(target_arch = "wasm32")]
+#[expect(clippy::type_complexity)]
+fn retarget_video(
+    commands: &mut Commands,
+    entity: Entity,
+    tracks: &Query<
+        (
+            &LivekitTrack,
+            Option<&ActiveTransmitter>,
+            Option<&PinnedImage>,
+        ),
+        (With<Video>, With<Subscribed>),
+    >,
+    ignore_active: bool,
+) {
+    let Ok((track, active, pinned)) = tracks.get(entity) else {
+        return;
+    };
+    let active = if ignore_active { None } else { active };
+    commands
+        .entity(entity)
+        .try_remove::<(HtmlMediaEntity, VideoTrackLive)>();
+    if let Some(image) = video_target(active, pinned) {
+        adopt_video(commands, entity, track, image);
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
+#[expect(clippy::type_complexity)]
+fn video_target_gained_active(
+    trigger: Trigger<OnAdd, ActiveTransmitter>,
+    mut commands: Commands,
+    tracks: Query<
+        (
+            &LivekitTrack,
+            Option<&ActiveTransmitter>,
+            Option<&PinnedImage>,
+        ),
+        (With<Video>, With<Subscribed>),
+    >,
+) {
+    retarget_video(&mut commands, trigger.target(), &tracks, false);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[expect(clippy::type_complexity)]
+fn video_target_lost_active(
+    trigger: Trigger<OnRemove, ActiveTransmitter>,
+    mut commands: Commands,
+    tracks: Query<
+        (
+            &LivekitTrack,
+            Option<&ActiveTransmitter>,
+            Option<&PinnedImage>,
+        ),
+        (With<Video>, With<Subscribed>),
+    >,
+) {
+    retarget_video(&mut commands, trigger.target(), &tracks, true);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[expect(clippy::type_complexity)]
+fn video_target_gained_pinned(
+    trigger: Trigger<OnAdd, PinnedImage>,
+    mut commands: Commands,
+    tracks: Query<
+        (
+            &LivekitTrack,
+            Option<&ActiveTransmitter>,
+            Option<&PinnedImage>,
+        ),
+        (With<Video>, With<Subscribed>),
+    >,
+) {
+    retarget_video(&mut commands, trigger.target(), &tracks, false);
+}
+
+#[cfg(target_arch = "wasm32")]
+#[expect(clippy::type_complexity)]
 fn queue_frame_copy(
-    mut video_tracks: Query<&mut HtmlMediaEntity, (With<Video>, With<Subscribed>)>,
+    mut commands: Commands,
+    mut video_tracks: Query<
+        (
+            Entity,
+            &mut HtmlMediaEntity,
+            Has<ActiveTransmitter>,
+            Has<VideoTrackLive>,
+        ),
+        (With<Video>, With<Subscribed>),
+    >,
     mut images: ResMut<Assets<Image>>,
     mut transmission_updated: EventWriter<TransmissionUpdated>,
 ) {
-    for mut html_media_entity in video_tracks.iter_mut() {
+    for (entity, mut html_media_entity, is_active, live) in video_tracks.iter_mut() {
         while let Ok(data) = html_media_entity.video.try_recv() {
             // the render world copies the frames into the image itself; only its size is
             // followed here
@@ -645,72 +789,130 @@ fn queue_frame_copy(
             let Some(image) = images.get_mut(html_media_entity.image.id()) else {
                 continue;
             };
-            debug!("Resizing active transmitter image.");
+            debug!("Resizing a video track's image.");
             image.data = None;
             image.texture_descriptor.size = Extent3d {
                 width: info.width,
                 height: info.height,
                 depth_or_array_layers: 1,
             };
-            transmission_updated.write(TransmissionUpdated);
+            if is_active {
+                transmission_updated.write(TransmissionUpdated);
+            }
+            commands.entity(entity).trigger(VideoTrackResized);
+            if !live {
+                commands.entity(entity).try_insert(VideoTrackLive);
+            }
         }
     }
 }
 
-fn active_transmitter_added(trigger: Trigger<OnAdd, ActiveTransmitter>, mut commands: Commands) {
+fn active_transmitter_added(
+    trigger: Trigger<OnAdd, ActiveTransmitter>,
+    mut commands: Commands,
+    subscribed: Query<(), Wanted>,
+) {
     let entity = trigger.target();
-    commands.entity(entity).trigger(SubscribeToTrack);
+    if !subscribed.contains(entity) {
+        commands.entity(entity).trigger(SubscribeToTrack);
+    }
 }
 
 fn active_transmitter_removed(
     trigger: Trigger<OnRemove, ActiveTransmitter>,
     mut commands: Commands,
+    pinned: Query<(), With<PinnedBy>>,
 ) {
     let entity = trigger.target();
+    if pinned.contains(entity) {
+        return;
+    }
     commands.entity(entity).queue_handled(
         entity_command::trigger(UnsubscribeToTrack),
         bevy::ecs::error::debug,
     );
 }
 
+fn pinned_by_added(
+    trigger: Trigger<OnAdd, PinnedBy>,
+    mut commands: Commands,
+    subscribed: Query<(), Wanted>,
+    tracks: Query<(), With<LivekitTrack>>,
+) {
+    let entity = trigger.target();
+    if tracks.contains(entity) && !subscribed.contains(entity) {
+        commands.entity(entity).trigger(SubscribeToTrack);
+    }
+}
+
+fn pinned_by_removed(
+    trigger: Trigger<OnRemove, PinnedBy>,
+    mut commands: Commands,
+    active: Query<(), With<ActiveTransmitter>>,
+    tracks: Query<(), With<LivekitTrack>>,
+) {
+    let entity = trigger.target();
+    if !tracks.contains(entity) || active.contains(entity) {
+        return;
+    }
+    commands.entity(entity).queue_handled(
+        entity_command::trigger(UnsubscribeToTrack),
+        bevy::ecs::error::debug,
+    );
+}
+
+/// Copies each video track's latest frame into its target image: the manager's for the
+/// active transmitter, a pinned image otherwise; frames of a track nobody shows are dropped.
 #[cfg(not(target_arch = "wasm32"))]
+#[expect(clippy::type_complexity)]
 fn copy_frame(
     mut commands: Commands,
-    active_transmitter: Single<(Entity, &ActiveTransmitter, &mut VideoFrameReceiver)>,
+    mut receivers: Query<(
+        Entity,
+        Option<&ActiveTransmitter>,
+        Option<&PinnedImage>,
+        &mut VideoFrameReceiver,
+        Has<VideoTrackLive>,
+    )>,
     mut images: ResMut<Assets<Image>>,
     mut transmission_updated: EventWriter<TransmissionUpdated>,
 ) {
-    let (entity, active_transmitter, mut video_frame_receiver): (
-        Entity,
-        &ActiveTransmitter,
-        Mut<VideoFrameReceiver>,
-    ) = active_transmitter.into_inner();
-
-    let Some(image) = images.get_mut(active_transmitter.id()) else {
-        debug_panic!("ActiveTransmitter image handle is invalid");
-    };
-
-    let mut frame = None;
-    loop {
-        match video_frame_receiver.try_recv() {
-            Ok(new_frame) => frame = Some(new_frame),
-            Err(mpsc::error::TryRecvError::Empty) => break,
-            Err(mpsc::error::TryRecvError::Disconnected) => {
-                error!("VideoFrameReceiver has disconnected.");
-                commands.entity(entity).try_remove::<VideoFrameReceiver>();
-                break;
+    for (entity, active, pinned, mut video_frame_receiver, live) in receivers.iter_mut() {
+        let mut frame = None;
+        loop {
+            match video_frame_receiver.try_recv() {
+                Ok(new_frame) => frame = Some(new_frame),
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    error!("VideoFrameReceiver has disconnected.");
+                    commands
+                        .entity(entity)
+                        .try_remove::<(VideoFrameReceiver, VideoTrackLive)>();
+                    break;
+                }
             }
         }
-    }
-    if let Some(frame) = frame {
+        let Some(frame) = frame else {
+            continue;
+        };
+        let Some(target) = video_target(active, pinned) else {
+            continue;
+        };
+        let Some(image) = images.get_mut(&target) else {
+            debug_panic!("A video track's target image handle is invalid");
+        };
+
         if image.width() != frame.width() || image.height() != frame.height() {
-            debug!("Resizing active transmitter image.");
+            debug!("Resizing a video track's image.");
             image.resize(Extent3d {
                 width: frame.width(),
                 height: frame.height(),
                 depth_or_array_layers: 1,
             });
-            transmission_updated.write(TransmissionUpdated);
+            if active.is_some() {
+                transmission_updated.write(TransmissionUpdated);
+            }
+            commands.entity(entity).trigger(VideoTrackResized);
         }
         if let Some(data) = &mut image.data {
             // TODO verify this transfer priority
@@ -718,6 +920,9 @@ fn copy_frame(
             frame.rgba_data_into_slice(data.as_mut_slice());
         } else {
             image.data = Some(frame.rgba_data());
+        }
+        if !live {
+            commands.entity(entity).try_insert(VideoTrackLive);
         }
     }
 }

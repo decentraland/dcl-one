@@ -40,3 +40,6 @@ export const SCENES: readonly VisualScene[] = [
 
 /** The video scene (`scenes/video`): in the workspace, not in `SCENES`, so without a reference. */
 export const VIDEO_SCENE = { id: 'video', base: [204, 0] as const }
+
+/** The livekit scene (`scenes/livekit`): in the workspace, not in `SCENES`, so without a reference. */
+export const LIVEKIT_SCENE = { id: 'livekit', base: [228, 0] as const }

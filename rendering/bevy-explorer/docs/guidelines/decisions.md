@@ -29,6 +29,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
+- **A pinned LiveKit player binds its track again when it returns.** unity-explorer falls back
+  to the stream manager's pick when a pinned participant leaves and stays there until the
+  source changes; here the requested address is kept and the same track is bound again when it
+  is published again. A malformed `livekit-video://` address is a `VsError` (Unity indexes the
+  path unchecked), a muted camera keeps its last frame (no placeholder) and frames are not
+  scaled to Unity's 2048 px cap. See the
+  [ADR](../../../../docs/adr/2026-11-05-explorer-pinned-livekit-streams.md).
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.

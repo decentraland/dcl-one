@@ -117,6 +117,7 @@ test is in the spec file's header. Port 40, Partial 32, Gap 15, Drop 2.
 | ViewSignalSmoke (2) | `view-signal` | | | | 2 | A Unity harness self-test |
 | Visual (17) | `visual/visual` | 17 | | | | The scenes at their own parcels; references recorded anew |
 | UUAV PlayMode (unity-explorer's player tests) | `visual/video` | 2 | 1 | 4 | | One scenario on the `video` scene: the state reaches Playing, the clock runs, the frame is red; seek, audio capture and helper recovery stay in the UUAV workspace's tests |
+| LivekitPlayerShould (unity-explorer's LiveKit player tests) | `visual/livekit` | 3 | 1 | 1 | | Two scenarios on the `livekit` scene: a malformed address errors and an unknown participant waits, on both platforms; a pinned participant's track plays, falls back when the publisher leaves and plays again when it returns, opt-in on the standalone with a local room (`scripts/livekit-room.sh`) |
 
 What the HUD would need for more Ports, found while porting: roles or labels on the minimap's
 name and coordinates, the chat message text, the communities titles and counts, the passport
@@ -140,6 +141,12 @@ player's `VideoEvent`s (`/inspect_component`) reach Playing without an error and
 clock, and the frame's pixel at the screen (`/entity_screen_position`) is the fixture's red. On
 the web the player is the browser's video element; on the standalone it is UUAV, which the
 scenes workflow runs (below).
+
+`specs/visual/livekit.test.ts` plays the `livekit` scene: without a room it asserts that a
+malformed `livekit-video://` address errors and an unknown participant's address waits in
+Loading. With `scripts/livekit-room.sh` (a local `livekit-server --dev` and the `lk` CLI
+publishing its demo video, standalone only) it pins a participant's track, checks the picture
+moves, stops the publisher and sees the fallback, then sees the republished track play.
 
 Build the scenes first with `apps/dcl-scene-cli`:
 
@@ -243,6 +250,7 @@ change on the left updates what is on the right in the same change, then runs th
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `npm test`; the web driver's tests |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
 | The `video` scene, its fixture (`scenes/video/generate-fixture.sh`), the engine's `VideoEvent` reporting or the video player's source resolution (`crates/media/src/uuav`, `crates/av`) | `specs/visual/video.test.ts` (the states, the clock mark, the colour probe); `scenes/README.md`; the scenes workflow's video steps | `npm run typecheck`; the video scenario on the web (this workflow) and on the standalone (the scenes workflow) |
+| The `livekit` scene, the `livekit-video://` address grammar or the pinned player's binding and fallback (`crates/livestream_manager/src/address.rs`, `crates/av/src/pinned_stream.rs`, `crates/comms/src/livekit/track`) | `specs/visual/livekit.test.ts` (the address outcomes, the pinned run); `scripts/livekit-room.sh`; `scenes/README.md`; the scenes workflow's media step | `npm run typecheck`; the no-room scenario on the web (this workflow) and on the standalone (the scenes workflow); the pinned scenario by hand with the script |
 | A path moved under `apps/bevy-explorer/e2e`, `tooling/bevy-e2e-*.py` or the workflow | The workflow's `paths` filters, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
 | The CI workflow's name, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests; the e2e workflow's `workflow_run` | the tooling tests |
 | A scenario the HUD can no longer run, or a Gap whose feature landed | A `todo` with the reason, or the todo back into a scenario; its header row and the scenario map | the scenarios in CI |

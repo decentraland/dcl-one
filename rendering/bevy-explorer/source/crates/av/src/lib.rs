@@ -19,6 +19,7 @@ pub mod audio_source_wasm;
 mod debug_panel;
 
 // video
+pub mod pinned_stream;
 #[cfg(any(feature = "uuav", feature = "html"))]
 pub mod video_player;
 
@@ -49,11 +50,12 @@ use dcl_component::{
 };
 use dcl_types::interface::ComponentPosition;
 use livestream_manager::{
-    states::Transmitter, ActiveReceiver, ReceiverImage, ReceiverVolume, TransmissionStopped,
-    TransmissionUpdated,
+    address::LivekitAddress, states::Transmitter, ActiveReceiver, PinnedTo, ReceiverImage,
+    ReceiverVolume, TransmissionStopped, TransmissionUpdated,
 };
 #[cfg(any(feature = "uuav", feature = "html"))]
 use media::AVCommand;
+use pinned_stream::PinnedStream;
 use scene_runner::{
     renderer_context::RendererSceneContext,
     update_world::{material::VideoTextureOutput, AddCrdtInterfaceExt},
@@ -66,8 +68,6 @@ use crate::audio_sink::AudioSinkPlugin;
 use crate::audio_source_wasm::AudioSourcePluginImpl;
 #[cfg(any(feature = "uuav", feature = "html"))]
 use crate::video_player::VideoPlayerPlugin;
-
-const LIVEKIT_VIDEO_STREAM: &str = "livekit-video://current-stream";
 
 pub trait AVPlayer: Component {
     type Source: Component + Deref<Target = str> + PartialEq;
@@ -395,6 +395,7 @@ impl Plugin for AVPlayerPlugin {
         debug_panel::register(app);
         app.add_plugins(AudioSourcePlugin);
         app.add_plugins(AudioSourcePluginImpl);
+        app.add_plugins(pinned_stream::PinnedStreamPlugin);
 
         app.add_crdt_lww_component::<PbAudioStream, AudioStream>(
             SceneComponentId::AUDIO_STREAM,
@@ -517,6 +518,8 @@ fn av_player_on_remove<T: AVPlayer>(
         InScene,
         ShouldBePlaying<T>,
         Stream,
+        PinnedStream,
+        PinnedTo,
     )>();
     #[cfg(feature = "uuav")]
     commands.entity(entity).try_remove::<AVSinks<T>>();
@@ -603,7 +606,9 @@ fn should_be_playing_on_remove<T: AVPlayer>(
 ) {
     let entity = trigger.target();
     debug!("Stream {} no longer playing.", entity);
-    commands.entity(entity).try_remove::<ActiveReceiver>();
+    commands
+        .entity(entity)
+        .try_remove::<(ActiveReceiver, PinnedTo)>();
 
     let Ok((has_stream, container_entity)) = av_players.get(entity) else {
         debug!("AVPlayer {entity} not a scene entity.");
@@ -704,7 +709,7 @@ impl Ord for ShouldBePlayingCandidate {
 }
 
 #[expect(clippy::type_complexity, reason = "Queries are complex")]
-fn video_player_should_be_playing(
+pub(crate) fn video_player_should_be_playing(
     mut commands: Commands,
     av_players: Query<(
         Entity,
@@ -722,7 +727,7 @@ fn video_player_should_be_playing(
     for (entity, source, config, has_in_scene, has_should_be_playing, global_transform) in
         av_players
     {
-        if !config.playing() || (&**source == LIVEKIT_VIDEO_STREAM && !has_in_scene) {
+        if !config.playing() || (LivekitAddress::is_livekit(source) && !has_in_scene) {
             if has_should_be_playing {
                 scratch_shouldnt_be_playing.push(entity);
             }
@@ -775,10 +780,15 @@ fn video_player_should_be_playing(
 }
 
 #[expect(clippy::type_complexity)]
+// A player bound to a pinned track takes its texture and events from that track
+// (`pinned_stream`), not from the manager's image.
 fn receiver_image_added(
     trigger: Trigger<OnAdd, ReceiverImage>,
     mut commands: Commands,
-    video_players: Query<(&ContainerEntity, &ReceiverImage), (With<VideoPlayer>, With<Stream>)>,
+    video_players: Query<
+        (&ContainerEntity, &ReceiverImage),
+        (With<VideoPlayer>, With<Stream>, Without<PinnedTo>),
+    >,
     transmitter_state: Res<State<Transmitter>>,
 ) {
     let entity = trigger.target();
@@ -805,9 +815,13 @@ fn receiver_image_removed(trigger: Trigger<OnRemove, ReceiverImage>, mut command
     commands.entity(entity).try_remove::<VideoTextureOutput>();
 }
 
+#[expect(clippy::type_complexity)]
 fn receiver_image_updated(
     mut commands: Commands,
-    av_players: Query<(Entity, &ContainerEntity, &mut VideoTextureOutput), With<ReceiverImage>>,
+    av_players: Query<
+        (Entity, &ContainerEntity, &mut VideoTextureOutput),
+        (With<ReceiverImage>, Without<PinnedTo>),
+    >,
     mut transmission_updated: EventReader<TransmissionUpdated>,
 ) {
     if transmission_updated.read().count() > 0 {
@@ -826,7 +840,7 @@ fn receiver_image_updated(
 
 fn transmission_stopped(
     mut commands: Commands,
-    av_players: Query<&ContainerEntity, With<ReceiverImage>>,
+    av_players: Query<&ContainerEntity, (With<ReceiverImage>, Without<PinnedTo>)>,
     mut transmission_stopped: EventReader<TransmissionStopped>,
 ) {
     if transmission_stopped.read().count() > 0 {
@@ -841,10 +855,10 @@ fn transmission_stopped(
 }
 
 #[derive(Event)]
-struct SetState<T: AVPlayer> {
-    entity: ContainerEntity,
-    state: VideoState,
-    _phantom: PhantomData<T>,
+pub(crate) struct SetState<T: AVPlayer> {
+    pub(crate) entity: ContainerEntity,
+    pub(crate) state: VideoState,
+    pub(crate) _phantom: PhantomData<T>,
 }
 
 fn set_state<T: AVPlayer>(
@@ -1154,7 +1168,7 @@ mod tests {
 
         let screen_1 = world
             .spawn((
-                VideoPlayerSource(LIVEKIT_VIDEO_STREAM.to_owned()),
+                VideoPlayerSource(livestream_manager::address::CURRENT_STREAM.to_owned()),
                 VideoPlayerConfig {
                     playing: true,
                     volume: 1.,
