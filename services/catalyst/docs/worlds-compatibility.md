@@ -170,8 +170,44 @@ difference not listed here is a gap, not a decision.
 - **Retired scenes.** Replaced and undeployed scenes are kept for
   `SCENE_EVICTION_TTL_MS` and removed by an hourly sweep. Scenes a mirror
   pass retires are deleted at once.
-- **`/gc`** reports `removedBytes` and has no `expiredUploads`. Every
-  `/admin/*` route answers 401 for a missing or wrong token.
+- **`/gc`** reports `removedBytes`. A dry run reclaims no expired partial
+  upload and reports `expiredUploads: null`. Every `/admin/*` route answers
+  401 for a missing or wrong token.
+- **Partial uploads** follow the upstream contract and limits, with these
+  differences:
+  - Files are keyed by the hash of their bytes. A batch carrying the same
+    file twice answers 400 `Duplicate form field '<hash>'`; upstream
+    refuses a repeated form field name.
+  - A stored file is free of staging charges when any domain of the shared
+    blob store names it, not only world scenes and thumbnails.
+  - The collector keeps every file a pending upload names, expired uploads
+    included, until the cleanup removes the upload. The cleanup unlinks
+    only files the upload's own batches stored, nothing else names and are
+    older than the collector's age floor; it leaves any other file to the
+    collector.
+  - A file found stored when the upload began and gone by its completion
+    is listed in `missing` again (202) instead of failing the publish.
+  - Batches of one entity are serialized within a process by an in-memory
+    lock; across replicas each staging step is atomic in the database.
+    There is no `CONTENT_LOCK_CONNECTIONS`. `MAX_CONCURRENT_UPLOADS` is
+    lowered to three quarters of `PG_POOL_SIZE` (at least one) with a
+    startup warning when it is set higher. Single-request and partial
+    publishes share that limit, so the lowered value bounds both.
+  - A personal world accepts partial uploads only once it is published on
+    this realm; its first scene goes in a single request.
+  - `PENDING_DEPLOYMENT_TTL`, `MAX_PENDING_DEPLOYMENTS_PER_DEPLOYER`,
+    `MAX_PENDING_BYTES_PER_DEPLOYER`, `MAX_PENDING_BYTES` and
+    `MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE` are the variables the content
+    server's partial uploads read, with the same defaults. Each value
+    applies to worlds and content separately: world uploads and content
+    uploads keep their own counts, bytes and rate windows.
+  - `MAX_PENDING_BYTES_PER_SOURCE` (default 4 GiB, at least
+    `MAX_PENDING_BYTES_PER_DEPLOYER`) caps the bytes staged by the live
+    uploads one client address started (429 with `Retry-After`).
+  - The cleanup runs as a fleet-wide leased job. Its `Retry-After` estimate
+    uses the last run this process finished.
+  - Partial batches record only the `total` processing stage, labelled
+    `mode="partial"`.
 - **`GET /worlds` search** adds trigram similarity only when the `pg_trgm`
   extension is installed. `%` and `_` in the query match literally.
 

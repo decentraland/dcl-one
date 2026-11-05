@@ -583,6 +583,104 @@ CREATE TABLE worlds.world_limit_overrides (
 );
 -- ==== end section: world-limits ====
 
+-- ==== section: partial-uploads ====
+-- Partial (multi-request) publishes (`POST /entities` with `partial=true`):
+-- a scene's files arrive over several authenticated batches keyed by the
+-- signed entity id, and the scene goes live (worlds.world_scenes) in the
+-- batch that completes its content. Workload: a handful of live uploads per
+-- node (10 per deployer, 4 per world), each with up to MAX_FILE_COUNT file
+-- rows, written once per batch under advisory locks (deployer, world, the
+-- staging budget); read by entity id per batch, summed per
+-- deployer/world/node at admission, swept by created_at every 5 minutes.
+-- No FK to worlds.worlds or world_scenes: a half-uploaded world must not
+-- create a world row (listings, validity checks); the world name is checked
+-- by the staging validation and again by the publish transaction.
+-- `entity` copies the manifest (its bytes are in the blob store under
+-- entity_id) so the blob collector keeps the content it names. `created_at`
+-- is the first batch's arrival and fixes the upload's lifetime
+-- (PENDING_DEPLOYMENT_TTL); an expired row keeps its slot and bytes charged
+-- until the cleanup job reclaims its files and deletes it. `reserved_bytes`
+-- caches sum(pending_scene_files.size) WHERE charged, rewritten with every
+-- file upsert under the budget lock. `source` is the first batch's client
+-- source key (NULL without a client address), whose live uploads share
+-- MAX_PENDING_BYTES_PER_SOURCE. The publish transaction deletes the row of
+-- any publish of the entity.
+CREATE TABLE worlds.pending_scenes (
+    entity_id text NOT NULL,
+    world_name text NOT NULL,
+    parcels text[] NOT NULL,
+    entity jsonb NOT NULL,
+    deployer text NOT NULL,
+    created_at timestamp without time zone NOT NULL,
+    initialized boolean NOT NULL DEFAULT false,
+    reserved_bytes bigint NOT NULL DEFAULT 0,
+    batches integer NOT NULL DEFAULT 0,
+    source text,
+    CONSTRAINT pending_scenes_pkey PRIMARY KEY (entity_id),
+    CONSTRAINT pending_scenes_world_lowercase CHECK (world_name = lower(world_name) AND world_name <> ''),
+    CONSTRAINT pending_scenes_deployer_lowercase CHECK (deployer = lower(deployer) AND deployer <> ''),
+    CONSTRAINT pending_scenes_reserved_nonneg CHECK (reserved_bytes >= 0),
+    CONSTRAINT pending_scenes_batches_nonneg CHECK (batches >= 0)
+);
+
+-- The expiry sweep and the live/expired cutoffs.
+CREATE INDEX pending_scenes_created_at_idx ON worlds.pending_scenes (created_at);
+-- The per-deployer upload count and byte sums.
+CREATE INDEX pending_scenes_deployer_created_at_idx ON worlds.pending_scenes (deployer, created_at);
+-- The per-world live upload count and staged byte sums.
+CREATE INDEX pending_scenes_world_name_created_at_idx ON worlds.pending_scenes (world_name, created_at);
+
+-- One row per file an upload names or stores: `stored` once this node
+-- holds it for the upload (written by a batch, or already in the store when
+-- the upload started), `written` only when one of the upload's batches
+-- stored it (the expiry cleanup unlinks nothing else), `charged` when its
+-- bytes count toward the staging budgets (false for content published
+-- content already referenced at the upload's start). Publication takes the
+-- scene's file sizes from here.
+CREATE TABLE worlds.pending_scene_files (
+    entity_id text NOT NULL,
+    hash text NOT NULL,
+    size bigint NOT NULL,
+    stored boolean NOT NULL DEFAULT false,
+    written boolean NOT NULL DEFAULT false,
+    charged boolean NOT NULL DEFAULT true,
+    CONSTRAINT pending_scene_files_pkey PRIMARY KEY (entity_id, hash),
+    CONSTRAINT pending_scene_files_size_nonneg CHECK (size >= 0),
+    CONSTRAINT pending_scene_files_entity_fkey FOREIGN KEY (entity_id)
+        REFERENCES worlds.pending_scenes (entity_id) ON DELETE CASCADE
+);
+
+-- The blob collector's `hash = ANY($1)` probe.
+CREATE INDEX pending_scene_files_hash_idx ON worlds.pending_scene_files (hash);
+
+-- The answer a partial publish gave its signer, for an idempotent retry of
+-- the completing batch (COMPLETED_UPLOAD_TTL), kept after a replace or
+-- undeploy. Written by the publish transaction that completes the upload;
+-- any other publish of the entity deletes it. Names no blob.
+CREATE TABLE worlds.completed_scene_uploads (
+    entity_id text NOT NULL,
+    deployer text NOT NULL,
+    world_name text NOT NULL,
+    parcels text[] NOT NULL,
+    creation_timestamp bigint NOT NULL,
+    completed_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT completed_scene_uploads_pkey PRIMARY KEY (entity_id)
+);
+
+CREATE INDEX completed_scene_uploads_completed_at_idx ON worlds.completed_scene_uploads (completed_at);
+
+-- Bytes each deployer sent in partial batches in its current fixed
+-- one-minute window (MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE), retries and
+-- refused batches included; stale windows are pruned by the cleanup job.
+CREATE TABLE worlds.partial_upload_rates (
+    deployer text NOT NULL,
+    window_started timestamp without time zone NOT NULL,
+    bytes bigint NOT NULL,
+    CONSTRAINT partial_upload_rates_pkey PRIMARY KEY (deployer),
+    CONSTRAINT partial_upload_rates_bytes_nonneg CHECK (bytes >= 0)
+);
+-- ==== end section: partial-uploads ====
+
 -- ==== section: world-quota ====
 -- Wallets over their storage allowance (the old `blocked` table): the
 -- block-if-over-quota pass inserts or refreshes `updated_at` every 12 hours

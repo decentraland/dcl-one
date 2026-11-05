@@ -78,6 +78,17 @@ from a deployment's content hash. Each world scene has a stable identity
 (`explore.world_scene_place`) following Places' overlap rule: overlapping
 exactly one active scene retains it, including a moved base; overlapping none
 or several creates a new identity. Retired identities keep their storage rows.
+
+Partial (multi-request) world publishes stage in `worlds.pending_scenes` and
+`worlds.pending_scene_files`, with no world row until the completing batch's
+publish transaction consumes the upload and writes its
+`worlds.completed_scene_uploads` receipt. Upload counts and staged bytes are
+admitted under advisory locks (deployer, world, node budget); the per-world
+count and byte sums read `pending_scenes (world_name, created_at)`. The blob
+collector keeps every file a pending row names, and a leased job reclaims
+expired uploads under the exclusive store lock, unlinking only files a
+batch of that upload wrote (`pending_scene_files.written`).
+
 Genesis storage management requires LAND rights at the requested parcel, using
 the published LAND manager index or its configured document source. Without a
 document source, only ownership at that parcel grants authority; scene-admin

@@ -1645,6 +1645,18 @@ async fn worlds_states(
     jobs: &Arc<jobs::Jobs>,
     presence: Arc<comms::presence::Presence>,
 ) -> anyhow::Result<worlds::Stage5> {
+    let max_concurrent_uploads = worlds::core::partial::uploads_within_pool(
+        config.worlds.max_concurrent_uploads,
+        config.node.pg_pool_size,
+    );
+    if max_concurrent_uploads < config.worlds.max_concurrent_uploads {
+        tracing::warn!(
+            configured = config.worlds.max_concurrent_uploads,
+            effective = max_concurrent_uploads,
+            pg_pool_size = config.node.pg_pool_size,
+            "MAX_CONCURRENT_UPLOADS lowered to three quarters of PG_POOL_SIZE"
+        );
+    }
     let non_empty = Config::non_empty;
 
     let core = Arc::new(
@@ -1656,7 +1668,7 @@ async fn worlds_states(
                 non_empty(&config.worlds.catalyrst_worlds_admin_token),
                 worlds::core::UploadLimits {
                     max_in_flight_upload_bytes: config.worlds.max_in_flight_upload_bytes,
-                    max_concurrent_uploads: config.worlds.max_concurrent_uploads,
+                    max_concurrent_uploads,
                     max_in_flight_upload_files: config.worlds.max_in_flight_upload_files,
                     multipart_upload_timeout_ms: config.worlds.multipart_upload_timeout_ms,
                     deployment_processing_timeout_ms: config
@@ -1670,7 +1682,7 @@ async fn worlds_states(
                         .max_in_flight_upload_bytes_per_source,
                 },
             )
-            .map(|s| {
+            .and_then(|s| {
                 s.with_global_scenes_urn(config.worlds_content.global_scenes_urn.as_deref())
                     .with_scene_eviction_ttl_ms(config.worlds.scene_eviction_ttl_ms)
                     .with_public_url(&worlds::Settings::from_config(config).public_url)
@@ -1678,6 +1690,25 @@ async fn worlds_states(
                     .with_owner_reconcile_interval_secs(
                         config.worlds.worlds_owner_reconcile_interval_secs,
                     )
+                    // The variables content's partial uploads share; each domain keeps its own budget.
+                    .with_partial_uploads(worlds::core::PartialUploadLimits {
+                        pending_deployment_ttl_ms: config.content.pending_deployment_ttl_ms,
+                        cleanup_interval_ms: config.worlds.partial_upload_cleanup_interval_ms,
+                        max_pending_per_deployer: u64::from(
+                            config.content.max_pending_deployments_per_deployer,
+                        ),
+                        max_pending_per_world: config.worlds.max_pending_deployments_per_world,
+                        pending_bytes_per_world_factor: config
+                            .worlds
+                            .pending_bytes_per_world_factor,
+                        max_pending_bytes_per_deployer: config
+                            .content
+                            .max_pending_bytes_per_deployer,
+                        max_pending_bytes_per_source: config.worlds.max_pending_bytes_per_source,
+                        max_pending_bytes: config.content.max_pending_bytes,
+                        max_bytes_per_minute: config.content.max_partial_upload_bytes_per_minute,
+                        completed_upload_ttl_ms: config.worlds.completed_upload_ttl,
+                    })
             })
             .context(
                 "MAX_IN_FLIGHT_UPLOAD_* / MAX_CONCURRENT_UPLOADS / *_TIMEOUT_MS configuration",
