@@ -83,9 +83,6 @@ function noChromeMessage(env) {
   return `Google Chrome is not installed (looked in ${looked}); install it, or point CHROME_PATH at it`;
 }
 
-/** Does a call of the binding from this execution context count? Only from a default (not an
- *  isolated-world, as a browser extension's) context of the origin the runner opened: another
- *  origin's frame must not be able to make input. */
 /** The credential a console line carries: the first argument of `/login_identity` or
  *  `/hud_login`, an AuthIdentity (an ephemeral private key and a signed delegation valid for
  *  days), or undefined. The e2e suite's `driver/console.ts` has the same rule. */
@@ -100,6 +97,9 @@ export function redact(line, text) {
   return secret === undefined ? text : text.split(secret).join('<redacted>');
 }
 
+/** Does a call of the binding from this execution context count? Only from a default (not an
+ *  isolated-world, as a browser extension's) context of the origin the runner opened: another
+ *  origin's frame must not be able to make input. */
 export function acceptsBinding(context, origin) {
   return context != null && context.isDefault === true && context.origin === origin;
 }
@@ -763,7 +763,7 @@ async function main(argv) {
     const run = async (command) => {
       try {
         const output = await driver.console(command);
-        console.log(JSON.stringify({ command: redact(command, command), ok: true, output }));
+        console.log(JSON.stringify({ command: redact(command, command), ok: true, output: redact(command, output) }));
       } catch (error) {
         failed = true;
         console.log(JSON.stringify({ command: redact(command, command), ok: false, error: redact(command, error.message) }));
