@@ -226,7 +226,10 @@ mod tests {
             reaction(&key, 3),
             message(&key, 4),
         ];
-        assert_eq!(trimmed_lines(&key, &lines, 2, 100), Some(lines[5..].to_vec()));
+        assert_eq!(
+            trimmed_lines(&key, &lines, 2, 100),
+            Some(lines[5..].to_vec())
+        );
         assert_eq!(trimmed_lines(&key, &lines, 4, 100), None);
         assert_eq!(trimmed_lines(&key, &lines, 0, 100), Some(Vec::new()));
         // a line that is not a record counts as a message
@@ -249,6 +252,9 @@ mod tests {
         // the record cap can cut below the message count
         assert_eq!(trimmed_lines(&key, &lines, 2, 1), Some(lines[7..].to_vec()));
         // the message cut wins when it is the tighter one
-        assert_eq!(trimmed_lines(&key, &lines, 1, 100), Some(lines[1..].to_vec()));
+        assert_eq!(
+            trimmed_lines(&key, &lines, 1, 100),
+            Some(lines[1..].to_vec())
+        );
     }
 }
