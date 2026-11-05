@@ -14,7 +14,7 @@
   "normalization": "Exact bytes of the published crates.io package (the .crate whose SHA256 is crate_sha256, as Cargo.lock recorded it), with the listed patches applied. Repository .gitattributes disables newline conversion for this subtree. SHA256 manifests are UTF-8 with LF lines and lexicographically sorted package-relative paths. No Cargo cache marker is imported.",
   "manifests": {
     "upstream-files.sha256": "b0cc1f6baf8c6a380ab0782354f23dd1f9c0600091b708ad7d8c33af561f352a",
-    "checksums.sha256": "6d82b9c067657e7625719bf98bb478bea3d02e24c250b293866607ce43365df8"
+    "checksums.sha256": "2e0a0646bbbb7e86e4d54f35798a94731a6358213480b8ca733374663ab9fb91"
   },
   "patches": [
     {
@@ -31,9 +31,10 @@
     },
     {
       "path": "patches/0002-bound-zstd-decoding.patch",
-      "sha256": "636634399153a433aafe27705ddecdd573ca4ef324f109c7f5fc96c768c34738",
+      "sha256": "f9e7b700e94607223003ca5f134707b47acb5ed37f49a30fe195a48938bc7d0b",
       "changes": [
-        "Use the pinned local ruzstd decoder and enforce the level output budget before expansion.",
+        "Depend on ruzstd 0.9.1 from crates.io, which checks a frame's window when the decoder is created and bounds a block's sequences, and cap a level's window at the greater of its length and 8 MiB.",
+        "Use ruzstd 0.9's decoder path in the XUASTC stream decoder.",
         "Add deterministic compressed-stream boundary tests."
       ]
     }

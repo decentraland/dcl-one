@@ -59,8 +59,12 @@ pub struct Ktx2Transcoder<'a> {
 #[cfg(feature = "zstd")]
 fn zstd_inflate(comp: &[u8], want: usize) -> Option<Vec<u8>> {
     use ruzstd::io::Read;
-    let mut dec = ruzstd::StreamingDecoder::new(comp).ok()?;
-    dec.decoder.set_output_limit(want).ok()?;
+    // The decoder holds a frame's whole window before it returns a byte, and the file declares
+    // the window. No level needs a window larger than itself (8 MiB covers encoders that declare
+    // their default window for small inputs), so a larger one is rejected when the frame opens.
+    let max_window = (want as u64).max(8 << 20);
+    let mut dec =
+        ruzstd::decoding::StreamingDecoder::new_with_max_window_size(comp, max_window).ok()?;
     // `want` comes from the file: a failed allocation must fail the level, not abort.
     let mut out = Vec::new();
     out.try_reserve_exact(want).ok()?;
@@ -502,34 +506,13 @@ mod bounded_zstd_tests {
     }
 
     #[test]
-    fn rejects_large_window_and_expansion_before_returning_output() {
+    fn rejects_large_window_and_excess_output() {
         // 128 MiB window rejected at initialization, including a tiny otherwise valid frame.
         assert!(zstd_inflate(&rle_frame(17 << 3, &[32]), 32).is_none());
-        // Output is still retained in the 1 KiB window when the budget is exhausted.
+        // Output beyond the level's length fails the level.
         assert!(zstd_inflate(&rle_frame(0, &[32, 32]), 32).is_none());
         assert!(zstd_inflate(&rle_frame(0, &[128 * 1024]), 32).is_none());
     }
-    #[test]
-    fn oversized_match_is_rejected_before_output_growth() {
-        use ruzstd::blocks::sequence_section::Sequence;
-        use ruzstd::decoding::{
-            scratch::DecoderScratch,
-            sequence_execution::{execute_sequences, ExecuteSequencesError},
-        };
-        let mut scratch = DecoderScratch::new(1024);
-        scratch.literals_buffer.push(7);
-        scratch.sequences.push(Sequence {
-            ll: 1,
-            ml: 128 * 1024,
-            of: 1,
-        });
-        assert!(matches!(
-            execute_sequences(&mut scratch),
-            Err(ExecuteSequencesError::OutputTooLarge)
-        ));
-        assert_eq!(scratch.buffer.len(), 0);
-    }
-
     #[test]
     fn raw_and_compressed_literal_blocks_obey_output_budget() {
         for compressed in [false, true] {
@@ -548,17 +531,5 @@ mod bounded_zstd_tests {
             assert_eq!(zstd_inflate(&frame, 16), Some(vec![7; 16]));
             assert!(zstd_inflate(&frame, 15).is_none());
         }
-    }
-
-    #[test]
-    fn budget_stops_decoding_while_output_is_still_in_window() {
-        use ruzstd::io::Read;
-        let frame = rle_frame(0, &[32, 32]);
-        let mut dec = ruzstd::StreamingDecoder::new(frame.as_slice()).unwrap();
-        dec.decoder.set_output_limit(32).unwrap();
-        assert!(dec.read_exact(&mut [0; 32]).is_err());
-        // The second block must fail before it is completed, even though no bytes
-        // have yet been returned from the decoder's 1 KiB history window.
-        assert_eq!(dec.decoder.blocks_decoded(), 1);
     }
 }

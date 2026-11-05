@@ -211,7 +211,7 @@ pub(crate) fn transcode_ktx2(bytes: &[u8]) -> Result<Vec<u8>, ImageProcessError>
     compress_decoded(image::DynamicImage::ImageRgba8(img))
 }
 
-pub(crate) const KTX2_MAGIC: &[u8] = b"\xABKTX 20\xBB\r\n\x1A\n";
+const KTX2_MAGIC: &[u8] = b"\xABKTX 20\xBB\r\n\x1A\n";
 
 /// The largest KTX2 width or height taken. Its RGBA fallback is 256 MB, within the 512 MB
 /// `image` allows a PNG.

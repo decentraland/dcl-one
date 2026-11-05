@@ -1,3 +1,5 @@
+// Modified in dcl-one: ruzstd 0.9's decoder path; see patches/0002-bound-zstd-decoding.patch
+// beside this crate.
 //! The XUASTC LDR stream decompressor: all three stream syntaxes decoded block
 //! by block into logical ASTC blocks and handed to a caller callback in raster
 //! order. The init callback validates the header (aborting before any
@@ -143,7 +145,7 @@ fn zstd_channel(comp: &[u8]) -> Option<Vec<u8>> {
     // The frame may legitimately decode to fewer bytes than its declared
     // content size, so the output is truncated to what actually decoded;
     // decoding more than the declared size is an error.
-    let mut dec = ruzstd::StreamingDecoder::new(comp).ok()?;
+    let mut dec = ruzstd::decoding::StreamingDecoder::new(comp).ok()?;
     let mut out = vec![0u8; want];
     let mut total = 0usize;
     loop {

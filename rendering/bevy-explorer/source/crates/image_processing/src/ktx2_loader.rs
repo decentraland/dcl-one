@@ -6,9 +6,9 @@
 //! never comes (the image was dropped before it loaded, or it has no cache entry) is evicted
 //! after `RESULT_LIFETIME`.
 //!
-//! Bevy gives an image path without an extension to the last image loader registered, which is
-//! this one, so anything that is neither ktx2 nor a cached dds is decoded the way Bevy's own image
-//! loader decodes it, from the format its bytes show.
+//! Only `.ktx2` paths reach this loader: it is registered ahead of the NFT image loader, which
+//! stays the last image loader and so takes image paths without an extension (see
+//! `ImageProcessingPlugin` in the app's plugin list).
 
 use std::{
     collections::HashMap,
@@ -43,23 +43,16 @@ pub(crate) fn evict_stale_results() {
 
 const DDS_MAGIC: &[u8] = b"DDS ";
 
-/// The bytes to build the image from and their format, and whether they are a fresh transcode to
-/// stash for the cache write: a cached dds as it is, a ktx2 transcoded to a dds, and anything else
-/// in the format its bytes show.
-fn prepare(bytes: Vec<u8>) -> anyhow::Result<(Vec<u8>, ImageFormat, bool)> {
+/// The dds to build the image from, and whether it is a fresh transcode to stash for the cache
+/// write: a cached dds as it is, or the ktx2 transcoded to a dds.
+fn prepare(bytes: Vec<u8>) -> anyhow::Result<(Vec<u8>, bool)> {
     if bytes.starts_with(DDS_MAGIC) {
         // a previous load's transcode, written over the ktx2 bytes in the cache
-        return Ok((bytes, ImageFormat::Dds, false));
+        return Ok((bytes, false));
     }
-    if bytes.starts_with(crate::processor::KTX2_MAGIC) {
-        let dds = crate::processor::transcode_ktx2(&bytes)
-            .map_err(|e| anyhow::anyhow!("ktx2 transcode failed: {e:?}"))?;
-        return Ok((dds, ImageFormat::Dds, true));
-    }
-    let format = image::guess_format(&bytes)?;
-    let format = ImageFormat::from_image_crate_format(format)
-        .ok_or_else(|| anyhow::anyhow!("unsupported image format {format:?}"))?;
-    Ok((bytes, format, false))
+    let dds = crate::processor::transcode_ktx2(&bytes)
+        .map_err(|e| anyhow::anyhow!("ktx2 transcode failed: {e:?}"))?;
+    Ok((dds, true))
 }
 
 pub struct Ktx2Loader {
@@ -92,12 +85,12 @@ impl AssetLoader for Ktx2Loader {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
 
-        let (bytes, format, transcoded) = prepare(bytes)?;
+        let (dds, transcoded) = prepare(bytes)?;
         if transcoded {
             if let Ok(mut results) = KTX2_RESULTS.lock() {
                 results.insert(
                     load_context.asset_path().to_string(),
-                    (Instant::now(), bytes.clone()),
+                    (Instant::now(), dds.clone()),
                 );
             }
         }
@@ -105,8 +98,8 @@ impl AssetLoader for Ktx2Loader {
         Ok(Image::from_buffer(
             #[cfg(debug_assertions)]
             load_context.path().display().to_string(),
-            &bytes,
-            ImageType::Format(format),
+            &dds,
+            ImageType::Format(ImageFormat::Dds),
             self.supported_compressed_formats,
             settings.is_srgb,
             settings.sampler.clone(),
@@ -127,33 +120,16 @@ mod tests {
 
     #[test]
     fn ktx2_is_transcoded_and_stashed() {
-        let (bytes, format, transcoded) = prepare(UASTC_8.to_vec()).unwrap();
-        assert!(bytes.starts_with(DDS_MAGIC));
-        assert!(matches!(format, ImageFormat::Dds));
+        let (dds, transcoded) = prepare(UASTC_8.to_vec()).unwrap();
+        assert!(dds.starts_with(DDS_MAGIC));
         assert!(transcoded);
     }
 
     #[test]
     fn cached_dds_passes_through() {
-        let (dds, _, _) = prepare(UASTC_8.to_vec()).unwrap();
-        let (bytes, format, transcoded) = prepare(dds.clone()).unwrap();
+        let (dds, _) = prepare(UASTC_8.to_vec()).unwrap();
+        let (bytes, transcoded) = prepare(dds.clone()).unwrap();
         assert_eq!(bytes, dds);
-        assert!(matches!(format, ImageFormat::Dds));
         assert!(!transcoded);
-    }
-
-    // an image path without an extension reaches this loader, so a png must still load
-    #[test]
-    fn other_images_keep_their_own_format() {
-        let img = image::DynamicImage::ImageRgba8(image::RgbaImage::new(4, 4));
-        let mut png = std::io::Cursor::new(Vec::new());
-        img.write_to(&mut png, image::ImageFormat::Png).unwrap();
-        let png = png.into_inner();
-
-        let (bytes, format, transcoded) = prepare(png.clone()).unwrap();
-        assert_eq!(bytes, png);
-        assert!(matches!(format, ImageFormat::Png));
-        assert!(!transcoded);
-        assert!(prepare(b"not an image".to_vec()).is_err());
     }
 }

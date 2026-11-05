@@ -98,9 +98,7 @@ jobs:
         run: |
           for test in .github/actions/bevy-explorer-ci-status/test-*.sh; do bash "$test"; done
       - name: Verify the vendored texture decoder bytes and patch replay
-        run: |
-          python3 rendering/bevy-explorer/source/vendor/basisu/verify.py
-          python3 rendering/bevy-explorer/source/vendor/ruzstd/verify.py
+        run: python3 rendering/bevy-explorer/source/vendor/basisu/verify.py
   changes:
     name: Changes
     runs-on: ubuntu-24.04

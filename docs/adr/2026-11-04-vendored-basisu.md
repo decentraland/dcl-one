@@ -47,6 +47,14 @@ of depending on an upstream release:
   fallibly, so an oversized file is an error rather than a process abort;
 - keep the key/value scan within its range.
 
+A second patch, `patches/0002-bound-zstd-decoding.patch`, moves the crate's Zstandard decoder
+from `ruzstd` 0.7 to the crates.io release 0.9.1, which checks a frame's declared window when the
+decoder is created and stops a block's sequences at the block maximum. A level's frame may declare
+a window no larger than the greater of its uncompressed length and 8 MiB, so a level's decode is
+bounded by that window plus its length plus one block, and any output past its length fails it. `ruzstd` stays a registry dependency;
+`cargo`'s `[patch]` can't change the vendored crate's version requirement, which is why the bump
+is part of the patch.
+
 Each modified file carries a notice of modification, as Apache-2.0 section 4(b) requires.
 
 `image_processing` keeps its own policy check in front of the crate: a single 2D UASTC image
@@ -56,7 +64,7 @@ fallback stays within what the PNG path accepts.
 ## Verification
 
 `python3 rendering/bevy-explorer/source/vendor/basisu/verify.py` checks every shipped byte against
-the manifests, the license digest and the patch hashes, and replays the patch in reverse to the
+the manifests, the license digest and the patch hashes, and replays the patches in reverse to the
 pristine package bytes, offline. The Explorer CI's Integration guards job runs it on every
 Explorer change. `image_processing`'s tests cover oversized and inconsistent headers (dimensions,
 level ranges past the file, an oversized uncompressed length, too many levels, truncation,

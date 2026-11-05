@@ -94,7 +94,6 @@ members = [
 exclude = [
   "../../../library/vendor/rusty_enet",
   "vendor/basisu",
-  "vendor/ruzstd",
 ]
 
 [workspace.dependencies]
