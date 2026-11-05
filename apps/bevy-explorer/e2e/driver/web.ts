@@ -80,13 +80,21 @@ export class WebConsole implements Console {
   /** Start Chrome on `url` and wait until the app frame answers console commands. */
   static async launch(options: WebLaunchOptions): Promise<WebConsole> {
     const { launch } = await webDriverModule()
-    const driver = await launch({
-      url: options.url,
-      chrome: options.chrome,
-      headless: options.headless ?? false,
-      args: options.args ?? [],
-      windowSize: options.windowSize ?? [1600, 900]
-    })
+    let driver: WebDriver
+    try {
+      driver = await launch({
+        url: options.url,
+        chrome: options.chrome,
+        headless: options.headless ?? false,
+        args: options.args ?? [],
+        windowSize: options.windowSize ?? [1600, 900]
+      })
+    } catch (error) {
+      // the driver closed the browser with the error; what the page said travels on the error
+      const said = (error as { console?: unknown }).console
+      if (Array.isArray(said)) throw new BootError(error instanceof Error ? error.message : String(error), said.map(consoleLine), undefined)
+      throw error
+    }
     try {
       await driver.ready({ timeout: options.readyTimeoutMs ?? 300_000 })
     } catch (error) {
@@ -104,6 +112,14 @@ export class WebConsole implements Console {
       return await this.#driver.console(normalized, { timeout: this.#commandTimeoutMs })
     } catch (error) {
       throw new ConsoleError(normalized, error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  /** What the page said and how it looks now: for a boot that opened but never arrived. */
+  async evidence(): Promise<{ console: string[]; screenshot: Buffer | undefined }> {
+    return {
+      console: this.#driver.consoleMessages().map(consoleLine),
+      screenshot: await this.#driver.screenshot().catch(() => undefined)
     }
   }
 

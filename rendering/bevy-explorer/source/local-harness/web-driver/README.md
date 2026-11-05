@@ -45,9 +45,11 @@ a frame of the page's origin with both `window.engine_console_command` and
 `DCL_WEB_DRIVER_DEBUG=1` logs what the driver ignores or cannot answer.
 
 `consoleMessages()` is what the page said so far, every frame's: `console.*` calls, uncaught
-exceptions and the browser's own log entries (a request that failed, a worker that would not
-register), oldest first, the last 300. `screenshot()` is the page as a JPEG. Both are for a boot
-that does not become ready: what `ready()`'s timeout cannot say.
+exceptions, the browser's own log entries (a request that failed, a worker that would not
+register) and a target that crashed, oldest first, the last 300. `screenshot()` is the page as a
+JPEG. Both are for a boot that does not become ready: what `ready()`'s timeout cannot say. An
+error `launch` throws carries the same messages as its `console`. A first navigation the browser
+aborts (`net::ERR_ABORTED`, seen on a browser's first start on a machine) is made once more.
 
 ## Wire protocol
 

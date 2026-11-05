@@ -225,9 +225,10 @@ jobs:
       DCL_E2E_BASE_DOMAIN: ${{ vars.DCL_E2E_BASE_DOMAIN || 'decentraland.zone' }}
       DCL_E2E_REALM: ${{ vars.DCL_E2E_REALM || 'https://peer.decentraland.zone' }}
       DCL_E2E_WORKER: '0'
-      # The app's "Enable GPU acceleration" page asks for the first of these: the image's Edge
-      # gave WebGPU no adapter without them. The GPU probe below says whether Chrome needs them.
-      CHROME_EXTRA_ARGS: --enable-unsafe-webgpu --ignore-gpu-blocklist
+      # The app's "Enable GPU acceleration" page asks for the first of these: without them the
+      # browser gave WebGPU no adapter. The GPU probe step passes them on as CHROME_EXTRA_ARGS,
+      # with the GPU's LUID when the browser starts on the VM's display adapter instead.
+      WEBGPU_FLAGS: --enable-unsafe-webgpu --ignore-gpu-blocklist
     steps:
       # The checkout fetches the scenes' assets through git-lfs, which the image's MinGit lacks:
       # the pinned release goes on PATH first, checked against the sum the release signs.
@@ -291,18 +292,31 @@ jobs:
           Write-Output "Chrome for Testing $env:CHROME_VERSION at $exe"
           Add-Content -Path $env:GITHUB_ENV -Value "CHROME_PATH=$exe"
       # What the scenarios will find, said in seconds rather than after a boot's timeout: the
-      # GPU and its driver, whether the job's session is interactive, and the WebGPU adapter the
-      # browser gives a page, bare and then with the scenarios' flags (`npm run gpu-probe`).
+      # GPU and its driver, whether the job's session is interactive, and the GPU the browser
+      # gives a page, bare and then with the scenarios' flags (`npm run gpu-probe`, chrome://gpu
+      # into the report). On the VM the browser starts on the paravirtual display adapter and
+      # WebGPU finds no hardware there; the probe names the NVIDIA adapter's LUID, and the
+      # scenarios start their browser on it. CHROME_EXTRA_ARGS is set here, first thing, so a
+      # probe that fails still leaves the scenarios their flags.
       - name: GPU probe
         continue-on-error: true
         run: |
+          Add-Content -Path $env:GITHUB_ENV -Value "CHROME_EXTRA_ARGS=$env:WEBGPU_FLAGS"
           Get-CimInstance Win32_VideoController | ForEach-Object { Write-Output "video controller: $($_.Name) driver=$($_.DriverVersion) status=$($_.Status)" }
           Write-Output "session: interactive=$([Environment]::UserInteractive) id=$((Get-Process -Id $PID).SessionId)"
-          $flags = $env:CHROME_EXTRA_ARGS
+          $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+          if ($smi) { & $smi.Source } else { Write-Output 'nvidia-smi: not on PATH' }
           $env:CHROME_EXTRA_ARGS = ''
           npm run gpu-probe
-          $env:CHROME_EXTRA_ARGS = $flags
-          npm run gpu-probe
+          $env:CHROME_EXTRA_ARGS = $env:WEBGPU_FLAGS
+          $lines = npm run gpu-probe -- --adapter nvidia 2>&1 | ForEach-Object { "$_" }
+          $lines
+          $luid = ($lines | Select-String -Pattern '^adapter-luid: (\S+)' | Select-Object -First 1)
+          if ($luid) {
+            $value = $luid.Matches[0].Groups[1].Value
+            Add-Content -Path $env:GITHUB_ENV -Value "CHROME_EXTRA_ARGS=$env:WEBGPU_FLAGS --use-adapter-luid=$value"
+            Write-Output "the scenarios' browser starts on adapter LUID $value"
+          }
       # The accounts secret is on the two scenario steps alone: never in the environment of the
       # install, the builds, or the report.
       - name: InWorld scenarios

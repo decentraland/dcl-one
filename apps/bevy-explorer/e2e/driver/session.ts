@@ -151,7 +151,10 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
     await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin)
     if (target.transport === 'web') await arrive(explorer, realm, position)
   } catch (error) {
+    // a page that opened but never arrived: what it said and how it looks, with the error
+    const evidence = console_ instanceof WebConsole ? await console_.evidence().catch(() => undefined) : undefined
     await explorer.close()
+    if (evidence) throw new BootError(message(error), evidence.console, evidence.screenshot)
     throw error
   }
   return {

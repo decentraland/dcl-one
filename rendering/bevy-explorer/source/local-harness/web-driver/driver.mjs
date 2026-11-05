@@ -242,7 +242,14 @@ class Driver {
     this.#page = { id: sessionId, type: 'page', targetId, parent: null };
     this.#sessions.set(sessionId, this.#page);
     await this.#setUp(this.#page);
-    const { errorText } = await this.#send('Page.navigate', { url: this.url }, this.#page);
+    let { errorText } = await this.#send('Page.navigate', { url: this.url }, this.#page);
+    if (errorText === 'net::ERR_ABORTED') {
+      // seen once per machine on a browser's first start: the navigation gone before it began
+      console.error(`web-driver: the first navigation to ${this.url} was aborted; navigating once more`);
+      this.#log(this.#page.id, 'warning', `web-driver: the first navigation was aborted (${errorText}); navigating once more`);
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      ({ errorText } = await this.#send('Page.navigate', { url: this.url }, this.#page));
+    }
     if (errorText) throw new Error(`could not open ${this.url}: ${errorText}`);
   }
 
@@ -309,6 +316,9 @@ class Driver {
         this.#log(sessionId, level, `${source}: ${text}${url ? ` (${url})` : ''}`);
         break;
       }
+      case 'Inspector.targetCrashed':
+        this.#log(sessionId, 'crash', 'the target crashed');
+        break;
       case 'Runtime.bindingCalled': {
         if (params.name !== BINDING) break;
         const session = this.#sessions.get(sessionId);
@@ -655,6 +665,8 @@ export async function launch({ url, chrome, headless = true, args = [], windowSi
   try {
     await driver.open();
   } catch (error) {
+    // what the page said before the open failed, on the error: the driver is closed with it
+    if (error instanceof Error) error.console = driver.consoleMessages();
     await driver.close();
     throw error;
   }
