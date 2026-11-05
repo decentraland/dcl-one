@@ -454,16 +454,16 @@ Verdict: MATCH under `/content/` (CR-11).
    - Place: `services/catalyst/content/src/get_content.rs` (`detect_content_type`).
    - Severity: P2.
 
-8. **CR-8** POST /entities/active: no `Cache-Control`, no `fields`.
+8. **CR-8** POST /entities/active: no `Cache-Control`, no `fields`. Status: Kept by decision (the `fields` mask).
+   - Decision: `?fields=` keeps masking, as a dcl-one superset. A client that sends it to upstream gets
+     full entities, so dropping it changes nothing for upstream clients and removes a feature.
    - Upstream: no `Cache-Control` header; the query string ignored, full entities returned
      (`decentraland/catalyst:src/controllers/handlers/active-entities-handler.ts:36-47`;
      `captures/content-reads/CR-14-active-entity-key-order.json` has no `Cache-Control`).
    - Done: no `Cache-Control` (`active_entities.rs` `get_active_entities`; test
      `active_entities_by_pointers_dedupe_multi_pointer_entities`).
-   - Left: `?fields=` still masks. It is listed below as this node's superset; a client that sends it to
-     upstream gets full entities, so dropping it changes nothing for upstream clients and removes a
-     feature. Keep it unless the superset is retired.
-   - Severity: P2 (the `fields` superset only).
+   - Left: `?fields=` still masks; it is listed below as this node's superset.
+   - Severity: P2 (the `fields` superset only, by decision).
 
 9. **CR-9** GET /entities/:type: `fields` and empty elements. Status: MATCH, no work.
    - Upstream: an empty `fields` means no mask (`get-entities-handler.ts:61`). `qsGetArray` treats only a
