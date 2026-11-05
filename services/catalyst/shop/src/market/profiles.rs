@@ -19,14 +19,13 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::content::queries::active_entity_docs_by_pointers;
 
-use super::graph::{self, normalize_urn};
+use super::graph;
 use super::third_party;
-use super::{MarketplaceState, SharedState, bad_request, internal_server_error, not_found};
+use super::{MarketplaceState, SharedState, bad_request, lambdas_internal_error, not_found};
 
 /// Bounds staleness for changes that arrive on chain rather than through a
 /// deployment (a wearable or name bought, sold or transferred).
@@ -46,12 +45,11 @@ fn is_base_wearable(urn: &str) -> bool {
     urn.contains("base-avatars")
 }
 
-/// Base-emote classification from @dcl/schemas 27.2.0 `isBaseEmote`.
+/// `profiles.ts` `isBaseEmote`: a substring test for the off-chain base
+/// emotes only; a `base-scene-emotes` URN goes through ownership like any
+/// other item (and nobody owns one).
 pub fn is_base_emote(urn: &str) -> bool {
-    let parts: Vec<_> = urn.split(':').collect();
-    parts.len() == 5
-        && parts[1] == "decentraland"
-        && matches!(parts[3], "base-emotes" | "base-scene-emotes")
+    urn.contains("urn:decentraland:off-chain:base-emotes")
 }
 
 /// Pointers `default*` hold the curated default looks: they own nothing.
@@ -86,7 +84,7 @@ fn collect_ownership_urns(metadata: &Value) -> Vec<String> {
                     continue;
                 }
                 let (urn, _token_id) = split_urn_and_token_id(wearable);
-                to_check.push(normalize_urn(urn));
+                to_check.push(urn.to_string());
             }
         }
         if let Some(emotes) = avatar_obj.get("emotes").and_then(|e| e.as_array()) {
@@ -98,7 +96,7 @@ fn collect_ownership_urns(metadata: &Value) -> Vec<String> {
                     continue;
                 }
                 let (urn, _token_id) = split_urn_and_token_id(emote_urn);
-                to_check.push(normalize_urn(urn));
+                to_check.push(urn.to_string());
             }
         }
     }
@@ -107,18 +105,19 @@ fn collect_ownership_urns(metadata: &Value) -> Vec<String> {
 
 /// An owned item as `profiles.ts` re-emits it: `<owned urn>:<the named token
 /// id, or the first one held>`; `None` when the URN is not held or the named
-/// token is not among the held ones.
+/// token is not among the held ones. The URN must equal the inventory's
+/// exactly, as lamb2's `Map` lookup does: the subgraphs spell L1 `ethereum`,
+/// so a `mainnet` spelling is not owned.
 fn owned_item(item: &str, owned: &OwnedTokens) -> Option<String> {
     let (urn, token_id) = split_urn_and_token_id(item);
-    let urn = normalize_urn(urn);
-    let held = owned.get(&urn)?;
+    let held = owned.get(urn)?;
     let token = match token_id {
         Some(t) => Some(held.iter().find(|h| *h == t)?),
         None => held.first(),
     };
     Some(match token {
         Some(token) => format!("{urn}:{token}"),
-        None => urn,
+        None => urn.to_string(),
     })
 }
 
@@ -283,6 +282,10 @@ fn link_url_regex() -> &'static regex::Regex {
     })
 }
 
+/// `profiles.ts` `sanitizeLinks`: a link whose `url` passes `LinkUrl.validate`
+/// is kept as deployed, else one whose URL-decoded `url` passes is kept with
+/// the decoded value; nothing else is checked (this node never fetches these
+/// URLs, so a loopback or private host is kept as lamb2 keeps it).
 pub fn sanitize_links(metadata: &mut Value) {
     let Some(avatars) = metadata.get_mut("avatars").and_then(|v| v.as_array_mut()) else {
         return;
@@ -297,13 +300,12 @@ pub fn sanitize_links(metadata: &mut Value) {
             let Some(url) = link.get("url").and_then(|u| u.as_str()) else {
                 continue;
             };
-            if re.is_match(url) && crate::http::is_safe_http_url(url) {
+            if re.is_match(url) {
                 sanitized.push(link.clone());
                 continue;
             }
             if let Ok(decoded) = urlencoding::decode(url)
                 && re.is_match(&decoded)
-                && crate::http::is_safe_http_url(&decoded)
             {
                 let mut link_clone = link.clone();
                 if let Some(obj) = link_clone.as_object_mut() {
@@ -533,7 +535,7 @@ enum Failure {
 impl Failure {
     fn into_response(self) -> Response {
         match self {
-            Failure::Db => internal_server_error(),
+            Failure::Db => lambdas_internal_error(),
             // lamb2's retryable 503 envelope (`ServiceOverloadedError`).
             Failure::Reader(e) => {
                 tracing::warn!(error = %e, "profiles: ownership reader failed");
@@ -614,12 +616,6 @@ async fn fetch_profile_for_id(
     Ok(if cached.is_null() { None } else { Some(cached) })
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ProfilesRequest {
-    #[serde(default)]
-    pub ids: Option<Vec<String>>,
-}
-
 #[derive(Debug, PartialEq, Eq)]
 enum ProfileIdsCheck {
     MissingOrEmpty,
@@ -627,7 +623,10 @@ enum ProfileIdsCheck {
     TooMany,
 }
 
-fn validate_profile_ids(ids: Option<&[String]>) -> ProfileIdsCheck {
+/// `profilesHandler`: `ids` must be a non-empty array (anything else,
+/// including a body that is not an object, is the "No profile ids" 400) of
+/// at most 1000 entries.
+fn validate_profile_ids(ids: Option<&[Value]>) -> ProfileIdsCheck {
     match ids {
         None | Some([]) => ProfileIdsCheck::MissingOrEmpty,
         Some(ids) if ids.len() > PROFILE_IDS_MAX => ProfileIdsCheck::TooMany,
@@ -686,16 +685,28 @@ pub async fn profiles(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
-    let body: ProfilesRequest = match serde_json::from_slice(&body) {
+    // lamb2 reads `(await request.json()).ids`: a body that is not JSON, or
+    // is `null`, throws before any check and is its bare 500.
+    let body: Value = match serde_json::from_slice(&body) {
+        Ok(Value::Null) | Err(_) => return lambdas_internal_error(),
         Ok(b) => b,
-        Err(e) => return bad_request(&format!("Failed to parse the request body as JSON: {e}")),
     };
-    if let Some(resp) = early_profiles_response(validate_profile_ids(body.ids.as_deref())) {
+    let ids = body.get("ids").and_then(Value::as_array).map(Vec::as_slice);
+    if let Some(resp) = early_profiles_response(validate_profile_ids(ids)) {
         return resp;
     }
-    let ids = body
-        .ids
-        .expect("validate_profile_ids guarantees a non-empty id list");
+    // lamb2 sends the ids to the content server as they are; one that is not
+    // a non-empty string fails that server's body schema (catalyst
+    // `activeEntitiesBodySchema`), and `getProfiles` turns the failure into
+    // `[]` for the whole batch.
+    let Some(ids) = ids
+        .unwrap_or_default()
+        .iter()
+        .map(|id| id.as_str().filter(|s| !s.is_empty()).map(str::to_string))
+        .collect::<Option<Vec<String>>>()
+    else {
+        return Json(json!([])).into_response();
+    };
 
     let modified_since: Option<i64> = headers
         .get("if-modified-since")
@@ -713,7 +724,7 @@ pub async fn profiles(
     }
     let entities = match active_entities(&state, &pointers).await {
         Ok(e) => e,
-        Err(()) => return internal_server_error(),
+        Err(()) => return lambdas_internal_error(),
     };
 
     if let Some(threshold) = modified_since
@@ -849,18 +860,20 @@ mod tests {
         assert_eq!(split_urn_and_token_id(tp).1, None);
     }
 
+    /// `profiles.ts` `isBaseEmote` is a substring test for the base emotes.
     #[test]
-    fn schemas_27_2_base_emote_classification() {
-        for collection in ["base-emotes", "base-scene-emotes"] {
-            assert!(is_base_emote(&format!(
-                "urn:decentraland:off-chain:{collection}:wave"
-            )));
+    fn base_emotes_are_the_off_chain_base_emotes_only() {
+        for urn in [
+            "urn:decentraland:off-chain:base-emotes:wave",
+            "urn:decentraland:off-chain:base-emotes:wave:extra",
+            "urn:decentraland:off-chain:base-emotes-fake:wave",
+        ] {
+            assert!(is_base_emote(urn), "{urn}");
         }
         for urn in [
+            "urn:decentraland:off-chain:base-scene-emotes:wave",
             "urn:decentraland:off-chain:base-avatars:wave",
-            "urn:decentraland:off-chain:base-scene-emotes-fake:wave",
-            "urn:decentraland:off-chain:base-scene-emotes:wave:extra",
-            "urn:other:off-chain:base-scene-emotes:wave",
+            "URN:decentraland:off-chain:base-emotes:wave",
             "invalid",
         ] {
             assert!(!is_base_emote(urn), "{urn}");
@@ -911,8 +924,10 @@ mod tests {
                 "emotes": [
                     {"slot": 0, "urn": "handsair"},
                     {"slot": 1, "urn": "urn:decentraland:off-chain:base-emotes:wave", "extra": 1},
-                    {"slot": 2, "urn": "urn:decentraland:mainnet:collections-v1:0xc:dance", "extra": 1},
-                    {"slot": 3, "urn": "urn:decentraland:matic:collections-v2:0xx:1"}
+                    {"slot": 2, "urn": "urn:decentraland:ethereum:collections-v1:0xc:dance", "extra": 1},
+                    {"slot": 3, "urn": "urn:decentraland:matic:collections-v2:0xx:1"},
+                    {"slot": 4, "urn": "urn:decentraland:mainnet:collections-v1:0xc:dance"},
+                    {"slot": 5, "urn": "urn:decentraland:off-chain:base-scene-emotes:clap"}
                 ]
             }
         })];
@@ -923,7 +938,8 @@ mod tests {
                 {"slot": 0, "urn": "handsair"},
                 {"slot": 1, "urn": "urn:decentraland:off-chain:base-emotes:wave", "extra": 1},
                 {"slot": 2, "urn": "urn:decentraland:ethereum:collections-v1:0xc:dance:3"},
-            ])
+            ]),
+            "the `mainnet` spelling and a base-scene emote are not owned"
         );
     }
 
@@ -953,7 +969,7 @@ mod tests {
         assert_eq!(
             collect_ownership_urns(&metadata),
             vec![
-                "urn:decentraland:ethereum:collections-v1:0xc:hat",
+                "urn:decentraland:mainnet:collections-v1:0xc:hat",
                 "urn:decentraland:matic:collections-v2:0xabc:0",
                 "urn:decentraland:matic:collections-v2:0xabc:9",
             ]
@@ -1015,37 +1031,53 @@ mod tests {
         );
     }
 
+    /// `sanitizeLinks`: `LinkUrl.validate`, then the decoded retry; the
+    /// host is not checked.
     #[test]
-    fn links_keep_only_safe_http_targets() {
+    fn links_keep_what_link_url_accepts() {
         let mut m = json!({ "avatars": [{ "links": [
             { "title": "ok", "url": "https://decentraland.org/x" },
             { "title": "encoded", "url": "https%3A%2F%2Fdecentraland.org%2Fy" },
             { "title": "js", "url": "javascript:alert(1)" },
             { "title": "internal", "url": "http://127.0.0.1/" },
+            { "title": "single label", "url": "HTTP://intranet" },
+            { "title": "space", "url": "https://ab c" },
             { "title": "none" }
         ] }] });
         sanitize_links(&mut m);
-        let links = m["avatars"][0]["links"].as_array().unwrap();
-        assert_eq!(links.len(), 2, "{links:?}");
-        assert_eq!(links[1]["url"], "https://decentraland.org/y");
+        let urls: Vec<&str> = m["avatars"][0]["links"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l["url"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            urls,
+            [
+                "https://decentraland.org/x",
+                "https://decentraland.org/y",
+                "http://127.0.0.1/",
+                "HTTP://intranet",
+            ]
+        );
     }
 
     #[test]
     fn validate_profile_ids_boundaries() {
         assert_eq!(validate_profile_ids(None), ProfileIdsCheck::MissingOrEmpty);
-        let empty: Vec<String> = Vec::new();
+        let empty: Vec<Value> = Vec::new();
         assert_eq!(
             validate_profile_ids(Some(&empty)),
             ProfileIdsCheck::MissingOrEmpty
         );
-        let ids = vec!["0xabc".to_string()];
+        let ids = vec![json!("0xabc")];
         assert_eq!(validate_profile_ids(Some(&ids)), ProfileIdsCheck::Valid);
-        let ids: Vec<String> = (0..PROFILE_IDS_MAX).map(|i| format!("0x{i}")).collect();
+        let ids: Vec<Value> = (0..PROFILE_IDS_MAX).map(|i| json!(i)).collect();
         assert_eq!(validate_profile_ids(Some(&ids)), ProfileIdsCheck::Valid);
-        let ids: Vec<String> = (0..=PROFILE_IDS_MAX).map(|i| format!("0x{i}")).collect();
+        let ids: Vec<Value> = (0..=PROFILE_IDS_MAX).map(|i| json!(i)).collect();
         assert_eq!(validate_profile_ids(Some(&ids)), ProfileIdsCheck::TooMany);
         const { assert!(PROFILE_BATCH_MAX < PROFILE_IDS_MAX) };
-        let ids: Vec<String> = (0..=PROFILE_BATCH_MAX).map(|i| format!("0x{i}")).collect();
+        let ids: Vec<Value> = (0..=PROFILE_BATCH_MAX).map(|i| json!(i)).collect();
         assert_eq!(
             validate_profile_ids(Some(&ids)),
             ProfileIdsCheck::Valid,
@@ -1067,8 +1099,53 @@ mod tests {
                 .status(),
             StatusCode::BAD_REQUEST
         );
-        let ids = vec!["0xabc".to_string()];
+        let ids = vec![json!("0xabc")];
         assert!(early_profiles_response(validate_profile_ids(Some(&ids))).is_none());
+    }
+
+    async fn post_profiles(body: &'static str) -> (StatusCode, Value) {
+        let state = super::super::tests::support::state_without_db();
+        let resp = profiles(
+            State(state),
+            HeaderMap::new(),
+            axum::body::Bytes::from_static(body.as_bytes()),
+        )
+        .await;
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    /// `profilesHandler`: `request.json()` throws on a body that is not JSON
+    /// and `null.ids` throws, both the bare 500; any other body without an
+    /// `ids` array is the "No profile ids" 400; a non-string id fails the
+    /// content read, which `getProfiles` answers `[]`.
+    #[tokio::test]
+    async fn malformed_profile_bodies_answer_as_lamb2() {
+        let internal = json!({ "error": "Internal Server Error" });
+        let missing = json!({ "error": "Bad request", "message": MISSING_PROFILE_IDS_MSG });
+        let empty = json!([]);
+        for (body, status, expected) in [
+            ("not json", StatusCode::INTERNAL_SERVER_ERROR, &internal),
+            ("", StatusCode::INTERNAL_SERVER_ERROR, &internal),
+            ("null", StatusCode::INTERNAL_SERVER_ERROR, &internal),
+            ("5", StatusCode::BAD_REQUEST, &missing),
+            ("[]", StatusCode::BAD_REQUEST, &missing),
+            (r#"{"ids":"0xabc"}"#, StatusCode::BAD_REQUEST, &missing),
+            (
+                r#"{"ids":{"0":"0xabc"}}"#,
+                StatusCode::BAD_REQUEST,
+                &missing,
+            ),
+            (r#"{"ids":["0xabc",5]}"#, StatusCode::OK, &empty),
+            (r#"{"ids":[null]}"#, StatusCode::OK, &empty),
+            (r#"{"ids":[""]}"#, StatusCode::OK, &empty),
+        ] {
+            let got = post_profiles(body).await;
+            assert_eq!((got.0, &got.1), (status, expected), "{body}");
+        }
     }
 
     #[test]

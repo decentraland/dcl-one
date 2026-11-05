@@ -108,6 +108,10 @@ struct Fixture {
     response: FixtureResponse,
     #[serde(default)]
     volatile_paths: Vec<String>,
+    /// `"unspecified"`: the upstream answer has no stable order, so a
+    /// top-level array is compared as a multiset.
+    #[serde(default)]
+    order: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -120,6 +124,9 @@ struct FixtureRequest {
     headers: BTreeMap<String, String>,
     #[serde(default)]
     body: Option<Value>,
+    /// A body sent as these bytes, for one that is not JSON.
+    #[serde(default)]
+    body_raw: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -196,6 +203,9 @@ fn fixture_request(fx: &FixtureRequest) -> Request<Body> {
     for (k, v) in &fx.headers {
         builder = builder.header(k.as_str(), v.as_str());
     }
+    if let Some(raw) = &fx.body_raw {
+        return builder.body(Body::from(raw.clone())).unwrap();
+    }
     match &fx.body {
         Some(body) => builder
             .header(header::CONTENT_TYPE, "application/json")
@@ -251,6 +261,13 @@ async fn replay_one(router: Router, fx: &Fixture) -> Vec<String> {
                 for path in &fx.volatile_paths {
                     scrub(&mut baseline, path);
                     scrub(&mut candidate, path);
+                }
+                if fx.order.as_deref() == Some("unspecified") {
+                    for v in [&mut baseline, &mut candidate] {
+                        if let Some(items) = v.as_array_mut() {
+                            items.sort_by_cached_key(|i| i.to_string());
+                        }
+                    }
                 }
                 if baseline != candidate {
                     notes.push(format!("body: fixture={baseline} candidate={candidate}"));
@@ -388,7 +405,8 @@ async fn profiles_reject_too_many_ids_and_malformed_json() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    // lamb2's `request.json()` throws: its bare 500.
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 /// The old lambdas answered 400 before touching a reader; a configured
