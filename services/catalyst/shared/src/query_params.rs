@@ -235,6 +235,100 @@ fn strip_array_index(key: &str) -> String {
     key.to_string()
 }
 
+/// JavaScript's `parseInt(raw, 10)`: leading whitespace, an optional sign,
+/// then the longest run of digits (`10abc` is 10, `1.5` is 1); `None` where
+/// it answers `NaN`. A value past `i64` saturates.
+pub fn js_parse_int(raw: &str) -> Option<i64> {
+    let s = raw.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    let (negative, digits) = match s.as_bytes().first() {
+        Some(b'-') => (true, &s[1..]),
+        Some(b'+') => (false, &s[1..]),
+        _ => (false, s),
+    };
+    let end = digits
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(digits.len());
+    if end == 0 {
+        return None;
+    }
+    let magnitude = digits[..end].bytes().fold(0i64, |n, d| {
+        n.saturating_mul(10).saturating_add(i64::from(d - b'0'))
+    });
+    Some(if negative { -magnitude } else { magnitude })
+}
+
+/// The value `qs` gives a handler that casts it to a string: a repeated key
+/// is an array, which JavaScript joins with commas. `None` for a missing key
+/// or a single empty value (both falsy).
+fn qs_js_string(params: &QueryParams, key: &str) -> Option<String> {
+    match params.get(key) {
+        Some(values) if !values.is_empty() && !(values.len() == 1 && values[0].is_empty()) => {
+            Some(values.join(","))
+        }
+        _ => None,
+    }
+}
+
+/// The content server's `qsGetNumber`: absent when missing or empty, else
+/// `parseInt`, absent on `NaN`.
+pub fn qs_get_js_number(params: &QueryParams, key: &str) -> Option<i64> {
+    qs_js_string(params, key).and_then(|s| js_parse_int(&s))
+}
+
+/// The content server's `qsGetBoolean`: absent when missing or empty, else
+/// whether the value is exactly `true` (a repeated key is an array, never
+/// `'true'`).
+pub fn qs_get_js_bool(params: &QueryParams, key: &str) -> Option<bool> {
+    let values = params.get(key)?;
+    match values.as_slice() {
+        [] => None,
+        [only] if only.is_empty() => None,
+        [only] => Some(only == "true"),
+        _ => Some(false),
+    }
+}
+
+/// The content server's `paginationObject` (`src/controllers/utils.ts`): a
+/// present `pageSize`/`pageNum` is read with `parseInt` (`10abc` is 10), and
+/// one that reads as `NaN` (empty included) or below 1 is a 400.
+pub fn parse_pagination_js(params: &QueryParams, max_page_size: i64) -> Result<Pagination, String> {
+    let read = |key: &str, default: i64| match params.get(key).and_then(|v| v.first()) {
+        Some(raw) => js_parse_int(raw),
+        None => Some(default),
+    };
+    let page_size = match read("pageSize", 100) {
+        Some(n) if n >= 1 => n,
+        _ => return Err("pageSize must be a positive integer".to_string()),
+    };
+    let page_num = match read("pageNum", 1) {
+        Some(n) if n >= 1 => n,
+        _ => return Err("pageNum must be a positive integer".to_string()),
+    };
+    if page_size > max_page_size {
+        return Err(format!("max allowed pageSize is {}", max_page_size));
+    }
+    Ok(Pagination {
+        page_size,
+        page_num,
+        offset: page_num.saturating_sub(1).saturating_mul(page_size),
+        limit: page_size,
+    })
+}
+
+/// `qs.stringify(..., {arrayFormat: 'repeat'})` over keys in the given order:
+/// each value percent-encoded as RFC 3986, empty values kept (`key=`).
+pub fn to_ordered_query_string(pairs: &[(&str, Vec<String>)]) -> String {
+    pairs
+        .iter()
+        .flat_map(|(key, values)| {
+            values
+                .iter()
+                .map(move |v| format!("{}={}", urlencoding_encode(key), urlencoding_encode(v)))
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,6 +366,75 @@ mod tests {
             .join("&");
         let params = parse_query_string(&query);
         assert!(qs_get_array(&params, "cid").len() <= MAX_QUERY_PARAMS);
+    }
+
+    #[test]
+    fn js_parse_int_reads_a_numeric_prefix() {
+        for (raw, want) in [
+            ("10", Some(10)),
+            ("10abc", Some(10)),
+            ("1.5", Some(1)),
+            ("  7", Some(7)),
+            ("-3", Some(-3)),
+            ("+4", Some(4)),
+            ("", None),
+            ("abc", None),
+            ("-", None),
+            ("0x10", Some(0)),
+            ("99999999999999999999999", Some(i64::MAX)),
+        ] {
+            assert_eq!(js_parse_int(raw), want, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn js_number_and_bool_follow_qs_get_number_and_boolean() {
+        let params = parse_query_string("a=10abc&b=&c=x&d=5&d=6&t=true&f=TRUE&e=&r=true&r=true");
+        assert_eq!(qs_get_js_number(&params, "a"), Some(10));
+        assert_eq!(qs_get_js_number(&params, "b"), None);
+        assert_eq!(qs_get_js_number(&params, "c"), None);
+        assert_eq!(qs_get_js_number(&params, "d"), Some(5));
+        assert_eq!(qs_get_js_number(&params, "missing"), None);
+        assert_eq!(qs_get_js_bool(&params, "t"), Some(true));
+        assert_eq!(qs_get_js_bool(&params, "f"), Some(false));
+        assert_eq!(qs_get_js_bool(&params, "e"), None);
+        assert_eq!(qs_get_js_bool(&params, "r"), Some(false));
+        assert_eq!(qs_get_js_bool(&params, "missing"), None);
+    }
+
+    #[test]
+    fn js_pagination_reads_like_pagination_object() {
+        let p =
+            parse_pagination_js(&parse_query_string("pageSize=10abc&pageNum=1.5"), 1000).unwrap();
+        assert_eq!((p.page_size, p.page_num, p.offset), (10, 1, 0));
+        let p = parse_pagination_js(&parse_query_string(""), 1000).unwrap();
+        assert_eq!((p.page_size, p.page_num), (100, 1));
+        for (query, message) in [
+            ("pageSize=", "pageSize must be a positive integer"),
+            ("pageSize=abc", "pageSize must be a positive integer"),
+            ("pageSize=0", "pageSize must be a positive integer"),
+            ("pageNum=", "pageNum must be a positive integer"),
+            ("pageNum=x", "pageNum must be a positive integer"),
+            ("pageSize=1001", "max allowed pageSize is 1000"),
+        ] {
+            assert_eq!(
+                parse_pagination_js(&parse_query_string(query), 1000).unwrap_err(),
+                message,
+                "{query}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordered_query_string_keeps_order_and_empty_values() {
+        let pairs = [
+            ("pointer", vec!["0,0".to_string(), String::new()]),
+            ("from", vec!["1".to_string()]),
+        ];
+        assert_eq!(
+            to_ordered_query_string(&pairs),
+            "pointer=0%2C0&pointer=&from=1"
+        );
     }
 
     #[test]

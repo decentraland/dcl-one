@@ -10,12 +10,12 @@ use super::errors::{AppError, AppResult};
 use super::formatters::{EntityField, MaskedEntity, mask_entity};
 use super::queries::{self, EntityDoc, MaskedColumns, retain_non_denylisted};
 use super::query_params::{
-    QueryParams, parse_entity_type, parse_pagination, parse_query_string, qs_get_filter_array,
+    QueryParams, parse_entity_type, parse_pagination_js, parse_query_string, qs_get_filter_array,
     qs_get_string,
 };
 use super::validation::{
-    BodyRefusal, ENTITIES_SELECTOR_MESSAGE, MAX_IDS_OR_POINTERS, active_entities_body,
-    validate_ids_or_pointers,
+    BodyRefusal, ENTITIES_SELECTOR_MESSAGE, MAX_IDS_OR_POINTERS, SelectorError,
+    active_entities_body, ordered_refusal_json,
 };
 
 pub(crate) fn json_docs_response(docs: &[EntityDoc]) -> Response {
@@ -60,12 +60,15 @@ async fn lookup(
     Ok(docs)
 }
 
+/// `fields=` (empty) is no mask, as upstream's `if (fields)` reads it.
 fn requested_fields(params: &QueryParams) -> Option<Vec<EntityField>> {
-    qs_get_string(params, "fields").map(|f| {
-        f.split(',')
-            .filter_map(|s| EntityField::parse(s.trim()))
-            .collect()
-    })
+    qs_get_string(params, "fields")
+        .filter(|f| !f.is_empty())
+        .map(|f| {
+            f.split(',')
+                .filter_map(|s| EntityField::parse(s.trim()))
+                .collect()
+        })
 }
 
 async fn lookup_masked(
@@ -102,19 +105,27 @@ pub async fn get_active_entities(
     let (use_ids, values) = match active_entities_body(&body) {
         Ok(selector) => selector,
         Err(BodyRefusal::Schema(refusal)) => {
-            return Ok((StatusCode::BAD_REQUEST, Json(refusal)).into_response());
+            return Ok((
+                StatusCode::BAD_REQUEST,
+                [(CONTENT_TYPE, "application/json")],
+                ordered_refusal_json(&refusal),
+            )
+                .into_response());
         }
         Err(BodyRefusal::Selector(error)) => return Err(error),
     };
     let values = values.as_slice();
 
-    let response = match requested_fields(&parse_query_string(query.as_deref().unwrap_or(""))) {
-        Some(fields) => {
-            Json(lookup_masked(&state, use_ids, values, &fields).await?).into_response()
-        }
-        None => json_docs_response(&lookup(&state, use_ids, values).await?),
-    };
-    Ok(with_cache_control(&state, response))
+    // No `Cache-Control`: upstream sets none on this POST
+    // (`captures/content-reads/CR-14-active-entity-key-order.json`).
+    Ok(
+        match requested_fields(&parse_query_string(query.as_deref().unwrap_or(""))) {
+            Some(fields) => {
+                Json(lookup_masked(&state, use_ids, values, &fields).await?).into_response()
+            }
+            None => json_docs_response(&lookup(&state, use_ids, values).await?),
+        },
+    )
 }
 
 /// GET /entities/{type}?pointer=..|id=..[&fields=content,pointers,metadata]
@@ -155,16 +166,20 @@ async fn entities_of_type(
         .collect();
     let ids = qs_get_filter_array(&params, "id");
 
-    let use_ids = validate_ids_or_pointers(
-        (!ids.is_empty()).then_some(ids.as_slice()),
-        (!pointers.is_empty()).then_some(pointers.as_slice()),
-        MAX_IDS_OR_POINTERS,
-    )
-    .map_err(|e| e.into_app_error(ENTITIES_SELECTOR_MESSAGE))?;
+    let use_ids = entities_selector(&ids, &pointers)?;
 
     let fields = requested_fields(&params);
 
-    let entities = lookup(state, use_ids, if use_ids { &ids } else { &pointers }).await?;
+    // An empty element inside a list is kept by upstream and matches nothing.
+    let values: Vec<String> = if use_ids { ids } else { pointers }
+        .into_iter()
+        .filter(|v| !v.is_empty())
+        .collect();
+    let entities = if values.is_empty() {
+        Vec::new()
+    } else {
+        lookup(state, use_ids, &values).await?
+    };
 
     // Upstream masks every entity here, `fields` or not, so the key order is
     // its `maskEntity` one (`version,id,type,timestamp,...`), not the stored one.
@@ -174,6 +189,21 @@ async fn entities_of_type(
         .map(|e| mask_entity(&e, fields.as_deref()))
         .collect();
     Ok(with_cache_control(state, Json(masked).into_response()))
+}
+
+/// Upstream's `GET /entities/:type` selector check: `id` or `pointer`, not
+/// both, each read by `qsGetArray` (a lone empty value is absent, an empty
+/// element in a list is kept); returns whether ids were selected.
+fn entities_selector(ids: &[String], pointers: &[String]) -> AppResult<bool> {
+    if ids.is_empty() == pointers.is_empty() {
+        return Err(AppError::invalid(ENTITIES_SELECTOR_MESSAGE));
+    }
+    if ids.len() > MAX_IDS_OR_POINTERS || pointers.len() > MAX_IDS_OR_POINTERS {
+        return Err(
+            SelectorError::TooMany(MAX_IDS_OR_POINTERS).into_app_error(ENTITIES_SELECTOR_MESSAGE)
+        );
+    }
+    Ok(!ids.is_empty())
 }
 
 /// GET /contents/{hash}/active-entities: the ids of the active entities that
@@ -274,7 +304,7 @@ pub async fn get_entities_by_collection(
     }
 
     let params = parse_query_string(request.uri().query().unwrap_or(""));
-    let pagination = parse_pagination(&params, 1000).map_err(AppError::invalid)?;
+    let pagination = parse_pagination_js(&params, 1000).map_err(AppError::invalid)?;
 
     let result = queries::active_entity_docs_by_prefix(
         &state.pool,
@@ -307,18 +337,42 @@ mod tests {
             .map(|p| p.to_lowercase())
             .collect();
         let ids = qs_get_filter_array(&params, "id");
-        validate_ids_or_pointers(
-            (!ids.is_empty()).then_some(ids.as_slice()),
-            (!pointers.is_empty()).then_some(pointers.as_slice()),
-            MAX_IDS_OR_POINTERS,
-        )
-        .map_err(|e| e.into_app_error(ENTITIES_SELECTOR_MESSAGE))
+        entities_selector(&ids, &pointers)
     }
 
     #[test]
-    fn empty_pointer_query_element_is_rejected() {
-        let err = selector_use_ids("pointer=").unwrap_err();
+    fn a_lone_empty_pointer_is_absent() {
+        for query in ["pointer=", "id=", "pointer=&id=", ""] {
+            let err = selector_use_ids(query).unwrap_err();
+            assert_eq!(err.to_string(), ENTITIES_SELECTOR_MESSAGE, "{query}");
+        }
+        let err = selector_use_ids("pointer=0,0&id=a").unwrap_err();
         assert_eq!(err.to_string(), ENTITIES_SELECTOR_MESSAGE);
+    }
+
+    /// CR-9: `qsGetArray` keeps an empty element inside a list, so
+    /// `pointer=a&pointer=` selects pointers (the empty one matches nothing).
+    #[test]
+    fn an_empty_element_inside_a_list_is_kept() {
+        assert!(!selector_use_ids("pointer=0,0&pointer=").unwrap());
+        assert!(selector_use_ids("id=a&id=").unwrap());
+        assert!(!selector_use_ids("pointer=&pointer=").unwrap());
+        // A lone empty `id` is absent, so the pointers select.
+        assert!(!selector_use_ids("pointer=0,0&id=").unwrap());
+    }
+
+    #[test]
+    fn an_empty_fields_value_is_no_mask() {
+        assert_eq!(requested_fields(&parse_query_string("fields=")), None);
+        assert_eq!(requested_fields(&parse_query_string("")), None);
+        assert_eq!(
+            requested_fields(&parse_query_string("fields=Content,")),
+            Some(vec![EntityField::Content])
+        );
+        assert_eq!(
+            requested_fields(&parse_query_string("fields=bogus")),
+            Some(vec![])
+        );
     }
 
     #[test]

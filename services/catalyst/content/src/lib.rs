@@ -216,7 +216,10 @@ impl Settings {
         let public_url = config.node.own_url();
         let map = config.map_urls();
         Self {
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            // Upstream's `CURRENT_VERSION`, the variable the social RPC
+            // `/status` reads too.
+            version: non_empty(&config.social.social_rpc_current_version)
+                .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
             commit_hash: config.commit_hash(),
             eth_network: config.node.eth_network.clone(),
             content_public_url: non_empty(&config.node.content_url)
@@ -763,7 +766,7 @@ pub fn build_router(state: SharedState) -> Router {
                 .on_failure(DefaultOnFailure::new().level(tracing::Level::DEBUG)),
         )
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
-        .layer(axum::middleware::from_fn(cors::cors_middleware))
+        .layer(axum::middleware::from_fn(routing::content_cors))
         .layer(axum::middleware::from_fn(connection::keep_alive_hint));
     if let Some(timeout) = request_timeout {
         app = app.layer(TimeoutLayer::with_status_code(
@@ -799,6 +802,32 @@ mod settings_tests {
                 .unwrap();
         let build_time = option_env!("CATALYST_COMMIT_HASH").map(str::to_string);
         assert_eq!(Settings::from_config(&config).commit_hash, build_time);
+    }
+
+    /// CS-15: `CURRENT_VERSION` sets the reported version, as upstream's.
+    #[test]
+    fn current_version_overrides_the_build_version() {
+        let config = Config::parse_for_tests(&[
+            "x",
+            "--database-url",
+            "postgres:///c",
+            "--social-rpc-current-version",
+            "8.3.2",
+        ])
+        .unwrap();
+        assert_eq!(Settings::from_config(&config).version, "8.3.2");
+        let config = Config::parse_for_tests(&[
+            "x",
+            "--database-url",
+            "postgres:///c",
+            "--social-rpc-current-version",
+            " ",
+        ])
+        .unwrap();
+        assert_eq!(
+            Settings::from_config(&config).version,
+            env!("CARGO_PKG_VERSION")
+        );
     }
 }
 

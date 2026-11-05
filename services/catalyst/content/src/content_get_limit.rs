@@ -13,10 +13,11 @@
 //!
 //! Over a budget the answer is upstream's 429 `{"error":"Too many requests"}`
 //! with `Retry-After` (seconds until the rejecting window ends) and the
-//! `RateLimit-Limit`/`-Remaining`/`-Reset` triplet of that bucket; a request
-//! that passes carries the burst bucket's triplet. The triplet's exact values
-//! come from `@dcl/rate-limiter-component`, which the pinned tree does not
-//! vendor, so they are this module's reading of it, not a capture.
+//! `RateLimit-Limit`/`-Remaining`/`-Reset` triplet of that bucket. A request
+//! that passes carries no `RateLimit-*` header, as the production peer answers
+//! (`captures/content-reads/CR-16-path-case-contents.json`). The 429's triplet
+//! comes from `@dcl/rate-limiter-component`, which the pinned tree does not
+//! vendor, so its values are this module's reading of it, not a capture.
 //!
 //! The counters are per process, as upstream's in-memory store is: N `serve`
 //! replicas behind the gateway admit N times each budget, and a restart
@@ -279,11 +280,7 @@ pub async fn limit(State(state): State<SharedState>, request: Request, next: Nex
     };
     match limiter.check(client, Instant::now()) {
         None => next.run(request).await,
-        Some(verdict) if verdict.allowed => {
-            let mut response = next.run(request).await;
-            rate_limit_headers(response.headers_mut(), &verdict);
-            response
-        }
+        Some(verdict) if verdict.allowed => next.run(request).await,
         Some(verdict) => {
             let mut response = json_error(StatusCode::TOO_MANY_REQUESTS, "Too many requests");
             let headers = response.headers_mut();
@@ -426,7 +423,7 @@ mod tests {
     }
 
     /// Through the router: the burst 429 body and headers, the exempt peer,
-    /// and the triplet on a request that passes; both mounts share a budget.
+    /// and no triplet on a request that passes; both mounts share a budget.
     #[tokio::test]
     async fn the_router_answers_upstreams_429() {
         use crate::tests::support::{TEST_CID, TestNode};
@@ -455,8 +452,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(first.status(), StatusCode::OK);
-        assert_eq!(first.headers()["ratelimit-limit"], "2");
-        assert_eq!(first.headers()["ratelimit-remaining"], "1");
+        assert!(first.headers().get("ratelimit-limit").is_none());
+        assert!(first.headers().get("ratelimit-remaining").is_none());
         let second = send("HEAD", format!("/contents/{TEST_CID}"), client)
             .await
             .unwrap();
