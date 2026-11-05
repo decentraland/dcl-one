@@ -27,12 +27,13 @@ use sqlx::PgPool;
 
 use crate::content::queries::active_entity_docs_by_pointers;
 use crate::shared::cache::TtlMap;
-use crate::shared::query_params::{parse_query_string, qs_get_array, qs_get_string};
+use crate::shared::http_util::lambdas_internal_error;
+use crate::shared::query_params::{parse_int_js, parse_query_string, qs_get_array, qs_get_string};
 
 use super::base_wearables::{self, BASE_AVATARS_COLLECTION_ID, BaseWearable};
 use super::definitions::{
     SORTED_RARITIES, default_sort_direction, extract_emote_definition, extract_wearable_definition,
-    validate_rarity, validate_sort,
+    locale_cmp, validate_rarity, validate_sort,
 };
 use super::graph::{self, Network, THE_GRAPH_PAGE_SIZE, graph_query};
 use super::mirrors::{self, Mirror};
@@ -148,8 +149,14 @@ fn parse_collection_types(raw: &[String]) -> Result<Vec<CollectionType>, Box<Res
     Ok(out)
 }
 
+/// One `key=value` pair as `URLSearchParams.toString()` writes it
+/// (application/x-www-form-urlencoded: a space is `+`, `*-._` and
+/// alphanumerics stay, everything else, `~` included, is percent-encoded).
 fn qp(key: &str, value: &str) -> String {
-    format!("{key}={}", urlencoding::encode(value))
+    format!(
+        "{key}={}",
+        url::form_urlencoded::byte_serialize(value.as_bytes()).collect::<String>()
+    )
 }
 
 fn lower_nonempty(v: &Option<String>) -> Option<String> {
@@ -320,9 +327,10 @@ struct CatalogQuery {
     last_id: Option<String>,
 }
 
-/// `limit` in 1..=500, else 500 (the old `limit_or_max`).
+/// `limit` in 1..=500, else 500, read with `parseInt` as lamb2's
+/// `clampLimit` does (decentraland/lamb2:src/logic/items-catalog.ts:88-97).
 fn clamp_limit(raw: &Option<String>) -> i64 {
-    match raw.as_ref().and_then(|s| s.parse::<i64>().ok()) {
+    match raw.as_deref().and_then(parse_int_js) {
         Some(n) if (1..=MAX_LIMIT).contains(&n) => n,
         _ => MAX_LIMIT,
     }
@@ -556,7 +564,7 @@ async fn item_urns(
                 .await
                 .map_err(|e| {
                     tracing::error!(error = %e, "lambdas catalogue query failed");
-                    super::internal_server_error()
+                    lambdas_internal_error()
                 })
         }
         UrnSource::Subgraphs => {
@@ -778,13 +786,15 @@ fn paginate(definitions: Vec<Value>, limit: i64) -> (Vec<Value>, Option<String>)
     paginate_merged(Vec::new(), definitions, limit)
 }
 
-/// `merged` is served first and never reordered; `on_chain` is sorted by id behind it.
+/// `merged` is served first and never reordered; `on_chain` is sorted behind
+/// it by `localeCompare` of the lowercased id, as lamb2's
+/// `paginateCatalogResults` (decentraland/lamb2:src/logic/items-catalog.ts:45-61).
 fn paginate_merged(
     mut merged: Vec<Value>,
     mut on_chain: Vec<Value>,
     limit: i64,
 ) -> (Vec<Value>, Option<String>) {
-    on_chain.sort_by_key(id_key);
+    on_chain.sort_by(|a, b| locale_cmp(&id_key(a), &id_key(b)));
     merged.extend(on_chain);
     let has_more = merged.len() as i64 > limit;
     if has_more {
@@ -832,7 +842,8 @@ fn filter_and_extract_base_wearables(
                     .is_none_or(|n| haystack.contains(n.as_str()))
         })
         .collect();
-    matched.sort_by_key(|a| a.urn.to_lowercase());
+    // `localeCompare` of the lowercased urns (wearables-catalog-handler.ts:107).
+    matched.sort_by(|a, b| locale_cmp(&a.urn.to_lowercase(), &b.urn.to_lowercase()));
     matched.truncate(max_results);
     matched
         .into_iter()
@@ -1022,9 +1033,16 @@ async fn catalog(
     )
 }
 
-fn wearables_query(qs: &str) -> Result<CatalogQuery, Box<Response>> {
+/// With `extensions` off (`LAMBDAS_CATALOG_EXTENSIONS_ENABLED`, off under
+/// the mirror posture) the extended filters are ignored, and alone do not
+/// count as a filter, as in lamb2 (decentraland/lamb2:src/logic/items-catalog.ts:14-43).
+fn wearables_query(qs: &str, extensions: bool) -> Result<CatalogQuery, Box<Response>> {
     let p = catalog_params_from_query(qs);
-    let extended = parse_extended_filters(&p)?;
+    let extended = if extensions {
+        parse_extended_filters(&p)?
+    } else {
+        ExtendedFilters::default()
+    };
     parse_catalog_query(&p, &p.wearable_id, "wearableId", extended)
 }
 
@@ -1033,7 +1051,8 @@ pub async fn collections_wearables_catalog(
     State(state): State<SharedState>,
     request: Request,
 ) -> Response {
-    match wearables_query(request.uri().query().unwrap_or("")) {
+    let extensions = state.settings.lambdas_catalog_extensions;
+    match wearables_query(request.uri().query().unwrap_or(""), extensions) {
         Ok(query) => catalog_wearables_with_base(&state, query).await,
         Err(resp) => *resp,
     }
@@ -1106,7 +1125,7 @@ pub async fn nfts_collections(State(state): State<SharedState>) -> Response {
         Ok(v) => Json(v).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "lambdas collections query failed");
-            super::internal_server_error()
+            lambdas_internal_error()
         }
     }
 }
@@ -1489,7 +1508,7 @@ mod tests {
 
     #[test]
     fn an_upstream_shaped_query_is_untouched_by_the_extension() {
-        let q = wearables_query("collectionId=urn:c1").unwrap_or_else(|_| panic!("parse"));
+        let q = wearables_query("collectionId=urn:c1", true).unwrap_or_else(|_| panic!("parse"));
         assert_eq!(q.filters.to_json(), json!({ "collectionIds": ["urn:c1"] }));
         assert_eq!(
             build_next_query(&q.filters, 50, "urn:c1:5", "wearableId"),
@@ -1498,8 +1517,58 @@ mod tests {
     }
 
     #[test]
+    fn without_the_extensions_the_query_is_lamb2s() {
+        for qs in [
+            "collectionType=on-chain",
+            "category=eyewear",
+            "rarity=ultra",
+            "orderBy=rarity",
+        ] {
+            assert!(
+                wearables_query(qs, false).is_err(),
+                "{qs} alone is no filter and is not validated"
+            );
+        }
+        let q = wearables_query(
+            "textSearch=hat&collectionType=nope&rarity=ultra&orderBy=x",
+            false,
+        )
+        .unwrap_or_else(|_| panic!("parse"));
+        assert_eq!(q.filters.to_json(), json!({ "textSearch": "hat" }));
+    }
+
+    #[test]
+    fn the_next_query_is_encoded_as_url_search_params() {
+        let q = wearables_query("textSearch=a b*~", true).unwrap_or_else(|_| panic!("parse"));
+        assert_eq!(
+            build_next_query(&q.filters, 5, "urn:x", "wearableId"),
+            "textSearch=a+b*%7E&limit=5&lastId=urn%3Ax"
+        );
+    }
+
+    #[test]
+    fn limit_is_read_with_parse_int() {
+        assert_eq!(clamp_limit(&Some("10abc".into())), 10);
+        assert_eq!(clamp_limit(&Some("abc".into())), MAX_LIMIT);
+        assert_eq!(clamp_limit(&Some("0".into())), MAX_LIMIT);
+        assert_eq!(clamp_limit(&Some("501".into())), MAX_LIMIT);
+        assert_eq!(clamp_limit(&None), MAX_LIMIT);
+    }
+
+    #[test]
+    fn on_chain_definitions_sort_by_locale_compare() {
+        // Byte order puts `_` (0x5f) after `-` and digits; UCA puts both
+        // punctuation marks before digits and letters.
+        let defs = vec![json!({ "id": "urn:a:b1" }), json!({ "id": "urn:a:b_1" })];
+        let (items, _) = paginate(defs, 10);
+        let ids: Vec<&str> = items.iter().filter_map(|d| d["id"].as_str()).collect();
+        assert_eq!(ids, vec!["urn:a:b_1", "urn:a:b1"]);
+    }
+
+    #[test]
     fn collection_type_alone_satisfies_the_filter_requirement() {
-        let q = wearables_query("collectionType=on-chain").unwrap_or_else(|_| panic!("parse"));
+        let q =
+            wearables_query("collectionType=on-chain", true).unwrap_or_else(|_| panic!("parse"));
         assert_eq!(
             q.filters.extended.collection_types,
             vec![CollectionType::OnChain]
@@ -1511,25 +1580,28 @@ mod tests {
     #[test]
     fn each_extended_filter_alone_satisfies_the_filter_requirement() {
         for qs in ["category=eyewear", "rarity=mythic", "name=aviator"] {
-            assert!(wearables_query(qs).is_ok(), "{qs} should be a filter");
+            assert!(wearables_query(qs, true).is_ok(), "{qs} should be a filter");
         }
     }
 
     #[test]
     fn ordering_alone_is_not_a_filter_and_needs_one_tier() {
-        assert!(wearables_query("orderBy=rarity").is_err());
-        assert!(wearables_query("orderBy=rarity&collectionType=on-chain").is_ok());
-        assert!(wearables_query("category=hat&orderBy=rarity").is_err());
+        assert!(wearables_query("orderBy=rarity", true).is_err());
+        assert!(wearables_query("orderBy=rarity&collectionType=on-chain", true).is_ok());
+        assert!(wearables_query("category=hat&orderBy=rarity", true).is_err());
         assert!(
-            wearables_query("orderBy=rarity&collectionType=on-chain&collectionType=base-wearable")
-                .is_err()
+            wearables_query(
+                "orderBy=rarity&collectionType=on-chain&collectionType=base-wearable",
+                true
+            )
+            .is_err()
         );
     }
 
     #[test]
     fn an_unknown_collection_type_or_rarity_is_refused() {
-        assert!(wearables_query("collectionType=on-chian").is_err());
-        assert!(wearables_query("rarity=ultra").is_err());
+        assert!(wearables_query("collectionType=on-chian", true).is_err());
+        assert!(wearables_query("rarity=ultra", true).is_err());
         assert_eq!(
             validate_rarity("ultra").unwrap_err(),
             "Invalid rarity requested: 'ultra'."
@@ -1538,21 +1610,28 @@ mod tests {
 
     #[test]
     fn direction_defaults_per_sort_field_and_validates() {
-        let q = wearables_query("collectionType=on-chain&orderBy=name")
+        let q = wearables_query("collectionType=on-chain&orderBy=name", true)
             .unwrap_or_else(|_| panic!("parse"));
         assert_eq!(q.filters.extended.direction.as_deref(), Some("ASC"));
-        let q = wearables_query("collectionType=on-chain&orderBy=rarity")
+        let q = wearables_query("collectionType=on-chain&orderBy=rarity", true)
             .unwrap_or_else(|_| panic!("parse"));
         assert_eq!(q.filters.extended.direction.as_deref(), Some("DESC"));
         assert!(
-            wearables_query("collectionType=on-chain&orderBy=rarity&direction=sideways").is_err()
+            wearables_query(
+                "collectionType=on-chain&orderBy=rarity&direction=sideways",
+                true
+            )
+            .is_err()
         );
     }
 
     #[test]
     fn extended_filters_survive_pagination_and_echo_only_when_used() {
-        let q = wearables_query("collectionType=on-chain&category=hat&rarity=mythic&orderBy=date")
-            .unwrap_or_else(|_| panic!("parse"));
+        let q = wearables_query(
+            "collectionType=on-chain&category=hat&rarity=mythic&orderBy=date",
+            true,
+        )
+        .unwrap_or_else(|_| panic!("parse"));
         let next = build_next_query(&q.filters, 50, "urn:c1:5", "wearableId");
         for expected in [
             "collectionType=on-chain",
@@ -1563,7 +1642,7 @@ mod tests {
         ] {
             assert!(next.contains(expected), "next dropped {expected}: {next}");
         }
-        let q = wearables_query("collectionType=base-wearable&category=eyewear")
+        let q = wearables_query("collectionType=base-wearable&category=eyewear", true)
             .unwrap_or_else(|_| panic!("parse"));
         let echoed = q.filters.to_json();
         assert_eq!(echoed["collectionTypes"], json!(["base-wearable"]));
@@ -1573,7 +1652,7 @@ mod tests {
 
     #[test]
     fn a_rarity_filter_excludes_the_ungraded_base_tier() {
-        let q = wearables_query("rarity=mythic").unwrap_or_else(|_| panic!("parse"));
+        let q = wearables_query("rarity=mythic", true).unwrap_or_else(|_| panic!("parse"));
         let base = BaseWearable {
             urn: "urn:decentraland:off-chain:base-avatars:aviatorstyle".into(),
             name: "aviatorstyle".into(),

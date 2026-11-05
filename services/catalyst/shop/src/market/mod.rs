@@ -158,6 +158,8 @@ pub struct Upstreams {
     pub nft_worker_base_url: Option<String>,
     /// `EXPLORER_ESCROW_GRANTS_ENABLED`: the explorer lists escrow grants.
     pub explorer_escrow_grants_enabled: bool,
+    /// `LAMBDAS_CATALOG_EXTENSIONS_ENABLED`: the wearables catalogue's extended filters.
+    pub lambdas_catalog_extensions_enabled: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -186,6 +188,10 @@ pub struct Settings {
     /// items include this node's active escrow grants (`shop.usage_grants`);
     /// off under the mirror posture, where lamb2 lists chain-owned tokens only.
     pub explorer_escrow_grants: bool,
+    /// `LAMBDAS_CATALOG_EXTENSIONS_ENABLED`: `/lambdas/collections/wearables`
+    /// takes `collectionType`, `category`, `rarity`, `name`, `orderBy` and
+    /// `direction`; off under the mirror posture, where lamb2 ignores them.
+    pub lambdas_catalog_extensions: bool,
     /// `LAND_IMAGE_BASE_URL`: the map service `/lambdas/users/{a}/lands` points its images at.
     pub land_image_base_url: String,
     pub trades_sync_upstream_url: Option<String>,
@@ -385,6 +391,7 @@ impl Settings {
             .transpose()?,
             nft_worker_base_url: checked("NFT_WORKER_BASE_URL", &upstreams.nft_worker_base_url)?,
             explorer_escrow_grants: upstreams.explorer_escrow_grants_enabled,
+            lambdas_catalog_extensions: upstreams.lambdas_catalog_extensions_enabled,
             land_image_base_url: config.map_urls().land_image_base,
             trades_sync_upstream_url: checked(
                 "TRADES_SYNC_UPSTREAM_URL",
@@ -444,6 +451,7 @@ impl Settings {
             third_party_registry_subgraph_url: None,
             nft_worker_base_url: None,
             explorer_escrow_grants: true,
+            lambdas_catalog_extensions: true,
             land_image_base_url: "https://api.decentraland.org".to_string(),
             trades_sync_upstream_url: None,
             trades_sync_interval: Duration::from_secs(900),
