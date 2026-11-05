@@ -18,6 +18,7 @@ const HAT3 = "urn:decentraland:matic:collections-v2:0xhat:3";
 const HAT4 = "urn:decentraland:matic:collections-v2:0xhat:4";
 const HAT5 = "urn:decentraland:matic:collections-v2:0xhat:5";
 const HAT6 = "urn:decentraland:matic:collections-v2:0xhat:6";
+const EMOTE = "urn:decentraland:matic:collections-v2:0xemote:0";
 
 const contentUrl = (pointer: string) =>
   `${window.location.origin}/content/contents/h_${pointer.toLowerCase()}`;
@@ -84,7 +85,19 @@ vi.mock("three/examples/jsm/loaders/GLTFLoader.js", () => {
   class FakeGLTFLoader {
     loadAsync(url: string) {
       loads.push(url);
-      const gltf = url.includes("idle.glb")
+      const emoteFile = () => {
+        const scene = new THREE.Group();
+        const mic = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.3, 0.1), new THREE.MeshStandardMaterial());
+        mic.name = "Prop_Mic";
+        scene.add(mic);
+        const dance = new THREE.AnimationClip("dance", 2, [
+          new THREE.VectorKeyframeTrack("Avatar_Hips.position", [0, 2], [0, 1, 0, 0, 1, 0]),
+        ]);
+        return { scene, animations: [dance] };
+      };
+      const gltf = url.includes(`h_${EMOTE.toLowerCase()}`)
+        ? emoteFile()
+        : url.includes("idle.glb")
         ? { scene: new THREE.Group(), animations: [idleClip()] }
         : url.includes("wave.glb")
           ? { scene: new THREE.Group(), animations: [strayClip()] }
@@ -100,6 +113,13 @@ const { createAvatarScene, OUTFIT_SWAP_DEBOUNCE_MS } = await import("./avatar");
 
 function entityFor(pointer: string) {
   const p = pointer.toLowerCase();
+  if (p === EMOTE.toLowerCase()) {
+    return {
+      pointers: [p],
+      content: [{ file: "dance.glb", hash: `h_${p}` }],
+      metadata: { emoteDataADR74: { category: "dance", loop: true, representations: [{ bodyShapes: [BODY], mainFile: "dance.glb" }] } },
+    };
+  }
   return {
     pointers: [p],
     content: [{ file: "model.glb", hash: `h_${p}` }],
@@ -387,5 +407,54 @@ test("with requireWearables, a resolved wearable is ready", async () => {
   const onStatus = vi.fn();
   const scene = createAvatarScene(box, { body: BODY, urns: [HAT1], emote: "idle", onStatus, requireWearables: true });
   await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"), { timeout: 10_000 });
+  scene.dispose();
+});
+
+test("an emote item among the urns drives the motion over the named emote, and brings its props", async () => {
+  const { scene, onStatus, renderer } = mount([HAT1, EMOTE], "fashion");
+  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"), { timeout: 10_000 });
+  // Its ADR-74 representation's main file, from the content server like a wearable's.
+  expect(loads).toContain(contentUrl(EMOTE));
+  expect(loads.some((url) => url.includes("fashion"))).toBe(false);
+  renderer.loop!();
+  expect(renderer.lastScene?.getObjectByName("avatar")?.getObjectByName("Prop_Mic")).toBeTruthy();
+  scene.dispose();
+});
+
+test("without an emote item, the named emote plays and no props are added", async () => {
+  const { scene, onStatus, renderer } = mount([HAT1], "fashion");
+  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"), { timeout: 10_000 });
+  expect(loads.some((url) => url.includes("fashion"))).toBe(true);
+  renderer.loop!();
+  expect(renderer.lastScene?.getObjectByName("Prop_Mic")).toBeFalsy();
+  scene.dispose();
+});
+
+test("an outfit swap that adds, then drops, an emote item replays the motion and its props", async () => {
+  const { scene, onStatus, renderer } = mount([HAT1], "fashion");
+  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"), { timeout: 10_000 });
+  const prop = () => {
+    renderer.loop!();
+    return renderer.lastScene?.getObjectByName("Prop_Mic") ?? null;
+  };
+  expect(prop()).toBeNull();
+  await scene.setOutfit({ urns: [HAT1, EMOTE] });
+  await vi.waitFor(() => expect(prop()).toBeTruthy(), { timeout: 10_000 });
+  await scene.setOutfit({ urns: [HAT1] });
+  await vi.waitFor(() => expect(prop()).toBeNull(), { timeout: 10_000 });
+  scene.dispose();
+});
+
+test("a later named emote wins over an emote item still being looked up", async () => {
+  const { scene, onStatus } = mount([HAT1], "idle");
+  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"), { timeout: 10_000 });
+  autoResolve = false;
+  const slow = scene.setEmote(EMOTE);
+  const quick = scene.setEmote("wave");
+  autoResolve = true;
+  for (const url of [...deferred.keys()]) resolveLoad(url);
+  await Promise.all([slow, quick]);
+  // The item's file was never played: the call that came later claimed the motion first.
+  expect(loads.filter((url) => url === contentUrl(EMOTE))).toHaveLength(0);
   scene.dispose();
 });

@@ -1,0 +1,25 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/lambdas/status",
+    "headers": {
+      "Origin": "https://example.org"
+    },
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "104",
+      "access-control-allow-origin": "*"
+    },
+    "body": {
+      "version": "4.14.2",
+      "currentTime": 1793827593065,
+      "commitHash": "02a37f5d88fb895339c20e84c2470be68cdf3f57"
+    }
+  }
+}

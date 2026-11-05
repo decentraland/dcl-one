@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
-import { WEB_APP_HEADERS, resolveFile, serveWebApp, type StaticServer } from '../driver/serve.ts'
+import { COMMON_HEADERS, headersFor, resolveFile, serveWebApp, type StaticServer } from '../driver/serve.ts'
 
 describe('serveWebApp', () => {
   let dir: string
@@ -23,11 +23,25 @@ describe('serveWebApp', () => {
     await rm(dir, { recursive: true, force: true })
   })
 
-  test("the benchmark's headers are on every response", async () => {
+  test('the common headers are on every response', async () => {
     for (const route of ['/', '/app.html', '/engine/engine.js', '/missing']) {
       const response = await fetch(server.url + route.slice(1))
-      for (const [name, value] of Object.entries(WEB_APP_HEADERS)) assert.equal(response.headers.get(name), value, `${name} on ${route}`)
+      for (const [name, value] of Object.entries(COMMON_HEADERS)) assert.equal(response.headers.get(name), value, `${name} on ${route}`)
     }
+  })
+
+  test('the shell is not isolated, the app frame isolates itself, the rest carries the policies', async () => {
+    const shell = await fetch(server.url)
+    for (const name of ['cross-origin-opener-policy', 'cross-origin-embedder-policy', 'document-isolation-policy']) {
+      assert.equal(shell.headers.get(name), null, `${name} on the shell`)
+    }
+    const app = await fetch(`${server.url}app.html`)
+    assert.equal(app.headers.get('document-isolation-policy'), 'isolate-and-credentialless')
+    assert.equal(app.headers.get('cross-origin-embedder-policy'), null)
+    const script = await fetch(`${server.url}engine/engine.js`)
+    assert.equal(script.headers.get('cross-origin-opener-policy'), 'same-origin')
+    assert.equal(script.headers.get('cross-origin-embedder-policy'), 'credentialless')
+    assert.equal(script.headers.get('document-isolation-policy'), null)
   })
 
   test('/ is index.html with its type', async () => {
@@ -50,6 +64,15 @@ describe('serveWebApp', () => {
     assert.equal(response.status, 200)
     assert.equal(response.headers.get('content-length'), String(Buffer.byteLength('<!doctype html><title>app</title>')))
     assert.equal(await response.text(), '')
+  })
+})
+
+describe('headersFor', () => {
+  test("follows the dev server's rule, query strings aside", () => {
+    assert.equal('cross-origin-opener-policy' in headersFor('/index.html?realm=x'), false)
+    assert.equal(headersFor('/')['cache-control'], 'no-store')
+    assert.equal(headersFor('/engine/headless.html')['document-isolation-policy'], 'isolate-and-credentialless')
+    assert.equal(headersFor('/service_worker.js')['cross-origin-embedder-policy'], 'credentialless')
   })
 })
 
