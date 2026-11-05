@@ -237,8 +237,7 @@ struct Subject {
 
 /// What a subject's emote events have left of its emote. It keeps a sequence of its own because an
 /// emote event can arrive after a delta has taken the baseline past it, and can carry the sequence
-/// of a state already held (see [`PulseDecoder::on_full`]). unity-explorer keeps the same apart, as
-/// `peerEmotes` in `PulseMultiplayerBus.Emotes.cs`.
+/// of a state already held (see [`PulseDecoder::on_full`]).
 #[derive(Default)]
 struct EmoteTrack {
     /// Sequence of the last start or stop taken in.
@@ -265,7 +264,7 @@ impl EmoteTrack {
 
     /// Take in a stop; `false` if it is behind the last emote event. At that event's own sequence
     /// it still lands, ending the emote that started there or repeating the stop already taken in:
-    /// only an older sequence is stale, as in unity-explorer.
+    /// only an older sequence is stale.
     fn stop(&mut self, seq: u32) -> bool {
         if self.seq.is_some_and(|held| seq < held) {
             return false;
@@ -600,11 +599,10 @@ impl PulseDecoder {
     /// Replace a known subject's baseline from a server-supplied full state, if it is newer than the
     /// one held: a higher sequence, or for an emote event an equal one too ([`FullKind`]). An older
     /// state leaves the baseline as it is, an older teleport's realm included, and announces
-    /// nothing. Any state for a known subject ends the wait for its resync, an older one too, as
-    /// in unity-explorer's `TryUpdateLastMovementAndCompleteResync`
-    /// (`PulseMultiplayerBus.PlayerState.cs`); a message without a state does not, and an unknown
-    /// subject has no wait to end. Unknown subjects are dropped: full state carries no wallet, so
-    /// without a prior `PlayerJoined` we can't address it.
+    /// nothing. Any state for a known subject ends the wait for its resync, an older one too; a
+    /// message without a state does not, and an unknown subject has no wait to end. Unknown
+    /// subjects are dropped: full state carries no wallet, so without a prior `PlayerJoined` we
+    /// can't address it.
     fn on_full(
         &mut self,
         subject_id: u32,
@@ -663,7 +661,7 @@ impl PulseDecoder {
 
     /// An emote event's state refreshes the baseline as any full state does, but the emote itself is
     /// judged by [`EmoteTrack`] alone: a state too old to replace the baseline still starts the emote
-    /// if the emote events themselves say it is news (`PulseMultiplayerBus.Emotes.cs`).
+    /// if the emote events themselves say it is news.
     fn on_emote_started(&mut self, e: pulse::EmoteStarted) -> Vec<PulseEvent> {
         let mut events = self.on_full(
             e.subject_id,
@@ -712,8 +710,7 @@ impl PulseDecoder {
             // on its way, or it has left, or a newer join of its wallet replaced it, and this delta
             // arrived after that (the two channels keep no order between them), and the server
             // answers nothing for a subject out of our view. A resync is no use either way, so the
-            // delta is dropped, as unity-explorer drops a message from an unknown peer
-            // (`HandlePlayerStateDelta` in `PulseMultiplayerBus.PlayerState.cs`).
+            // delta is dropped.
             return Vec::new();
         };
 

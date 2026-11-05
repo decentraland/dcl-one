@@ -49,8 +49,8 @@ pub struct PulseFrame {
     pub kind: FrameKind,
 }
 
-/// unity-explorer `ENetTransport.SendOutgoingMessages`: in each run of consecutive `Input` frames
-/// only the newest survives; every other frame keeps its place.
+/// In each run of consecutive `Input` frames only the newest survives, since each carries the
+/// player's whole state; every other frame keeps its place.
 pub fn collapse_inputs(frames: Vec<PulseFrame>) -> Vec<PulseFrame> {
     let mut collapsed: Vec<PulseFrame> = Vec::with_capacity(frames.len());
     for frame in frames {

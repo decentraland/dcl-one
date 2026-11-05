@@ -2,46 +2,33 @@
 //!
 //! A pure policy: told what failed and when, it answers with the time to retry at, or that no
 //! retry can help. It knows nothing of Bevy, the driver or the handshake, and its times are `f64`
-//! seconds on the caller's clock, so a test drives it without an app. There is no jitter, as in the
-//! reference client, and that is deliberate: the repository owner kept unity-explorer's exact
-//! waits, although the server's contract (decentraland/Pulse `docs/hardening.md`, "Client
-//! recovery") asks for jitter on codes 7, 8, 17 and 18.
+//! seconds on the caller's clock, so a test drives it without an app. The waits are exact, with no
+//! jitter.
 //!
-//! The numbers are unity-explorer's (paths under `Explorer/Assets/DCL/`), which recovers two ways.
-//! A connection that was up and dropped waits a fixed time chosen by the server's reason:
-//! `ReconnectionSettings` in `Multiplayer/Movement/Systems/PulseMultiplayerBus.Disconnects.cs`, its
-//! values set in `PluginSystem/Global/Plugin Settings.asset`. An attempt that never got its
-//! handshake accepted backs off, doubling: `CONNECTION_RETRY_POLICY` in
-//! `Multiplayer/Connections/Pulse/PulseMultiplayerService.cs`, capped by
-//! `WebRequests/RetryPolicy.cs`. Three things are not Unity's, and each says so where it applies:
-//! the refusal floors also hold before acceptance, codes 17 and 18, and a rejected handshake is
+//! It recovers two ways. A connection that was up and dropped waits a fixed time chosen by the
+//! server's reason. An attempt that never got its handshake accepted backs off, doubling. A refusal
+//! (codes 6, 7, 8, 17 and 18) sets a floor under the wait either way, and a rejected handshake is
 //! retried.
 
 use super::transport::PulseDisconnect;
 
-/// unity-explorer `ReconnectionSettings.DefaultRetryDelayMs` (3000): the wait after a connection
-/// that had been accepted drops with no reason, a graceful close, an auth timeout or an auth
-/// failure.
+/// The wait after a connection that had been accepted drops with no reason, a graceful close, an
+/// auth timeout or an auth failure.
 pub const DEFAULT_RETRY_DELAY: f64 = 3.0;
-/// unity-explorer `ReconnectionSettings.AuthExhaustionRetryDelayMs` (10000): the least wait after
-/// the per-IP or pre-auth cap refuses a connection (codes 7 and 8). Unity applies it only to a
-/// connection that was up; here it floors the backoff before acceptance too. Code 17 shares it,
-/// being in their family on the server; unity-explorer does not know that code.
+/// The least wait after the per-IP or pre-auth cap refuses a connection (codes 7 and 8), whether or
+/// not its handshake had been accepted. Code 17 shares it, being in their family on the server.
 pub const AUTH_EXHAUSTION_RETRY_DELAY: f64 = 10.0;
-/// unity-explorer `ReconnectionSettings.ServerFullRetryDelayMs` (60000): the least wait after the
-/// server is full (code 6). Unity applies it only to a connection that was up; here it floors the
-/// backoff before acceptance too.
+/// The least wait after the server is full (code 6), whether or not the handshake had been
+/// accepted.
 pub const SERVER_FULL_RETRY_DELAY: f64 = 60.0;
-/// The wait after the first failed attempt: unity-explorer `CONNECTION_RETRY_POLICY` in
-/// `PulseMultiplayerService.cs` (1000 ms), doubling with each failed attempt.
+/// The wait after the first failed attempt, doubling with each failed attempt.
 pub const ATTEMPT_BACKOFF_START: f64 = 1.0;
-/// unity-explorer `RetryPolicy.MAX_DELAY_BETWEEN_ATTEMPTS_MS` (60000): where the attempt backoff
-/// stops.
+/// Where the attempt backoff stops.
 pub const ATTEMPT_BACKOFF_CAP: f64 = 60.0;
-/// The first wait after the server refuses a scene listener for its IP's cap (code 18). Not in
-/// unity-explorer, whose disconnect reasons end at 16: the server's contract (decentraland/Pulse
-/// `docs/hardening.md`, "Client recovery") asks for a long backoff from 5-10 s, doubling, capped in
-/// the minutes, because that capacity frees only when another listener on the IP leaves.
+/// The first wait after the server refuses a scene listener for its IP's cap (code 18). The
+/// server's contract (decentraland/Pulse `docs/hardening.md`, "Client recovery") asks for a long
+/// backoff from 5-10 s, doubling, capped in the minutes, because that capacity frees only when
+/// another listener on the IP leaves.
 pub const LISTENER_LIMIT_START: f64 = 10.0;
 /// Where the wait after a scene-listener refusal stops: five minutes.
 pub const LISTENER_LIMIT_CAP: f64 = 300.0;
@@ -58,8 +45,7 @@ pub enum Failure {
         accepted: bool,
     },
     /// Rejected (`success = false`), unanswered within the response timeout, or not signable. A
-    /// rejection takes the backoff like the others; unity-explorer treats it as terminal until the
-    /// next sign-in (`Multiplayer/Connections/Pulse/PulseHandshakeDisconnectedException.cs`).
+    /// rejection takes the backoff like the others.
     HandshakeFailed,
 }
 

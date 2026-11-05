@@ -41,9 +41,7 @@ const CHANNEL_RELIABLE: u8 = 0;
 /// pings and reliable retransmits keep ticking on an otherwise-idle connection.
 const MAINTENANCE_INTERVAL: Duration = Duration::from_millis(100);
 
-/// unity-explorer `ENetTransportOptions.ConnectTimeoutMs` (10000), for DNS and for the ENet
-/// connect: `ResolveIPv4Async` and `ConnectAsync` in `ENetTransport.cs`, both in
-/// `Explorer/Assets/DCL/Multiplayer/Connections/Pulse/ENet/`.
+/// How long the DNS lookup and the ENet connect each have before the attempt fails, retryably.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Reliable messages held while the protocol layer's queue is full. Past it the connection fails
@@ -153,9 +151,8 @@ async fn resolve(
     None
 }
 
-/// The first IPv4 address, else the first IPv6 one. unity-explorer takes the first IPv4 address
-/// and fails without one (`ENetTransport.ResolveIPv4Async`), and the servers bind `0.0.0.0` by
-/// default, so IPv6 is only a fallback.
+/// The first IPv4 address, else the first IPv6 one: the servers bind `0.0.0.0` by default, so IPv6
+/// is only a fallback.
 fn pick_address(addrs: impl IntoIterator<Item = SocketAddr>) -> Option<SocketAddr> {
     let mut first_ipv6 = None;
     for address in addrs {
@@ -405,13 +402,13 @@ fn fail(channels: &mut PulseDriverChannels, message: String) {
     let _ = channels.status.try_send(PulseStatus::Failed(message));
 }
 
-/// [`fail`], for a connection `host.connect` has started, ending the peer with `NONE` (0) as
-/// unity-explorer's `ForceDisconnectAsync` (`ENetTransport.cs`) does. The server hears it only once
-/// the peer is connected, on the backlog-cap and service-error paths, and then lets the peer go at
-/// once rather than at its own timeout. Until VERIFY_CONNECT the peer has no id from the server,
-/// and ENet drops any command but CONNECT that carries the unassigned one (`src/c/protocol.rs` in
-/// the vendored port, which dcl-one's server runs too). So on a connect timeout the notice never
-/// arrives, as in unity-explorer, and the server keeps its half-open peer until its own timeout.
+/// [`fail`], for a connection `host.connect` has started, ending the peer with `NONE` (0): a
+/// failure, where leaving on purpose sends `GRACEFUL`. The server hears it only once the peer is
+/// connected, on the backlog-cap and service-error paths, and then lets the peer go at once rather
+/// than at its own timeout. Until VERIFY_CONNECT the peer has no id from the server, and ENet drops
+/// any command but CONNECT that carries the unassigned one (`src/c/protocol.rs` in the vendored
+/// port, which dcl-one's server runs too). So on a connect timeout the notice never arrives, and
+/// the server keeps its half-open peer until its own timeout.
 fn abandon<S: enet::Socket>(
     host: &mut enet::Host<S>,
     peer: enet::PeerID,

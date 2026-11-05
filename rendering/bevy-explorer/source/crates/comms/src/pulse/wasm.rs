@@ -43,8 +43,7 @@ use super::transport::{
 const STOP_POLL_MS: u32 = 200;
 
 /// How long the session may take to come up: the same 10 s the native driver allows the ENet
-/// connect, from unity-explorer `ENetTransportOptions.ConnectTimeoutMs`
-/// (`Explorer/Assets/DCL/Multiplayer/Connections/Pulse/ENet/ENetTransportOptions.cs`).
+/// connect.
 const CONNECT_TIMEOUT_MS: u32 = 10_000;
 
 pub(super) fn spawn(
@@ -225,9 +224,8 @@ async fn pump_outbound(
                 }
                 PulseReliability::UnreliableSequenced | PulseReliability::UnreliableUnsequenced => {
                     // Unreliable: a dropped datagram (send failure or over-MTU) is tolerable and
-                    // expected — like the reference client, skip this one and keep the session,
-                    // rather than bounce the whole connection (a full re-handshake + re-teleport)
-                    // over one lost packet.
+                    // expected — skip this one and keep the session, rather than bounce the whole
+                    // connection (a full re-handshake + re-teleport) over one lost packet.
                     let (channel, seq) = match frame.reliability {
                         PulseReliability::UnreliableSequenced => {
                             (CHANNEL_SEQUENCED, next_seq(&mut seq_sequenced))

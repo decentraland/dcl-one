@@ -489,7 +489,7 @@ fn a_listeners_peers_leave_their_scene_transports_on_a_drop() {
     assert_eq!(departures(&mut second_updates), [(second, address(W2))]);
 }
 
-/// The servers refuse at connect, before any handshake, where unity-explorer's 60 s never applies.
+/// The servers refuse at connect, before any handshake, and the floor holds there too.
 #[test]
 fn a_refusal_at_connect_waits_for_its_floor() {
     let mut harness = Harness::player(Connection::Connecting);

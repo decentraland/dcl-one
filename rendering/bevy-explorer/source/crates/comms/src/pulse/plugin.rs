@@ -107,8 +107,7 @@ enum Connection {
 /// Cooldown before looking the local scene development realm up again after a failed lookup.
 const RETRY_COOLDOWN_SECS: f64 = 2.0;
 /// How long the server has to answer the handshake, from the moment it is sent, before the
-/// connection is closed as failed. unity-explorer waits without limit; the servers' own pre-auth
-/// deadline is 30 s.
+/// connection is closed as failed. The servers' own pre-auth deadline is 30 s.
 const HANDSHAKE_RESPONSE_TIMEOUT_SECS: f64 = 10.0;
 /// Minimum spacing between a listener's `SceneListenerUpdate`s. An update rides the server's
 /// discrete-event bucket (20/s sustained, 16 burst) and overrunning it is a terminal disconnect,
@@ -1996,13 +1995,10 @@ fn pulse_teleport_on_local_move(
     send_teleport_at(&mut session, &realm, position);
 }
 
-/// What a handshake says about where the player already is, after unity-explorer's
-/// `WriteInitialState` (`PulseMultiplayerBus.LastState.cs:58-102`): the last pose built, the realm
-/// it is in and, if an emote is still playing, which one and how long ago it started. `None` with no
-/// pose to restore or no realm to put it in. Two rules are this client's own, not unity-explorer's:
-/// nothing is carried out of world, a position behind the loading screen being provisional; and a
-/// one-shot emote is carried only within its duration, where unity-explorer forgets an emote at the
-/// first movement that is not emoting.
+/// What a handshake says about where the player already is: the last pose built, the realm it is
+/// in and, if an emote is still playing (a loop, or a one-shot within its duration), which one and
+/// how long ago it started. `None` out of world, where a position behind the loading screen is
+/// provisional, and with no pose to restore or no realm to put it in.
 fn initial_state(
     last_state: Option<&pulse::PlayerState>,
     emote: Option<&LocalEmote>,
@@ -2020,7 +2016,7 @@ fn initial_state(
     };
 
     if let Some(emote) = emote {
-        // As in unity-explorer, a duration of 0 is none: the emote loops.
+        // A duration of 0 is none: the emote loops.
         let duration_ms = emote.duration_ms.filter(|&duration| duration > 0);
         let elapsed_ms = ((now - emote.started_at) * 1000.0) as u32;
         if duration_ms.is_none_or(|duration| elapsed_ms < duration) {

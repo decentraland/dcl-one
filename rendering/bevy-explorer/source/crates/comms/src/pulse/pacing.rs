@@ -5,8 +5,8 @@
 //! `src/DCLPulse/appsettings.json:44-47`; dcl-one `services/catalyst/comms/src/pulse/hardening.rs`,
 //! `DEFAULT_DISCRETE_RATE_PER_SEC`). A peer that finds it empty is disconnected, and for a reason
 //! that is terminal. A scene can empty it within a second: a durationless `movePlayerTo` every frame
-//! is a teleport every frame. unity-explorer has no limiter; this goes beyond it, so that a scene
-//! cannot end the session this way.
+//! is a teleport every frame. Pacing teleports and emotes here keeps a scene from ending the session
+//! that way.
 //!
 //! The pacer keeps a bucket of half that size, which leaves room for frames that bunch up in transit,
 //! and holds back what it does not allow. Only the latest teleport and the latest emote command
