@@ -43,7 +43,9 @@ export function ShopCard({
   onOpenOnWeb: () => void
 }): React.JSX.Element {
   const creator = useProfile(item.creator)
-  // Signed out until the Shop knows the buyer's wallet: credits for primary sales, MANA for resales.
+  // Priced signed out: credits for primary sales, MANA for resales. The HUD's identity doesn't say how the
+  // buyer signed in (features/auth/sso.ts forwards it whatever the method), so a web3 buyer's extra MANA
+  // price waits for the Buy flow's wallet bridge, which knows.
   const price = cardPrice(item, SIGNED_OUT)
   const discount = price.kind === 'credits' && price.compareAt != null ? `-${saleDiscountPct(price.compareAt, price.credits)}%` : undefined
   const emote = item.category === 'emote'

@@ -79,3 +79,12 @@
   gap: 20px;
   overflow: hidden;
 }
+/* A row that couldn't be read: where its cards would be, a line and Retry. */
+.rowError {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 80px;
+  color: var(--text);
+  font-size: var(--type-16);
+}

@@ -61,7 +61,7 @@ type Feed = Record<string, unknown>[] | 'down'
 interface Routes {
   catalogue?: Feed[]
   listings?: Feed[]
-  trending?: Record<string, unknown>[]
+  trending?: Record<string, unknown>[] | 'down'
   outfits?: unknown[]
   byIds?: Record<string, unknown>[]
   entity?: { description: string; hides: string[] }
@@ -83,7 +83,7 @@ function serve(routes: Routes): ReturnType<typeof vi.fn> {
     const path = url.pathname
     if (path.endsWith('/v3/catalog/items')) return url.searchParams.has('id') ? Response.json({ data: routes.byIds ?? [] }) : answer(routes.catalogue, routes.total)
     if (path.endsWith('/v3/catalog/unified')) return answer(routes.listings, routes.total)
-    if (path.endsWith('/v3/catalog/trending')) return Response.json({ data: routes.trending ?? [] })
+    if (path.endsWith('/v3/catalog/trending')) return routes.trending === 'down' ? new Response('', { status: 503 }) : Response.json({ data: routes.trending ?? [] })
     if (path.endsWith('/v1/outfits')) return Response.json({ outfits: routes.outfits ?? [] })
     if (path.endsWith('/dapps.json') && routes.flags != null) return Response.json({ flags: routes.flags })
     if (path.endsWith('/content/entities/active') && init?.method === 'POST') {
@@ -211,15 +211,78 @@ describe('in-world shop', () => {
     expect(screen.getByRole('region', { name: 'New' })).toBeInTheDocument()
   })
 
-  it('sends VIEW ALL to the wearables on sale, newest first', async () => {
+  it("sends New's VIEW ALL to the wearables on sale, newest first", async () => {
     const f = serve({ trending: [listingRow()], listings: [[listingRow()]] })
+    renderShop()
+    await openTab('All')
+    await screen.findAllByText('Golden Armor', {}, { timeout: 5000 })
+    const before = calls(f, '/v3/catalog/unified').length
+    await userEvent.click(within(screen.getByRole('region', { name: 'New' })).getByRole('button', { name: /view all/i }))
+    expect(screen.getByRole('tab', { name: 'Wearables' })).toHaveAttribute('aria-selected', 'true')
+    await waitFor(() => expect(calls(f, '/v3/catalog/unified').length).toBeGreaterThan(before))
+    expect(calls(f, '/v3/catalog/unified').at(-1)!.searchParams.get('category')).toBe('wearable')
+    expect(calls(f, '/v3/catalog/unified').at(-1)!.searchParams.get('sortBy')).toBe('newest')
+  })
+
+  it("sends Trending's VIEW ALL to the catalogue as it opens, as the web Shop does", async () => {
+    const f = serve({ trending: [listingRow()], listings: [[listingRow()]], catalogue: [[catalogueRow()]] })
     renderShop()
     await openTab('All')
     await screen.findAllByText('Golden Armor', {}, { timeout: 5000 })
     await userEvent.click(within(screen.getByRole('region', { name: 'Trending' })).getByRole('button', { name: /view all/i }))
     expect(screen.getByRole('tab', { name: 'Wearables' })).toHaveAttribute('aria-selected', 'true')
-    await waitFor(() => expect(calls(f, '/v3/catalog/unified').at(-1)!.searchParams.get('category')).toBe('wearable'))
-    expect(calls(f, '/v3/catalog/unified').at(-1)!.searchParams.get('sortBy')).toBe('newest')
+    // Every status, the catalogue's own feed: there is no trending order to keep.
+    await waitFor(() => expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('category')).toBe('wearable'))
+  })
+
+  it('shows what was searched for on the All home in the catalogue', async () => {
+    const f = serve({ trending: [listingRow()], listings: [[listingRow()]], catalogue: [[catalogueRow()]] })
+    renderShop()
+    await openTab('All')
+    await userEvent.type(screen.getByPlaceholderText('Search'), 'armor')
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Wearables' })).toHaveAttribute('aria-selected', 'true'))
+    expect(await screen.findByText(/Results for ‘armor’/)).toBeInTheDocument()
+    await waitFor(() => expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('search')).toBe('armor'))
+  })
+
+  it('keeps the rows that loaded and offers Retry on the one that failed', async () => {
+    const f = serve({ trending: 'down', listings: [[listingRow({ itemId: '2', name: 'Pixel Hoodie' })]] })
+    renderShop()
+    await openTab('All')
+    expect(await findCard('Pixel Hoodie')).toBeInTheDocument()
+    const trending = await screen.findByRole('region', { name: 'Trending' })
+    expect(within(trending).getByRole('alert')).toHaveTextContent('Couldn’t load these items.')
+    const before = calls(f, '/v3/catalog/trending').length
+    await userEvent.click(within(trending).getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(calls(f, '/v3/catalog/trending').length).toBeGreaterThan(before))
+  })
+
+  it('says so when the All home has nothing to show', async () => {
+    serve({ trending: [], listings: [[]], outfits: [] })
+    renderShop()
+    await openTab('All')
+    expect(await screen.findByText('Nothing on sale right now', {}, { timeout: 5000 })).toBeInTheDocument()
+  })
+
+  it("doesn't dress the avatar in an outfit whose items answer after the Shop closed", async () => {
+    let release: () => void = () => {}
+    const f = serve({
+      outfits: [{ id: 'o1', name: 'Neon Night', thumbnailHash: '', items: [{ contractAddress: CONTRACT, itemId: '1' }], gradientFrom: '#ff0000', gradientTo: '#0000ff' }],
+      byIds: [catalogueRow()]
+    })
+    const served = f.getMockImplementation() as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+    f.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), location.href)
+      if (url.pathname.endsWith('/v3/catalog/items') && url.searchParams.has('id')) await new Promise<void>((r) => (release = r))
+      return served(input, init)
+    })
+    const { props, rerender } = renderShop()
+    await openTab('All')
+    await userEvent.click(await screen.findByRole('button', { name: 'Try on Neon Night' }, { timeout: 5000 }))
+    rerender({ shop: { open: false, toggle: vi.fn() } })
+    release()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(props.preview).not.toHaveBeenCalledWith([BODY, ARMOR_URN])
   })
 
   it('takes a sort picked on the All home into the wearables catalogue', async () => {

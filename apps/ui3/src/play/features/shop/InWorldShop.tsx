@@ -134,7 +134,11 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
 
   // Only a preview this page made is undone: the Backpack shares the preview avatar.
   const previewing = useRef(false)
+  // Every preview this page starts takes the next ticket, and closing, taking off or starting another
+  // retires the one before: an outfit whose items answer late applies only if its ticket is still current.
+  const previewTicket = useRef(0)
   const restoreLook = useCallback(() => {
+    previewTicket.current++
     if (!previewing.current) return
     previewing.current = false
     preview(null)
@@ -191,6 +195,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const wearOn = (item: CatalogItem): void => {
     const urn = tryOnUrn(item)
     if (urn == null || !lookKnown || item.category === 'emote') return
+    previewTicket.current++
     setTryingOn(item.id)
     previewing.current = true
     preview([...equipped.filter((w) => w.category !== item.wearableCategory).map((w) => w.urn), urn])
@@ -214,7 +219,16 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   // An outfit dresses the avatar in what of it fits the player's body shape, over nothing else.
   const wearOutfit = async (outfit: OutfitSummary): Promise<void> => {
     if (!lookKnown) return
-    const items = await queryClient.fetchQuery(homeQueries.outfitItems(outfit))
+    const ticket = ++previewTicket.current
+    let items: CatalogItem[]
+    try {
+      items = await queryClient.fetchQuery(homeQueries.outfitItems(outfit))
+    } catch {
+      // The outfit's items didn't load: the avatar keeps what it wears.
+      return
+    }
+    // Closed, taken off or replaced by another preview meanwhile.
+    if (ticket !== previewTicket.current) return
     const body = equipped.find((w) => w.category === 'body_shape')?.urn ?? null
     const shape = body as BodyShapeUrn | null
     setSelected(null)
@@ -242,10 +256,12 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     setFilters({ ...defaultFilters(next === 'all' ? 'wearable' : KIND[next]), search: draft.trim().toLowerCase() })
     setPage(0)
   }
+  // As on the web Shop, both rows lead to the catalogue: New keeps its order (on sale, newest first);
+  // Trending has no order of its own there, so it opens the catalogue as it stands by default.
   const viewAll = (row: 'trending' | 'newest'): void => {
     pickSection('wearables')
-    setFilters({ ...defaultFilters('wearable'), status: 'on_sale', sort: 'newest', search: draft.trim().toLowerCase() })
-    void row
+    const search = draft.trim().toLowerCase()
+    setFilters(row === 'newest' ? { ...defaultFilters('wearable'), status: 'on_sale', sort: 'newest', search } : { ...defaultFilters('wearable'), search })
   }
   const pickSort = (id: string): void => {
     const next = CATALOGUE_SORTS.find((s) => s.id === id)
@@ -336,8 +352,10 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                 <div ref={homeScroller} className={styles.scroller}>
                   <ShopHome
                     outfits={outfits.data}
-                    trending={{ items: trending.data, pending: trending.isPending }}
-                    newest={{ items: newest.data, pending: newest.isPending }}
+                    // Loading until a row has items: its first read, and a retry after it failed.
+                    trending={{ items: trending.data, pending: trending.data == null && trending.fetchStatus === 'fetching', error: trending.isError }}
+                    newest={{ items: newest.data, pending: newest.data == null && newest.fetchStatus === 'fetching', error: newest.isError }}
+                    onRetry={(row) => void (row === 'trending' ? trending : newest).refetch()}
                     onOutfit={(o) => void wearOutfit(o)}
                     onViewAll={viewAll}
                     renderCard={(item: CatalogItem) => (

@@ -2,7 +2,7 @@
 // the Trending and New rows, each with a way to the full catalogue. What it shows comes in as props; the
 // page reads it (homeQuery) and draws each row's card.
 
-import { ChevronRight, Rail } from '../../../design'
+import { Button, ChevronRight, EmptyState, Rail } from '../../../design'
 import { ShopItemSkeleton } from './ShopItemCard'
 import styles from './ShopHome.module.css'
 
@@ -20,10 +20,11 @@ export interface ShopHomeOutfit {
   gradientTo?: string
 }
 
-/** A row's items, or that they are still coming. */
+/** A row's items, that they are still coming, or that they couldn't be read. */
 export interface ShopHomeRow<T> {
   items: readonly T[] | undefined
   pending: boolean
+  error?: boolean
 }
 
 export function ShopHome<T extends { id: string }, O extends ShopHomeOutfit>({
@@ -32,7 +33,8 @@ export function ShopHome<T extends { id: string }, O extends ShopHomeOutfit>({
   newest,
   renderCard,
   onOutfit,
-  onViewAll
+  onViewAll,
+  onRetry
 }: {
   outfits: readonly O[] | undefined
   trending: ShopHomeRow<T>
@@ -41,7 +43,13 @@ export function ShopHome<T extends { id: string }, O extends ShopHomeOutfit>({
   renderCard: (item: T) => React.ReactNode
   onOutfit: (outfit: O) => void
   onViewAll: (row: 'trending' | 'newest') => void
+  /** Reads a row again after it failed. */
+  onRetry: (row: 'trending' | 'newest') => void
 }): React.JSX.Element {
+  const shows = (row: ShopHomeRow<T>): boolean => row.pending || row.error === true || (row.items?.length ?? 0) > 0
+  if ((outfits == null || outfits.length === 0) && !shows(trending) && !shows(newest)) {
+    return <EmptyState variant="inline" title="Nothing on sale right now" subtitle="Check back soon." />
+  }
   return (
     <div className={styles.home}>
       {outfits != null && outfits.length > 0 && (
@@ -60,8 +68,8 @@ export function ShopHome<T extends { id: string }, O extends ShopHomeOutfit>({
           ))}
         </Rail>
       )}
-      <HomeRow title="Trending" row={trending} renderCard={renderCard} onViewAll={() => onViewAll('trending')} />
-      <HomeRow title="New" row={newest} renderCard={renderCard} onViewAll={() => onViewAll('newest')} />
+      <HomeRow title="Trending" row={trending} renderCard={renderCard} onViewAll={() => onViewAll('trending')} onRetry={() => onRetry('trending')} />
+      <HomeRow title="New" row={newest} renderCard={renderCard} onViewAll={() => onViewAll('newest')} onRetry={() => onRetry('newest')} />
     </div>
   )
 }
@@ -70,13 +78,31 @@ function HomeRow<T extends { id: string }>({
   title,
   row,
   renderCard,
-  onViewAll
+  onViewAll,
+  onRetry
 }: {
   title: string
   row: ShopHomeRow<T>
   renderCard: (item: T) => React.ReactNode
   onViewAll: () => void
+  onRetry: () => void
 }): React.JSX.Element | null {
+  if (row.error === true && !row.pending && (row.items == null || row.items.length === 0)) {
+    // A row that failed keeps its place, with a way to read it again; the others stay as they are.
+    return (
+      <section className={styles.row} aria-label={title}>
+        <header className={styles.rowHead}>
+          <h2 className={styles.rowTitle}>{title}</h2>
+        </header>
+        <div className={styles.rowError} role="alert">
+          <span>Couldn’t load these items.</span>
+          <Button variant="secondary" size="sm" onClick={onRetry}>
+            Retry
+          </Button>
+        </div>
+      </section>
+    )
+  }
   if (!row.pending && (row.items == null || row.items.length === 0)) return null
   return (
     <section className={styles.row} aria-label={title}>
