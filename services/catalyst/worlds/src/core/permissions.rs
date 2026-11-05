@@ -18,6 +18,7 @@ use uuid::Uuid;
 use crate::comms::world_identity::{ParcelError, ParcelSet, WorldName};
 use crate::policy::Permission;
 use crate::shared::identity::{Address, PermissionDecision};
+use crate::shared::query_params::js_parse_int;
 use crate::shared::signed_fetch::SignedPath;
 
 use super::auth::{PERMISSIONS_METADATA_KEYS, map_auth_error_api, require_verified};
@@ -588,23 +589,6 @@ type QueryPairs = Vec<(String, String)>;
 
 fn query_param<'a>(q: &'a QueryPairs, key: &str) -> Option<&'a str> {
     q.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
-}
-
-/// JS `parseInt(s, 10)`: leading whitespace, an optional sign, then the
-/// leading digits (saturating); `None` where JS gives `NaN`.
-fn js_parse_int(s: &str) -> Option<i64> {
-    let t = s.trim_start();
-    let (negative, rest) = match t.as_bytes().first() {
-        Some(b'-') => (true, &t[1..]),
-        Some(b'+') => (false, &t[1..]),
-        _ => (false, t),
-    };
-    let digits = &rest[..rest.bytes().take_while(u8::is_ascii_digit).count()];
-    if digits.is_empty() {
-        return None;
-    }
-    let n = digits.parse::<i64>().unwrap_or(i64::MAX);
-    Some(if negative { -n } else { n })
 }
 
 const MAX_PAGE_LIMIT: i64 = 100;

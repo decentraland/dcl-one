@@ -6,7 +6,7 @@ use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 
 use super::SharedState;
-use super::errors::{AppError, AppResult};
+use super::errors::{AppError, AppResult, json_error};
 use super::formatters::{EntityField, MaskedEntity, mask_entity};
 use super::queries::{self, EntityDoc, MaskedColumns, retain_non_denylisted};
 use super::query_params::{
@@ -14,8 +14,8 @@ use super::query_params::{
     qs_get_string,
 };
 use super::validation::{
-    BodyRefusal, ENTITIES_SELECTOR_MESSAGE, MAX_IDS_OR_POINTERS, SelectorError,
-    active_entities_body, ordered_refusal_json,
+    BodyRefusal, ENTITIES_SELECTOR_MESSAGE, MAX_IDS_OR_POINTERS, active_entities_body,
+    ordered_refusal_json, too_many_ids_or_pointers,
 };
 
 pub(crate) fn json_docs_response(docs: &[EntityDoc]) -> Response {
@@ -112,7 +112,15 @@ pub async fn get_active_entities(
             )
                 .into_response());
         }
-        Err(BodyRefusal::Selector(error)) => return Err(error),
+        // Upstream's bare 500, without the error log `AppError::Internal`
+        // writes: any client can send a NUL.
+        Err(BodyRefusal::NulElement) => {
+            tracing::debug!("POST /entities/active with a NUL byte in an element");
+            return Ok(json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal Server Error",
+            ));
+        }
     };
     let values = values.as_slice();
 
@@ -199,9 +207,7 @@ fn entities_selector(ids: &[String], pointers: &[String]) -> AppResult<bool> {
         return Err(AppError::invalid(ENTITIES_SELECTOR_MESSAGE));
     }
     if ids.len() > MAX_IDS_OR_POINTERS || pointers.len() > MAX_IDS_OR_POINTERS {
-        return Err(
-            SelectorError::TooMany(MAX_IDS_OR_POINTERS).into_app_error(ENTITIES_SELECTOR_MESSAGE)
-        );
+        return Err(too_many_ids_or_pointers());
     }
     Ok(!ids.is_empty())
 }

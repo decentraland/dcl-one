@@ -665,6 +665,38 @@ async fn every_listed_content_route_is_routed() {
     }
 }
 
+/// Upstream's preflight allows `GET,HEAD,POST,OPTIONS` only, so a content
+/// route that takes another method must keep the shared CORS rule
+/// (`routing::upstream_cors_path` false), or browsers could not call it.
+#[tokio::test]
+async fn every_route_outside_upstreams_cors_methods_is_exempt() {
+    let node = TestNode::without_db("cors-methods").await;
+    for route in crate::routing::CONTENT_ROUTE_PATHS {
+        let path: Vec<&str> = route
+            .split('/')
+            .map(|s| if s.starts_with('{') { "x" } else { s })
+            .collect();
+        let path = format!("/content{}", path.join("/"));
+        let (status, headers, _) = send(
+            node.router(),
+            Request::patch(&path).body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{path}");
+        let allow = headers[header::ALLOW].to_str().unwrap().to_string();
+        let other = allow
+            .split(',')
+            .map(str::trim)
+            .any(|m| !["GET", "HEAD", "POST", "OPTIONS"].contains(&m));
+        if other {
+            assert!(
+                !crate::routing::upstream_cors_path(&path),
+                "{path} allows {allow} but takes upstream's CORS rule"
+            );
+        }
+    }
+}
+
 /// `CR-17-body-over-10mib.json`: upstream caps the `POST /entities/active`
 /// body at `MAX_ACTIVE_ENTITIES_BODY_SIZE` (10 MiB) with a plain-text 413.
 #[tokio::test]

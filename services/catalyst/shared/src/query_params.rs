@@ -55,10 +55,6 @@ pub fn qs_get_number(params: &QueryParams, key: &str) -> Option<i64> {
     qs_get_string(params, key).and_then(|s| s.parse::<i64>().ok())
 }
 
-pub fn qs_get_bool(params: &QueryParams, key: &str) -> Option<bool> {
-    qs_get_string(params, key).map(|s| s == "true")
-}
-
 /// Trimmed and case-insensitive: each type name, plus `<type>s` for a name
 /// that does not already end in `s` (`scenes` is `scene`; `outfitss` is
 /// nothing), as upstream builds `ENTITY_TYPES_BY_NAME`.
@@ -68,26 +64,6 @@ pub fn parse_entity_type(raw: &str) -> Option<&'static str> {
         .iter()
         .copied()
         .find(|t| *t == lowered || (!t.ends_with('s') && lowered.strip_suffix('s') == Some(*t)))
-}
-
-pub fn to_query_string(filters: &HashMap<String, Vec<String>>) -> String {
-    let mut pairs: Vec<String> = Vec::new();
-    let mut keys: Vec<&String> = filters.keys().collect();
-    keys.sort();
-    for key in keys {
-        if let Some(values) = filters.get(key) {
-            for val in values {
-                if !val.is_empty() {
-                    pairs.push(format!(
-                        "{}={}",
-                        urlencoding_encode(key),
-                        urlencoding_encode(val)
-                    ));
-                }
-            }
-        }
-    }
-    pairs.join("&")
 }
 
 pub fn camel_to_snake(s: &str) -> String {
@@ -174,15 +150,6 @@ pub fn parse_pagination_with(
     })
 }
 
-pub fn parse_pagination(params: &QueryParams, max_page_size: i64) -> Result<Pagination, String> {
-    parse_pagination_with(
-        params,
-        max_page_size,
-        OversizePolicy::Reject,
-        NonPositivePolicy::Reject,
-    )
-}
-
 fn urlencoding_decode(s: &str) -> String {
     let mut bytes: Vec<u8> = Vec::with_capacity(s.len());
     let mut buf = [0u8; 4];
@@ -239,7 +206,9 @@ fn strip_array_index(key: &str) -> String {
 /// then the longest run of digits (`10abc` is 10, `1.5` is 1); `None` where
 /// it answers `NaN`. A value past `i64` saturates.
 pub fn js_parse_int(raw: &str) -> Option<i64> {
-    let s = raw.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    // JavaScript's whitespace: Unicode `White_Space` without U+0085, plus U+FEFF.
+    let s =
+        raw.trim_start_matches(|c: char| c == '\u{feff}' || (c != '\u{85}' && c.is_whitespace()));
     let (negative, digits) = match s.as_bytes().first() {
         Some(b'-') => (true, &s[1..]),
         Some(b'+') => (false, &s[1..]),
@@ -273,6 +242,19 @@ fn qs_js_string(params: &QueryParams, key: &str) -> Option<String> {
 /// `parseInt`, absent on `NaN`.
 pub fn qs_get_js_number(params: &QueryParams, key: &str) -> Option<i64> {
     qs_js_string(params, key).and_then(|s| js_parse_int(&s))
+}
+
+/// PostgreSQL's `timestamptz` range in Unix milliseconds (4714-11-24 BC to
+/// 294276-12-31 AD).
+const PG_TIMESTAMP_MS: std::ops::RangeInclusive<i64> = -210_866_803_200_000..=9_224_318_015_999_000;
+
+/// [`qs_get_js_number`] for a millisecond bound (`from`, `to`), clamped to
+/// what `to_timestamp` accepts. Upstream hands any value to PostgreSQL and
+/// answers its "timestamp out of range" as a 500; no deployment lies outside
+/// that range, so the clamped bound selects the same rows.
+pub fn qs_get_js_timestamp(params: &QueryParams, key: &str) -> Option<i64> {
+    qs_get_js_number(params, key)
+        .map(|ms| ms.clamp(*PG_TIMESTAMP_MS.start(), *PG_TIMESTAMP_MS.end()))
 }
 
 /// The content server's `qsGetBoolean`: absent when missing or empty, else
@@ -440,7 +422,13 @@ mod tests {
     #[test]
     fn parse_pagination_defaults() {
         let params = parse_query_string("");
-        let p = parse_pagination(&params, 1000).unwrap();
+        let p = parse_pagination_with(
+            &params,
+            1000,
+            OversizePolicy::Reject,
+            NonPositivePolicy::Reject,
+        )
+        .unwrap();
         assert_eq!(p.page_size, 100);
         assert_eq!(p.page_num, 1);
         assert_eq!(p.offset, 0);
@@ -524,12 +512,24 @@ mod tests {
     fn pagination_strict_rejects_non_positive() {
         let zero = parse_query_string("pageSize=0");
         assert_eq!(
-            parse_pagination(&zero, 1000).unwrap_err(),
+            parse_pagination_with(
+                &zero,
+                1000,
+                OversizePolicy::Reject,
+                NonPositivePolicy::Reject
+            )
+            .unwrap_err(),
             "pageSize must be a positive integer"
         );
         let neg = parse_query_string("pageNum=-1");
         assert_eq!(
-            parse_pagination(&neg, 1000).unwrap_err(),
+            parse_pagination_with(
+                &neg,
+                1000,
+                OversizePolicy::Reject,
+                NonPositivePolicy::Reject
+            )
+            .unwrap_err(),
             "pageNum must be a positive integer"
         );
     }
@@ -579,17 +579,5 @@ mod tests {
         let params = parse_query_string("q=a+b&bad=%ZZ");
         assert_eq!(qs_get_string(&params, "q").as_deref(), Some("a b"));
         assert_eq!(qs_get_string(&params, "bad").as_deref(), Some("%ZZ"));
-    }
-
-    #[test]
-    fn next_page_query_string_is_sorted_and_encoded() {
-        let mut filters: HashMap<String, Vec<String>> = HashMap::new();
-        filters.insert("to".into(), vec!["5".into()]);
-        filters.insert("entityType".into(), vec!["scene".into(), "".into()]);
-        filters.insert("lastId".into(), vec!["a b".into()]);
-        assert_eq!(
-            to_query_string(&filters),
-            "entityType=scene&lastId=a%20b&to=5"
-        );
     }
 }

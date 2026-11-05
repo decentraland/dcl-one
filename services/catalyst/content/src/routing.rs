@@ -166,8 +166,10 @@ const UPSTREAM_CORS_METHODS: &str = "GET,HEAD,POST,OPTIONS";
 /// request without `Origin` gets no CORS header, as captured.
 ///
 /// The root mounts, the lambdas routes in this router and this node's own
-/// write routes under `/content/` (`scenes`, `forwarding`, which need
-/// `DELETE`) keep the shared rule.
+/// routes under `/content/`, which upstream does not serve (`scenes`, whose
+/// `DELETE` the upstream preflight would refuse, and the `forwarding`
+/// operator API), keep the shared rule. `every_route_outside_upstreams_cors_methods_is_exempt`
+/// fails when a content route takes another method without an exemption.
 pub(crate) async fn content_cors(req: Request, next: Next) -> Response {
     if !upstream_cors_path(req.uri().path()) {
         return crate::cors::cors_middleware(req, next).await;
@@ -208,7 +210,7 @@ pub(crate) async fn content_cors(req: Request, next: Next) -> Response {
     res
 }
 
-fn upstream_cors_path(path: &str) -> bool {
+pub(crate) fn upstream_cors_path(path: &str) -> bool {
     path.strip_prefix(CONTENT_PREFIX).is_some_and(|rest| {
         let first = rest.split('/').next().unwrap_or("");
         !first.eq_ignore_ascii_case("scenes") && !first.eq_ignore_ascii_case("forwarding")

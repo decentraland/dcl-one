@@ -8,7 +8,7 @@ use super::errors::{AppError, AppResult};
 use super::queries::{self, DeploymentQueryOptions};
 use super::query_params::{
     QueryParams, camel_to_snake, parse_entity_type, parse_query_string, qs_get_filter_array,
-    qs_get_js_bool, qs_get_js_number, qs_get_string, to_ordered_query_string,
+    qs_get_js_bool, qs_get_js_number, qs_get_js_timestamp, qs_get_string, to_ordered_query_string,
 };
 use super::wire_types::{ControllerDeployment, DeploymentsResponse, HistoryPagination};
 
@@ -135,8 +135,8 @@ fn parse_deployment_query_options(params: &QueryParams) -> AppResult<DeploymentQ
     let only_currently_pointed = qs_get_js_bool(params, "onlyCurrentlyPointed");
     let offset = qs_get_js_number(params, "offset");
     let limit = qs_get_js_number(params, "limit");
-    let from = qs_get_js_number(params, "from");
-    let to = qs_get_js_number(params, "to");
+    let from = qs_get_js_timestamp(params, "from");
+    let to = qs_get_js_timestamp(params, "to");
     let last_id = qs_get_string(params, "lastId").map(|s| s.to_lowercase());
 
     if offset.is_some_and(|off| off > 5000) {

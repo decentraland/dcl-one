@@ -847,7 +847,10 @@ pub async fn get_pointer_changes(
 /// `limit: None` returns every row (the unpaginated legacy answer). Rows come
 /// in table order, as upstream's cache is filled from an unordered `SELECT`
 /// at start and then in report order; this node has no report sequence, so
-/// a re-reported failure moves where the update puts its row.
+/// a re-reported failure moves where the update puts its row. A page
+/// (`limit: Some`) is ordered by `failure_time, entity_id` instead: a
+/// retry's `ON CONFLICT DO UPDATE` moves a row's `ctid`, which would make
+/// `offset` paging skip and repeat rows.
 pub async fn failed_deployments(
     pool: &PgPool,
     offset: i64,
@@ -864,7 +867,7 @@ pub async fn failed_deployments(
         retry_count: i32,
         next_retry_at: f64,
     }
-    let rows: Vec<Row> = sqlx::query_as(
+    let rows: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         r#"
         SELECT
             entity_id,
@@ -876,10 +879,15 @@ pub async fn failed_deployments(
             retry_count,
             date_part('epoch', next_retry_at) * 1000 AS next_retry_at
         FROM content.failed_deployments
-        ORDER BY ctid
+        ORDER BY {}
         OFFSET $1 LIMIT $2
         "#,
-    )
+        if limit.is_some() {
+            "failure_time, entity_id"
+        } else {
+            "ctid"
+        }
+    )))
     .bind(offset.max(0))
     .bind(limit.map(|l| l.max(0)))
     .fetch_all(pool)
