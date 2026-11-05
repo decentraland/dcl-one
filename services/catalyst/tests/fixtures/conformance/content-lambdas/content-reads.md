@@ -93,7 +93,7 @@ Deprecated upstream in favour of `POST /entities/active` (comment at `decentrala
 | type not recognised | 400 | `{"error":"Unrecognized type: <raw :type>"}` | `Content-Type: application/json` | `get-entities-handler.ts:37-42` | `active_entities.rs:130-134`, `shared/src/query_params.rs` `parse_entity_type` | MATCH (fixtures `entities-200-outfits-accepted.json`, `entities-400-outfitss-rejected.json`, `entities-400-outfit-rejected.json`) |
 | both or neither of id/pointer | 400 | `{"error":"ids or pointers must be present, but not both"}` | json | `get-entities-handler.ts:45-50` | `active_entities.rs:142-147`, `validation.rs:14` | MATCH, except a multi-value list containing an empty element (`?pointer=a&pointer=`): upstream 200, dcl-one 400 (`validation.rs:40-46`) |
 | > 1000 ids or pointers | 400 | `{"error":"Too many ids or pointers; the maximum allowed is 1000"}` | json | `get-entities-handler.ts:52-57` | `validation.rs:26-28,49-51` | MATCH |
-| success, no `fields` | 200 | `Entity[]` (example below); unknown ids/pointers are omitted; denylisted ids dropped | `Cache-Control: public, max-age=<ENTITIES_CACHE_CONTROL_MAX_AGE>` (default 10; 0 omits the header) | `get-entities-handler.ts:66-77`, `Environment.ts:713-717` | `active_entities.rs:151-164`, `config/src/node.rs:71-72` | MATCH on fields and values; object key order differs (see CR-14) |
+| success, no `fields` | 200 | `Entity[]` (example below); unknown ids/pointers are omitted; denylisted ids dropped | `Cache-Control: public, max-age=<ENTITIES_CACHE_CONTROL_MAX_AGE>` (default 10; 0 omits the header) | `get-entities-handler.ts:66-77`, `Environment.ts:713-717` | `active_entities.rs:151-164`, `config/src/node.rs:71-72` | MATCH on fields, values and top-level key order (`maskEntity`'s, CR-14); `metadata`'s inner key order differs (CR-14) |
 | success, `fields=<list>` | 200 | `[{version,id,type,timestamp,pointers,content,metadata?}]`: unselected `pointers`/`content` are `[]`, unselected `metadata` key absent | same | `get-entities-handler.ts:80-95` | `formatters.rs:122-170` | MATCH |
 | `fields=` (empty) | 200 | upstream: unmasked entities | | `get-entities-handler.ts:61` (`if (fields)`) | `active_entities.rs:64-70` (`Some("")` -> mask everything) | DIVERGENT: dcl-one returns `pointers: []`, `content: []`, no `metadata` |
 | `fields` repeated (`fields=a&fields=b`) | 500 upstream (`.split` on an array) | `{"error":"Internal Server Error"}` | | `get-entities-handler.ts:34,62` | first value used | DIVERGENT (upstream bug; no backlog item) |
@@ -112,9 +112,13 @@ Success example (both trees; values fake):
   `decentraland/catalyst:src/logic/deployments/component.ts:192`, dcl-one `services/catalyst/content/src/queries.rs:112-127`).
 - `metadata` is the `entity_metadata.v` value; the key is absent when the column is NULL (upstream
   `component.ts:276`, dcl-one `queries.rs:108-110,124-126`).
+- Key order: `GET /entities/:type` masks every entity, so its keys are `maskEntity`'s
+  `version,id,type,timestamp,pointers,content,metadata`; `POST /entities/active` and the collection
+  listing answer the stored entity, captured as `id,type,pointers,content,version,timestamp,metadata`.
+  dcl-one writes both orders (`formatters.rs` `MaskedEntity`, `queries.rs` `ActiveEntityJson`).
+  `metadata`'s own keys are sorted in dcl-one (CR-14).
 - `timestamp`: upstream sends `date_part('epoch', entity_timestamp) * 1000` as a JS number (float8);
-  dcl-one truncates the same expression to `i64` (`queries.rs:121`). Equal for every value whose
-  float8 product is integral.
+  dcl-one sends the same double, as an integer when it is integral (`queries.rs` `js_millis`).
 - Order: upstream returns cache hits first, then DB rows in unspecified order
   (`logic/active-entities/component.ts:294-351`); no ORDER BY (`logic/deployments/component.ts:351-369`).
   dcl-one: ids in plan order, pointers ordered by each entity's smallest matching pointer
@@ -181,7 +185,7 @@ emote types synced.
 
 | trigger | status | body | headers | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
-| body larger than the cap | 413 | `text/plain; charset=utf-8` `Payload Too Large` (capture `captures/content-reads/CR-17-body-over-10mib.json`) | | `routes.ts:92` | `lib.rs:637` (256 KiB, axum `DefaultBodyLimit`): `text/plain` "Failed to buffer the request body: length limit exceeded" | DIVERGENT: cap 256 KiB vs 10 MiB; body text |
+| body larger than the cap | 413 | `text/plain; charset=utf-8` `Payload Too Large` (capture `captures/content-reads/CR-17-body-over-10mib.json`) | | `routes.ts:92` | `lib.rs` (`routing::MAX_ACTIVE_ENTITIES_BODY_BYTES`, 10 MiB, axum `DefaultBodyLimit`), `routing.rs` `payload_too_large_text`: `413 text/plain; charset=utf-8` `Payload Too Large` | MATCH (CR-17) |
 | body not JSON | 400 | `{"ok":false,"message":<V8 JSON.parse message>}`, no `data`. Captured: empty body `Unexpected end of JSON input`; `{` `Expected property name or '}' in JSON at position 1 (line 1 column 2)`; `hello` `Unexpected token 'h', "hello" is not valid JSON` (`captures/content-reads/CR-2-empty-body.json`, `CR-2-not-json.json`, `CR-2-invalid-token.json`) | json | `routes.ts:93` | 400 `{"ok":false,"message":<text>}`, no `data`: `"Unexpected end of JSON input"` for an empty body, otherwise serde's parse message (`validation.rs:74-84`) | DIVERGENT (P2): the empty-body answer matches the capture; any other parse message is serde's wording, not V8's |
 | `Content-Type` not `application/json` (e.g. `text/plain` from a bare `fetch`) | validated normally (`text/plain` with `{}` answers the same 400 as JSON `{}`: `captures/content-reads/CR-2-text-plain.json`) | | | `routes.ts:38-41` | the body is read as `Bytes` and parsed whatever the header (`active_entities.rs:98-110`) | MATCH |
 | `{}`; both keys; empty array; empty string element; extra property; non-string element; `null` value; non-object body; > 1000 items | 400 | `{"ok":false,"message":"Invalid JSON body","data":<ajv errors>}`: the first error of each `oneOf` branch, then the `oneOf` error, each `{instancePath, schemaPath, keyword, params, message}` in that key order (`captures/content-reads/CR-2-*.json`, eleven cases) | json | `active-entities-handler.ts:8-23` | the same `ok`/`message`, with `data` built as AJV's first error per `oneOf` branch plus the `oneOf` error (`validation.rs:74-215`; fixtures `tests/fixtures/content/active-entities-400-*.json`) | MATCH as JSON values: the `data` arrays `validation.rs` builds, as read, equal all eleven captured arrays. Key order differs: `json!` without `preserve_order` sorts keys (`data,message,ok`; `instancePath,keyword,message,params,schemaPath`) (CR-2) |
@@ -317,12 +321,15 @@ time this node stored the deployment, so it differs between any two nodes (upstr
   (the `GET` comes from `/entities/:type`) (`captures/content-reads/CR-12-*.json`). A method outside the
   router's list (`FOO`) is answered by the CDN with an empty 400 before it reaches the peer, so the 501
   is not observable on the public peer (`CR-12-unknown-method.json`).
-- dcl-one: axum answers 405 with `Allow` and an empty body for any method. axum writes `Allow` as the
-  registered methods joined by `,` without spaces (`GET,HEAD`), where upstream writes `HEAD, GET`.
+- dcl-one: axum answers 405 with `Allow` and an empty body for any method; `routing.rs`
+  `upstream_allow` rewrites `Allow` under `/content/` as upstream writes it (`HEAD, GET, POST`, comma
+  and space, `HEAD` first); the root mounts keep axum's `GET,HEAD`. A method outside koa-router's list (`FOO`) is also a 405 in dcl-one.
 - Path shadowing: upstream `GET /entities/active` matches `/entities/:type` and answers 400
-  `{"error":"Unrecognized type: active"}` (captured: `captures/content-reads/CR-12-get-entities-active.json`); in dcl-one the static `/entities/active` route (POST only)
-  wins and answers 405 (`services/catalyst/content/src/lib.rs:630-638`).
-- Verdict: DIVERGENT (CR-12).
+  `{"error":"Unrecognized type: active"}` (captured: `captures/content-reads/CR-12-get-entities-active.json`);
+  dcl-one serves `GET` on its static `/entities/active` route with the `/entities/:type` handler and the
+  type `active` (`active_entities.rs` `get_entities_active`), the same answer.
+- Verdict: MATCH for every captured answer (test `wrong_methods_answer_like_the_captured_router`);
+  DIVERGENT for a method outside the router's list, which the capture cannot show (CR-12).
 
 ## X3. CORS
 
@@ -356,7 +363,11 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
 - Case: the same router port defaults to `sensitive: false`. Captured: `HEAD /content/Contents/<hash>`
   answers `200` with the file's headers, and `/content/Status` and `/content/Deployments` answer `200`
   (`captures/content-reads/CR-16-path-case-contents.json`, `CR-16-path-case-status.json`,
-  `captures/content-sync/CS-23-path-case-deployments.json`). axum is case-sensitive (404). DIVERGENT (CR-16).
+  `captures/content-sync/CS-23-path-case-deployments.json`). dcl-one spells the static segments of a
+  content route under `/content/` in the route's case before routing, so these answer the same
+  (`services/catalyst/content/src/routing.rs` `upstream_routing`, wrapped around the whole app in
+  `services/catalyst/src/serve.rs`); parameters keep their case. The root mounts stay case-sensitive
+  (upstream production has none), as does every non-content path. MATCH (CR-16).
 - Prefix: upstream production serves only `/content/*`; dcl-one answers the same routes at the root
   and under `/content` (`services/catalyst/content/src/lib.rs:710-711`). A superset.
 - NUL bytes: dcl-one answers any path or query containing a NUL (raw or `%00`) with
@@ -470,15 +481,17 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
     - Severity: P2.
 
 12. **CR-12** Method handling.
-    - Gap: `GET /entities/active` is 405 (upstream 400 `Unrecognized type: active`); unknown methods are 405 (upstream 501).
-    - Expected: `GET /entities/active` handled by the `/entities/:type` handler; 405 with `Allow` only for
-      methods the router knows (`decentraland/catalyst:src/controllers/routes.ts:86-95`, `src/service.ts:64-65`).
-    - Capture: `GET /content/entities/active` answers 400 `{"error":"Unrecognized type: active"}`; `PUT`/`PATCH`
-      answer 405 with an empty body and `Allow: HEAD, GET` (comma and space, `HEAD` first); the public CDN
-      answers an unknown method with its own 400, so behind that CDN the 501 is never seen
-      (`captures/content-reads/CR-12-*.json`).
-    - Place: `services/catalyst/content/src/lib.rs:630-638` (add `.get(active_entities::get_entities)` on
-      `/entities/active` with `type = "active"`).
+    - Gap: a method outside the router's list (`FOO`) is a 405 in dcl-one; upstream's application answers
+      501, and the public CDN in front of it a 400 (`captures/content-reads/CR-12-unknown-method.json`).
+      Neither body is captured, so it is left.
+    - Done: `GET /entities/active` answers 400 `{"error":"Unrecognized type: active"}` through the
+      `/entities/:type` handler; a 405's `Allow` is written `HEAD, GET, POST` (comma and space, `HEAD`
+      first), with an empty body (`active_entities.rs` `get_entities_active`, `routing.rs` `upstream_allow`;
+      test `wrong_methods_answer_like_the_captured_router`), as captured in
+      `captures/content-reads/CR-12-*.json`.
+    - Expected: 501 for an unknown method only if a capture of the application (not the CDN) shows its
+      bytes (`decentraland/catalyst:src/service.ts:64-65`).
+    - Place: `services/catalyst/content/src/routing.rs`.
     - Severity: P2.
 
 13. **CR-13** Unknown-route 404 body. Status: MATCH, no work.
@@ -490,18 +503,20 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
     - Severity: none (closed).
 
 14. **CR-14** Entity JSON key order.
-    - Gap: dcl-one serialises entity objects, `metadata` and `authChain` links with keys in alphabetical
-      order (serde_json without `preserve_order`, `services/catalyst/Cargo.toml:68`).
-    - Expected: `version,id,type,pointers,timestamp,content,metadata`
-      (`decentraland/catalyst:src/logic/deployments/component.ts:186-194`); masked
-      `version,id,type,timestamp,pointers,content,metadata` (`get-entities-handler.ts:94`); `metadata` in
-      PostgreSQL jsonb key order as stored.
-    - Capture: the production peer answers `POST /content/entities/active` with
-      `id,type,pointers,content,version,timestamp,metadata` (a wearable and the scene at 0,0), and
-      `GET /content/entities/scene?pointer=0,0` with `version,id,type,timestamp,pointers,content,metadata`
-      (`captures/content-reads/CR-14-active-entity-key-order.json`, `CR-16-trailing-slash-entities.json`).
-      The `POST` order is neither of the orders read above; trace where it comes from before fixing.
-    - Place: `services/catalyst/content/src/queries.rs:112-127` (build the document bytes in order).
+    - Done: the top-level keys follow the capture: `POST /entities/active` and the collection listing
+      `id,type,pointers,content,version,timestamp,metadata` (the order upstream's cache holds entities in,
+      `decentraland/catalyst:src/logic/entities/component.ts:125-135`); `GET /entities/:type`
+      `version,id,type,timestamp,pointers,content,metadata` (`maskEntity`,
+      `get-entities-handler.ts:94`) (`captures/content-reads/CR-14-active-entity-key-order.json`,
+      `CR-16-trailing-slash-entities.json`; `queries.rs` `ActiveEntityJson`, `formatters.rs` `MaskedEntity`;
+      tests `active_entity_keys_follow_the_captured_order`, `masked_keys_follow_upstream_mask_entity_order`).
+      An entity upstream reads from the database on a cache miss is `version,id,type,pointers,timestamp,content,metadata`
+      (`decentraland/catalyst:src/logic/deployments/component.ts:186-194`); the capture shows the cached order.
+    - Gap: `metadata` and `authChain` links keep sorted keys (serde_json without `preserve_order`,
+      `services/catalyst/Cargo.toml:68`); upstream sends the deployed text order (cache) or PostgreSQL jsonb
+      order (database).
+    - Expected: needs capture: the captures elide `metadata`.
+    - Place: `services/catalyst/content/src/queries.rs` `row_to_doc`.
     - Severity: P2.
 
 15. **CR-15** /available-content duplicates and empty cid. Status: MATCH, no work.
@@ -511,22 +526,25 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
       `available-content-400-empty-cid.json`, unit test `a_repeated_cid_is_listed_once`).
     - Severity: none (closed).
 
-16. **CR-16** Case-insensitive paths.
-    - Gap: axum matches paths case-sensitively.
-    - Expected: the upstream router's case-insensitive match. Confirmed by capture: `/content/Contents/<hash>`,
-      `/content/Status` and `/content/Deployments` answer 200 (`captures/content-reads/CR-16-path-case-contents.json`, `CR-16-path-case-status.json`,
-      `captures/content-sync/CS-23-path-case-deployments.json`).
-    - Place: a path-lowercasing layer for the static segments in `services/catalyst/content/src/lib.rs:695-727`.
-    - Severity: P2.
+16. **CR-16** Case-insensitive paths. Status: MATCH, no work.
+    - Upstream: the router matches case-insensitively. Captured: `/content/Contents/<hash>`, `/content/Status`
+      and `/content/Deployments` answer 200 (`captures/content-reads/CR-16-path-case-contents.json`,
+      `CR-16-path-case-status.json`, `captures/content-sync/CS-23-path-case-deployments.json`).
+    - dcl-one: `services/catalyst/content/src/routing.rs` `upstream_routing`, wrapped around the whole
+      app in `services/catalyst/src/serve.rs`, spells the static segments of a content route under
+      `/content/` in the route's case before routing; parameters keep their case. Root mounts and other
+      services' paths are not rewritten (tests `content_paths_match_case_insensitively`,
+      `every_listed_content_route_is_routed`).
+    - Severity: none (closed).
 
-17. **CR-17** POST /entities/active body cap.
-    - Gap: 256 KiB, axum text 413.
-    - Expected: `MAX_ACTIVE_ENTITIES_BODY_SIZE`, default 10 MiB; above it `413 text/plain; charset=utf-8`
-      `Payload Too Large` (captured: `captures/content-reads/CR-17-body-over-10mib.json`; only the over-cap side
-      was sent, so the exact cap is the pinned tree's default, not a measurement)
+17. **CR-17** POST /entities/active body cap. Status: MATCH, no work.
+    - Upstream: `MAX_ACTIVE_ENTITIES_BODY_SIZE`, default 10 MiB; above it `413 text/plain; charset=utf-8`
+      `Payload Too Large` (captured: `captures/content-reads/CR-17-body-over-10mib.json`; only the over-cap
+      side was sent, so the exact cap is the pinned tree's default)
       (`decentraland/catalyst:src/Environment.ts:79`, `src/controllers/routes.ts:92`).
-    - Place: `services/catalyst/content/src/lib.rs:637`.
-    - Severity: P2.
+    - dcl-one: a fixed 10 MiB cap and the same 413 (`routing.rs` `MAX_ACTIVE_ENTITIES_BODY_BYTES`,
+      `payload_too_large_text`; test `active_entities_body_cap_is_ten_mib`). The cap is not configurable.
+    - Severity: none (closed).
 
 18. **CR-18** GET /contents/:hashId gzip passthrough.
     - Gap: never `Content-Encoding: gzip`; `Content-Length: 0` sent for empty files.
@@ -537,12 +555,12 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
     - Place: `services/catalyst/content/src/get_content.rs:193-198`, `storage/src/content.rs`.
     - Severity: P2.
 
-19. **CR-19** Entity `timestamp` and audit `localTimestamp` as float.
-    - Gap: `as i64` truncates the float8 `date_part(...) * 1000`.
-    - Expected: the float8 value as a JSON number (integral in the common case)
-      (`decentraland/catalyst:src/logic/deployments/component.ts:357`).
-    - Place: `services/catalyst/content/src/queries.rs:121,917` (round, or emit the f64 when it is not integral).
-    - Severity: P2.
+19. **CR-19** Entity `timestamp` and audit `localTimestamp` as float. Status: MATCH, no work.
+    - Upstream: the float8 `date_part(...) * 1000` as a JS number (`decentraland/catalyst:src/logic/deployments/component.ts:357`).
+    - dcl-one: the same double, written as an integer when it is integral and with its fraction otherwise
+      (`services/catalyst/content/src/queries.rs` `js_millis`; test `js_millis_keeps_a_fraction_and_drops_a_zero_one`).
+      The history routes' timestamps are CS-19.
+    - Severity: none (closed).
 
 20. **CR-20** Differential tests for the hand-written validators.
     - Gap: `is_valid_collection_urn` and `is_canonical_cid` replace `@dcl/urn-resolver` and `@dcl/schemas`
