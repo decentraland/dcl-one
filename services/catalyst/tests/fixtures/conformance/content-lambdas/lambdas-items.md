@@ -9,7 +9,7 @@ Pinned revisions:
 - Upstream content server, for the collection-prefix query only: `decentraland/catalyst` @ `a416565db1e705cff9523540a2578af642598a29`.
 - dcl-one: `dcl-one-conformance` @ `37e91aed` (origin/main, 2026-11-04), workspace `services/catalyst`.
 
-Method: everything below was read statically. Nothing was built, run or captured, so no row here is verified.
+Method: everything below was read statically, except where a row cites a capture under [`captures/lambdas-items/`](captures/lambdas-items/), which states what the production peer and the marketplace API answered on 2026-11-04 ([`captures/README.md`](captures/README.md)). Nothing was built or run, so no row here is verified.
 
 Files read (upstream lamb2):
 `src/controllers/routes.ts`, `src/controllers/handlers/{wearables,emotes,third-party-wearables,explorer,explorer-emotes,all-collections,wearables-by-owner,emotes-by-owner,wearables-catalog,emotes-catalog}-handler.ts`, `src/controllers/handlers/{items-commons,pagination-utils,utils,errorHandler}.ts`, `src/logic/{pagination,pagination-constants,sorting,utils,api-with-fallback,items-by-owner,items-catalog,linked-wearables-mapper,third-party-providers-storage}.ts`, `src/logic/fetch-elements/{fetch-items,fetch-elements,graph-pagination,fetch-base-items,fetch-third-party-wearables,fetch-items-by-filters}.ts`, `src/adapters/{elements-fetcher,marketplace-api-fetcher,third-party-providers-graph-fetcher,alchemy-nft-fetcher,entities-fetcher,definitions,definitions-fetcher,content-server-url}.ts`, `src/components.ts`, `src/service.ts`, `src/types.ts`, `docs/openapi.yaml`.
@@ -545,7 +545,7 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
   - Validation runs only when `orderBy` is present, so `direction=foo` alone is a 200.
   - Without `orderBy`, no in-memory sort is applied: the order is the source's (subgraph `id` asc grouping in the fallback).
 - Change: user_items.rs:114-163, 247-249, 270-272.
-- Note: if dcl-one keeps a default order, document that the marketplace-server's default order is not in the pinned trees.
+- Note: the marketplace API's default group order, seen for two addresses (100 groups each; one is in the capture files), is rarity descending, then `urn` ascending; lamb2 passes it through (`captures/lambdas-items/LI-18-*.json`). dcl-one's default `rarity DESC` then URN agrees with it on the primary path.
 
 **LI-9 (P2). Third-party ownership without the NFT worker misses open mappings.**
 
@@ -619,6 +619,7 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
 **LI-18 (P2). `individualData` order is newest transfer first.**
 
 - Expected: source order; subgraph `id` ascending in the fallback (fetch-items.ts:157-195).
+- Capture: the marketplace API, lamb2's primary source, orders every `individualData` list by `transferredAt` descending, and lamb2 passes it through unchanged (`captures/lambdas-items/LI-18-marketplace-api-wearables-grouped.json`, `LI-18-lambdas-wearables.json`). dcl-one's newest-first order therefore matches the primary path; only the subgraph fallback (`id` ascending) differs. Ties on `transferredAt` were not observed.
 - Change: services/catalyst/chain-index/src/graph.rs:369-374; services/catalyst/shop/src/market/user_items.rs:61-94.
 
 **LI-19 (P2). `/collections/*-by-owner/:owner` is sorted by rarity DESC then urn.**

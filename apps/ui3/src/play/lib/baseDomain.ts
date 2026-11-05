@@ -66,26 +66,17 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
   'rpc-social-service-ea': '/social-rpc',
   'social-api': '/social-api',
   opensea: '/opensea',
-  reels: '/camera-reel-service',
+  // the site itself: Reels' share page
+  '': '',
   api: '/api',
   'pulse-server': '',
-  // hosts the HUD reaches outside the engine's service table
   'marketplace-api': '/marketplace-api',
   events: '/events',
-  'autotranslate-server': '/autotranslate-server'
-}
-
-/**
- * A backend host outside the engine's service table (`sub.<base domain>` upstream): on dcl-one its
- * gateway prefix on this origin. `path` is appended as given.
- */
-export function hostUrl(sub: string, path = ''): string {
-  if (BASE_DOMAIN === ONE_GATEWAY_HOST) {
-    const prefix = GATEWAY_PREFIXES[sub]
-    if (prefix == null) throw new Error(`hostUrl: '${sub}' has no gateway prefix`)
-    return `${window.location.origin}${prefix}${path}`
-  }
-  return `https://${sub}.${BASE_DOMAIN}${path}`
+  'autotranslate-server': '/autotranslate-server',
+  'camera-reel-service': '/camera-reel-service',
+  badges: '/badges',
+  notifications: '/notifications',
+  'assets-cdn': '/assets-cdn'
 }
 
 /** The domain a url without ?baseDomain= means here: derived from the hosting origin, else this host. */

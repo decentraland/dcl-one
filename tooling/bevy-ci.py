@@ -14,13 +14,23 @@ SCENES_WORKFLOW = '.github/workflows/bevy-explorer-scenes.yml'
 PRODUCERS = {'web': 'Web engine, HUD and bridge scene', 'headless': 'Headless Smoke'}
 LANES = ('clippy', 'test', 'headless', 'web')
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
+GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
+                      'apps/ui3/src/play/engine/generated/serviceTable.ts')
 INPUTS = ('rendering/bevy-explorer/source', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
-          'tooling/bevy-ci.py', 'tooling/bevy-http2-test.mjs', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'library/uuav/uuav-client', 'library/uuav/uuav-ipc', 'library/uuav/dist', 'tooling/uuav',
+          'apps/dcl-scene-cli', 'infra/gateway', *GATEWAY_HUD_INPUTS,
+          'tooling/bevy-ci.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
           'tooling/tests/test_bevy_*.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
           '.github/workflows/bevy-explorer-headless-build.yml',
           'tooling/ci-publication.py', '.cargo', 'rust-toolchain*')
+# Paths of the end-to-end suite that select the scenes lane: the inputs of the video playback
+# steps in bevy-explorer-scenes.yml. The run loads every visual spec before it filters, so the
+# whole folder is an input.
+SCENES_E2E_INPUTS = ('apps/bevy-explorer/e2e/scenes/', 'apps/bevy-explorer/e2e/driver/',
+                     'apps/bevy-explorer/e2e/scripts/', 'apps/bevy-explorer/e2e/specs/visual/',
+                     'apps/bevy-explorer/e2e/package.json', 'apps/bevy-explorer/e2e/package-lock.json')
 # Web files that the Test Suite's harness tests read: the benchmark runner's
 # (rendering/bevy-explorer/source/local-harness/benchmark/tests) and the web driver's
 # (local-harness/web-driver), which loads the HUD's test commands into Chrome. A change to one is
@@ -192,13 +202,14 @@ def select(base, head):
             affected = (*LANES, 'native-matrix')
         elif path == '.github/workflows/bevy-explorer-images.yml':
             affected = ('web', 'headless')
-        elif path == 'tooling/bevy-http2-test.mjs':
-            affected = ('test',)
         elif path == 'tooling/play-artifact.py':
             affected = ('web',)
         elif path.startswith(('tooling/tests/test_bevy_', 'tooling/tests/test_play_')):
             # The always-run source job executes these tests; they aren't build inputs.
             affected = ()
+        elif path.startswith('infra/gateway/') or path in GATEWAY_HUD_INPUTS:
+            # The Linux Test Suite compares Explorer and HUD routing with the nginx map.
+            affected = ('test',)
         elif path in HARNESS_WEB_READS:
             # The web lane builds and tests these files; the Test Suite runs the harness tests,
             # which read them (the sender the benchmark runner's receiver must accept, the guest's
@@ -213,9 +224,13 @@ def select(base, head):
             # Launcher/package assembly cannot affect web or graphical/native tests.
             # Keep the headless build/smoke; main also packages all four platforms.
             affected = ('headless',)
+        elif path.startswith(SCENES_E2E_INPUTS) or path.startswith('apps/dcl-scene-cli/'):
+            # The scenes, the driver, the runner scripts, the visual specs, the package files and
+            # the CLI that builds the scenes select the scenes lane.
+            affected = ('scenes',)
         elif path.startswith('apps/bevy-explorer/e2e/'):
-            # The end-to-end suite drives a built client; its own workflow (bevy-explorer-e2e.yml)
-            # checks it and runs it against the web app this workflow built.
+            # The rest of the end-to-end suite drives a built client; its own workflow
+            # (bevy-explorer-e2e.yml) checks it and runs it against the web app this workflow built.
             affected = ()
         elif path.startswith('apps/bevy-explorer/') and path.removeprefix('apps/bevy-explorer/') in APP_INPUTS:
             affected = APP_INPUTS[path.removeprefix('apps/bevy-explorer/')]
