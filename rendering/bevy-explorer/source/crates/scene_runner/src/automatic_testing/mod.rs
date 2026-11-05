@@ -9,6 +9,7 @@ use bevy::{
     prelude::*,
     render::{
         camera::RenderTarget,
+        extract_resource::ExtractResourcePlugin,
         render_resource::{PipelineCache, TextureFormat},
         view::screenshot::{Screenshot, ScreenshotCaptured},
         Render, RenderApp, RenderSet,
@@ -29,7 +30,7 @@ use ipfs::IpfsAssetServer;
 use wallet::Wallet;
 
 use crate::{
-    initialize_scene::{TestingData, PARCEL_SIZE},
+    initialize_scene::{SceneLoading, TestingData, PARCEL_SIZE},
     renderer_context::RendererSceneContext,
     ContainingScene, OutOfWorld, Toaster,
 };
@@ -41,6 +42,7 @@ impl Plugin for AutomaticTestingPlugin {
         let ready = SnapshotRenderReadiness::default();
         app.insert_resource(ready.clone());
         app.init_resource::<SnapshotInProgress>();
+        app.add_plugins(ExtractResourcePlugin::<SnapshotInProgress>::default());
         app.sub_app_mut(RenderApp)
             .insert_resource(ready)
             .add_systems(Render, record_ready_frame.in_set(RenderSet::Cleanup));
@@ -48,10 +50,7 @@ impl Plugin for AutomaticTestingPlugin {
     }
 }
 
-/// Hold native video textures while a requested snapshot waits for render readiness
-/// and GPU readback. The resource exists only when the scene test harness is enabled.
-#[derive(Resource, Default)]
-pub struct SnapshotInProgress(pub bool);
+pub use common::structs::SnapshotInProgress;
 
 // The render thread signals completed frames with no outstanding pipelines.
 // Three such frames account for pipelined rendering and allow UI layout to settle.
@@ -102,10 +101,11 @@ fn automatic_testing(
         Local<Handle<LoadedFolder>>,
         ResMut<SnapshotInProgress>,
     ),
-    (mut wallet, folders, images): (
+    (mut wallet, folders, images, loading): (
         ResMut<Wallet>,
         Res<Assets<LoadedFolder>>,
         Res<Assets<Image>>,
+        Query<&SceneLoading>,
     ),
     ui_roots: Query<(Entity, Option<&mut UiTargetCamera>), (With<ComputedNode>, Without<ChildOf>)>,
 ) {
@@ -427,6 +427,22 @@ fn automatic_testing(
         return;
     };
     let context = scenes.get(current_scene).unwrap();
+
+    // A scene that failed to load never sends a plan: it fails by name (`scene load`, which its
+    // `allow_failures` may list, as a step's name) and the run goes on.
+    if matches!(loading.get(current_scene), Ok(SceneLoading::Failed)) {
+        warn!("test scene @ {:?} failed to load", context.base);
+        fails.push((
+            format!("[({},{}) : scene load]", context.base.x, context.base.y),
+            "the scene failed to load".to_owned(),
+            next_test_scene
+                .allow_failures
+                .iter()
+                .any(|f| f == "scene load"),
+        ));
+        testing_data.test_scenes.as_mut().unwrap().0.pop_front();
+        return;
+    }
 
     let Some(plan) = plans.get(&current_scene) else {
         warn!("waiting for plan for scene @ {:?}", context.base);

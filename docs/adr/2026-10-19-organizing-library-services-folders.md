@@ -25,3 +25,5 @@ never a peer).
 - Add every new path to an `ownership.json` area.
 - Exception: `library/ui/apps/<app>/` holds UI used by a single app
   ([shared UI library ADR](2026-10-30-shared-ui-library.md)).
+- Exception: `library/uuav/` keeps its `uuav-*` crate names and its own
+  toolchain pin ([UUAV ADR](2026-11-03-uuav-native-video.md)).

@@ -406,6 +406,19 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['CONTENT_FORWARD_UPSTREAM_URL'], '')
         self.assertEqual(env['SYNC_ENABLED'], 'false')
 
+    def test_runtime_takes_only_the_public_sign_in_ids_from_the_shell(self):
+        with patch.dict(os.environ, {'THIRDWEB_CLIENT_ID': 'example-client-id', 'MAGIC_API_KEY': 'pk_example123',
+                                    'WALLETCONNECT_PROJECT_ID': 'example-project', 'THIRDWEB_SECRET_KEY': 'not-a-real-key'}):
+            env = dev.runtime_env(self.config)
+        self.assertEqual(env['THIRDWEB_CLIENT_ID'], 'example-client-id')
+        self.assertEqual(env['MAGIC_API_KEY'], 'pk_example123')
+        self.assertEqual(env['WALLETCONNECT_PROJECT_ID'], 'example-project')
+        self.assertNotIn('THIRDWEB_SECRET_KEY', env)
+        with patch.dict(os.environ, {}, clear=False):
+            for key in dev.PUBLIC_SIGN_IN_IDS:
+                os.environ.pop(key, None)
+            self.assertFalse(set(dev.PUBLIC_SIGN_IN_IDS) & set(dev.runtime_env(self.config)))
+
     def test_mirror_fetches_catalogues_and_requested_content_only(self):
         env = dev.runtime_env({**self.config, 'profile': 'mirror'})
         self.assertNotIn('NODE_POSTURE', env)

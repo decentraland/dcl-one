@@ -5,7 +5,7 @@ use common::{
     structs::{AudioDecoderError, AudioSettings},
     util::VolumePanning,
 };
-use comms::global_crdt::ForeignAudioSource;
+use comms::global_crdt::{ForeignAudioSource, NearbyPanning, VoicePan};
 use kira::{
     manager::backend::DefaultBackend,
     sound::{streaming::StreamingSoundData, PlaybackState},
@@ -190,16 +190,20 @@ fn update_foreign_audio_player_volume(
             &GlobalTransform,
             Option<&RenderLayers>,
             &mut AudioSpawned<ForeignAudioSource>,
+            &mut VoicePan,
         ),
         With<ForeignAudioSource>,
     >,
     pan: VolumePanning,
     settings: Res<AudioSettings>,
+    panning_settings: Res<NearbyPanning>,
+    time: Res<Time>,
 ) {
-    for (emitter_transform, render_layers, mut audio_spawned) in streams.iter_mut() {
+    for (emitter_transform, render_layers, mut audio_spawned, mut voice_pan) in streams.iter_mut() {
         let (volume, panning) =
             pan.volume_and_panning(emitter_transform.translation(), render_layers);
         let volume = volume * settings.voice();
+        let panning = voice_pan.update(panning, &panning_settings, time.delta_secs());
 
         audio_spawned
             .handle

@@ -192,6 +192,56 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
         ValidationResponse::Ok
     }
 
+    /// The content-independent subset upstream's `createStagingValidator`
+    /// runs on a batch of a partial upload (`partial_deployments`): the
+    /// structure, hashing, metadata schema, ADR-45, signature and scene rules
+    /// and the uploaded-but-unreferenced check, then the access step unless
+    /// `include_access` is off (a resume by the upload's creator). The size
+    /// and content completeness wait for publication, which runs
+    /// [`Self::validate`] in full.
+    pub async fn validate_staging(
+        &self,
+        deployment: &Deployment<'_>,
+        include_access: bool,
+    ) -> ValidationResponse {
+        let deadline = tokio::time::Instant::now() + self.access_budget();
+        for result in [
+            self.validate_entity_structure(deployment),
+            self.validate_ipfs_hashing(deployment),
+            super::metadata_schema::validate_metadata(deployment.entity),
+            self.validate_adr45(deployment),
+        ] {
+            if !result.is_ok() {
+                return result;
+            }
+        }
+        let result = self.validate_signature(deployment).await;
+        if !result.is_ok() {
+            return result;
+        }
+        let result = self.validate_scene_content(deployment);
+        if !result.is_ok() {
+            return result;
+        }
+        let referenced: HashSet<&String> =
+            deployment.entity.content.iter().map(|c| &c.hash).collect();
+        let unreferenced: Vec<String> = deployment
+            .files
+            .keys()
+            .filter(|hash| !referenced.contains(hash) && **hash != deployment.entity.id)
+            .map(|hash| {
+                format!("This hash was uploaded but is not referenced in the entity: {hash}")
+            })
+            .collect();
+        if !unreferenced.is_empty() {
+            return ValidationResponse::from_errors(unreferenced);
+        }
+        if include_access {
+            return self.validate_access(deployment, deadline).await;
+        }
+        ValidationResponse::Ok
+    }
+
     fn validate_entity_structure(&self, deployment: &Deployment<'_>) -> ValidationResponse {
         let entity = &deployment.entity;
 

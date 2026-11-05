@@ -1,0 +1,1015 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+  },
+  "scope": "Actual upstream voice-db PostgreSQL queries, private voice domain, RPC handlers and privileged identifier guards; owned temporary database; deterministic media HTTP replies. Not live-media equivalence.",
+  "caller": "0x1111111111111111111111111111111111111111",
+  "target": "0x2222222222222222222222222222222222222222",
+  "call": "a4444444-4444-4444-8444-444444444444",
+  "cases": [
+    {
+      "id": "accept.absent.empty",
+      "method": "accept",
+      "pending": false,
+      "variant": "empty",
+      "call_id": "",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"\""
+          }
+        }
+      },
+      "expected_hex": "12280a26696e76616c696420696e7075742073796e74617820666f72207479706520757569643a202222",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "accept.absent.malformed",
+      "method": "accept",
+      "pending": false,
+      "variant": "malformed",
+      "call_id": "not-a-uuid",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"not-a-uuid\""
+          }
+        }
+      },
+      "expected_hex": "12320a30696e76616c696420696e7075742073796e74617820666f72207479706520757569643a20226e6f742d612d7575696422",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "accept.absent.canonical",
+      "method": "accept",
+      "pending": false,
+      "variant": "canonical",
+      "call_id": "a4444444-4444-4444-8444-444444444444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "The voice chat with id a4444444-4444-4444-8444-444444444444 was not found"
+          }
+        }
+      },
+      "expected_hex": "224b0a4954686520766f696365206368617420776974682069642061343434343434342d343434342d343434342d383434342d34343434343434343434343420776173206e6f7420666f756e64",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "accept.absent.uppercase",
+      "method": "accept",
+      "pending": false,
+      "variant": "uppercase",
+      "call_id": "A4444444-4444-4444-8444-444444444444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "The voice chat with id A4444444-4444-4444-8444-444444444444 was not found"
+          }
+        }
+      },
+      "expected_hex": "224b0a4954686520766f696365206368617420776974682069642041343434343434342d343434342d343434342d383434342d34343434343434343434343420776173206e6f7420666f756e64",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "accept.absent.compact",
+      "method": "accept",
+      "pending": false,
+      "variant": "compact",
+      "call_id": "a4444444444444448444444444444444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "The voice chat with id a4444444444444448444444444444444 was not found"
+          }
+        }
+      },
+      "expected_hex": "22470a4554686520766f6963652063686174207769746820696420613434343434343434343434343434343834343434343434343434343434343420776173206e6f7420666f756e64",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "accept.absent.braced",
+      "method": "accept",
+      "pending": false,
+      "variant": "braced",
+      "call_id": "{a4444444-4444-4444-8444-444444444444}",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "The voice chat with id {a4444444-4444-4444-8444-444444444444} was not found"
+          }
+        }
+      },
+      "expected_hex": "224d0a4b54686520766f69636520636861742077697468206964207b61343434343434342d343434342d343434342d383434342d3434343434343434343434347d20776173206e6f7420666f756e64",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "accept.absent.urn",
+      "method": "accept",
+      "pending": false,
+      "variant": "urn",
+      "call_id": "urn:uuid:a4444444-4444-4444-8444-444444444444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"urn:uuid:a4444444-4444-4444-8444-444444444444\""
+          }
+        }
+      },
+      "expected_hex": "12550a53696e76616c696420696e7075742073796e74617820666f72207479706520757569643a202275726e3a757569643a61343434343434342d343434342d343434342d383434342d34343434343434343434343422",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "accept.absent.four-digit-groups",
+      "method": "accept",
+      "pending": false,
+      "variant": "four-digit-groups",
+      "call_id": "a444-4444-4444-4444-8444-4444-4444-4444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "The voice chat with id a444-4444-4444-4444-8444-4444-4444-4444 was not found"
+          }
+        }
+      },
+      "expected_hex": "224e0a4c54686520766f6963652063686174207769746820696420613434342d343434342d343434342d343434342d383434342d343434342d343434342d3434343420776173206e6f7420666f756e64",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "accept.pending.empty",
+      "method": "accept",
+      "pending": true,
+      "variant": "empty",
+      "call_id": "",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"\""
+          }
+        }
+      },
+      "expected_hex": "12280a26696e76616c696420696e7075742073796e74617820666f72207479706520757569643a202222",
+      "remaining_rows": 1,
+      "updates": []
+    },
+    {
+      "id": "accept.pending.malformed",
+      "method": "accept",
+      "pending": true,
+      "variant": "malformed",
+      "call_id": "not-a-uuid",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"not-a-uuid\""
+          }
+        }
+      },
+      "expected_hex": "12320a30696e76616c696420696e7075742073796e74617820666f72207479706520757569643a20226e6f742d612d7575696422",
+      "remaining_rows": 1,
+      "updates": []
+    },
+    {
+      "id": "accept.pending.canonical",
+      "method": "accept",
+      "pending": true,
+      "variant": "canonical",
+      "call_id": "a4444444-4444-4444-8444-444444444444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "a4444444-4444-4444-8444-444444444444",
+            "credentials": {
+              "connectionUrl": "wss://livekit.test/voice-chat-private-a4444444-4444-4444-8444-444444444444?for=0x2222222222222222222222222222222222222222"
+            }
+          }
+        }
+      },
+      "expected_hex": "0aa3010a2461343434343434342d343434342d343434342d383434342d343434343434343434343434127b0a797773733a2f2f6c6976656b69742e746573742f766f6963652d636861742d707269766174652d61343434343434342d343434342d343434342d383434342d3434343434343434343434343f666f723d307832323232323232323232323232323232323232323232323232323232323232323232323232323232",
+      "remaining_rows": 0,
+      "updates": [
+        {
+          "callId": "a4444444-4444-4444-8444-444444444444",
+          "callerAddress": "0x1111111111111111111111111111111111111111",
+          "calleeAddress": "0x2222222222222222222222222222222222222222",
+          "status": "accepted",
+          "credentials": {
+            "connectionUrl": "wss://livekit.test/voice-chat-private-a4444444-4444-4444-8444-444444444444?for=0x1111111111111111111111111111111111111111"
+          }
+        }
+      ]
+    },
+    {
+      "id": "accept.pending.uppercase",
+      "method": "accept",
+      "pending": true,
+      "variant": "uppercase",
+      "call_id": "A4444444-4444-4444-8444-444444444444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "A4444444-4444-4444-8444-444444444444",
+            "credentials": {
+              "connectionUrl": "wss://livekit.test/voice-chat-private-a4444444-4444-4444-8444-444444444444?for=0x2222222222222222222222222222222222222222"
+            }
+          }
+        }
+      },
+      "expected_hex": "0aa3010a2441343434343434342d343434342d343434342d383434342d343434343434343434343434127b0a797773733a2f2f6c6976656b69742e746573742f766f6963652d636861742d707269766174652d61343434343434342d343434342d343434342d383434342d3434343434343434343434343f666f723d307832323232323232323232323232323232323232323232323232323232323232323232323232323232",
+      "remaining_rows": 0,
+      "updates": [
+        {
+          "callId": "A4444444-4444-4444-8444-444444444444",
+          "callerAddress": "0x1111111111111111111111111111111111111111",
+          "calleeAddress": "0x2222222222222222222222222222222222222222",
+          "status": "accepted",
+          "credentials": {
+            "connectionUrl": "wss://livekit.test/voice-chat-private-a4444444-4444-4444-8444-444444444444?for=0x1111111111111111111111111111111111111111"
+          }
+        }
+      ]
+    },
+    {
+      "id": "accept.pending.compact",
+      "method": "accept",
+      "pending": true,
+      "variant": "compact",
+      "call_id": "a4444444444444448444444444444444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Invalid Gatekeeper private voice room ID"
+          }
+        }
+      },
+      "expected_hex": "122a0a28496e76616c696420476174656b6565706572207072697661746520766f69636520726f6f6d204944",
+      "remaining_rows": 1,
+      "updates": []
+    },
+    {
+      "id": "accept.pending.braced",
+      "method": "accept",
+      "pending": true,
+      "variant": "braced",
+      "call_id": "{a4444444-4444-4444-8444-444444444444}",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Invalid Gatekeeper private voice room ID"
+          }
+        }
+      },
+      "expected_hex": "122a0a28496e76616c696420476174656b6565706572207072697661746520766f69636520726f6f6d204944",
+      "remaining_rows": 1,
+      "updates": []
+    },
+    {
+      "id": "accept.pending.urn",
+      "method": "accept",
+      "pending": true,
+      "variant": "urn",
+      "call_id": "urn:uuid:a4444444-4444-4444-8444-444444444444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"urn:uuid:a4444444-4444-4444-8444-444444444444\""
+          }
+        }
+      },
+      "expected_hex": "12550a53696e76616c696420696e7075742073796e74617820666f72207479706520757569643a202275726e3a757569643a61343434343434342d343434342d343434342d383434342d34343434343434343434343422",
+      "remaining_rows": 1,
+      "updates": []
+    },
+    {
+      "id": "accept.pending.four-digit-groups",
+      "method": "accept",
+      "pending": true,
+      "variant": "four-digit-groups",
+      "call_id": "a444-4444-4444-4444-8444-4444-4444-4444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Invalid Gatekeeper private voice room ID"
+          }
+        }
+      },
+      "expected_hex": "122a0a28496e76616c696420476174656b6565706572207072697661746520766f69636520726f6f6d204944",
+      "remaining_rows": 1,
+      "updates": []
+    },
+    {
+      "id": "reject.absent.empty",
+      "method": "reject",
+      "pending": false,
+      "variant": "empty",
+      "call_id": "",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"\""
+          }
+        }
+      },
+      "expected_hex": "12280a26696e76616c696420696e7075742073796e74617820666f72207479706520757569643a202222",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "reject.absent.malformed",
+      "method": "reject",
+      "pending": false,
+      "variant": "malformed",
+      "call_id": "not-a-uuid",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"not-a-uuid\""
+          }
+        }
+      },
+      "expected_hex": "12320a30696e76616c696420696e7075742073796e74617820666f72207479706520757569643a20226e6f742d612d7575696422",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "reject.absent.canonical",
+      "method": "reject",
+      "pending": false,
+      "variant": "canonical",
+      "call_id": "a4444444-4444-4444-8444-444444444444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "The voice chat with id a4444444-4444-4444-8444-444444444444 was not found"
+          }
+        }
+      },
+      "expected_hex": "224b0a4954686520766f696365206368617420776974682069642061343434343434342d343434342d343434342d383434342d34343434343434343434343420776173206e6f7420666f756e64",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "reject.absent.uppercase",
+      "method": "reject",
+      "pending": false,
+      "variant": "uppercase",
+      "call_id": "A4444444-4444-4444-8444-444444444444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "The voice chat with id A4444444-4444-4444-8444-444444444444 was not found"
+          }
+        }
+      },
+      "expected_hex": "224b0a4954686520766f696365206368617420776974682069642041343434343434342d343434342d343434342d383434342d34343434343434343434343420776173206e6f7420666f756e64",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "reject.absent.compact",
+      "method": "reject",
+      "pending": false,
+      "variant": "compact",
+      "call_id": "a4444444444444448444444444444444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "The voice chat with id a4444444444444448444444444444444 was not found"
+          }
+        }
+      },
+      "expected_hex": "22470a4554686520766f6963652063686174207769746820696420613434343434343434343434343434343834343434343434343434343434343420776173206e6f7420666f756e64",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "reject.absent.braced",
+      "method": "reject",
+      "pending": false,
+      "variant": "braced",
+      "call_id": "{a4444444-4444-4444-8444-444444444444}",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "The voice chat with id {a4444444-4444-4444-8444-444444444444} was not found"
+          }
+        }
+      },
+      "expected_hex": "224d0a4b54686520766f69636520636861742077697468206964207b61343434343434342d343434342d343434342d383434342d3434343434343434343434347d20776173206e6f7420666f756e64",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "reject.absent.urn",
+      "method": "reject",
+      "pending": false,
+      "variant": "urn",
+      "call_id": "urn:uuid:a4444444-4444-4444-8444-444444444444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"urn:uuid:a4444444-4444-4444-8444-444444444444\""
+          }
+        }
+      },
+      "expected_hex": "12550a53696e76616c696420696e7075742073796e74617820666f72207479706520757569643a202275726e3a757569643a61343434343434342d343434342d343434342d383434342d34343434343434343434343422",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "reject.absent.four-digit-groups",
+      "method": "reject",
+      "pending": false,
+      "variant": "four-digit-groups",
+      "call_id": "a444-4444-4444-4444-8444-4444-4444-4444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "The voice chat with id a444-4444-4444-4444-8444-4444-4444-4444 was not found"
+          }
+        }
+      },
+      "expected_hex": "224e0a4c54686520766f6963652063686174207769746820696420613434342d343434342d343434342d343434342d383434342d343434342d343434342d3434343420776173206e6f7420666f756e64",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "reject.pending.empty",
+      "method": "reject",
+      "pending": true,
+      "variant": "empty",
+      "call_id": "",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"\""
+          }
+        }
+      },
+      "expected_hex": "12280a26696e76616c696420696e7075742073796e74617820666f72207479706520757569643a202222",
+      "remaining_rows": 1,
+      "updates": []
+    },
+    {
+      "id": "reject.pending.malformed",
+      "method": "reject",
+      "pending": true,
+      "variant": "malformed",
+      "call_id": "not-a-uuid",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"not-a-uuid\""
+          }
+        }
+      },
+      "expected_hex": "12320a30696e76616c696420696e7075742073796e74617820666f72207479706520757569643a20226e6f742d612d7575696422",
+      "remaining_rows": 1,
+      "updates": []
+    },
+    {
+      "id": "reject.pending.canonical",
+      "method": "reject",
+      "pending": true,
+      "variant": "canonical",
+      "call_id": "a4444444-4444-4444-8444-444444444444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "a4444444-4444-4444-8444-444444444444"
+          }
+        }
+      },
+      "expected_hex": "0a260a2461343434343434342d343434342d343434342d383434342d343434343434343434343434",
+      "remaining_rows": 0,
+      "updates": [
+        {
+          "callId": "a4444444-4444-4444-8444-444444444444",
+          "callerAddress": "0x1111111111111111111111111111111111111111",
+          "calleeAddress": "0x2222222222222222222222222222222222222222",
+          "status": "rejected"
+        }
+      ]
+    },
+    {
+      "id": "reject.pending.uppercase",
+      "method": "reject",
+      "pending": true,
+      "variant": "uppercase",
+      "call_id": "A4444444-4444-4444-8444-444444444444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "A4444444-4444-4444-8444-444444444444"
+          }
+        }
+      },
+      "expected_hex": "0a260a2441343434343434342d343434342d343434342d383434342d343434343434343434343434",
+      "remaining_rows": 0,
+      "updates": [
+        {
+          "callId": "A4444444-4444-4444-8444-444444444444",
+          "callerAddress": "0x1111111111111111111111111111111111111111",
+          "calleeAddress": "0x2222222222222222222222222222222222222222",
+          "status": "rejected"
+        }
+      ]
+    },
+    {
+      "id": "reject.pending.compact",
+      "method": "reject",
+      "pending": true,
+      "variant": "compact",
+      "call_id": "a4444444444444448444444444444444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "a4444444444444448444444444444444"
+          }
+        }
+      },
+      "expected_hex": "0a220a206134343434343434343434343434343438343434343434343434343434343434",
+      "remaining_rows": 0,
+      "updates": [
+        {
+          "callId": "a4444444444444448444444444444444",
+          "callerAddress": "0x1111111111111111111111111111111111111111",
+          "calleeAddress": "0x2222222222222222222222222222222222222222",
+          "status": "rejected"
+        }
+      ]
+    },
+    {
+      "id": "reject.pending.braced",
+      "method": "reject",
+      "pending": true,
+      "variant": "braced",
+      "call_id": "{a4444444-4444-4444-8444-444444444444}",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "{a4444444-4444-4444-8444-444444444444}"
+          }
+        }
+      },
+      "expected_hex": "0a280a267b61343434343434342d343434342d343434342d383434342d3434343434343434343434347d",
+      "remaining_rows": 0,
+      "updates": [
+        {
+          "callId": "{a4444444-4444-4444-8444-444444444444}",
+          "callerAddress": "0x1111111111111111111111111111111111111111",
+          "calleeAddress": "0x2222222222222222222222222222222222222222",
+          "status": "rejected"
+        }
+      ]
+    },
+    {
+      "id": "reject.pending.urn",
+      "method": "reject",
+      "pending": true,
+      "variant": "urn",
+      "call_id": "urn:uuid:a4444444-4444-4444-8444-444444444444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"urn:uuid:a4444444-4444-4444-8444-444444444444\""
+          }
+        }
+      },
+      "expected_hex": "12550a53696e76616c696420696e7075742073796e74617820666f72207479706520757569643a202275726e3a757569643a61343434343434342d343434342d343434342d383434342d34343434343434343434343422",
+      "remaining_rows": 1,
+      "updates": []
+    },
+    {
+      "id": "reject.pending.four-digit-groups",
+      "method": "reject",
+      "pending": true,
+      "variant": "four-digit-groups",
+      "call_id": "a444-4444-4444-4444-8444-4444-4444-4444",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "a444-4444-4444-4444-8444-4444-4444-4444"
+          }
+        }
+      },
+      "expected_hex": "0a290a27613434342d343434342d343434342d343434342d383434342d343434342d343434342d34343434",
+      "remaining_rows": 0,
+      "updates": [
+        {
+          "callId": "a444-4444-4444-4444-8444-4444-4444-4444",
+          "callerAddress": "0x1111111111111111111111111111111111111111",
+          "calleeAddress": "0x2222222222222222222222222222222222222222",
+          "status": "rejected"
+        }
+      ]
+    },
+    {
+      "id": "end.absent.empty",
+      "method": "end",
+      "pending": false,
+      "variant": "empty",
+      "call_id": "",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"\""
+          }
+        }
+      },
+      "expected_hex": "12280a26696e76616c696420696e7075742073796e74617820666f72207479706520757569643a202222",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "end.absent.malformed",
+      "method": "end",
+      "pending": false,
+      "variant": "malformed",
+      "call_id": "not-a-uuid",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"not-a-uuid\""
+          }
+        }
+      },
+      "expected_hex": "12320a30696e76616c696420696e7075742073796e74617820666f72207479706520757569643a20226e6f742d612d7575696422",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "end.absent.canonical",
+      "method": "end",
+      "pending": false,
+      "variant": "canonical",
+      "call_id": "a4444444-4444-4444-8444-444444444444",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "The voice chat with id a4444444-4444-4444-8444-444444444444 was not found"
+          }
+        }
+      },
+      "expected_hex": "1a4b0a4954686520766f696365206368617420776974682069642061343434343434342d343434342d343434342d383434342d34343434343434343434343420776173206e6f7420666f756e64",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "end.absent.uppercase",
+      "method": "end",
+      "pending": false,
+      "variant": "uppercase",
+      "call_id": "A4444444-4444-4444-8444-444444444444",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "The voice chat with id A4444444-4444-4444-8444-444444444444 was not found"
+          }
+        }
+      },
+      "expected_hex": "1a4b0a4954686520766f696365206368617420776974682069642041343434343434342d343434342d343434342d383434342d34343434343434343434343420776173206e6f7420666f756e64",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "end.absent.compact",
+      "method": "end",
+      "pending": false,
+      "variant": "compact",
+      "call_id": "a4444444444444448444444444444444",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Invalid Gatekeeper private voice call ID"
+          }
+        }
+      },
+      "expected_hex": "122a0a28496e76616c696420476174656b6565706572207072697661746520766f6963652063616c6c204944",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "end.absent.braced",
+      "method": "end",
+      "pending": false,
+      "variant": "braced",
+      "call_id": "{a4444444-4444-4444-8444-444444444444}",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Invalid Gatekeeper private voice call ID"
+          }
+        }
+      },
+      "expected_hex": "122a0a28496e76616c696420476174656b6565706572207072697661746520766f6963652063616c6c204944",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "end.absent.urn",
+      "method": "end",
+      "pending": false,
+      "variant": "urn",
+      "call_id": "urn:uuid:a4444444-4444-4444-8444-444444444444",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"urn:uuid:a4444444-4444-4444-8444-444444444444\""
+          }
+        }
+      },
+      "expected_hex": "12550a53696e76616c696420696e7075742073796e74617820666f72207479706520757569643a202275726e3a757569643a61343434343434342d343434342d343434342d383434342d34343434343434343434343422",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "end.absent.four-digit-groups",
+      "method": "end",
+      "pending": false,
+      "variant": "four-digit-groups",
+      "call_id": "a444-4444-4444-4444-8444-4444-4444-4444",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Invalid Gatekeeper private voice call ID"
+          }
+        }
+      },
+      "expected_hex": "122a0a28496e76616c696420476174656b6565706572207072697661746520766f6963652063616c6c204944",
+      "remaining_rows": 0,
+      "updates": []
+    },
+    {
+      "id": "end.pending.empty",
+      "method": "end",
+      "pending": true,
+      "variant": "empty",
+      "call_id": "",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"\""
+          }
+        }
+      },
+      "expected_hex": "12280a26696e76616c696420696e7075742073796e74617820666f72207479706520757569643a202222",
+      "remaining_rows": 1,
+      "updates": []
+    },
+    {
+      "id": "end.pending.malformed",
+      "method": "end",
+      "pending": true,
+      "variant": "malformed",
+      "call_id": "not-a-uuid",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"not-a-uuid\""
+          }
+        }
+      },
+      "expected_hex": "12320a30696e76616c696420696e7075742073796e74617820666f72207479706520757569643a20226e6f742d612d7575696422",
+      "remaining_rows": 1,
+      "updates": []
+    },
+    {
+      "id": "end.pending.canonical",
+      "method": "end",
+      "pending": true,
+      "variant": "canonical",
+      "call_id": "a4444444-4444-4444-8444-444444444444",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "a4444444-4444-4444-8444-444444444444"
+          }
+        }
+      },
+      "expected_hex": "0a260a2461343434343434342d343434342d343434342d383434342d343434343434343434343434",
+      "remaining_rows": 0,
+      "updates": [
+        {
+          "callId": "a4444444-4444-4444-8444-444444444444",
+          "calleeAddress": "0x2222222222222222222222222222222222222222",
+          "status": "ended"
+        }
+      ]
+    },
+    {
+      "id": "end.pending.uppercase",
+      "method": "end",
+      "pending": true,
+      "variant": "uppercase",
+      "call_id": "A4444444-4444-4444-8444-444444444444",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "A4444444-4444-4444-8444-444444444444"
+          }
+        }
+      },
+      "expected_hex": "0a260a2441343434343434342d343434342d343434342d383434342d343434343434343434343434",
+      "remaining_rows": 0,
+      "updates": [
+        {
+          "callId": "A4444444-4444-4444-8444-444444444444",
+          "calleeAddress": "0x2222222222222222222222222222222222222222",
+          "status": "ended"
+        }
+      ]
+    },
+    {
+      "id": "end.pending.compact",
+      "method": "end",
+      "pending": true,
+      "variant": "compact",
+      "call_id": "a4444444444444448444444444444444",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "a4444444444444448444444444444444"
+          }
+        }
+      },
+      "expected_hex": "0a220a206134343434343434343434343434343438343434343434343434343434343434",
+      "remaining_rows": 0,
+      "updates": [
+        {
+          "callId": "a4444444444444448444444444444444",
+          "calleeAddress": "0x2222222222222222222222222222222222222222",
+          "status": "ended"
+        }
+      ]
+    },
+    {
+      "id": "end.pending.braced",
+      "method": "end",
+      "pending": true,
+      "variant": "braced",
+      "call_id": "{a4444444-4444-4444-8444-444444444444}",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "{a4444444-4444-4444-8444-444444444444}"
+          }
+        }
+      },
+      "expected_hex": "0a280a267b61343434343434342d343434342d343434342d383434342d3434343434343434343434347d",
+      "remaining_rows": 0,
+      "updates": [
+        {
+          "callId": "{a4444444-4444-4444-8444-444444444444}",
+          "calleeAddress": "0x2222222222222222222222222222222222222222",
+          "status": "ended"
+        }
+      ]
+    },
+    {
+      "id": "end.pending.urn",
+      "method": "end",
+      "pending": true,
+      "variant": "urn",
+      "call_id": "urn:uuid:a4444444-4444-4444-8444-444444444444",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "invalid input syntax for type uuid: \"urn:uuid:a4444444-4444-4444-8444-444444444444\""
+          }
+        }
+      },
+      "expected_hex": "12550a53696e76616c696420696e7075742073796e74617820666f72207479706520757569643a202275726e3a757569643a61343434343434342d343434342d343434342d383434342d34343434343434343434343422",
+      "remaining_rows": 1,
+      "updates": []
+    },
+    {
+      "id": "end.pending.four-digit-groups",
+      "method": "end",
+      "pending": true,
+      "variant": "four-digit-groups",
+      "call_id": "a444-4444-4444-4444-8444-4444-4444-4444",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "a444-4444-4444-4444-8444-4444-4444-4444"
+          }
+        }
+      },
+      "expected_hex": "0a290a27613434342d343434342d343434342d343434342d383434342d343434342d343434342d34343434",
+      "remaining_rows": 0,
+      "updates": [
+        {
+          "callId": "a444-4444-4444-4444-8444-4444-4444-4444",
+          "calleeAddress": "0x2222222222222222222222222222222222222222",
+          "status": "ended"
+        }
+      ]
+    }
+  ]
+}

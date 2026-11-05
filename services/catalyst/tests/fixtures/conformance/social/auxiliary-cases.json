@@ -1,0 +1,631 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+    "yarn_lock_sha256": "5e5f4a1ee4bd960bede74f5877921117ebbfa88a67cf5c75ffd86ea9416c7088",
+    "sources": [
+      {
+        "path": "src/controllers/handlers/uws/status-handler.ts",
+        "sha256": "54d5e788302b5ae325d35432af0de7d073795a47dca703ebd610ace2597b2c3c"
+      },
+      {
+        "path": "src/controllers/handlers/uws/privacy-handler.ts",
+        "sha256": "599a49d4d540e86bd7e9ae299385b7fab357071d7356ad2610baef62bd6c6217"
+      },
+      {
+        "path": "node_modules/@dcl/uws-http-server/dist/src/metrics.js",
+        "sha256": "832458a0f898b114b6d8de0fb5a0377aa52f3870010c134dd5b72de17e8ebbda"
+      },
+      {
+        "path": "src/metrics.ts",
+        "sha256": "e872d06e154dd82ad0f6174aee657d0cf1c2bb3049f7282ef74e3b2dcab52f99"
+      }
+    ]
+  },
+  "runtime": {
+    "node": "v26.12.0"
+  },
+  "scope": "Actual pinned uWS status/privacy factories and installed metrics handler, with injected database, registry and request/response objects. No deployed lifecycle, Prometheus samples or real connection abort claimed.",
+  "cases": [
+    {
+      "operation": "status",
+      "config": {},
+      "response": {
+        "body": {
+          "version": "",
+          "commitHash": ""
+        }
+      }
+    },
+    {
+      "operation": "status",
+      "config": {
+        "CURRENT_VERSION": "custom-version",
+        "COMMIT_HASH": "custom-commit"
+      },
+      "response": {
+        "body": {
+          "version": "custom-version",
+          "commitHash": "custom-commit"
+        }
+      }
+    },
+    {
+      "operation": "status",
+      "config": {
+        "CURRENT_VERSION": "",
+        "COMMIT_HASH": "  "
+      },
+      "response": {
+        "body": {
+          "version": "",
+          "commitHash": "  "
+        }
+      }
+    },
+    {
+      "operation": "privacy",
+      "id": "invalid",
+      "address": "bad",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Invalid address"
+        }
+      }
+    },
+    {
+      "operation": "privacy",
+      "id": "absent",
+      "address": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 200,
+        "body": {
+          "private_messages_privacy": "all"
+        }
+      }
+    },
+    {
+      "operation": "privacy",
+      "id": "upper",
+      "address": "0X1111111111111111111111111111111111111111",
+      "response": {
+        "status": 200,
+        "body": {
+          "private_messages_privacy": "all"
+        }
+      }
+    },
+    {
+      "operation": "privacy",
+      "id": "friends",
+      "address": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 200,
+        "body": {
+          "private_messages_privacy": "only_friends"
+        }
+      }
+    },
+    {
+      "operation": "privacy",
+      "id": "error",
+      "address": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "source failure"
+        }
+      }
+    },
+    {
+      "operation": "privacy",
+      "id": "unknown-error",
+      "address": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Unknown error"
+        }
+      }
+    },
+    {
+      "operation": "metrics",
+      "id": "open",
+      "config": {},
+      "path": "/metrics",
+      "response": {
+        "headers": {
+          "content-type": "text/plain; version=0.0.4; charset=utf-8"
+        },
+        "status": "200 OK",
+        "body": "ws_messages_received 3\n"
+      },
+      "metrics_calls": 1
+    },
+    {
+      "operation": "metrics",
+      "id": "empty-config",
+      "config": {
+        "WKC_METRICS_PUBLIC_PATH": "",
+        "WKC_METRICS_BEARER_TOKEN": ""
+      },
+      "path": "/metrics",
+      "response": {
+        "headers": {
+          "content-type": "text/plain; version=0.0.4; charset=utf-8"
+        },
+        "status": "200 OK",
+        "body": "ws_messages_received 3\n"
+      },
+      "metrics_calls": 1
+    },
+    {
+      "operation": "metrics",
+      "id": "custom-path",
+      "config": {
+        "WKC_METRICS_PUBLIC_PATH": "/custom"
+      },
+      "path": "/custom",
+      "response": {
+        "headers": {
+          "content-type": "text/plain; version=0.0.4; charset=utf-8"
+        },
+        "status": "200 OK",
+        "body": "ws_messages_received 3\n"
+      },
+      "metrics_calls": 1
+    },
+    {
+      "operation": "metrics",
+      "id": "gated-missing",
+      "config": {
+        "WKC_METRICS_BEARER_TOKEN": "fixture-token"
+      },
+      "path": "/metrics",
+      "response": {
+        "headers": {},
+        "status": "401 Unauthorized",
+        "body": ""
+      },
+      "metrics_calls": 0
+    },
+    {
+      "operation": "metrics",
+      "id": "gated-wrong",
+      "config": {
+        "WKC_METRICS_BEARER_TOKEN": "fixture-token"
+      },
+      "authorization": "Bearer wrong",
+      "path": "/metrics",
+      "response": {
+        "headers": {},
+        "status": "401 Unauthorized",
+        "body": ""
+      },
+      "metrics_calls": 0
+    },
+    {
+      "operation": "metrics",
+      "id": "gated-lowercase",
+      "config": {
+        "WKC_METRICS_BEARER_TOKEN": "fixture-token"
+      },
+      "authorization": "bearer fixture-token",
+      "path": "/metrics",
+      "response": {
+        "headers": {},
+        "status": "401 Unauthorized",
+        "body": ""
+      },
+      "metrics_calls": 0
+    },
+    {
+      "operation": "metrics",
+      "id": "gated-double-space",
+      "config": {
+        "WKC_METRICS_BEARER_TOKEN": "fixture-token"
+      },
+      "authorization": "Bearer  fixture-token",
+      "path": "/metrics",
+      "response": {
+        "headers": {},
+        "status": "401 Unauthorized",
+        "body": ""
+      },
+      "metrics_calls": 0
+    },
+    {
+      "operation": "metrics",
+      "id": "gated-extra-token",
+      "config": {
+        "WKC_METRICS_BEARER_TOKEN": "fixture-token"
+      },
+      "authorization": "Bearer fixture-token extra",
+      "path": "/metrics",
+      "response": {
+        "headers": {
+          "content-type": "text/plain; version=0.0.4; charset=utf-8"
+        },
+        "status": "200 OK",
+        "body": "ws_messages_received 3\n"
+      },
+      "metrics_calls": 1
+    },
+    {
+      "operation": "metrics",
+      "id": "gated-ok",
+      "config": {
+        "WKC_METRICS_BEARER_TOKEN": "fixture-token"
+      },
+      "authorization": "Bearer fixture-token",
+      "path": "/metrics",
+      "response": {
+        "headers": {
+          "content-type": "text/plain; version=0.0.4; charset=utf-8"
+        },
+        "status": "200 OK",
+        "body": "ws_messages_received 3\n"
+      },
+      "metrics_calls": 1
+    },
+    {
+      "operation": "metrics",
+      "id": "aborted",
+      "config": {},
+      "path": "/metrics",
+      "response": {
+        "headers": {}
+      },
+      "metrics_calls": 1
+    }
+  ],
+  "metric_declarations": {
+    "http_request_duration_seconds": {
+      "type": "histogram",
+      "help": "Request duration in seconds.",
+      "labelNames": [
+        "method",
+        "handler",
+        "code"
+      ]
+    },
+    "http_requests_total": {
+      "type": "counter",
+      "help": "Total number of HTTP requests",
+      "labelNames": [
+        "method",
+        "handler",
+        "code"
+      ]
+    },
+    "http_request_size_bytes": {
+      "type": "histogram",
+      "help": "Duration of HTTP requests size in bytes",
+      "labelNames": [
+        "method",
+        "handler",
+        "code"
+      ]
+    },
+    "wkc_logger_logs_total": {
+      "help": "Log amounts per logger and level",
+      "type": "counter",
+      "labelNames": [
+        "logger",
+        "level"
+      ]
+    },
+    "ws_active_connections_by_protocol": {
+      "type": "gauge",
+      "help": "Active WebSocket connections by protocol",
+      "labelNames": [
+        "protocol"
+      ]
+    },
+    "ws_connection_duration_seconds_by_protocol": {
+      "type": "histogram",
+      "help": "WebSocket connection duration by protocol",
+      "labelNames": [
+        "protocol"
+      ],
+      "buckets": [
+        1,
+        5,
+        10,
+        30,
+        60,
+        300,
+        600,
+        1800,
+        3600,
+        7200,
+        14400
+      ]
+    },
+    "ws_auth_errors_by_protocol": {
+      "type": "counter",
+      "help": "Authentication failures by protocol and cause",
+      "labelNames": [
+        "protocol",
+        "type"
+      ]
+    },
+    "ws_admission_evictions": {
+      "type": "counter",
+      "help": "Oldest WebSocket connections closed to keep an address within its connection cap",
+      "labelNames": [
+        "protocol"
+      ]
+    },
+    "ws_admission_rejections": {
+      "type": "counter",
+      "help": "Subscription starts rejected by the per-address rate limit",
+      "labelNames": [
+        "protocol",
+        "reason"
+      ]
+    },
+    "ws_active_connections": {
+      "type": "gauge",
+      "help": "Number of WebSocket active connections"
+    },
+    "ws_connections_rejected": {
+      "type": "counter",
+      "help": "Number of WebSocket connections rejected because the pool reached WS_MAX_CONCURRENT_CONNECTIONS"
+    },
+    "ws_messages_received": {
+      "type": "counter",
+      "help": "Number of WebSocket messages received"
+    },
+    "ws_messages_sent": {
+      "type": "counter",
+      "help": "Number of outbound WebSocket messages accepted by the socket (sent or buffered)"
+    },
+    "ws_errors": {
+      "type": "counter",
+      "help": "Number of WebSocket errors"
+    },
+    "ws_close_codes": {
+      "type": "counter",
+      "help": "Number of WebSocket close codes",
+      "labelNames": [
+        "code"
+      ]
+    },
+    "ws_transport_errors": {
+      "type": "counter",
+      "help": "Number of WebSocket transport errors"
+    },
+    "ws_auth_errors": {
+      "type": "counter",
+      "help": "Number of WebSocket authentication errors",
+      "labelNames": [
+        "type"
+      ]
+    },
+    "ws_auth_race_condition_aborted": {
+      "type": "counter",
+      "help": "Number of authentication attempts aborted due to connection closed during auth"
+    },
+    "ws_idle_timeouts": {
+      "type": "counter",
+      "help": "Number of WebSocket idle timeouts"
+    },
+    "ws_connection_duration_seconds": {
+      "type": "histogram",
+      "help": "Duration of WebSocket connections in seconds",
+      "buckets": [
+        1,
+        5,
+        10,
+        30,
+        60,
+        300,
+        600,
+        1800,
+        3600,
+        7200,
+        14400
+      ]
+    },
+    "rpc_procedure_call_total": {
+      "type": "counter",
+      "help": "Total number of RPC procedure calls",
+      "labelNames": [
+        "code",
+        "procedure"
+      ]
+    },
+    "rpc_procedure_call_duration_seconds": {
+      "type": "histogram",
+      "help": "Duration of RPC procedure calls in seconds",
+      "labelNames": [
+        "code",
+        "procedure"
+      ],
+      "buckets": [
+        0.01,
+        0.05,
+        0.1,
+        0.5,
+        1,
+        2,
+        5,
+        10
+      ]
+    },
+    "rpc_in_procedure_call_size_bytes": {
+      "type": "histogram",
+      "help": "Size of incoming RPC procedure call payloads in bytes",
+      "labelNames": [
+        "procedure"
+      ],
+      "buckets": [
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384
+      ]
+    },
+    "rpc_out_procedure_call_size_bytes": {
+      "type": "histogram",
+      "help": "Size of outgoing RPC procedure call payloads in bytes",
+      "labelNames": [
+        "code",
+        "procedure"
+      ],
+      "buckets": [
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384
+      ]
+    },
+    "rpc_updates_sent_on_subscription": {
+      "type": "counter",
+      "help": "Number of updates sent on RPC subscription streams",
+      "labelNames": [
+        "event"
+      ]
+    },
+    "stream_ws_messages_received": {
+      "type": "counter",
+      "help": "Number of messages received on the plain WebSocket stream protocol",
+      "labelNames": [
+        "type"
+      ]
+    },
+    "stream_ws_updates_sent": {
+      "type": "counter",
+      "help": "Number of updates sent on plain WebSocket stream subscriptions",
+      "labelNames": [
+        "event"
+      ]
+    },
+    "stream_ws_errors": {
+      "type": "counter",
+      "help": "Number of errors reported on the plain WebSocket stream protocol",
+      "labelNames": [
+        "type"
+      ]
+    },
+    "stream_ws_authentications": {
+      "type": "counter",
+      "help": "Successful plain WebSocket stream authentications by handshake method",
+      "labelNames": [
+        "method"
+      ]
+    },
+    "stream_ws_close_codes": {
+      "type": "counter",
+      "help": "Number of plain WebSocket stream protocol close codes",
+      "labelNames": [
+        "code"
+      ]
+    },
+    "ws_unexpected_send_result_events": {
+      "type": "counter",
+      "help": "Number of unexpected send result events"
+    },
+    "ws_backpressure_events": {
+      "type": "counter",
+      "help": "Number of WebSocket messages that encountered backpressure or were dropped",
+      "labelNames": [
+        "result"
+      ]
+    },
+    "ws_drain_events": {
+      "type": "counter",
+      "help": "Number of WebSocket drain events"
+    },
+    "ws_message_size_bytes": {
+      "type": "histogram",
+      "help": "Size of WebSocket messages in bytes",
+      "labelNames": [
+        "result"
+      ],
+      "buckets": [
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384
+      ]
+    },
+    "ws_queue_vs_backpressure_ratio": {
+      "type": "gauge",
+      "help": "Ratio of message queue size to uWebSocket buffered amount"
+    },
+    "subscribers_local_count": {
+      "type": "gauge",
+      "help": "Number of local in-memory subscriber emitters"
+    },
+    "subscribers_generators_count": {
+      "type": "gauge",
+      "help": "Number of active async generators across all subscribers"
+    },
+    "subscribers_stale_cleaned": {
+      "type": "counter",
+      "help": "Number of stale subscribers removed by reconciliation"
+    },
+    "subscribers_stale_connections_cleaned": {
+      "type": "counter",
+      "help": "Number of stale connections (socket gone, address still active) removed by reconciliation"
+    },
+    "subscription_duplicates_total": {
+      "type": "counter",
+      "help": "Number of duplicate stream subscriptions rejected by the per-(address, event) guard",
+      "labelNames": [
+        "event"
+      ]
+    },
+    "subscription_updates_dropped_total": {
+      "type": "counter",
+      "help": "Number of subscription updates dropped because a connection's value queue overflowed (slow consumer)",
+      "labelNames": [
+        "event"
+      ]
+    },
+    "friendship_rate_limiter_unavailable": {
+      "type": "counter",
+      "help": "Number of friendship/block mutations allowed because the Redis rate limiter was unreachable"
+    },
+    "ai_compliance_validation_duration_seconds": {
+      "type": "histogram",
+      "help": "Duration of AI compliance validation in seconds",
+      "buckets": [
+        0.01,
+        0.05,
+        0.1,
+        0.5,
+        1,
+        2,
+        5,
+        10,
+        30
+      ]
+    },
+    "ai_compliance_validation_total": {
+      "type": "counter",
+      "help": "Total number of AI compliance validations (compliant, non-compliant, failed)",
+      "labelNames": [
+        "result"
+      ]
+    }
+  }
+}

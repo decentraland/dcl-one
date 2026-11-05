@@ -7,8 +7,12 @@
 //! `communities` (social-api REST), `rpc` (the friends/presence/voice
 //! WebSocket), `messaging` (the old gatekeeper's MLS delivery service, on
 //! its own state), `notifications`, `badges`, `media`
-//! (autotranslate) and `profile_images`; every one over the ONE pool, the
-//! ONE outbound client, the ONE blob store and `jobs::spawn_periodic`. The
+//! (autotranslate) and `profile_images`; domain readers share the default outbound
+//! client, SQL pool and blob store. Configured AI compliance, analytics and
+//! referral Slack each lazily retain one Outbound provider profile with its
+//! own HTTP transport pools; no profile is built per request. Optional legacy
+//! SQS/SNS transports use the official AWS SDK clients
+//! inside the existing job lifecycle (`legacy_events`). The
 //! LiveKit gatekeeper itself is `comms::gatekeeper`; its state is the RPC's
 //! voice runtime and the communities' voice eviction. [`router`] composes
 //! them the way the old gateway's location table did, behind the [`writes`]
@@ -32,11 +36,13 @@ use std::sync::Arc;
 
 use axum::Router;
 
+pub mod analytics;
 pub mod badges;
 pub mod chat;
 pub mod comms_directory;
 pub mod communities;
 
+pub mod legacy_events;
 pub mod media;
 pub mod messaging;
 mod mls;
@@ -66,6 +72,41 @@ pub struct States {
     pub rpc: Arc<rpc::State>,
 }
 
+/// The social API host's unmatched paths and preflights apply to its entire
+/// gateway prefix, including paths no domain router registered.
+pub fn social_api_gateway(router: Router) -> Router {
+    social_api_gateway_with_limit(router, 1024 * 1024)
+}
+
+pub fn social_api_gateway_with_limit(router: Router, max_body_bytes: usize) -> Router {
+    // Wrap the complete method router: Axum adds Allow after each individual
+    // route's layers, whereas source allowedMethods and CORS surround routing.
+    let router = router.fallback(|| async {
+        use axum::response::IntoResponse;
+        let mut response = (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
+        response
+            .extensions_mut()
+            .insert(communities::http::SocialApiNotFound);
+        response
+    });
+    Router::new()
+        .fallback_service(router)
+        .layer(axum::middleware::from_fn(
+            communities::http::social_api_methods,
+        ))
+        .layer(axum::middleware::from_fn(rpc::http::instrument_metrics))
+        .layer(axum::middleware::from_fn(
+            communities::cors::social_api_cors,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            max_body_bytes,
+            communities::http::social_api_body_limit,
+        ))
+        .layer(axum::middleware::map_response(
+            communities::cors::content_type_options,
+        ))
+}
+
 /// The old gateway's location table for the social bundle
 /// (`catalyrst/nixos/web-gateway.nix`): `/social-api`, `/comms-gatekeeper`,
 /// `/notifications`, `/badges`, `/autotranslate-server` and
@@ -85,7 +126,7 @@ pub struct States {
 /// `notifications.<domain>/x` to `/notifications/x` and sets
 /// `x-original-path` so the signed-fetch signature still verifies. The
 /// social RPC socket is `/social-rpc` (the old `rpc-social-service-ea.`
-/// vhost root; the handshake accepts a signature over `/` too) and its admin
+/// vhost root; its handshake signature binds `/`) and its admin
 /// routes `/admin/social/*`. Every router is wrapped in the
 /// [`writes::guard`] with the process's `SOCIAL_WRITES_ENABLED`.
 pub fn router(states: &States, writes_enabled: bool) -> Router {
@@ -97,17 +138,20 @@ pub fn router(states: &States, writes_enabled: bool) -> Router {
             .merge(guard(rpc::http::router(states.rpc.clone())))
     };
     Router::new()
-        .merge(social_api())
+        .merge(social_api().layer(axum::middleware::from_fn(rpc::http::instrument_metrics)))
         .nest(
             "/social-api",
-            social_api()
-                .route(
-                    "/openapi.json",
-                    axum::routing::get(|| async {
-                        crate::shared::openapi::document(crate::shared::openapi::COMMUNITIES)
-                    }),
-                )
-                .merge(communities::health_router()),
+            social_api_gateway_with_limit(
+                social_api()
+                    .route(
+                        "/openapi.json",
+                        axum::routing::get(|| async {
+                            crate::shared::openapi::document(crate::shared::openapi::COMMUNITIES)
+                        }),
+                    )
+                    .merge(communities::health_router()),
+                states.communities.settings.http_max_request_body_bytes,
+            ),
         )
         .nest(
             "/notifications",

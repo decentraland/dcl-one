@@ -576,6 +576,10 @@ mod tests {
             "content/src/deploy_remote_entity.rs",
             "content",
         ),
+        (
+            "content/src/partial_deployments.rs",
+            "content",
+        ),
         ("content/src/read_through.rs", "mirror"),
         ("content/src/snapshot_gen.rs", "content"),
         ("content/src/write_deployer.rs", "content"),

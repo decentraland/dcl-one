@@ -8,7 +8,7 @@ export const DEFAULT_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000;
 export function generateEphemeralKey(): EphemeralKey {
   const privateKey = generatePrivateKey();
   const account = privateKeyToAccount(privateKey);
-  return { address: account.address.toLowerCase(), privateKey };
+  return { address: account.address.toLowerCase(), privateKey, publicKey: account.publicKey };
 }
 
 export function buildEphemeralMessage(

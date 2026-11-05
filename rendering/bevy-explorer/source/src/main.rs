@@ -89,10 +89,9 @@ fn main() {
             init_runtime().unwrap();
             // the autopilot ends its run with a code, success or failure
             let exit = decentraland_app.build(decentraland_app_config).run();
-            // the app is gone, so its av threads are leaving: let them, rather than have
-            // process teardown kill one inside ffmpeg
-            #[cfg(feature = "ffmpeg")]
-            av::video_stream::join_av_threads(std::time::Duration::from_secs(2));
+            // the app is gone: stop the video helper process it spawned
+            #[cfg(feature = "uuav")]
+            media::uuav_shutdown();
             match exit {
                 AppExit::Success => 0,
                 AppExit::Error(code) => code.get().into(),

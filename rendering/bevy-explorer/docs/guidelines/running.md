@@ -74,6 +74,29 @@ commands registered with `add_preview_console_command`. On web the same surface 
 from the browser console through `window.engine`, which lives in the app frame (`app.html`),
 not the shell page: pick the app frame in the DevTools context selector first.
 
+## Runtime debug panel
+
+In a development engine build, click the bug button in the lower-right corner of the in-world HUD to toggle the panel.
+In any build, open **Sidebar settings (•••) → Debug panel** or enter `/debug` in chat.
+Use `/debug help` to list the sections available in this client and `/debug <section>`
+to open one directly. Search matches both section titles and controls. Expand the
+sections you want to watch. Collapsing a section stops its queries. Download totals and
+connection rates include traffic from before you opened the panel. Current Scene charts
+show up to 256 completed ticks from the player's current parcel scene. Entering a different
+scene starts its own history.
+Pulse and LiveKit rooms show one connection button. It changes from **Disconnect**
+to **Connect** when paused, and is disabled when there is no controllable connection.
+
+World and Scene Loading show where the player is and which load stage is active.
+Performance and Memory and limits expose the engine's measurements and budgets.
+The room, voice, rendering, media and avatar sections appear with the plugins that
+supply them. When several readings need the same scene, peer or sample, the panel
+shows the cause once. Expand the reading count to see which fields it affects.
+Numeric groups show a separate cell for each value. Development-only mutations
+require preview mode. To add a section, follow the [plugin recipe](recipes.md#a-plugin-section-in-the-runtime-debug-panel).
+
+![Entity Requests in the Windows development build, with separate minimum, mean and maximum values for scene and avatar batches](runtime-debug-panel.png)
+
 ## Test commands
 
 > **Implementation and acceptance:** the web driver, HUD automation helper and native
@@ -96,7 +119,8 @@ State, in every build:
   slots), as rendered (built or not, wearables by category, hidden categories) and the emote
   each plays, as a JSON array; the player's by default. The HUD's preview avatars are tagged
   `preview`. Rendered URNs are normalised (lowercase, default wearables included); selected ones
-  are as written.
+  are as written. The HUD uses `/avatar_state --panel` for a single local-player report.
+  It shows the completed model while a replacement loads and explains missing readings.
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.

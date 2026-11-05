@@ -565,6 +565,50 @@ async fn database_outage_is_a_500_not_an_empty_answer() {
     assert_eq!(body, json!({"error": "Internal Server Error"}));
 }
 
+/// Upstream reads the POST /entities/active body as JSON whatever the
+/// `Content-Type` (`ensureJsonContentType: false`): a `text/plain` or
+/// header-less body reaches the lookup (the 500 of the absent database), and
+/// a body that is not JSON is the schema validator's 400.
+#[tokio::test]
+async fn active_entities_parses_the_body_whatever_the_content_type() {
+    let node = TestNode::without_db("active-any-type").await;
+    let send = |content_type: Option<&'static str>, body: &'static str| {
+        let mut request = Request::post("/content/entities/active");
+        if let Some(content_type) = content_type {
+            request = request.header(header::CONTENT_TYPE, content_type);
+        }
+        let router = node.router();
+        async move {
+            let resp = router
+                .oneshot(request.body(Body::from(body)).unwrap())
+                .await
+                .unwrap();
+            let status = resp.status();
+            let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            (status, serde_json::from_slice::<Value>(&bytes).unwrap())
+        }
+    };
+    for content_type in [Some("text/plain;charset=UTF-8"), None] {
+        let (status, _) = send(content_type, r#"{"pointers":["0,0"]}"#).await;
+        assert_eq!(
+            status,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{content_type:?}"
+        );
+        let (status, body) = send(content_type, "{}").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{content_type:?}");
+        assert_eq!(body["message"], "Invalid JSON body");
+    }
+    let (status, body) = send(Some("text/plain"), "").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body,
+        json!({"ok": false, "message": "Unexpected end of JSON input"})
+    );
+}
+
 #[tokio::test]
 async fn snapshot_routes_over_the_database() {
     require_test_db!(Some(node) = TestNode::with_db("snapshots").await);
@@ -1072,6 +1116,28 @@ async fn history_reads_over_seeded_rows() {
     assert_eq!(body["deployments"].as_array().unwrap().len(), 1);
     assert_eq!(body["deployments"][0]["entityId"], ids[0]);
     assert_eq!(body["pagination"]["moreData"], false);
+
+    // Upstream drops denylisted entities from the page after computing
+    // `moreData` (`logic/deployments/component.ts:316-318`): the page is
+    // short, `moreData` still holds and `next` follows the last kept row.
+    node.state.denylist.add(&ids[1]);
+    let (status, body) = get_json(
+        node.router(),
+        &format!("/content/deployments?{id_filter}&limit=2&fields=pointers"),
+    )
+    .await;
+    node.state.denylist.remove(&ids[1]);
+    assert_eq!(status, StatusCode::OK);
+    let listed: Vec<&str> = body["deployments"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["entityId"].as_str().unwrap())
+        .collect();
+    assert_eq!(listed, vec![ids[2].as_str()]);
+    assert_eq!(body["pagination"]["moreData"], true);
+    let next = body["pagination"]["next"].as_str().unwrap();
+    assert!(next.contains(&format!("lastId={}", ids[2])), "{next}");
 
     let (status, body) = get_json(
         node.router(),

@@ -13,6 +13,14 @@ pub(crate) struct Frame {
     sum_dt: f32,
 }
 
+/// The completed analytics window. The panel reads the same sorted samples as telemetry.
+#[derive(Default, Resource)]
+pub struct LastFrameWindow {
+    pub min_fps: Option<u32>,
+    pub max_fps: Option<u32>,
+    pub hiccups: Option<u32>,
+}
+
 const HICCUP_THRESHOLD_MS: f32 = 50.0;
 const FRAME_AMOUNT_TO_MEASURE: usize = 1000;
 pub struct FrameMetricPlugin;
@@ -25,6 +33,7 @@ impl Plugin for FrameMetricPlugin {
             hiccups_time_ms: 0.0,
             sum_dt: 0.0,
         })
+        .init_resource::<LastFrameWindow>()
         .add_systems(Update, metrics_frame_system);
     }
 }
@@ -32,6 +41,7 @@ impl Plugin for FrameMetricPlugin {
 fn metrics_frame_system(
     time: Res<Time>,
     mut frame_data: ResMut<Frame>,
+    mut last: ResMut<LastFrameWindow>,
     mut metrics: ResMut<SegmentMetricsEvents>,
     config: Res<SegmentConfig>,
 ) {
@@ -50,6 +60,16 @@ fn metrics_frame_system(
             .sort_by(|a, b| a.partial_cmp(b).unwrap());
 
         let n_samples = frame_data.dt_ms_vec.len();
+        let fps = |ms: &f32| (*ms > 0.0).then(|| (1000.0 / ms).round() as u32);
+        *last = LastFrameWindow {
+            min_fps: frame_data.dt_ms_vec.last().and_then(fps),
+            max_fps: frame_data
+                .dt_ms_vec
+                .iter()
+                .find(|ms| **ms > 0.0)
+                .and_then(fps),
+            hiccups: Some(frame_data.hiccups_count),
+        };
         let median_frame_time = frame_data.dt_ms_vec[n_samples / 2];
         let p1_frame_time = frame_data.dt_ms_vec[n_samples / 100];
         let p5_frame_time = frame_data.dt_ms_vec[(n_samples * 5) / 100];

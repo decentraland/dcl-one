@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole, redactLine } from '../driver/console.ts'
 import { type CommandRecord, Explorer, type WorldState } from '../driver/explorer.ts'
+import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
   return JSON.stringify({
@@ -237,5 +238,78 @@ describe('hudLogin', () => {
       return true
     })
     assert.equal(records[0]!.error, '`/hud_login <redacted> --default-on-error` failed: profile fetch failed for <redacted>: 503')
+  })
+})
+
+describe('enterWorld', () => {
+  test('presses the lobby Jump In once it is actionable, then waits for the world', async () => {
+    let jumped = false
+    let reads = 0
+    const fake = new FakeConsole({
+      world_state: () => world({ inWorld: jumped && ++reads > 1 }),
+      hud_read: () => control({ name: 'Jump In', actionable: reads >= 0 }),
+      hud_click: () => {
+        jumped = true
+        return control({ name: 'Jump In', input: 'trusted' })
+      }
+    })
+    const state = await enterWorld(new Explorer(fake), 10_000)
+    assert.equal(state.inWorld, true)
+    assert.deepEqual(fake.sent('hud_click'), ['/hud_click {"name":"Jump In","role":"button","index":0}'])
+  })
+
+  test('a held world without a Jump In is asked for the realm through the console, after the grace', async () => {
+    let asked = false
+    let reads = 0
+    const fake = new FakeConsole({
+      world_state: () => world(asked ? {} : { inWorld: false, worldHeld: true, signedIn: true, realmConnected: true }),
+      hud_read: () => {
+        reads += 1
+        return '{"found":false}'
+      },
+      changerealm: () => {
+        asked = true
+        return 'ok'
+      }
+    })
+    const state = await enterWorld(new Explorer(fake), 10_000, 'http://127.0.0.1:18744', 1500)
+    assert.equal(state.inWorld, true)
+    assert.deepEqual(fake.sent('changerealm'), ['/changerealm http://127.0.0.1:18744'])
+    // polled at 0 s and 1 s inside the grace, asked at 2 s
+    assert.ok(reads >= 3, `the HUD was read ${reads} times before the console was asked`)
+  })
+
+  test('a Jump In that mounts within the grace wins over the console', async () => {
+    let reads = 0
+    let jumped = false
+    const fake = new FakeConsole({
+      world_state: () => world(jumped ? {} : { inWorld: false, worldHeld: true, signedIn: true, realmConnected: true }),
+      hud_read: () => (++reads > 1 ? control({ name: 'Jump In', actionable: true }) : '{"found":false}'),
+      hud_click: () => {
+        jumped = true
+        return control({ name: 'Jump In', input: 'trusted' })
+      },
+      changerealm: 'ok'
+    })
+    await enterWorld(new Explorer(fake), 10_000, 'http://127.0.0.1:18744', 5000)
+    assert.deepEqual(fake.sent('changerealm'), [])
+    assert.equal(fake.sent('hud_click').length, 1)
+  })
+
+  test('a held world is left to its Jump In without a realm to ask for', async () => {
+    let reads = 0
+    const fake = new FakeConsole({
+      world_state: () => world(++reads > 2 ? {} : { inWorld: false, worldHeld: true, signedIn: true, realmConnected: true }),
+      hud_read: '{"found":false}',
+      changerealm: 'ok'
+    })
+    await enterWorld(new Explorer(fake), 10_000)
+    assert.deepEqual(fake.sent('changerealm'), [])
+  })
+
+  test('needs no Jump In when the world comes on its own', async () => {
+    const fake = new FakeConsole({ world_state: () => world(), hud_read: '{"found":false}' })
+    await enterWorld(new Explorer(fake), 1000)
+    assert.deepEqual(fake.sent('hud_click'), [])
   })
 })

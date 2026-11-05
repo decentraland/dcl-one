@@ -200,7 +200,7 @@ fn player_config_added<T: AVPlayer>(
     trigger: Trigger<OnInsert, T::Config>,
     mut av_players: Query<(
         &T::Config,
-        Option<&mut AVSinks<T>>,
+        Option<&AVSinks<T>>,
         Has<ShouldBePlaying<T>>,
         Has<Stream>,
         Option<&mut ReceiverVolume>,
@@ -214,7 +214,7 @@ fn player_config_added<T: AVPlayer>(
                 disqualified::ShortName::of::<T>()
             )
         });
-    let Some(mut sinks) = maybe_sinks else {
+    let Some(sinks) = maybe_sinks else {
         if !has_stream {
             debug_panic!(
                 "Non-stream {} did not have sinks.",
@@ -228,15 +228,7 @@ fn player_config_added<T: AVPlayer>(
         return;
     };
 
-    let AVSinks {
-        #[cfg(feature = "ffmpeg")]
-            audio: _,
-        video: _,
-        command_sender,
-        sent_volume: _,
-        rate,
-        _phantom,
-    } = sinks.as_mut();
+    let command_sender = &sinks.command_sender;
 
     if config.playing() && has_should_be_playing {
         command_sender.send(AVCommand::Play).report();
@@ -246,7 +238,6 @@ fn player_config_added<T: AVPlayer>(
     command_sender
         .send(AVCommand::Repeat(config.r#loop()))
         .report();
-    *rate = Some(config.playback_rate() as f64);
 }
 
 /// Where a player's volume is decided: its config, the user's scene-audio setting, and silence
@@ -265,14 +256,20 @@ fn update_av_volume<T: AVPlayer>(
 
     for (scene, config, mut sinks) in av_players.iter_mut() {
         let AVSinks {
-            #[cfg(feature = "ffmpeg")]
+            #[cfg(feature = "uuav")]
                 audio: _,
             video: _,
             command_sender,
+            rejected_commands,
             rate: _,
             sent_volume,
             _phantom,
         } = sinks.as_mut();
+
+        // a rejected source's commands go nowhere; the queue is emptied here so it stays small
+        if let Some(rejected) = rejected_commands {
+            while rejected.try_recv().is_ok() {}
+        }
 
         let volume = if containing_scenes.contains(&scene.root) {
             config.volume() * audio_settings.scene()
@@ -367,10 +364,11 @@ fn play_videos(
 
     for (mut video_player_sinks, container, mut output) in q.iter_mut() {
         let AVSinks {
-            #[cfg(feature = "ffmpeg")]
+            #[cfg(feature = "uuav")]
                 audio: _,
             video: Some(video),
             command_sender: _,
+            rejected_commands: _,
             rate: sink_rate,
             sent_volume: _,
             _phantom,
@@ -421,16 +419,7 @@ fn play_videos(
             // no pixels: the render world copied the frame into the gpu image itself
             if let Some(pixels) = frame.data() {
                 let image = images.get_mut(&video.image).unwrap();
-
-                match &mut image.data {
-                    Some(data) => {
-                        data.copy_from_slice(pixels);
-                        image.transfer_priority = RenderAssetTransferPriority::Priority(-2);
-                    }
-                    None => {
-                        image.data = Some(pixels.to_owned());
-                    }
-                }
+                image.data = Some(pixels.to_owned());
             }
             if video.resized {
                 video.resized = false;
@@ -447,6 +436,7 @@ fn play_videos(
         }
 
         if let Some(state) = new_state {
+            video.last_state = Some(state);
             if let Ok(mut context) = scenes.get_mut(container.root) {
                 trace!("send current time = {}", video.current_time);
                 let event = PbVideoEvent {
@@ -474,6 +464,30 @@ mod snapshot_tests {
     use dcl_component::SceneEntityId;
 
     #[test]
+    fn playback_config_preserves_the_frame_rate_from_video_metadata() {
+        let mut app = App::new();
+        app.add_observer(player_config_added::<VideoPlayer>);
+        let mut sinks = noop_sinks::<VideoPlayer>(String::new(), Handle::default());
+        sinks.rate = Some(24.0);
+        let player = app.world_mut().spawn(sinks).id();
+        app.world_mut()
+            .entity_mut(player)
+            .insert(crate::VideoPlayerConfig {
+                playing: false,
+                volume: 0.5,
+                playback_rate: 2.0,
+                r#loop: true,
+            });
+        assert_eq!(
+            app.world()
+                .get::<AVSinks<VideoPlayer>>(player)
+                .unwrap()
+                .rate,
+            Some(24.0)
+        );
+    }
+
+    #[test]
     fn holds_video_updates_until_snapshot_readback_finishes() {
         let mut app = App::new();
         app.init_resource::<Assets<Image>>()
@@ -497,7 +511,7 @@ mod snapshot_tests {
         let (commands, _commands_rx) = tokio::sync::mpsc::unbounded_channel();
         app.world_mut().spawn((
             AVSinks::<VideoPlayer> {
-                #[cfg(feature = "ffmpeg")]
+                #[cfg(feature = "uuav")]
                 audio: None,
                 video: Some(crate::video_stream::VideoSink {
                     source: "fixture.mp4".to_owned(),
@@ -505,10 +519,12 @@ mod snapshot_tests {
                     image: image.clone(),
                     current_time: -1.0,
                     last_reported_time: -1.0,
+                    last_state: None,
                     length: None,
                     resized: false,
                 }),
                 command_sender: commands,
+                rejected_commands: None,
                 rate: None,
                 sent_volume: None,
                 _phantom: Default::default(),
