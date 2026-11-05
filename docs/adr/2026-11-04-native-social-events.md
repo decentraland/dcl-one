@@ -73,7 +73,10 @@ needs its own producer integration before referral-login coverage can be claimed
 Existing NATS subjects and delivery guarantees are unchanged.
 
 Run `catalyst schema migrate` before rolling out the new server; bootstrap
-requires the login receipt relation. This deployment supports the owned
+requires the login receipt relation. Remove `AWS_SQS_ENDPOINT`,
+`AWS_SQS_QUEUE_URL`, `AWS_SNS_ENDPOINT` and `AWS_SNS_ARN` from Social deployment
+environments and secret/config templates; the runtime no longer reads them.
+This deployment supports the owned
 Explorer producer. It is not a drop-in referral replacement for unchanged
 Unity, mobile or other clients: their referral-progress operations remain a
 known gap until those clients submit native signed login observations. Do not

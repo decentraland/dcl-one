@@ -850,7 +850,9 @@ Under the invited-user row lock, admission caps distinct new IDs at 120 per
 wallet in a rolling 24-hour window of server `received_at` values. A duplicate
 does not consume another slot. Finished or rejected referrals return success
 without adding receipts; banned referrers are a no-op on this native ingress,
-without exposing their identity or stored IP. The referrer-wide advisory lock
+without exposing their identity or stored IP. Those acknowledged login
+observations are not retained or replayed if the ban is later lifted; a new
+login observation is required. The referrer-wide advisory lock
 is acquired only when the login can grant a tier, after receipt checks and
 login-day processing. Lock or statement timeouts return a retryable 503.
 
@@ -868,8 +870,23 @@ implementation bounds, not measured production rates or throughput.
 
 The bootstrap defines this new relation and index. Run `catalyst schema
 migrate` before rolling out the new server. On an existing database, the
-production migrator creates missing objects from that same definition; no
-data-alteration step is needed.
+production migrator creates missing objects from that same definition. Step
+`0025_social_referral_login_received_at` also upgrades databases that already
+have the earlier receipt table without `received_at`, preserving its rows,
+keys and original expiry timestamps. Each backfilled timestamp uses the UTC
+server clock after the DDL lock is acquired; future inserts use the same
+server-clock default. Existing `received_at` values remain unchanged. The step
+is recorded once and a second migrate does not change the timestamps. The
+volatile default can rewrite the table under the DDL lock; no production-sized
+migration duration has been measured.
+
+Both receipt cleanup paths require `expires_at` to have passed and
+`received_at` to be at least 24 hours old. This preserves the backfilled quota
+window even when a legacy expiry is already in the past. The effective
+retention for such upgraded rows is at least 24 hours from each row’s
+backfilled timestamp. The
+workload remains the existing per-wallet receipts; no new table or index is
+added, and no receipt or referral progress is reset.
 
 Referral attribution serializes quota decisions with a transaction-scoped
 referrer/IP advisory key; count and insertion share that transaction. The IP is
