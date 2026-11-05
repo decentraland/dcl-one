@@ -492,6 +492,10 @@ export function Showcase(): React.JSX.Element {
         </div>
       </Section>
 
+      <Section title="ColorPicker (swatch, hue only: name colour)">
+        <ColorPicker label="Name color" value="#40eaff" presets={['#a140ff', '#ff40ad', '#ff9840', '#ffe340', '#40ff45', '#40eaff']} hueOnly swatch onChange={() => undefined} />
+      </Section>
+
       <Section title="Panel">
         <Panel style={{ padding: 18, maxWidth: 360 }}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>Genesis Plaza</div>

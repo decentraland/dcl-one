@@ -346,6 +346,8 @@ export interface ProfileState {
   saveError: string | null
   /** Apply a partial edit to your own profile. Omitted fields are left alone. */
   save: (edit: ProfileEdit) => void
+  /** Deploy a claimed name's colour without the edit form: a failure reverts it with no error. */
+  saveNameColor: (color: NonNullable<ProfileEdit['nameColor']>) => void
   requestOwnedNames: () => void
   dismissSaveError: () => void
 }
@@ -950,7 +952,20 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileSaveError, setProfileSaveError] = useState<string | null>(null)
   // What the profile looked like before the in-flight save, to put back if the engine rejects it.
-  const profileRevertRef = useRef<{ address: string; profile: Profile | null; stored: Profile | undefined } | null>(null)
+  // `quiet` marks a save the player didn't press SAVE for (the name colour, saved as the passport
+  // closes): its failure reverts without an error, as unity-explorer drops a failed colour deploy.
+  const profileRevertRef = useRef<{ address: string; profile: Profile | null; stored: Profile | undefined; quiet: boolean } | null>(null)
+  // One profile save at a time: the engine cancels an in-flight deploy when another arrives, which
+  // would report the first as failed although the second carries it. A save asked for meanwhile
+  // waits here, merged with any other waiting one, until the engine answers.
+  const profileInFlightRef = useRef(false)
+  const queuedProfileEditRef = useRef<{ edit: ProfileEdit; quiet: boolean } | null>(null)
+  const startProfileSaveRef = useRef<(edit: ProfileEdit, quiet: boolean) => void>(() => undefined)
+  // The latest profile and claimed names, for a save started from the message handler.
+  const profileRef = useRef(profile)
+  profileRef.current = profile
+  const ownedNamesRef = useRef(ownedNames)
+  ownedNamesRef.current = ownedNames
   const [notifications, setNotifications] = useState<AppNotification[]>([])
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [skyboxOpen, setSkyboxOpen] = useState(false)
@@ -1251,20 +1266,28 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'ownedNames':
           setOwnedNames(msg.names)
           break
-        case 'profileSaved':
-          setProfileSaving(false)
+        case 'profileSaved': {
+          profileInFlightRef.current = false
           // A failed save must not leave the optimistic edit on screen claiming to be saved, so the
           // pre-save profile goes back — see saveProfile.
+          const revert = profileRevertRef.current
+          profileRevertRef.current = null
           if (!msg.ok) {
-            setProfileSaveError(msg.error ?? 'Could not save your profile.')
-            const revert = profileRevertRef.current
+            if (revert?.quiet !== true) setProfileSaveError(msg.error ?? 'Could not save your profile.')
             if (revert != null) {
+              // Also the base a queued save starts from below, before any render catches up.
+              profileRef.current = revert.profile
               setProfile(revert.profile)
               updateProfile(revert.address, () => revert.stored)
             }
           }
-          profileRevertRef.current = null
+          const queued = queuedProfileEditRef.current
+          queuedProfileEditRef.current = null
+          // A quiet save left waiting runs on its own; the form's SAVE is done once its deploy is.
+          if (queued == null || queued.quiet) setProfileSaving(false)
+          if (queued != null) startProfileSaveRef.current(queued.edit, queued.quiet)
           break
+        }
         case 'notifications':
           setNotifications(msg.notifications)
           break
@@ -2477,17 +2500,39 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // has deployed the new version, and the catalyst reindexes later still, so waiting for the round
   // trip would leave the passport showing the old profile for seconds after a save. `profileSaved`
   // either confirms it or hands back the pre-save state (see the message handler).
-  const saveProfile = useCallback(
-    (edit: ProfileEdit) => {
-      const address = profile?.address.toLowerCase() ?? ''
-      profileRevertRef.current = { address, profile, stored: peekProfile(address) }
+  startProfileSaveRef.current = (edit: ProfileEdit, quiet: boolean): void => {
+    const current = profileRef.current
+    const address = current?.address.toLowerCase() ?? ''
+    profileRevertRef.current = { address, profile: current, stored: peekProfile(address), quiet }
+    profileInFlightRef.current = true
+    if (!quiet) {
       setProfileSaveError(null)
       setProfileSaving(true)
-      driverRef.current?.send({ kind: 'saveProfile', ...edit })
-      setProfile((prev) => (prev != null ? applyProfileEdit(prev, edit, ownedNames) : prev))
-      updateProfile(address, (mine) => (mine != null ? applyProfileEdit(mine, edit, ownedNames) : mine))
-    },
-    [profile, ownedNames]
+    }
+    driverRef.current?.send({ kind: 'saveProfile', ...edit })
+    const next = current != null ? applyProfileEdit(current, edit, ownedNamesRef.current) : current
+    // A save chained straight after this one must snapshot the edited profile, not the stale render.
+    profileRef.current = next
+    setProfile(next)
+    updateProfile(address, (mine) => (mine != null ? applyProfileEdit(mine, edit, ownedNamesRef.current) : mine))
+  }
+  const queueOrStartProfileSave = useCallback((edit: ProfileEdit, quiet: boolean) => {
+    if (!profileInFlightRef.current) {
+      startProfileSaveRef.current(edit, quiet)
+      return
+    }
+    const waiting = queuedProfileEditRef.current
+    queuedProfileEditRef.current = { edit: { ...waiting?.edit, ...edit }, quiet: (waiting?.quiet ?? true) && quiet }
+    if (!quiet) {
+      setProfileSaveError(null)
+      setProfileSaving(true)
+    }
+  }, [])
+  const saveProfile = useCallback((edit: ProfileEdit) => queueOrStartProfileSave(edit, false), [queueOrStartProfileSave])
+  // The passport's name colour, deployed as it closes. Quiet: a failure only puts the old colour back.
+  const saveNameColor = useCallback(
+    (nameColor: NonNullable<ProfileEdit['nameColor']>) => queueOrStartProfileSave({ nameColor }, true),
+    [queueOrStartProfileSave]
   )
   const dismissProfileSaveError = useCallback(() => setProfileSaveError(null), [])
   const friendAct = useCallback((op: FriendAction, address: string, message?: string) => {
@@ -2572,6 +2617,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // Backpack look is dropped rather than committed after the engine has let the account go.
     backpackWasOpen.current = false
     profileRevertRef.current = null
+    profileInFlightRef.current = false
+    queuedProfileEditRef.current = null
     setProfile(null)
     setPrevUserId(null)
     setOwnedNames([])
@@ -3236,6 +3283,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saving: profileSaving,
       saveError: profileSaveError,
       save: saveProfile,
+      saveNameColor,
       requestOwnedNames,
       dismissSaveError: dismissProfileSaveError
     },

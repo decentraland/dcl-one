@@ -170,6 +170,7 @@ export const fakeProfileState = (over: Partial<ProfileState> = {}): ProfileState
   saving: false,
   saveError: null,
   save: vi.fn(),
+  saveNameColor: vi.fn(),
   requestOwnedNames: vi.fn(),
   dismissSaveError: vi.fn(),
   ...over
