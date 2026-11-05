@@ -30,11 +30,11 @@ jobs:
         run: python3 tooling/web-preview.py resolve >> "$GITHUB_OUTPUT"
   reviewer:
     needs: source
-    if: needs.source.outputs.publish == 'true' && needs.source.outputs.reviewer == 'true'
+    if: vars.WEB_PREVIEW_REVIEWER_ENABLED == 'true' && needs.source.outputs.publish == 'true' && needs.source.outputs.reviewer == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     concurrency:
-      group: web-preview-reviewer-publish-${{ needs.source.outputs.pr }}
+      group: web-preview-reviewer-publish-${{ needs.source.outputs.pr }}-${{ github.event.workflow_run.id }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -112,7 +112,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     concurrency:
-      group: web-previews-comment-${{ needs.source.outputs.pr || github.event.workflow_run.head_branch }}
+      group: web-previews-comment-${{ needs.source.outputs.pr || github.event.workflow_run.head_branch }}-${{ github.event.workflow_run.id }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -130,5 +130,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
           REVIEWER_URL: ${{ needs.reviewer.outputs.url }}
-          PUBLICATION_RESULT: ${{ needs.reviewer.result }}
+          PUBLICATION_RESULT: ${{ vars.WEB_PREVIEW_REVIEWER_ENABLED != 'true' && 'disabled pending CDN base verification' || needs.reviewer.result }}
         run: python3 tooling/web-preview.py report

@@ -2,12 +2,6 @@ name: Web previews / Build
 on:
   pull_request:
     types: [opened, synchronize, reopened]
-    paths:
-      - 'apps/sites/**'
-      - 'library/ui/**'
-      - 'tooling/web-preview.py'
-      - 'tooling/tests/test_web_preview.py'
-      - '.github/workflows/web-previews*.yml'
 permissions:
   contents: read
 concurrency:

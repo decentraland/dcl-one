@@ -3,6 +3,7 @@
 
 import argparse
 import http.client
+from html.parser import HTMLParser
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import sys
 import time
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
+from urllib.parse import urljoin
 
 WORKFLOW = '.github/workflows/web-previews.yml'
 PIPELINE_INPUTS = {
@@ -180,6 +182,43 @@ def cdn_url(version):
     return f'https://cdn.decentraland.org/{PACKAGE}/{version}'
 
 
+class ReviewerAssets(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.assets = []
+
+    def handle_starttag(self, tag, attrs):
+        values = dict(attrs)
+        source = (
+            values.get('src')
+            if tag == 'script'
+            else (
+                values.get('href') if tag == 'link' and values.get('rel') == 'stylesheet' else None
+            )
+        )
+        if source and re.search(r'/assets/[^/]+-[A-Za-z0-9_-]+\.(js|css)$', source):
+            self.assets.append(source)
+
+
+def verify_reviewer_resources(url, entry, html):
+    parser = ReviewerAssets()
+    parser.feed(html)
+    if not parser.assets:
+        raise ValueError('Reviewer entry has no hashed JavaScript or CSS asset')
+    asset = urljoin(entry, parser.assets[0])
+    if not asset.startswith(url + '/'):
+        raise ValueError('Reviewer asset escapes the versioned CDN prefix')
+    with urlopen(asset, timeout=15) as response:
+        content_type = response.headers.get('Content-Type', '')
+        expected = 'text/css' if asset.endswith('.css') else 'javascript'
+        if expected not in content_type or not response.read(1):
+            raise ValueError('CDN reviewer asset is not JavaScript or CSS')
+    with urlopen(f'{url}/dcl-ui-review/fidelity.json', timeout=15) as response:
+        fidelity = json.load(response)
+        if not isinstance(fidelity, (dict, list)):
+            raise ValueError('CDN reviewer fidelity data is not a JSON object or array')
+
+
 def verify_cdn(version, revision, run_id, timeout=300):
     url = cdn_url(version)
     deadline = time.monotonic() + timeout
@@ -193,8 +232,12 @@ def verify_cdn(version, revision, run_id, timeout=300):
                 if response.status == 200 and 'text/html' in response.headers.get(
                     'Content-Type', ''
                 ):
-                    return f'{url}/dcl-ui-review/index.html'
-        except (OSError, HTTPError, URLError, http.client.HTTPException, json.JSONDecodeError):
+                    entry = f'{url}/dcl-ui-review/index.html'
+                    verify_reviewer_resources(url, entry, response.read().decode('utf-8'))
+                    return entry
+        except HTTPError as error:
+            error.close()
+        except (OSError, URLError, http.client.HTTPException, json.JSONDecodeError):
             pass
         if time.monotonic() >= deadline:
             raise TimeoutError(
@@ -227,7 +270,8 @@ def report(repository, run_id, reviewer_url, publication_result):
             link = 'SSR preview pending: shared host deployment is not wired yet'
         rows.append(f'| {label} | {result} | {link} |')
     if not rows:
-        rows.append('| Web previews | failed | See the build run |')
+        print('No selected web products to report')
+        return
     receipt = f'<!-- source-run:{run_id}:{run["run_attempt"]} -->'
     body = '\n'.join(
         [
@@ -252,13 +296,15 @@ def report(repository, run_id, reviewer_url, publication_result):
         ),
         None,
     )
-    if current:
-        previous = re.search(r'<!-- source-run:(\d+):(\d+) -->', current['body'])
-        if previous and tuple(map(int, previous.groups())) > (run_id, run['run_attempt']):
-            return
     # Recheck after the API reads so an outdated source cannot replace the current preview.
     _, live = resolve(repository, run_id)
     if live is None:
+        return
+    runs = api(
+        f'repos/{repository}/actions/workflows/web-previews.yml/runs'
+        f'?event=pull_request&head_sha={run["head_sha"]}&per_page=100'
+    )['workflow_runs']
+    if not runs or max(int(item['id']) for item in runs) != run_id:
         return
     path = (
         f'repos/{repository}/issues/comments/{current["id"]}'
@@ -294,12 +340,6 @@ def main():
         return
     repository = os.environ['GITHUB_REPOSITORY']
     run_id = int(os.environ['SOURCE_RUN_ID'])
-    run, pr = resolve(repository, run_id)
-    if args.command == 'resolve':
-        print(f'pr={pr["number"] if pr else ""}')
-        print(f'publish={str(pr is not None and publishable(run, pr, repository)).lower()}')
-        print('reviewer=' + str(require_reviewer(repository, run_id)).lower())
-        return
     if args.command == 'report':
         report(
             repository,
@@ -307,6 +347,12 @@ def main():
             os.environ.get('REVIEWER_URL', ''),
             os.environ.get('PUBLICATION_RESULT', 'not published'),
         )
+        return
+    run, pr = resolve(repository, run_id)
+    if args.command == 'resolve':
+        print(f'pr={pr["number"] if pr else ""}')
+        print(f'publish={str(pr is not None and publishable(run, pr, repository)).lower()}')
+        print('reviewer=' + str(require_reviewer(repository, run_id)).lower())
         return
     if pr is None or not publishable(run, pr, repository):
         raise ValueError('Source run is no longer eligible for publication')

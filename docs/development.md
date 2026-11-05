@@ -67,15 +67,14 @@ See [production rules](../infra/containers/README.md#sites-explorer-build-input)
 
 ### Pull request previews
 
-`Web previews / Build` selects two independent products: changes under `apps/sites/` build Sites, and changes under `library/ui/` build its standalone UI reviewer. API-only changes do not select previews. Changes to the preview pipeline select both products.
+`Web previews / Build` selects two independent products: changes under `apps/sites/` build Sites, and changes under `library/ui/` build its standalone UI reviewer. API-only changes do not select previews. Changes to the preview pipeline select both products. The workflow evaluates every PR update against its cumulative diff so later commits keep the selected preview current; PRs with no selected products run no product build.
 
-The reviewer must support versioned CDN subdirectories, including navigation, reference images and JSON requests. The source change is pending: the proposed command is `pnpm --dir library/ui exec vite build --config figma/review/review.vite.config.ts --base <BASE>`, producing `library/ui/figma/review/review-dist/`. Do not treat this contract as accepted until its exact source commit passes a nested-prefix build and navigation regression.
+The workflow runs `pnpm review:build --base ./` from `library/ui`, invoking Vite with `figma/review/review.vite.config.ts` and producing `library/ui/figma/review/review-dist/`. Versioned CDN navigation, references, render images and JSON fetches still require the pending source change and an exact source commit passing the nested-prefix regression. Publication is disabled unless the repository variable `WEB_PREVIEW_REVIEWER_ENABLED` equals `true`; enable it only after that regression and source audit pass. Builds and artifacts remain available while publication is disabled.
 
 `Web previews / Publish` uses trusted publication code and validated static
 artifacts, without running pull request lifecycle scripts with credentials.
 Same-repository, open pull requests receive one updated status comment; forks
-build artifacts without publishing. A reviewer link appears only after the
-CDN serves the matching source receipt and HTML entry.
+build artifacts without publishing. A reviewer link appears only after the CDN serves the matching source receipt, HTML entry, a version-scoped hashed asset and fidelity JSON.
 
 Publication needs `GITLAB_CDN_DEPLOYER_TOKEN` and `GITLAB_CDN_DEPLOYER_URL`, as
 used by Bevy, and `FIGMA_FILE_KEY` for the trusted artifact key scan. The
