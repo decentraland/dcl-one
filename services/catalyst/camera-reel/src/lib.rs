@@ -70,7 +70,9 @@
 #[cfg(test)]
 pub(crate) use catalyst_builder as builder;
 pub(crate) use catalyst_content as content;
+pub(crate) use catalyst_jobs as jobs;
 pub(crate) use catalyst_shared as shared;
+pub(crate) use catalyst_social as social;
 pub(crate) use catalyst_storage as storage;
 pub(crate) use dcl_auth as auth;
 

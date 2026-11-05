@@ -1044,6 +1044,22 @@ mod tests {
             "{page}"
         );
         assert!(page.contains("ORDER BY c.order_price ASC NULLS LAST"));
+        // The NAME browse's price range: both bounds on the listing price, which reads the order legs.
+        let names = parse_filters(&pairs(&[
+            ("category", "ens"),
+            ("minPrice", "1000"),
+            ("maxPrice", "2000"),
+            ("sortBy", "cheapest"),
+        ]))
+        .unwrap();
+        let ((page, _), _) = build_nfts_query(&names, sources_for(&names), 10, 0, 1, None);
+        assert!(
+            page.contains("shop.nft_order o")
+                && page.contains("c.order_price >= $")
+                && page.contains("c.order_price <= $")
+                && page.contains("ORDER BY c.order_price ASC NULLS LAST"),
+            "{page}"
+        );
     }
 
     /// The geography filters route to LAND and bind their predicates; the

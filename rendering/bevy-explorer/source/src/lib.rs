@@ -4,6 +4,7 @@
 pub mod automation;
 mod autopilot;
 mod commands;
+mod debug_panel;
 mod deep_link;
 mod ext;
 mod gpu_memory;
@@ -369,9 +370,6 @@ impl DecentralandApp {
         #[cfg(target_arch = "wasm32")]
         app.add_plugins(wasm_default_plugins(&decentraland_app_config));
 
-        #[cfg(all(not(target_arch = "wasm32"), feature = "ffmpeg"))]
-        media::init_ffmpeg();
-
         // we use kira for audio source asset management, regardless of native / wasm
         app.add_plugins(bevy_kira_audio::AudioPlugin);
 
@@ -706,6 +704,7 @@ impl DecentralandApp {
         app.add_console_command::<SceneThreadsCommand, _>(scene_threads);
         app.add_console_command::<FpsCommand, _>(set_fps);
         app.add_console_command::<SessionGraphicsCommand, _>(session_graphics);
+        debug_panel::register(&mut app);
 
         app
     }

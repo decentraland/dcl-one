@@ -1,0 +1,1680 @@
+{
+  "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+  "polling_job": {
+    "interval_ms": 45000,
+    "initial_delay_ms": 0,
+    "after_first_run_delay_ms": 45000,
+    "callback_runs_before_timer": 0,
+    "callback_runs_after_timer": 1,
+    "sdk": {
+      "name": "@dcl/job-component",
+      "version": "0.3.5",
+      "files": [
+        {
+          "file": "dist/src/component.js",
+          "sha256": "733cd3dfe2856448015385c53d82c8418632a7250ef99fe512261e56b86fcc87"
+        },
+        {
+          "file": "dist/src/runner.js",
+          "sha256": "2f5db46d0c37cba71c68ddb11d2a0a6a9e8b075903f1bb7d7242741cd61a32ea"
+        }
+      ]
+    }
+  },
+  "sources": [
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": ".env.default",
+      "sha256": "0d3fb40bec25595f2e3bc3574e8977cd2772985b822981cb5e935ba9323c9bfd"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/components.ts",
+      "sha256": "9878788adb18eeff8b80ac24f392b945239533fe5e88550d1334123002c60e68"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/logic/community-voice/community-voice.ts",
+      "sha256": "1d91e9ce1b66c146d5c85cc3554729fe7b02dd84e06db719d65d2a661a6fc716"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/logic/community/broadcaster.ts",
+      "sha256": "218d70629c47448709bc589c986ccb2a0a2e4001cbba92ce6c1b89de1a9bc405"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/logic/community-voice/community-voice-cache.ts",
+      "sha256": "f4abaa10d293932d66cada2a73d2d429dd465bd0c1344f8d41d12ad3db4e2d6b"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/logic/community-voice/community-voice-polling.ts",
+      "sha256": "607637eafe5d6006cdc7f9891ae123fc0ee14d0274110fe7428ad33f72745088"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/adapters/comms-gatekeeper.ts",
+      "sha256": "3ab0b025bc24e1e5e5f987edf311ef816e884e5fd19132ce43c31d53a4ff3d3e"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/utils/uuid.ts",
+      "sha256": "2b19a75f8592496b7b4820bbee4ef1b8334540db2f5002296f80e6a15c70e5db"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/logic/updates.ts",
+      "sha256": "72b9f7eb4b47a309ce702a96d7407d1c7c3a97ed0b3f9f7f5ca472a62637a827"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/controllers/handlers/rpc/subscribe-to-community-voice-chat-updates.ts",
+      "sha256": "dbb387700070c9224a33ce01133208afdc95d5fea15a3d9121c7e4d6a00ab293"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/controllers/handlers/uws/stream-registry.ts",
+      "sha256": "9d0da108781769c1c9f5899e4e5ae187fab1d02119abbbb934a66efbe92089f0"
+    }
+  ],
+  "scope": "Original community domain/broadcast invocation, cache, poller, privileged adapter identifier guards, update audience handler and both client parsers; deterministic JSON-serializing Redis facade shared across component rebuilds; controlled media HTTP responses and clock with real24h facade expiry. No network Redis/LiveKit used.",
+  "cases": [
+    {
+      "scenario": "uppercase-start-lowercase-end",
+      "http": [
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "POST",
+          "path": "/community-voice-chat",
+          "body": {
+            "community_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_address": "0x1111111111111111111111111111111111111111",
+            "action": "create",
+            "user_role": "owner"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "DELETE",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333",
+          "body": {
+            "user_address": "0x1111111111111111111111111111111111111111"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        }
+      ],
+      "keys": [
+        {
+          "op": "put",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "put",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "del",
+          "key": "community-voice-chat:a3333333-b333-4c33-8d33-e33333333333"
+        },
+        {
+          "op": "del",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333"
+        }
+      ],
+      "reads": [
+        {
+          "step": "restart-after-start",
+          "entries": [
+            {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "isActive": true,
+              "lastChecked": 1234567890000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            }
+          ]
+        },
+        {
+          "step": "restart-after-end-other-spelling",
+          "entries": [
+            {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "isActive": true,
+              "lastChecked": 1234567890000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            }
+          ]
+        },
+        {
+          "step": "after-inactive-poll",
+          "entries": []
+        }
+      ],
+      "published": [
+        {
+          "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+          "status": 0,
+          "positions": [],
+          "worlds": [],
+          "communityName": "Community",
+          "creatorAddress": "0x1111111111111111111111111111111111111111",
+          "notificationScope": "all"
+        },
+        {
+          "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+          "status": 1,
+          "endedAt": 1234567890000
+        },
+        {
+          "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+          "status": 1,
+          "endedAt": 1234567890000,
+          "positions": [],
+          "worlds": [],
+          "communityName": "",
+          "notificationScope": "all"
+        }
+      ],
+      "broadcasts": [
+        {
+          "event": {
+            "type": "community",
+            "subType": "community-voice-chat-started",
+            "key": "A3333333-B333-4C33-8D33-E33333333333-1234567890000",
+            "timestamp": 1234567890000,
+            "metadata": {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "communityName": "Community",
+              "thumbnailUrl": ""
+            }
+          },
+          "options": {
+            "excludeAddresses": [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          }
+        }
+      ],
+      "sns": [
+        {
+          "type": "community",
+          "subType": "community-voice-chat-started",
+          "key": "A3333333-B333-4C33-8D33-E33333333333-1234567890000-batch-1",
+          "timestamp": 1234567890000,
+          "metadata": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "communityName": "Community",
+            "thumbnailUrl": "",
+            "addressesToNotify": [
+              "0x2222222222222222222222222222222222222222"
+            ]
+          }
+        }
+      ],
+      "wire": [
+        {
+          "phase": "start-upper",
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 0,
+            "positions": [],
+            "isMember": true,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "rpc_hex": "0a2441333333333333332d423333332d344333332d384433332d45333333333333333333333310d088ec8ff72330013a09436f6d6d756e697479",
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "started",
+            "createdAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": true,
+            "communityName": "Community"
+          }
+        },
+        {
+          "phase": "start-upper",
+          "address": "0x5555555555555555555555555555555555555555",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 0,
+            "positions": [],
+            "isMember": false,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "rpc_hex": "0a2441333333333333332d423333332d344333332d384433332d45333333333333333333333310d088ec8ff7233a09436f6d6d756e697479",
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "started",
+            "createdAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": "Community"
+          }
+        },
+        {
+          "phase": "end-lower",
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "createdAt": 1234567890000,
+            "status": 1,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "isMember": true,
+            "communityName": "",
+            "worlds": []
+          },
+          "rpc_hex": "0a2461333333333333332d623333332d346333332d386433332d65333333333333333333333310d088ec8ff723180120d088ec8ff7233001",
+          "json": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "status": "ended",
+            "createdAt": 1234567890000,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": true,
+            "communityName": ""
+          }
+        },
+        {
+          "phase": "inactive-poll",
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 1,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "isMember": false,
+            "communityName": "",
+            "worlds": []
+          },
+          "rpc_hex": "0a2441333333333333332d423333332d344333332d384433332d45333333333333333333333310d088ec8ff723180120d088ec8ff723",
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "ended",
+            "createdAt": 1234567890000,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": ""
+          }
+        },
+        {
+          "phase": "inactive-poll",
+          "address": "0x5555555555555555555555555555555555555555",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 1,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "isMember": false,
+            "communityName": "",
+            "worlds": []
+          },
+          "rpc_hex": "0a2441333333333333332d423333332d344333332d384433332d45333333333333333333333310d088ec8ff723180120d088ec8ff723",
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "ended",
+            "createdAt": 1234567890000,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": ""
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "two-alias-cache-entries",
+      "http": [
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "POST",
+          "path": "/community-voice-chat",
+          "body": {
+            "community_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_address": "0x1111111111111111111111111111111111111111",
+            "action": "create",
+            "user_role": "owner"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "POST",
+          "path": "/community-voice-chat",
+          "body": {
+            "community_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_address": "0x1111111111111111111111111111111111111111",
+            "action": "create",
+            "user_role": "owner"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        }
+      ],
+      "keys": [
+        {
+          "op": "put",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "put",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "put",
+          "key": "community-voice-chat:a3333333-b333-4c33-8d33-e33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "put",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "put",
+          "key": "community-voice-chat:a3333333-b333-4c33-8d33-e33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "del",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333"
+        },
+        {
+          "op": "del",
+          "key": "community-voice-chat:a3333333-b333-4c33-8d33-e33333333333"
+        }
+      ],
+      "reads": [
+        {
+          "step": "restart-after-start",
+          "entries": [
+            {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "isActive": true,
+              "lastChecked": 1234567890000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            }
+          ]
+        },
+        {
+          "step": "restart-two-aliases",
+          "entries": [
+            {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "isActive": true,
+              "lastChecked": 1234567890000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            },
+            {
+              "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+              "isActive": true,
+              "lastChecked": 1234567890000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            }
+          ]
+        },
+        {
+          "step": "after-active-sibling-poll",
+          "entries": [
+            {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "isActive": true,
+              "lastChecked": 1234567890000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            },
+            {
+              "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+              "isActive": true,
+              "lastChecked": 1234567890000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            }
+          ]
+        },
+        {
+          "step": "after-inactive-poll",
+          "entries": []
+        }
+      ],
+      "published": [
+        {
+          "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+          "status": 0,
+          "positions": [],
+          "worlds": [],
+          "communityName": "Community",
+          "creatorAddress": "0x1111111111111111111111111111111111111111",
+          "notificationScope": "all"
+        },
+        {
+          "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+          "status": 0,
+          "positions": [],
+          "worlds": [],
+          "communityName": "Community",
+          "creatorAddress": "0x1111111111111111111111111111111111111111",
+          "notificationScope": "all"
+        },
+        {
+          "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+          "status": 1,
+          "endedAt": 1234567890000,
+          "positions": [],
+          "worlds": [],
+          "communityName": "",
+          "notificationScope": "all"
+        },
+        {
+          "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+          "status": 1,
+          "endedAt": 1234567890000,
+          "positions": [],
+          "worlds": [],
+          "communityName": "",
+          "notificationScope": "all"
+        }
+      ],
+      "broadcasts": [
+        {
+          "event": {
+            "type": "community",
+            "subType": "community-voice-chat-started",
+            "key": "A3333333-B333-4C33-8D33-E33333333333-1234567890000",
+            "timestamp": 1234567890000,
+            "metadata": {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "communityName": "Community",
+              "thumbnailUrl": ""
+            }
+          },
+          "options": {
+            "excludeAddresses": [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          }
+        },
+        {
+          "event": {
+            "type": "community",
+            "subType": "community-voice-chat-started",
+            "key": "a3333333-b333-4c33-8d33-e33333333333-1234567890000",
+            "timestamp": 1234567890000,
+            "metadata": {
+              "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+              "communityName": "Community",
+              "thumbnailUrl": ""
+            }
+          },
+          "options": {
+            "excludeAddresses": [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          }
+        }
+      ],
+      "sns": [
+        {
+          "type": "community",
+          "subType": "community-voice-chat-started",
+          "key": "A3333333-B333-4C33-8D33-E33333333333-1234567890000-batch-1",
+          "timestamp": 1234567890000,
+          "metadata": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "communityName": "Community",
+            "thumbnailUrl": "",
+            "addressesToNotify": [
+              "0x2222222222222222222222222222222222222222"
+            ]
+          }
+        },
+        {
+          "type": "community",
+          "subType": "community-voice-chat-started",
+          "key": "a3333333-b333-4c33-8d33-e33333333333-1234567890000-batch-1",
+          "timestamp": 1234567890000,
+          "metadata": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "communityName": "Community",
+            "thumbnailUrl": "",
+            "addressesToNotify": [
+              "0x2222222222222222222222222222222222222222"
+            ]
+          }
+        }
+      ],
+      "wire": [
+        {
+          "phase": "start-upper",
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 0,
+            "positions": [],
+            "isMember": true,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "rpc_hex": "0a2441333333333333332d423333332d344333332d384433332d45333333333333333333333310d088ec8ff72330013a09436f6d6d756e697479",
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "started",
+            "createdAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": true,
+            "communityName": "Community"
+          }
+        },
+        {
+          "phase": "start-upper",
+          "address": "0x5555555555555555555555555555555555555555",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 0,
+            "positions": [],
+            "isMember": false,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "rpc_hex": "0a2441333333333333332d423333332d344333332d384433332d45333333333333333333333310d088ec8ff7233a09436f6d6d756e697479",
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "started",
+            "createdAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": "Community"
+          }
+        },
+        {
+          "phase": "start-lower",
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "createdAt": 1234567890000,
+            "status": 0,
+            "positions": [],
+            "isMember": true,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "rpc_hex": "0a2461333333333333332d623333332d346333332d386433332d65333333333333333333333310d088ec8ff72330013a09436f6d6d756e697479",
+          "json": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "status": "started",
+            "createdAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": true,
+            "communityName": "Community"
+          }
+        },
+        {
+          "phase": "start-lower",
+          "address": "0x5555555555555555555555555555555555555555",
+          "rpc": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "createdAt": 1234567890000,
+            "status": 0,
+            "positions": [],
+            "isMember": false,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "rpc_hex": "0a2461333333333333332d623333332d346333332d386433332d65333333333333333333333310d088ec8ff7233a09436f6d6d756e697479",
+          "json": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "status": "started",
+            "createdAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": "Community"
+          }
+        },
+        {
+          "phase": "inactive-poll",
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 1,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "isMember": false,
+            "communityName": "",
+            "worlds": []
+          },
+          "rpc_hex": "0a2441333333333333332d423333332d344333332d384433332d45333333333333333333333310d088ec8ff723180120d088ec8ff723",
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "ended",
+            "createdAt": 1234567890000,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": ""
+          }
+        },
+        {
+          "phase": "inactive-poll",
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "createdAt": 1234567890000,
+            "status": 1,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "isMember": false,
+            "communityName": "",
+            "worlds": []
+          },
+          "rpc_hex": "0a2461333333333333332d623333332d346333332d386433332d65333333333333333333333310d088ec8ff723180120d088ec8ff723",
+          "json": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "status": "ended",
+            "createdAt": 1234567890000,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": ""
+          }
+        },
+        {
+          "phase": "inactive-poll",
+          "address": "0x5555555555555555555555555555555555555555",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 1,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "isMember": false,
+            "communityName": "",
+            "worlds": []
+          },
+          "rpc_hex": "0a2441333333333333332d423333332d344333332d384433332d45333333333333333333333310d088ec8ff723180120d088ec8ff723",
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "ended",
+            "createdAt": 1234567890000,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": ""
+          }
+        },
+        {
+          "phase": "inactive-poll",
+          "address": "0x5555555555555555555555555555555555555555",
+          "rpc": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "createdAt": 1234567890000,
+            "status": 1,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "isMember": false,
+            "communityName": "",
+            "worlds": []
+          },
+          "rpc_hex": "0a2461333333333333332d623333332d346333332d386433332d65333333333333333333333310d088ec8ff723180120d088ec8ff723",
+          "json": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "status": "ended",
+            "createdAt": 1234567890000,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": ""
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "aliases-own-scope-and-expiry",
+      "http": [
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "POST",
+          "path": "/community-voice-chat",
+          "body": {
+            "community_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_address": "0x1111111111111111111111111111111111111111",
+            "action": "create",
+            "user_role": "owner"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "POST",
+          "path": "/community-voice-chat",
+          "body": {
+            "community_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_address": "0x1111111111111111111111111111111111111111",
+            "action": "create",
+            "user_role": "owner"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        }
+      ],
+      "keys": [
+        {
+          "op": "put",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "put",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "put",
+          "key": "community-voice-chat:a3333333-b333-4c33-8d33-e33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "del",
+          "key": "community-voice-chat:a3333333-b333-4c33-8d33-e33333333333"
+        }
+      ],
+      "reads": [
+        {
+          "step": "restart-after-start",
+          "entries": [
+            {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "isActive": true,
+              "lastChecked": 1234567890000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            }
+          ]
+        },
+        {
+          "step": "restart-two-aliases",
+          "entries": [
+            {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "isActive": true,
+              "lastChecked": 1234567890000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            },
+            {
+              "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+              "isActive": true,
+              "lastChecked": 1234567891000,
+              "createdAt": 1234567891000,
+              "notificationScope": "members"
+            }
+          ]
+        },
+        {
+          "step": "upper-expired-lower-fresh",
+          "entries": [
+            {
+              "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+              "isActive": true,
+              "lastChecked": 1234567891000,
+              "createdAt": 1234567891000,
+              "notificationScope": "members"
+            }
+          ]
+        },
+        {
+          "step": "after-inactive-poll",
+          "entries": []
+        }
+      ],
+      "published": [
+        {
+          "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+          "status": 0,
+          "positions": [],
+          "worlds": [],
+          "communityName": "Community",
+          "creatorAddress": "0x1111111111111111111111111111111111111111",
+          "notificationScope": "all"
+        },
+        {
+          "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+          "status": 0,
+          "positions": [],
+          "worlds": [],
+          "communityName": "Community",
+          "creatorAddress": "0x1111111111111111111111111111111111111111",
+          "notificationScope": "members"
+        },
+        {
+          "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+          "status": 1,
+          "endedAt": 1234654290500,
+          "positions": [],
+          "worlds": [],
+          "communityName": "",
+          "notificationScope": "members"
+        }
+      ],
+      "broadcasts": [
+        {
+          "event": {
+            "type": "community",
+            "subType": "community-voice-chat-started",
+            "key": "A3333333-B333-4C33-8D33-E33333333333-1234567890000",
+            "timestamp": 1234567890000,
+            "metadata": {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "communityName": "Community",
+              "thumbnailUrl": ""
+            }
+          },
+          "options": {
+            "excludeAddresses": [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          }
+        },
+        {
+          "event": {
+            "type": "community",
+            "subType": "community-voice-chat-started",
+            "key": "a3333333-b333-4c33-8d33-e33333333333-1234567891000",
+            "timestamp": 1234567891000,
+            "metadata": {
+              "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+              "communityName": "Community",
+              "thumbnailUrl": ""
+            }
+          },
+          "options": {
+            "excludeAddresses": [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          }
+        }
+      ],
+      "sns": [
+        {
+          "type": "community",
+          "subType": "community-voice-chat-started",
+          "key": "A3333333-B333-4C33-8D33-E33333333333-1234567890000-batch-1",
+          "timestamp": 1234567890000,
+          "metadata": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "communityName": "Community",
+            "thumbnailUrl": "",
+            "addressesToNotify": [
+              "0x2222222222222222222222222222222222222222"
+            ]
+          }
+        },
+        {
+          "type": "community",
+          "subType": "community-voice-chat-started",
+          "key": "a3333333-b333-4c33-8d33-e33333333333-1234567891000-batch-1",
+          "timestamp": 1234567891000,
+          "metadata": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "communityName": "Community",
+            "thumbnailUrl": "",
+            "addressesToNotify": [
+              "0x2222222222222222222222222222222222222222"
+            ]
+          }
+        }
+      ],
+      "wire": [
+        {
+          "phase": "start-upper",
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 0,
+            "positions": [],
+            "isMember": true,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "rpc_hex": "0a2441333333333333332d423333332d344333332d384433332d45333333333333333333333310d088ec8ff72330013a09436f6d6d756e697479",
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "started",
+            "createdAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": true,
+            "communityName": "Community"
+          }
+        },
+        {
+          "phase": "start-upper",
+          "address": "0x5555555555555555555555555555555555555555",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 0,
+            "positions": [],
+            "isMember": false,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "rpc_hex": "0a2441333333333333332d423333332d344333332d384433332d45333333333333333333333310d088ec8ff7233a09436f6d6d756e697479",
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "started",
+            "createdAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": "Community"
+          }
+        },
+        {
+          "phase": "start-lower",
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "createdAt": 1234567891000,
+            "status": 0,
+            "positions": [],
+            "isMember": true,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "rpc_hex": "0a2461333333333333332d623333332d346333332d386433332d65333333333333333333333310b890ec8ff72330013a09436f6d6d756e697479",
+          "json": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "status": "started",
+            "createdAt": 1234567891000,
+            "positions": [],
+            "worlds": [],
+            "isMember": true,
+            "communityName": "Community"
+          }
+        },
+        {
+          "phase": "inactive-poll",
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "createdAt": 1234654290500,
+            "status": 1,
+            "endedAt": 1234654290500,
+            "positions": [],
+            "isMember": true,
+            "communityName": "",
+            "worlds": []
+          },
+          "rpc_hex": "0a2461333333333333332d623333332d346333332d386433332d65333333333333333333333310c4c485b9f723180120c4c485b9f7233001",
+          "json": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "status": "ended",
+            "createdAt": 1234654290500,
+            "endedAt": 1234654290500,
+            "positions": [],
+            "worlds": [],
+            "isMember": true,
+            "communityName": ""
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "explicit-end-restart-keeps-other-alias",
+      "http": [
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "POST",
+          "path": "/community-voice-chat",
+          "body": {
+            "community_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_address": "0x1111111111111111111111111111111111111111",
+            "action": "create",
+            "user_role": "owner"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "POST",
+          "path": "/community-voice-chat",
+          "body": {
+            "community_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_address": "0x1111111111111111111111111111111111111111",
+            "action": "create",
+            "user_role": "owner"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "DELETE",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333",
+          "body": {
+            "user_address": "0x1111111111111111111111111111111111111111"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "POST",
+          "path": "/community-voice-chat",
+          "body": {
+            "community_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_address": "0x1111111111111111111111111111111111111111",
+            "action": "create",
+            "user_role": "owner"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        }
+      ],
+      "keys": [
+        {
+          "op": "put",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "put",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "put",
+          "key": "community-voice-chat:a3333333-b333-4c33-8d33-e33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "put",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "put",
+          "key": "community-voice-chat:a3333333-b333-4c33-8d33-e33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "del",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333"
+        },
+        {
+          "op": "put",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "del",
+          "key": "community-voice-chat:a3333333-b333-4c33-8d33-e33333333333"
+        },
+        {
+          "op": "del",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333"
+        }
+      ],
+      "reads": [
+        {
+          "step": "restart-after-start",
+          "entries": [
+            {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "isActive": true,
+              "lastChecked": 1234567890000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            }
+          ]
+        },
+        {
+          "step": "restart-two-aliases",
+          "entries": [
+            {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "isActive": true,
+              "lastChecked": 1234567890000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            },
+            {
+              "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+              "isActive": true,
+              "lastChecked": 1234567891000,
+              "createdAt": 1234567891000,
+              "notificationScope": "members"
+            }
+          ]
+        },
+        {
+          "step": "after-active-sibling-poll",
+          "entries": [
+            {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "isActive": true,
+              "lastChecked": 1234567891000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            },
+            {
+              "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+              "isActive": true,
+              "lastChecked": 1234567891000,
+              "createdAt": 1234567891000,
+              "notificationScope": "members"
+            }
+          ]
+        },
+        {
+          "step": "after-upper-end",
+          "entries": [
+            {
+              "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+              "isActive": true,
+              "lastChecked": 1234567891000,
+              "createdAt": 1234567891000,
+              "notificationScope": "members"
+            }
+          ]
+        },
+        {
+          "step": "restart-after-new-upper-start",
+          "entries": [
+            {
+              "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+              "isActive": true,
+              "lastChecked": 1234567891000,
+              "createdAt": 1234567891000,
+              "notificationScope": "members"
+            },
+            {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "isActive": true,
+              "lastChecked": 1234567892000,
+              "createdAt": 1234567892000,
+              "notificationScope": "members"
+            }
+          ]
+        },
+        {
+          "step": "media-closed-before-poll",
+          "entries": [
+            {
+              "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+              "isActive": true,
+              "lastChecked": 1234567891000,
+              "createdAt": 1234567891000,
+              "notificationScope": "members"
+            },
+            {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "isActive": true,
+              "lastChecked": 1234567892000,
+              "createdAt": 1234567892000,
+              "notificationScope": "members"
+            }
+          ],
+          "publishedCount": 4
+        },
+        {
+          "step": "after-inactive-poll",
+          "entries": []
+        }
+      ],
+      "published": [
+        {
+          "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+          "status": 0,
+          "positions": [],
+          "worlds": [],
+          "communityName": "Community",
+          "creatorAddress": "0x1111111111111111111111111111111111111111",
+          "notificationScope": "all"
+        },
+        {
+          "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+          "status": 0,
+          "positions": [],
+          "worlds": [],
+          "communityName": "Community",
+          "creatorAddress": "0x1111111111111111111111111111111111111111",
+          "notificationScope": "members"
+        },
+        {
+          "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+          "status": 1,
+          "endedAt": 1234567891000,
+          "notificationScope": "all"
+        },
+        {
+          "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+          "status": 0,
+          "positions": [],
+          "worlds": [],
+          "communityName": "Community",
+          "creatorAddress": "0x1111111111111111111111111111111111111111",
+          "notificationScope": "members"
+        },
+        {
+          "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+          "status": 1,
+          "endedAt": 1234567892000,
+          "positions": [],
+          "worlds": [],
+          "communityName": "",
+          "notificationScope": "members"
+        },
+        {
+          "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+          "status": 1,
+          "endedAt": 1234567892000,
+          "positions": [],
+          "worlds": [],
+          "communityName": "",
+          "notificationScope": "members"
+        }
+      ],
+      "broadcasts": [
+        {
+          "event": {
+            "type": "community",
+            "subType": "community-voice-chat-started",
+            "key": "A3333333-B333-4C33-8D33-E33333333333-1234567890000",
+            "timestamp": 1234567890000,
+            "metadata": {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "communityName": "Community",
+              "thumbnailUrl": ""
+            }
+          },
+          "options": {
+            "excludeAddresses": [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          }
+        },
+        {
+          "event": {
+            "type": "community",
+            "subType": "community-voice-chat-started",
+            "key": "a3333333-b333-4c33-8d33-e33333333333-1234567891000",
+            "timestamp": 1234567891000,
+            "metadata": {
+              "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+              "communityName": "Community",
+              "thumbnailUrl": ""
+            }
+          },
+          "options": {
+            "excludeAddresses": [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          }
+        },
+        {
+          "event": {
+            "type": "community",
+            "subType": "community-voice-chat-started",
+            "key": "A3333333-B333-4C33-8D33-E33333333333-1234567892000",
+            "timestamp": 1234567892000,
+            "metadata": {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "communityName": "Community",
+              "thumbnailUrl": ""
+            }
+          },
+          "options": {
+            "excludeAddresses": [
+              "0x1111111111111111111111111111111111111111"
+            ]
+          }
+        }
+      ],
+      "sns": [
+        {
+          "type": "community",
+          "subType": "community-voice-chat-started",
+          "key": "A3333333-B333-4C33-8D33-E33333333333-1234567890000-batch-1",
+          "timestamp": 1234567890000,
+          "metadata": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "communityName": "Community",
+            "thumbnailUrl": "",
+            "addressesToNotify": [
+              "0x2222222222222222222222222222222222222222"
+            ]
+          }
+        },
+        {
+          "type": "community",
+          "subType": "community-voice-chat-started",
+          "key": "a3333333-b333-4c33-8d33-e33333333333-1234567891000-batch-1",
+          "timestamp": 1234567891000,
+          "metadata": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "communityName": "Community",
+            "thumbnailUrl": "",
+            "addressesToNotify": [
+              "0x2222222222222222222222222222222222222222"
+            ]
+          }
+        },
+        {
+          "type": "community",
+          "subType": "community-voice-chat-started",
+          "key": "A3333333-B333-4C33-8D33-E33333333333-1234567892000-batch-1",
+          "timestamp": 1234567892000,
+          "metadata": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "communityName": "Community",
+            "thumbnailUrl": "",
+            "addressesToNotify": [
+              "0x2222222222222222222222222222222222222222"
+            ]
+          }
+        }
+      ],
+      "wire": [
+        {
+          "phase": "start-upper",
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 0,
+            "positions": [],
+            "isMember": true,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "rpc_hex": "0a2441333333333333332d423333332d344333332d384433332d45333333333333333333333310d088ec8ff72330013a09436f6d6d756e697479",
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "started",
+            "createdAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": true,
+            "communityName": "Community"
+          }
+        },
+        {
+          "phase": "start-upper",
+          "address": "0x5555555555555555555555555555555555555555",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 0,
+            "positions": [],
+            "isMember": false,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "rpc_hex": "0a2441333333333333332d423333332d344333332d384433332d45333333333333333333333310d088ec8ff7233a09436f6d6d756e697479",
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "started",
+            "createdAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": "Community"
+          }
+        },
+        {
+          "phase": "start-lower",
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "createdAt": 1234567891000,
+            "status": 0,
+            "positions": [],
+            "isMember": true,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "rpc_hex": "0a2461333333333333332d623333332d346333332d386433332d65333333333333333333333310b890ec8ff72330013a09436f6d6d756e697479",
+          "json": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "status": "started",
+            "createdAt": 1234567891000,
+            "positions": [],
+            "worlds": [],
+            "isMember": true,
+            "communityName": "Community"
+          }
+        },
+        {
+          "phase": "end-upper",
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567891000,
+            "status": 1,
+            "endedAt": 1234567891000,
+            "positions": [],
+            "isMember": false,
+            "communityName": "",
+            "worlds": []
+          },
+          "rpc_hex": "0a2441333333333333332d423333332d344333332d384433332d45333333333333333333333310b890ec8ff723180120b890ec8ff723",
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "ended",
+            "createdAt": 1234567891000,
+            "endedAt": 1234567891000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": ""
+          }
+        },
+        {
+          "phase": "end-upper",
+          "address": "0x5555555555555555555555555555555555555555",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567891000,
+            "status": 1,
+            "endedAt": 1234567891000,
+            "positions": [],
+            "isMember": false,
+            "communityName": "",
+            "worlds": []
+          },
+          "rpc_hex": "0a2441333333333333332d423333332d344333332d384433332d45333333333333333333333310b890ec8ff723180120b890ec8ff723",
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "ended",
+            "createdAt": 1234567891000,
+            "endedAt": 1234567891000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": ""
+          }
+        },
+        {
+          "phase": "restart-upper",
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567892000,
+            "status": 0,
+            "positions": [],
+            "isMember": true,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "rpc_hex": "0a2441333333333333332d423333332d344333332d384433332d45333333333333333333333310a098ec8ff72330013a09436f6d6d756e697479",
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "started",
+            "createdAt": 1234567892000,
+            "positions": [],
+            "worlds": [],
+            "isMember": true,
+            "communityName": "Community"
+          }
+        },
+        {
+          "phase": "inactive-poll",
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "createdAt": 1234567892000,
+            "status": 1,
+            "endedAt": 1234567892000,
+            "positions": [],
+            "isMember": true,
+            "communityName": "",
+            "worlds": []
+          },
+          "rpc_hex": "0a2461333333333333332d623333332d346333332d386433332d65333333333333333333333310a098ec8ff723180120a098ec8ff7233001",
+          "json": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "status": "ended",
+            "createdAt": 1234567892000,
+            "endedAt": 1234567892000,
+            "positions": [],
+            "worlds": [],
+            "isMember": true,
+            "communityName": ""
+          }
+        },
+        {
+          "phase": "inactive-poll",
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567892000,
+            "status": 1,
+            "endedAt": 1234567892000,
+            "positions": [],
+            "isMember": true,
+            "communityName": "",
+            "worlds": []
+          },
+          "rpc_hex": "0a2441333333333333332d423333332d344333332d384433332d45333333333333333333333310a098ec8ff723180120a098ec8ff7233001",
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "ended",
+            "createdAt": 1234567892000,
+            "endedAt": 1234567892000,
+            "positions": [],
+            "worlds": [],
+            "isMember": true,
+            "communityName": ""
+          }
+        }
+      ]
+    }
+  ]
+}

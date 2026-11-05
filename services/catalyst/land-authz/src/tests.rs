@@ -1494,6 +1494,9 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
         body["message"],
         "Coordinates X and Y must be valid numbers in a valid range"
     );
+    // Past ±150 but inside an exception block: a parcel lamb2 looks up.
+    let (status, _, body) = get_json(&app, "/lambdas/parcels/160/100/operators").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
 
     let (status, _, body) = get_json(
         &app,
@@ -1554,6 +1557,18 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+    for (parcel, expected) in [
+        ("62/158", StatusCode::NOT_FOUND),
+        ("163/59", StatusCode::NOT_FOUND),
+        ("164/100", StatusCode::BAD_REQUEST),
+    ] {
+        let (status, _, body) = get_json(
+            &app,
+            &format!("/lambdas/users/{DANA}/parcels/{parcel}/permissions"),
+        )
+        .await;
+        assert_eq!(status, expected, "{parcel}: {body}");
+    }
     let (status, _, body) = get_json(&app, "/lambdas/users/nobody/parcels/1/1/permissions").await;
     assert_eq!(
         (status, body["message"].as_str()),
@@ -1566,14 +1581,14 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
     let (status, headers, body) = post_json(
         &app,
         &format!("/lambdas/users/{DANA}/parcels/permissions"),
-        json!({ "parcels": ["2,2", "37,55", "99,99", "2,2"] }),
+        json!({ "parcels": ["2,2", "37,55", "99,99", "2,2", "151,144"] }),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(headers[SOURCE_HEADER], "land-authz-index");
     assert_eq!(
         body["elements"].as_array().unwrap().len(),
-        3,
+        4,
         "duplicates collapse"
     );
     assert_eq!(body["elements"][0]["permissions"]["updateManager"], true);
@@ -1582,6 +1597,14 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
         json!({ "owner": false, "operator": false, "updateOperator": false, "updateManager": false, "approvedForAll": false })
     );
     assert_eq!(body["elements"][2]["permissions"], Value::Null);
+    assert_eq!(
+        (
+            &body["elements"][3]["x"],
+            &body["elements"][3]["permissions"]
+        ),
+        (&json!(151), &Value::Null),
+        "an exception-block parcel is looked up, not refused"
+    );
     let (status, _, body) = post_json(
         &app,
         &format!("/lambdas/users/{DANA}/parcels/permissions"),
@@ -1853,26 +1876,19 @@ async fn before_the_index_is_ready_the_marketplace_reader_answers_the_owner_leg_
     assert!(owns_land_at(&state, BOB, &[(2, 2)]).await.unwrap());
     assert!(!owns_land_at(&state, CARL, &[(1, 1), (2, 2)]).await.unwrap());
 
-    let (status, headers, body) = get_json(
+    // The single route answers five booleans or nothing: owner-only is not
+    // an answer, and without the LAND subgraph it is lamb2's bare 500.
+    let (status, _, body) = get_json(
         &app,
         &format!("/lambdas/users/{ALICE}/parcels/1/1/permissions"),
     )
     .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(headers[SOURCE_HEADER], "marketplace-subgraph:owner-only");
     assert_eq!(
-        body,
-        json!({ "owner": true, "operator": null, "updateOperator": null, "updateManager": null, "approvedForAll": null }),
-        "the legs the subgraph cannot decide are null, not false"
-    );
-    let (_, _, body) = get_json(
-        &app,
-        &format!("/lambdas/users/{CARL}/parcels/1/1/permissions"),
-    )
-    .await;
-    assert_eq!(
-        body,
-        json!({ "owner": false, "operator": null, "updateOperator": null, "updateManager": null, "approvedForAll": null })
+        (status, body),
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": "Internal Server Error" })
+        )
     );
     let (status, _, body) = post_json(
         &app,
@@ -1930,9 +1946,10 @@ async fn before_the_index_is_ready_the_marketplace_reader_answers_the_owner_leg_
         can_deploy(&none, (1, 1), ALICE).await,
         Err(Unavailable::NoSource)
     ));
-    let (status, _, body) = get_json(
+    let (status, _, body) = post_json(
         &router(none),
-        &format!("/lambdas/users/{ALICE}/parcels/1/1/permissions"),
+        &format!("/lambdas/users/{ALICE}/parcels/permissions"),
+        json!({ "parcels": ["1,1"] }),
     )
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);

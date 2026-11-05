@@ -1,0 +1,119 @@
+{
+  "social": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+  "companion": "be6a4b97a2189157884503485892ff46d0ac68da",
+  "sources": [
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/adapters/voice-db.ts",
+      "sha256": "049b7969e8251bc050bb2a45c11409c8e060084a660473d5cc07b06556929c53"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/logic/voice/voice.ts",
+      "sha256": "c094a8aa994c0efc6509e736c98257da84d77a0818eaa16170bef2ae62cf94a6"
+    },
+    {
+      "repository": "decentraland/comms-gatekeeper",
+      "file": "src/adapters/db/voice-db.ts",
+      "sha256": "06cf05a87566f429d3ed200aea0033195cc7f0299a4c6d4b0640b89c7d29dc87"
+    },
+    {
+      "repository": "decentraland/comms-gatekeeper",
+      "file": "src/adapters/db/types.ts",
+      "sha256": "1ea7552c148c084623bd35900882dd43e0bb6a87efdc880c6a391f8ba2a74d04"
+    },
+    {
+      "repository": "decentraland/comms-gatekeeper",
+      "file": "src/adapters/db/errors.ts",
+      "sha256": "30f19f49f0b8467d11729d98da29a26c47102a5fa0daa1942aeb18da0b431200"
+    },
+    {
+      "repository": "decentraland/comms-gatekeeper",
+      "file": "src/adapters/livekit.ts",
+      "sha256": "82f5b33c28bea3f8774fe3ad75b28a58b1434f9fb480603182388508b232fd28"
+    },
+    {
+      "repository": "decentraland/comms-gatekeeper",
+      "file": "src/logic/voice/voice.ts",
+      "sha256": "d130c2dc15dcb7926a0ef5d2b937912bfb08cc0724adf07624525c987b446040"
+    },
+    {
+      "repository": "decentraland/comms-gatekeeper",
+      "file": "src/components.ts",
+      "sha256": "7b79ebc3cdde634871f1b8f9dad00decc518b79f34f63cfc3f085ae340174e65"
+    }
+  ],
+  "scope": "Original Social voice and pending DB + original companion presence and media-write DB on PostgreSQL. Actual initial/interrupted TTL300000; media table retains rows until its minute sweep. No LiveKit transport instantiated; one source constant dependency extracted verbatim.",
+  "entries": [
+    {
+      "status": "connected",
+      "stale": false,
+      "source_presence": true,
+      "started": false,
+      "error": "One of the users is already in a voice chat: 0x2222222222222222222222222222222222222222",
+      "media_rows": 2,
+      "pending_rows": 0
+    },
+    {
+      "status": "not_connected",
+      "stale": false,
+      "source_presence": true,
+      "started": false,
+      "error": "One of the users is already in a voice chat: 0x2222222222222222222222222222222222222222",
+      "media_rows": 2,
+      "pending_rows": 0
+    },
+    {
+      "status": "not_connected",
+      "stale": true,
+      "source_presence": false,
+      "started": true,
+      "error": null,
+      "media_rows": 2,
+      "pending_rows": 1
+    },
+    {
+      "status": "connection_interrupted",
+      "stale": false,
+      "source_presence": true,
+      "started": false,
+      "error": "One of the users is already in a voice chat: 0x2222222222222222222222222222222222222222",
+      "media_rows": 2,
+      "pending_rows": 0
+    },
+    {
+      "status": "connection_interrupted",
+      "stale": true,
+      "source_presence": false,
+      "started": true,
+      "error": null,
+      "media_rows": 2,
+      "pending_rows": 1
+    },
+    {
+      "status": "disconnected",
+      "stale": false,
+      "source_presence": false,
+      "started": true,
+      "error": null,
+      "media_rows": 2,
+      "pending_rows": 1
+    }
+  ],
+  "writerSequences": [
+    {
+      "scenario": "pending-then-media-other-role",
+      "pending_retained": true,
+      "media_rows": 2
+    },
+    {
+      "scenario": "two-media-writers-retain-both-rooms",
+      "pending_retained": true,
+      "media_rows": 4,
+      "rooms": [
+        "voice-chat-private-media-one",
+        "voice-chat-private-media-two"
+      ]
+    }
+  ]
+}
