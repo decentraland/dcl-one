@@ -108,6 +108,10 @@ struct Fixture {
     response: FixtureResponse,
     #[serde(default)]
     volatile_paths: Vec<String>,
+    /// `"unspecified"`: the upstream answer has no stable order, so a
+    /// top-level array is compared as a multiset.
+    #[serde(default)]
+    order: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -120,6 +124,9 @@ struct FixtureRequest {
     headers: BTreeMap<String, String>,
     #[serde(default)]
     body: Option<Value>,
+    /// A body sent as these bytes, for one that is not JSON.
+    #[serde(default)]
+    body_raw: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -195,6 +202,9 @@ fn fixture_request(fx: &FixtureRequest) -> Request<Body> {
     for (k, v) in &fx.headers {
         builder = builder.header(k.as_str(), v.as_str());
     }
+    if let Some(raw) = &fx.body_raw {
+        return builder.body(Body::from(raw.clone())).unwrap();
+    }
     match &fx.body {
         Some(body) => builder
             .header(header::CONTENT_TYPE, "application/json")
@@ -250,6 +260,13 @@ async fn replay_one(router: Router, fx: &Fixture) -> Vec<String> {
                 for path in &fx.volatile_paths {
                     scrub(&mut baseline, path);
                     scrub(&mut candidate, path);
+                }
+                if fx.order.as_deref() == Some("unspecified") {
+                    for v in [&mut baseline, &mut candidate] {
+                        if let Some(items) = v.as_array_mut() {
+                            items.sort_by_cached_key(|i| i.to_string());
+                        }
+                    }
                 }
                 if baseline != candidate {
                     notes.push(format!("body: fixture={baseline} candidate={candidate}"));
@@ -336,7 +353,7 @@ async fn post_json(router: Router, uri: &str, body: Value) -> (StatusCode, Value
 }
 
 #[tokio::test]
-async fn status_carries_version_commit_and_time_and_cors_reflects_the_origin() {
+async fn status_carries_version_commit_and_time_and_lamb2_cors() {
     let state = state_without_db();
     let (status, body) = get_json(router(state.clone()), "/lambdas/status").await;
     assert_eq!(status, StatusCode::OK);
@@ -357,7 +374,7 @@ async fn status_carries_version_commit_and_time_and_cors_reflects_the_origin() {
         resp.headers()
             .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
             .unwrap(),
-        "https://example.org"
+        "*"
     );
 }
 
@@ -387,7 +404,8 @@ async fn profiles_reject_too_many_ids_and_malformed_json() {
         )
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    // lamb2's `request.json()` throws: its bare 500.
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 /// The old lambdas answered 400 before touching a reader; a configured
@@ -726,6 +744,83 @@ async fn unseed_profile(pool: &sqlx::PgPool, address: &str, entity_id: &str) {
 }
 
 #[tokio::test]
+async fn profiles_metadata_validates_ids_as_asset_bundle_registry() {
+    let state = state_without_db();
+    let msg = "The ids property must be an array of non-empty strings";
+    for body in [
+        json!({}),
+        json!({ "ids": "0xabc" }),
+        json!({ "ids": ["0xabc", ""] }),
+        json!({ "ids": [1] }),
+    ] {
+        let (status, resp) =
+            post_json(router(state.clone()), "/lambdas/profiles/metadata", body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(resp, json!({ "error": "Bad request", "message": msg }));
+    }
+    let (status, resp) = post_json(
+        router(state.clone()),
+        "/lambdas/profiles/metadata",
+        json!({ "ids": [] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(resp, json!([]));
+}
+
+#[tokio::test]
+async fn profiles_metadata_caps_distinct_ids_and_answers_bad_json_with_a_bare_500() {
+    let state = state_without_db();
+    let resp = router(state.clone())
+        .oneshot(
+            Request::post("/lambdas/profiles/metadata")
+                .header("content-type", "application/json")
+                .body(Body::from("{"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&bytes).unwrap(),
+        json!({ "error": "Internal Server Error" })
+    );
+    let ids: Vec<String> = (0..=1000).map(|i| format!("0x{i:040x}")).collect();
+    let (status, body) = post_json(
+        router(state),
+        "/lambdas/profiles/metadata",
+        json!({ "ids": ids }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body["message"],
+        "Too many profile ids were specified. Maximum allowed is 1000"
+    );
+}
+
+/// Both paths, the per-id cache (50 ids or fewer) and the batch read, turn a
+/// failed database read into the bare 500.
+#[tokio::test]
+async fn profiles_metadata_answers_a_failed_read_with_a_bare_500_on_both_paths() {
+    let state = state_without_db();
+    for n in [3, 60] {
+        let ids: Vec<String> = (0..n).map(|i| format!("0x{i:040x}")).collect();
+        let (status, body) = post_json(
+            router(state.clone()),
+            "/lambdas/profiles/metadata",
+            json!({ "ids": ids }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{n} ids");
+        assert_eq!(body, json!({ "error": "Internal Server Error" }), "{n} ids");
+    }
+}
+
+#[tokio::test]
 async fn a_synced_profile_is_served_shaped_and_cached() {
     let Some(state) = state_with_db(Settings::for_tests()).await else {
         return;
@@ -898,6 +993,81 @@ async fn default_profiles_are_the_deployed_entities_owning_nothing() {
     let (status, body) = get_json(router(state), "/lambdas/profile/default99999999").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({ "avatars": [], "timestamp": 0 }));
+}
+
+#[tokio::test]
+async fn compact_profiles_agree_with_the_full_answer() {
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let t = tag();
+    let address = format!("0x{}00000001", &t[..32]);
+    let unknown = format!("0x{}00000002", &t[..32]);
+    let entity_id = format!("bafymeta{t}");
+    seed_profile(
+        &state.pool,
+        &address,
+        &entity_id,
+        json!({ "avatars": [{
+            "name": "tester",
+            "avatar": { "snapshots": { "face256": "bafyface", "body": "bafybody" } }
+        }] }),
+    )
+    .await;
+
+    let ids = json!({ "ids": [address.to_uppercase(), unknown, address] });
+    let (status, full) = post_json(router(state.clone()), "/lambdas/profiles", ids.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    let face = full[0]["avatars"][0]["avatar"]["snapshots"]["face256"].clone();
+    let claimed = full[0]["avatars"][0]["hasClaimedName"].clone();
+    let (status, compact) =
+        post_json(router(state.clone()), "/lambdas/profiles/metadata", ids).await;
+    unseed_profile(&state.pool, &address, &entity_id).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        compact,
+        json!([{
+            "pointer": address, "name": "tester", "hasClaimedName": claimed, "thumbnailUrl": face
+        }])
+    );
+}
+
+/// Above 50 ids the batch read serves the same compact answer, once per
+/// pointer whatever its case.
+#[tokio::test]
+async fn compact_profiles_above_the_cache_batch() {
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let t = tag();
+    let address = format!("0x{}00000003", &t[..32]);
+    let entity_id = format!("bafymetabatch{t}");
+    seed_profile(
+        &state.pool,
+        &address,
+        &entity_id,
+        json!({ "avatars": [{
+            "name": "batched",
+            "avatar": { "snapshots": { "face256": "bafyface", "body": "bafybody" } }
+        }] }),
+    )
+    .await;
+    let mut ids: Vec<String> = (0..60).map(|i| format!("0x{}{i:08x}", &t[..32])).collect();
+    ids[30] = address.to_uppercase();
+    ids.push(address.clone());
+
+    let (status, compact) = post_json(
+        router(state.clone()),
+        "/lambdas/profiles/metadata",
+        json!({ "ids": ids }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{compact}");
+    assert_eq!(compact.as_array().unwrap().len(), 1, "{compact}");
+    assert_eq!(compact[0]["pointer"], address);
+    assert_eq!(compact[0]["name"], "batched");
+
+    unseed_profile(&state.pool, &address, &entity_id).await;
 }
 
 fn head(t: &str, i: u64, created_ms: i64) -> Value {

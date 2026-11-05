@@ -1101,8 +1101,8 @@ pub async fn nfts_collections(State(state): State<SharedState>) -> Response {
 /// outfits it may wear (`sanitize_outfits`), with `namesForExtraSlots` (the
 /// names it owns); an address without names keeps only slots 0-4. An entity
 /// without outfits is answered as deployed (decentraland/lamb2's
-/// `getOutfits`). A failed content read is a 500, a failed ownership or
-/// names read lamb2's 502 `FetcherError`.
+/// `getOutfits`). A failed content read or third-party check is lamb2's
+/// bare 500, a failed ownership or names read its 502 `FetcherError`.
 pub async fn outfits(State(state): State<SharedState>, Path(id): Path<String>) -> Response {
     let address = id.to_lowercase();
     let st = state.clone();
@@ -1113,7 +1113,7 @@ pub async fn outfits(State(state): State<SharedState>, Path(id): Path<String>) -
             let pointer = format!("{address}:outfits");
             let entities = super::profiles::active_entities(&st, std::slice::from_ref(&pointer))
                 .await
-                .map_err(|()| super::internal_server_error())?;
+                .map_err(|()| super::lambdas_internal_error())?;
             let Some(mut entity) = entities.into_iter().next() else {
                 return Ok::<Value, Response>(Value::Null);
             };
@@ -1156,7 +1156,9 @@ pub async fn outfits(State(state): State<SharedState>, Path(id): Path<String>) -
 /// and its third-party check then decides alone for the items seen so far:
 /// an outfit `[owned third-party, not owned]` is kept with the first only.
 /// Without a collections subgraph nothing is checked, as profiles do. A
-/// failed ownership read answers the old lambdas' 502 `FetcherError`.
+/// failed ownership read answers the old lambdas' 502 `FetcherError`; a
+/// failed third-party check lamb2's bare 500, as its checker's error is not
+/// one `errorHandler` maps.
 async fn sanitize_outfits(
     state: &MarketplaceState,
     address: &str,
@@ -1246,7 +1248,10 @@ async fn sanitize_outfits(
     } else {
         super::third_party::sanitize_third_party_urns(state, address, &worn_third_party)
             .await
-            .map_err(|e| super::third_party::fetch_error(address, &e))?
+            .map_err(|e| {
+                tracing::warn!(error = %e, address, "outfits: third-party items could not be checked");
+                super::lambdas_internal_error()
+            })?
             .into_iter()
             .collect()
     };
@@ -1636,6 +1641,31 @@ mod tests {
         assert_eq!(
             e["metadata"],
             json!({ "outfits": [{ "slot": 0 }, { "slot": 7 }], "namesForExtraSlots": ["alice"] })
+        );
+    }
+
+    /// lamb2's third-party checker error is not one `errorHandler` maps: a
+    /// failed check (here the mapping read) is the bare 500, not the 502.
+    #[tokio::test]
+    async fn a_failed_third_party_check_is_lamb2s_bare_500() {
+        let state = super::super::tests::support::state_with_empty_readers(None).await;
+        let mut entity = json!({ "metadata": { "outfits": [{ "slot": 0, "outfit": { "wearables": [
+            "urn:decentraland:matic:collections-thirdparty:tp:c1:hat:mainnet:0x0000000000000000000000000000000000000001:1"
+        ] } }] } });
+        let resp = sanitize_outfits(
+            &state,
+            "0x0000000000000000000000000000000000000001",
+            &mut entity,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(resp.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&body).unwrap(),
+            json!({ "error": "Internal Server Error" })
         );
     }
 }

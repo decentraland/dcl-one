@@ -1,18 +1,28 @@
 {
-  "description": "POST /lambdas/profiles with a never-deployed address returns 200 + empty array (no entity matches, but valid request).",
+  "description": "POST /lambdas/profiles with never-deployed addresses returns 200 + an array of the profiles found (none). lamb2 gives the result no stable order (content-server cache hits first, then DB order), so the replay compares it as a set.",
   "request": {
     "method": "POST",
     "path": "/lambdas/profiles",
     "query": {},
-    "headers": {"content-type": "application/json"},
-    "body": {"ids": ["0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"]}
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "ids": [
+        "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        "0x0000000000000000000000000000000000000001"
+      ]
+    }
   },
   "response": {
     "status": 200,
-    "headers": {"content-type": "application/json"},
+    "headers": {
+      "content-type": "application/json"
+    },
     "body_json": []
   },
-  "captured_from": "hand-authored from handler source (lambdas.rs::profiles)",
+  "captured_from": "hand-authored from lamb2 02a37f5 src/adapters/profiles.ts::getProfiles and catalyst a416565 src/logic/active-entities/component.ts; dcl-one shop/src/market/profiles.rs::profiles",
   "captured_at": "2026-05-23T20:00:00Z",
-  "volatile_paths": []
+  "volatile_paths": [],
+  "order": "unspecified"
 }
