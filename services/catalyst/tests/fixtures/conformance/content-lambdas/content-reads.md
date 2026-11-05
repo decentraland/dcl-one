@@ -219,17 +219,22 @@ pointer of the same entity answered from the DB can return that entity twice
   `src/Environment.ts:106-125`, `src/components.ts:545-595`). GET and HEAD share the buckets.
 - Rate limit (dcl-one): the same three buckets, defaults, environment variables and exemption in the app
   (`services/catalyst/content/src/content_get_limit.rs`, a route layer on GET and HEAD). The client is the
-  rightmost entry of `TRUSTED_CLIENT_IP_HEADER` when set, else the gateway-stamped address (`X-Real-IP`,
-  else the last `X-Forwarded-For` entry), else the socket. Counters are per process, as upstream's
-  in-memory store. The gateway's own limits (`zone=content`, `zone=read`, `infra/gateway/gateway.py`) stay
-  in front, with the addresses of `GATEWAY_TRUSTED_SYNC_PEER_IPS` uncounted.
+  socket peer; only a peer in `HTTP_TRUSTED_PROXY_CIDRS` (the gateway) may name it, through the rightmost
+  entry of `TRUSTED_CLIENT_IP_HEADER` when set, else its one `X-Real-IP`. Upstream reads its headers from
+  any peer; dcl-one's routes are reachable without the gateway too, so a direct client's headers never
+  count. `TRUSTED_SYNC_PEER_IPS` also takes networks (CIDR), as the gateway's list does. Counters are per
+  process, as upstream's in-memory store. The gateway's own limits (`zone=content`, `zone=read`,
+  `infra/gateway/gateway.py`) stay in front; it leaves `GATEWAY_TRUSTED_SYNC_PEER_IPS` uncounted on
+  `GET`/`HEAD /contents/{hash}` only, as upstream.
+- Rollout: a node behind the gateway must list the gateway's network in `HTTP_TRUSTED_PROXY_CIDRS`;
+  otherwise every client shares the gateway's budget (1000 requests a minute by default).
 
 **Responses**
 
 | trigger | status | body | headers | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|---|
 | over burst/hourly/daily budget | 429 | `{"error":"Too many requests"}` | `Retry-After`, `RateLimit-*` (added by the limiter) | `components.ts:554`, `content-get-rate-limit.ts:99-118` | `content_get_limit.rs`: the same buckets, body, `Retry-After` and `RateLimit-Limit`/`-Remaining`/`-Reset`. The gateway's per-second limits still answer nginx's HTML 429 above 100 r/s (`/content/`) or 30 r/s (root) | MATCH on the app's budgets and body; the `RateLimit-*` values follow a reading of `@dcl/rate-limiter-component`, which is not vendored (needs a capture); the gateway can answer first above its per-second rates |
-| client IP in `TRUSTED_SYNC_PEER_IPS` | never limited | | | `sync-peer-exemption.ts:17-24` | `content_get_limit.rs` skips listed peers; the gateway leaves `GATEWAY_TRUSTED_SYNC_PEER_IPS` uncounted in `zone=content` and `zone=read` | MATCH |
+| client IP in `TRUSTED_SYNC_PEER_IPS` | never limited | | | `sync-peer-exemption.ts:17-24` | `content_get_limit.rs` skips listed peers (addresses or networks); the gateway leaves `GATEWAY_TRUSTED_SYNC_PEER_IPS` uncounted in `zone=content` on `GET`/`HEAD /contents/{hash}` only | MATCH |
 | hash fails validation | 404 | `{"error":"No content found with hash <hash>"}` | json | `get-content-handler.ts:15-17` | `get_content.rs:97-99` | MATCH (fixture `tests/fixtures/content/contents-404-garbage-hash.json`) |
 | hash denylisted | 404 | same | | `get-content-handler.ts:22-24` | `get_content.rs:97-99` | MATCH |
 | `If-None-Match` matches `"<hash>"` or is `*` (checked before storage) | 304 | none | `ETag: "<hash>"`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Access-Control-Expose-Headers: ETag` | `get-content-handler.ts:34-35`, `utils.ts:88-113` | `get_content.rs:101-105`, `formatters.rs:9-33` | MATCH |
@@ -237,7 +242,7 @@ pointer of the same entity answered from the DB can return that entity twice
 | Range unsatisfiable (`start >= size`, `start > end`, `bytes=-0`, empty file) | 416 | none | `Content-Range: bytes */<size>`, `Access-Control-Expose-Headers: Content-Range` | `utils.ts:184-195` | `get_content.rs:125-135`, `formatters.rs:41-83` | MATCH |
 | Range satisfiable | 206 | the slice (GET), none (HEAD) | base headers below + `Content-Range: bytes a-b/<size>`, `Content-Length: <b-a+1>` | `utils.ts:197-211`, `get-content-handler.ts:52-63` | `get_content.rs:136-159` | MATCH. Upstream `<size>` is the decompressed size of a gzip-stored file (`utils.ts:184`); dcl-one stores raw bytes, so the same number |
 | plain GET | 200 | the bytes | `Content-Type: application/octet-stream` (or sniffed), `ETag: "<hash>"`, `Access-Control-Expose-Headers: ETag, Content-Range, Accept-Ranges, Content-Length`, `Accept-Ranges: bytes`, `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, `Content-Length` | `utils.ts:115-135` | `formatters.rs:85-102`, `get_content.rs:193-198` | DIVERGENT: upstream serves a gzip-stored file as stored, with `Content-Encoding: gzip` and the compressed `Content-Length`, regardless of `Accept-Encoding` (`utils.ts:128-133`); dcl-one never sets `Content-Encoding` (`storage/src/content.rs:333-338`). Upstream omits `Content-Length` for a 0-byte file (`if (content.size)`); dcl-one sends `0` |
-| plain GET with `STORAGE_X_ACCEL_BASE` set | 200 | empty; nginx serves the file | `X-Accel-Redirect` | n/a | `get_content.rs:177-191` | deploy-dependent; headers nginx emits need a capture |
+| plain GET with `STORAGE_X_ACCEL_BASE` set | 200 | empty; nginx serves the file | `X-Accel-Redirect` | n/a | `get_content.rs:177-191` | deploy-dependent; headers nginx emits need a capture. nginx likely drops the app's `RateLimit-*` headers on the internal redirect, as it does `ETag`; a 429 is answered by the app and keeps them |
 | plain HEAD | 200 | none | as plain GET | `get-content-handler.ts:62` | `get_content.rs:163-167` | MATCH, except sniffing (next row) |
 | `?includeMimeType` | 200/206 | | `Content-Type` from `file-type` on the stream head, else `application/octet-stream` | `utils.ts:137-153` | `get_content.rs` `detect_content_type`, sniffed on GET, HEAD and the head of a range | DIVERGENT on rarer formats only: dcl-one detects png, glb, mp4 (any `ftyp`), jpeg, gif, mp3 (ID3 or a Layer III frame), wav, webp, zip, ogg, webm, and answers `application/octet-stream` for anything else (JSON and text included, as `file-type`); `file-type`'s other formats (ktx2, `ftyp` brands such as `qt`/`M4A`/`heic`, Ogg codec subtypes, zip-based documents) need its table, which is not vendored (CR-7) |
 | storage fault | 500 | `{"error":"Internal Server Error"}` | | `middlewares.ts:72-81` | `get_content.rs:107`, `errors.rs:95-99` | MATCH |
@@ -397,16 +402,18 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
    - dcl-one: `services/catalyst/content/src/content_get_limit.rs` with the same names and defaults
      (`config/src/content.rs`; zero limits and prefixes outside 1-128 fail at startup, as upstream).
    - Gap: the `RateLimit-*` values on a passing request and on a 429 follow a reading of
-     `@dcl/rate-limiter-component` (not vendored); confirm with a capture. Counters are per process.
+     `@dcl/rate-limiter-component` (not vendored); confirm with a capture. Counters are per process. With
+     `STORAGE_X_ACCEL_BASE` set, a passing request's `RateLimit-*` likely does not survive nginx's internal
+     redirect; the 429 does. Forwarding headers count only from `HTTP_TRUSTED_PROXY_CIDRS` peers.
    - Severity: P2.
 
 4. **CR-4** GET/HEAD /contents/:hashId: trusted sync peer bypass. Status: MATCH, no work.
    - Upstream: canonical IPs listed in `TRUSTED_SYNC_PEER_IPS` (comma list; invalid entries dropped with a
      warning) skip all three buckets (`decentraland/catalyst:src/controllers/sync-peer-exemption.ts:12-25`,
      `src/components.ts:580-595`).
-   - dcl-one: the same in `content_get_limit.rs`; the gateway gives the addresses of
-     `GATEWAY_TRUSTED_SYNC_PEER_IPS` an empty `limit_req` key in `zone=content` and `zone=read`
-     (`infra/gateway/gateway.py`).
+   - dcl-one: the same in `content_get_limit.rs`, which also takes networks (CIDR); the gateway gives the
+     peers of `GATEWAY_TRUSTED_SYNC_PEER_IPS` an empty `limit_req` key in `zone=content` on `GET`/`HEAD
+     /contents/{hash}` only, every other route counted (`infra/gateway/gateway.py`).
    - Severity: none (closed).
 
 5. **CR-5** GET /entities/:type and GET /audit/:type/:entityId: accept `outfits`. Status: MATCH, no work.
