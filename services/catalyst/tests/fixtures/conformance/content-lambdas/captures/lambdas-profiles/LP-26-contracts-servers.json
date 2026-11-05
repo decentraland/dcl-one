@@ -1,0 +1,59 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/lambdas/contracts/servers",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": [
+      {
+        "baseUrl": "https://peer-1.example.org",
+        "owner": "0x0000000000000000000000000000000000000011",
+        "id": "0x0000000000000000000000000000000000000000000000000000000000000100"
+      },
+      {
+        "baseUrl": "https://peer-2.example.org",
+        "owner": "0x0000000000000000000000000000000000000012",
+        "id": "0x0000000000000000000000000000000000000000000000000000000000000101"
+      },
+      {
+        "baseUrl": "https://peer-3.example.org",
+        "owner": "0x0000000000000000000000000000000000000013",
+        "id": "0x0000000000000000000000000000000000000000000000000000000000000102"
+      },
+      {
+        "baseUrl": "https://peer-4.example.org",
+        "owner": "0x0000000000000000000000000000000000000014",
+        "id": "0x0000000000000000000000000000000000000000000000000000000000000103"
+      },
+      {
+        "baseUrl": "https://peer-5.example.org",
+        "owner": "0x0000000000000000000000000000000000000015",
+        "id": "0x0000000000000000000000000000000000000000000000000000000000000104"
+      },
+      {
+        "baseUrl": "https://peer-6.example.org",
+        "owner": "0x0000000000000000000000000000000000000016",
+        "id": "0x0000000000000000000000000000000000000000000000000000000000000105"
+      },
+      {
+        "baseUrl": "https://peer-7.example.org",
+        "owner": "0x0000000000000000000000000000000000000017",
+        "id": "0x0000000000000000000000000000000000000000000000000000000000000106"
+      },
+      {
+        "baseUrl": "https://peer-8.example.org",
+        "owner": "0x0000000000000000000000000000000000000018",
+        "id": "0x0000000000000000000000000000000000000000000000000000000000000107"
+      }
+    ]
+  },
+  "note": "Hosts replaced by peer-N.example.org; every captured baseUrl was https:// with no trailing slash and no whitespace. Owners were EIP-55 checksummed (mixed case) and are replaced by fakes; each id is 0x + 64 hex."
+}

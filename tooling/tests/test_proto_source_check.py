@@ -1,4 +1,4 @@
-"""Only library/protocol/proto and the listed legacy copies may hold decentraland protos."""
+"""Only library/protocol may hold decentraland protos."""
 import importlib.util
 from pathlib import Path
 import tempfile
@@ -19,19 +19,20 @@ def write(root, rel, text):
 
 
 class ProtoSourceTest(unittest.TestCase):
-    def test_source_allowlist_and_own_packages_pass_while_a_new_copy_fails(self):
+    def test_source_and_own_packages_pass_while_a_copy_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             write(root, 'library/protocol/proto/decentraland/sdk/components/thing.proto', DECENTRALAND)
             write(root, 'library/protocol/public/sdk-components.proto', 'syntax = "proto3";\npackage decentraland.sdk.components;\nimport public "decentraland/sdk/components/thing.proto";\n')
-            write(root, 'library/dcl-scene-authoring/proto/decentraland/sdk/components/thing.proto', DECENTRALAND)
             write(root, 'services/catalyst/comms/src/protocol/bus/room_events.proto', OWN)
             write(root, 'apps/x/node_modules/@dcl/protocol/proto/decentraland/thing.proto', DECENTRALAND)
             write(root, 'library/protocol/proto/google/protobuf/descriptor.proto', 'syntax = "proto2";\npackage google.protobuf;\n')
             self.assertEqual(check.offenders(root), [])
             write(root, 'services/new-copy/decentraland/sdk/components/thing.proto', '﻿' + DECENTRALAND)
             write(root, 'rendering/bevy-explorer/source/crates/dcl_component/src/proto/decentraland/x.proto', DECENTRALAND)
+            write(root, 'library/dcl-scene-authoring/proto/decentraland/sdk/components/thing.proto', DECENTRALAND)
             self.assertEqual(check.offenders(root), [
+                'library/dcl-scene-authoring/proto/decentraland/sdk/components/thing.proto',
                 'rendering/bevy-explorer/source/crates/dcl_component/src/proto/decentraland/x.proto',
                 'services/new-copy/decentraland/sdk/components/thing.proto'])
 

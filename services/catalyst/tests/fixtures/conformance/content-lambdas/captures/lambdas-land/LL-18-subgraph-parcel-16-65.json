@@ -1,0 +1,40 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://subgraph.decentraland.org/land-manager",
+  "request": {
+    "method": "POST",
+    "path": "/",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "query": "{ parcels(where: { and: [{ x: 16 }, { y: 65 }] }) { x y owner { address } operator updateOperator } estates(where: { parcels_: { x: 16, y: 65 } }) { owner { address } operator updateOperator } }"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*",
+      "vary": "Origin, accept-encoding",
+      "access-control-allow-headers": "Content-Type, User-Agent",
+      "access-control-allow-methods": "GET, OPTIONS, POST"
+    },
+    "body": {
+      "data": {
+        "parcels": [
+          {
+            "x": "16",
+            "y": "65",
+            "owner": {
+              "address": "0x000000000000000000000000000000000000001b"
+            },
+            "operator": null,
+            "updateOperator": "0x0000000000000000000000000000000000000000"
+          }
+        ],
+        "estates": []
+      }
+    }
+  }
+}
