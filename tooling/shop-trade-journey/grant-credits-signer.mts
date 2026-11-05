@@ -8,7 +8,7 @@
 // The grantee is the address of the key in .cache/dev/credits-signer.key (or E2E_CREDITS_SIGNER_KEY_FILE),
 // or E2E_CREDITS_SIGNER when set. The admin key, a wallet holding the role's admin role on that contract,
 // is read from the file CREDITS_ADMIN_KEY_FILE names, or typed at a hidden prompt. No key is printed.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createPublicClient, createWalletClient, getAddress, http, isAddress, keccak256, parseAbi, toHex, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -80,7 +80,12 @@ async function hiddenPrompt(question: string): Promise<string> {
 
 async function adminKey(): Promise<Hex> {
   const file = process.env.CREDITS_ADMIN_KEY_FILE;
-  if (file) return readKey(file, "CREDITS_ADMIN_KEY_FILE");
+  if (file) {
+    // A regular file holding the contract's admin key should be private; a pipe (<(pbpaste)) has no such mode.
+    const st = statSync(file);
+    if (st.isFile() && st.mode & 0o077) console.warn(`Warning: ${file} is readable by other users; chmod 600 it, or delete it once the role is granted.`);
+    return readKey(file, "CREDITS_ADMIN_KEY_FILE");
+  }
   const typed = await hiddenPrompt("Private key of the CreditsManager admin on Amoy (hidden): ");
   const key = typed.startsWith("0x") ? typed : `0x${typed}`;
   if (!/^0x[0-9a-fA-F]{64}$/.test(key)) throw new Error("that is not a 32-byte private key");

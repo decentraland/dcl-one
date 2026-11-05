@@ -138,8 +138,9 @@ there with viem. Only the Shop's own top-level page can reach it. It refuses:
 - typed data whose domain names another chain, in `chainId` or in `salt` (where Decentraland's trade and
   meta-transaction domains carry it), or names no chain at all;
 - a transaction for a chain other than the current one, or to a contract outside Amoy's trade contracts
-  (MANA, the marketplaces, the bid contract, the collection store) and the token's collection; the
-  primary loop adds the CouponManager, the CreditsManager and the item's collection;
+  (MANA, the marketplaces, the bid contract, the collection store) and the token's collection; in the
+  primary loop the seller may send only to the CouponManager, and the buyer only to MANA, the
+  marketplaces, the collection store and the CreditsManager;
 - a typed-data `chainId` that is not a number, since viem would leave it out of what is signed;
 - requests for another address, and `eth_sign`, `eth_signTransaction` and `eth_sendRawTransaction`.
 

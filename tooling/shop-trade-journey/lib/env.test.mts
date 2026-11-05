@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { journeyEnv, parseDiscount, parseEnvFile, parseItem, parseToken } from "./env.mts";
+import { journeyEnv, parseDiscount, parseEnvFile, parseItem, parseToken, parseTopup } from "./env.mts";
 
 describe("parseEnvFile", () => {
   it("reads KEY=value lines, skipping comments and export, stripping quotes", () => {
@@ -42,6 +42,15 @@ describe("parseDiscount", () => {
     assert.equal(parseDiscount(undefined), 10);
     assert.equal(parseDiscount(""), 10);
     assert.equal(parseDiscount("70"), 70);
-    for (const bad of ["4", "71", "12.5", "ten"]) assert.throws(() => parseDiscount(bad), /E2E_DISCOUNT/, bad);
+    for (const bad of ["4", "71", "12.5", "ten", "0x10", "1e1"]) assert.throws(() => parseDiscount(bad), /E2E_DISCOUNT/, bad);
+  });
+});
+
+describe("parseTopup", () => {
+  it("defaults to 100 and keeps within the server's mock top-up cap", () => {
+    assert.equal(parseTopup(undefined), "100");
+    assert.equal(parseTopup(" 25.5 "), "25.5");
+    assert.equal(parseTopup("10000"), "10000");
+    for (const bad of ["0", "10001", "1.234", "-5", "1e3", "lots"]) assert.throws(() => parseTopup(bad), /E2E_TOPUP/, bad);
   });
 });

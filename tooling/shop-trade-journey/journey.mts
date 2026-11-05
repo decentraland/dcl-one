@@ -19,7 +19,7 @@ import { generatePrivateKey } from "viem/accounts";
 import { polygonAmoy } from "viem/chains";
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { launch } from "./lib/browser.mts";
-import { journeyEnv, parseDiscount, parseItem, parseToken } from "./lib/env.mts";
+import { journeyEnv, parseDiscount, parseItem, parseToken, parseTopup } from "./lib/env.mts";
 import { signedPost } from "./lib/signed.mts";
 import { answer, DEFAULT_RPC, keyFrom, PAGE_PROVIDER, testnetWallet, type TestnetWallet } from "./lib/wallet.mts";
 
@@ -345,6 +345,24 @@ async function quotedMana(page: Page): Promise<bigint | null> {
 }
 
 /** The seller's live discounts on this collection in My Store: rows that still offer "End now". */
+/** "<pct>% off" at the start of a row: "5% off" must not match "15% off". */
+const offText = (pct: number) => new RegExp(`^\\s*${pct}% off`);
+
+/** My Store's Discounts list once it has answered: the empty state or its rows, never the loading state. */
+async function discountsLoaded(page: Page): Promise<void> {
+  const panel = page.locator('section[aria-label="Discounts"]');
+  await panel.getByTestId("shop-empty").or(panel.getByTestId("shop-creator-sale")).or(panel.getByRole("alert")).first().waitFor({ timeout: 60_000 });
+  if (await panel.getByRole("alert").first().isVisible().catch(() => false)) throw new Error(`My Store could not load the discounts: ${(await panel.getByRole("alert").first().innerText()).trim()}`);
+}
+
+/** The "Discount <name>" button for the collection, or an error naming the buttons My Store does show. */
+async function discountButton(page: Page, collectionName: string) {
+  const button = page.getByRole("button", { name: `Discount ${collectionName}`, exact: true });
+  if (await button.isVisible().catch(() => false)) return button;
+  const shown = (await page.getByRole("button", { name: /^Discount / }).allInnerTexts()).map((t) => t.trim());
+  throw new Error(`My Store has no “Discount ${collectionName}” button (the collection's on-chain name)${shown.length ? `; it shows: ${shown.join(", ")}` : ", and no collection to discount"}`);
+}
+
 function liveSales(page: Page, collectionName: string) {
   return page.getByTestId("shop-creator-sale").filter({ hasText: collectionName }).filter({ has: page.getByRole("button", { name: "End now" }) });
 }
@@ -352,7 +370,8 @@ function liveSales(page: Page, collectionName: string) {
 async function endDiscount(seller: Actor, collectionName: string, pct: number): Promise<void> {
   await seller.page.goto(`${sites}/shop/my-store`);
   // This run's discount: its collection and its percentage. The preflight refuses a collection with one live.
-  const row = liveSales(seller.page, collectionName).filter({ hasText: `${pct}% off` });
+  await discountsLoaded(seller.page);
+  const row = liveSales(seller.page, collectionName).filter({ hasText: offText(pct) });
   await row.first().getByRole("button", { name: "End now" }).click({ timeout: 60_000 });
   // The row re-renders as ended once the list refreshes, so the confirmation is read from the page.
   await seller.page.getByText("Ended.").first().waitFor({ timeout: RELAYED });
@@ -361,7 +380,7 @@ async function endDiscount(seller: Actor, collectionName: string, pct: number): 
 /** The primary loop over E2E_ITEM: the seller's discount, then a MANA and a credits purchase at the lower price. */
 async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: Funds, item: { contract: string; itemId: string } | null): Promise<void> {
   const pct = parseDiscount(env.E2E_DISCOUNT);
-  const topup = env.E2E_TOPUP || "100";
+  const topup = parseTopup(env.E2E_TOPUP);
   let collectionName = "";
   let price: bigint | null = null;
   if (item) {
@@ -383,9 +402,11 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
     });
     await step("no discount of the seller's is live on the collection", seller, async () => {
       await seller.page.goto(`${sites}/shop/my-store`);
-      await seller.page.getByRole("button", { name: `Discount ${collectionName}`, exact: true }).or(liveSales(seller.page, collectionName)).first().waitFor({ timeout: 60_000 });
+      // Counted only once the list has answered: while it loads it shows no row, live or not.
+      await discountsLoaded(seller.page);
       const live = await liveSales(seller.page, collectionName).count();
       if (live) throw new Error(`${live} discount(s) on “${collectionName}” are still live, from an earlier run: end them in My Store first`);
+      await discountButton(seller.page, collectionName);
     });
   }
   // Credits: the stack signs them only with a key holding CREDITS_SIGNER_ROLE on Amoy's CreditsManager,
@@ -421,16 +442,19 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
   }
   if (short.length) throw new Error(`not funded: ${short.join("; ")}`);
 
-  await step(`seller starts a ${pct}% discount from My Store`, seller, async () => {
-    await seller.page.goto(`${sites}/shop/my-store`);
-    await seller.page.getByRole("button", { name: `Discount ${collectionName}`, exact: true }).click({ timeout: 60_000 });
-    await seller.page.getByLabel("Discount percentage").fill(String(pct));
-    await seller.page.getByRole("button", { name: "Review discount" }).click();
-    await seller.page.getByRole("button", { name: "Start discount" }).click();
-    await seller.page.getByTestId("shop-sale-started").waitFor({ timeout: RELAYED });
-  });
   let ended = false;
   try {
+    // Inside the try: a start that times out may still have published the discount, and the preflight
+    // made sure no other discount is live on the collection, so whatever the cleanup finds is this run's.
+    await step(`seller starts a ${pct}% discount from My Store`, seller, async () => {
+      await seller.page.goto(`${sites}/shop/my-store`);
+      await discountsLoaded(seller.page);
+      await (await discountButton(seller.page, collectionName)).click();
+      await seller.page.getByLabel("Discount percentage").fill(String(pct));
+      await seller.page.getByRole("button", { name: "Review discount" }).click();
+      await seller.page.getByRole("button", { name: "Start discount" }).click();
+      await seller.page.getByTestId("shop-sale-started").waitFor({ timeout: RELAYED });
+    });
     await step("the item shows the discounted price", buyer, async () => {
       // The catalogue joins the creator's live coupon once the coupon-state job has read it from the manager.
       const until = Date.now() + 3 * 60_000;
