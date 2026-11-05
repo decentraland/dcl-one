@@ -991,11 +991,15 @@ fn resolve_playback<'a>(
     bodyshape: &str,
     emote_loader: &'a mut CollectibleManager<Emote>,
     gltfs: &mut Assets<Gltf>,
-    ipfas: &IpfsAssetServer,
-    preloaded_gltfs: &Query<&PreloadedGltf>,
-    cached_gltf_handles: &mut HashSet<Handle<Gltf>>,
-    anim_clips: &Assets<AnimationClip>,
+    params: &mut PlayParams,
 ) -> Result<(&'a Emote, Handle<AnimationClip>, f32), Hold> {
+    let PlayParams {
+        ipfas,
+        preloaded_gltfs,
+        cached_gltf_handles,
+        anim_clips,
+        ..
+    } = params;
     let urn = &playback.urn;
     if let Some(scene_emote) = urn.scene_emote() {
         debug!("got {scene_emote:?}");
@@ -1504,16 +1508,8 @@ fn play_slot(
     seek: &mut Option<f32>,
     default_mark: Option<f32>,
 ) -> Result<Played, Hold> {
-    let (emote, clip, clip_duration) = resolve_playback(
-        playback,
-        bodyshape,
-        emote_loader,
-        gltfs,
-        &params.ipfas,
-        &params.preloaded_gltfs,
-        &mut params.cached_gltf_handles,
-        &params.anim_clips,
-    )?;
+    let (emote, clip, clip_duration) =
+        resolve_playback(playback, bodyshape, emote_loader, gltfs, params)?;
 
     // extract props and prop anim
     let (prop_fresh, prop_player_and_clip) = match ensure_prop(
