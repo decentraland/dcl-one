@@ -35,6 +35,14 @@ pub const FSR_SHARPNESS: f32 = 0.92;
 /// out of the compositor's 2D view.
 const COMPOSITOR_LAYER: RenderLayers = RenderLayers::layer(2);
 
+/// How many frames after a scene target retarget or resize the compositor's material is still
+/// touched. Bevy prepares 2D materials in no fixed order against GPU images, and the fork keeps
+/// a replaced image's old texture readable while the new one is prepared: a material touched
+/// only in the frame of the change can bind the texture of the previous size, which the plain
+/// copy then reads past (transparent black beyond it, the page showing through on the web).
+/// Touching it again on the next frames rebuilds the bind group once the new texture exists.
+const MATERIAL_REFRESH_FRAMES: u8 = 2;
+
 /// The image the primary camera renders the world into, and the render scale it is sized for.
 #[derive(Resource)]
 pub struct SceneTarget {
@@ -190,6 +198,7 @@ fn sync_scene_target(
     mut primary: Query<&mut Camera, (With<PrimaryCamera>, Without<Compositor>)>,
     mut compositor: Query<(&mut Camera, &mut ContrastAdaptiveSharpening), With<Compositor>>,
     quads: Query<&MeshMaterial2d<FsrMaterial>>,
+    mut refresh: Local<u8>,
 ) {
     let (Ok(window), Ok(mut primary)) = (windows.single(), primary.single_mut()) else {
         return;
@@ -222,6 +231,7 @@ fn sync_scene_target(
             };
         }
         primary.target = RenderTarget::Image(target);
+        *refresh = MATERIAL_REFRESH_FRAMES;
     }
     if scene_target.scale != render_scale {
         scene_target.scale = render_scale;
@@ -236,14 +246,17 @@ fn sync_scene_target(
     for quad in &quads {
         // a retarget may give the image a new GPU texture, and the material's bind group only
         // follows when the material changes too: `params` may not (a scale factor change at the
-        // same physical size), so the material is touched on every retarget
-        let stale =
-            retarget || resize || materials.get(&quad.0).is_some_and(|m| m.params != params);
+        // same physical size), so the material is touched on every retarget, and on the frames
+        // after it (`MATERIAL_REFRESH_FRAMES`)
+        let stale = *refresh > 0 || materials.get(&quad.0).is_some_and(|m| m.params != params);
         if stale {
             if let Some(material) = materials.get_mut(&quad.0) {
                 material.params = params;
             }
         }
+    }
+    if !(retarget || resize) {
+        *refresh = refresh.saturating_sub(1);
     }
     let sharpen = size != output;
     for (mut camera, mut cas) in &mut compositor {
@@ -341,6 +354,67 @@ mod tests {
             .set_physical_resolution(0, 0);
         app.update();
         assert_eq!(size(&app), UVec2::ONE);
+    }
+
+    /// A resize touches the compositor's material in its own frame and on the next
+    /// `MATERIAL_REFRESH_FRAMES` frames, then leaves it alone.
+    #[test]
+    fn material_is_refreshed_after_a_resize() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Image>()
+            .init_asset::<FsrMaterial>()
+            .init_resource::<SceneTarget>()
+            .insert_resource(AppConfig::default())
+            .init_resource::<SessionGraphics>()
+            .add_systems(Update, sync_scene_target);
+        let window = app
+            .world_mut()
+            .spawn((
+                Window {
+                    resolution: WindowResolution::new(800.0, 600.0).with_scale_factor_override(1.0),
+                    ..default()
+                },
+                PrimaryWindow,
+            ))
+            .id();
+        app.world_mut()
+            .spawn((Camera::default(), PrimaryCamera::default()));
+        let image = app.world().resource::<SceneTarget>().image.clone();
+        let material = app
+            .world_mut()
+            .resource_mut::<Assets<FsrMaterial>>()
+            .add(FsrMaterial {
+                source: image,
+                params: Vec4::ONE,
+            });
+        app.world_mut().spawn(MeshMaterial2d(material.clone()));
+        let modified = |app: &mut App| {
+            app.world_mut()
+                .resource_mut::<Events<AssetEvent<FsrMaterial>>>()
+                .drain()
+                .any(|event| matches!(event, AssetEvent::Modified { id } if id == material.id()))
+        };
+
+        // the first frame sizes the target for the window
+        let mut touched = Vec::new();
+        for _ in 0..(MATERIAL_REFRESH_FRAMES as usize + 2) {
+            app.update();
+            touched.push(modified(&mut app));
+        }
+        assert_eq!(touched, [true, true, true, false]);
+
+        app.world_mut()
+            .get_mut::<Window>(window)
+            .unwrap()
+            .resolution
+            .set_physical_resolution(1024, 768);
+        touched.clear();
+        for _ in 0..(MATERIAL_REFRESH_FRAMES as usize + 2) {
+            app.update();
+            touched.push(modified(&mut app));
+        }
+        assert_eq!(touched, [true, true, true, false]);
     }
 
     /// The compositor's pipelines compile on this machine's adapter, in a renderer with no
