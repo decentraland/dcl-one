@@ -36,6 +36,12 @@ interface Entry {
   extras: boolean
   /** When the engine last answered that it holds nothing for this address. */
   missingAt: number | undefined
+  /** The version the engine last announced (`profileChanged`). */
+  announced: number | undefined
+  /** Set when the engine announces a version below the last one: it put an earlier profile back (the
+   *  local player's edit failed to deploy). A copy above it was read before that, so it is not taken
+   *  until the engine announces a newer version. */
+  revertedTo: number | undefined
   pending: boolean
   subscribers: number
   /** When the last subscriber left, or a list last vouched for the address: the eviction clock. */
@@ -63,7 +69,7 @@ const notify = (key: string): void => listeners.get(key)?.forEach((l) => l())
 function entry(key: string): Entry {
   let e = entries.get(key)
   if (e == null) {
-    e = { profile: undefined, full: false, extras: false, missingAt: undefined, pending: false, subscribers: 0, idleSince: Date.now() }
+    e = { profile: undefined, full: false, extras: false, missingAt: undefined, announced: undefined, revertedTo: undefined, pending: false, subscribers: 0, idleSince: Date.now() }
     entries.set(key, e)
   }
   return e
@@ -156,6 +162,9 @@ export function seedProfiles(seeds: readonly ProfileSeed[]): void {
 export function receiveProfile(address: string, profile: Profile | null): void {
   const key = profileKey(address)
   const e = entry(key)
+  // Read before the engine put an earlier profile back but answered after it (a passport read also
+  // waits on other services): the re-read that announcement asked for brings what it holds now.
+  if (profile?.version != null && e.revertedTo != null && profile.version > e.revertedTo) return
   e.pending = false
   if (profile == null) {
     e.missingAt = Date.now()
@@ -200,9 +209,10 @@ export function requestPassport(address: string): void {
   request(key, true)
 }
 
-/** The engine's copy of a profile changed: a new version, or server-filled fields (the snapshots)
- *  at the same one. Re-read it if someone is showing it and what's held isn't newer; drop it if
- *  nobody is (the next subscriber fetches fresh); ignore an address never seen. */
+/** The engine's copy of a profile changed: a new version, server-filled fields (the snapshots) at
+ *  the same one, or an earlier version put back after the local player's edit failed to deploy.
+ *  Re-read it if someone is showing it, whatever the version: the engine's is the one to show. Drop
+ *  it if nobody is (the next subscriber fetches fresh); ignore an address never seen. */
 export function profileChanged(address: string, version: number): void {
   const key = profileKey(address)
   const e = entries.get(key)
@@ -212,7 +222,9 @@ export function profileChanged(address: string, version: number): void {
     listeners.delete(key)
     return
   }
-  if (e.full && e.profile?.version != null && e.profile.version > version) return
+  if (e.announced != null && version < e.announced) e.revertedTo = version
+  else if (e.revertedTo != null && version > e.revertedTo) e.revertedTo = undefined
+  e.announced = version
   e.pending = true
   e.missingAt = undefined
   request(key, e.extras)
