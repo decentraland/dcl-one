@@ -442,6 +442,20 @@ describe('in-world shop', () => {
     await waitFor(() => expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('emoteCategory')).toBe('dance'))
   })
 
+  it("doesn't show one kind's cards while the other kind loads", async () => {
+    const f = serve({ catalogue: [[catalogueRow()]] })
+    const served = f.getMockImplementation() as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+    // The emotes never answer: the wearables must not stand in for them meanwhile.
+    f.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) =>
+      new URL(String(input), location.href).searchParams.get('category') === 'emote' ? new Promise<Response>(() => {}) : served(input, init)
+    )
+    renderShop()
+    await findCard()
+    await openTab('Emotes')
+    expect(screen.queryByText('Golden Armor')).not.toBeInTheDocument()
+    expect(screen.getByRole('status', { name: 'Loading the catalogue' })).toBeInTheDocument()
+  })
+
   it('plays a tried-on emote on the avatar, and STOP EMOTE stops it', async () => {
     serve({ catalogue: [[catalogueRow({ category: 'emote', name: 'Moonwalk', data: { emote: { category: 'dance' } } })]] })
     const { props } = renderShop({ equipped: [] })

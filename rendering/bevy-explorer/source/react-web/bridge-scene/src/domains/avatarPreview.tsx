@@ -43,6 +43,9 @@ const FRAMING: Record<PreviewFocus, { range: number; centerY: number }> = {
   bottom: { range: 3.96, centerY: 1.15 },
   shoes: { range: 3.03, centerY: 0.35 }
 }
+// The Shop's whole body in its 573×942 window, as the design draws it: the avatar ~751px tall, its feet on
+// the stage's floor logo (~970px down the screen). The Shop frames nothing else.
+const SHOP_FRAMING = { range: 4.9, centerY: 1.84 }
 const FOCUS_SECONDS = 0.6
 const CAMERA_PITCH = 12
 const CAMERA_DISTANCE = 8
@@ -573,7 +576,7 @@ export function registerAvatarPreview(ctx: Ctx): void {
 
   // The Backpack's selected category: ease the camera to frame that part of the avatar.
   ctx.on('previewFocus', (msg) => {
-    if (stage !== 'backpack') return
+    if (stage !== 'backpack' || shopStage != null) return
     const to = FRAMING[msg.focus] ?? FRAMING.body
     if (to === framingTo) return
     framingFrom = framing
@@ -620,6 +623,9 @@ export function registerAvatarPreview(ctx: Ctx): void {
   ctx.on('previewStage', (msg) => {
     shopStage = msg.rect
     showPodium(shopStage == null)
+    framing = framingFrom = framingTo = shopStage != null ? SHOP_FRAMING : FRAMING.body
+    framingT = 1
+    applyFraming(framing)
   })
 
   // The Shop's emote try-on: played once on the preview avatar, again for every ask; null stops it (an

@@ -4,7 +4,7 @@
 // (shop/discovery/lib/itemsGrid), what is on sale reads the listings feed and anything wider the
 // catalogue; the card prices each row by the web Shop's own rule (shop/discovery/cardPrice).
 
-import { keepPreviousData, queryOptions, useQuery } from '@tanstack/react-query'
+import { queryOptions, useQuery } from '@tanstack/react-query'
 import { fetchCatalogItems, fetchShopItems, type ShopSort } from '../../../shop/discovery/api'
 import { SUBCAT_MAP } from '../../../shop/discovery/lib/categories'
 // The design's ALL pill: the icon library's 3×3 `apps` grid (16px of 4px squares in the 26px slot).
@@ -148,5 +148,13 @@ export const shopQueries = {
 
 /** One page of the catalogue for a filter set; a new page or filter set keeps the last rows until it answers. */
 export function useShopCatalogue(filters: CatalogueFilters, page: number, { creatorSales, enabled }: { creatorSales: boolean; enabled: boolean }) {
-  return useQuery({ ...shopQueries.catalogue(filters, page, { creatorSales }), enabled, placeholderData: keepPreviousData })
+  return useQuery({
+    ...shopQueries.catalogue(filters, page, { creatorSales }),
+    enabled,
+    // A new page or filter of the same kind shows the last rows, dimmed, until it answers; another kind
+    // (wearables → emotes) has nothing in common with them, so it loads afresh.
+    placeholderData: (previous, previousQuery) => (sameKind(previousQuery?.queryKey, filters.kind) ? previous : undefined)
+  })
 }
+
+const sameKind = (key: readonly unknown[] | undefined, kind: CatalogueKind): boolean => (key?.[2] as CatalogueFilters | undefined)?.kind === kind

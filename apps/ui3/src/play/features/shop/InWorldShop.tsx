@@ -395,7 +395,8 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                     variant="inline"
                     tone="error"
                     title="Couldn't load the Shop"
-                    subtitle={grid.error instanceof Error ? grid.error.message : 'Please try again.'}
+                    // The server's own message (a database error…) means nothing to a buyer.
+                    subtitle="Please try again in a moment."
                     actions={[{ label: 'Retry', onClick: () => void grid.refetch() }]}
                   />
                 ) : items.length === 0 ? (
