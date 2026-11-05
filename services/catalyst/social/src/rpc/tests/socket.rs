@@ -479,16 +479,21 @@ async fn shutdown_ends_every_socket_with_1001() {
     assert!(
         crate::shared::test_wait::until(async || server.state.ctx.live_connections() == 3).await
     );
-    server.jobs.shutdown(Duration::from_secs(5)).await;
-    for socket in &mut sockets {
-        match next_message(socket).await {
-            WsMessage::Close(Some(frame)) => {
-                assert_eq!(u16::from(frame.code), 1001);
-                assert_eq!(frame.reason.as_str(), "Server shutting down");
+    let clients = async {
+        for socket in &mut sockets {
+            match next_message(socket).await {
+                WsMessage::Close(Some(frame)) => {
+                    assert_eq!(u16::from(frame.code), 1001);
+                    assert_eq!(frame.reason.as_str(), "Server shutting down");
+                }
+                other => panic!("expected a close, got {other:?}"),
             }
-            other => panic!("expected a close, got {other:?}"),
+            // Drive the peer's queued close acknowledgement while shutdown
+            // waits for the stream transport to finish its handshake.
+            socket.flush().await.unwrap();
         }
-    }
+    };
+    tokio::join!(server.jobs.shutdown(Duration::from_secs(5)), clients);
     assert_eq!(server.state.ctx.live_connections(), 0);
 }
 

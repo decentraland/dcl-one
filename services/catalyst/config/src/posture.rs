@@ -473,10 +473,12 @@ const ROWS: &[Row] = &[
         Own("<PUBLIC_URL>/api/v1/estatemap.png"),
         Own("<PUBLIC_URL>/api/v1/estatemap.png"),
     ),
+    // The image lamb2's `/lands` answers is the marketplace subgraph's
+    // `nft.image`, under Decentraland's map API.
     row(
         "map",
         "LAND_IMAGE_BASE_URL",
-        Own("<PUBLIC_URL>/api"),
+        Is("https://api.decentraland.org"),
         Own("<PUBLIC_URL>/api"),
         Own("<PUBLIC_URL>/api"),
     ),
