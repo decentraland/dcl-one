@@ -416,9 +416,33 @@ pub async fn other_method(State(state): State<SharedState>) -> Response {
         .into_response()
 }
 
+/// The client the `POST /entities` limits count. Behind the gateway the
+/// socket peer is a proxy in `HTTP_TRUSTED_PROXY_CIDRS`, and its single
+/// `X-Real-IP` names the client (the proxy itself when missing); any other
+/// peer is counted by its own address, since the route is reachable without
+/// the gateway and a forwarding header from it is the client's own choice.
+/// Without a socket (in-process callers and tests) the forwarded address is
+/// read as before.
+fn deploy_client(
+    headers: &HeaderMap,
+    peer: Option<std::net::IpAddr>,
+    trusted_proxies: &[ipnet::IpNet],
+) -> String {
+    use crate::shared::client_ip::{client_ip, is_trusted_proxy, single_real_ip};
+    let Some(peer) = peer.map(|p| p.to_canonical()) else {
+        return client_ip(headers);
+    };
+    if is_trusted_proxy(peer, trusted_proxies) {
+        single_real_ip(headers).unwrap_or(peer).to_string()
+    } else {
+        peer.to_string()
+    }
+}
+
 pub async fn create_entity(
     State(state): State<SharedState>,
     RawQuery(query): RawQuery,
+    connect: Option<axum::Extension<axum::extract::ConnectInfo<std::net::SocketAddr>>>,
     headers: HeaderMap,
     request: axum::extract::Request,
 ) -> AppResult<Response> {
@@ -429,7 +453,11 @@ pub async fn create_entity(
     let Some(deployer) = state.deployer().cloned() else {
         return Ok(writes::disabled_response());
     };
-    let client_ip = crate::shared::client_ip::client_ip(&headers);
+    let client_ip = deploy_client(
+        &headers,
+        connect.map(|axum::Extension(axum::extract::ConnectInfo(addr))| addr.ip()),
+        &state.settings.trusted_proxy_cidrs,
+    );
     // Upstream's burst limit: every request counts, none is given back.
     if let Err(retry_after) = state.deploy_burst.try_consume(&client_ip) {
         return Ok(quota_exceeded_response(retry_after));

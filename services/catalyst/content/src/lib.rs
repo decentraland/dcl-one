@@ -171,6 +171,9 @@ pub struct Settings {
     pub multipart_upload_timeout: Duration,
     /// The deployer's request TTL and per-pointer rate limits.
     pub deploy_limits: write_deployer::DeployLimits,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: the only socket peers whose `X-Real-IP`
+    /// names the client of the `POST /entities` limits.
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 }
 
 /// An operator bearer whose `Debug` never prints it; empty is unset.
@@ -272,6 +275,7 @@ impl Settings {
                 config.worlds.multipart_upload_timeout_ms.max(1),
             ),
             deploy_limits: write_deployer::DeployLimits::from_config(&config.content),
+            trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
         }
     }
 
@@ -310,6 +314,7 @@ impl Settings {
             max_in_flight_upload_bytes_per_source: create_entity::MAX_DEPLOYMENT_BYTES as u64,
             multipart_upload_timeout: Duration::from_secs(300),
             deploy_limits: write_deployer::DeployLimits::default(),
+            trusted_proxy_cidrs: Vec::new(),
         }
     }
 }

@@ -1669,6 +1669,47 @@ async fn a_client_past_its_burst_limit_is_turned_away() {
     );
 }
 
+/// A client reaching the API directly is counted by its socket: a spoofed
+/// `X-Real-IP` neither escapes its burst limit nor spends another address's.
+/// Only a socket peer in `HTTP_TRUSTED_PROXY_CIDRS` names the client.
+#[tokio::test]
+async fn the_burst_limit_counts_a_direct_socket_not_its_header() {
+    let settings = Settings {
+        post_entities_rate_limit_max: 2,
+        trusted_proxy_cidrs: vec!["10.0.0.0/8".parse().unwrap()],
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("burst-direct-socket", settings).await;
+    let router = node.router();
+    let from = |peer: [u8; 4], ip: &str| {
+        let mut request = form_request(ip, &entity_form());
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                peer, 40000,
+            ))));
+        request
+    };
+    // A direct client rotating its header: one budget, its socket's.
+    for ip in ["203.0.113.30", "203.0.113.31"] {
+        let (status, _, _) = call(&router, from([198, 51, 100, 7], ip)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    let (status, _, _) = call(&router, from([198, 51, 100, 7], "203.0.113.32")).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(node.state.deploy_quota.counted_for("198.51.100.7"), 2);
+    assert_eq!(node.state.deploy_quota.counted_for("203.0.113.30"), 0);
+    // Behind a trusted proxy, its X-Real-IP is the client.
+    for _ in 0..2 {
+        let (status, _, _) = call(&router, from([10, 0, 0, 5], "203.0.113.33")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    let (status, _, _) = call(&router, from([10, 0, 0, 5], "203.0.113.33")).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    let (status, _, _) = call(&router, from([10, 0, 0, 5], "203.0.113.34")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "another client behind the proxy");
+}
+
 #[tokio::test]
 async fn a_body_past_the_upload_budget_is_shed_with_retry_after() {
     let capacity = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
