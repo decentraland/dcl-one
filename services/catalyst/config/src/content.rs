@@ -181,6 +181,7 @@ pub struct ContentConfig {
     )]
     pub post_entities_rate_limit_window_seconds: u64,
 
+    // Worlds' partial uploads also read these (not the cleanup interval or pointer cap) as their own budget.
     /// Milliseconds a partial (multi-request) upload lives from its first
     /// batch; batches do not extend it.
     #[arg(long, env = "PENDING_DEPLOYMENT_TTL", default_value_t = 60 * 60 * 1000)]

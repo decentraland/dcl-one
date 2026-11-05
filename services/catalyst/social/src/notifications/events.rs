@@ -550,6 +550,7 @@ mod tests {
             HOST,
             HOST,
             &catalyst_explore::Settings::for_tests(),
+            None,
         )
         .await
         .unwrap();
@@ -754,6 +755,7 @@ mod tests {
             HOST,
             HOST,
             &catalyst_explore::Settings::for_tests(),
+            None,
         )
         .await
         .unwrap();

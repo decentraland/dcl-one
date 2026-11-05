@@ -1,0 +1,27 @@
+{
+  "description": "POST /lambdas/profiles whose ids is not an array answers lamb2's 'No profile ids' 400 (Array.isArray(body.ids) fails).",
+  "request": {
+    "method": "POST",
+    "path": "/lambdas/profiles",
+    "query": {},
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "ids": "0x0000000000000000000000000000000000000001"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Bad request",
+      "message": "No profile ids were specified. Expected ids:string[] in body"
+    }
+  },
+  "captured_from": "hand-authored from lamb2 02a37f5 src/controllers/handlers/profiles-handler.ts, src/controllers/handlers/errorHandler.ts",
+  "captured_at": "2026-11-04T00:00:00Z",
+  "volatile_paths": []
+}
