@@ -133,7 +133,7 @@ Query parsing uses `qs.parse(..., {parseArrays:true, parameterLimit:2000, arrayL
 | `pointer` (repeatable) | Lowercased, then `entity_pointers && $pointers` (`deployments-repository/component.ts:118-121`). A single empty value (`?pointer=`) is absent, so no filter; an empty element in a list is kept. | Lowercased (`deployments.rs:139-142`); empty values as upstream (`qs_get_filter_array`). MATCH. |
 | `deployedBy` | **Not read by the handler.** `DeploymentFilters.deployedBy` exists in `deployment-types.ts:7`, but the handler never fills it. | Read, lowercased, and filtered with `LOWER(deployer_address) = ANY(...)` (`deployments.rs:144-147`, `queries.rs:540-543`). Also echoed in `filters.deployedBy` and in `next`. |
 | `onlyCurrentlyPointed` | `qsGetBoolean`: `undefined` when missing or empty; otherwise `=== 'true'`. When true, adds `deleter_deployment IS NULL`. | `qs_get_js_bool`, the same rule (`shared/src/query_params.rs`). MATCH (CS-08). |
-| `from`, `to` | `parseInt(v, 10)`, so `10abc` → 10 and `1.5` → 1. A falsy value (0) adds no bound (`deployments-repository/component.ts:156-188`). | `qs_get_js_number`, `parseInt`'s reading (`10abc` → 10, `1.5` → 1). `0` adds a `>= 0` bound, which returns the same rows. MATCH (CS-08). |
+| `from`, `to` | `parseInt(v, 10)`, so `10abc` → 10 and `1.5` → 1. A falsy value (0) adds no bound (`deployments-repository/component.ts:156-188`). | `qs_get_js_timestamp`, `parseInt`'s reading (`10abc` → 10, `1.5` → 1). `0` adds a `>= 0` bound, which returns the same rows. A value outside PostgreSQL's timestamp range is clamped to it; upstream passes it on and answers PostgreSQL's "timestamp out of range" as a 500. MATCH (CS-08), except that 500. |
 | `offset` | `parseInt`. More than 5000 → 400. A negative value is treated as 0 (`logic/deployments/component.ts:237-239`). | Same (`deployments.rs` `parse_deployment_query_options`, `queries.rs`). |
 | `limit` | `parseInt`. A value of 1..500 is used as given; anything else (missing, 0, negative, more than 500) becomes **500** (`logic/deployments/component.ts:235-242`). | Same (`queries.rs:21-28`). |
 | `lastId` | Lowercased. Only used as a tiebreak on the bound in the direction of travel (`createOrClause`, `deployments-repository/component.ts:145-241`). | Lowercased. The tuple cursor is `(ts, lower(id)) < (ts of the lastId row, or T, lower(lastId))` (`queries.rs:374-453`). It returns the same rows, and it also handles sub-millisecond ties. |
@@ -410,6 +410,8 @@ Field by field:
   - dcl-one reads the table in physical order (`ORDER BY ctid`, `queries.rs` `failed_deployments`): the
     order upstream reads it in at start. A failure reported again while upstream runs keeps its place
     in the map; here the update moves its row (CS-10).
+  - With `offset` or `limit`, dcl-one orders the page by `failure_time, entity_id` instead: a retry's
+    upsert moves a row's `ctid`, so paging in physical order would skip and repeat rows.
 - **`snapshotHash`.**
   - Upstream: absent for failures that did not come from a snapshot. Those are cached but not
     persisted (`component.ts:241-254`).
