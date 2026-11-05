@@ -18,6 +18,27 @@ preview = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(preview)
 
 
+def review_pr(number=9, base='main', base_sha='b' * 40):
+    return {
+        'number': number,
+        'state': 'open',
+        'base': {'ref': base, 'sha': base_sha},
+        'head': {'sha': 'a' * 40, 'repo': {'full_name': 'example/one'}},
+    }
+
+
+def build_run(pr):
+    return {
+        'event': 'pull_request',
+        'status': 'completed',
+        'conclusion': 'success',
+        'path': preview.WORKFLOW,
+        'head_repository': {'full_name': 'example/one'},
+        'head_sha': 'a' * 40,
+        'pull_requests': [pr],
+    }
+
+
 def cdn_responses():
     identity = io.BytesIO(json.dumps({'revision': 'a' * 40, 'run': 123}).encode())
     html = io.BytesIO(b'<html><script src="./assets/main-Abc123.js"></script></html>')
@@ -200,7 +221,7 @@ class WebPreviewTests(unittest.TestCase):
             'run_attempt': 1,
             'html_url': 'https://github.com/example/one/actions/runs/123',
         }
-        pr = {'number': 9}
+        pr = review_pr()
         jobs = {'jobs': [{'name': 'UI reviewer', 'conclusion': 'success'}]}
         with patch.object(preview, 'resolve', side_effect=[(run, pr), (run, None)]):
             with patch.object(preview, 'api', side_effect=[jobs, []]) as api:
@@ -213,7 +234,7 @@ class WebPreviewTests(unittest.TestCase):
             'run_attempt': 1,
             'html_url': 'https://github.com/example/one/actions/runs/123',
         }
-        pr = {'number': 9}
+        pr = review_pr()
         jobs = {'jobs': [{'name': 'UI reviewer', 'conclusion': 'success'}]}
         comments = [
             {
@@ -273,39 +294,16 @@ class WebPreviewTests(unittest.TestCase):
                     sleep.assert_called_once_with(5)
 
     def test_resolve_uses_commit_fallback_and_skips_outdated_candidates(self):
-        run = {
-            'event': 'pull_request',
-            'status': 'completed',
-            'conclusion': 'success',
-            'path': preview.WORKFLOW,
-            'head_repository': {'full_name': 'example/one'},
-            'head_sha': 'a' * 40,
-            'pull_requests': [],
-        }
-        pr = {
-            'number': 2,
-            'state': 'open',
-            'head': {'sha': 'a' * 40, 'repo': {'full_name': 'example/one'}},
-        }
-        with patch.object(
-            preview,
-            'api',
-            side_effect=[run, [{'number': 1}, {'number': 2}], {**pr, 'state': 'closed'}, pr],
-        ) as api:
+        pr = review_pr(2)
+        closed = {**review_pr(1), 'state': 'closed'}
+        run = {**build_run(pr), 'pull_requests': []}
+        with patch.object(preview, 'api', side_effect=[run, [closed, pr], closed, pr]) as api:
             self.assertEqual(preview.resolve('example/one', 123), (run, pr))
             self.assertTrue(api.call_args_list[1].kwargs['paginate'])
 
     def test_resolve_rejects_cancelled_runs(self):
-        run = {
-            'event': 'pull_request',
-            'status': 'completed',
-            'conclusion': 'cancelled',
-            'path': preview.WORKFLOW,
-            'head_repository': {'full_name': 'example/one'},
-            'head_sha': 'a' * 40,
-            'pull_requests': [{'number': 1}],
-        }
-        pr = {'state': 'open', 'head': {'sha': 'a' * 40, 'repo': {'full_name': 'example/one'}}}
+        pr = review_pr()
+        run = {**build_run(pr), 'conclusion': 'cancelled'}
         with patch.object(preview, 'api', side_effect=[run, pr]):
             self.assertEqual(preview.resolve('example/one', 123), (run, None))
 
@@ -315,7 +313,7 @@ class WebPreviewTests(unittest.TestCase):
             'run_attempt': 2,
             'html_url': 'https://github.com/example/one/actions/runs/123',
         }
-        pr = {'number': 9}
+        pr = review_pr()
         jobs = {'jobs': [{'name': 'UI reviewer', 'conclusion': 'success'}]}
         for comments, method, path in [
             ([], 'POST', 'repos/example/one/issues/9/comments'),
@@ -403,7 +401,7 @@ class WebPreviewTests(unittest.TestCase):
 
     def test_report_omits_skipped_products_and_reports_sites_as_pending(self):
         run = {'head_sha': 'a' * 40, 'run_attempt': 1, 'html_url': 'https://github.com/example/run'}
-        pr = {'number': 9}
+        pr = review_pr()
         jobs = {
             'jobs': [
                 {'name': 'UI reviewer', 'conclusion': 'skipped'},
@@ -423,7 +421,7 @@ class WebPreviewTests(unittest.TestCase):
 
     def test_report_links_failed_jobs_and_reports_disabled_publication(self):
         run = {'head_sha': 'a' * 40, 'run_attempt': 1, 'html_url': 'https://github.com/example/run'}
-        pr = {'number': 9}
+        pr = review_pr()
         for conclusion, expected in [
             ('failure', '[Build log](https://github.com/example/job)'),
             ('success', 'Publication: disabled'),
@@ -531,6 +529,144 @@ class WebPreviewTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual(output, 'sites=true\nreviewer=false\n')
+
+    def test_run_resolves_its_own_pr_and_base_for_a_shared_head(self):
+        first = review_pr(9, 'main')
+        second = review_pr(10, 'feature/base', 'c' * 40)
+        for pr in (first, second):
+            run = build_run(pr)
+            with (
+                self.subTest(number=pr['number']),
+                patch.object(preview, 'api', side_effect=[run, pr]),
+            ):
+                self.assertEqual(preview.resolve('example/one', 123), (run, pr))
+
+    def test_resolve_rejects_changed_base_identity(self):
+        pr = review_pr()
+        run = build_run(pr)
+        for replacement in (review_pr(base='other'), review_pr(base_sha='c' * 40)):
+            with (
+                self.subTest(base=replacement['base']),
+                patch.object(preview, 'api', side_effect=[run, replacement]),
+            ):
+                self.assertEqual(preview.resolve('example/one', 123), (run, None))
+
+    def test_ambiguous_commit_fallback_cannot_pick_an_arbitrary_pr(self):
+        first = review_pr(9)
+        second = review_pr(10, 'feature/base', 'c' * 40)
+        run = {**build_run(first), 'pull_requests': []}
+        with patch.object(preview, 'api', side_effect=[run, [first, second], first, second]):
+            self.assertEqual(preview.resolve('example/one', 123), (run, None))
+
+    def test_newest_run_is_scoped_to_the_same_pr_and_base(self):
+        pr = review_pr()
+        runs = {
+            'workflow_runs': [
+                {'id': 123, 'pull_requests': [pr]},
+                {'id': 124, 'pull_requests': [review_pr(10, 'feature/base')]},
+            ]
+        }
+        with patch.object(preview, 'api', return_value=runs):
+            self.assertTrue(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
+        runs['workflow_runs'].append({'id': 125, 'pull_requests': [pr]})
+        with patch.object(preview, 'api', return_value=runs):
+            self.assertFalse(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
+
+    def test_newest_run_without_pr_metadata_is_resolved_before_matching(self):
+        pr = review_pr()
+        runs = {'workflow_runs': [{'id': 123}, {'id': 124}]}
+        for candidate, expected in ((review_pr(10), True), (pr, False), (None, True)):
+            with (
+                self.subTest(candidate=candidate),
+                patch.object(preview, 'api', return_value=runs),
+                patch.object(preview, 'resolve', return_value=({}, candidate)),
+            ):
+                self.assertEqual(
+                    preview.newest_run_for_pr('example/one', 123, build_run(pr), pr), expected
+                )
+
+    def test_failed_selection_replaces_a_previous_successful_preview(self):
+        pr = review_pr()
+        run = {
+            **build_run(pr),
+            'conclusion': 'failure',
+            'run_attempt': 1,
+            'html_url': 'https://github.com/example/run',
+        }
+        old = {
+            'id': 5,
+            'user': {'login': 'github-actions[bot]'},
+            'body': preview.MARKER + '\n[Preview](https://cdn.example/old)',
+        }
+        for selection in (
+            [
+                {
+                    'name': 'changes',
+                    'conclusion': 'failure',
+                    'html_url': 'https://github.com/example/selection',
+                }
+            ],
+            [],
+        ):
+            jobs = {
+                'jobs': selection
+                + [
+                    {'name': 'Sites', 'conclusion': 'skipped'},
+                    {'name': 'UI reviewer', 'conclusion': 'skipped'},
+                ]
+            }
+            with (
+                self.subTest(selection=selection),
+                patch.object(preview, 'resolve', return_value=(run, pr)),
+                patch.object(
+                    preview, 'api', side_effect=[jobs, [old], {'workflow_runs': [{'id': 123}]}, {}]
+                ) as api,
+            ):
+                preview.report('example/one', 123, '', 'skipped')
+                self.assertEqual(api.call_args.kwargs['method'], 'PATCH')
+                body = api.call_args.kwargs['body']['body']
+                self.assertIn('| Preview selection | failure |', body)
+                self.assertNotIn('https://cdn.example/old', body)
+                expected = (
+                    'https://github.com/example/selection'
+                    if selection
+                    else 'https://github.com/example/run'
+                )
+                self.assertIn(expected, body)
+
+    def test_report_cannot_switch_pr_between_identity_checks(self):
+        pr = review_pr()
+        run = {**build_run(pr), 'run_attempt': 1, 'html_url': 'https://github.com/example/run'}
+        jobs = {'jobs': [{'name': 'Sites', 'conclusion': 'success'}]}
+        with (
+            patch.object(preview, 'resolve', side_effect=[(run, pr), (run, review_pr(10))]),
+            patch.object(preview, 'api', side_effect=[jobs, []]) as api,
+        ):
+            preview.report('example/one', 123, '', 'skipped')
+            self.assertEqual(api.call_count, 2)
+
+    def test_incomplete_pr_identity_cannot_match_a_run(self):
+        pr = review_pr()
+        for candidate in (
+            {},
+            {**pr, 'base': None},
+            {**pr, 'head': None},
+            {**pr, 'base': {'ref': 'main'}},
+        ):
+            with self.subTest(candidate=candidate):
+                self.assertFalse(preview.same_pull_request(candidate, pr))
+
+    def test_ambiguous_run_metadata_cannot_pick_an_arbitrary_pr(self):
+        first = review_pr()
+        second = review_pr(10, 'feature/base')
+        run = {**build_run(first), 'pull_requests': [first, second]}
+        with patch.object(preview, 'api', side_effect=[run, first, second]):
+            self.assertEqual(preview.resolve('example/one', 123), (run, None))
+
+    def test_source_run_absent_from_latest_listing_cannot_replace_a_comment(self):
+        pr = review_pr()
+        with patch.object(preview, 'api', return_value={'workflow_runs': []}):
+            self.assertFalse(preview.newest_run_for_pr('example/one', 123, build_run(pr), pr))
 
 
 if __name__ == '__main__':

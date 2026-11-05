@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import sys
 import time
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from urllib.request import urlopen
 from urllib.parse import urljoin
 
@@ -158,6 +158,40 @@ def api(path, *, method='GET', body=None, paginate=False):
     return [item for page in value for item in page] if paginate else value
 
 
+def same_pull_request(candidate, pr):
+    base = candidate.get('base') or {}
+    head = candidate.get('head') or {}
+    return bool(
+        candidate.get('number') == pr.get('number')
+        and base.get('ref')
+        and base.get('sha')
+        and head.get('sha')
+        and base.get('ref') == (pr.get('base') or {}).get('ref')
+        and base.get('sha') == (pr.get('base') or {}).get('sha')
+        and head.get('sha') == (pr.get('head') or {}).get('sha')
+    )
+
+
+def newest_run_for_pr(repository, run_id, run, pr):
+    runs = api(
+        f'repos/{repository}/actions/workflows/web-previews.yml/runs'
+        f'?event=pull_request&head_sha={run["head_sha"]}&per_page=100'
+    )['workflow_runs']
+    matching = []
+    for candidate in runs:
+        candidate_id = int(candidate['id'])
+        if candidate_id == run_id:
+            matching.append(candidate_id)
+        elif candidate.get('pull_requests'):
+            if any(same_pull_request(item, pr) for item in candidate['pull_requests']):
+                matching.append(candidate_id)
+        else:
+            _, candidate_pr = resolve(repository, candidate_id)
+            if candidate_pr and same_pull_request(candidate_pr, pr):
+                matching.append(candidate_id)
+    return bool(matching) and max(matching) == run_id
+
+
 def resolve(repository, run_id):
     run = api(f'repos/{repository}/actions/runs/{run_id}')
     if (
@@ -169,11 +203,12 @@ def resolve(repository, run_id):
     candidates = run.get('pull_requests') or api(
         f'repos/{repository}/commits/{run["head_sha"]}/pulls?per_page=100', paginate=True
     )
+    matches = []
     for candidate in candidates:
         pr = api(f'repos/{repository}/pulls/{int(candidate["number"])}')
-        if publishable(run, pr, repository):
-            return run, pr
-    return run, None
+        if same_pull_request(candidate, pr) and publishable(run, pr, repository):
+            matches.append(pr)
+    return run, matches[0] if len(matches) == 1 else None
 
 
 def cdn_url(version):
@@ -237,7 +272,7 @@ def verify_cdn(version, revision, run_id, timeout=300):
                     return entry
         except HTTPError as error:
             error.close()
-        except (OSError, URLError, http.client.HTTPException, json.JSONDecodeError):
+        except (OSError, http.client.HTTPException, json.JSONDecodeError):
             pass
         if time.monotonic() >= deadline:
             raise TimeoutError(
@@ -253,6 +288,9 @@ def report(repository, run_id, reviewer_url, publication_result):
         return
     jobs = api(f'repos/{repository}/actions/runs/{run_id}/jobs?per_page=100')['jobs']
     rows = []
+    selection = next((job for job in jobs if job['name'] == 'changes'), None)
+    if selection and selection['conclusion'] == 'failure':
+        rows.append(f'| Preview selection | failure | [Build log]({selection["html_url"]}) |')
     for name, label in [('UI reviewer', 'UI reviewer'), ('Sites', 'Sites')]:
         job = next((job for job in jobs if job['name'] == name), None)
         if not job or job['conclusion'] == 'skipped':
@@ -269,6 +307,8 @@ def report(repository, run_id, reviewer_url, publication_result):
         else:
             link = 'SSR preview pending: shared host deployment is not wired yet'
         rows.append(f'| {label} | {result} | {link} |')
+    if not rows and run.get('conclusion') == 'failure':
+        rows.append(f'| Preview selection | failure | [Build run]({run["html_url"]}) |')
     if not rows:
         print('No selected web products to report')
         return
@@ -298,13 +338,9 @@ def report(repository, run_id, reviewer_url, publication_result):
     )
     # Recheck after the API reads so an outdated source cannot replace the current preview.
     _, live = resolve(repository, run_id)
-    if live is None:
+    if live is None or not same_pull_request(live, pr):
         return
-    runs = api(
-        f'repos/{repository}/actions/workflows/web-previews.yml/runs'
-        f'?event=pull_request&head_sha={run["head_sha"]}&per_page=100'
-    )['workflow_runs']
-    if not runs or max(int(item['id']) for item in runs) != run_id:
+    if not newest_run_for_pr(repository, run_id, run, live):
         return
     path = (
         f'repos/{repository}/issues/comments/{current["id"]}'
@@ -351,10 +387,10 @@ def main():
     run, pr = resolve(repository, run_id)
     if args.command == 'resolve':
         print(f'pr={pr["number"] if pr else ""}')
-        print(f'publish={str(pr is not None and publishable(run, pr, repository)).lower()}')
+        print(f'publish={str(pr is not None).lower()}')
         print('reviewer=' + str(require_reviewer(repository, run_id)).lower())
         return
-    if pr is None or not publishable(run, pr, repository):
+    if pr is None:
         raise ValueError('Source run is no longer eligible for publication')
     if not require_reviewer(repository, run_id):
         raise ValueError('Reviewer did not produce one successful job and static artifact')
