@@ -1,6 +1,8 @@
 # ADR: Bounded referral Slack effects
 
-- Status: Proposed
+- Status: Superseded
+- Superseded by: [Native social events](2026-11-04-native-social-events.md)
+- Status changed: 2026-11-04
 - Date: 2026-11-04
 
 ## Context
@@ -8,9 +10,9 @@
 Referral attribution posts Slack messages (suspicious timing, IP rejection and
 the hundred-invite milestone). The pinned `social-service-ea` uses
 `@slack/web-api`'s `WebClient` with its default retry policy, which can retry
-for about thirty minutes and waits out any `Retry-After`. In the native stack,
-HTTP attribution effects retain this bounded adapter; the login milestone
-alert runs after commit without delaying login acknowledgement.
+for about thirty minutes and waits out any `Retry-After`. Those effects are
+awaited inside referral HTTP requests and inside the login-event consumer,
+whose SQS visibility timeout is 60 seconds.
 
 ## Decision
 
@@ -25,8 +27,8 @@ and is logged at the boundary the source uses; it is not retried later.
 ## Consequences
 
 - A Slack outage cannot hold one effect beyond ten seconds. This bounds the
-  Slack contribution to HTTP request latency; it is not a budget for the
-  complete handler. The post-commit login alert runs in the background.
+  Slack contribution to request/consumer latency, not a complete handler or
+  queue batch; other work can still exceed the queue's visibility window.
 - A message the source would have delivered after a long outage or a long
   `Retry-After` is dropped here. Slack delivery is a notification, not durable
   state.
@@ -34,9 +36,9 @@ and is logged at the boundary the source uses; it is not retried later.
 
 ## Alternatives
 
-- Keep the SDK's retry policy: can hold HTTP requests for up to half an hour.
-- Detach HTTP attribution effects too: changes their awaited ordering and
-  error boundary without making delivery durable. The native login milestone
-  already uses bounded background delivery under the native events decision.
+- Keep the SDK's retry policy: blocks HTTP requests and the consumer for up to
+  half an hour and lets messages be redelivered while still being handled.
+- Detach the effect into a background task: loses the source's awaited
+  ordering and error boundary without making delivery durable.
 - Persist an outbox and retry it: a new table and worker for a notification
   that the source does not persist either.

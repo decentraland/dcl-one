@@ -521,8 +521,11 @@ It could issue a reward already claimed or quarantined by the new code. Before
 running `catalyst schema migrate` for 0024:
 
 1. Pause referral/login ingress and stop every login consumer, retry worker and
-   administrative writer. Drain or stop in-flight reward work and preserve
-   pending login observations for compatible ingress after the cutover.
+   administrative writer. Drain or stop in-flight reward work. Pending native
+   login observations retain their client event IDs and may retry within their
+   acceptance window. Legacy SQS messages cannot be replayed into the signed
+   native endpoint: they lack the user signature, and no queue importer exists.
+   Any undrained legacy messages will not advance referral progress after cutover.
 2. Stop every pre-0024 binary sharing this database and disable its automatic
    restart or rollback. A fleet lease or `FLEET_JOBS_ENABLED=false` alone is not
    this gate: older login consumers do not honor the new reward lock.
@@ -830,7 +833,8 @@ history, with V2 and anonymous controls; no performance change was measured.
 
 `POST /social-api/v1/client-login` derives the invited wallet from ADR-44 signed
 fetch. Its signed metadata contains `loginId` and `occurredAt`; the timestamp
-limits admission to the preceding 24 hours with 30 seconds of future tolerance.
+limits admission to the preceding 24 hours with five minutes of future tolerance,
+matching the signed-fetch clock window.
 The client preserves these values across retries and signs each request afresh.
 The occurrence timestamp bounds replay acceptance, while login-day accounting
 continues to use the database's UTC processing date.
@@ -842,16 +846,30 @@ login-day update or grant and its accepted notification/email delivery row.
 Duplicate receipts do not evaluate the threshold again. The FK to referral
 progress shares its deletion/restore lifecycle and cascades on deletion.
 
-Under the referral row lock, admission removes that wallet's expired receipts
-and caps unexpired distinct IDs at 120 per wallet; a duplicate does not consume
-another slot. Expiry is the signed occurrence time plus 24 hours. The existing
-minute worker deletes at most 1,000 expired receipts per pass using
-`referral_login_receipts_expiry_idx(expires_at, invited_user, login_id)` before
-processing rewards. Delayed cleanup does not extend accepted event age or the
-per-wallet cap. Traffic and retention limits describe implementation bounds,
-not measured production rates or throughput. The bootstrap defines this new
-relation and index. On an existing database, the production migrator creates
-missing objects from that same definition; no data-alteration step is needed.
+Under the invited-user row lock, admission caps distinct new IDs at 120 per
+wallet in a rolling 24-hour window of server `received_at` values. A duplicate
+does not consume another slot. Finished or rejected referrals return success
+without adding receipts; banned referrers are a no-op on this native ingress,
+without exposing their identity or stored IP. The referrer-wide advisory lock
+is acquired only when the login can grant a tier, after receipt checks and
+login-day processing. Lock or statement timeouts return a retryable 503.
+
+Expiry is the later of server reception and signed occurrence, plus 24 hours.
+Backdating cannot shorten quota retention. Future-dated events can retain a
+receipt for up to 24 hours and five minutes, so retained receipts are not the
+same count as the rolling admission limit. The primary key's invited-user
+prefix serves this bounded per-wallet count; no separate receipt-time index
+is needed. The existing minute worker locks and deletes at most 1,000 expired
+receipts with `FOR UPDATE SKIP LOCKED`, using
+`referral_login_receipts_expiry_idx(expires_at, invited_user, login_id)`.
+Cleanup failure is logged and does not skip the reward pass. Delayed cleanup
+does not extend accepted event age or the admission window. These are
+implementation bounds, not measured production rates or throughput.
+
+The bootstrap defines this new relation and index. Run `catalyst schema
+migrate` before rolling out the new server. On an existing database, the
+production migrator creates missing objects from that same definition; no
+data-alteration step is needed.
 
 Referral attribution serializes quota decisions with a transaction-scoped
 referrer/IP advisory key; count and insertion share that transaction. The IP is
@@ -864,7 +882,9 @@ per matching row and has a measured CPU cost (see METRICS.md). No index on the
 stored IP text serves this inet comparison, so the schema defines none. Finalizing
 a referral serializes its referrer and counts the milestone before committing
 the grant. A grant that reaches a reward tier records it in the nullable
-`referral_progress.reward_tier` in the same transaction. Optional Slack alerts occur after commit. Reward requests run in the existing
+`referral_progress.reward_tier` in the same transaction. Optional milestone Slack alerts occur after commit. At most eight such tasks
+per adapter are admitted before spawning; saturation drops and logs the alert.
+Admitted effects retain the ten-second deadline. Reward requests run in the existing
 leased worker after login recording commits; they do not delay login acknowledgement. One nullable receipt per milestone stores a
 pre-POST `reward_requested_at`, confirmed provider `reward_response` and
 `reward_retry_at`. The expected workload is at most one receipt per milestone,

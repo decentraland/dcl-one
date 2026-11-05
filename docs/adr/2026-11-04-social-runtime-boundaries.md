@@ -59,8 +59,11 @@ Before migrating 0024, pause referral/login ingress; stop every login consumer,
 retry worker and administrative writer; and drain or stop in-flight reward work.
 Stop all pre-0024 binaries sharing the database and disable their restart or
 rollback before running the compatible `catalyst schema migrate` and schema
-status. Resume login delivery only on compatible binaries after
-inspecting the migration and quarantined rows. A fleet lease alone does not
+status. Resume native signed login delivery only on compatible binaries after
+inspecting the migration and quarantined rows. Retained legacy SQS messages
+cannot be submitted to the new endpoint: they have no user signature, and no
+importer exists. Undrained messages will not advance referral progress after
+cutover; retaining them is not a replay strategy. A fleet lease alone does not
 prevent an older login consumer from issuing a reward.
 
 This process gate is required even on an already-version-3 database. The migrator
