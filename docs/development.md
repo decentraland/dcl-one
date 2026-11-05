@@ -73,23 +73,9 @@ Sites and its current UI dependency declare `pnpm@10.19.0` in their package mani
 
 The workflow runs `pnpm review:build --base ./` from `library/ui`, invoking Vite with `figma/review/review.vite.config.ts` and producing `library/ui/figma/review/review-dist/`. Versioned CDN navigation, references, render images and JSON fetches still require the pending source change and an exact source commit passing the nested-prefix regression. Publication is disabled unless the repository variable `WEB_PREVIEW_REVIEWER_ENABLED` equals `true`; enable it only after that regression and source audit pass. Builds and artifacts remain available while publication is disabled.
 
-`Web previews / Publish` uses trusted publication code and validated static
-artifacts, without running pull request lifecycle scripts with credentials.
-Same-repository, open pull requests receive one updated status comment; forks
-build artifacts without publishing. A reviewer link appears only after the CDN serves the matching source receipt, HTML entry, a version-scoped hashed asset and fidelity JSON.
+`Web previews / Publish` uses trusted publication code and validated static artifacts, without running pull request lifecycle scripts with credentials. Same-repository, open pull requests receive one updated status comment; forks build artifacts without publishing. A reviewer link appears only after the CDN serves the matching source receipt, HTML entry, a version-scoped hashed asset and fidelity JSON.
 
-Publication needs `GITLAB_CDN_DEPLOYER_TOKEN` and `GITLAB_CDN_DEPLOYER_URL`, as
-used by Bevy, and `FIGMA_FILE_KEY` for the trusted artifact key scan. The
-reviewer and its dependency-free key guard must already be on the default
-branch before publication can run. The trusted scan uses `node library/ui/figma/key-guard.mjs --no-worktree --no-range --path .preview/input`. No Figma key is passed to the PR build.
-The public npm package
-`@dcl-regenesislabs/dcl-one-ui-review` needs a trusted publisher for this
-repository and `web-previews-publish.yml` using npm trusted publishing.
-Publication uses timestamp versions so a retry can publish after a previous npm upload succeeded. Registry polling is limited to 20 attempts at 10-second intervals, leaving time for CDN verification within the publication job timeout. The version's commit suffix identifies trusted
-publication code; `preview-source.json` records the built PR head and source
-build run.
-GitHub artifacts expire after seven days; this does not delete immutable npm
-versions or CDN copies.
+Publication needs `GITLAB_CDN_DEPLOYER_TOKEN` and `GITLAB_CDN_DEPLOYER_URL`, as used by Bevy, and `FIGMA_FILE_KEY` for the trusted artifact key scan. The reviewer and its dependency-free key guard must already be on the default branch before publication can run. The trusted scan uses `node library/ui/figma/key-guard.mjs --no-worktree --no-range --path .preview/input`. No Figma key is passed to the PR build. The public npm package `@dcl-regenesislabs/dcl-one-ui-review` needs a trusted publisher for this repository and `web-previews-publish.yml` using npm trusted publishing. Publication uses timestamp versions so a retry can publish after a previous npm upload succeeded. Registry polling is limited to 20 attempts at 10-second intervals, leaving time for CDN verification within the publication job timeout. The version's commit suffix identifies trusted publication code; `preview-source.json` records the built PR head and source build run. GitHub artifacts expire after seven days; this does not delete immutable npm versions or CDN copies.
 
 Sites currently uploads its SSR build, documentation content, fixtures and dependency manifests as `web-preview-sites`. The planned preview uses a complete container image built from the pull request and runs in Kubernetes at a shared hostname supplied by deployment configuration. It is manually triggered and expires after six hours. The infrastructure owner supplies the cluster configuration; the application deployment integration and dev/prod service selector are not implemented. The PR comment reports that the preview is pending.
 
