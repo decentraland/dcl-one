@@ -177,7 +177,7 @@ Validation order. Upstream: pageSize → sort → fetch. dcl-one: address → pa
 
 | Trigger | Status | Body shape | Upstream | dcl-one | Verdict |
 |---|---|---|---|---|---|
-| Success | 200 | `{"elements":[TPW],"totalAmount":number,"pageNum":number,"pageSize":number}`. `TPW = {"urn":string,"individualData":[{"id":"<urn>:<network>:<contract>:<tokenId>","tokenId":"<network>:<contract>:<tokenId>"}],"amount":number,"name":string,"category":string,"entity":Entity,"definition"?:WearableDefinition}`. | third-party-wearables-handler.ts:46-73; decentraland/lamb2:src/logic/fetch-elements/fetch-third-party-wearables.ts:33-58 | third_party.rs:947-957, 1306-1349 | Shape MATCH. Key order C6. Data source: MATCH with `NFT_WORKER_BASE_URL`; without it, the chain-path differences of LI-9. |
+| Success | 200 | `{"elements":[TPW],"totalAmount":number,"pageNum":number,"pageSize":number}`. `TPW = {"urn":string,"individualData":[{"id":"<urn>:<network>:<contract>:<tokenId>","tokenId":"<network>:<contract>:<tokenId>"}],"amount":number,"name":string,"category":string,"entity":Entity,"definition"?:WearableDefinition}`. | third-party-wearables-handler.ts:46-73; decentraland/lamb2:src/logic/fetch-elements/fetch-third-party-wearables.ts:33-58 | third_party.rs:947-957, 1306-1349 | Shape MATCH. Key order C6. Data source: MATCH with `NFT_WORKER_BASE_URL`, which a mirror requires; island and journey without it keep the chain path (LI-9). |
 | `includeDefinitions`, definition missing | 200 | The key is omitted (both) (lines 60-65; third_party.rs `finish_tpw_response`). | | | MATCH (LI-13) |
 | `pageSize` > 1000 | 200 (both) | — | line 42 | third_party.rs `pagination_object` | MATCH |
 | Bad sort | 400 | C1, `Invalid sorting requested: date DESC` etc. | sorting.ts:144 | third_party.rs:1250-1252 | MATCH |
@@ -285,7 +285,7 @@ Validation order. Upstream: pageSize → rarity → sort → collectionType. dcl
 | Owned fetch fails | 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}` (both) | — | elements-fetcher.ts:272-273 | lambdas_explorer.rs:716-719, 770 | MATCH |
 | Collections subgraph not configured and on-chain requested | dcl-one 503 envelope | — | — | lambdas_explorer.rs:667-671 | dcl-one only |
 | Third-party registry fails, no cached value | 502 `Cannot fetch elements for <address>` (both) | — | third-party-providers-storage.ts:51 | third_party.rs `third_party_providers`; lambdas_explorer.rs `explorer_items` | MATCH (LI-10) |
-| A provider's holdings cannot be read (NFT worker transport failure, or an RPC failure on the chain path) | upstream 502 (C3). dcl-one: the same 502 with `NFT_WORKER_BASE_URL`; on the chain path (no worker) that contract's items are left out (logged) and the rest is served | — | elements-fetcher.ts:265-274 | lambdas_explorer.rs `compute_explorer_items`; third_party.rs `fetch_all_third_party_wearables` | MATCH with the worker; chain path DIVERGENT (P2, LI-9) |
+| A provider's holdings cannot be read (NFT worker transport failure, or an RPC failure on the chain path) | upstream 502 (C3). dcl-one: the same 502 with `NFT_WORKER_BASE_URL`; on the chain path (no worker) that contract's items are left out (logged) and the rest is served | — | elements-fetcher.ts:265-274 | lambdas_explorer.rs `compute_explorer_items`; third_party.rs `fetch_all_third_party_wearables` | MATCH with the worker, which a mirror requires; the island and journey chain path is kept by decision (LI-9) |
 
 Field-level differences:
 
@@ -551,17 +551,14 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
 - dcl-one: the same (`validate_and_sort` in services/catalyst/shop/src/market/user_items.rs). Without `orderBy` the groups come in the marketplace's order, rarest first then urn (LI-18).
 - Severity: none (closed).
 
-**LI-9 (P2). Third-party ownership without the NFT worker misses open mappings.**
+**LI-9 (no work). Third-party ownership reads the NFT worker wherever the routes are public.**
 
+- Status: MATCH, no work (by decision: the worker is required under `NODE_POSTURE=mirror`).
 - Expected: every token the wallet holds on each provider contract, on every `ContractNetwork` (`mainnet`, `sepolia`, `matic`, `amoy`), as the NFT worker returns it, matched against mappings with `includesNft`; a non-2xx worker answer is nothing for that network, a thrown request a 502 `FetcherError` (decentraland/lamb2:src/adapters/alchemy-nft-fetcher.ts:16-54; decentraland/lamb2:src/logic/fetch-elements/fetch-third-party-wearables.ts:80-139; decentraland/lamb2:src/adapters/elements-fetcher.ts:265-274).
-- dcl-one with `NFT_WORKER_BASE_URL` (set to the same worker under `NODE_POSTURE=mirror`, services/catalyst/config/src/posture.rs) asks the worker the same way and answers the same, the explorer included: a worker read that fails is the 502 there too (`fetch_third_party_items` with `OnFailure::Fail` in services/catalyst/shop/src/market/lambdas_explorer.rs). MATCH there.
-- dcl-one without it reads the chain (services/catalyst/shop/src/market/third_party.rs `owned_via_rpc`), which lamb2 has no twin of, and still differs:
-  - `any` or wide-`range` mappings (more than 2,048 ids: a range is expanded only when `to - from < 2048`) on a plain ERC-721 the owner holds some of, or on any ERC-1155: only the explicitly mapped ids are confirmed; the rest is logged as unresolved and left out;
-  - an enumerable ERC-721 balance above 50,000 fails the read with a 502;
-  - a network with no RPC endpoint (`TRADE_RPC_URLS` entry, or `ETH_RPC_URL`/`RPC_ENDPOINT_POLYGON` for the networks of `ETH_NETWORK`) reports nothing owned;
-  - in the explorer, a contract that cannot be read is left out and the rest is served (`OnFailure::Skip`).
-- Change: a design decision. Require `NFT_WORKER_BASE_URL` where the third-party routes are public (the mirror posture already sets it), or index the provider contracts' transfers for the chain path.
-- Severity: P2 (the replacement posture uses the worker).
+- dcl-one with `NFT_WORKER_BASE_URL` asks the worker the same way and answers the same, the explorer included: a worker read that fails is the 502 there too (`fetch_third_party_items` with `OnFailure::Fail` in services/catalyst/shop/src/market/lambdas_explorer.rs).
+- `NODE_POSTURE=mirror`, the posture that replaces a Catalyst and serves these routes publicly, sets it to the same worker and refuses to start when it is blanked (`refuse_chain_read_third_party` in services/catalyst/config/src/posture.rs; pinned by `a_mirror_refuses_a_blank_nft_worker`).
+- Kept by decision: island and journey, and a node with no posture, still read the chain without a worker (services/catalyst/shop/src/market/third_party.rs `owned_via_rpc`), which lamb2 has no twin of. There an `any` or wide-`range` mapping confirms only its explicitly mapped ids, an enumerable ERC-721 balance above 50,000 is a 502, a network with no RPC endpoint reports nothing owned, and the explorer leaves out a contract it cannot read (`OnFailure::Skip`).
+- Severity: none (closed).
 
 **LI-10 (no work). Third-party routes: a registry failure answers lamb2's 502.**
 

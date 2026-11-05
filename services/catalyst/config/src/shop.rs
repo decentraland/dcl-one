@@ -55,6 +55,7 @@ pub struct MarketUpstreamsConfig {
     /// NFT ownership indexer (`POST <base>/wallets/<owner>/networks/<network>/nfts`)
     /// for an owner's third-party holdings; unset, they are read over each
     /// network's JSON-RPC (`TRADE_RPC_URLS`, `ETH_RPC_URL`, `RPC_ENDPOINT_POLYGON`).
+    /// `NODE_POSTURE=mirror` refuses to start with it empty.
     #[arg(long, env = "NFT_WORKER_BASE_URL")]
     pub nft_worker_base_url: Option<String>,
 
