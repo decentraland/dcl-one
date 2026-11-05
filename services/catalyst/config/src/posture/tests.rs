@@ -171,6 +171,30 @@ fn a_mirror_reads_third_party_holdings_from_the_nft_worker() {
     );
 }
 
+/// LI-9: a mirror's third-party routes are public, so it may not fall back
+/// to the chain path; island and journey keep it without a worker.
+#[test]
+fn a_mirror_refuses_a_blank_nft_worker() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    let check_of = |pairs: &[(&str, &str)]| {
+        let c = parsed(pairs);
+        let map = env(pairs);
+        check(&c, &lookup(&map))
+    };
+    check_of(&[db, (ENV, "mirror")]).unwrap();
+    for blank in ["", " "] {
+        let err = check_of(&[db, (ENV, "mirror"), ("NFT_WORKER_BASE_URL", blank)])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("NFT_WORKER_BASE_URL is empty: unset it"),
+            "{err}"
+        );
+    }
+    check_of(&[db, (ENV, "island")]).unwrap();
+    check_of(&[db, (ENV, "journey")]).unwrap();
+}
+
 #[test]
 fn a_mirror_explorer_lists_chain_owned_items_only() {
     assert_eq!(
@@ -192,6 +216,24 @@ fn a_mirror_explorer_lists_chain_owned_items_only() {
         c.market_upstreams.explorer_escrow_grants_enabled,
         "without a posture the binary default lists them"
     );
+}
+
+#[test]
+fn a_mirror_catalog_takes_the_upstream_filters_only() {
+    assert_eq!(
+        expanded(Posture::Mirror, &[])["LAMBDAS_CATALOG_EXTENSIONS_ENABLED"],
+        "false"
+    );
+    for posture in [Posture::Island, Posture::Journey] {
+        assert_eq!(
+            expanded(posture, &[])["LAMBDAS_CATALOG_EXTENSIONS_ENABLED"],
+            "true"
+        );
+    }
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert!(!c.market_upstreams.lambdas_catalog_extensions_enabled);
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst")]);
+    assert!(c.market_upstreams.lambdas_catalog_extensions_enabled);
 }
 
 #[test]
@@ -225,6 +267,7 @@ fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
                 "SERVE_UNSYNCED",
                 "PHASED_SYNC",
                 "EXPLORER_ESCROW_GRANTS_ENABLED",
+                "LAMBDAS_CATALOG_EXTENSIONS_ENABLED",
             ];
             assert!(
                 value == "false" || allowed.contains(key),

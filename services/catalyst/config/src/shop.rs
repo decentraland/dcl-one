@@ -55,6 +55,7 @@ pub struct MarketUpstreamsConfig {
     /// NFT ownership indexer (`POST <base>/wallets/<owner>/networks/<network>/nfts`)
     /// for an owner's third-party holdings; unset, they are read over each
     /// network's JSON-RPC (`TRADE_RPC_URLS`, `ETH_RPC_URL`, `RPC_ENDPOINT_POLYGON`).
+    /// `NODE_POSTURE=mirror` refuses to start with it empty.
     #[arg(long, env = "NFT_WORKER_BASE_URL")]
     pub nft_worker_base_url: Option<String>,
 
@@ -63,6 +64,12 @@ pub struct MarketUpstreamsConfig {
     /// only, so the mirror posture turns it off.
     #[arg(long, env = "EXPLORER_ESCROW_GRANTS_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
     pub explorer_escrow_grants_enabled: bool,
+
+    /// Take this node's extended filters on `/lambdas/collections/wearables`
+    /// (`collectionType`, `category`, `rarity`, `name`, `orderBy`,
+    /// `direction`). lamb2 ignores them, so the mirror posture turns it off.
+    #[arg(long, env = "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
+    pub lambdas_catalog_extensions_enabled: bool,
 }
 
 /// The marketplace: the collections and items mirrors, the trade ownership RPCs, the

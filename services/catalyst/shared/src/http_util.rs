@@ -44,3 +44,4 @@ pub fn internal_server_error() -> Response {
         "Internal Server Error",
     )
 }
+

@@ -893,12 +893,20 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
             ),
             1,
         ),
-        // Two values naming one provider list it once (the old handler
-        // listed it twice).
+        // Two distinct values naming one provider list it once (lamb2 lists
+        // it twice, explorer-handler.ts:119-143), so the value list cannot
+        // multiply the answer.
         (
             format!(
                 "thirdPartyCollectionId={tp_collection}:c1&thirdPartyCollectionId={tp_collection}"
             ),
+            1,
+        ),
+        (
+            (0..500)
+                .map(|i| format!("thirdPartyCollectionId={tp_collection}:x{i}"))
+                .collect::<Vec<_>>()
+                .join("&"),
             1,
         ),
         ("thirdPartyCollectionId=not-a-urn".to_string(), 0),
@@ -917,16 +925,40 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
     )
     .await;
     assert_eq!((status, &body), (StatusCode::BAD_GATEWAY, &not_found));
-    let too_many = "thirdPartyCollectionId=urn:a&".repeat(101);
-    let (status, body) = get(&state, &format!("/explorer/{OWNER}/wearables?{too_many}")).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    // No count limit; values that name no provider are dropped.
+    let many = "thirdPartyCollectionId=urn:a&".repeat(101);
+    let (status, body) = get(
+        &state,
+        &format!("/explorer/{OWNER}/wearables?collectionType=third-party&{many}"),
+    )
+    .await;
+    assert_eq!(
+        (status, &body["totalAmount"]),
+        (StatusCode::OK, &json!(0)),
+        "{body}"
+    );
     let (_, body) = get(&state, &format!("/explorer/{OWNER}/emotes")).await;
     assert_eq!(
         body["totalAmount"], 0,
         "the owner holds no emote copy: {body}"
     );
+    // Any `:address`: one that is not an Ethereum address owns nothing, the
+    // base wearables still answer.
     let (status, body) = get(&state, "/explorer/not-an-address/wearables").await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let types: Vec<&str> = body["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["type"].as_str())
+        .collect();
+    assert!(types.iter().all(|t| *t == "base-wearable"), "{body}");
+    let (_, body) = get(
+        &state,
+        "/explorer/not-an-address/wearables?collectionType=on-chain",
+    )
+    .await;
+    assert_eq!(body["totalAmount"], 0, "{body}");
 
     // `/users/{address}/wearables`: lamb2's filters, order and include keys.
     let hat = format!("urn:decentraland:matic:collections-v2:{COFFEE}:1");
