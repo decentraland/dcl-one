@@ -93,6 +93,8 @@ jobs:
       - name: Check the CI status comment scripts
         run: |
           for test in .github/actions/bevy-explorer-ci-status/test-*.sh; do bash "$test"; done
+      - name: Verify the vendored basisu bytes and patch replay
+        run: python3 rendering/bevy-explorer/source/vendor/basisu/verify.py
   changes:
     name: Changes
     runs-on: ubuntu-24.04

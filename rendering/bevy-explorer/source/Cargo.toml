@@ -82,7 +82,7 @@ members = [
   "local-harness/benchmark",
   "local-harness/presence/harness-util",
 ]
-exclude = ["../../../library/vendor/rusty_enet"]
+exclude = ["../../../library/vendor/rusty_enet", "vendor/basisu"]
 
 [workspace.dependencies]
 analytics = { path = "crates/analytics" }
@@ -175,6 +175,10 @@ bevy_console = { git = "https://github.com/robtfm/bevy-console", branch = "0.16"
 # Shared pinned ENet-CSharp transport source; provenance and local patches live beside it.
 # The native Pulse client and Catalyst use the same implementation. Native only.
 rusty_enet = { path = "../../../library/vendor/rusty_enet", version = "0.4.0" }
+# Basis Universal transcoder for KTX2 (KHR_texture_basisu) textures: pure Rust, so native and web
+# share it. Vendored with a local patch that bounds sizes read from untrusted files; provenance
+# and the patch live beside it.
+basisu = { path = "vendor/basisu", version = "=0.1.0" }
 # enables naga_oil function overrides on non-`virtual` bevy_pbr functions (e.g.
 # our shadow-darkness override in bound_material.wgsl). feature-unifies into the
 # naga_oil that bevy builds its shader composer with. version must match bevy's.
