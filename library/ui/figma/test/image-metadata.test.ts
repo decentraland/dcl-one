@@ -13,11 +13,11 @@ import { readMaterialized } from '../src/lfs.js'
 
 // Gate: no raster under library/ui/figma (the frozen test capture included), or in the public component
 // assets, may carry non-rendering metadata (tEXt, iTXt, zTXt, eXIf, tIME). The public allowlist holds
-// exactly the owner-pending NavBar assets; an entry that becomes clean must be removed.
+// exactly the owner-approved NavBar assets; an entry that becomes clean must be removed.
 const repoRoot = path.resolve(import.meta.dirname, '../../../..')
 const PUBLIC_ASSETS = 'library/ui/components/assets/'
-const EXPIRY = 'NavBar re-promotion or the PR split, whichever comes first'
-// The 12 promoted NavBar assets under the open, owner-pending exception (phase4-handoff). Changing this
+const EXPIRY = 'NavBar re-promotion'
+// The 12 promoted NavBar assets under the owner-approved exception (2026-11-05). Changing this
 // list is a scope decision, not a test fix.
 const APPROVED_PUBLIC_EXCEPTIONS = [].map((name) => `${PUBLIC_ASSETS}${name}.svg`)
 
@@ -71,7 +71,7 @@ describe('image metadata gate', () => {
     expect(undercounted).toEqual([])
   }, 180_000)
 
-  it('should allow exactly the 12 owner-pending public NavBar assets, each with a reason and an expiry', async () => {
+  it('should allow exactly the 12 owner-approved public NavBar assets, each with a reason and an expiry', async () => {
     const allow = await allowlist()
 
     // The exact approved set, not a count: a substituted or duplicated path fails here.
@@ -80,7 +80,7 @@ describe('image metadata gate', () => {
     for (const entry of allow.files) {
       expect(entry.path.startsWith(PUBLIC_ASSETS) && entry.path.endsWith('.svg')).toBe(true)
       expect(entry.reason).toMatch(/NavBar/)
-      expect(entry.reason).toMatch(/[Oo]wner-pending/)
+      expect(entry.reason).toMatch(/Owner-approved exception \(2026-11-05\)/)
       expect(entry.expires).toBe(EXPIRY)
     }
   })
