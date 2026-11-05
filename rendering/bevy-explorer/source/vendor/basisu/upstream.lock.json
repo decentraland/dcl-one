@@ -14,12 +14,12 @@
   "normalization": "Exact bytes of the published crates.io package (the .crate whose SHA256 is crate_sha256, as Cargo.lock recorded it), with the listed patches applied. Repository .gitattributes disables newline conversion for this subtree. SHA256 manifests are UTF-8 with LF lines and lexicographically sorted package-relative paths. No Cargo cache marker is imported.",
   "manifests": {
     "upstream-files.sha256": "b0cc1f6baf8c6a380ab0782354f23dd1f9c0600091b708ad7d8c33af561f352a",
-    "checksums.sha256": "1b7dbca67c11ea12eddfc794dce63eaf801ee6def79ad87a1f931a87f414dcac"
+    "checksums.sha256": "6d82b9c067657e7625719bf98bb478bea3d02e24c250b293866607ce43365df8"
   },
   "patches": [
     {
       "path": "patches/0001-bound-untrusted-sizes.patch",
-      "sha256": "89592239a061149c6e0240d9befce420c735b5d40439e653922500788796f753",
+      "sha256": "5cf44c6ac293952f55eb1ce40076fc4b6b5e9bbbd54b2f0cce601de76045692b",
       "changes": [
         "Reject KTX2 width or height above 16384, and more levels than the base level's full mip chain",
         "Checked arithmetic for every offset, length and image index taken from the KTX2 header and supercompression global data, so no sum wraps where usize is 32 bits",

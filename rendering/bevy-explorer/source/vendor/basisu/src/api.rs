@@ -510,7 +510,8 @@ pub struct GlobalCodebook {
 /// can't be made is `Error::InvalidData` instead of a process abort.
 fn zeroed(size: usize) -> Result<Vec<u8>, Error> {
     let mut out = Vec::new();
-    out.try_reserve_exact(size).map_err(|_| Error::InvalidData)?;
+    out.try_reserve_exact(size)
+        .map_err(|_| Error::InvalidData)?;
     out.resize(size, 0);
     Ok(out)
 }
