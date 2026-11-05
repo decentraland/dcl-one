@@ -25,7 +25,6 @@ concurrency:
       || format('uuav-native-skip-{0}', github.run_id) }}
   cancel-in-progress: true
 env:
-  DIST_LFS_GLOB: 'library/uuav/dist/**'
   LOCK: tooling/uuav/uuav-binaries.lock.json
   UUAV: library/uuav
 jobs:
@@ -49,7 +48,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: false
-      - run: git lfs pull --include "$DIST_LFS_GLOB"
+      - run: git lfs pull --include 'library/uuav/dist/macos-universal/**'
 
       - name: Read pins from the lock
         id: pins
@@ -169,7 +168,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: false
-      - run: git lfs pull --include "$DIST_LFS_GLOB"
+      - run: git lfs pull --include 'library/uuav/dist/windows-x86_64/**'
 
       - name: Read pins from the lock
         id: pins
@@ -259,7 +258,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: false
-      - run: git lfs pull --include "$DIST_LFS_GLOB"
+      - run: git lfs pull --include 'library/uuav/dist/linux-x86_64/**'
 
       - name: Read pins from the lock
         id: pins
