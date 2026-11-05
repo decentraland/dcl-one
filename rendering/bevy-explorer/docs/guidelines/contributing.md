@@ -28,6 +28,12 @@ understand the change in one sitting.
 - When simplifying a feature, remove leftover edits that no longer change behaviour. Keep
   comments that explain constraints still in force and rename tests that now prove a different
   contract.
+- No provenance in comments: not a Unity file, type, constant or PR, not "as in unity-explorer",
+  and not who decided. Such citations go stale as Unity moves, and justify the code by where it
+  came from rather than why it is right. A comment gives the code's own reason, or nothing if the
+  code is clear. Unity sources go in the PR description; who decided goes there or in
+  [decisions](decisions.md).
+- Existing comments survive a refactor unless they became wrong.
 - Limit each `Drop` implementation to one blocking operation. Release a lock before taking
   another or doing file I/O. Put multi-step cleanup in an explicit completion path.
 - Reuse what exists: protocol and SDK types, the existing scheduling, picking and loading
