@@ -30,6 +30,8 @@ import { ReactEcsRenderer } from '@dcl/sdk/react-ecs'
 import type { Entity } from '@dcl/ecs'
 import { isSpeaking } from './voice'
 import { fetchProfile } from './profile'
+import { BevyApi } from '../bevy-api'
+import { relay } from '../system-helpers'
 import { userNameColor } from '../../../src/engine/nameColor'
 
 // unity-explorer colours (CommonStyles.uss): solid pill + border, white-40% wallet id.
@@ -177,11 +179,26 @@ function nameColor(userId: string, name: string, claimed: boolean): Color4 {
 // it resolves so the badge / discriminator don't flicker on first sight.
 const claimedCache = new Map<string, { name: string; claimed: boolean }>()
 const pendingClaimed = new Map<string, string>()
+// Bumped when the engine reports a new profile version for a player: their next frame re-reads it,
+// so a colour change (which keeps the same name) reaches the tag too. A read started before the
+// bump is dropped, as it may hold the previous colour.
+const profileGeneration = new Map<string, number>()
+function forgetProfile(address: string): void {
+  const key = canon(address)
+  profileGeneration.set(key, (profileGeneration.get(key) ?? 0) + 1)
+  for (const userId of [...claimedCache.keys(), ...pendingClaimed.keys()]) {
+    if (canon(userId) !== key) continue
+    claimedCache.delete(userId)
+    pendingClaimed.delete(userId)
+  }
+}
 function resolveClaimed(userId: string, name: string): void {
   if (claimedCache.get(userId)?.name === name || pendingClaimed.get(userId) === name) return
   pendingClaimed.set(userId, name)
+  const generation = profileGeneration.get(canon(userId)) ?? 0
   fetchProfile(userId)
     .then((av) => {
+      if ((profileGeneration.get(canon(userId)) ?? 0) !== generation) return
       const claimed = av?.hasClaimedName ?? !name.includes('#')
       claimedCache.set(userId, { name, claimed })
       const nc = av?.nameColor
@@ -190,7 +207,9 @@ function resolveClaimed(userId: string, name: string): void {
     })
     // Settle on the heuristic rather than leave the entry empty: Tag asks every frame, so an
     // unresolvable profile would otherwise be re-requested every frame.
-    .catch(() => claimedCache.set(userId, { name, claimed: !name.includes('#') }))
+    .catch(() => {
+      if ((profileGeneration.get(canon(userId)) ?? 0) === generation) claimedCache.set(userId, { name, claimed: !name.includes('#') })
+    })
     .finally(() => {
       if (pendingClaimed.get(userId) === name) pendingClaimed.delete(userId)
     })
@@ -327,6 +346,9 @@ const initFlag = globalThis as { __bevyNametagsStarted?: boolean }
 export function initNametags(): void {
   if (initFlag.__bevyNametagsStarted === true) return // never stack the systems twice
   initFlag.__bevyNametagsStarted = true
+  // Any player's profile changing (yours included, e.g. a name colour picked on the passport)
+  // makes their tag re-read it.
+  relay('nametagProfile', async () => await BevyApi.getProfileChangedStream(), (ev) => forgetProfile(ev.address))
   console.log('[nametags] BUILD=pool+showhide+self')
 
   // THE POOL: one entity per wallet, created on first sight and kept FOREVER (never destroyed — entity
