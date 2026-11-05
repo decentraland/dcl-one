@@ -961,17 +961,25 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         "{body}"
     );
     let fetcher_error = json!({ "error": "The requested items cannot be fetched right now", "message": format!("Cannot fetch elements for {OWNER}") });
-    for uri in [
-        format!("/lambdas/users/{OWNER}/third-party-wearables"),
-        format!("/lambdas/outfits/{OWNER}"),
-    ] {
-        let (status, body) = get(&down_state, &uri).await;
-        assert_eq!(
-            (status, body),
-            (StatusCode::BAD_GATEWAY, fetcher_error.clone()),
-            "{uri}"
-        );
-    }
+    let uri = format!("/lambdas/users/{OWNER}/third-party-wearables");
+    let (status, body) = get(&down_state, &uri).await;
+    assert_eq!(
+        (status, body),
+        (StatusCode::BAD_GATEWAY, fetcher_error),
+        "{uri}"
+    );
+    // lamb2's outfits let the third-party checker's error through to its
+    // bare 500.
+    let uri = format!("/lambdas/outfits/{OWNER}");
+    let (status, body) = get(&down_state, &uri).await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": "Internal Server Error" })
+        ),
+        "{uri}"
+    );
     let (status, body) = get(&down_state, &format!("/lambdas/profiles/{OWNER}")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(

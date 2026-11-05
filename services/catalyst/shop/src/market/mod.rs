@@ -848,7 +848,8 @@ impl AssetKey {
 }
 
 pub use crate::shared::http_util::{
-    bad_request, internal_server_error, lambdas_error, not_found, service_unavailable,
+    bad_request, internal_server_error, lambdas_error, lambdas_internal_error, not_found,
+    service_unavailable,
 };
 pub use crate::shared::identity::is_valid_eth_address;
 pub use crate::shared::upstream::check_upstream;
@@ -887,6 +888,10 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/lambdas/profiles",
             post(profiles::profiles).layer(DefaultBodyLimit::max(256 * 1024)),
+        )
+        .route(
+            "/lambdas/profiles/metadata",
+            post(profiles::profiles_metadata).layer(DefaultBodyLimit::max(256 * 1024)),
         )
         .route("/lambdas/profiles/{id}", get(profiles::profile_by_id))
         .route("/lambdas/profile/{id}", get(profiles::profile_alias))

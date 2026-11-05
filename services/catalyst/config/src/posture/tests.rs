@@ -951,3 +951,16 @@ fn the_chain_rpcs_default_by_network_outside_island_and_journey() {
     c.default_rpc_urls();
     refuse_remote_secrets(&mut c).unwrap();
 }
+
+/// lamb2's /about CPU and memory check is opt-in: off under every posture
+/// and with none, on only when `ABOUT_RESOURCE_CHECK` says so.
+#[test]
+fn about_resource_check_is_off_unless_set() {
+    let db = ("DATABASE_URL", "postgres:///catalyst");
+    assert!(!parsed(&[db]).node.about_resource_check);
+    for posture in ["mirror", "island", "journey"] {
+        assert!(!parsed(&[db, (ENV, posture)]).node.about_resource_check);
+        let on = parsed(&[db, (ENV, posture), ("ABOUT_RESOURCE_CHECK", "true")]);
+        assert!(on.node.about_resource_check, "{posture}");
+    }
+}
