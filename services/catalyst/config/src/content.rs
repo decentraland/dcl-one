@@ -226,6 +226,8 @@ pub struct ContentConfig {
 
     /// `POST /entities` bodies one client address (IPv6 by /64) may have in
     /// flight at once on this process, before a 429 with `Retry-After: 5`.
+    /// Upstream's catalyst and worlds-content-server read the same variable,
+    /// so the worlds multipart uploads take it too.
     #[arg(
         long,
         env = "MAX_CONCURRENT_UPLOADS_PER_SOURCE",
@@ -236,7 +238,8 @@ pub struct ContentConfig {
 
     /// Bytes of `POST /entities` bodies (declared, else the 200 MiB cap) one
     /// client address may have in flight; unset, one maximum-size upload.
-    /// Below that startup fails.
+    /// Below that startup fails. The worlds uploads read it too; unset, they
+    /// default to one 350 MiB world deploy.
     #[arg(
         long,
         env = "MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE",
