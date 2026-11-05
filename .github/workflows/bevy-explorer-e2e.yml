@@ -225,7 +225,9 @@ jobs:
       - name: Build dcl-scene-cli
         if: env.GROUP != 'inworld'
         working-directory: apps/dcl-scene-cli
-        run: cargo build --release --locked
+        # The crate is a member of the catalyst workspace (services/catalyst), whose target folder
+        # would otherwise take the binary; its own keeps the path below and the cache local.
+        run: cargo build --release --locked --target-dir target
       - name: Build the visual scenes
         if: env.GROUP != 'inworld'
         env:

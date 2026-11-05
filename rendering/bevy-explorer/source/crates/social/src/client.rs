@@ -629,6 +629,17 @@ async fn social_socket_handler_inner(
     }
 }
 
+async fn social_auth_headers(
+    wallet: &wallet::Wallet,
+    connection_uri: &http::Uri,
+) -> Result<Vec<(String, String)>, anyhow::Error> {
+    // Social verifies the protocol root even when the connection uses a gateway prefix.
+    let mut parts = connection_uri.clone().into_parts();
+    parts.path_and_query = Some(http::uri::PathAndQuery::from_static("/"));
+    let signed_uri = http::Uri::from_parts(parts)?;
+    wallet::sign_request("get", &signed_uri, wallet, "{}".to_owned()).await
+}
+
 async fn run_one_connection(
     wallet: &wallet::Wallet,
     rx: &mut UnboundedReceiver<UpsertFriendshipRequest>,
@@ -647,9 +658,7 @@ async fn run_one_connection(
 
     // V2 auth: send signed headers as first WS message
     let uri: http::Uri = social_url().parse().map_err(dbgerr)?;
-    let signed_headers = wallet::sign_request("get", &uri, wallet, "{}".to_owned())
-        .await
-        .map_err(dbgerr)?;
+    let signed_headers = social_auth_headers(wallet, &uri).await.map_err(dbgerr)?;
     let headers_map: std::collections::HashMap<String, String> =
         signed_headers.into_iter().collect();
     let auth_json = serde_json::to_string(&headers_map)?;
@@ -1364,3 +1373,43 @@ async fn run_one_connection(
 }
 
 pub type FriendshipEventBody = friendship_update::Update;
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+
+    #[test]
+    fn social_signature_uses_source_root_for_mounted_and_standalone_connections() {
+        async_std::task::block_on(async {
+            let mut wallet = wallet::Wallet::default();
+            wallet.finalize_as_guest();
+            for url in [
+                "wss://social.example/",
+                "wss://social.example/social-rpc",
+                "wss://social.example/edge/social-rpc?region=test",
+            ] {
+                let connection: http::Uri = url.parse().unwrap();
+                let original = connection.clone();
+                let headers: std::collections::HashMap<_, _> =
+                    social_auth_headers(&wallet, &connection)
+                        .await
+                        .unwrap()
+                        .into_iter()
+                        .collect();
+                assert_eq!(connection, original, "connection URI remains unchanged");
+                let entity: serde_json::Value =
+                    serde_json::from_str(&headers["x-identity-auth-chain-1"]).unwrap();
+                let expected = format!("get:/:{}:{{}}", headers["x-identity-timestamp"]);
+                assert_eq!(entity["payload"], expected);
+                let signature: alloy_core::primitives::Signature =
+                    entity["signature"].as_str().unwrap().parse().unwrap();
+                assert_eq!(
+                    signature
+                        .recover_address_from_msg(expected.as_bytes())
+                        .unwrap(),
+                    wallet.address().unwrap()
+                );
+            }
+        });
+    }
+}

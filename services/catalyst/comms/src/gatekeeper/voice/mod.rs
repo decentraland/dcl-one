@@ -194,6 +194,23 @@ pub async fn get_private_voice_chat_room_credentials(
     room_id: &str,
     user_addresses: &[Address],
 ) -> Result<BTreeMap<String, Value>, ApiError> {
+    private_voice_chat_room_credentials(state, room_id, user_addresses, false).await
+}
+
+pub(super) async fn pending_private_voice_chat_room_credentials(
+    state: &CommsState,
+    room_id: &str,
+    user_addresses: &[Address],
+) -> Result<BTreeMap<String, Value>, ApiError> {
+    private_voice_chat_room_credentials(state, room_id, user_addresses, true).await
+}
+
+async fn private_voice_chat_room_credentials(
+    state: &CommsState,
+    room_id: &str,
+    user_addresses: &[Address],
+    pending_only: bool,
+) -> Result<BTreeMap<String, Value>, ApiError> {
     let call_id = Uuid::parse_str(room_id.trim())
         .map_err(|_| ApiError::bad_request("Invalid request body, room_id must be a uuid"))?;
     let [caller, callee] = user_addresses else {
@@ -222,13 +239,28 @@ pub async fn get_private_voice_chat_room_credentials(
             serde_json::json!({ "connection_url": connection_url }),
         );
     }
-    let displaced = state
-        .voice_db
-        .create_private_call(call_id, caller, callee)
-        .await?;
-    if !displaced.is_empty() {
-        let rooms: Vec<String> = displaced.iter().map(private_voice_chat_room_name).collect();
-        delete_livekit_rooms(state, &rooms, "displaced private voice room").await;
+    if pending_only {
+        if !state
+            .voice_db
+            .accept_pending_private_call(call_id, caller, callee)
+            .await?
+        {
+            return Err(ApiError::not_found("Private voice chat intent not found"));
+        }
+    } else {
+        match state
+            .voice_db
+            .create_private_call(call_id, caller, callee)
+            .await
+        {
+            Ok(_) => {}
+            Err(db::CreatePrivateCallError::PartiesDiffer) => {
+                return Err(super::errors::conflict(
+                    "Private voice chat room belongs to other participants",
+                ));
+            }
+            Err(db::CreatePrivateCallError::Db(e)) => return Err(e.into()),
+        }
     }
     Ok(out)
 }
