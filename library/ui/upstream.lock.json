@@ -5,7 +5,7 @@
       "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
       "license": {
         "spdx": "AGPL-3.0-only",
-        "status": "Published in dcl-one under AGPL-3.0-only (the root LICENSE) with the written confirmation of figma-design-system's author and rights holder (2026-11-05)."
+        "status": "Authorized for publication in dcl-one under the repository's license (AGPL-3.0-only) by the written confirmation of figma-design-system's author and rights holder (2026-11-05)."
       },
       "imported": {
         "dcl-mcp-figma/src, test, capture": "figma/src, figma/test, figma/capture",
