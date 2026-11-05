@@ -1756,6 +1756,8 @@ fn play_current_emote(
         // persists so downstream `SceneDrivenAnimationFeedback` publishing reports the
         // fallback source, not the failed scene-driven one.
         let played = loop {
+            // locomotion skips loading footsteps instead of gliding in idle
+            let wait_for_sound = ![&*URN_WALK, &*URN_RUN, &*URN_JUMP].contains(&&active_emote.urn);
             match play_slot(
                 &mut commands,
                 &mut params,
@@ -1773,8 +1775,7 @@ fn play_current_emote(
                 active_emote.speed,
                 &mut active_emote.pending_seek,
                 active_emote.initial_audio_mark,
-                // locomotion skips loading footsteps instead of gliding in idle
-                active_emote.source != ActiveEmoteSource::VelocitySelected,
+                wait_for_sound,
             ) {
                 Err(Hold::Failed) => {
                     if let Some(fb) = active_emote.fallback.take() {
