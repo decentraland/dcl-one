@@ -1033,22 +1033,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     comms_stage.gatekeeper.spawn_jobs(&jobs);
     social.media.spawn_jobs(&jobs);
     social.rpc.spawn_jobs(&jobs);
-    if let Some(events) =
-        social::legacy_events::LegacyEvents::new(social::legacy_events::Settings {
-            sqs_endpoint: config.social.legacy_sqs_endpoint.clone(),
-            sqs_queue_url: config.social.legacy_sqs_queue_url.clone(),
-            sns_endpoint: config.social.legacy_sns_endpoint.clone(),
-            sns_arn: config.social.legacy_sns_arn.clone(),
-        })
-        .await?
-    {
-        social.communities.referral.set_publisher(events.clone());
-        events.spawn(
-            &jobs,
-            social.communities.clone(),
-            config.writes.social_writes_enabled,
-        );
-    }
     if config.writes.social_writes_enabled {
         let communities = social.communities.clone();
         jobs.spawn_periodic_leased(

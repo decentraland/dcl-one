@@ -422,6 +422,24 @@ class PlayImportTests(unittest.TestCase):
         with patch.object(play.subprocess, 'run', side_effect=OSError):
             self.assertTrue(play.engine_changed(pr))
 
+    def test_pr_base_is_the_main_tip_the_merge_commit_was_built_on(self):
+        tip, head, stale, merge = 'd' * 40, 'e' * 40, 'f' * 40, 'c' * 40
+        header = lambda *parents: subprocess.CompletedProcess(
+            [], 0, (''.join(f'parent {sha}\n' for sha in parents) + f'author CI\n\nparent {stale}\n').encode(), b'')
+        with tempfile.TemporaryDirectory() as temporary:
+            event = Path(temporary) / 'event.json'
+            event.write_text(json.dumps({'number': 7, 'pull_request': {'head': {'sha': head}, 'base': {'sha': stale}}}))
+            env = {'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_EVENT_PATH': str(event), 'GITHUB_SHA': merge}
+            with patch.dict(os.environ, env):
+                with patch.object(play.subprocess, 'run', return_value=header(tip, head)):
+                    self.assertEqual(play.current_pr(), {'number': 7, 'head': head, 'base': tip, 'merge': merge})
+                for result in (header(head), header(tip, stale)):
+                    with patch.object(play.subprocess, 'run', return_value=result):
+                        self.assertEqual(play.current_pr()['base'], stale)
+                for error in (subprocess.CalledProcessError(128, 'git'), OSError()):
+                    with patch.object(play.subprocess, 'run', side_effect=error):
+                        self.assertEqual(play.current_pr()['base'], stale)
+
     def test_pr_without_engine_changes_takes_the_newest_finished_main_build_without_matching(self):
         pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
         newest_running = run(id=45, status='in_progress', conclusion=None)
