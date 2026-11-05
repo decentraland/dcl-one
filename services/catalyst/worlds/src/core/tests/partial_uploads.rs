@@ -1178,12 +1178,10 @@ async fn two_replicas_completing_one_entity_publish_it_once() {
         partial::REPLICA.scope("b", send(&f.app, &u, Batch::of(&owner, false, &[0]))),
         async {
             let first = blocked_by(&f.pool, holder, "SELECT owner FROM worlds.worlds", 1).await;
-            // The second queues behind the first: on the row, or on the store lock behind a collector.
-            let row_or_store = [
-                "SELECT owner FROM worlds.worlds",
-                "pg_advisory_xact_lock_shared",
-            ];
-            waiting_on(&f.pool, first[0], &row_or_store, true, 1).await;
+            // The second queues behind the first: on the row, or on an advisory lock (the world's
+            // publish lock, the wallet's quota lock, or the store lock behind a collector).
+            let row_or_lock = ["SELECT owner FROM worlds.worlds", "pg_advisory_xact_lock"];
+            waiting_on(&f.pool, first[0], &row_or_lock, true, 1).await;
             held.commit().await.unwrap();
         },
     );
