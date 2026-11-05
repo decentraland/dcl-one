@@ -7,6 +7,7 @@
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context as _;
 use axum::extract::State;
@@ -20,10 +21,13 @@ use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::PgPool;
 
 use super::{Shared, mirror};
-use crate::jobs::JobContext;
+use crate::jobs::{JobContext, Jobs, PeriodicCfg};
 
 pub const MIRROR: &str = "denylist";
 const BODY_CAP: usize = 4 << 20;
+/// Delay between refresh passes; failures retain the last snapshot.
+pub const RELOAD_INTERVAL: Duration = Duration::from_secs(30);
+const RELOAD_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Denylist {
@@ -93,14 +97,16 @@ struct Served {
 }
 
 /// The served list and its normalized set, rebuilt from the database after
-/// every pass or overlay change.
+/// every pass or overlay change and periodically on every serving replica.
 pub struct Snapshot {
     inner: RwLock<Arc<Served>>,
+    reload: tokio::sync::Mutex<()>,
 }
 
 impl Default for Snapshot {
     fn default() -> Self {
         Self {
+            reload: tokio::sync::Mutex::new(()),
             inner: RwLock::new(Arc::new(Served {
                 list: Arc::new(Denylist::default()),
                 wallets: HashSet::new(),
@@ -124,6 +130,9 @@ impl Snapshot {
     /// Mirror rows plus local additions, minus local removals; a wallet both
     /// mirrored and locally added keeps the upstream's casing.
     pub async fn reload(&self, pool: &PgPool) -> sqlx::Result<()> {
+        // A periodic read started before an admin write must not finish after
+        // that write's own reload and replace its newer snapshot.
+        let _reload = self.reload.lock().await;
         let rows: Vec<(String, String)> = sqlx::query_as(
             "SELECT DISTINCT ON (wallet) wallet, wallet_raw FROM (
                  SELECT wallet, wallet_raw, 0 AS pri FROM explore_api.denylist_users
@@ -233,6 +242,27 @@ pub async fn run_pass(state: &Shared, ctx: &JobContext) -> anyhow::Result<()> {
         })
     })
     .await
+}
+
+/// Every process reloads its served set from the tables the leased mirror and
+/// the local overlay write, so replicas that never hold the mirror lease (and
+/// social's referral checks on them) follow the shared denylist. Each pass has
+/// a five-second budget and failed passes retry after the same interval.
+pub fn spawn_reload(state: &Shared, jobs: &Jobs, every: Duration) {
+    let state = state.clone();
+    jobs.spawn_periodic(
+        "explorer-denylist-reload",
+        PeriodicCfg::every(every).after_first_interval(),
+        move |_ctx| {
+            let state = state.clone();
+            async move {
+                tokio::time::timeout(RELOAD_TIMEOUT, state.denylist.reload(&state.pool))
+                    .await
+                    .context("denylist snapshot reload timed out")?
+                    .context("reloading the denylist")
+            }
+        },
+    );
 }
 
 pub fn routes() -> Router<Shared> {

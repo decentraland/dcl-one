@@ -292,6 +292,7 @@ async fn grants_as_copies(
                     rarity,
                     name,
                     category: item_category,
+                    item_type: String::new(),
                 },
                 g.unlock_at,
             )
@@ -712,6 +713,7 @@ mod tests {
             rarity: "common".into(),
             name: "Item".into(),
             category: "eyewear".into(),
+            item_type: "wearable_v2".into(),
         };
         let owned = serde_json::to_value(profile_row(&copy, None)).unwrap();
         assert_eq!(

@@ -4,6 +4,7 @@
 // of the relay uses (relayStart below). The engine's own glue is never loaded here.
 import initSceneRuntime, * as sceneRuntimeExports from "./pkg-scene/dcl_scene_wasm.js";
 import { relayCopyWasm } from "./relay_copy.js";
+import { createSceneFetch } from "./scene_fetch.js";
 
 // The capability the trusted super-user scene is given below. Captured before the scrub so the
 // constructor survives while the global does not.
@@ -12,6 +13,7 @@ const RealBroadcastChannel = self.BroadcastChannel;
 // postMessage carries killToken.
 const workerPostMessage = self.postMessage.bind(self);
 const workerClose = self.close.bind(self);
+self.fetch = createSceneFetch(self.fetch.bind(self));
 // Stack traces are only ever formatted the default way: scene code can't install a formatter.
 Object.defineProperty(Error, "prepareStackTrace", {
   get: () => undefined,

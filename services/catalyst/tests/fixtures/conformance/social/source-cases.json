@@ -1,0 +1,540 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+    "yarn_lock_sha256": "5e5f4a1ee4bd960bede74f5877921117ebbfa88a67cf5c75ffd86ea9416c7088"
+  },
+  "runtime": {
+    "node": "v26.12.0",
+    "protocol_package": "1.0.0-29103578374.commit-3c4b54e"
+  },
+  "scope": "Real upstream RPC handlers and friendship/settings components with deterministic injected dependencies; not deployed HTTP, Redis, SNS, or PostgreSQL equivalence.",
+  "caller": "0x1111111111111111111111111111111111111111",
+  "target": "0x2222222222222222222222222222222222222222",
+  "cases": [
+    {
+      "id": "block-user.missing",
+      "method": "blockUser",
+      "request": {},
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Invalid user address in the request payload"
+          }
+        }
+      },
+      "expected_hex": "1a2d0a2b496e76616c69642075736572206164647265737320696e207468652072657175657374207061796c6f6164"
+    },
+    {
+      "id": "block-user.invalid",
+      "method": "blockUser",
+      "request": {
+        "user": {
+          "address": "invalid"
+        }
+      },
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Invalid user address in the request payload"
+          }
+        }
+      },
+      "expected_hex": "1a2d0a2b496e76616c69642075736572206164647265737320696e207468652072657175657374207061796c6f6164"
+    },
+    {
+      "id": "block-user.self",
+      "method": "blockUser",
+      "request": {
+        "user": {
+          "address": "0x1111111111111111111111111111111111111111"
+        }
+      },
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Cannot block yourself"
+          }
+        }
+      },
+      "expected_hex": "1a170a1543616e6e6f7420626c6f636b20796f757273656c66"
+    },
+    {
+      "id": "unblock-user.missing",
+      "method": "unblockUser",
+      "request": {},
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Invalid user address in the request payload"
+          }
+        }
+      },
+      "expected_hex": "1a2d0a2b496e76616c69642075736572206164647265737320696e207468652072657175657374207061796c6f6164"
+    },
+    {
+      "id": "unblock-user.invalid",
+      "method": "unblockUser",
+      "request": {
+        "user": {
+          "address": "invalid"
+        }
+      },
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Invalid user address in the request payload"
+          }
+        }
+      },
+      "expected_hex": "1a2d0a2b496e76616c69642075736572206164647265737320696e207468652072657175657374207061796c6f6164"
+    },
+    {
+      "id": "unblock-user.self",
+      "method": "unblockUser",
+      "request": {
+        "user": {
+          "address": "0x1111111111111111111111111111111111111111"
+        }
+      },
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Cannot unblock yourself"
+          }
+        }
+      },
+      "expected_hex": "1a190a1743616e6e6f7420756e626c6f636b20796f757273656c66"
+    },
+    {
+      "id": "upsert-friendship.missing-action",
+      "method": "upsertFriendship",
+      "request": {},
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Unknown message"
+          }
+        }
+      },
+      "expected_hex": "22110a0f556e6b6e6f776e206d657373616765"
+    },
+    {
+      "id": "upsert-friendship.missing-user",
+      "method": "upsertFriendship",
+      "request": {
+        "action": {
+          "$case": "request",
+          "request": {}
+        }
+      },
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Cannot read properties of undefined (reading 'address')"
+          }
+        }
+      },
+      "expected_hex": "1a390a3743616e6e6f7420726561642070726f70657274696573206f6620756e646566696e6564202872656164696e672027616464726573732729"
+    },
+    {
+      "id": "upsert-friendship.invalid",
+      "method": "upsertFriendship",
+      "request": {
+        "action": {
+          "$case": "request",
+          "request": {
+            "user": {
+              "address": "invalid"
+            }
+          }
+        }
+      },
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Invalid user address in the request payload"
+          }
+        }
+      },
+      "expected_hex": "222d0a2b496e76616c69642075736572206164647265737320696e207468652072657175657374207061796c6f6164"
+    },
+    {
+      "id": "upsert-friendship.whitespace",
+      "method": "upsertFriendship",
+      "request": {
+        "action": {
+          "$case": "request",
+          "request": {
+            "user": {
+              "address": " 0x2222222222222222222222222222222222222222"
+            }
+          }
+        }
+      },
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Invalid user address in the request payload"
+          }
+        }
+      },
+      "expected_hex": "222d0a2b496e76616c69642075736572206164647265737320696e207468652072657175657374207061796c6f6164"
+    },
+    {
+      "id": "upsert-friendship.self",
+      "method": "upsertFriendship",
+      "request": {
+        "action": {
+          "$case": "request",
+          "request": {
+            "user": {
+              "address": "0x1111111111111111111111111111111111111111"
+            }
+          }
+        }
+      },
+      "response": {
+        "response": {
+          "$case": "invalidFriendshipAction",
+          "invalidFriendshipAction": {
+            "message": "You cannot send a friendship request to yourself"
+          }
+        }
+      },
+      "expected_hex": "12320a30596f752063616e6e6f742073656e64206120667269656e6473686970207265717565737420746f20796f757273656c66"
+    },
+    {
+      "id": "get-friendship-status.missing",
+      "method": "getFriendshipStatus",
+      "request": {},
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "User address is missing in the request payload"
+          }
+        }
+      },
+      "expected_hex": "1a300a2e557365722061646472657373206973206d697373696e6720696e207468652072657175657374207061796c6f6164"
+    },
+    {
+      "id": "get-friendship-status.invalid",
+      "method": "getFriendshipStatus",
+      "request": {
+        "user": {
+          "address": "invalid"
+        }
+      },
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Invalid user address in the request payload"
+          }
+        }
+      },
+      "expected_hex": "1a2d0a2b496e76616c69642075736572206164647265737320696e207468652072657175657374207061796c6f6164"
+    },
+    {
+      "id": "get-friendship-status.no-action",
+      "method": "getFriendshipStatus",
+      "request": {
+        "user": {
+          "address": "0x2222222222222222222222222222222222222222"
+        }
+      },
+      "response": {
+        "response": {
+          "$case": "accepted",
+          "accepted": {
+            "status": 7
+          }
+        }
+      },
+      "expected_hex": "0a020807"
+    },
+    {
+      "id": "get-friendship-status.synthesized-block-action",
+      "method": "getFriendshipStatus",
+      "request": {
+        "user": {
+          "address": "0x2222222222222222222222222222222222222222"
+        }
+      },
+      "response": {
+        "response": {
+          "$case": "accepted",
+          "accepted": {
+            "status": 6
+          }
+        }
+      },
+      "expected_hex": "0a020806"
+    },
+    {
+      "id": "get-friends.missing-profile",
+      "method": "getFriends",
+      "request": {
+        "user": {
+          "address": "0x2222222222222222222222222222222222222222"
+        },
+        "pagination": {
+          "limit": 1,
+          "offset": 0
+        }
+      },
+      "response": {
+        "friends": [],
+        "paginationData": {
+          "total": 1,
+          "page": 1
+        }
+      },
+      "expected_hex": "120408011001"
+    },
+    {
+      "id": "get-mutual-friends.missing-profile",
+      "method": "getMutualFriends",
+      "request": {
+        "user": {
+          "address": "0x2222222222222222222222222222222222222222"
+        },
+        "pagination": {
+          "limit": 1,
+          "offset": 0
+        }
+      },
+      "response": {
+        "friends": [],
+        "paginationData": {
+          "total": 1,
+          "page": 1
+        }
+      },
+      "expected_hex": "120408011001"
+    },
+    {
+      "id": "get-pending-friendship-requests.missing-profile",
+      "method": "getPendingFriendshipRequests",
+      "request": {
+        "user": {
+          "address": "0x2222222222222222222222222222222222222222"
+        },
+        "pagination": {
+          "limit": 1,
+          "offset": 0
+        }
+      },
+      "response": {
+        "response": {
+          "$case": "requests",
+          "requests": {
+            "requests": []
+          }
+        },
+        "paginationData": {
+          "total": 1,
+          "page": 1
+        }
+      },
+      "expected_hex": "0a001a0408011001"
+    },
+    {
+      "id": "get-sent-friendship-requests.missing-profile",
+      "method": "getSentFriendshipRequests",
+      "request": {
+        "user": {
+          "address": "0x2222222222222222222222222222222222222222"
+        },
+        "pagination": {
+          "limit": 1,
+          "offset": 0
+        }
+      },
+      "response": {
+        "response": {
+          "$case": "requests",
+          "requests": {
+            "requests": []
+          }
+        },
+        "paginationData": {
+          "total": 1,
+          "page": 1
+        }
+      },
+      "expected_hex": "0a001a0408011001"
+    },
+    {
+      "id": "get-blocked-users.missing-profile",
+      "method": "getBlockedUsers",
+      "request": {
+        "user": {
+          "address": "0x2222222222222222222222222222222222222222"
+        },
+        "pagination": {
+          "limit": 1,
+          "offset": 0
+        }
+      },
+      "response": {
+        "profiles": [],
+        "paginationData": {
+          "total": 1,
+          "page": 1
+        }
+      },
+      "expected_hex": "120408011001"
+    },
+    {
+      "id": "upsert-friendship.missing-profiles-after-commit",
+      "method": "upsertFriendship",
+      "request": {
+        "action": {
+          "$case": "request",
+          "request": {
+            "user": {
+              "address": "0x2222222222222222222222222222222222222222"
+            }
+          }
+        }
+      },
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Profile not found for address 0x1111111111111111111111111111111111111111"
+          }
+        }
+      },
+      "expected_hex": "1a4a0a4850726f66696c65206e6f7420666f756e6420666f72206164647265737320307831313131313131313131313131313131313131313131313131313131313131313131313131313131",
+      "effects": [
+        "friendship-written",
+        "action-written",
+        "update-published"
+      ]
+    },
+    {
+      "id": "get-social-settings.absent",
+      "method": "getSocialSettings",
+      "request": {},
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "settings": {
+              "privateMessagesPrivacy": 0,
+              "blockedUsersMessagesVisibility": 0,
+              "showSituationReactions": 0
+            }
+          }
+        }
+      },
+      "expected_hex": "0a020a00"
+    },
+    {
+      "id": "get-private-messages-settings.duplicates",
+      "method": "getPrivateMessagesSettings",
+      "request": {
+        "user": [
+          {
+            "address": "0x2222222222222222222222222222222222222222"
+          },
+          {
+            "address": "0x2222222222222222222222222222222222222222"
+          }
+        ]
+      },
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "settings": [
+              {
+                "user": {
+                  "address": "0x2222222222222222222222222222222222222222"
+                },
+                "privateMessagesPrivacy": 0,
+                "isFriend": false
+              }
+            ]
+          }
+        }
+      },
+      "expected_hex": "0a300a2e0a2c0a2a307832323232323232323232323232323232323232323232323232323232323232323232323232323232"
+    },
+    {
+      "id": "upsert-social-settings.empty",
+      "method": "upsertSocialSettings",
+      "request": {},
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "At least one setting to update must be provided"
+          }
+        }
+      },
+      "expected_hex": "1a310a2f4174206c65617374206f6e652073657474696e6720746f20757064617465206d7573742062652070726f7669646564"
+    },
+    {
+      "id": "upsert-social-settings.privacy",
+      "method": "upsertSocialSettings",
+      "request": {
+        "privateMessagesPrivacy": 99
+      },
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Unknown private messages privacy setting"
+          }
+        }
+      },
+      "expected_hex": "1a2a0a28556e6b6e6f776e2070726976617465206d6573736167657320707269766163792073657474696e67"
+    },
+    {
+      "id": "upsert-social-settings.blocked-visibility",
+      "method": "upsertSocialSettings",
+      "request": {
+        "blockedUsersMessagesVisibility": 99
+      },
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Unknown blocked users messages visibility setting"
+          }
+        }
+      },
+      "expected_hex": "1a330a31556e6b6e6f776e20626c6f636b6564207573657273206d65737361676573207669736962696c6974792073657474696e67"
+    },
+    {
+      "id": "upsert-social-settings.reactions",
+      "method": "upsertSocialSettings",
+      "request": {
+        "showSituationReactions": 99
+      },
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Unknown situation reactions visibility setting"
+          }
+        }
+      },
+      "expected_hex": "1a300a2e556e6b6e6f776e20736974756174696f6e207265616374696f6e73207669736962696c6974792073657474696e67"
+    }
+  ]
+}

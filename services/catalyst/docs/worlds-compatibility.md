@@ -192,6 +192,12 @@ difference not listed here is a gap, not a decision.
     publishes share that limit, so the lowered value bounds both.
   - A personal world accepts partial uploads only once it is published on
     this realm; its first scene goes in a single request.
+  - `PENDING_DEPLOYMENT_TTL`, `MAX_PENDING_DEPLOYMENTS_PER_DEPLOYER`,
+    `MAX_PENDING_BYTES_PER_DEPLOYER`, `MAX_PENDING_BYTES` and
+    `MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE` are the variables the content
+    server's partial uploads read, with the same defaults. Each value
+    applies to worlds and content separately: world uploads and content
+    uploads keep their own counts, bytes and rate windows.
   - `MAX_PENDING_BYTES_PER_SOURCE` (default 4 GiB, at least
     `MAX_PENDING_BYTES_PER_DEPLOYER`) caps the bytes staged by the live
     uploads one client address started (429 with `Retry-After`).

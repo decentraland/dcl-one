@@ -243,6 +243,17 @@ const ROWS: &[Row] = &[
     ),
     upstream(
         "mirrors",
+        "FF_URL",
+        "https://feature-flags.decentraland.org",
+    ),
+    upstream("social analytics", "ANALYTICS_API_URL", ""),
+    upstream(
+        "community compliance",
+        "OPENAI_BASE_URL",
+        "https://api.openai.com/v1",
+    ),
+    upstream(
+        "mirrors",
         "EXPLORER_MAP_SOURCE_URL",
         "https://api.decentraland.org",
     ),
@@ -273,6 +284,18 @@ const ROWS: &[Row] = &[
         "mirrors",
         "MARKETPLACE_SUBGRAPH_URL",
         "https://subgraph.decentraland.org/marketplace",
+    ),
+    upstream(
+        "mirrors",
+        "NFT_WORKER_BASE_URL",
+        "https://nfts.decentraland.org",
+    ),
+    // lamb2's LAND subgraph: parcel operators and permissions until the
+    // land-authz index is published.
+    upstream(
+        "mirrors",
+        "LAND_SUBGRAPH_URL",
+        "https://subgraph.decentraland.org/land-manager",
     ),
     mirrored("indexes", "MARKETPLACE_NFT_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
@@ -736,6 +759,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("PUBLIC_URL", "this node's own address"),
     ("HTTP_SERVER_HOST", "the address it listens on"),
     ("ACCOUNT_BASE_URL", LINK),
+    ("PROFILE_URL", LINK),
     ("MARKETPLACE_BASE_URL", LINK),
     ("SHOP_BASE_URL", LINK),
     ("SHOP_ITEM_BASE_URL", LINK),
@@ -745,6 +769,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("BADGES_PUBLIC_ASSET_BASE_URL", LINK),
     ("PROFILE_CDN_BASE_URL", LINK),
     ("COMMUNITIES_CDN_URL", LINK),
+    ("SERVICE_BASE_URL", LINK),
     ("FIRST_WEAR_IMAGE_BASE", LINK),
     ("MAP_EXTERNAL_BASE_URL", LINK),
     ("MAP_IMAGE_BASE_URL", LINK),
@@ -949,7 +974,59 @@ pub fn refuse_remote_secrets(config: &mut Config) -> anyhow::Result<()> {
 /// The secrets that switch on a client of a fixed third-party API, with the
 /// key that can point it elsewhere (then held to loopback above) and the API.
 const THIRD_PARTY_SECRETS: &[(&str, Option<&str>, &str)] = &[
+    (
+        "OPEN_AI_API_KEY",
+        Some("OPENAI_BASE_URL"),
+        "community compliance Responses API",
+    ),
     ("SENDGRID_API_KEY", None, "SendGrid's mail API"),
+    ("SLACK_BOT_TOKEN", None, "Slack Web API"),
+    (
+        "ANALYTICS_API_TOKEN",
+        Some("ANALYTICS_API_URL"),
+        "Social Analytics API",
+    ),
+    ("AWS_SNS_ARN", Some("AWS_SNS_ENDPOINT"), "Amazon SNS"),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_5",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_10",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_20",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_25",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_30",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_50",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_60",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_75",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
     (
         "TURNSTILE_SECRET_KEY",
         None,

@@ -90,6 +90,7 @@ pub(crate) fn market_settings(
             trades_sync_pages_per_run: config.market_upstreams.trades_sync_pages_per_run,
             trades_serve_partial: config.market_upstreams.trades_serve_partial,
             profile_cdn_base_url: config.market_upstreams.profile_cdn_base_url.clone(),
+            nft_worker_base_url: config.market_upstreams.nft_worker_base_url.clone(),
         },
     )?
     .with_market(

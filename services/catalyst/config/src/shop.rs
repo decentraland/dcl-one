@@ -20,8 +20,9 @@ pub struct MarketUpstreamsConfig {
     #[arg(long, env = "MARKETPLACE_SUBGRAPH_URL")]
     pub marketplace_subgraph_url: Option<String>,
 
-    /// Land-manager subgraph: parcel operators and update-operator lookups
-    /// before the land-authz index is published; unset answers the envelope.
+    /// Land-manager subgraph: parcel operators, permissions and
+    /// update-operator lookups before the land-authz index is published;
+    /// unset answers the envelope (lamb2's 500 on the permissions route).
     #[arg(long, env = "LAND_SUBGRAPH_URL")]
     pub land_subgraph_url: Option<String>,
 
@@ -50,6 +51,12 @@ pub struct MarketUpstreamsConfig {
     /// set; unset they point at this node's `contents/<hash>`.
     #[arg(long, env = "PROFILE_CDN_BASE_URL")]
     pub profile_cdn_base_url: Option<String>,
+
+    /// NFT ownership indexer (`POST <base>/wallets/<owner>/networks/<network>/nfts`)
+    /// for an owner's third-party holdings; unset, they are read over each
+    /// network's JSON-RPC (`TRADE_RPC_URLS`, `ETH_RPC_URL`, `RPC_ENDPOINT_POLYGON`).
+    #[arg(long, env = "NFT_WORKER_BASE_URL")]
+    pub nft_worker_base_url: Option<String>,
 }
 
 /// The marketplace: the collections and items mirrors, the trade ownership RPCs, the

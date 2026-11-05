@@ -4,8 +4,9 @@
 
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use common::structs::{CurrentRealm, OutOfWorld, PrimaryUser, WorldHold};
-use console::DoAddConsoleCommand;
+use common::structs::{CurrentRealm, NoRenderApp, OutOfWorld, PreviewMode, PrimaryUser, WorldHold};
+use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+use ipfs::IpfsResource;
 use wallet::Wallet;
 
 /// `/world_state` and the [`Arrivals`] counter it and the autopilot read. It needs no window, HUD
@@ -15,8 +16,45 @@ pub struct WorldStatePlugin;
 
 impl Plugin for WorldStatePlugin {
     fn build(&self, app: &mut App) {
+        let mut inputs = Vec::new();
+        if !app.world().contains_resource::<NoRenderApp>() {
+            inputs.push(DebugInput {
+                label: "Teleport to parcel (x y)",
+                field: "",
+                command: "/teleport {value}",
+                kind: DebugInputKind::Text,
+            });
+        }
+        if !app
+            .world()
+            .get_resource::<PreviewMode>()
+            .is_some_and(|p| p.is_preview)
+        {
+            inputs.push(DebugInput {
+                label: "Change realm",
+                field: "",
+                command: "/changerealm {value}",
+                kind: DebugInputKind::Text,
+            });
+        }
         app.add_plugins(ArrivalsPlugin)
-            .add_console_command::<WorldStateCommand, _>(world_state_cmd);
+            .add_console_command::<WorldStateCommand, _>(world_state_cmd)
+            .add_debug_section(DebugSection {
+                title: "World",
+                inputs: &inputs,
+                query: "/world_state",
+                fields: &[
+                    ("Realm", "realmOrigin"),
+                    ("Realm name", "realmName"),
+                    ("Content server", "contentOrigin"),
+                    ("Lambdas server", "lambdasOrigin"),
+                    ("Realm connected", "realmConnected"),
+                    ("In world", "inWorld"),
+                    ("Position (X / Y / Z)", "position"),
+                    ("Arrivals", "arrivals"),
+                ],
+                actions: &[],
+            });
     }
 }
 
@@ -71,6 +109,12 @@ impl WorldState {
     }
 }
 
+// Realm-advertised endpoints can contain credentials in userinfo, paths or signed queries.
+fn http_origin(value: &str) -> Option<String> {
+    let url = url::Url::parse(value).ok()?;
+    matches!(url.scheme(), "http" | "https").then(|| url.origin().ascii_serialization())
+}
+
 // --- /world_state ---
 
 /// Report, as JSON, whether the player is in world as the benchmark autopilot judges it: signed
@@ -82,6 +126,7 @@ struct WorldStateCommand;
 
 fn world_state_cmd(
     mut input: ConsoleCommand<WorldStateCommand>,
+    ipfs: Option<Res<IpfsResource>>,
     arrivals: Res<Arrivals>,
     wallet: Res<Wallet>,
     world_hold: Option<Res<WorldHold>>,
@@ -106,6 +151,10 @@ fn world_state_cmd(
                 "guest": address.is_some() && wallet.is_guest_account(),
                 "realm": realm.address,
                 "realmConnected": state.realm_connected,
+                "realmName": realm.config.realm_name,
+                "realmOrigin": http_origin(&realm.address),
+                "contentOrigin": ipfs.as_ref().and_then(|io| io.contents_endpoint()).as_deref().and_then(http_origin),
+                "lambdasOrigin": ipfs.as_ref().and_then(|io| io.lambda_endpoint()).as_deref().and_then(http_origin),
                 "worldHeld": state.world_held,
                 "outOfWorld": state.out_of_world,
                 // the same axes as /player_position

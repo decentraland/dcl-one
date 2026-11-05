@@ -39,6 +39,7 @@ async fn a_retried_publish_with_the_same_key_stores_one_post() {
     let (owner, moderator) = (wallet(), wallet());
     let community = rig.community(&owner, false).await;
     rig.member(community, &moderator, "moderator").await;
+    rig.profile(&moderator, "Moderator", false).await;
 
     let (status, first) = publish(&rig, community, &owner, Some("draft-1"), "Hello").await;
     assert_eq!(status, StatusCode::CREATED, "{first}");
@@ -116,4 +117,38 @@ async fn post_content_follows_the_upstream_schema() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
     assert_eq!(stored(&rig, community).await.len(), 1);
+}
+
+/// A banned wallet gets the source's missing-permission answer, also when a
+/// member row was left beside its active ban, and stores nothing.
+#[tokio::test]
+async fn a_banned_wallet_cannot_publish() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let (owner, banned, kicked) = (wallet(), wallet(), wallet());
+    let community = rig.community(&owner, false).await;
+    rig.member(community, &banned, "moderator").await;
+    for wallet in [&banned, &kicked] {
+        sqlx::query("INSERT INTO social.community_bans (community_id, banned_address, banned_by) VALUES ($1, $2, $3)")
+            .bind(community)
+            .bind(&wallet.address)
+            .bind(&owner.address)
+            .execute(&rig.pool)
+            .await
+            .unwrap();
+    }
+    for wallet in [&banned, &kicked] {
+        let (status, body) = publish(&rig, community, wallet, None, "Hello").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        assert_eq!(
+            body["message"],
+            format!(
+                "The user {} doesn't have permission to create posts in the community",
+                wallet.address
+            )
+        );
+    }
+    assert!(stored(&rig, community).await.is_empty());
+    rig.finish();
 }

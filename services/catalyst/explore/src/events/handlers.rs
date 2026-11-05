@@ -12,6 +12,7 @@ use super::{
 };
 use crate::SharedState;
 use crate::shared::errors::{ApiData, ApiError};
+pub(crate) use crate::shared::parcel::is_inside_world_limits;
 
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "events/"))]
@@ -310,18 +311,6 @@ fn is_ethereum_address(s: &str) -> bool {
         return false;
     };
     hex.len() == 40 && hex.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-pub(crate) fn is_inside_world_limits(x: i32, y: i32) -> bool {
-    const RANGES: [(i32, i32, i32, i32); 4] = [
-        (-150, -150, 150, 150),
-        (62, 151, 162, 158),
-        (151, 144, 162, 150),
-        (151, 59, 163, 143),
-    ];
-    RANGES.iter().any(|(x_min, y_min, x_max, y_max)| {
-        x >= *x_min && x <= *x_max && y >= *y_min && y <= *y_max
-    })
 }
 
 fn resolve_only_attendee(q: &EventListQuery) -> bool {

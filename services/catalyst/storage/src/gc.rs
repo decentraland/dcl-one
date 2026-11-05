@@ -107,6 +107,8 @@ pub const REFERENCE_SOURCES: &[&str] = &[
     "content.processed_snapshots.hash",
     "content.failed_deployments.snapshot_hash",
     "content.failed_deployments.entity_id",
+    "content.pending_deployments.entity_id",
+    "content.pending_deployment_files.hash",
     "explore.satellite_region.blob_cid",
     "explore.world_manifest.blob_cid",
     "explore.poster.blob_cid",
@@ -161,6 +163,16 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "a URL (the view over the place tables)",
     ),
     ("explore.schedules_local.image", "a URL"),
+    (
+        "content.pending_deployments.content_hashes",
+        "a partial upload's manifest: content.pending_deployment_files names every key \
+         it stored or found stored",
+    ),
+    (
+        "content.pending_deployment_files.entity_id",
+        "the upload a receipt belongs to: content.pending_deployments.entity_id holds the \
+         reference to its entity file",
+    ),
     (
         "content.forward_outbox.entity_id",
         "a forwarding record: content.deployments holds the reference, and a deployment gone \
@@ -271,6 +283,10 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
     (
         "social.community_mirror.thumbnail_url",
         "a URL (the upstream CDN's thumbnail of a mirrored community)",
+    ),
+    (
+        "social.referral_reward_images.reward_image_url",
+        "a URL returned by the rewards API",
     ),
     ("credits.usages.tx_hash", "a transaction hash"),
     (
@@ -647,7 +663,7 @@ async fn rows_among(
         return Ok(found);
     }
     for source in REFERENCE_SOURCES {
-        if !pending && source.starts_with(PENDING_PREFIX) {
+        if !pending && PENDING_PREFIXES.iter().any(|p| source.starts_with(p)) {
             continue;
         }
         let (table, column) = split_source(source);
@@ -675,13 +691,77 @@ async fn rows_among(
     Ok(found)
 }
 
-/// The partial-upload staging sources ([`published_among`] leaves them out).
-const PENDING_PREFIX: &str = "worlds.pending_";
+/// The partial-upload staging sources, content's and worlds' ([`published_among`] leaves them out).
+const PENDING_PREFIXES: [&str; 2] = ["content.pending_", "worlds.pending_"];
 
 /// A `max_age` that counts every row.
 const ALL_ROWS: i64 = i32::MAX as i64;
 
 const CHUNK: usize = 2_000;
+
+/// Whether the stored file `id` was last written at least `min_age` before
+/// `now`; `None` when it is not stored.
+async fn aged(
+    storage: &Storage,
+    id: &str,
+    now: SystemTime,
+    min_age: Duration,
+) -> Result<Option<bool>, GcError> {
+    let Some(path) = storage.file_path(id).await? else {
+        return Ok(None);
+    };
+    let modified = match tokio::fs::metadata(&path).await {
+        Ok(meta) => meta.modified().ok(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(GcError::Io(path.display().to_string(), e)),
+    };
+    Ok(Some(
+        modified
+            .and_then(|m| now.duration_since(m).ok())
+            .is_some_and(|age| age >= min_age),
+    ))
+}
+
+/// Unlinks those of `keys` a collection pass with `min_age` would: aged
+/// files outside the fixed references (the asset-pack catalogue, the global
+/// scenes) that no domain names, re-checked right before the unlink. For a
+/// writer reclaiming the blobs it staged; younger ones are left to the
+/// collector, which covers the same store-then-row gap. Answers how many
+/// went.
+pub async fn unlink_orphans(
+    pool: &PgPool,
+    storage: &Storage,
+    global_scenes_urn: &[String],
+    keys: &[String],
+    min_age: Duration,
+) -> Result<usize, GcError> {
+    if keys.is_empty() {
+        return Ok(0);
+    }
+    check_json_sources(pool).await?;
+    let fixed = fixed_references(
+        &mut *pool.acquire().await?,
+        Pins::new(storage, global_scenes_urn),
+    )
+    .await?;
+    let now = SystemTime::now();
+    let mut candidates: Vec<String> = Vec::new();
+    for key in keys {
+        if !fixed.contains(key) && aged(storage, key, now, min_age).await? == Some(true) {
+            candidates.push(key.clone());
+        }
+    }
+    let mut unlinked = 0;
+    for batch in candidates.chunks(CHUNK) {
+        // The fixed references were filtered out above.
+        let referenced = rows_among(&mut *pool.acquire().await?, batch, true, ALL_ROWS).await?;
+        for key in batch.iter().filter(|k| !referenced.contains(*k)) {
+            storage.delete_strict(key).await?;
+            unlinked += 1;
+        }
+    }
+    Ok(unlinked)
+}
 
 /// One collection pass: the store is walked in chunks of aged files, each
 /// checked against every domain's references; a candidate is re-checked
@@ -710,17 +790,8 @@ pub async fn collect(
         let next = ids.next().await?;
         if let Some(id) = &next {
             report.scanned += 1;
-            if let Some(path) = storage.file_path(id).await? {
-                let modified = match tokio::fs::metadata(&path).await {
-                    Ok(meta) => meta.modified().ok(),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(e) => return Err(GcError::Io(path.display().to_string(), e)),
-                };
-                if modified
-                    .and_then(|m| now.duration_since(m).ok())
-                    .is_some_and(|age| age >= options.min_age)
-                    && !fixed.contains(id)
-                {
+            if let Some(aged) = aged(storage, id, now, options.min_age).await? {
+                if aged && !fixed.contains(id) {
                     chunk.push(id.clone());
                 } else if fixed.contains(id) {
                     report.references += 1;
@@ -745,14 +816,14 @@ pub async fn collect(
         return Err(GcError::EmptyReferenceSet);
     }
     if !options.dry_run {
-        unlink_orphans(pool, storage, pins, &orphans, options.min_age, &mut report).await?;
+        unlink_collected(pool, storage, pins, &orphans, options.min_age, &mut report).await?;
     }
     tracing::info!(?report, "blob store collection finished");
     Ok(report)
 }
 
 /// Unlinks each candidate still unreferenced and still aged, under the exclusive store lock.
-async fn unlink_orphans(
+async fn unlink_collected(
     pool: &PgPool,
     storage: &Storage,
     pins: Pins<'_>,
@@ -1026,7 +1097,7 @@ mod tests {
             .unwrap();
         let mut report = GcReport::default();
         let pins = Pins::new(&storage, &[]);
-        unlink_orphans(&pool, &storage, pins, &keys, MIN_ORPHAN_AGE, &mut report)
+        unlink_collected(&pool, &storage, pins, &keys, MIN_ORPHAN_AGE, &mut report)
             .await
             .unwrap();
         assert_eq!((report.removed, report.refreshed), (1, 1));

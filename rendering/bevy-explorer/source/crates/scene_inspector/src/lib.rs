@@ -7,6 +7,7 @@ mod active_scene;
 mod asset_commands;
 mod manual_registry;
 mod mobile_ui;
+mod panel;
 mod read_commands;
 mod screen_position;
 pub mod snapshot;
@@ -27,6 +28,7 @@ impl Plugin for SceneInspectorPlugin {
         manual_registry::register_engine_components(app);
 
         read_commands::add_read_commands(app);
+        panel::register(app);
         write_commands::add_write_commands(app);
         asset_commands::add_asset_commands(app);
         mobile_ui::add_mobile_ui_command(app);

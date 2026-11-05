@@ -51,7 +51,7 @@ pub async fn fetch_with_permit<P, E, F>(
     send: impl FnOnce() -> F,
     headers_timeout: Duration,
     idle_timeout: Duration,
-    on_chunk: impl Fn(usize),
+    on_chunk: impl FnMut(usize),
 ) -> Result<FetchedResponse, FetchError<E>>
 where
     P: HttpAttemptPermit,
@@ -73,7 +73,7 @@ async fn fetch_observed<E>(
     send: impl Future<Output = Result<reqwest::Response, E>>,
     headers_timeout: Duration,
     idle_timeout: Duration,
-    on_chunk: impl Fn(usize),
+    mut on_chunk: impl FnMut(usize),
 ) -> Result<FetchedResponse, FetchError<E>> {
     let response = match with_timeout(headers_timeout, send).await {
         Ok(result) => result.map_err(FetchError::Send)?,

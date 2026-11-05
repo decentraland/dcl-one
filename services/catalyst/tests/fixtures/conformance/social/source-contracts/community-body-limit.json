@@ -1,0 +1,775 @@
+{
+  "source": "decentraland/social-service-ea",
+  "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+  "node": "v26.12.0",
+  "sources": [
+    "src/components.ts",
+    "src/utils/requestBodyLimit.ts",
+    "src/controllers/routes/http.routes.ts",
+    "node_modules/@dcl/http-server/dist/server.js",
+    "node_modules/@dcl/http-server/dist/logic.js",
+    "node_modules/@dcl/schema-validator-component/dist/src/component.js",
+    "src/utils/multipart.ts",
+    "src/logic/community/fields-validator.ts"
+  ],
+  "scope": "Actual server with maxBodySize configured; real route crypto/schema/multipart middleware; mocked domain dependencies are not reached by oversized reads.",
+  "cap": 64,
+  "packages": {
+    "@dcl/http-server": "2.3.0",
+    "@dcl/schema-validator-component": "1.0.1",
+    "@well-known-components/env-config-provider": "1.2.0"
+  },
+  "boot": [
+    {
+      "input": null,
+      "result": 1048576
+    },
+    {
+      "input": "1",
+      "result": 1
+    },
+    {
+      "input": "64",
+      "result": 64
+    },
+    {
+      "input": "1048576",
+      "result": 1048576
+    },
+    {
+      "input": "16777216",
+      "result": 16777216
+    },
+    {
+      "input": "0",
+      "error": "Invalid HTTP_MAX_REQUEST_BODY_BYTES: expected an integer number of bytes between 1 and 16777216, got 0"
+    },
+    {
+      "input": "-1",
+      "error": "Invalid HTTP_MAX_REQUEST_BODY_BYTES: expected an integer number of bytes between 1 and 16777216, got -1"
+    },
+    {
+      "input": "1.5",
+      "error": "Invalid HTTP_MAX_REQUEST_BODY_BYTES: expected an integer number of bytes between 1 and 16777216, got 1.5"
+    },
+    {
+      "input": "16777217",
+      "error": "Invalid HTTP_MAX_REQUEST_BODY_BYTES: expected an integer number of bytes between 1 and 16777216, got 16777217"
+    },
+    {
+      "input": "NaN",
+      "error": "Configuration: config \"HTTP_MAX_REQUEST_BODY_BYTES\" should be a number, got string (NaN) instead"
+    },
+    {
+      "input": "Infinity",
+      "error": "Invalid HTTP_MAX_REQUEST_BODY_BYTES: expected an integer number of bytes between 1 and 16777216, got Infinity"
+    },
+    {
+      "input": "64junk",
+      "result": 64
+    },
+    {
+      "input": "1e3junk",
+      "result": 1000
+    },
+    {
+      "input": "0x100",
+      "error": "Invalid HTTP_MAX_REQUEST_BODY_BYTES: expected an integer number of bytes between 1 and 16777216, got 0"
+    },
+    {
+      "input": "﻿64",
+      "result": 64
+    },
+    {
+      "input": "",
+      "error": "Configuration: config \"HTTP_MAX_REQUEST_BODY_BYTES\" should be a number, got string () instead"
+    },
+    {
+      "input": " 64.0junk",
+      "result": 64
+    },
+    {
+      "input": "-Infinity",
+      "error": "Invalid HTTP_MAX_REQUEST_BODY_BYTES: expected an integer number of bytes between 1 and 16777216, got -Infinity"
+    }
+  ],
+  "cases": [
+    {
+      "method": "POST",
+      "path": "/v1/communities",
+      "length": 65,
+      "status": 413,
+      "body": "Payload Too Large",
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "17"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/communities",
+      "length": 65,
+      "sendBody": false,
+      "status": 413,
+      "body": "Payload Too Large",
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "17"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "GET",
+      "path": "/v1/communities",
+      "length": 65,
+      "status": 413,
+      "body": "Payload Too Large",
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "17"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "GET",
+      "path": "/unknown",
+      "length": 65,
+      "status": 413,
+      "body": "Payload Too Large",
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "17"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "OPTIONS",
+      "path": "/unknown",
+      "length": 65,
+      "status": 413,
+      "body": "Payload Too Large",
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "17"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "TRACK",
+      "path": "/unknown",
+      "length": 65,
+      "status": 400,
+      "body": "",
+      "headers": {
+        "connection": "close"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "TRACE",
+      "path": "/unknown",
+      "length": 65,
+      "status": 413,
+      "body": "Payload Too Large",
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "17"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "PROPFIND",
+      "path": "/unknown",
+      "length": 65,
+      "status": 413,
+      "body": "Payload Too Large",
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "17"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "GET",
+      "path": "/unknown",
+      "length": 65,
+      "noOrigin": true,
+      "status": 413,
+      "body": "Payload Too Large",
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "connection": "close",
+        "content-length": "17"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "OPTIONS",
+      "path": "/unknown",
+      "length": 65,
+      "noOrigin": true,
+      "status": 413,
+      "body": "Payload Too Large",
+      "headers": {
+        "content-type": "text/plain; charset=utf-8",
+        "connection": "close",
+        "content-length": "17"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/communities",
+      "length": 64,
+      "status": 400,
+      "body": "{\"error\":\"Invalid Auth Chain\",\"message\":\"This endpoint requires a signed fetch request. See ADR-44.\"}",
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-length": "101",
+        "content-type": "application/json",
+        "connection": "keep-alive"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/communities",
+      "chunked": 65,
+      "status": 400,
+      "body": "{\"error\":\"Invalid Auth Chain\",\"message\":\"This endpoint requires a signed fetch request. See ADR-44.\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "101",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/communities",
+      "chunked": 65,
+      "signed": true,
+      "status": 500,
+      "body": "{\"error\":\"Internal Server Error\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "33",
+        "content-type": "application/json"
+      },
+      "diagnostics": [
+        {
+          "message": "Payload Too Large",
+          "statusCode": 413,
+          "status": 413
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001",
+      "chunked": 65,
+      "signed": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/mutes",
+      "chunked": 65,
+      "signed": true,
+      "status": 500,
+      "body": "{\"error\":\"Internal Server Error\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "33",
+        "content-type": "application/json"
+      },
+      "diagnostics": [
+        {
+          "message": "Payload Too Large",
+          "statusCode": 413,
+          "status": 413
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/mutes",
+      "chunked": 65,
+      "signed": true,
+      "status": 500,
+      "body": "{\"error\":\"Internal Server Error\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "33",
+        "content-type": "application/json"
+      },
+      "diagnostics": [
+        {
+          "message": "Payload Too Large",
+          "statusCode": 413,
+          "status": 413
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/unknown",
+      "chunked": 65,
+      "status": 404,
+      "body": "Not found",
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-length": "9",
+        "content-type": "text/plain; charset=utf-8",
+        "connection": "keep-alive"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "OPTIONS",
+      "path": "/unknown",
+      "chunked": 65,
+      "status": 204,
+      "body": "",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-headers": "authorization,x-test",
+        "access-control-allow-methods": "GET,HEAD,OPTIONS,DELETE,POST,PUT,PATCH",
+        "access-control-allow-origin": "*",
+        "access-control-max-age": "86400",
+        "vary": "Access-Control-Request-Headers"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "GET",
+      "path": "/v1/communities/?search=body-boundary-empty-fixture",
+      "length": 0,
+      "status": 200,
+      "body": "{\"data\":{\"results\":[],\"total\":0,\"page\":1,\"pages\":0,\"limit\":100}}",
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-length": "64",
+        "content-type": "application/json",
+        "connection": "keep-alive"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "GET",
+      "path": "/v1/communities/?search=body-boundary-empty-fixture",
+      "length": 0,
+      "signed": true,
+      "status": 200,
+      "body": "{\"data\":{\"results\":[],\"total\":0,\"page\":1,\"pages\":0,\"limit\":100}}",
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-length": "64",
+        "content-type": "application/json",
+        "connection": "keep-alive"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "GET",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001/",
+      "length": 0,
+      "status": 404,
+      "body": "{\"error\":\"Not Found\",\"message\":\"Community not found: 00000000-0000-4000-8000-000000000001\"}",
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-length": "91",
+        "content-type": "application/json",
+        "connection": "keep-alive"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "GET",
+      "path": "/unknown/",
+      "length": 0,
+      "status": 404,
+      "body": "Not found",
+      "headers": {
+        "access-control-allow-origin": "*",
+        "content-length": "9",
+        "content-type": "text/plain; charset=utf-8",
+        "connection": "keep-alive"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "PUT",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001",
+      "chunked": 65,
+      "signed": true,
+      "status": 500,
+      "body": "{\"error\":\"Internal Server Error\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "33",
+        "content-type": "application/json"
+      },
+      "diagnostics": [
+        {
+          "message": "Payload Too Large",
+          "statusCode": 413,
+          "status": 413
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001/members/0x9222222222222222222222222222222222222222",
+      "chunked": 65,
+      "signed": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001/places",
+      "chunked": 65,
+      "signed": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001/posts",
+      "chunked": 65,
+      "signed": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001/requests",
+      "chunked": 65,
+      "signed": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/communities/00000000-0000-4000-8000-000000000001/requests/00000000-0000-4000-8000-000000000002",
+      "chunked": 65,
+      "signed": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/referral-progress",
+      "chunked": 65,
+      "signed": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/referral-email",
+      "chunked": 65,
+      "signed": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/social-settings",
+      "chunked": 65,
+      "signed": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/friendship-requests",
+      "chunked": 65,
+      "signed": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/friendship-requests/0x9222222222222222222222222222222222222222",
+      "chunked": 65,
+      "signed": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/blocks",
+      "chunked": 65,
+      "signed": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/private-voice-chats",
+      "chunked": 65,
+      "signed": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/00000000-0000-4000-8000-000000000001",
+      "chunked": 65,
+      "signed": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/community-voice-chats",
+      "chunked": 65,
+      "signed": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/community-voice-chats/00000000-0000-4000-8000-000000000001/speakers/0x9222222222222222222222222222222222222222",
+      "chunked": 65,
+      "signed": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    },
+    {
+      "method": "POST",
+      "path": "/v1/members/0x9222222222222222222222222222222222222222/communities",
+      "chunked": 65,
+      "bearer": true,
+      "status": 400,
+      "body": "{\"ok\":false,\"message\":\"Payload Too Large\"}",
+      "headers": {
+        "connection": "close",
+        "access-control-allow-origin": "*",
+        "content-length": "42",
+        "content-type": "application/json"
+      },
+      "diagnostics": []
+    }
+  ],
+  "multipart": {
+    "cap": 2097152,
+    "bodyCap": 1048576,
+    "thumbnailMin": 1024,
+    "thumbnailMax": 512000,
+    "cases": [
+      {
+        "name": "total-declared",
+        "thumbnailBytes": 1024,
+        "paddingBytes": 1048576,
+        "wireBytes": 1050055,
+        "nativeParsedThumbnailBytes": 1024,
+        "status": 400,
+        "body": "{\"error\":\"Bad request\",\"message\":\"Request body too large\"}",
+        "headers": {
+          "access-control-allow-origin": "*",
+          "content-length": "58",
+          "content-type": "application/json",
+          "connection": "keep-alive"
+        }
+      },
+      {
+        "name": "total-chunked",
+        "thumbnailBytes": 1024,
+        "paddingBytes": 1048576,
+        "chunked": true,
+        "wireBytes": 1050055,
+        "nativeParsedThumbnailBytes": 1024,
+        "status": 400,
+        "body": "{\"error\":\"Bad request\",\"message\":\"Request body too large\"}",
+        "headers": {
+          "access-control-allow-origin": "*",
+          "content-length": "58",
+          "content-type": "application/json",
+          "connection": "keep-alive"
+        }
+      },
+      {
+        "name": "total-header-only",
+        "thumbnailBytes": 1024,
+        "paddingBytes": 1048576,
+        "sendBody": false,
+        "wireBytes": 1050055,
+        "nativeParsedThumbnailBytes": 1024,
+        "status": 400,
+        "body": "{\"error\":\"Bad request\",\"message\":\"Request body too large\"}",
+        "headers": {
+          "access-control-allow-origin": "*",
+          "content-length": "58",
+          "content-type": "application/json",
+          "connection": "keep-alive"
+        }
+      },
+      {
+        "name": "thumbnail-over-max",
+        "thumbnailBytes": 512001,
+        "paddingBytes": 0,
+        "wireBytes": 512456,
+        "nativeParsedThumbnailBytes": 512001,
+        "status": 400,
+        "body": "{\"error\":\"Bad request\",\"message\":\"Thumbnail size must be between 1KB and 500KB\"}",
+        "headers": {
+          "access-control-allow-origin": "*",
+          "content-length": "80",
+          "content-type": "application/json",
+          "connection": "keep-alive"
+        }
+      },
+      {
+        "name": "thumbnail-under-min",
+        "thumbnailBytes": 1023,
+        "paddingBytes": 0,
+        "wireBytes": 1478,
+        "nativeParsedThumbnailBytes": 1023,
+        "status": 400,
+        "body": "{\"error\":\"Bad request\",\"message\":\"Thumbnail size must be between 1KB and 500KB\"}",
+        "headers": {
+          "access-control-allow-origin": "*",
+          "content-length": "80",
+          "content-type": "application/json",
+          "connection": "keep-alive"
+        }
+      }
+    ]
+  }
+}

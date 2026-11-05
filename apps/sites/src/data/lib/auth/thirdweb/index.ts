@@ -9,7 +9,6 @@ export {
   ThirdwebError,
   initiateEmailLogin,
   completeEmailLogin,
-  socialLoginUrl,
   signMessageEnclave,
   signTypedDataEnclave,
   getWalletForToken,
