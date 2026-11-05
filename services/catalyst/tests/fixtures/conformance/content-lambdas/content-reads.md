@@ -368,6 +368,12 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
   (`services/catalyst/content/src/routing.rs` `upstream_routing`, wrapped around the whole app in
   `services/catalyst/src/serve.rs`); parameters keep their case. The root mounts stay case-sensitive
   (upstream production has none), as does every non-content path. MATCH (CR-16).
+  - The write and admin routes (`POST /entities`, `/scenes/{coord}`, `/forwarding/*`) stay
+    case-sensitive (`CASE_SENSITIVE_ROUTE_PATHS`): the captures cover reads only, and the gateway's
+    deploy limits key on those spellings. `POST /content/Entities` answers 404.
+  - `GET /content/entities/Active` keeps the type for `/entities/{type}` and answers
+    `Unrecognized type: Active`, as upstream's `/entities/:type` would. Other methods take
+    `/entities/active`.
 - Prefix: upstream production serves only `/content/*`; dcl-one answers the same routes at the root
   and under `/content` (`services/catalyst/content/src/lib.rs:710-711`). A superset.
 - NUL bytes: dcl-one answers any path or query containing a NUL (raw or `%00`) with
@@ -533,8 +539,10 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
     - dcl-one: `services/catalyst/content/src/routing.rs` `upstream_routing`, wrapped around the whole
       app in `services/catalyst/src/serve.rs`, spells the static segments of a content route under
       `/content/` in the route's case before routing; parameters keep their case. Root mounts and other
-      services' paths are not rewritten (tests `content_paths_match_case_insensitively`,
-      `every_listed_content_route_is_routed`).
+      services' paths are not rewritten. The write and admin routes stay case-sensitive
+      (`CASE_SENSITIVE_ROUTE_PATHS`). Tests: `content_paths_match_case_insensitively`,
+      `every_listed_content_route_is_routed`, and `every_content_route_is_listed_once`, which checks
+      that each registered route is in exactly one list.
     - Severity: none (closed).
 
 17. **CR-17** POST /entities/active body cap. Status: MATCH, no work.
@@ -544,6 +552,12 @@ Verdict: DIVERGENT, browser-compatible in both directions (CR-11).
       (`decentraland/catalyst:src/Environment.ts:79`, `src/controllers/routes.ts:92`).
     - dcl-one: a fixed 10 MiB cap and the same 413 (`routing.rs` `MAX_ACTIVE_ENTITIES_BODY_BYTES`,
       `payload_too_large_text`; test `active_entities_body_cap_is_ten_mib`). The cap is not configurable.
+      Behind the gateway, `/entities/active` and `/content/entities/active` (any case) take a 10m body
+      cap, so the server-wide 1m does not answer nginx's HTML 413 first (`infra/gateway/gateway.py`;
+      test `test_active_entities_take_upstreams_ten_mib_body_cap`).
+    - Memory: upstream caps neither pointer nor id length. The read-through negative cache stores a
+      key longer than 128 bytes as its SHA-256, so its 100,000 entries stay small
+      (`read_through.rs` `negative_key`).
     - Severity: none (closed).
 
 18. **CR-18** GET /contents/:hashId gzip passthrough.

@@ -661,7 +661,8 @@ async fn not_found() -> impl IntoResponse {
     (StatusCode::NOT_FOUND, "Not found")
 }
 
-/// The paths here are listed again in [`routing::CONTENT_ROUTE_PATHS`].
+/// The paths here are listed again in [`routing::CONTENT_ROUTE_PATHS`] (case-insensitive)
+/// or [`routing::CASE_SENSITIVE_ROUTE_PATHS`].
 fn content_routes(state: &SharedState) -> Router<SharedState> {
     Router::new()
         .route("/challenge", get(status::get_challenge))

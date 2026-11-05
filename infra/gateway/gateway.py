@@ -147,8 +147,16 @@ def render(table, cfg, mime):
         locations += location(row["key"], f"rewrite {rewrite} break;\n" + proxy("apis"))
     # Worlds deploys reach this match already rewritten under their host prefix.
     deploy = "|".join(re.escape(path) for path in [*table["deploy"], "/worlds-content-server/entities"])
-    locations += location(f'~ "^({deploy})/*$"', proxy("apis",
+    # Case-insensitive, as nginx would otherwise pass /content/Entities to the
+    # /content/ location and its looser limits.
+    locations += location(f'~* "^({deploy})/*$"', proxy("apis",
         "client_max_body_size 200m; client_body_timeout 300s; limit_req zone=deploy burst=4 nodelay;"))
+    # Upstream caps the POST /entities/active body at 10 MiB and answers its
+    # own 413 (MAX_ACTIVE_ENTITIES_BODY_SIZE); the server-wide 1m would answer
+    # nginx's HTML 413 first. The content server's case rewrite routes any
+    # spelling, so the match ignores case too.
+    locations += location('~* "^(/content)?/entities/active/*$"', proxy("apis",
+        "client_max_body_size 10m; limit_req zone=content burst=1000 nodelay;"))
     locations += location("~ ^/comms-gatekeeper/reports/players/[^/]+/evidence/", proxy("apis",
         "client_max_body_size 11m;"))
     locations += location("~ ^(/builder-api)?/v1/(projects/[^/]+/(blobs/[^/]+|manifest|files)|items/[^/]+/files)/*$",

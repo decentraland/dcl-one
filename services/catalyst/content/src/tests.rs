@@ -636,6 +636,29 @@ async fn content_paths_match_case_insensitively() {
     let (status, _) = get_json(node.router(), "/content/Deployments?limit=1").await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
 
+    // A GET keeps `/entities/{type}` and echoes the type as sent, as
+    // upstream's `/entities/:type` does.
+    let (status, _, body) = send(
+        node.router(),
+        Request::get("/content/Entities/Active")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, br#"{"error":"Unrecognized type: Active"}"#);
+
+    // The write routes keep their case: the gateway's deploy location and
+    // its limits match these spellings.
+    let (status, _, _) = send(
+        node.router(),
+        Request::post("/content/Entities")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
     // The root mounts stay case-sensitive: upstream production has none.
     let (status, _, _) = send(
         node.router(),
@@ -645,12 +668,15 @@ async fn content_paths_match_case_insensitively() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
-/// The case rewrite's route list names only routed paths: a `PATCH` (served
+/// The case rewrite's route lists name only routed paths: a `PATCH` (served
 /// on none) is each one's 405, not the 404 fallback.
 #[tokio::test]
 async fn every_listed_content_route_is_routed() {
     let node = TestNode::without_db("route-list").await;
-    for route in crate::routing::CONTENT_ROUTE_PATHS {
+    for route in crate::routing::CONTENT_ROUTE_PATHS
+        .iter()
+        .chain(crate::routing::CASE_SENSITIVE_ROUTE_PATHS)
+    {
         let path: Vec<&str> = route
             .split('/')
             .map(|s| if s.starts_with('{') { "x" } else { s })
@@ -663,6 +689,32 @@ async fn every_listed_content_route_is_routed() {
         .await;
         assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{path}");
     }
+}
+
+/// The other direction: every path `content_routes` registers is in exactly
+/// one of the two lists, so a new route cannot silently stay out of the
+/// case rewrite.
+#[test]
+fn every_content_route_is_listed_once() {
+    let source = include_str!("lib.rs");
+    let body = source
+        .split("fn content_routes(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .expect("content_routes in lib.rs");
+    let mut registered: Vec<&str> = body
+        .split(".route(")
+        .skip(1)
+        .filter_map(|call| call.split('"').nth(1))
+        .collect();
+    registered.sort_unstable();
+    let mut listed: Vec<&str> = crate::routing::CONTENT_ROUTE_PATHS
+        .iter()
+        .chain(crate::routing::CASE_SENSITIVE_ROUTE_PATHS)
+        .copied()
+        .collect();
+    listed.sort_unstable();
+    assert_eq!(registered, listed);
 }
 
 /// `CR-17-body-over-10mib.json`: upstream caps the `POST /entities/active`

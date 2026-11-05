@@ -7,12 +7,13 @@
 use axum::Router;
 use axum::extract::Request;
 use axum::http::header::{ALLOW, CONTENT_TYPE};
-use axum::http::{HeaderValue, StatusCode, Uri};
+use axum::http::{HeaderValue, Method, StatusCode, Uri};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 
-/// Every path `content_routes` registers; keep the two in step (the test
-/// below checks each one is routed).
+/// The read paths `content_routes` registers, rewritten case-insensitively;
+/// every registered path is here or in [`CASE_SENSITIVE_ROUTE_PATHS`]
+/// (`every_content_route_is_listed_once` in the crate tests checks both).
 pub(crate) const CONTENT_ROUTE_PATHS: &[&str] = &[
     "/challenge",
     "/entities/{type}",
@@ -33,6 +34,12 @@ pub(crate) const CONTENT_ROUTE_PATHS: &[&str] = &[
     "/queries/items/{pointer}/image",
     "/queries/erc721/{chainId}/{contract}/{option}",
     "/queries/erc721/{chainId}/{contract}/{option}/{emission}",
+];
+
+/// The write and admin paths, kept case-sensitive: the captures cover reads
+/// only, and the gateway's deploy and admin locations match these spellings.
+#[cfg(test)]
+pub(crate) const CASE_SENSITIVE_ROUTE_PATHS: &[&str] = &[
     "/entities",
     "/scenes/{coord}",
     "/forwarding",
@@ -65,7 +72,8 @@ pub fn upstream_routing(app: Router) -> Router {
 }
 
 fn canonical_case(mut req: Request) -> Request {
-    let Some(path) = canonical_path(req.uri().path()) else {
+    let read = matches!(*req.method(), Method::GET | Method::HEAD);
+    let Some(path) = canonical_path(req.uri().path(), read) else {
         return req;
     };
     let path_and_query = match req.uri().query() {
@@ -89,13 +97,20 @@ fn is_param(segment: &str) -> bool {
 /// The path with the static segments of every content route it matches
 /// (ignoring case) spelled as the route spells them; `None` when nothing
 /// changes. `/entities/Active` matches both `/entities/{type}` and
-/// `/entities/active`, and becomes the latter, the route upstream's `POST`
-/// takes.
-pub(crate) fn canonical_path(path: &str) -> Option<String> {
+/// `/entities/active`: a `GET` or `HEAD` (`read`) keeps it for
+/// `/entities/{type}`, which echoes `Active` in its error as upstream does,
+/// and any other method takes `/entities/active`, upstream's `POST` route.
+pub(crate) fn canonical_path(path: &str, read: bool) -> Option<String> {
     let rest = path.strip_prefix(CONTENT_PREFIX)?;
+    if !rest.bytes().any(|b| b.is_ascii_uppercase()) {
+        return None;
+    }
     let mut segments: Vec<&str> = rest.split('/').collect();
     let mut changed = false;
     for route in CONTENT_ROUTE_PATHS {
+        if read && *route == "/entities/active" {
+            continue;
+        }
         let route: Vec<&str> = route.trim_start_matches('/').split('/').collect();
         if route.len() != segments.len()
             || !route
@@ -177,31 +192,37 @@ mod tests {
     fn static_segments_take_the_route_case_and_parameters_keep_theirs() {
         let cid = "bafkreiAbC";
         assert_eq!(
-            canonical_path(&format!("/content/Contents/{cid}")),
+            canonical_path(&format!("/content/Contents/{cid}"), true),
             Some(format!("/content/contents/{cid}"))
         );
         assert_eq!(
-            canonical_path(&format!("/content/CONTENTS/{cid}/Active-Entities")),
+            canonical_path(&format!("/content/CONTENTS/{cid}/Active-Entities"), true),
             Some(format!("/content/contents/{cid}/active-entities"))
         );
         assert_eq!(
-            canonical_path("/content/Status"),
+            canonical_path("/content/Status", true),
             Some("/content/status".into())
         );
         assert_eq!(
-            canonical_path("/content/Deployments"),
+            canonical_path("/content/Deployments", true),
             Some("/content/deployments".into())
         );
         assert_eq!(
-            canonical_path("/content/Entities/Scene"),
+            canonical_path("/content/Entities/Scene", true),
             Some("/content/entities/Scene".into())
         );
         assert_eq!(
-            canonical_path("/content/entities/Active"),
-            Some("/content/entities/active".into())
+            canonical_path("/content/entities/Active", false),
+            Some("/content/entities/active".into()),
+            "a POST takes upstream's /entities/active"
         );
         assert_eq!(
-            canonical_path("/content/Entities/Active/Collections/urn:A"),
+            canonical_path("/content/Entities/Active", true),
+            Some("/content/entities/Active".into()),
+            "a GET keeps the type for /entities/{{type}}"
+        );
+        assert_eq!(
+            canonical_path("/content/Entities/Active/Collections/urn:A", true),
             Some("/content/entities/active/collections/urn:A".into())
         );
     }
@@ -217,8 +238,12 @@ mod tests {
             "/Content/Status",
             "/lambdas/Status",
             "/shop-api/Status",
+            "/content/Entities",
+            "/content/Scenes/0,0",
+            "/content/Forwarding",
         ] {
-            assert_eq!(canonical_path(path), None, "{path}");
+            assert_eq!(canonical_path(path, true), None, "{path}");
+            assert_eq!(canonical_path(path, false), None, "{path}");
         }
     }
 
