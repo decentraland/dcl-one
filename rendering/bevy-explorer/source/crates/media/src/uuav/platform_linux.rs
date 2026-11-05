@@ -12,8 +12,14 @@ use bevy::render::{
     renderer::{RenderAdapter, RenderDevice, RenderQueue},
 };
 
+use super::render::PlaneTextures;
+
 /// Frames are presented on this platform.
 pub const PRESENTS_FRAMES: bool = true;
+
+/// The upload copies the CPU planes through the queue, which orders it against the reads
+/// itself.
+pub const GATE_COPY_ON_READ: bool = false;
 
 /// Nothing is derived from a host GPU object on Linux; the client accepts a null probe.
 pub struct Probe;
@@ -34,11 +40,11 @@ pub fn make_planes(
     uv: *const c_void,
     width: u32,
     height: u32,
-) -> Option<(wgpu::Texture, wgpu::Texture)> {
+) -> Option<PlaneTextures> {
     if y.is_null() || uv.is_null() {
         return None;
     }
-    Some((
+    Some(PlaneTextures::pair(
         create(device, TextureFormat::R8Unorm, width, height),
         create(device, TextureFormat::Rg8Unorm, width / 2, height / 2),
     ))
@@ -63,18 +69,21 @@ fn create(device: &RenderDevice, format: TextureFormat, width: u32, height: u32)
 
 /// Copies the client's planes into the textures; `width` and `height` are the planes' own size,
 /// read together with the pointers. Both planes are `width` bytes per row: the CbCr plane is
-/// half as wide with two bytes per texel.
+/// half as wide with two bytes per texel. Always `true`: the copy is queued.
 pub fn upload(
     queue: &RenderQueue,
-    planes: (&wgpu::Texture, &wgpu::Texture),
+    planes: &PlaneTextures,
     y: *const c_void,
     uv: *const c_void,
     width: u32,
     height: u32,
-) {
+) -> bool {
     if y.is_null() || uv.is_null() {
-        return;
+        return false;
     }
+    let [y_texture, uv_texture] = planes.textures() else {
+        return false;
+    };
     let row = width as usize;
     // SAFETY: the client created the planes for this size, `height` rows of `width` bytes
     // behind the Y pointer and half as many behind the CbCr pointer, and keeps them alive until
@@ -82,8 +91,9 @@ pub fn upload(
     let y_bytes = unsafe { std::slice::from_raw_parts(y.cast::<u8>(), row * height as usize) };
     let uv_bytes =
         unsafe { std::slice::from_raw_parts(uv.cast::<u8>(), row * (height / 2) as usize) };
-    write(queue, planes.0, y_bytes, width, width, height);
-    write(queue, planes.1, uv_bytes, width, width / 2, height / 2);
+    write(queue, y_texture, y_bytes, width, width, height);
+    write(queue, uv_texture, uv_bytes, width, width / 2, height / 2);
+    true
 }
 
 fn write(

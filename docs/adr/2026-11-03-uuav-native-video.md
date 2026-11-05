@@ -54,7 +54,14 @@ scene video and audio stream through it (`crates/media/src/uuav`).
   the render world turns the presented NV12 planes into the player's
   target image before the gpu images are prepared. macOS wraps the client's
   Metal planes without a copy; Linux uploads the shared CPU planes every
-  frame.
+  frame; Windows imports the client's NV12 presentation texture without a
+  copy, as a DX12 shared resource or as Vulkan external memory
+  (`VK_KHR_external_memory_win32`), ordered by a fence on the decode device.
+- The Windows renderer backend stays wgpu's choice (Vulkan where the driver
+  has it, DX12 otherwise, `WGPU_BACKEND` to force one): the frame path works
+  on both, so it pins neither. DX12 is not made the default: the packaged
+  Windows folder on DX12 has gaps of its own (the DXC libraries CEF ships,
+  descriptor exhaustion on the full world; `rendering/bevy-explorer/docs/guidelines/platforms.md`).
 - Sources stream directly: a scene content file resolves to its content
   server url and only http(s) urls are opened, so the sandboxed helper never
   needs file access and nothing is downloaded first.
@@ -72,18 +79,26 @@ scene video and audio stream through it (`crates/media/src/uuav`).
   suite: the Explorer's e2e `video` scene (`apps/bevy-explorer/e2e/scenes/video`)
   plays a committed fixture and its spec asserts the player's events, the
   running clock and the presented frame through the engine, on the web
-  app in the e2e workflow and on the Linux standalone, in software decode,
-  in the scenes workflow. Hardware decode on Linux and macOS, and any
-  frame on Windows, have no CI run.
+  app in the e2e workflow, on the Linux standalone, in software decode,
+  in the scenes workflow, and on the Windows standalone, in hardware
+  decode on the e2e workflow's GPU runner (the Vulkan import; the DX12
+  import runs there informatively, forced). Hardware decode on Linux and
+  macOS has no CI run.
 - The Explorer's CI, packaging and test runs fetch `library/uuav/dist/**`
   from LFS and stage it next to the binaries (`tooling/uuav/stage-dist.py`);
   the FFmpeg packages the runners used to install are gone.
-- Windows shows no video frames yet: the client presents into a D3D11 NV12
-  texture on its own device while the renderer runs on Vulkan or DX12. The
-  path (a shared NT handle into a DX12 renderer, which pins the backend;
-  Vulkan external memory; or a CPU readback as the software fallback) is an
-  open evaluation, marked `TODO(uuav-windows)` in
-  `crates/media/src/uuav/platform_windows.rs`. Audio-only sources and the
-  audio of a video play.
+- Windows: the client presents into one NV12 `ID3D11Texture2D` on a D3D11
+  device the Explorer creates on the renderer's adapter; the probe texture
+  carries `D3D11_RESOURCE_MISC_SHARED_NTHANDLE`, which makes the client
+  create its presentation textures shareable (`uuav-client`,
+  `UnityDevice::share_presentation`). The render world opens each one on the
+  renderer (`ID3D12Device::OpenSharedHandle`, or wgpu-hal's
+  `texture_from_d3d11_shared_handle` on Vulkan) as one `NV12` texture with a
+  view per plane. A D3D11 fence signalled behind the client's copy is waited
+  on, bounded, before the conversion is submitted, and the next copy waits
+  for the conversion's completion callback; a copy that has not landed in
+  time is shown on the next poll. A renderer on GL, a driver without
+  `VK_KHR_external_memory_win32`, or a device without NV12 textures keeps the
+  placeholder and logs why once; audio plays regardless.
 - Not carried over yet: the playback rate (`AVCommand` has no rate, as
   before) and DMA-BUF zero-copy on Linux.
