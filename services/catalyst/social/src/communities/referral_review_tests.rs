@@ -969,13 +969,43 @@ async fn native_login_receipt_upgrade_preserves_attribution_and_is_idempotent() 
         .execute(&pool)
         .await
         .unwrap();
-    let step = include_str!(concat!(
-        env!("DCL_ONE_ROOT"),
-        "/schemas/migrations/0025_social_referral_login_receipts.sql"
-    ));
-    for _ in 0..2 {
-        sqlx::raw_sql(step).execute(&pool).await.unwrap();
-    }
+    let ledger_before: Vec<(String, String, bool, chrono::NaiveDateTime)> = sqlx::query_as(
+        "SELECT step,sha256,created_fresh,applied_at FROM meta.schema_steps ORDER BY step",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let migrated =
+        crate::db::schema_migrate::migrate(&pool, crate::db::SCHEMA_SQL, crate::db::MIGRATIONS_SQL)
+            .await
+            .unwrap();
+    assert!(
+        migrated.steps.is_empty(),
+        "new objects need no existing-table step"
+    );
+    assert!(
+        migrated
+            .created
+            .contains(&crate::db::schema_migrate::Object::Relation(
+                "social.referral_login_receipts".into()
+            ))
+    );
+    let replay =
+        crate::db::schema_migrate::migrate(&pool, crate::db::SCHEMA_SQL, crate::db::MIGRATIONS_SQL)
+            .await
+            .unwrap();
+    assert!(replay.steps.is_empty());
+    assert!(replay.created.is_empty());
+    let ledger_after: Vec<(String, String, bool, chrono::NaiveDateTime)> = sqlx::query_as(
+        "SELECT step,sha256,created_fresh,applied_at FROM meta.schema_steps ORDER BY step",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        ledger_before, ledger_after,
+        "historical migration receipts remain unchanged"
+    );
     assert_eq!(columns(pool.clone()).await, bootstrap);
     let days: Vec<chrono::NaiveDate> =
         sqlx::query_scalar("SELECT login_days FROM social.referral_progress WHERE invited_user=$1")
