@@ -372,14 +372,14 @@ async fn send_request(
         ..
     } = resource;
 
-    // Check both here and in the connect-time resolver so DNS rebinding cannot widen
-    // the scene's allowance. Link-local and metadata remain forbidden in every mode.
+    // Scenes are untrusted code running with the host's network position. Check both
+    // here and in the connect-time resolver so DNS rebinding cannot widen the scene's
+    // allowance. Link-local and metadata remain forbidden in every mode.
     common::util::assert_public_url(&url, allow_private).await?;
 
     let request = if let Some(body) = request_body {
         let mut buf = Vec::new();
-        let mut reader = body.into_async_read();
-        reader.read_to_end(&mut buf).await?;
+        body.into_async_read().read_to_end(&mut buf).await?;
         request.body(buf)
     } else if let Some(body) = body_bytes {
         request.body(body)

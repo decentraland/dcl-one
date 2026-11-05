@@ -662,8 +662,8 @@ fn op_error(state: Rc<RefCell<OpState>>, #[string] message: String) {
 
 #[cfg(test)]
 mod tests {
-    mod hud_gateway {
-        include!("hud_gateway_tests.rs");
+    mod system_scene_network {
+        include!("system_scene_network_tests.rs");
     }
     use std::sync::Arc;
 

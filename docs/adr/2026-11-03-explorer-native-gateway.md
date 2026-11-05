@@ -10,11 +10,11 @@ public path. The HUD bridge reads the engine's resolved service bases through
 `getServiceUrls()`. The service map exposed to the HUD omits credentials. `Reels` identifies
 the public photo share page and `CameraReel` identifies the API that serves photo data.
 
-The bundled bridge and a system scene selected by the operator can use loopback and LAN
-services outside preview. Their native Fetch uses the existing scene client and address
-policy with private-network access enabled. Link-local and metadata addresses remain blocked.
-The authoritative server retains its existing network policy. Ordinary scene traffic
-continues through its scene permission and public-address checks.
+On desktop, native HTTP Fetch from the bundled bridge or a system scene selected by the
+operator can use loopback and LAN services outside preview. It uses the existing scene client
+and address policy with private-network access enabled. Link-local and metadata addresses
+remain blocked. Native scene WebSockets permit private resolved addresses only in preview.
+The authoritative server and ordinary scenes use their existing scene network policies.
 
 A hostname beginning with `gateway.` selects the gateway virtual-host layout.
 Other hostnames select the apex layout. This supports both deployment entry points while

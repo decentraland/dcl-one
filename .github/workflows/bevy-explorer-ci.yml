@@ -12,6 +12,7 @@
       - tooling/play-artifact.py
       - tooling/tests/test_play_*.py
       - tooling/tests/test_bevy_*.py
+      - tooling/uuav/**
       - .github/workflows/bevy-explorer-*.yml
       - .github/actions/bevy-explorer-ci-status/**
       - flake.*
@@ -20,6 +21,7 @@
       - tooling/fetch-play.py
       - infra/packages/**
       - infra/containers/**
+      - infra/gateway/**
       - services/catalyst/**
       - schemas/**
       - library/**
@@ -41,6 +43,7 @@
       - tooling/play-artifact.py
       - tooling/tests/test_play_*.py
       - tooling/tests/test_bevy_*.py
+      - tooling/uuav/**
       - .github/workflows/bevy-explorer-*.yml
       - .github/actions/bevy-explorer-ci-status/**
       - flake.*
@@ -49,6 +52,7 @@
       - tooling/fetch-play.py
       - infra/packages/**
       - infra/containers/**
+      - infra/gateway/**
       - services/catalyst/**
       - schemas/**
       - library/**
@@ -148,8 +152,26 @@ jobs:
       CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
       SCCACHE_GHA_ENABLED: 'true'
       SCCACHE_GHA_VERSION: dcl-bevy-windows-v1
+      # the lock target the test binaries spawn on this runner
+      UUAV_TARGET: ${{ matrix.os == 'windows-2025' && 'windows-x86_64' || matrix.os == 'macos-15' && 'macos-universal'
+        || 'linux-x86_64' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: false
+      - name: Restore this runner's UUAV runtime set
+        # The set is the lock's bytes for one target (library/uuav/dist/<target>, Git LFS, 30 to
+        # 105 MiB); the other targets are never read here. LFS traffic from Actions counts against
+        # the organisation's bandwidth, so a miss pulls only this target and the hit skips LFS.
+        # stage-dist.py checks every staged file against the lock, whichever way it arrived.
+        id: uuav-dist
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: library/uuav/dist/${{ env.UUAV_TARGET }}
+          key: uuav-dist-${{ env.UUAV_TARGET }}-${{ hashFiles('tooling/uuav/uuav-binaries.lock.json') }}
+      - name: Fetch this runner's UUAV runtime set
+        if: steps.uuav-dist.outputs.cache-hit != 'true'
+        run: git lfs pull --include 'library/uuav/dist/${{ env.UUAV_TARGET }}/**'
       - name: Reserve disk space on the hosted Linux runner
         if: runner.os == 'Linux'
         working-directory: .
@@ -177,38 +199,11 @@ jobs:
         run: |
           sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py \
             libasound2-dev libudev-dev ninja-build clang curl pkg-config \
-            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev \
             libssl-dev libx11-dev libgl1-mesa-dev libxext-dev \
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
         if: runner.os == 'Linux'
         run: ../../../apps/bevy-explorer/install-clang.sh
-      - name: install ffmpeg deps (macOs)
-        if: runner.os == 'macos'
-        run: |
-          brew install ffmpeg@6 pkg-config;
-          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@6/lib/pkgconfig" >> "$GITHUB_ENV"
-      - name: install ffmpeg deps (windows)
-        if: runner.os == 'windows' && matrix.os != 'self-hosted-windows'
-        run: |
-          # Prefer the standalone LLVM install (stable across runner image rolls); fall back to the VS-bundled Clang toolset, whose version moves with the image and has produced opaque bindgen structs on rollover.
-          $vsLlvm = "$(& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath)\VC\Tools\LLVM\x64\bin"
-          $libclang = @("C:\Program Files\LLVM\bin", $vsLlvm) | Where-Object { Test-Path "$_\libclang.dll" } | Select-Object -First 1
-          if (-not $libclang) { throw "libclang.dll not found (checked standalone LLVM and VS Clang toolset)" }
-          Write-Host "Using LIBCLANG_PATH=$libclang"
-          Add-Content $env:GITHUB_ENV "LIBCLANG_PATH=$libclang`n"
-          $ffUrl = "https://github.com/GyanD/codexffmpeg/releases/download/6.0/ffmpeg-6.0-full_build-shared.7z"
-          for ($i = 1; $i -le 3; $i++) {
-            try { Invoke-WebRequest $ffUrl -OutFile ffmpeg-6.0-full_build-shared.7z; break }
-            catch { if ($i -eq 3) { throw }; Write-Host "ffmpeg download failed (attempt $i), retrying..."; Start-Sleep -Seconds 5 }
-          }
-          7z x ffmpeg-6.0-full_build-shared.7z
-          mkdir ffmpeg
-          mv ffmpeg-*/* ffmpeg/
-          if (-not (Test-Path "ffmpeg\include")) { throw "ffmpeg headers missing after extract (ffmpeg\include not found)" }
-          Add-Content $env:GITHUB_ENV "FFMPEG_DIR=${pwd}\ffmpeg`n"
-          Add-Content $env:GITHUB_PATH "${pwd}\ffmpeg\bin`n"
-        shell: pwsh
       - name: Install ninja (macos)
         if: runner.os == 'macos'
         run: brew install ninja
@@ -240,6 +235,9 @@ jobs:
           # Reports belong to this run, including when an older target was restored.
           rm -rf target/cargo-timings
           cargo build --package dcl_deno_ipc --profile ci-test --locked --timings
+      - name: Stage the UUAV runtime set
+        # the test binaries spawn the video helper as a sibling (library/uuav/dist, Git LFS)
+        run: python3 "$GITHUB_WORKSPACE/tooling/uuav/stage-dist.py" host target/ci-test/deps
       - name: Run the native test suite
         env:
           RUSTC_WRAPPER: ${{ runner.os == 'Windows' && 'sccache' || '' }}
@@ -254,6 +252,15 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+      - name: Test Explorer routes against the gateway
+        if: runner.os == 'Linux'
+        run: |
+          set -o pipefail
+          cargo test --all --lib --profile ci-test --locked \
+            gateway::gateway_tests::gateway_routes_match_deployment -- --ignored --exact \
+            | tee "$RUNNER_TEMP/explorer-gateway-routes.log"
+          # Cargo succeeds when an exact filter matches zero tests.
+          grep -Fx 'test gateway::gateway_tests::gateway_routes_match_deployment ... ok' "$RUNNER_TEMP/explorer-gateway-routes.log"
       - name: Test the web driver
         # The web driver against the runner's Chrome: real input through the DevTools pipe into the
         # HUD's test commands, with the app frame out of and in the page's process. (A comment
@@ -472,7 +479,6 @@ jobs:
         run: |
           sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py \
             libasound2-dev libudev-dev ninja-build clang curl pkg-config \
-            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev \
             libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
       - name: Install clang for webrtc-sys
         run: ../../../apps/bevy-explorer/install-clang.sh

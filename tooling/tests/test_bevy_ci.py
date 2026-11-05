@@ -23,6 +23,22 @@ def producers(outcome='success'):
     return [{'name': name, 'status': 'completed', 'conclusion': outcome} for name in ci.PRODUCERS.values()]
 
 
+class WorkflowTest(unittest.TestCase):
+    def test_gateway_route_step_requires_the_ignored_fixture_to_pass(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
+        _, _, after = workflow.partition('      - name: Test Explorer routes against the gateway\n')
+        step = after.split('      - name:', 1)[0]
+        self.assertIn("if: runner.os == 'Linux'", step)
+        self.assertIn('set -o pipefail', step)
+        self.assertIn('gateway::gateway_tests::gateway_routes_match_deployment -- --ignored --exact', step)
+        self.assertIn('| tee "$RUNNER_TEMP/explorer-gateway-routes.log"', step)
+        self.assertIn(
+            "grep -Fx 'test gateway::gateway_tests::gateway_routes_match_deployment ... ok'"
+            ' "$RUNNER_TEMP/explorer-gateway-routes.log"',
+            step,
+        )
+
+
 class SelectionTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -79,6 +95,10 @@ class SelectionTest(unittest.TestCase):
                      '.cargo/config.toml', 'rust-toolchain.toml', ci.WORKFLOW,
                      'library/vendor/rusty_enet/src/packet.rs',
                      'library/vendor/rusty_enet/checksums.sha256',
+                     'library/uuav/uuav-client/src/lib.rs',
+                     'library/uuav/uuav-ipc/src/lib.rs',
+                     'library/uuav/dist/linux-x86_64/uuav-helper',
+                     'tooling/uuav/stage-dist.py',
                      'tooling/dev-regressions.py', 'tooling/dev-regressions.json'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
@@ -161,13 +181,27 @@ class SelectionTest(unittest.TestCase):
                                   if selected[lane]}, {'web', 'test'})
 
     def test_the_end_to_end_suite_selects_no_engine_lane(self):
-        for name in ('driver/explorer.ts', 'specs/chat.test.ts', 'scenes/core/scene.json', 'README.md'):
+        for name in ('specs/chat.test.ts', 'specs/pages.ts', 'README.md',
+                     'test/explorer.test.ts', 'references/core.png'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write('apps/bevy-explorer/e2e/' + name, 'changed')
                 selected = ci.select(before, self.commit())
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, set())
+
+    def test_what_the_graphical_run_plays_from_the_end_to_end_suite_selects_scenes(self):
+        for name in ('e2e/driver/explorer.ts', 'e2e/scenes/video/src/index.ts',
+                     'e2e/scenes/video/assets/video/red_tone.mp4', 'e2e/scenes/core/scene.json',
+                     'e2e/scenes/dcl-workspace.json', 'e2e/specs/visual/video.test.ts',
+                     'e2e/specs/visual/visual.test.ts', 'e2e/specs/visual/realm.ts', 'e2e/specs/visual/scenes.ts',
+                     'e2e/scripts/e2e.ts', 'e2e/package-lock.json', '../dcl-scene-cli/src/main.rs'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write('apps/bevy-explorer/' + name, 'changed')
+                selected = ci.select(before, self.commit())
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
+                                  if selected[lane]}, {'scenes'})
 
     def test_web_change_cannot_hide_a_native_or_shared_input_change(self):
         self.write('rendering/bevy-explorer/source/react-web/src/App.tsx', 'web edit')
@@ -219,6 +253,17 @@ class SelectionTest(unittest.TestCase):
         self.write('apps/sites/only-sites.ts', 'changed')
         with patch.object(ci, 'api', side_effect=AssertionError('PR must not consult main runs')):
             self.assertFalse(ci.plan('pull_request', self.base, self.commit(), '')['test'])
+
+    def test_gateway_contract_inputs_select_only_the_linux_test_lane_on_prs(self):
+        for name in ('infra/gateway/gateway.py', 'infra/gateway/routes.nix',
+                     'apps/ui3/src/play/lib/baseDomain.ts',
+                     'apps/ui3/src/play/engine/generated/serviceTable.ts'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(name, 'changed')
+                selected = ci.plan('pull_request', before, self.commit(), '')
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
+                                  if selected[lane]}, {'test'})
 
     def test_upstream_watch_and_manual_packaging_are_not_ci_build_inputs(self):
         for name in ('upstream', 'desktop', 'rollout', 'rollout-manual'):

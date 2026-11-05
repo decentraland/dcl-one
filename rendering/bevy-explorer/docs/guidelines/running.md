@@ -48,11 +48,14 @@ selects that backend for both the Events panel and community events. `--camera-r
 the photo API. `--reels` selects the public share page where a photo link opens. On the
 integrated web client, Sites supplies its origin's service URLs at boot.
 
-The bundled bridge and a system scene selected with `--system-scene` can reach loopback
-and LAN services outside preview. This also applies to individual overrides such as
-`--social-api https://social.lan`. The native scene client continues to reject link-local
-and metadata addresses. Ordinary scenes and authoritative hosted scenes retain their
-existing address policies.
+On desktop, native HTTP Fetch from the bundled bridge or an operator-selected
+`--system-scene` can reach loopback and LAN services outside preview, including through
+an explicit HTTP service override. The HTTP client blocks link-local and metadata addresses.
+Ordinary and authoritative hosted scenes use their own address policies. For native scene
+WebSockets, access to private resolved addresses is preview-only.
+
+Use HTTPS for remote deployments. Plain HTTP sends signed headers and any request
+credentials in cleartext.
 
 The gateway flag leaves Pulse, social RPC, Ethereum RPC and storage on their explicit
 overrides or base-domain defaults. The default base domain is `decentraland.org`.
@@ -65,8 +68,8 @@ also keep their configured destinations, set with `--auth-page https://example.o
 and `--reels https://example.org/reels` when needed.
 
 With Python 3 and Node.js 24 installed, run
-`cargo test -p common gateway_routes_match_deployment -- --ignored` from the Explorer
-workspace to compare its resolved routes with Sites and the rendered nginx maps.
+`cargo test --locked -p common gateway_routes_match_deployment -- --ignored` from the
+Explorer workspace to compare its resolved routes with the HUD resolver and the rendered nginx maps.
 This also checks signature paths and the intentionally separate RPC and storage defaults.
 
 To package, follow the [desktop workflow](../../../../.github/workflows/bevy-explorer-desktop.yml):
