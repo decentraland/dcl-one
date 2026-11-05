@@ -11,6 +11,7 @@ use alloy_core::primitives::Address;
 use bevy::{
     color::palettes,
     math::DVec3,
+    pbr::CascadeShadowConfig,
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::{primitives::Aabb, view::RenderLayers},
@@ -21,6 +22,9 @@ use dcl_component::proto_components::{
         development::{ws_scene_message, UpdateModelType},
     },
     social_service::v2::PrivateMessagePrivacySetting,
+};
+pub use platform::{
+    unity_bloom, unity_color_grading, BLOOM_SCATTER, GRADING_MIDTONES_RANGE, GRADING_SHADOWS_WEIGHT,
 };
 use serde::{Deserialize, Serialize};
 use system_api_types::SatelliteView;
@@ -616,7 +620,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 2;
+pub const SETTINGS_GENERATION: u32 = 4;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -708,6 +712,9 @@ impl AppConfig {
     /// one-time migrations for configs saved with an older generation, keeping everything
     /// else. gen 1: reinitialize the preset-managed settings to the current defaults.
     /// gen 2: default bloom dropped High -> Low; move configs still on the old default.
+    /// gen 3: sun shadows follow Unity's cascades; reset the shadow distance, quality and
+    /// caster count to the new defaults.
+    /// gen 4: the defaults are Unity's Medium preset; reset the fields the presets manage.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -718,6 +725,29 @@ impl AppConfig {
         }
         if self.settings_generation < 2 && self.graphics.bloom == BloomSetting::High {
             self.graphics.bloom = default.graphics.bloom;
+        }
+        if self.settings_generation < 3 {
+            self.graphics.shadow_distance = default.graphics.shadow_distance;
+            self.graphics.shadow_settings = default.graphics.shadow_settings;
+            self.graphics.shadow_caster_count = default.graphics.shadow_caster_count;
+        }
+        if self.settings_generation < 4 {
+            let (g, d) = (&mut self.graphics, &default.graphics);
+            g.vsync = d.vsync;
+            g.msaa = d.msaa;
+            g.fps_target = d.fps_target;
+            g.render_scale = d.render_scale;
+            g.bloom = d.bloom;
+            g.avatar_outline = d.avatar_outline;
+            g.shadow_settings = d.shadow_settings;
+            g.shadow_distance = d.shadow_distance;
+            g.light_count = d.light_count;
+            g.shadow_caster_count = d.shadow_caster_count;
+            g.lens_flare = d.lens_flare;
+            g.dof = d.dof;
+            g.ssao = d.ssao;
+            g.fog = d.fog;
+            g.sky_reflections = d.sky_reflections;
         }
         self.settings_generation = SETTINGS_GENERATION;
     }
@@ -883,35 +913,48 @@ pub struct GraphicsSettings {
     pub cel_shading: bool,
     /// draw the dark edge outline around avatars
     pub avatar_outline: bool,
+    /// draw the lens flare of the sun, or of the moon at night
+    pub lens_flare: bool,
     /// show a hologram ghost where an avatar is still loading
     pub avatar_ghosts: bool,
     pub gpu_bytes_per_frame: usize,
-    /// share of the screen's device pixels the web canvas renders at
+    /// share of the window's device pixels the world renders at, upscaled to the window with FSR
+    /// (`visuals::upscale`); the UI stays at full resolution
     pub render_scale: f32,
 }
+
+/// The ambient brightness setting at which the Trilight ambient is Unity's (visuals::sky_envmap).
+pub const AMBIENT_BRIGHTNESS_UNITY: i32 = 50;
 
 impl Default for GraphicsSettings {
     fn default() -> Self {
         Self {
-            vsync: false,
+            // unity:Explorer/Assets/DCL/Settings/Settings/QualityPresetMedium.asset
+            vsync: true,
             log_fps: !cfg!(target_arch = "wasm32"),
-            msaa: AaSetting::FxaaLow,
+            // msaaLevel 2x; the web build has no MSAA
+            msaa: if cfg!(target_arch = "wasm32") {
+                AaSetting::FxaaHigh
+            } else {
+                AaSetting::Msaa2x
+            },
             fps_target: 60,
-            shadow_distance: 20.0,
+            shadow_distance: 60.0,
             shadow_settings: ShadowSetting::Low,
-            light_count: 4,
-            shadow_caster_count: 0,
+            light_count: 6, // maxSceneLights 6
+            shadow_caster_count: 3,
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
-            fog: FogSetting::Atmospheric,
-            bloom: BloomSetting::Low,
-            dof: DofSetting::High,
+            fog: FogSetting::On,
+            bloom: BloomSetting::Off, // Medium's bloom is on without HDR, so invisible
+            dof: DofSetting::Off,     // Unity has none
             ssao: SsaoSetting::Off,
             sky_reflections: SkyReflectionSetting::High,
             oob: 2.0,
-            ambient_brightness: 50,
+            ambient_brightness: AMBIENT_BRIGHTNESS_UNITY,
             cel_shading: true,
             avatar_outline: true,
+            lens_flare: true,
             avatar_ghosts: true,
             gpu_bytes_per_frame: if cfg!(target_arch = "wasm32") {
                 10_000_000
@@ -998,8 +1041,62 @@ impl AudioSettings {
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ShadowSetting {
     Off,
+    /// unity's Medium: one soft cascade
     Low,
+    /// unity's High: four soft cascades
     High,
+}
+
+/// unity: Assets/Rendering/UniversalRenderPipeline - High.asset, m_Cascade4Split
+pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
+/// unity: QualityPresetsAsset.asset MainShadowResolution (Medium, High)
+pub const SUN_SHADOW_MAP_SIZE: usize = 1024;
+/// unity: Quality Settings.asset dynamicLights, SpotLightsLods first tier
+pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
+pub const MIN_CASCADE: f32 = 0.1;
+
+/// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
+pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
+    if distance <= 0.0 {
+        return None;
+    }
+    let far = distance.max(MIN_CASCADE + f32::EPSILON);
+    let bounds = match setting {
+        ShadowSetting::Off => return None,
+        ShadowSetting::Low => vec![far],
+        ShadowSetting::High => {
+            let mut previous = MIN_CASCADE;
+            SUN_CASCADE_4_SPLITS
+                .iter()
+                .map(|split| (f64::from(*split) * f64::from(far)) as f32)
+                .chain([far])
+                .map(|bound| {
+                    // bounds must increase strictly, even for a distance under the minimum
+                    previous = bound.max(previous + f32::EPSILON);
+                    previous
+                })
+                .collect()
+        }
+    };
+    Some(CascadeShadowConfig {
+        bounds,
+        overlap_proportion: 0.2,
+        minimum_distance: MIN_CASCADE,
+    })
+}
+
+/// The sun's shadow depth bias (a world length) and normal bias for a quality and a shadow
+/// distance. unity: `QualityPresetsAsset.asset` DepthBias 1.75 (Medium) and 1.56 (High) in shadow
+/// map texels, NormalBias 0; the texel is sized from the widest cascade, about twice its far
+/// bound across the map, so the near cascades of High carry more bias than Unity's.
+pub fn sun_shadow_bias(setting: ShadowSetting, distance: f32) -> (f32, f32) {
+    let texels = match setting {
+        ShadowSetting::Off => return (0.0, 0.0),
+        ShadowSetting::Low => 1.75,
+        ShadowSetting::High => 1.56,
+    };
+    let texel_size = 2.0 * distance.max(MIN_CASCADE) / SUN_SHADOW_MAP_SIZE as f32;
+    (texels * texel_size, 0.0)
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1010,6 +1107,12 @@ pub enum AaSetting {
     Msaa2x,
     Msaa4x,
     Msaa8x,
+}
+
+impl AaSetting {
+    pub fn is_msaa(&self) -> bool {
+        matches!(self, Self::Msaa2x | Self::Msaa4x | Self::Msaa8x)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1026,8 +1129,8 @@ pub struct FullscreenResSetting(pub UVec2);
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FogSetting {
     Off,
-    Basic,
-    Atmospheric,
+    #[serde(alias = "Basic", alias = "Atmospheric")]
+    On,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1043,6 +1146,10 @@ pub enum DofSetting {
     Low,
     High,
 }
+
+/// A camera that draws the lens flare of the directional light (the lens flare setting).
+#[derive(Component, Clone, Copy, Default)]
+pub struct LensFlare;
 
 #[derive(Component)]
 // (sensor height, extra focal distance)
@@ -1910,6 +2017,123 @@ pub struct PointAtMarkerVisibilityChanged;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_graphics_are_unity_medium() {
+        let g = GraphicsSettings::default();
+        assert_eq!((g.fps_target, g.vsync, g.render_scale), (60, true, 1.0));
+        assert_eq!(
+            (g.bloom, g.avatar_outline, g.lens_flare),
+            (BloomSetting::Off, true, true)
+        );
+        assert_eq!(
+            (
+                g.shadow_settings,
+                g.shadow_distance,
+                g.light_count,
+                g.shadow_caster_count
+            ),
+            (ShadowSetting::Low, 60.0, 6, 3)
+        );
+        assert_eq!(
+            (g.dof, g.ssao, g.fog, g.sky_reflections),
+            (
+                DofSetting::Off,
+                SsaoSetting::Off,
+                FogSetting::On,
+                SkyReflectionSetting::High
+            )
+        );
+        #[cfg(not(target_arch = "wasm32"))]
+        assert_eq!(g.msaa, AaSetting::Msaa2x);
+        #[cfg(target_arch = "wasm32")]
+        assert_eq!(g.msaa, AaSetting::FxaaHigh);
+    }
+
+    #[test]
+    fn generation_4_resets_managed_fields_and_keeps_the_rest() {
+        let mut cfg = AppConfig::default();
+        cfg.settings_generation = 3;
+        cfg.graphics.ambient_brightness = 10;
+        cfg.graphics.oob = 0.0;
+        cfg.graphics.dof = DofSetting::High;
+        cfg.graphics.light_count = 4;
+        cfg.reset_outdated_settings();
+        assert_eq!(cfg.settings_generation, SETTINGS_GENERATION);
+        assert_eq!(
+            (cfg.graphics.dof, cfg.graphics.light_count),
+            (DofSetting::Off, 6)
+        );
+        assert_eq!(
+            (cfg.graphics.ambient_brightness, cfg.graphics.oob),
+            (10, 0.0)
+        );
+    }
+
+    #[test]
+    fn grading_brightens_shadows_and_keeps_gamma_neutral() {
+        let g = unity_color_grading();
+        // urp: ColorUtils.PrepareShadowsMidtonesHighlights adds 4w to the (1, 1, 1) multiplier
+        assert_eq!(g.shadows.gain, 1.0 + 4.0 * GRADING_SHADOWS_WEIGHT);
+        assert_eq!(g.shadows.lift, 0.0);
+        assert_eq!(
+            (g.shadows.gamma, g.midtones.gamma, g.highlights.gamma),
+            (1.0, 1.0, 1.0)
+        );
+        assert_eq!(g.global.midtones_range, GRADING_MIDTONES_RANGE);
+    }
+
+    /// bevy_core_pipeline's `compute_blend_factor` (bloom/mod.rs): the blend constant of the
+    /// upsample pass that adds mip `mip` of `max_mip` into the finer one; mip 0 is the composite.
+    fn bevy_bloom_blend(b: &bevy::core_pipeline::bloom::Bloom, mip: f32, max_mip: f32) -> f32 {
+        let lf_boost = (1.0
+            - (1.0 - mip / max_mip).powf(1.0 / (1.0 - b.low_frequency_boost_curvature)))
+            * b.low_frequency_boost;
+        b.intensity + lf_boost
+    }
+
+    #[test]
+    fn bloom_weighs_mips_like_urp_scatter() {
+        let b = unity_bloom();
+        assert_eq!(b.prefilter.threshold, 1.0);
+        // urp: thresholdKnee = threshold * 0.5; bevy: knee = threshold * softness
+        assert_eq!(b.prefilter.threshold_softness, 0.5);
+        assert_eq!(b.high_pass_frequency, 1.0);
+        // urp folds lerp(fine, coarse, s) over the chain and adds the result once: mip i weighs
+        // (1 - s) s^i. bevy adds mip i with weight blend(0) * blend(1) * .. * blend(i).
+        let max_mip = 7.0;
+        let mut weight = 1.0;
+        for mip in 0..=7 {
+            weight *= bevy_bloom_blend(&b, mip as f32, max_mip);
+            let urp = (1.0 - BLOOM_SCATTER) * BLOOM_SCATTER.powi(mip);
+            assert!(
+                (weight - urp).abs() < 0.002,
+                "mip {mip}: bevy {weight} vs urp {urp}"
+            );
+        }
+    }
+
+    #[test]
+    fn sun_shadow_bias_is_unitys_texels() {
+        // medium: 1.75 texels of a 1024 map spanning twice 60 m
+        let (depth, normal) = sun_shadow_bias(ShadowSetting::Low, 60.0);
+        assert!((depth - 1.75 * 120.0 / 1024.0).abs() < 1e-5 && normal == 0.0);
+        assert_eq!(sun_shadow_bias(ShadowSetting::Off, 60.0), (0.0, 0.0));
+    }
+
+    #[test]
+    fn sun_cascades_follow_unity_splits() {
+        let high = sun_cascades(ShadowSetting::High, 100.0).unwrap();
+        assert_eq!(high.bounds, vec![10.2, 28.2, 47.4, 100.0]);
+        assert_eq!(high.minimum_distance, MIN_CASCADE);
+        let medium = sun_cascades(ShadowSetting::Low, 60.0).unwrap();
+        assert_eq!(medium.bounds, vec![60.0]);
+        assert!(sun_cascades(ShadowSetting::Off, 60.0).is_none());
+        assert!(sun_cascades(ShadowSetting::High, 0.0).is_none());
+        // a distance under the minimum still yields a strictly increasing config
+        let tiny = sun_cascades(ShadowSetting::High, 0.05).unwrap();
+        assert!(tiny.bounds.windows(2).all(|w| w[0] < w[1]) && tiny.bounds[0] > MIN_CASCADE);
+    }
 
     #[test]
     fn migrate_inputs_updates_old_tables() {

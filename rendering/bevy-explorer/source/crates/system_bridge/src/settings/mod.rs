@@ -14,6 +14,7 @@ use avatar_ghosts_setting::AvatarGhostsSetting;
 use avatar_outline_setting::AvatarOutlineSetting;
 use bevy::{
     app::{Plugin, Update},
+    core_pipeline::prepass::{DepthPrepass, NormalPrepass},
     ecs::{
         schedule::ScheduleLabel,
         system::{StaticSystemParam, SystemParam, SystemParamItem},
@@ -25,19 +26,20 @@ use bevy::{
 use cache_size::CacheSizeSetting;
 use cel_shading_setting::CelShadingSetting;
 use common::structs::DmPrivacy;
-#[cfg(not(target_arch = "wasm32"))]
 use common::structs::SsaoSetting;
 use common::{
     sets::SceneSets,
     structs::{
         AaSetting, AppConfig, BloomSetting, CameraSmoothing, DofSetting, FogSetting,
-        ParcelGrassConfig, ParcelGrassSetting, PlayerLanguage, PointAtMarkerVisibility,
-        PreviewMode, SessionGraphics, ShadowSetting, SkyReflectionSetting, WindowSetting,
+        GraphicsSettings, ParcelGrassConfig, ParcelGrassSetting, PlayerLanguage,
+        PointAtMarkerVisibility, PreviewMode, SessionGraphics, ShadowSetting, SkyReflectionSetting,
+        WindowSetting,
     },
 };
 use constrain_ui::ConstrainUiSetting;
 use frame_rate::FpsTargetSetting;
 use language_setting::LanguageSetting;
+use lens_flare_setting::LensFlareSetting;
 use load_distance::{LoadDistanceSetting, UnloadDistanceSetting};
 use max_avatars::MaxAvatarsSetting;
 use max_downloads::MaxDownloadsSetting;
@@ -67,6 +69,7 @@ pub mod fog_settings;
 pub mod frame_rate;
 pub mod imposter_settings;
 pub mod language_setting;
+pub mod lens_flare_setting;
 pub mod load_distance;
 pub mod max_avatars;
 pub mod max_downloads;
@@ -74,7 +77,6 @@ pub mod oob_setting;
 pub mod parcel_grass_settings;
 pub mod player_settings;
 pub mod point_at_marker_visibility;
-#[cfg(target_arch = "wasm32")]
 pub mod render_scale_setting;
 pub mod scene_threads;
 pub mod sensitivity;
@@ -84,6 +86,21 @@ pub mod ssao_setting;
 pub mod video_threads;
 pub mod volume_settings;
 pub mod window_settings;
+
+/// The prepasses exist for the avatar outline (edge detection) and SSAO; nothing else reads
+/// them (DoF, stars and the fork's focus target use the main-pass depth).
+pub fn prepasses_needed(graphics: &GraphicsSettings) -> bool {
+    graphics.avatar_outline || graphics.ssao != SsaoSetting::Off
+}
+
+/// Inserts or removes both prepass components to match `prepasses_needed`.
+pub fn sync_prepasses(cmds: &mut EntityCommands, graphics: &GraphicsSettings) {
+    if prepasses_needed(graphics) {
+        cmds.try_insert((DepthPrepass, NormalPrepass));
+    } else {
+        cmds.remove::<(DepthPrepass, NormalPrepass)>();
+    }
+}
 
 pub struct SettingBridgePlugin;
 
@@ -172,6 +189,7 @@ impl Plugin for SettingBridgePlugin {
         add_enum_setting::<CelShadingSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AvatarOutlineSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AvatarGhostsSetting>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<LensFlareSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AaSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<AmbientSetting>(app, &mut settings, &mut schedule, &config);
         if is_fullscreen_available() {
@@ -184,8 +202,6 @@ impl Plugin for SettingBridgePlugin {
         }
 
         add_enum_setting::<FpsTargetSetting>(app, &mut settings, &mut schedule, &config);
-        // only the web canvas can be drawn at a share of the screen
-        #[cfg(target_arch = "wasm32")]
         add_int_setting::<render_scale_setting::RenderScaleSetting>(
             app,
             &mut settings,
@@ -543,4 +559,27 @@ fn is_fullscreen_available() -> bool {
 #[inline(always)]
 fn is_fullscreen_available() -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prepasses_follow_outline_and_ssao() {
+        let mut g = GraphicsSettings {
+            avatar_outline: false,
+            ssao: SsaoSetting::Off,
+            ..Default::default()
+        };
+        assert!(!prepasses_needed(&g));
+        g.avatar_outline = true;
+        assert!(prepasses_needed(&g));
+        g = GraphicsSettings {
+            avatar_outline: false,
+            ssao: SsaoSetting::Low,
+            ..Default::default()
+        };
+        assert!(prepasses_needed(&g));
+    }
 }

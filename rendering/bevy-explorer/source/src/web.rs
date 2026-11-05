@@ -5,6 +5,7 @@ use bevy::{
     render::{render_resource::PipelineCompilationHandler, renderer::RenderDevice},
     tasks::BoxedFuture,
     web_worker::{WebWorkerConfig, WorkerSpec},
+    window::{WindowCreated, WindowResized},
     winit::{UpdateMode, WinitSettings, WinitWindows},
 };
 use bevy_console::ConsoleConfiguration;
@@ -27,7 +28,6 @@ use system_bridge::{SystemApi, SystemBridge};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::js_sys;
 use web_sys::{HtmlCanvasElement, OffscreenCanvas};
-use winit::platform::web::WindowExtWebSys;
 
 use system_api_types::launch_options::{ClientOptions, EngineRunOptions, LaunchOptions};
 
@@ -576,7 +576,7 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
     // The systems that call the page hooks take `JsThread` so the multi-threaded
     // executor keeps them on this thread, off the compute workers (see `JsThread`).
     app.insert_non_send_resource(());
-    app.add_systems(Update, (update_winit_fps, update_render_scale))
+    app.add_systems(Update, (update_winit_fps, size_window_to_canvas))
         .add_systems(Update, update_url_params)
         .add_systems(Update, update_text_focus)
         .add_systems(Last, engine_heartbeat_system);
@@ -794,23 +794,39 @@ pub fn update_winit_fps(
     }
 }
 
-// winit's page-side window draws the canvas at this share of its device pixels, reported  to the
-// app as a scale factor change, so the logical size, UI and cursor keep their places.
-pub fn update_render_scale(
-    config: Res<AppConfig>,
-    session: Res<SessionGraphics>,
+/// Sizes the new window to its canvas. winit reports the canvas's fitted size as soon as the
+/// window exists, which is before bevy has registered it, so bevy skips that resize ("Skipped
+/// event Resized ... for unknown winit Window Id"); a page whose layout then stays put sends no
+/// other, and the window would keep its 1280x720 default: the engine drawing a corner of the
+/// canvas, with the page behind the rest.
+pub fn size_window_to_canvas(
+    mut created: EventReader<WindowCreated>,
     winit_windows: NonSend<WinitWindows>,
-    mut last_scale: Local<Option<f32>>,
+    mut windows: Query<&mut Window>,
+    mut resized: EventWriter<WindowResized>,
 ) {
-    let scale = session
-        .render_scale(&config)
-        .clamp(SessionGraphics::MIN_RENDER_SCALE, 1.0);
-    if *last_scale == Some(scale) || winit_windows.windows.is_empty() {
-        return;
-    }
-    *last_scale = Some(scale);
-    for window in winit_windows.windows.values() {
-        window.set_render_scale(scale as f64);
+    for event in created.read() {
+        let (Some(winit_window), Ok(mut window)) = (
+            winit_windows.get_window(event.window),
+            windows.get_mut(event.window),
+        ) else {
+            continue;
+        };
+        let size = winit_window.inner_size();
+        if size.width == 0
+            || size.height == 0
+            || window.physical_size() == UVec2::new(size.width, size.height)
+        {
+            continue;
+        }
+        window
+            .resolution
+            .set_physical_resolution(size.width, size.height);
+        resized.write(WindowResized {
+            window: event.window,
+            width: window.width(),
+            height: window.height(),
+        });
     }
 }
 

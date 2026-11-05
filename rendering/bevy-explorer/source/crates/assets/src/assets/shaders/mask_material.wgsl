@@ -13,7 +13,8 @@
 #import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting, mesh_view_bindings::lights}
 #import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level}
 
-// the sky envmap, levelled towards the flat ambient light, is the only ambient light
+// the Trilight ambient map is the diffuse ambient light; the sky envmap, levelled towards the
+// flat ambient light, the reflections (see sky_envmap_lookup.wgsl)
 // (see sky_envmap_lookup.wgsl)
 override fn environment_map::compute_radiances(input: lighting::LayerLightingInput, clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>, world_position: vec3<f32>, found_diffuse_indirect: bool) -> environment_map::EnvironmentMapRadiances {
     let upper = sky_envmap_input(input);

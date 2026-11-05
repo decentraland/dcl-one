@@ -33,6 +33,7 @@ use scene_runner::{
 
 use crate::{
     bake_scene::IMPOSTERCEPTION_LAYER,
+    fade::{fade_alpha, fade_imposters, retarget, ImposterFade},
     floor_imposter::{FloorImposter, FloorImposterLoader},
     imposter_mesh::ImposterMesh,
     imposter_spec::{floor_path, load_imposter, texture_path, BakedScene, ImposterSpec},
@@ -66,6 +67,7 @@ impl Plugin for DclImposterRenderPlugin {
                 focus_imposters,
                 spawn_imposters,
                 load_imposters,
+                fade_imposters,
                 debug_write_imposters.run_if(|e: Res<DebugImpostersEnabled>| e.0),
             )
                 .chain()
@@ -203,7 +205,8 @@ pub fn spawn_imposters(
     focus: Res<ImposterFocus>,
     mut required: Local<HashMap<(IVec2, usize), bool>>,
     mut last_run_state: Local<Option<(IVec2, f32, f32, IVec2, IVec2, HashSet<IVec2>)>>,
-    current_imposters: Query<(Entity, &SceneImposter)>,
+    current_imposters: Query<(Entity, &SceneImposter, Option<&ImposterFade>)>,
+    time: Res<Time>,
     current_realm: Res<CurrentRealm>,
     ingredients: Res<BakingIngredients>,
     live_scenes: Res<LiveScenes>,
@@ -213,7 +216,7 @@ pub fn spawn_imposters(
     mut manager: ImposterSpecManager,
 ) {
     if current_realm.is_changed() || config.scene_imposter_distances.is_empty() {
-        for (entity, _) in &current_imposters {
+        for (entity, _, _) in &current_imposters {
             if let Ok(mut commands) = commands.get_entity(entity) {
                 commands.despawn();
             }
@@ -386,23 +389,39 @@ pub fn spawn_imposters(
         }
     }
 
-    // remove old
-    let mut old = HashMap::new();
-    for (ent, scene_imposter) in current_imposters.iter() {
+    // remove old. tiles that have an imposter showing fade out in place and keep their
+    // `SceneImposter` (so requiring them again mid-fade reverses the fade); `fade_imposters`
+    // despawns them at zero
+    let now = time.elapsed_secs();
+    let mut old: HashMap<&SceneImposter, (Entity, Option<&ImposterFade>)> = HashMap::new();
+    for (ent, scene_imposter, fade) in current_imposters.iter() {
         let required_as_ingredient =
             required.remove(&(scene_imposter.parcel, scene_imposter.level));
 
         match required_as_ingredient {
             None => {
-                commands.entity(ent).remove::<SceneImposter>();
-                old.insert(scene_imposter, ent);
+                if fade.is_some_and(|f| f.to == 0.0) {
+                    // already fading out
+                    continue;
+                }
+                if fade.is_none() {
+                    commands.entity(ent).remove::<SceneImposter>();
+                }
+                old.insert(scene_imposter, (ent, fade));
                 debug!("remove {:?}", scene_imposter);
             }
             Some(as_ingredient) => {
                 if scene_imposter.as_ingredient != as_ingredient {
                     commands.entity(ent).remove::<SceneImposter>();
-                    old.insert(scene_imposter, ent);
+                    old.insert(scene_imposter, (ent, None));
                     required.insert((scene_imposter.parcel, scene_imposter.level), as_ingredient);
+                } else if let Some(fade) = fade.filter(|f| f.to == 0.0) {
+                    commands.entity(ent).insert(retarget(
+                        Some(fade),
+                        fade_alpha(fade, now),
+                        1.0,
+                        now,
+                    ));
                 }
             }
         }
@@ -417,11 +436,14 @@ pub fn spawn_imposters(
         };
 
         let max_parcel = parcel + (1 << level);
-        old.retain(|k, v| {
+        old.retain(|k, (ent, fade)| {
             let is_child =
                 k.parcel.cmpge(parcel).all() && (k.parcel + (1 << k.level)).cmple(max_parcel).all();
             if is_child {
-                manager.store_removed(Some(scene_imposter), *v);
+                if fade.is_some() {
+                    commands.entity(*ent).remove::<SceneImposter>();
+                }
+                manager.store_removed(Some(scene_imposter), *ent);
             }
             !is_child
         });
@@ -432,8 +454,15 @@ pub fn spawn_imposters(
     }
 
     // remove any not required non-children
-    for (_, ent) in old.drain() {
-        manager.store_removed(None, ent);
+    for (_, (ent, fade)) in old.drain() {
+        match fade {
+            Some(fade) => {
+                commands
+                    .entity(ent)
+                    .insert(retarget(Some(fade), fade_alpha(fade, now), 0.0, now));
+            }
+            None => manager.store_removed(None, ent),
+        }
     }
 
     *last_run_state = Some(run_state);
@@ -1050,6 +1079,16 @@ impl<'w, 's> ImposterSpecManager<'w, 's> {
 #[derive(Component)]
 pub struct RetryImposter(LevelError);
 
+/// The shared, path-loaded assets a tile's visuals come from. A fading tile renders its own copy
+/// of the imposter, so this keeps the shared one alive: once no tile holds a path's handle the
+/// asset server drops it and the next tile wanting the path loads it again. Replaced on every
+/// visual spawn, removed with the visuals.
+#[derive(Component)]
+struct ImposterSource {
+    _imposter: Option<Handle<Imposter>>,
+    _floor: Option<Handle<FloorImposter>>,
+}
+
 #[derive(Component)]
 pub struct SubstituteImposter(SceneImposter);
 
@@ -1061,22 +1100,28 @@ fn load_imposters(
             &SceneImposter,
             Option<&SubstituteImposter>,
             Option<&RetryImposter>,
+            Option<&ImposterFade>,
         ),
         Or<(Changed<SceneImposter>, With<RetryImposter>)>,
     >,
     mut manager: ImposterSpecManager,
     imposter_meshes: Res<ImposterMeshes>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut imposter_assets: ResMut<Assets<Imposter>>,
+    time: Res<Time>,
     tick: Res<FrameCount>,
-    _children: Query<&Children>,
+    children: Query<&Children>,
 ) {
-    for (entity, base_imposter, maybe_substitute, maybe_error) in pending_imposters.iter() {
+    let now = time.elapsed_secs();
+    for (entity, base_imposter, maybe_substitute, maybe_error, maybe_fade) in
+        pending_imposters.iter()
+    {
         let state = manager.get_imposter(base_imposter, maybe_error.map(|e| e.0));
         let (scene_imposter, maybe_imposter, maybe_floor, error) = match state {
             ImposterState::Missing => {
                 commands
                     .entity(entity)
-                    .remove::<RetryImposter>()
+                    .remove::<(RetryImposter, ImposterSource)>()
                     .despawn_related::<Children>();
                 continue;
             }
@@ -1096,7 +1141,7 @@ fn load_imposters(
                 for prev_child in ents {
                     commands.entity(prev_child).try_insert(ChildOf(entity));
 
-                    // if let Ok(children) = _children.get(prev_child) {
+                    // if let Ok(children) = children.get(prev_child) {
                     //     for child in children {
                     //         commands.entity(*child).insert(ShowAabbGizmo {
                     //             color: Some(Color::linear_rgba(1.0, 1.0, 0.0, 0.4)),
@@ -1138,6 +1183,41 @@ fn load_imposters(
         // } else {
         //     Some(Color::linear_rgba(1.0, 0.0, 0.0, 0.4))
         // };
+
+        // a tile that replaces visuals it already shows (previous finer tiles reparented under
+        // it, or its own substitute) starts opaque: those visuals despawn with the spawn below,
+        // and a fade-in from zero would leave the ground see-through for half a second
+        let replacing_visuals = children.get(entity).is_ok_and(|c| !c.is_empty());
+
+        // hold the shared assets for as long as the tile shows them, whatever it renders
+        commands.entity(entity).try_insert(ImposterSource {
+            _imposter: maybe_imposter.as_ref().map(|(handle, _)| handle.clone()),
+            _floor: maybe_floor.clone(),
+        });
+
+        // the handle is shared by every user of the path, so a tile that fades gets its own copy
+        // of the asset to write alpha into. ingredient tiles are baked into other imposters and
+        // stay opaque and shared. a respawn keeps the tile's running fade and its alpha
+        let maybe_imposter = maybe_imposter.map(|(handle, spec)| {
+            if base_imposter.as_ingredient {
+                return (handle, spec);
+            }
+            let Some(mut own) = imposter_assets.get(&handle).cloned() else {
+                return (handle, spec);
+            };
+            let alpha = match maybe_fade {
+                Some(fade) => fade_alpha(fade, now),
+                None if replacing_visuals => 1.0,
+                None => 0.0,
+            };
+            own.data.alpha = alpha;
+            if maybe_fade.is_none() {
+                commands
+                    .entity(entity)
+                    .try_insert(retarget(None, alpha, 1.0, now));
+            }
+            (imposter_assets.add(own), spec)
+        });
 
         commands
             .entity(entity)

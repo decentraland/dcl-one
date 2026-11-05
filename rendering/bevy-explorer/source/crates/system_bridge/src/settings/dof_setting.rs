@@ -1,7 +1,7 @@
 use super::SettingCategory;
 use bevy::{
     core_pipeline::dof::{DepthOfField, DepthOfFieldMode},
-    ecs::system::SystemParamItem,
+    ecs::system::{lifetimeless::SRes, SystemParamItem},
     prelude::*,
 };
 use common::structs::{AppConfig, DofConfig, DofSetting};
@@ -24,7 +24,7 @@ impl EnumAppSetting for DofSetting {
 }
 
 impl AppSetting for DofSetting {
-    type Param = ();
+    type Param = SRes<AppConfig>;
 
     fn title() -> String {
         "Depth of Field".to_owned()
@@ -35,7 +35,9 @@ impl AppSetting for DofSetting {
     }
 
     fn description(&self) -> String {
-        format!("Bloom is a post-processing effect used to reproduce an imaging artifact of real-world cameras. The effect produces fringes (or feathers) of light extending from the borders of bright areas in an image, contributing to the illusion of an extremely bright light overwhelming the camera capturing the scene.\n\n{}", 
+        format!("Depth of field blurs what is far from the focus, like a camera lens. Not available with MSAA, which turns it off.
+
+{}",
         match self {
             DofSetting::Off => "Off: No depth of field.",
             DofSetting::Low => "Low: A bit of depth of field is applied.",
@@ -53,13 +55,26 @@ impl AppSetting for DofSetting {
 
     fn apply_to_camera(
         &self,
-        _: &SystemParamItem<Self::Param>,
+        config: &SystemParamItem<Self::Param>,
         mut commands: Commands,
         camera_entity: Entity,
     ) {
         let Ok(mut cmds) = commands.get_entity(camera_entity) else {
             return;
         };
+
+        // the fork's transparent focus texture is single-sampled while the transparent pass it
+        // joins is multisampled, which wgpu refuses (the proper fix is a sampled texture with a
+        // resolve target in `prepare_transparent_focus_textures`). until then depth of field
+        // yields to MSAA; unity has no depth of field, so no preset combines them. the stars
+        // then draw over imposters at night, as they do with no depth of field texture
+        if config.graphics.msaa.is_msaa() {
+            if *self != DofSetting::Off {
+                warn_once!("depth of field is off while MSAA is on");
+            }
+            cmds.remove::<(DepthOfField, DofConfig)>();
+            return;
+        }
 
         let (mode, aperture_f_stops) = match self {
             // no blur, but depth of field stays active so its transparent focus texture is still

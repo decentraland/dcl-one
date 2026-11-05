@@ -202,3 +202,236 @@ fn ripples_tile_and_are_deterministic() {
     let top = &bytes[..ripples::SIZE * ripples::SIZE * 2];
     assert!(top.iter().any(|&v| v < 100) && top.iter().any(|&v| v > 155));
 }
+
+#[test]
+fn the_flat_ocean_stays_below_the_deepest_trough() {
+    assert!(OCEAN_DROP > waves::tests::wave_bound() + 0.2);
+}
+
+#[test]
+fn shader_wave_constants_match_the_cpu_constants() {
+    use std::collections::BTreeSet;
+
+    use bevy::render::render_resource::ShaderDefVal;
+    use waves::*;
+
+    let bits = |value: f32| value.to_bits();
+    let mut expected = vec![
+        ("WAVE_COUNT".to_string(), WAVE_COUNT),
+        ("WAVE_HEIGHT".to_string(), bits(WAVE_HEIGHT)),
+        ("WAVE_DISTANCE".to_string(), bits(WAVE_DISTANCE)),
+        ("WAVE_SPEED".to_string(), bits(WAVE_SPEED)),
+        ("WAVE_STEEPNESS".to_string(), bits(WAVE_STEEPNESS)),
+        ("REFRACTION_STRENGTH".to_string(), bits(REFRACTION_STRENGTH)),
+        (
+            "REFRACTION_CHROMATIC".to_string(),
+            bits(REFRACTION_CHROMATIC),
+        ),
+        (
+            "WATER_DEPTH_HORIZONTAL".to_string(),
+            bits(WATER_DEPTH_HORIZONTAL),
+        ),
+        (
+            "WATER_DEPTH_VERTICAL".to_string(),
+            bits(WATER_DEPTH_VERTICAL),
+        ),
+        ("WATER_DEPTH_EXP".to_string(), bits(WATER_DEPTH_EXP)),
+        ("WAVE_DIRECTION_X".to_string(), bits(WAVE_DIRECTION.x)),
+        ("WAVE_DIRECTION_Y".to_string(), bits(WAVE_DIRECTION.y)),
+    ];
+    for (name, vector) in [
+        ("WAVE_AMP", WAVE_AMP),
+        ("WAVE_FREQ", WAVE_FREQ),
+        ("WAVE_DIR1", WAVE_DIR1),
+        ("WAVE_DIR2", WAVE_DIR2),
+    ] {
+        for (axis, value) in ["X", "Y", "Z", "W"].iter().zip(vector.to_array()) {
+            expected.push((format!("{name}_{axis}"), bits(value)));
+        }
+    }
+    let defs: Vec<_> = waves::shader_defs()
+        .into_iter()
+        .map(|def| match def {
+            ShaderDefVal::UInt(name, value) => (name, value),
+            other => panic!("unexpected def {other:?}"),
+        })
+        .collect();
+    assert_eq!(defs, expected);
+
+    // every `#{NAME}` the shaders read is one of the defs, and every def is read
+    let mut used = BTreeSet::new();
+    for shader in [
+        include_str!("../coast_waves.wgsl"),
+        include_str!("../coast_water.wgsl"),
+    ] {
+        for piece in shader.split("#{").skip(1) {
+            used.insert(piece.split('}').next().unwrap().to_string());
+        }
+    }
+    let names: BTreeSet<_> = expected.into_iter().map(|(name, _)| name).collect();
+    assert_eq!(used, names);
+}
+
+/// The sea's vertex and fragment pipelines compile on this machine's adapter, in a renderer with
+/// no window: `setup`'s wave grid and flat ocean, made visible, seen by a multisampled camera and
+/// an HDR one without MSAA, both with `Camera3d`'s default transmission steps. Needs a GPU, so
+/// `#[ignore]`d and skipped by CI:
+///
+/// ```text
+/// cargo test -p visuals water_pipelines_compile -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "needs a GPU; run with --ignored"]
+fn water_pipelines_compile() {
+    use std::{
+        path::Path,
+        time::{Duration, Instant},
+    };
+
+    use bevy::{
+        asset::io::embedded::EmbeddedAssetRegistry,
+        log::LogPlugin,
+        render::{
+            camera::RenderTarget,
+            pipelined_rendering::PipelinedRenderingPlugin,
+            render_resource::{
+                CachedPipelineState, Extent3d, PipelineCache, PipelineDescriptor, ShaderDefVal,
+                TextureDimension, TextureFormat, TextureUsages,
+            },
+            RenderApp,
+        },
+        window::ExitCondition,
+        winit::WinitPlugin,
+    };
+
+    let mut app = App::new();
+    app.add_plugins(
+        DefaultPlugins
+            .build()
+            .disable::<LogPlugin>()
+            .disable::<WinitPlugin>()
+            // keeps the render app in this app, so the pipeline cache is readable
+            .disable::<PipelinedRenderingPlugin>()
+            .set(WindowPlugin {
+                primary_window: None,
+                exit_condition: ExitCondition::DontExit,
+                close_when_requested: false,
+            }),
+    );
+    app.add_plugins(assets::EmbedAssetsPlugin);
+    // the coast's shaders as `CoastPlugin` and the terrain embed them; the rest of the coast
+    // plugin needs the terrain
+    let registry = app.world().resource::<EmbeddedAssetRegistry>();
+    for (name, source) in [
+        ("coast_profile.wgsl", include_str!("../coast_profile.wgsl")),
+        ("coast_surf.wgsl", include_str!("../coast_surf.wgsl")),
+        ("coast_cliff.wgsl", include_str!("../coast_cliff.wgsl")),
+        ("coast_water.wgsl", include_str!("../coast_water.wgsl")),
+        ("coast_waves.wgsl", include_str!("../coast_waves.wgsl")),
+    ] {
+        let path = Path::new("visuals").join(name);
+        registry.insert_asset(path.clone(), &path, source.as_bytes());
+    }
+    app.add_plugins((
+        MaterialPlugin::<CliffMaterial>::default(),
+        MaterialPlugin::<WaterMaterial>::default(),
+    ))
+    .add_systems(Startup, setup);
+    app.finish();
+    app.cleanup();
+    app.update();
+
+    let world = app.world_mut();
+    let mut oceans = world.query_filtered::<&mut Visibility, With<Ocean>>();
+    for mut visibility in oceans.iter_mut(world) {
+        *visibility = Visibility::Inherited;
+    }
+    let mut target = Image::new_fill(
+        Extent3d {
+            width: 64,
+            height: 64,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        &[0, 0, 0, 0],
+        TextureFormat::Bgra8UnormSrgb,
+        RenderAssetUsages::all(),
+    );
+    target.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
+    let mut images = world.resource_mut::<Assets<Image>>();
+    let targets = [images.add(target.clone()), images.add(target)];
+    world.spawn((
+        DirectionalLight::default(),
+        Transform::default().looking_to(Vec3::new(0.3, -1.0, -0.4), Vec3::Y),
+    ));
+    for (target, hdr, msaa) in [
+        (&targets[0], false, Msaa::Sample4),
+        (&targets[1], true, Msaa::Off),
+    ] {
+        world.spawn((
+            Camera3d::default(),
+            Camera {
+                target: RenderTarget::Image(target.clone().into()),
+                hdr,
+                ..default()
+            },
+            msaa,
+            // above the sea, looking down at it
+            Transform::from_xyz(0.0, SEA_LEVEL + 10.0, 0.0)
+                .looking_at(Vec3::new(0.0, SEA_LEVEL, -40.0), Vec3::Y),
+        ));
+    }
+
+    // a few frames queue every pipeline; then they compile in the background
+    for _ in 0..10 {
+        app.update();
+    }
+    let started = Instant::now();
+    let mut errors = Vec::new();
+    loop {
+        app.update();
+        let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
+        errors.clear();
+        let mut pending = 0;
+        for pipeline in cache.pipelines() {
+            match &pipeline.state {
+                CachedPipelineState::Ok(_) => {}
+                CachedPipelineState::Err(error) => errors.push(error.to_string()),
+                _ => pending += 1,
+            }
+        }
+        if pending == 0 {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(120),
+            "{pending} pipelines still compiling"
+        );
+    }
+    assert!(
+        errors.is_empty(),
+        "pipeline errors:\n{}",
+        errors.join("\n\n")
+    );
+
+    // the sea's pipelines are the ones specialized with the wave constants
+    let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
+    let water = cache
+        .pipelines()
+        .filter(|pipeline| {
+            matches!(
+                &pipeline.descriptor,
+                PipelineDescriptor::RenderPipelineDescriptor(descriptor)
+                    if descriptor.vertex.shader_defs.iter().any(|def| {
+                        matches!(def, ShaderDefVal::UInt(name, _) if name == "WAVE_COUNT")
+                    }) && descriptor.fragment.as_ref().is_some_and(|fragment| {
+                        fragment.shader_defs.iter().any(|def| {
+                            matches!(def, ShaderDefVal::UInt(name, _) if name == "REFRACTION_STRENGTH")
+                        })
+                    })
+            ) && matches!(pipeline.state, CachedPipelineState::Ok(_))
+        })
+        .count();
+    println!("{water} water pipelines compiled");
+    assert!(water >= 2, "one water pipeline per camera");
+}

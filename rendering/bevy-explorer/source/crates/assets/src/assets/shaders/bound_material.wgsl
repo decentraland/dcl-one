@@ -20,17 +20,19 @@
 
 override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, view_z: f32) -> f32 {
     let base = shadows::fetch_directional_shadow(light_id, frag_position, surface_normal, view_z);
-    // far bound of the last cascade = the shadow distance for this light
+    // the far bound of the last cascade is the shadow distance for this light
     let light = &lights.directional_lights[light_id];
     let far = (*light).cascades[max((*light).num_cascades, 1u) - 1u].far_bound;
-    return soften_directional_shadow(base, far, view_z);
+    let to_frag = frag_position.xyz - view.world_position;
+    return soften_directional_shadow(base, far, dot(to_frag, to_frag));
 }
 
 #ifdef ENVIRONMENT_MAP
 #import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting}
 #import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level}
 
-// the sky envmap, levelled towards the flat ambient light, is the only ambient light
+// the Trilight ambient map is the diffuse ambient light; the sky envmap, levelled towards the
+// flat ambient light, the reflections (see sky_envmap_lookup.wgsl)
 // (see sky_envmap_lookup.wgsl)
 override fn environment_map::compute_radiances(input: lighting::LayerLightingInput, clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>, world_position: vec3<f32>, found_diffuse_indirect: bool) -> environment_map::EnvironmentMapRadiances {
     let upper = sky_envmap_input(input);
@@ -171,7 +173,7 @@ fn fragment(
     if (mesh_tag & #{OUTLINE_MESH_TAGS}) != 0 {
         let outline_color = vec3(
             f32((mesh_tag & #{OUTLINE_RED_MESH_TAG}) != 0),
-            f32((mesh_tag & #{OUTLINE_GREEN_MESH_TAG}) != 0),
+            0.0,
             f32((mesh_tag & #{OUTLINE_BLUE_MESH_TAG}) != 0),
         );
         let black = (mesh_tag & (#{OUTLINE_MESH_TAGS} & ~#{OUTLINE_BLACK_MESH_TAG})) == 0;

@@ -1,9 +1,10 @@
 use bevy::{
     core_pipeline::fxaa::{Fxaa, Sensitivity},
-    ecs::system::SystemParamItem,
+    ecs::system::{lifetimeless::SRes, SystemParamItem},
     prelude::*,
+    render::{render_resource::TextureFormat, renderer::RenderAdapter},
 };
-use common::structs::{AaSetting, AppConfig};
+use common::structs::{AaSetting, AppConfig, DofSetting};
 
 use super::{AppSetting, EnumAppSetting, SettingCategory};
 
@@ -35,8 +36,20 @@ impl EnumAppSetting for AaSetting {
     }
 }
 
+/// The highest MSAA sample count up to `requested` that `supported` accepts, falling back from 8
+/// to 4, 2 and 1.
+fn clamp_msaa(requested: u32, supported: impl Fn(u32) -> bool) -> u32 {
+    [8, 4, 2]
+        .into_iter()
+        .filter(|&samples| samples <= requested)
+        .find(|&samples| supported(samples))
+        .unwrap_or(1)
+}
+
 impl AppSetting for AaSetting {
-    type Param = ();
+    // the adapter is absent until the renderer is up; the config says whether depth of field
+    // has to yield to MSAA (see `DofSetting::apply_to_camera`)
+    type Param = (Option<SRes<RenderAdapter>>, SRes<AppConfig>);
 
     fn title() -> String {
         "Anti-aliasing".to_owned()
@@ -69,16 +82,37 @@ impl AppSetting for AaSetting {
 
     fn apply_to_camera(
         &self,
-        _param: &SystemParamItem<Self::Param>,
+        param: &SystemParamItem<Self::Param>,
         mut commands: Commands,
         camera_entity: Entity,
     ) {
-        let msaa = match self {
-            AaSetting::Off | AaSetting::FxaaLow | AaSetting::FxaaHigh => Msaa::Off,
-            AaSetting::Msaa2x => Msaa::Sample2,
-            AaSetting::Msaa4x => Msaa::Sample4,
-            AaSetting::Msaa8x => Msaa::Sample8,
+        let (adapter, config) = param;
+        let requested = match self {
+            AaSetting::Off | AaSetting::FxaaLow | AaSetting::FxaaHigh => 1,
+            AaSetting::Msaa2x => 2,
+            AaSetting::Msaa4x => 4,
+            AaSetting::Msaa8x => 8,
         };
+        // unity: URP clamps the MSAA count silently; wgpu fails validation on a count the HDR
+        // view target or the depth texture does not support (Apple GPUs stop at 4). The saved
+        // setting keeps the requested count, so the HUD still shows the preset.
+        let samples = match adapter {
+            Some(adapter) => clamp_msaa(requested, |samples| {
+                [TextureFormat::Rgba16Float, TextureFormat::Depth32Float]
+                    .into_iter()
+                    .all(|format| {
+                        adapter
+                            .get_texture_format_features(format)
+                            .flags
+                            .sample_count_supported(samples)
+                    })
+            }),
+            None => requested,
+        };
+        if samples != requested {
+            warn_once!("MSAA {requested}x is not supported by this GPU, using {samples}x");
+        }
+        let msaa = Msaa::from_samples(samples);
 
         commands
             .entity(camera_entity)
@@ -95,5 +129,25 @@ impl AppSetting for AaSetting {
                 edge_threshold_min: sensitivity,
             });
         }
+
+        // depth of field is there or not depending on MSAA
+        DofSetting::load(config).apply_to_camera(config, commands.reborrow(), camera_entity);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::clamp_msaa;
+
+    #[test]
+    fn msaa_clamps_to_the_highest_supported_count() {
+        let apple = |n: u32| matches!(n, 1 | 2 | 4);
+        assert_eq!(clamp_msaa(8, apple), 4);
+        assert_eq!(clamp_msaa(4, apple), 4);
+        assert_eq!(clamp_msaa(2, apple), 2);
+        assert_eq!(clamp_msaa(1, apple), 1);
+        assert_eq!(clamp_msaa(8, |n| n <= 8), 8);
+        assert_eq!(clamp_msaa(8, |n| n == 1 || n == 2), 2);
+        assert_eq!(clamp_msaa(8, |n| n == 1), 1);
     }
 }

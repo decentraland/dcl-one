@@ -10,6 +10,7 @@ serde_json = { workspace = true }
 common = { workspace = true }
 console = { workspace = true }
 scene_runner = { workspace = true }
+scene_material = { workspace = true }
 dcl_types = { workspace = true }
 dcl_component = { workspace = true }
 ipfs = { workspace = true }
@@ -20,5 +21,12 @@ bevy_console = { workspace = true }
 
 clap = { workspace = true }
 chrono = { workspace = true }
+half = { workspace = true }
 noise = "0.9"
 web-time = { workspace = true }
+
+[dev-dependencies]
+assets = { workspace = true }
+# present only to enable the naga_oil `override_any` feature in a per-crate test build, as the
+# root crate does for the app (see [workspace.dependencies]); not referenced from Rust
+naga_oil = { workspace = true }

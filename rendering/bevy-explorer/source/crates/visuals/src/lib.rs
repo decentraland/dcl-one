@@ -2,18 +2,21 @@ mod atmosphere_params;
 mod coast;
 mod day_night;
 mod debug_panel;
+mod lens_flare;
 mod nishita_cloud;
 mod props;
 pub mod shell_texturing;
 mod sky_envmap;
+pub use common::sky_preset;
 mod solids;
 mod stars;
 pub mod terrain;
 mod trees;
+pub mod upscale;
 
 use bevy::{
     core_pipeline::dof::{DepthOfField, DepthOfFieldMode},
-    pbr::{wireframe::WireframePlugin, CascadeShadowConfigBuilder, DirectionalLightShadowMap},
+    pbr::{wireframe::WireframePlugin, DirectionalLightShadowMap},
     prelude::*,
     render::view::{Layer, RenderLayers},
 };
@@ -31,8 +34,9 @@ use bevy_console::ConsoleCommand;
 use common::{
     sets::SetupSets,
     structs::{
-        AppConfig, DofConfig, FogSetting, PrimaryCamera, PrimaryCameraRes, PrimaryUser,
-        SceneGlobalLight, SceneLoadDistance, ShadowSetting, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER,
+        sun_cascades, sun_shadow_bias, AppConfig, DofConfig, FogSetting, PrimaryCamera,
+        PrimaryCameraRes, PrimaryUser, SceneGlobalLight, SceneLoadDistance, TimeOfDay,
+        AMBIENT_BRIGHTNESS_UNITY, PRIMARY_AVATAR_LIGHT_LAYER, SUN_SHADOW_MAP_SIZE,
     },
 };
 use console::DoAddConsoleCommand;
@@ -40,16 +44,15 @@ use scene_runner::update_world::lights::{moon_direction, SUN_COLOR_NOON};
 
 use crate::{
     coast::CoastPlugin,
-    day_night::DayNightPlugin,
+    day_night::{day_fraction, DayNightPlugin},
     props::PropsPlugin,
     shell_texturing::ShellTexturingPlugin,
-    sky_envmap::{SkyEnvmapPlugin, SkyEnvmapSettings},
+    sky_envmap::{SkyAmbient, SkyEnvmapPlugin, SkyEnvmapSettings},
+    sky_preset::{ambient_trilight, fog_color, FOG_DENSITY_PER_METRE},
     solids::SolidsPlugin,
     terrain::TerrainPlugin,
     trees::TreesPlugin,
 };
-
-const MIN_CASCADE: f32 = 0.1;
 
 pub struct VisualsPlugin {
     pub no_fog: bool,
@@ -58,28 +61,30 @@ pub struct VisualsPlugin {
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
         debug_panel::register(app);
-        app.insert_resource(DirectionalLightShadowMap { size: 4096 })
-            .init_resource::<SceneGlobalLight>()
-            .insert_resource(CloudCover {
-                cover: 0.375,
-                speed: 5.0,
-                density_cap: 0.8,
-                shadow: 0.05,
-                scale: 1.5,
-                steps: 44,
-                lacunarity: 2.0,
-                sharpness: 50.0,
-                sharp_mid: 0.1,
-            })
-            .add_plugins(WireframePlugin::default())
-            .add_plugins(DayNightPlugin)
-            .add_plugins(ShellTexturingPlugin)
-            .add_plugins(TerrainPlugin)
-            .add_plugins(CoastPlugin)
-            .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin))
-            .add_systems(Update, apply_global_light)
-            .add_systems(Update, update_dof)
-            .add_systems(Startup, setup.in_set(SetupSets::Main));
+        app.insert_resource(DirectionalLightShadowMap {
+            size: SUN_SHADOW_MAP_SIZE,
+        })
+        .init_resource::<SceneGlobalLight>()
+        .insert_resource(CloudCover {
+            cover: 0.375,
+            speed: 5.0,
+            density_cap: 0.8,
+            shadow: 0.05,
+            scale: 1.5,
+            steps: 44,
+            lacunarity: 2.0,
+            sharpness: 50.0,
+            sharp_mid: 0.1,
+        })
+        .add_plugins(WireframePlugin::default())
+        .add_plugins(DayNightPlugin)
+        .add_plugins(ShellTexturingPlugin)
+        .add_plugins(TerrainPlugin)
+        .add_plugins(CoastPlugin)
+        .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin))
+        .add_systems(Update, apply_global_light)
+        .add_systems(Update, update_dof)
+        .add_systems(Startup, setup.in_set(SetupSets::Main));
 
         app.insert_resource(AtmosphereSettings {
             resolution: 1024,
@@ -92,9 +97,13 @@ impl Plugin for VisualsPlugin {
         .insert_resource(AtmosphereModel::new(NishitaCloud::default()))
         .add_plugins(AtmospherePlugin)
         .add_plugins(SkyEnvmapPlugin)
-        .add_plugins(stars::StarsPlugin);
+        .add_plugins(stars::StarsPlugin)
+        .add_plugins(lens_flare::LensFlarePlugin)
+        .add_plugins(upscale::UpscalePlugin);
 
         app.add_console_command::<ShadowConsoleCommand, _>(shadow_console_command);
+        app.init_resource::<ShadowBiasOverride>();
+        app.add_console_command::<ShadowBiasConsoleCommand, _>(shadow_bias_console_command);
         app.add_console_command::<FogConsoleCommand, _>(fog_console_command);
         app.add_console_command::<DofConsoleCommand, _>(dof_console_command);
         app.add_console_command::<CloudConsoleCommand, _>(cloud_console_command);
@@ -149,10 +158,12 @@ fn setup(
     info!("visuals::setup");
 
     commands.entity(camera.0).try_insert(DistanceFog {
-        color: Color::srgb(0.3, 0.2, 0.1),
-        directional_light_color: Color::srgb(1.0, 1.0, 0.7),
-        directional_light_exponent: 10.0,
-        falloff: FogFalloff::ExponentialSquared { density: 0.01 },
+        color: fog_color(0.5),
+        directional_light_color: Color::NONE,
+        directional_light_exponent: 0.0,
+        falloff: FogFalloff::Exponential {
+            density: FOG_DENSITY_PER_METRE,
+        },
     });
 
     {
@@ -187,11 +198,18 @@ fn apply_global_light(
     scene_distance: Res<SceneLoadDistance>,
     scene_global_light: Res<SceneGlobalLight>,
     time_of_day: Res<TimeOfDay>,
-    envmap_settings: Res<SkyEnvmapSettings>,
+    // one parameter: bevy systems take sixteen at most
+    envmap: (
+        Res<SkyEnvmapSettings>,
+        ResMut<SkyAmbient>,
+        Res<ShadowBiasOverride>,
+    ),
     mut prev: Local<(f32, SceneGlobalLight)>,
     mut cloud_dt: Local<f32>,
     mut last_primary_distance: Local<f32>,
+    mut last_day_fraction: Local<f32>,
 ) {
+    let (envmap_settings, mut sky_ambient, shadow_bias) = envmap;
     // the transition has settled once the previous output exactly matches the target
     let settled = prev.0 >= TRANSITION_TIME && prev.1 == *scene_global_light;
 
@@ -287,13 +305,17 @@ fn apply_global_light(
     let fog_added = cameras
         .iter_mut()
         .any(|(_, fog)| fog.is_some_and(|fog| fog.is_added()));
+    let clock_fraction = day_fraction(time_of_day.elapsed_secs() / 3600.0);
     let skip_writes = settled
         && !setting.is_changed()
         && !envmap_settings.is_changed()
+        && !shadow_bias.is_changed()
         && !scene_distance.is_changed()
         && !fog_added
-        && *last_primary_distance == primary_distance;
+        && *last_primary_distance == primary_distance
+        && *last_day_fraction == clock_fraction;
     *last_primary_distance = primary_distance;
+    *last_day_fraction = clock_fraction;
 
     if skip_writes {
         prev.0 += time.delta_secs();
@@ -301,6 +323,12 @@ fn apply_global_light(
         return;
     }
 
+    let (shadow_depth_bias, shadow_normal_bias) = shadow_bias.0.unwrap_or_else(|| {
+        sun_shadow_bias(
+            setting.graphics.shadow_settings,
+            setting.graphics.shadow_distance,
+        )
+    });
     let mut directional_layers = RenderLayers::none();
     for (entity, layer, mut light_trans, mut directional) in sun.iter_mut() {
         if !next_light.layers.intersects(&RenderLayers::layer(layer.0)) {
@@ -312,6 +340,8 @@ fn apply_global_light(
         light_trans.rotation = rotation;
         directional.illuminance = next_light.dir_illuminance;
         directional.color = next_light.dir_color;
+        directional.shadow_depth_bias = shadow_depth_bias;
+        directional.shadow_normal_bias = shadow_normal_bias;
     }
 
     for new_layer in next_light
@@ -324,40 +354,12 @@ fn apply_global_light(
             layer = layer.union(&PRIMARY_AVATAR_LIGHT_LAYER);
         }
 
-        let (shadows_enabled, cascade_shadow_config) = match setting.graphics.shadow_settings {
-            ShadowSetting::Off => (false, Default::default()),
-            ShadowSetting::Low => (
-                true,
-                CascadeShadowConfigBuilder {
-                    num_cascades: 1,
-                    minimum_distance: MIN_CASCADE,
-                    maximum_distance: setting
-                        .graphics
-                        .shadow_distance
-                        .max(MIN_CASCADE + f32::EPSILON),
-                    first_cascade_far_bound: setting
-                        .graphics
-                        .shadow_distance
-                        .max(MIN_CASCADE + f32::EPSILON),
-                    overlap_proportion: 0.2,
-                }
-                .build(),
-            ),
-            ShadowSetting::High => (
-                true,
-                CascadeShadowConfigBuilder {
-                    num_cascades: 4,
-                    minimum_distance: MIN_CASCADE,
-                    maximum_distance: setting
-                        .graphics
-                        .shadow_distance
-                        .max(MIN_CASCADE + f32::EPSILON),
-                    first_cascade_far_bound: (setting.graphics.shadow_distance / 15.0)
-                        .max(MIN_CASCADE + f32::EPSILON),
-                    overlap_proportion: 0.2,
-                }
-                .build(),
-            ),
+        let (shadows_enabled, cascade_shadow_config) = match sun_cascades(
+            setting.graphics.shadow_settings,
+            setting.graphics.shadow_distance,
+        ) {
+            Some(cascades) => (true, cascades),
+            None => (false, Default::default()),
         };
 
         commands.spawn((
@@ -365,6 +367,8 @@ fn apply_global_light(
                 color: next_light.dir_color,
                 illuminance: next_light.dir_illuminance,
                 shadows_enabled,
+                shadow_depth_bias,
+                shadow_normal_bias,
                 ..Default::default()
             },
             Transform::default().with_rotation(rotation),
@@ -374,54 +378,23 @@ fn apply_global_light(
         ));
     }
 
-    for (maybe_primary, maybe_fog) in cameras.iter_mut() {
-        let dir_light_lightness = Lcha::from(next_light.dir_color).lightness;
-        // floor keeps night fog tinted instead of going black
-        let skybox_brightness =
-            (next_light.sun_illuminance.sqrt() * 40.0 * dir_light_lightness).clamp(400.0, 2000.0);
-
+    for (_, maybe_fog) in cameras.iter_mut() {
         if let Some(mut fog) = maybe_fog {
-            let distance = (scene_distance.load + scene_distance.unload)
-                .max(scene_distance.load_imposter * 0.333)
-                + maybe_primary.map_or(0.0, |camera| camera.distance * 5.0);
-
-            // fog hue follows the (scene-overridable) sunlight, so a scene's global
-            // light tints the fog too, with a stronger fill when the sun is low
-            // (midnight ≈ 2.1x) so the night doesn't go black. Overall brightness
-            // tracks the sky; an extra dir-intensity pull drops night fog toward
-            // the dark horizon colour (the authored night fog is darker than a
-            // plain tint).
-            let sun_energy = ((-next_light.sun_direction.y + 0.05) / 0.35).clamp(0.0, 1.0);
-            let sun_energy = sun_energy * sun_energy * (3.0 - 2.0 * sun_energy);
-            let fill = 0.8 * (1.0 + (1.0 - sun_energy) * 1.1);
-            let night_pull = (next_light.sun_illuminance / 7000.0).clamp(0.35, 1.0);
-            let base_color = next_light.dir_color.to_srgba() * fill * 0.5 * skybox_brightness
-                / 2000.0
-                * night_pull;
-            let base_color = Color::from(base_color).with_alpha(1.0);
-
-            fog.color = base_color;
-            match setting.graphics.fog {
-                FogSetting::Off => {
-                    fog.falloff = FogFalloff::from_visibility_squared(distance * 200.0);
-                    fog.directional_light_color = base_color;
-                }
-                FogSetting::Basic => {
-                    fog.falloff = FogFalloff::from_visibility_squared(distance * 2.0);
-                    fog.directional_light_color = base_color;
-                }
-                FogSetting::Atmospheric => {
-                    fog.falloff = FogFalloff::from_visibility_squared(distance * 2.0);
-                    fog.directional_light_color = next_light.dir_color;
-                }
-            }
+            fog.color = fog_color(clock_fraction);
+            fog.directional_light_color = Color::NONE;
+            fog.falloff = FogFalloff::Exponential {
+                density: match setting.graphics.fog {
+                    FogSetting::Off => 0.0,
+                    FogSetting::On => FOG_DENSITY_PER_METRE,
+                },
+            };
         }
     }
 
-    // the sky envmap is the only ambient light. the pbr shaders zero the flat ambient where an
-    // envmap is bound and level the envmap towards it instead: the setting's brightness, scaled
-    // and tinted by a scene's ambient override, the envmap already following the time of day.
-    // the compression rides in the alpha, negated (see sky_envmap_lookup.wgsl); the uniform
+    // the flat ambient light is only the target the pbr shaders level the sky reflections
+    // towards (they zero it as a light where the sky envmap is bound): the setting's brightness,
+    // scaled and tinted by a scene's ambient override, the envmap already following the time
+    // of day. the compression rides in the alpha, negated (see sky_envmap_lookup.wgsl); the uniform
     // holds alpha * brightness. the brightness is kept above zero so the compression survives a
     // zero setting, levelling the envmap to ~nothing
     const MIN_AMBIENT_BRIGHTNESS: f32 = 0.01;
@@ -433,6 +406,17 @@ fn apply_global_light(
     ambient.color = next_light
         .ambient_color
         .with_alpha(-envmap_settings.compression / ambient.brightness);
+
+    // the diffuse ambient light is the Trilight ambient map (sky_envmap.rs): unity's three
+    // colours at the phase, tinted and scaled by a scene's ambient override, and by the setting
+    // relative to the default where the ambient is unity's
+    let ambient_tint = next_light.ambient_color.to_linear().to_vec3()
+        * next_light.ambient_brightness
+        * (setting.graphics.ambient_brightness as f32 / AMBIENT_BRIGHTNESS_UNITY as f32);
+    let bands = ambient_trilight(clock_fraction).map(|band| band * ambient_tint);
+    if sky_ambient.bands != bands {
+        sky_ambient.bands = bands;
+    }
 
     if prev.1.source == scene_global_light.source {
         prev.0 += time.delta_secs()
@@ -468,6 +452,40 @@ fn shadow_console_command(
     }
 }
 
+/// The sun shadow biases set live by `/shadowbias`, in place of the preset's.
+#[derive(Resource, Default)]
+pub struct ShadowBiasOverride(pub Option<(f32, f32)>);
+
+/// set the sun shadow depth bias (world length) and normal bias (texels); no arguments restores
+/// the preset's
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/shadowbias")]
+struct ShadowBiasConsoleCommand {
+    depth: Option<f32>,
+    normal: Option<f32>,
+}
+
+fn shadow_bias_console_command(
+    mut input: ConsoleCommand<ShadowBiasConsoleCommand>,
+    mut bias: ResMut<ShadowBiasOverride>,
+    setting: Res<AppConfig>,
+) {
+    if let Some(Ok(command)) = input.take() {
+        let preset = sun_shadow_bias(
+            setting.graphics.shadow_settings,
+            setting.graphics.shadow_distance,
+        );
+        bias.0 = command
+            .depth
+            .map(|depth| (depth, command.normal.unwrap_or(preset.1)));
+        let (depth, normal) = bias.0.unwrap_or(preset);
+        input.reply_ok(format!(
+            "shadow bias depth {depth:.3} normal {normal:.3} (preset {:.3} {:.3})",
+            preset.0, preset.1
+        ));
+    }
+}
+
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/fog")]
 struct FogConsoleCommand {
@@ -482,7 +500,7 @@ fn fog_console_command(
         let activate = command.on.unwrap_or(true);
 
         config.graphics.fog = if activate {
-            FogSetting::Atmospheric
+            FogSetting::On
         } else {
             FogSetting::Off
         };
@@ -804,7 +822,7 @@ fn gamma_console_command(
     }
 }
 
-/// set saturation per tonal range (scene default 1.3); 0 = grayscale.
+/// set saturation per tonal range (default 1.0); 0 = grayscale.
 /// `/saturation <shadows> [midtones] [highlights]`
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/saturation")]

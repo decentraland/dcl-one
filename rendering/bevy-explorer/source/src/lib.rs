@@ -32,7 +32,7 @@ use bevy::{
     app::{PluginGroupBuilder, Propagate, TaskPoolThreadAssignmentPolicy},
     log::LogPlugin,
     prelude::*,
-    render::view::RenderLayers,
+    render::{camera::RenderTarget, view::RenderLayers},
 };
 #[cfg(target_arch = "wasm32")]
 use bevy::{
@@ -93,7 +93,7 @@ use tween::TweenPlugin;
 use ui_core::UiCorePlugin;
 use user_input::{avatar_movement::GroundCollider, UserInputPlugin};
 use uuid::Uuid;
-use visuals::VisualsPlugin;
+use visuals::{upscale::SceneTarget, VisualsPlugin};
 use wallet::WalletPlugin;
 use world_ui::WorldUiPlugin;
 
@@ -239,7 +239,7 @@ pub struct DecentralandArguments {
     /// `/allowed/failures`
     #[arg(long = "test_scenes", value_name = "x,y;x,y", help_heading = DEBUG)]
     pub test_scenes: Option<TestScenes>,
-    /// Vsync (default off)
+    /// Vsync (default on)
     #[arg(long, value_name = "true|false", help_heading = SETTINGS)]
     pub vsync: Option<bool>,
     /// Scene load distance in meters (default 100). Also `/scene_distance`
@@ -632,6 +632,7 @@ impl DecentralandApp {
             .add_plugins(RestrictedActionsPlugin)
             .add_plugins(UtilsPlugin)
             .add_plugins(InputManagerPlugin)
+            // before VisualsPlugin: its stars graph edge needs the highlight node SceneBoundPlugin adds
             .add_plugins(SceneBoundPlugin)
             .add_plugins(UserInputPlugin)
             .add_plugins(UiCorePlugin)
@@ -734,6 +735,7 @@ fn setup(
     config: Res<AppConfig>,
     boot_location: Res<BootLocation>,
     testing: Res<TestingData>,
+    scene_target: Res<SceneTarget>,
 ) {
     info!("main::setup");
     // create the main player
@@ -767,6 +769,8 @@ fn setup(
                 // Scene tests keep the simulation camera but render only their
                 // explicit snapshot cameras, avoiding an unused software-rendered view.
                 is_active: testing.test_scenes.is_none(),
+                // the compositor draws it onto the window (`visuals::upscale`)
+                target: RenderTarget::Image(scene_target.image.clone().into()),
                 ..Default::default()
             },
             default_camera_components(),
