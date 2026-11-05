@@ -128,7 +128,7 @@ async fn a_banned_wallet_cannot_publish() {
     };
     let (owner, banned, kicked) = (wallet(), wallet(), wallet());
     let community = rig.community(&owner, false).await;
-    rig.member(community, &banned, "member").await;
+    rig.member(community, &banned, "moderator").await;
     for wallet in [&banned, &kicked] {
         sqlx::query("INSERT INTO social.community_bans (community_id, banned_address, banned_by) VALUES ($1, $2, $3)")
             .bind(community)

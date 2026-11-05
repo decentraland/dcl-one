@@ -555,8 +555,8 @@ impl State {
 
     /// The four mirror loops, each a periodic job: a failed pass backs off
     /// (doubling to an hour) and the next one starts over from the persisted
-    /// marker. Nothing is spawned unless `EXPLORER_MIRRORS_ENABLED` is set,
-    /// like every other mirror's flag.
+    /// marker. Upstream mirrors require `EXPLORER_MIRRORS_ENABLED`; local
+    /// maintenance and denylist snapshot reload run on every process.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         auth_api::spawn_identity_sweeper(self, jobs);
         denylist::spawn_reload(self, jobs, denylist::RELOAD_INTERVAL);

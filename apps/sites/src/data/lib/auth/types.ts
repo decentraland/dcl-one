@@ -9,6 +9,8 @@ export type AuthLink = {
 export type EphemeralKey = {
   address: string;
   privateKey: `0x${string}`;
+  /** Kept from creation so the shared session (single-sign-on.ts) can be written without loading curve code. */
+  publicKey?: `0x${string}`;
 };
 
 export type AuthIdentity = {

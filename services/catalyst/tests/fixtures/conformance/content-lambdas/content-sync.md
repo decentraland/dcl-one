@@ -853,7 +853,7 @@ catalyst list and its `/about` is healthy.
     - Upstream: lists only stored snapshots, each with the real generation time
       (`decentraland/catalyst:src/logic/snapshots/component.ts:39,126-133`).
     - dcl-one: rows without a hash are left out; the deleter repair marks a window with
-      `content.snapshots.outdated` (step `0025_content_snapshots_outdated`) and keeps its generation time
+      `content.snapshots.outdated` (step `0026_content_snapshots_outdated`) and keeps its generation time
       (`services/catalyst/content/src/snapshot_gen.rs`, `content/src/sync/repository.rs`), pinned in
       `tests/snapshot_generation.rs`.
     - Severity: none (closed).

@@ -36,7 +36,7 @@ and version-3 binaries refuse version 2.
 
 - Cutover requires stopped writers, a verified backup restore, the release,
   the migrator and a clean status, in that order.
-- Steps 0021 to 0023 run as additive migrations after the release; on shipped
+- Steps 0021 to 0024 run as additive migrations after the release; on shipped
   main, 0021 rewrites `social.referral_progress` (measured in METRICS.md).
 - Returning to version 2 is a restore, not a reverse script: version 3 can hold
   several pending or media calls per wallet that the old constraints reject.

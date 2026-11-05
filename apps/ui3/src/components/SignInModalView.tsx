@@ -52,6 +52,8 @@ type SignInModalViewProps = {
   onClose: () => void;
   onSignedIn?: () => void;
   inAppAvailable: boolean;
+  /** Whether the social buttons are offered; the email code's `inAppAvailable` when not given. */
+  socialAvailable?: boolean;
   walletAvailable: boolean;
   wallets?: SignInWallet[];
   desktopShell: boolean;
@@ -68,6 +70,7 @@ export default function SignInModalView({
   onClose,
   onSignedIn,
   inAppAvailable,
+  socialAvailable,
   walletAvailable,
   wallets = [],
   desktopShell,
@@ -90,6 +93,7 @@ export default function SignInModalView({
   const qrRequest = useRef<AbortController | null>(null);
 
   const inApp = inAppAvailable;
+  const social = socialAvailable ?? inAppAvailable;
   const shell = desktopShell;
   const shellRef = useRef<SignInShellHandle | null>(null);
   const [shellError, setShellError] = useState<string | null>(null);
@@ -257,7 +261,7 @@ export default function SignInModalView({
               </>
             ) : null}
 
-            {inApp &&
+            {social &&
               SOCIALS.map(({ provider, label, Icon }) => (
                 <button
                   key={provider}
@@ -289,7 +293,7 @@ export default function SignInModalView({
               </button>
             )}
 
-            {!shell && !inApp && !showWallet && (
+            {!shell && !inApp && !social && !showWallet && (
               <p className="signin__note">
                 Sign-in is temporarily unavailable (no sign-in provider is
                 configured). Please try again shortly.
