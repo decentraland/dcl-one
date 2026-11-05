@@ -16,9 +16,9 @@ use std::time::{Duration, Instant};
 use alloy_primitives::Address;
 use axum::Json;
 use axum::extract::State;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use parking_lot::Mutex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::http::{RetryDecision, is_transient_status, read_body_capped, retry_with_backoff};
@@ -214,8 +214,22 @@ async fn calls(
         .await
 }
 
+/// One `/lambdas/contracts/servers` entry, with lamb2's key order
+/// (`baseUrl`, `owner`, `id`, `captures/lambdas-profiles/LP-26-contracts-servers.json`);
+/// a `json!` object would sort the keys.
+#[derive(Debug, Serialize, Deserialize)]
+struct CatalystServer {
+    #[serde(rename = "baseUrl")]
+    base_url: String,
+    owner: String,
+    id: String,
+}
+
 /// `ids` are the 64-hex-char catalyst ids, `records` the matching `catalystById` returns.
-fn servers_from_records(ids: &[String], records: Vec<Vec<u8>>) -> Result<Vec<Value>, String> {
+fn servers_from_records(
+    ids: &[String],
+    records: Vec<Vec<u8>>,
+) -> Result<Vec<CatalystServer>, String> {
     let mut out = Vec::with_capacity(ids.len());
     for (id, rec) in ids.iter().zip(records) {
         if rec.len() < 96 {
@@ -233,11 +247,11 @@ fn servers_from_records(ids: &[String], records: Vec<Vec<u8>>) -> Result<Vec<Val
         if !address.starts_with("https://") {
             address = format!("https://{address}");
         }
-        out.push(json!({
-            "baseUrl": address.trim(),
-            "owner": owner,
-            "id": format!("0x{id}"),
-        }));
+        out.push(CatalystServer {
+            base_url: address.trim().to_string(),
+            owner,
+            id: format!("0x{id}"),
+        });
     }
     Ok(out)
 }
@@ -246,7 +260,7 @@ async fn fetch_servers(
     state: &MarketplaceState,
     rpc: &str,
     network: &str,
-) -> Result<Vec<Value>, String> {
+) -> Result<Vec<CatalystServer>, String> {
     let c = contracts_for(network);
     let count_hex = eth_call(state, rpc, c.catalyst, SEL_CATALYST_COUNT).await?;
     let count = decode_uint_word(&count_hex)?;
@@ -351,10 +365,10 @@ pub struct Caches {
     denylisted_names: Slot,
 }
 
-pub async fn contracts_servers(State(state): State<SharedState>) -> impl IntoResponse {
+pub async fn contracts_servers(State(state): State<SharedState>) -> Response {
     let Some(rpc) = state.settings.eth_rpc_url.clone() else {
         tracing::debug!("ETH_RPC_URL is unset; /lambdas/contracts/servers answers empty");
-        return Json(json!([]));
+        return Json(json!([])).into_response();
     };
     let network = state.settings.eth_network.clone();
     let st = state.clone();
@@ -362,14 +376,16 @@ pub async fn contracts_servers(State(state): State<SharedState>) -> impl IntoRes
         .contracts
         .servers
         .get("servers", || async move {
-            fetch_servers(&st, &rpc, &network).await.map(Value::Array)
+            let servers = fetch_servers(&st, &rpc, &network).await?;
+            serde_json::to_value(servers).map_err(|e| e.to_string())
         })
         .await
+        .and_then(|v| serde_json::from_value::<Vec<CatalystServer>>(v).map_err(|e| e.to_string()))
     {
-        Ok(v) => Json(v),
+        Ok(servers) => Json(servers).into_response(),
         Err(e) => {
             tracing::error!("contracts/servers failed: {e}");
-            Json(json!([]))
+            Json(json!([])).into_response()
         }
     }
 }
@@ -530,14 +546,19 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.len(), 2, "http:// entries are dropped");
-        assert_eq!(out[0]["baseUrl"], "https://peer.example");
+        assert_eq!(out[0].base_url, "https://peer.example");
+        assert_eq!(out[0].owner, "0x75e1d32289679dfcB2F01fBc0e043B3d7F9Cd443");
+        assert_eq!(out[0].id, format!("0x{}", "11".repeat(32)));
+        assert_eq!(out[1].base_url, "https://secure.example");
+        assert_eq!(out[1].id, format!("0x{}", "33".repeat(32)));
+        // lamb2's key order on the wire (`LP-26-contracts-servers.json`).
         assert_eq!(
-            out[0]["owner"],
-            "0x75e1d32289679dfcB2F01fBc0e043B3d7F9Cd443"
+            serde_json::to_string(&out[1]).unwrap(),
+            format!(
+                r#"{{"baseUrl":"https://secure.example","owner":"0x75e1d32289679dfcB2F01fBc0e043B3d7F9Cd443","id":"0x{}"}}"#,
+                "33".repeat(32)
+            )
         );
-        assert_eq!(out[0]["id"], format!("0x{}", "11".repeat(32)));
-        assert_eq!(out[1]["baseUrl"], "https://secure.example");
-        assert_eq!(out[1]["id"], format!("0x{}", "33".repeat(32)));
         assert!(servers_from_records(&ids[..1], vec![vec![0u8; 40]]).is_err());
     }
 
