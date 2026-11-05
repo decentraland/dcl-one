@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { act } from '@testing-library/react'
 import type { Setting } from '../engine/protocol'
 import { renderSession, enterAsGuest } from './harness'
-import { presetTargets } from '../../bridge-scene/src/domains/settings'
+import { presetTargets } from '../../bridge-scene/src/domains/graphicsPresets'
 
 // DOMAIN: settings — fetch ExplorerSettings on open, change a setting.
 describe('settings domain', () => {
