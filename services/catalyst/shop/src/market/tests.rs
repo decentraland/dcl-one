@@ -151,7 +151,6 @@ const DB_FIXTURES: &[&str] = &[
 const READER_FIXTURES: &[&str] = &[
     "users-wearables-200-unknown-address",
     "users-emotes-200-unknown-address",
-    "users-names-200-pagesize-cap-1000",
     "collections-wearables-by-owner-200-unknown",
 ];
 
@@ -422,7 +421,6 @@ async fn user_item_routes_reject_a_malformed_address_before_any_reader_call() {
     for path in [
         "/lambdas/users/not-an-address/wearables",
         "/lambdas/users/0xZZ/emotes",
-        "/lambdas/users/0x8d6f/names",
     ] {
         let (status, body) = get_json(router(state.clone()), path).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
@@ -431,6 +429,20 @@ async fn user_item_routes_reject_a_malformed_address_before_any_reader_call() {
             "{path}"
         );
     }
+    // lamb2's names answer an empty page for a string that owns nothing
+    // (the unreachable reader would answer the 502 if it were asked).
+    let (status, body) = get_json(
+        router(state),
+        "/lambdas/users/0x8d6f/names?pageSize=2&pageNum=3",
+    )
+    .await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::OK,
+            json!({ "elements": [], "totalAmount": 0, "pageNum": 3, "pageSize": 2 })
+        )
+    );
 }
 
 #[tokio::test]
@@ -457,12 +469,17 @@ async fn a_configured_but_unreachable_reader_fails_closed() {
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(body["error"], "Service Unavailable");
-    let (status, _) = get_json(
+    // Names answer lamb2's 502 `FetcherError`, still never an empty page.
+    let (status, body) = get_json(
         router(state.clone()),
         "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/names",
     )
     .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert_eq!(
+        body["message"],
+        "Cannot fetch elements for 0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    );
     let (status, _) = get_json(
         router(state),
         "/lambdas/collections/emotes-by-owner/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",

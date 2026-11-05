@@ -183,6 +183,91 @@ pub fn parse_pagination(params: &QueryParams, max_page_size: i64) -> Result<Pagi
     )
 }
 
+/// JavaScript's `parseInt`: leading white space, an optional sign, then the
+/// longest run of digits; `None` where JavaScript answers `NaN`. With
+/// `hex_prefix` (`parseInt(s)` with no radix) a `0x`/`0X` reads hex digits.
+/// A value past `i64` saturates.
+pub fn js_parse_int(s: &str, hex_prefix: bool) -> Option<i64> {
+    let s = s.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
+    let (negative, s) = match s.as_bytes().first() {
+        Some(b'-') => (true, &s[1..]),
+        Some(b'+') => (false, &s[1..]),
+        _ => (false, s),
+    };
+    let (radix, s) = match s.get(..2) {
+        Some("0x" | "0X") if hex_prefix => (16, &s[2..]),
+        _ => (10, s),
+    };
+    let digits: Vec<u32> = s.chars().map_while(|c| c.to_digit(radix)).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    let magnitude = digits.iter().fold(0i64, |acc, &d| {
+        acc.saturating_mul(i64::from(radix))
+            .saturating_add(i64::from(d))
+    });
+    Some(if negative { -magnitude } else { magnitude })
+}
+
+/// lamb2's `paginationObject` with `fetchAndPaginate`'s slicing: each of
+/// `pageSize` (default 100) and `pageNum` (default 1) is `parseInt(v, 10)`,
+/// `None` for `NaN` (answered as `null`); a `pageSize` over the maximum is
+/// the 400; the page is `slice(offset, offset + pageSize)` with
+/// `offset = (pageNum - 1) * pageSize`, so a zero, negative or `NaN` value
+/// is not clamped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JsPagination {
+    pub page_size: Option<i64>,
+    pub page_num: Option<i64>,
+}
+
+impl JsPagination {
+    pub fn parse(params: &QueryParams, max_page_size: i64) -> Result<Self, String> {
+        let read = |key: &str, default: i64| match qs_get_string(params, key) {
+            Some(v) => js_parse_int(&v, false),
+            None => Some(default),
+        };
+        let page_size = read("pageSize", 100);
+        if page_size.is_some_and(|s| s > max_page_size) {
+            return Err(format!("max allowed pageSize is {max_page_size}"));
+        }
+        Ok(Self {
+            page_size,
+            page_num: read("pageNum", 1),
+        })
+    }
+
+    /// `slice`'s arguments, `None` when one is `NaN` (an empty page).
+    fn bounds(&self) -> Option<(i64, i64)> {
+        let size = self.page_size?;
+        let start = self.page_num?.saturating_sub(1).saturating_mul(size);
+        Some((start, start.saturating_add(size)))
+    }
+
+    /// The page of a list of `len` elements, as `Array.prototype.slice`
+    /// takes it: a negative bound counts from the end.
+    pub fn range(&self, len: usize) -> std::ops::Range<usize> {
+        let Some((start, end)) = self.bounds() else {
+            return 0..0;
+        };
+        let len = len as i64;
+        let at = |i: i64| if i < 0 { (len + i).max(0) } else { i.min(len) } as usize;
+        let (start, end) = (at(start), at(end));
+        if start < end { start..end } else { 0..0 }
+    }
+
+    /// `(offset, limit)` for a query that pages in SQL, when the page does
+    /// not depend on the list's length (no negative bound); otherwise
+    /// `None`, and the caller counts first and takes [`Self::range`].
+    pub fn sql_window(&self) -> Option<(i64, i64)> {
+        match self.bounds() {
+            None => Some((0, 0)),
+            Some((start, end)) if start >= 0 && end >= 0 => Some((start, (end - start).max(0))),
+            Some(_) => None,
+        }
+    }
+}
+
 fn urlencoding_decode(s: &str) -> String {
     let mut bytes: Vec<u8> = Vec::with_capacity(s.len());
     let mut buf = [0u8; 4];
@@ -409,6 +494,55 @@ mod tests {
             qs_get_string(&params, "name").as_deref(),
             Some("\u{4E2D}\u{6587}")
         );
+    }
+
+    #[test]
+    fn js_parse_int_reads_as_javascript_does() {
+        for (s, hex, want) in [
+            ("12", false, Some(12)),
+            (" \t-7", false, Some(-7)),
+            ("+3", false, Some(3)),
+            ("1.5", false, Some(1)),
+            ("12abc", false, Some(12)),
+            ("0x10", false, Some(0)),
+            ("0x10", true, Some(16)),
+            ("-0X1f", true, Some(-31)),
+            ("0x", true, None),
+            ("", false, None),
+            ("abc", false, None),
+            ("-", false, None),
+            ("99999999999999999999999", false, Some(i64::MAX)),
+        ] {
+            assert_eq!(js_parse_int(s, hex), want, "{s:?} hex={hex}");
+        }
+    }
+
+    /// `paginationObject` plus `elements.slice(offset, offset + limit)`.
+    #[test]
+    fn js_pagination_slices_as_javascript_does() {
+        let page = |q: &str| JsPagination::parse(&parse_query_string(q), i64::MAX).unwrap();
+        let p = page("");
+        assert_eq!((p.page_size, p.page_num), (Some(100), Some(1)));
+        assert_eq!(p.range(150), 0..100);
+        assert_eq!(p.sql_window(), Some((0, 100)));
+        assert_eq!(page("pageSize=2&pageNum=2").range(5), 2..4);
+        assert_eq!(page("pageSize=0").range(5), 0..0);
+        // pageNum 0: slice(-2, 0), empty; pageNum -1: slice(-4, -2).
+        assert_eq!(page("pageSize=2&pageNum=0").range(5), 0..0);
+        assert_eq!(page("pageSize=2&pageNum=-1").range(5), 1..3);
+        assert_eq!(page("pageSize=2&pageNum=-1").sql_window(), None);
+        // A negative size: slice(-4, -6) is empty; slice(0, -1) all but the last.
+        assert_eq!(page("pageSize=-2&pageNum=3").range(5), 0..0);
+        assert_eq!(page("pageSize=-1&pageNum=1").range(5), 0..4);
+        let nan = page("pageSize=abc&pageNum=1");
+        assert_eq!((nan.page_size, nan.range(5)), (None, 0..0));
+        assert_eq!(nan.sql_window(), Some((0, 0)));
+        assert_eq!(page("pageSize=2.9&pageNum=2x").range(5), 2..4);
+        assert_eq!(
+            JsPagination::parse(&parse_query_string("pageSize=1001"), 1000).unwrap_err(),
+            "max allowed pageSize is 1000"
+        );
+        assert!(JsPagination::parse(&parse_query_string("pageSize=x"), 1000).is_ok());
     }
 
     #[test]
