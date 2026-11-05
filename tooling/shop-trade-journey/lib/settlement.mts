@@ -15,7 +15,7 @@ export const MARKETPLACE_ABI = parseAbi([
   "function executeMetaTransaction(address userAddress, bytes functionData, bytes signature)",
 ]);
 
-export const ASSET_TYPE = { ERC20: 1n, USD_PEGGED_MANA: 2n } as const;
+export const ASSET_TYPE = { ERC20: 1n, USD_PEGGED_MANA: 2n, COLLECTION_ITEM: 4n } as const;
 const PPM = 1_000_000n;
 
 export type Settled = {
@@ -35,6 +35,21 @@ export function settledCall(input: Hex): Settled {
   if (call.functionName === "accept") return { call: "accept", trades: call.args[0], coupons: [] };
   if (call.functionName === "acceptWithCoupon") return { call: "acceptWithCoupon", trades: call.args[0], coupons: call.args[1] };
   throw new Error(`the transaction called ${call.functionName}, not a marketplace purchase`);
+}
+
+/**
+ * Where a settled call sells `itemId` of `collection`: the trade and the position of the asset in its `sent`,
+ * which is also the position of its proof in the coupon's `callerData`. Exactly one such asset, or an error.
+ */
+export function soldItem(settled: Settled, collection: Hex, itemId: bigint): { trade: number; asset: number } {
+  const found: { trade: number; asset: number }[] = [];
+  settled.trades.forEach((t, trade) =>
+    t.sent.forEach((a, asset) => {
+      if (a.assetType === ASSET_TYPE.COLLECTION_ITEM && a.contractAddress.toLowerCase() === collection.toLowerCase() && a.value === itemId) found.push({ trade, asset });
+    }),
+  );
+  if (found.length !== 1) throw new Error(`the call sells item ${itemId} of ${collection} ${found.length} times, not once`);
+  return found[0]!;
 }
 
 /** `CollectionDiscountCouponData`: `(discountType, discount, root)`. */

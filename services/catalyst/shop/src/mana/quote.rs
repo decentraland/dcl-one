@@ -564,6 +564,14 @@ mod tests {
             salt = uuid::Uuid::new_v4().simple(),
             mana = chain.mana,
         ));
+        // The collection and its item as the mirrors hold them, after a
+        // complete pass, so the facts derive a primary mint.
+        sqlx::query("INSERT INTO shop.mirror_state (mirror, network, source_url, last_complete_pass_at) VALUES ('items','matic','fixture',now()), ('collections','matic','fixture',now()) ON CONFLICT (mirror,network) DO UPDATE SET last_complete_pass_at = now()")
+            .execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO shop.collections (network,contract_address,chain_id,name,creator,owner,urn,is_completed,is_approved,is_editable,created_at,updated_at,reviewed_at,mirrored_at) VALUES ('matic',$1,137,'Coupon fixture',$2,$2,'urn:coupon-quote',true,true,false,0,0,0,now())")
+            .bind(format!("{collection:#x}")).bind(format!("{creator:#x}")).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO shop.items (network,contract_address,item_id,chain_id,item_type,urn,creator,rarity,total_supply,max_supply,available,price,name,category,search_is_store_minter,search_is_collection_approved,created_at,updated_at,reviewed_at,mirrored_at) VALUES ('matic',$1,0,137,'wearable_v2','urn:coupon-quote:0',$2,'common',0,10,10,$3::numeric,'Hat','hat',true,true,0,0,0,now())")
+            .bind(format!("{collection:#x}")).bind(format!("{creator:#x}")).bind(price.to_string()).execute(&pool).await.unwrap();
         let trade_id =
             crate::market::listings::insert_trade(&pool, &trade, "MATIC", &format!("{venue:#x}"))
                 .await
@@ -651,5 +659,14 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        for table in ["shop.items", "shop.collections"] {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM {table} WHERE network = 'matic' AND contract_address = $1"
+            )))
+            .bind(format!("{collection:#x}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
     }
 }

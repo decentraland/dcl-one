@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { concat, encodeAbiParameters, encodeFunctionData, keccak256, toFunctionSelector, type Hex } from "viem";
-import { ASSET_TYPE, chargedMana, collectionInRoot, collectionLeaf, couponData, couponProofs, discounted, MARKETPLACE_ABI, settledCall } from "./settlement.mts";
+import { ASSET_TYPE, chargedMana, collectionInRoot, collectionLeaf, couponData, couponProofs, discounted, MARKETPLACE_ABI, settledCall, soldItem } from "./settlement.mts";
 
 const A = "0x00000000000000000000000000000000000000aa" as Hex;
 const B = "0x00000000000000000000000000000000000000bb" as Hex;
@@ -39,6 +39,21 @@ describe("the settled marketplace call", () => {
     assert.ok(collectionInRoot(B, couponProofs(settled.coupons[0]!.callerData)[0]!, root), "B is in the tree with A's leaf as its proof");
     assert.ok(!collectionInRoot("0x00000000000000000000000000000000000000cc", [collectionLeaf(A)], root));
     assert.equal(settledCall(encodeFunctionData({ abi: MARKETPLACE_ABI, functionName: "accept", args: [[trade]] })).call, "accept");
+  });
+});
+
+describe("the item a settled call sells", () => {
+  const item = (contractAddress: Hex, value: bigint) => ({ assetType: ASSET_TYPE.COLLECTION_ITEM, contractAddress, value, beneficiary: A, extra: "0x" as Hex });
+  const settled = (sent: ReturnType<typeof item>[][]) => ({ call: "acceptWithCoupon" as const, coupons: [], trades: sent.map((s) => ({ ...trade, sent: s })) });
+
+  it("names the trade and the position of the asset, which is the position of its proof", () => {
+    assert.deepEqual(soldItem(settled([[item(A, 0n)], [item(A, 2n), item(B, 1n)]]), B, 1n), { trade: 1, asset: 1 });
+  });
+
+  it("refuses another item, another collection, and an item sold twice", () => {
+    assert.throws(() => soldItem(settled([[item(B, 0n)]]), B, 1n), /0 times/);
+    assert.throws(() => soldItem(settled([[item(A, 1n)]]), B, 1n), /0 times/);
+    assert.throws(() => soldItem(settled([[item(B, 1n)], [item(B, 1n)]]), B, 1n), /2 times/);
   });
 });
 

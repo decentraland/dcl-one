@@ -271,9 +271,129 @@ pub async fn index_confirms(
     Ok(Some(confirmed))
 }
 
+/// The coupon an `accept_trade` transaction applied to the trade the row
+/// names, read from the calldata it was mined with rather than from the
+/// coupons live now: `None` for a plain `accept`, the coupon's address and
+/// `data` for `acceptWithCoupon` (coupon `i` discounts trade `i`). The
+/// transaction must have called the row's venue, carry the trade the row
+/// references, and name a coupon implementation whose `data` the Shop can
+/// price; anything else is refused, so no price is guessed.
+pub fn applied_coupon(
+    chain_id: u64,
+    venue: Address,
+    reference: &str,
+    to: Option<Address>,
+    input: &[u8],
+) -> Result<Option<(Address, Vec<u8>)>, String> {
+    use crate::evm::abi::{decode_meta_tx_full, modelled_coupons, offchain};
+    use alloy_sol_types::SolCall;
+    if to != Some(venue) {
+        return Err(format!(
+            "the transaction called {}, not the venue {venue:#x}",
+            to.map(|t| format!("{t:#x}"))
+                .unwrap_or_else(|| "no contract".into())
+        ));
+    }
+    let inner = decode_meta_tx_full(input)
+        .map(|m| m.function_signature)
+        .unwrap_or_else(|| input.to_vec());
+    let names = |t: &offchain::Trade| {
+        format!("{:#x}", alloy_primitives::keccak256(&t.signature)).eq_ignore_ascii_case(reference)
+    };
+    if let Ok(call) = offchain::acceptCall::abi_decode(&inner) {
+        return if call._trades.iter().any(names) {
+            Ok(None)
+        } else {
+            Err("the transaction does not carry the trade the row names".into())
+        };
+    }
+    let call = offchain::acceptWithCouponCall::abi_decode(&inner)
+        .map_err(|_| "the transaction is neither accept nor acceptWithCoupon".to_string())?;
+    let index = call
+        ._trades
+        .iter()
+        .position(names)
+        .ok_or_else(|| "the transaction does not carry the trade the row names".to_string())?;
+    let coupon = call
+        ._coupons
+        .get(index)
+        .ok_or_else(|| "the transaction carries no coupon for the trade".to_string())?;
+    if !modelled_coupons(chain_id).contains(&coupon.couponAddress) {
+        return Err(format!(
+            "the coupon {:#x} is not an implementation the Shop prices",
+            coupon.couponAddress
+        ));
+    }
+    Ok(Some((coupon.couponAddress, coupon.data.to_vec())))
+}
+
+/// The MANA an `accept_trade` must take from the buyer: the row's signed
+/// price, less the coupon its own transaction carried. Other kinds keep the
+/// row's price.
+pub async fn expected_price(
+    reader: &Reader,
+    row: &ExecutionRow,
+    receipt: &Receipt,
+) -> Result<(Option<U256>, Option<Value>), ExpectedPriceError> {
+    let price = row
+        .expected_price
+        .as_deref()
+        .and_then(|p| U256::from_str_radix(p, 10).ok());
+    let Some(signed) = price.filter(|_| row.kind == "accept_trade") else {
+        return Ok((price, None));
+    };
+    let venue: Address = row
+        .venue
+        .parse()
+        .map_err(|_| ExpectedPriceError::Refused("the row's venue is not an address".into()))?;
+    let input = reader
+        .transaction_input(&row.tx_hash)
+        .await
+        .map_err(|e| ExpectedPriceError::Unreadable(e.to_string()))?
+        .ok_or_else(|| {
+            ExpectedPriceError::Unreadable("the node does not know the transaction".into())
+        })?;
+    let reference = row.reference.as_deref().unwrap_or_default();
+    match applied_coupon(
+        row.chain_id.max(0) as u64,
+        venue,
+        reference,
+        receipt.to,
+        &input,
+    )
+    .map_err(ExpectedPriceError::Refused)?
+    {
+        None => Ok((Some(signed), None)),
+        Some((address, data)) => {
+            let charged = crate::evm::abi::discounted_amount(&data, signed).ok_or_else(|| {
+                ExpectedPriceError::Refused("the coupon cannot discount the signed price".into())
+            })?;
+            Ok((
+                Some(charged),
+                Some(
+                    json!({ "address": format!("{address:#x}"), "data": format!("0x{}", hex::encode(&data)), "price": charged.to_string() }),
+                ),
+            ))
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExpectedPriceError {
+    /// The transaction could not be read now; the row waits.
+    Unreadable(String),
+    /// The transaction does not settle the row as the Shop prices it.
+    Refused(String),
+}
+
 /// The final comparison: the token's owner now and the MANA the payer
 /// spent against the expectation; the mismatches, empty when it settled.
-pub async fn verdict(reader: &Reader, row: &ExecutionRow, proof: &Proof) -> Vec<String> {
+pub async fn verdict(
+    reader: &Reader,
+    row: &ExecutionRow,
+    proof: &Proof,
+    price: Option<U256>,
+) -> Vec<String> {
     let mut mismatches = Vec::new();
     let contract: Option<Address> = row.contract_address.as_deref().and_then(|c| c.parse().ok());
     let token_id: Option<U256> = row
@@ -294,11 +414,7 @@ pub async fn verdict(reader: &Reader, row: &ExecutionRow, proof: &Proof) -> Vec<
             Err(e) => mismatches.push(format!("ownership could not be read: {e}")),
         }
     }
-    if let Some(price) = row
-        .expected_price
-        .as_deref()
-        .and_then(|p| U256::from_str_radix(p, 10).ok())
-    {
+    if let Some(price) = price {
         if proof.mana_out != price {
             mismatches.push(format!(
                 "{} wei left the payer, the price was {price}",
@@ -496,7 +612,32 @@ pub async fn step(
             return Ok("mined");
         }
     }
-    let mismatches = verdict(&reader, row, &proof).await;
+    let (price, coupon, refused) = match expected_price(&reader, row, &receipt).await {
+        Ok((price, coupon)) => (price, coupon, None),
+        Err(ExpectedPriceError::Refused(why)) => (None, None, Some(why)),
+        Err(ExpectedPriceError::Unreadable(why)) => {
+            advance(
+                &state.pool,
+                row.id,
+                &row.status,
+                &Advance {
+                    status: "mined",
+                    block_number: Some(block),
+                    confirmed_by: None,
+                    settlement: Some(proof_json(&proof)),
+                    error: Some(why),
+                    next_check_at: now
+                        + ChronoDuration::from_std(backoff(row.attempts))
+                            .unwrap_or(ChronoDuration::minutes(1)),
+                },
+                now,
+            )
+            .await?;
+            return Ok("rpc-error");
+        }
+    };
+    let mut mismatches = verdict(&reader, row, &proof, price).await;
+    mismatches.extend(refused);
     let status = if mismatches.is_empty() {
         "settled"
     } else {
@@ -505,6 +646,9 @@ pub async fn step(
     let mut settlement = proof_json(&proof);
     settlement["mismatches"] = json!(mismatches);
     settlement["confirmedBy"] = json!(by);
+    if let Some(coupon) = coupon {
+        settlement["coupon"] = coupon;
+    }
     advance(
         &state.pool,
         row.id,
