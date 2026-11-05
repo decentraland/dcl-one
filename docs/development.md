@@ -69,10 +69,7 @@ See [production rules](../infra/containers/README.md#sites-explorer-build-input)
 
 `Web previews / Build` selects two independent products: changes under `apps/sites/` build Sites, and changes under `library/ui/` build its standalone UI reviewer. API-only changes do not select previews. Changes to the preview pipeline select both products.
 
-The reviewer requires `library/ui/package.json` with `review:build`, producing
-`library/ui/figma/review/review-dist/dcl-ui-review/index.html`. The complete
-output must support a versioned CDN subdirectory, including navigation,
-reference images and JSON requests, when built with `--base ./`.
+The reviewer must support versioned CDN subdirectories, including navigation, reference images and JSON requests. The source change is pending: the proposed command is `pnpm --dir library/ui exec vite build --config figma/review/review.vite.config.ts --base <BASE>`, producing `library/ui/figma/review/review-dist/`. Do not treat this contract as accepted until its exact source commit passes a nested-prefix build and navigation regression.
 
 `Web previews / Publish` uses trusted publication code and validated static
 artifacts, without running pull request lifecycle scripts with credentials.
