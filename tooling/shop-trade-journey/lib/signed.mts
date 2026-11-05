@@ -6,9 +6,9 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 export type AuthLink = { type: "SIGNER" | "ECDSA_EPHEMERAL" | "ECDSA_SIGNED_ENTITY"; payload: string; signature: string };
 
-/** What the request signs: `method:path:timestamp:metadata`, lowercased (ADR-44). */
+/** What the request signs (ADR-44 v6): `method:path` lowercased, then the timestamp and the metadata as they are. */
 export function requestPayload(method: string, path: string, timestamp: string, metadata: string): string {
-  return `${method}:${path}:${timestamp}:${metadata}`.toLowerCase();
+  return `${`${method}:${path}`.toLowerCase()}:${timestamp}:${metadata}`;
 }
 
 /** The `x-identity-*` headers for one request to `path` (the URL's path, as the server sees it). */

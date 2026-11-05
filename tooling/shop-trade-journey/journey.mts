@@ -14,7 +14,7 @@
 // with credits; the seller ends the discount. It mints two units each run, so it runs while supply lasts.
 import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { createPublicClient, erc721Abi, erc20Abi, formatEther, http, keccak256, parseAbi, parseEther, toHex, type Hex } from "viem";
+import { createPublicClient, erc721Abi, erc20Abi, formatEther, http, isAddress, keccak256, parseAbi, parseEther, toHex, type Hex } from "viem";
 import { generatePrivateKey } from "viem/accounts";
 import { polygonAmoy } from "viem/chains";
 import type { Browser, BrowserContext, Page } from "playwright-core";
@@ -46,6 +46,9 @@ const AMOY_CREDITS_MANAGER = "0x8052a560e6e6ac86eeb7e711a4497f639b322fb3" as con
 const CREDITS_SIGNER_ROLE = keccak256(toHex("CREDITS_SIGNER_ROLE"));
 const COLLECTION_ABI = parseAbi(["function creator() view returns (address)", "function name() view returns (string)", "function balanceOf(address) view returns (uint256)"]);
 const ROLES_ABI = parseAbi(["function hasRole(bytes32, address) view returns (bool)"]);
+// Creator sales follow decentraland.org's `dapps-shop-creator-sales` rollout flag (apps/ui3 discovery/flags.ts),
+// which is off; the primary loop turns them on the way a host does, through window.__SHOP_FLAGS__.
+const CREATOR_SALES_ON = "window.__SHOP_FLAGS__ = { ...(window.__SHOP_FLAGS__ || {}), creatorSales: true };";
 
 const env = journeyEnv();
 const preflightOnly = process.argv.includes("--preflight");
@@ -74,7 +77,7 @@ type Actor = { name: string; wallet: TestnetWallet; context: BrowserContext; pag
 type Step = { name: string; ok: boolean; ms: number; detail?: string; tx: Hex[] };
 const steps: Step[] = [];
 
-async function actor(browser: Browser, name: string, key: Hex, allowedTo: string[]): Promise<Actor> {
+async function actor(browser: Browser, name: string, key: Hex, allowedTo: string[], initScript?: string): Promise<Actor> {
   const wallet = testnetWallet({ key, chainId: polygonAmoy.id, allowedTo });
   // No __SHOP_CHAIN__ override: the Shop settles on whatever the profile's VITE_SHOP_CHAIN_ID built it
   // for, and the wallet refuses Polygon, so a stack not wired for Amoy fails at its first signature.
@@ -87,6 +90,7 @@ async function actor(browser: Browser, name: string, key: Hex, allowedTo: string
     return answer(wallet, req);
   });
   await context.addInitScript(PAGE_PROVIDER);
+  if (initScript) await context.addInitScript(initScript);
   const page = await context.newPage();
   wallet.onChainChanged = (id) => void page.evaluate((hex) => (window as never as { __e2eWalletEmit: (e: string, v: string) => void }).__e2eWalletEmit("chainChanged", hex), `0x${id.toString(16)}`).catch(() => {});
   page.on("pageerror", (e) => console.log(`  [${name}] page error: ${e.message}`));
@@ -257,16 +261,21 @@ async function trade(seller: Actor, buyer: Actor, s: Funds, b: Funds, token: { c
 /** Confirms the cart and walks its steps (approvals, the credits authorization, the purchase) to the receipt. */
 async function checkout(page: Page): Promise<void> {
   await page.getByTestId("confirm-checkout").click();
-  const action = page.getByTestId("authorize-step-action");
+  // The step's button is disabled while its approval runs (AuthorizeStep's `busy`), and the modal goes away
+  // once the cart moves on, so each pass waits for an enabled button, the receipt or the step's error.
+  const ready = page.locator('[data-testid="authorize-step-action"]:not([disabled])');
+  const busy = page.locator('[data-testid="authorize-step-action"][disabled]');
+  const failed = page.getByTestId("authorize-step").getByRole("alert");
   const done = page.getByTestId("success-done");
-  // One click per step; a group the cart settles by itself shows no action and goes straight to the receipt.
   for (let n = 0; n < 6; n++) {
-    await action.or(done).first().waitFor({ timeout: RELAYED });
+    await ready.or(done).or(failed).first().waitFor({ timeout: RELAYED });
     if (await done.isVisible()) return;
-    await action.click({ timeout: RELAYED });
-    await page.waitForTimeout(1_000);
+    // A failed approval re-enables its button: report it rather than clicking it again.
+    if (await failed.isVisible()) throw new Error(`the cart's step failed: ${(await failed.first().innerText()).trim()}`);
+    await ready.first().click();
+    await busy.waitFor({ timeout: 5_000 }).catch(() => {});
   }
-  await done.waitFor({ timeout: RELAYED });
+  throw new Error("the cart asked for more than 6 steps without reaching the receipt");
 }
 
 const itemPath = (i: { contract: string; itemId: string }) => `${sites}/shop/item/${i.contract}/${i.itemId}`;
@@ -285,24 +294,69 @@ async function unitsGrow(i: { contract: string }, who: Hex, before: bigint): Pro
 
 /** Buys one unit from the item page, paying with `method`, through the cart. */
 async function buyItem(a: Actor, i: { contract: string; itemId: string }, method: "mana" | "credits"): Promise<void> {
-  // Not networkidle: a signed-in page keeps the credits balance stream open.
+  // Not networkidle: a signed-in page keeps the credits balance stream open. The panel first, then the
+  // method: credits is the default for a primary item, and a buyer short of credits sees a top-up, not Buy.
   await a.page.goto(itemPath(i));
-  await a.page.getByTestId("cta-buy").waitFor({ timeout: 60_000 });
+  await a.page.getByTestId("payment-panel").waitFor({ timeout: 60_000 });
   const choice = a.page.getByTestId(`pay-${method}`);
   if (await choice.isVisible().catch(() => false)) await choice.click();
   else if (method === "credits") throw new Error("the item page offers no credits payment: is the item listed in the Shop for credits?");
-  await a.page.getByTestId("cta-buy").click();
+  const buy = a.page.getByTestId("cta-buy");
+  const topUp = a.page.getByTestId("cta-top-up");
+  await buy.or(topUp).first().waitFor({ timeout: 60_000 });
+  if (!(await buy.isVisible())) throw new Error(`the item page asks to top up instead of buying with ${method}`);
+  await buy.click();
   await a.page.waitForURL(/\/shop\/cart/);
   await checkout(a.page);
 }
 
 type CreditsStatus = { authorizeEnabled?: boolean; ready?: boolean; chainId?: number; contract?: string | null };
 
+const manaOf = (who: Hex) => amoy.readContract({ address: AMOY_MANA, abi: erc20Abi, functionName: "balanceOf", args: [who] });
+
+/** The buyer's MANA once it differs from `before`, polled: the RPC may answer from a block behind the receipt. */
+async function manaMoves(who: Hex, before: bigint): Promise<bigint> {
+  const until = Date.now() + 60_000;
+  for (;;) {
+    const now = await manaOf(who).catch(() => before);
+    if (now !== before || Date.now() > until) return now;
+    await new Promise((r) => setTimeout(r, 5_000));
+  }
+}
+
+/** The MANA amount the item page quotes once MANA is selected, or null when it cannot be read. */
+async function quotedMana(page: Page): Promise<bigint | null> {
+  const mana = page.getByTestId("pay-mana");
+  if (await mana.isVisible().catch(() => false)) await mana.click();
+  const text = await page.getByTestId("item-price").innerText({ timeout: 10_000 }).catch(() => "");
+  const n = text.replace(/,/g, "").match(/\d+(?:\.\d+)?/)?.[0];
+  try {
+    return n ? parseEther(n) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The seller's live discounts on this collection in My Store: rows that still offer "End now". */
+function liveSales(page: Page, collectionName: string) {
+  return page.getByTestId("shop-creator-sale").filter({ hasText: collectionName }).filter({ has: page.getByRole("button", { name: "End now" }) });
+}
+
+async function endDiscount(seller: Actor, collectionName: string, pct: number): Promise<void> {
+  await seller.page.goto(`${sites}/shop/my-store`);
+  // This run's discount: its collection and its percentage. The preflight refuses a collection with one live.
+  const row = liveSales(seller.page, collectionName).filter({ hasText: `${pct}% off` });
+  await row.first().getByRole("button", { name: "End now" }).click({ timeout: 60_000 });
+  // The row re-renders as ended once the list refreshes, so the confirmation is read from the page.
+  await seller.page.getByText("Ended.").first().waitFor({ timeout: RELAYED });
+}
+
 /** The primary loop over E2E_ITEM: the seller's discount, then a MANA and a credits purchase at the lower price. */
 async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: Funds, item: { contract: string; itemId: string } | null): Promise<void> {
   const pct = parseDiscount(env.E2E_DISCOUNT);
-  const topup = env.E2E_TOPUP ?? "100";
+  const topup = env.E2E_TOPUP || "100";
   let collectionName = "";
+  let price: bigint | null = null;
   if (item) {
     await step("seller created the item's collection", seller, async () => {
       const [creator, name] = await Promise.all([
@@ -314,8 +368,17 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
       return `“${name}”`;
     });
     await step("item page renders", buyer, async () => {
+      // The panel, not Buy: credits is the default method, and a buyer without credits sees a top-up.
       await buyer.page.goto(itemPath(item));
-      await buyer.page.getByTestId("cta-buy").waitFor({ timeout: 60_000 });
+      await buyer.page.getByTestId("payment-panel").waitFor({ timeout: 60_000 });
+      price = await quotedMana(buyer.page);
+      return price === null ? "its MANA price could not be read" : `${formatEther(price)} MANA before the discount`;
+    });
+    await step("no discount of the seller's is live on the collection", seller, async () => {
+      await seller.page.goto(`${sites}/shop/my-store`);
+      await seller.page.getByRole("button", { name: `Discount ${collectionName}`, exact: true }).or(liveSales(seller.page, collectionName)).first().waitFor({ timeout: 60_000 });
+      const live = await liveSales(seller.page, collectionName).count();
+      if (live) throw new Error(`${live} discount(s) on “${collectionName}” are still live, from an earlier run: end them in My Store first`);
     });
   }
   // Credits: the stack signs them only with a key holding CREDITS_SIGNER_ROLE on Amoy's CreditsManager,
@@ -323,23 +386,27 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
   let creditsProblem: string | null = null;
   await step("stack can sign credits on Amoy", buyer, async () => {
     const res = await fetch(`${sites}/credits/usage-index/status`);
-    if (!res.ok) throw new Error(`${sites}/credits/usage-index/status answered ${res.status}`);
+    if (!res.ok) {
+      await res.body?.cancel();
+      throw new Error(`${sites}/credits/usage-index/status answered ${res.status}`);
+    }
     const st = (await res.json()) as CreditsStatus;
+    const signer = env.E2E_CREDITS_SIGNER;
     if (st.contract?.toLowerCase() !== AMOY_CREDITS_MANAGER || st.chainId !== 80002) creditsProblem = `the stack's credits contract is ${st.contract ?? "unset"} on ${st.chainId}, not Amoy's CreditsManager`;
     else if (!st.authorizeEnabled) creditsProblem = "the stack signs no credits: put its signer key in .cache/dev/credits-signer.key and restart it";
     else if (!st.ready) creditsProblem = "the stack's credits usage index has not caught up yet";
-    const signer = env.E2E_CREDITS_SIGNER;
-    if (!creditsProblem && signer) {
-      const ok = await amoy.readContract({ address: AMOY_CREDITS_MANAGER, abi: ROLES_ABI, functionName: "hasRole", args: [CREDITS_SIGNER_ROLE, signer as Hex] });
-      if (!ok) creditsProblem = `${signer} does not hold CREDITS_SIGNER_ROLE on Amoy's CreditsManager`;
+    else if (signer && !isAddress(signer)) creditsProblem = "E2E_CREDITS_SIGNER is not an address";
+    else if (signer && !(await amoy.readContract({ address: AMOY_CREDITS_MANAGER, abi: ROLES_ABI, functionName: "hasRole", args: [CREDITS_SIGNER_ROLE, signer as Hex] }))) {
+      creditsProblem = `${signer} does not hold CREDITS_SIGNER_ROLE on Amoy's CreditsManager`;
     }
     if (creditsProblem && !preflightOnly) throw new Error(creditsProblem);
     return creditsProblem ? `not yet: ${creditsProblem}` : "ready";
   });
+  // The discount lowers the MANA price, so the regular price is enough for the MANA purchase.
   const short = [
     s.pol === 0n && "seller has no POL (ending the discount pays gas)",
     b.pol === 0n && "buyer has no POL (gas for the purchases)",
-    b.mana === 0n && "buyer has no MANA for the MANA purchase",
+    price !== null ? b.mana < price && `buyer has less than the ${formatEther(price)} MANA the item costs` : b.mana === 0n && "buyer has no MANA for the MANA purchase",
   ].filter(Boolean);
   if (preflightOnly || !item) {
     console.log(`\nPreflight done.${short.length ? `\nBefore the primary loop: ${short.join("; ")}.` : ""}`);
@@ -355,41 +422,57 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
     await seller.page.getByRole("button", { name: "Start discount" }).click();
     await seller.page.getByTestId("shop-sale-started").waitFor({ timeout: RELAYED });
   });
-  await step("the item shows the discounted price", buyer, async () => {
-    // The catalogue joins the creator's live coupon once the coupon-state job has read it from the manager.
-    const until = Date.now() + 3 * 60_000;
-    for (;;) {
-      await buyer.page.goto(itemPath(item));
-      await buyer.page.getByTestId("item-price").waitFor({ timeout: 60_000 }).catch(() => {});
-      if (await buyer.page.getByTestId("detail-price-was").isVisible().catch(() => false)) return (await buyer.page.getByTestId("item-price").innerText().catch(() => "")).replace(/\s+/g, " ");
-      if (Date.now() > until) throw new Error("no crossed-out regular price after 3 minutes: the discount does not reach the item page");
-      await new Promise((r) => setTimeout(r, 15_000));
+  let ended = false;
+  try {
+    await step("the item shows the discounted price", buyer, async () => {
+      // The catalogue joins the creator's live coupon once the coupon-state job has read it from the manager.
+      const until = Date.now() + 3 * 60_000;
+      for (;;) {
+        await buyer.page.goto(itemPath(item));
+        await buyer.page.getByTestId("payment-panel").waitFor({ timeout: 60_000 }).catch(() => {});
+        if (await buyer.page.getByTestId("detail-price-was").isVisible().catch(() => false)) return (await buyer.page.getByTestId("item-price").innerText().catch(() => "")).replace(/\s+/g, " ");
+        if (Date.now() > until) throw new Error("no crossed-out regular price after 3 minutes: the discount does not reach the item page");
+        await new Promise((r) => setTimeout(r, 15_000));
+      }
+    });
+    await step("buyer buys one with MANA at the discount", buyer, async () => {
+      const units = await unitsOf(item, buyer.wallet.address);
+      const before = await manaOf(buyer.wallet.address);
+      await buyItem(buyer, item, "mana");
+      await unitsGrow(item, buyer.wallet.address, units);
+      const paid = before - (await manaMoves(buyer.wallet.address, before));
+      if (paid <= 0n) throw new Error("the unit arrived but the buyer's MANA did not go down");
+      // The page's regular price, read before the discount: the purchase has to cost less.
+      if (price !== null && paid >= price) throw new Error(`paid ${formatEther(paid)} MANA, not less than the regular ${formatEther(price)}: the discount did not apply`);
+      return `paid ${formatEther(paid)} MANA${price !== null ? ` of a regular ${formatEther(price)}` : ""}`;
+    });
+    await step(`buyer tops up ${topup} test credits with the mock card`, buyer, async () => {
+      const out = await signedPost<{ available?: string }>(buyerKey, `${sites}/credits/topup/mock-card`, { credits: topup });
+      return `${out.available ?? "?"} credits available`;
+    });
+    await step("buyer buys one with credits at the discount", buyer, async () => {
+      const units = await unitsOf(item, buyer.wallet.address);
+      const before = await manaOf(buyer.wallet.address);
+      await buyItem(buyer, item, "credits");
+      await unitsGrow(item, buyer.wallet.address, units);
+      // Paid in credits: a fallback to MANA would also deliver the unit, so the MANA balance must not move.
+      const after = await manaMoves(buyer.wallet.address, before);
+      if (after !== before) throw new Error(`the buyer's MANA went from ${formatEther(before)} to ${formatEther(after)}: the purchase was not paid in credits`);
+    });
+    await step("seller ends the discount", seller, async () => {
+      await endDiscount(seller, collectionName, pct);
+      ended = true;
+    });
+  } finally {
+    // A run that failed after starting the discount still ends it, so the collection is not left on sale.
+    if (!ended) {
+      console.log("  ending the discount this run started …");
+      await endDiscount(seller, collectionName, pct).then(
+        () => console.log("  ended"),
+        (e: Error) => console.log(`  could not end it (${e.message.split("\n")[0]}): end it in My Store`),
+      );
     }
-  });
-  await step("buyer buys one with MANA at the discount", buyer, async () => {
-    const units = await unitsOf(item, buyer.wallet.address);
-    const mana = (await balances("buyer ", buyer.wallet.address)).mana;
-    await buyItem(buyer, item, "mana");
-    await unitsGrow(item, buyer.wallet.address, units);
-    const after = (await balances("buyer ", buyer.wallet.address)).mana;
-    return `paid ${formatEther(mana - after)} MANA`;
-  });
-  await step(`buyer tops up ${topup} test credits with the mock card`, buyer, async () => {
-    const out = await signedPost<{ available?: string }>(buyerKey, `${sites}/credits/topup/mock-card`, { credits: topup });
-    return `${out.available ?? "?"} credits available`;
-  });
-  await step("buyer buys one with credits at the discount", buyer, async () => {
-    const units = await unitsOf(item, buyer.wallet.address);
-    await buyItem(buyer, item, "credits");
-    await unitsGrow(item, buyer.wallet.address, units);
-  });
-  await step("seller ends the discount", seller, async () => {
-    await seller.page.goto(`${sites}/shop/my-store`);
-    const row = seller.page.getByTestId("shop-creator-sale").filter({ hasText: `${pct}% off` }).filter({ has: seller.page.getByRole("button", { name: "End now" }) });
-    await row.first().getByRole("button", { name: "End now" }).click({ timeout: 60_000 });
-    // The row re-renders as ended once the list refreshes, so the confirmation is read from the page.
-    await seller.page.getByText("Ended.").first().waitFor({ timeout: RELAYED });
-  });
+  }
 }
 
 async function main(): Promise<void> {
@@ -398,13 +481,17 @@ async function main(): Promise<void> {
   const token = primaryLoop || (preflightOnly && !env.E2E_TOKEN) ? null : parseToken(env.E2E_TOKEN);
   const item = !primaryLoop || (preflightOnly && !env.E2E_ITEM) ? null : parseItem(env.E2E_ITEM);
 
-  const allowedTo = primaryLoop
-    ? [...AMOY_TRADE_CONTRACTS, AMOY_COUPON_MANAGER, AMOY_CREDITS_MANAGER, ...(item ? [item.contract] : [])]
-    : [...AMOY_TRADE_CONTRACTS, ...(token ? [token.contract] : [])];
+  // Each actor may send only to what its steps need. The trade loop's wallets trade the token both ways.
+  // In the primary loop the seller only ends the discount (CouponManager) and the buyer only pays: MANA
+  // approvals, the marketplaces and collection store, and the CreditsManager. Neither calls the collection.
+  const tradeTo = [...AMOY_TRADE_CONTRACTS, ...(token ? [token.contract] : [])];
+  const sellerTo = primaryLoop ? [AMOY_COUPON_MANAGER] : tradeTo;
+  const buyerTo = primaryLoop ? [...AMOY_TRADE_CONTRACTS, AMOY_CREDITS_MANAGER] : tradeTo;
+  const flags = primaryLoop ? CREATOR_SALES_ON : undefined;
   const browser = await launch();
   try {
-    const seller = await actor(browser, "seller", sellerKey, allowedTo);
-    const buyer = await actor(browser, "buyer", buyerKey, allowedTo);
+    const seller = await actor(browser, "seller", sellerKey, sellerTo, flags);
+    const buyer = await actor(browser, "buyer", buyerKey, buyerTo, flags);
     console.log(`Stack ${sites}, settling on Amoy`);
     const s = await balances("seller", seller.wallet.address);
     const b = await balances("buyer ", buyer.wallet.address);

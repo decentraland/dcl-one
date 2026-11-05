@@ -494,7 +494,15 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'false')
         self.assertNotIn('CREDITS_SIGNER_KEY_FILE', env)
         key = self.state / 'credits-signer.key'
+        key.write_text('  \n')  # empty: the server would read no key, so authorization stays off
+        self.assertEqual(dev.runtime_env({**self.config, 'profile': 'testnet'})['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'false')
         key.write_text('not a real key')
+        key.chmod(0o644)
+        warning = io.StringIO()
+        with contextlib.redirect_stderr(warning):
+            dev.runtime_env({**self.config, 'profile': 'testnet'})
+        self.assertIn('chmod 600', warning.getvalue())
+        key.chmod(0o600)
         env = dev.runtime_env({**self.config, 'profile': 'testnet'})
         self.assertEqual(env['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'true')
         self.assertEqual(env['CREDITS_SIGNER_KEY_FILE'], str(key))

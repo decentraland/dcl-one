@@ -7,6 +7,12 @@ import { requestPayload, signedHeaders, type AuthLink } from "./signed.mts";
 // A throwaway key with no funds anywhere, used only to check signatures.
 const KEY = `0x${"11".repeat(32)}` as const;
 
+describe("requestPayload", () => {
+  it("lowercases the method and path only, as v6 does", () => {
+    assert.equal(requestPayload("POST", "/Credits/X", "1", '{"A":1}'), 'post:/credits/x:1:{"A":1}');
+  });
+});
+
 describe("signedHeaders", () => {
   it("chains the wallet to an ephemeral key that signs this request", async () => {
     const now = 1_760_000_000_000;

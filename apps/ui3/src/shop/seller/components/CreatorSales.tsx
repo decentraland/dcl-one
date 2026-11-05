@@ -10,7 +10,7 @@ import { useMemo, useState } from "react";
 
 import Button from "../../../atoms/Button";
 import EmptyState from "../../../components/EmptyState";
-import { CHAIN, type ChainId } from "../../model/chain";
+import type { ChainId } from "../../model/chain";
 import { CENTS_PER_CREDIT, COUPON_PPM, creditsCeil, discountedCents, usdCents } from "../../model/money";
 import { dataUnavailable } from "../../market/lib/api";
 import { formatDate, LoadFailure, Loading, useShopProvider, useWalletBlock, useWrite, WriteStatus } from "../../market/components/kit";
@@ -28,6 +28,7 @@ import {
   type SaleInputProblem,
 } from "../lib/coupons";
 import type { SaleableCollection } from "../lib/saleableCollections";
+import { settlementChainId } from "../../checkout/chain/config";
 
 const DAY = 86_400_000;
 const PRESETS = [10, 20, 30, 50];
@@ -47,7 +48,7 @@ export function salePrice(credits: number, pct: number): number {
   return cents === null ? credits : creditsCeil(cents);
 }
 
-export function CreatorSaleForm({ collection, chainId = CHAIN.POLYGON, onClose, now = Date.now }: { collection: SaleableCollection; chainId?: ChainId; onClose: () => void; now?: () => number }) {
+export function CreatorSaleForm({ collection, chainId = settlementChainId(), onClose, now = Date.now }: { collection: SaleableCollection; chainId?: ChainId; onClose: () => void; now?: () => number }) {
   const qc = useQueryClient();
   const provider = useShopProvider();
   const block = useWalletBlock("Starting a discount");

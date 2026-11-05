@@ -399,8 +399,11 @@ def credits_signer_env():
     The operator places the key in the gitignored stack state (credits-signer.key). It has to hold
     CREDITS_SIGNER_ROLE on Amoy's CreditsManager, or the contract rejects every credit it signs."""
     key = STATE / 'credits-signer.key'
-    if not key.is_file():
+    # An empty file reads as no key on the server, so it must not turn authorization on.
+    if not key.is_file() or not key.read_text().strip():
         return {'CREDITS_ONCHAIN_AUTHORIZE_ENABLED': 'false'}
+    if key.stat().st_mode & 0o077:
+        print(f'Warning: {key} is readable by other users; chmod 600 it.', file=sys.stderr)
     return {'CREDITS_ONCHAIN_AUTHORIZE_ENABLED': 'true', 'CREDITS_SIGNER_KEY_FILE': str(key)}
 
 

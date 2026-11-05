@@ -89,6 +89,12 @@ step. Before running again:
 5. The buyer buys one unit with credits through the cart.
 6. The seller ends the discount, a transaction the seller pays for in POL.
 
+Creator sales follow decentraland.org's `dapps-shop-creator-sales` rollout flag, which is off, so the loop
+turns them on in both browsers the way a host does (`window.__SHOP_FLAGS__`). The preflight reads the item's
+MANA price, checks the buyer can pay it, and refuses a collection that still has a live discount. If a step
+fails after the discount starts, the loop still ends it. The MANA purchase must cost less than the regular
+price, and the credits purchase must leave the buyer's MANA untouched.
+
 Each run mints two units, so it runs while the item has supply. The seller needs a little POL, and the
 buyer POL and enough MANA for one unit at the discounted price.
 

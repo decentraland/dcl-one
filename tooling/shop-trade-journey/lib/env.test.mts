@@ -40,6 +40,7 @@ describe("parseItem", () => {
 describe("parseDiscount", () => {
   it("defaults to 10 and keeps to the Shop's 5..70 whole percentages", () => {
     assert.equal(parseDiscount(undefined), 10);
+    assert.equal(parseDiscount(""), 10);
     assert.equal(parseDiscount("70"), 70);
     for (const bad of ["4", "71", "12.5", "ten"]) assert.throws(() => parseDiscount(bad), /E2E_DISCOUNT/, bad);
   });

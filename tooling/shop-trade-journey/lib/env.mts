@@ -40,7 +40,7 @@ export function parseItem(value: string | undefined): { contract: string; itemId
 
 /** A whole-number discount within the Shop's bounds (MIN_SALE_PCT..MAX_SALE_PCT in seller/lib/coupons.ts). */
 export function parseDiscount(value: string | undefined): number {
-  const pct = Number(value ?? "10");
+  const pct = Number(value?.trim() || "10");
   if (!Number.isInteger(pct) || pct < 5 || pct > 70) throw new Error("E2E_DISCOUNT must be a whole percentage from 5 to 70");
   return pct;
 }
