@@ -2443,36 +2443,73 @@ fn assert_corruption_rejection_blocks_gameplay(srv: &mut PulseServer, peer: u32)
     let before = srv.board.try_read(peer).unwrap().clone();
     let profile = srv.profiles.get(peer);
     let packets = [
-        (1, client_message::Message::Input(PlayerStateInput { state: Some(valid_state(6)) })),
-        (0, client_message::Message::Teleport(teleport_request(9, "next-realm"))),
-        (0, client_message::Message::ProfileAnnouncement(ProfileVersionAnnouncement { version: 9 })),
-        (2, client_message::Message::EmoteStart(crate::protocol::pulse::decentraland::pulse::EmoteStart {
-            emote_id: "urn:decentraland:off-chain:base-emotes:wave".into(),
-            duration_ms: Some(2000), player_state: Some(valid_state(3)), mask: None,
-        })),
+        (
+            1,
+            client_message::Message::Input(PlayerStateInput {
+                state: Some(valid_state(6)),
+            }),
+        ),
+        (
+            0,
+            client_message::Message::Teleport(teleport_request(9, "next-realm")),
+        ),
+        (
+            0,
+            client_message::Message::ProfileAnnouncement(ProfileVersionAnnouncement { version: 9 }),
+        ),
+        (
+            2,
+            client_message::Message::EmoteStart(
+                crate::protocol::pulse::decentraland::pulse::EmoteStart {
+                    emote_id: "urn:decentraland:off-chain:base-emotes:wave".into(),
+                    duration_ms: Some(2000),
+                    player_state: Some(valid_state(3)),
+                    mask: None,
+                },
+            ),
+        ),
         (2, client_message::Message::EmoteStop(Default::default())),
     ];
     for (channel, message) in packets {
-        assert_eq!(srv.dispatch(peer, channel, &client_msg(message), 1000, 1100), Action::Ignore);
+        assert_eq!(
+            srv.dispatch(peer, channel, &client_msg(message), 1000, 1100),
+            Action::Ignore
+        );
         assert_eq!(srv.board.try_read(peer), Some(&before));
         assert_eq!(srv.board.last_seq(peer), before.seq);
         assert_eq!(srv.profiles.get(peer), profile);
     }
-    assert_eq!(srv.peers[&peer].connection_state, PeerConnectionState::PendingDisconnect);
+    assert_eq!(
+        srv.peers[&peer].connection_state,
+        PeerConnectionState::PendingDisconnect
+    );
 }
 
 #[test]
 fn decode_corruption_rejection_is_terminal_for_queued_gameplay() {
     let mut srv = PulseServer::new();
     authed(&mut srv, 7, "wallet");
-    let input = client_msg(client_message::Message::Input(PlayerStateInput { state: Some(valid_state(5)) }));
+    let input = client_msg(client_message::Message::Input(PlayerStateInput {
+        state: Some(valid_state(5)),
+    }));
     assert_eq!(srv.dispatch(7, 1, &input, 0, 100), Action::Applied);
     for _ in 0..5 {
-        assert_eq!(srv.dispatch(7, 0, &[0x0a, 0xff], 1000, 1000), Action::Ignore);
-        assert_eq!(srv.peers[&7].connection_state, PeerConnectionState::Authenticated);
+        assert_eq!(
+            srv.dispatch(7, 0, &[0x0a, 0xff], 1000, 1000),
+            Action::Ignore
+        );
+        assert_eq!(
+            srv.peers[&7].connection_state,
+            PeerConnectionState::Authenticated
+        );
     }
-    assert_eq!(srv.dispatch(7, 0, &[0x0a, 0xff], 1000, 1000),
-        Action::Reject { reply: None, reason: DisconnectReason::PacketCorrupted });
+    assert_eq!(
+        srv.dispatch(7, 0, &[0x0a, 0xff], 1000, 1000),
+        Action::Reject {
+            reply: None,
+            reason: DisconnectReason::PacketCorrupted
+        }
+    );
     assert_corruption_rejection_blocks_gameplay(&mut srv, 7);
 }
 
@@ -2480,15 +2517,33 @@ fn decode_corruption_rejection_is_terminal_for_queued_gameplay() {
 async fn native_corruption_rejection_is_terminal_before_transport_disconnect() {
     for size in [4097, 8192] {
         let (mut server, mut transports, mut client, peer) = envelope_rig().await;
-        let input = client_msg(client_message::Message::Input(PlayerStateInput { state: Some(valid_state(5)) }));
+        let input = client_msg(client_message::Message::Input(PlayerStateInput {
+            state: Some(valid_state(5)),
+        }));
         assert_eq!(server.dispatch(peer, 1, &input, 0, 100), Action::Applied);
         // Decode failures and oversize native envelopes share one corruption budget.
         for _ in 0..5 {
-            assert_eq!(server.dispatch(peer, 0, &[0x0a, 0xff], 1000, 1000), Action::Ignore);
+            assert_eq!(
+                server.dispatch(peer, 0, &[0x0a, 0xff], 1000, 1000),
+                Action::Ignore
+            );
         }
-        server.receive(&mut transports, peer, 0, &envelope_profile(size, 9), 1000, 1000).await.unwrap();
+        server
+            .receive(
+                &mut transports,
+                peer,
+                0,
+                &envelope_profile(size, 9),
+                1000,
+                1000,
+            )
+            .await
+            .unwrap();
         assert_corruption_rejection_blocks_gameplay(&mut server, peer);
-        assert!(server.ip_limiter.contains_peer(peer), "retain IP reservation until disconnect");
+        assert!(
+            server.ip_limiter.contains_peer(peer),
+            "retain IP reservation until disconnect"
+        );
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         let mut wire_reason = None;
         let mut disconnected = false;

@@ -8,14 +8,20 @@ type WorldScene = {
 
 const PAGE_SIZE = 100;
 
+function record(v: unknown): Record<string, unknown> {
+  return v !== null && typeof v === "object" ? (v as Record<string, unknown>) : {};
+}
+
 function toWorldScene(s: unknown): WorldScene {
-  const o = (s ?? {}) as Record<string, unknown>;
+  const o = record(s);
   const parcels = Array.isArray(o.parcels)
     ? o.parcels.filter((p): p is string => typeof p === "string")
     : [];
+  // The base parcel lives in the entity's scene metadata (`WorldSceneEntry.entity`).
+  const base = record(record(record(o.entity).metadata).scene).base;
   return {
     entityId: typeof o.entityId === "string" ? o.entityId : "",
-    baseParcel: typeof o.baseParcel === "string" ? o.baseParcel : "",
+    baseParcel: typeof base === "string" ? base : "",
     parcels,
   };
 }

@@ -977,10 +977,13 @@ pub(crate) async fn live_world_rooms(
 /// world or of a live scene (`protected_addresses`) stay; a shared-secret
 /// participant must mint again with the new secret; an allow-list edit
 /// evicts only who lost access; an undetermined decision evicts nobody.
-/// `Ok(false)`: some decision or eviction did not complete; the pass may run again.
+/// Only participants that joined by `cutoff` (unix seconds) are considered:
+/// a later joiner was admitted under the new setting, e.g. with the new secret.
+/// `Ok(false)`: some roster, decision or eviction did not complete; the pass may run again.
 pub(crate) async fn readmit_world_rooms(
     state: &CommsState,
     world: &WorldName,
+    cutoff: i64,
 ) -> Result<bool, String> {
     let now = chrono::Utc::now().naive_utc();
     match state.policy.world_admission(world, now).await {
@@ -996,7 +999,19 @@ pub(crate) async fn readmit_world_rooms(
         if undecided.contains(&room) {
             continue;
         }
-        for identity in client.list_participant_identities(&room).await {
+        let participants = match client.list_participants(&room).await {
+            Ok(participants) => participants,
+            Err(error) => {
+                complete = false;
+                tracing::warn!(%error, room = %room, "roster unavailable; participants kept for now");
+                continue;
+            }
+        };
+        for participant in participants {
+            if participant.joined_at.is_some_and(|joined| joined > cutoff) {
+                continue;
+            }
+            let identity = participant.identity;
             let Ok(address) = Address::parse(&identity) else {
                 continue;
             };
@@ -1031,9 +1046,10 @@ pub(crate) async fn readmit_until_settled(
     world: &WorldName,
     delays: &[std::time::Duration],
 ) -> bool {
+    let cutoff = chrono::Utc::now().timestamp();
     let mut delays = delays.iter();
     loop {
-        match readmit_world_rooms(state, world).await {
+        match readmit_world_rooms(state, world, cutoff).await {
             Ok(true) => return true,
             Ok(false) => tracing::warn!(%world, "access-change readmission incomplete"),
             Err(error) => tracing::warn!(%error, %world, "access-change readmission failed"),
