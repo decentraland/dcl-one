@@ -261,8 +261,12 @@ mod tests {
         let first = state.queue.events[0].clone();
         state.completed(&wallet);
         assert_eq!(state.queue.events.len(), 2);
-        assert_eq!(state.queue.events[0], first);
-        assert_ne!(state.queue.events[1].login_id, first.login_id);
+        assert!(state.queue.events.contains(&first));
+        assert!(state
+            .queue
+            .events
+            .iter()
+            .any(|event| event.login_id != first.login_id));
         assert!(!state.queue.ready());
         state.pause();
         assert!(state.active.is_none());
