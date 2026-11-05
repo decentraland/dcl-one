@@ -99,15 +99,20 @@ export const BRIDGE_ABOUT_PATH = '/bridge-scene/static/BevyExplorerUI/about'
 const BRIDGE_CONTENT_PATH = '/bridge-scene/static/'
 const RELATIVE_BRIDGE_URN = /^urn:decentraland:entity:(baf[a-z2-7]+)\?=&baseUrl=\/bridge-scene\/static\/$/
 
-/** The realm document with its scene's root-relative content url made absolute under `origin`;
- *  a document whose url is already absolute, or that is not the bundled bridge's, is left as it
- *  is (an app served from elsewhere, `DCL_E2E_WEB_URL`, is not served here at all). */
+/** The realm document with its scene's root-relative content url made absolute under `origin`.
+ *  A document whose url is absolute already is left as it is (a build exported with
+ *  `SCENE_BASE_URL`); one with a root-relative url the build is not known to write is refused,
+ *  since served as it is it would fail in the engine as "relative URL without a base" with
+ *  nothing in the suite's own logs. A document without one scene urn is not the bridge's. */
 export function bridgeAbout(about: string, origin: string): string {
   const realm = JSON.parse(about) as { configurations?: { scenesUrn?: unknown } }
   const urns = realm.configurations?.scenesUrn
   if (!Array.isArray(urns) || urns.length !== 1 || typeof urns[0] !== 'string') return about
   const match = RELATIVE_BRIDGE_URN.exec(urns[0])
-  if (!match) return about
+  if (!match) {
+    if (/[?&]baseUrl=\//.test(urns[0])) throw new Error(`the bridge scene's realm names a root-relative content url this server does not know how to serve: ${urns[0]}`)
+    return about
+  }
   const content = new URL(BRIDGE_CONTENT_PATH, origin).href
   return JSON.stringify({ ...realm, configurations: { ...realm.configurations, scenesUrn: [`urn:decentraland:entity:${match[1]}?=&baseUrl=${content}`] } })
 }
@@ -141,7 +146,15 @@ async function serveFile(root: string, origin: () => string, request: IncomingMe
     return
   }
   if ((request.url ?? '').split('?')[0] === BRIDGE_ABOUT_PATH) {
-    const body = bridgeAbout(await readFile(file, 'utf8'), origin())
+    let body: string
+    try {
+      body = bridgeAbout(await readFile(file, 'utf8'), origin())
+    } catch (error) {
+      // said here, where the boot log is, not left to the engine's "relative URL without a base"
+      console.error(`[e2e] ${BRIDGE_ABOUT_PATH}: ${error instanceof Error ? error.message : String(error)}`)
+      response.writeHead(503).end()
+      return
+    }
     response.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'content-length': Buffer.byteLength(body), 'accept-ranges': 'none' })
     response.end(request.method === 'HEAD' ? undefined : body)
     return

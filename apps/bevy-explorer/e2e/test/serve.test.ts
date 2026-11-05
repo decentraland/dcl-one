@@ -99,6 +99,30 @@ describe('bridgeAbout', () => {
     assert.equal(bridgeAbout(other, 'http://127.0.0.1:1'), other)
     assert.equal(bridgeAbout('{}', 'http://127.0.0.1:1'), '{}')
   })
+
+  test('refuses a root-relative content url it does not know, naming it', () => {
+    const unknown = JSON.stringify({ configurations: { scenesUrn: [`urn:decentraland:entity:${BRIDGE_HASH}?=&baseUrl=/elsewhere/`] } })
+    assert.throws(() => bridgeAbout(unknown, 'http://127.0.0.1:1'), /root-relative content url this server does not know how to serve: urn:decentraland:entity:bafkreiexample\?=&baseUrl=\/elsewhere\//)
+  })
+
+  test('the server answers such a document with 503 and says so', async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'e2e-serve-bridge-'))
+    const server = await serveWebApp(dir, 0)
+    const original = console.error
+    const said: string[] = []
+    console.error = (line: unknown) => said.push(String(line))
+    try {
+      await mkdir(path.join(dir, 'bridge-scene', 'static', 'BevyExplorerUI'), { recursive: true })
+      await writeFile(path.join(dir, ...BRIDGE_ABOUT_PATH.split('/').filter(Boolean)), JSON.stringify({ configurations: { scenesUrn: ['urn:decentraland:entity:bafkreiother?=&baseUrl=/elsewhere/'] } }))
+      const response = await fetch(server.url + BRIDGE_ABOUT_PATH.slice(1))
+      assert.equal(response.status, 503)
+      assert.equal(said.filter((line) => line.includes(BRIDGE_ABOUT_PATH) && line.includes('/elsewhere/')).length, 1)
+    } finally {
+      console.error = original
+      await server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('headersFor', () => {

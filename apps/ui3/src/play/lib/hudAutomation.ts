@@ -12,9 +12,10 @@
 // engine asks over window.cef (cefNativeBridge.ts, answerHudRequest, answerHudWait) and then
 // clicks and types with real input through CEF. Waiting happens here on both: the page polls, the
 // engine just relays. /hud_login signs the HUD in through its own flow: the session provides the
-// sign-in while it is mounted (features/session/useEngineSession.ts, provideHudLogin), so the
-// HUD leaves its start page as it does for a user, which the engine's /login_identity alone never
-// makes it do.
+// sign-in while it is mounted (features/session/useEngineSession.ts calls provideHudLogin), so
+// the HUD leaves its start page as it does for a user, which the engine's /login_identity alone
+// never makes it do. It is registered only while a test runner drives the browser (the hook is
+// present at install), so a page script in a browser nobody drives has no such command.
 
 import type { NewAccountPick } from '../engine/driver'
 import type { AuthIdentity } from '../features/auth/sso'
@@ -637,7 +638,8 @@ export async function clickAt(x: number, y: number, button: MouseButtonName = 'l
  * What `/hud_login` asks of the session: sign in with this identity as the page's stored sign-in,
  * the way Jump In reuses one, with a first login's pick, and go where a link's destination would
  * from the lobby. The sign-in stands for the terms the welcome page asks for, as ACCEPT AND PLAY
- * does. The session provides the sign-in with `provideHudLogin` while it is mounted.
+ * does; a first login (an account with no profile yet) needs the pick, which names the profile
+ * it deploys. The session provides the sign-in with `provideHudLogin` while it is mounted.
  */
 export interface HudLoginRequest {
   identity: AuthIdentity
@@ -645,7 +647,7 @@ export interface HudLoginRequest {
   guest: boolean
   /** Continue with (and deploy) a default profile if the account's can't be fetched, as `/login_identity` does. */
   defaultOnError: boolean
-  /** The name and curated look a first login's new profile takes; an existing profile keeps its own. */
+  /** The name and curated look a first login's new profile takes (needed then); an existing profile keeps its own. */
   pick?: NewAccountPick
   /** Where to go once signed in, from the lobby: a realm URL or world name, and a parcel `x,y`. */
   destination?: { realm?: string; position?: string }
@@ -696,6 +698,8 @@ function decodeIdentity(encoded: string): AuthIdentity {
 }
 
 const LOGIN_USAGE = '/hud_login <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>] [--position <x,y>]'
+/** The curated default looks a new account can wear, `default1` to `default<n>` (lib/guestName.ts). */
+const CURATED_LOOKS = 160
 
 /** The text after `/hud_login`: the encoded identity, then its flags. */
 export function parseLoginArgs(rest: string): HudLoginRequest {
@@ -728,7 +732,7 @@ export function parseLoginArgs(rest: string): HudLoginRequest {
       case '--look': {
         const text = value()
         look = Number(text)
-        if (!Number.isInteger(look) || look < 1) throw new Error(`--look takes a curated look's number, from 1, not \`${text}\``)
+        if (!Number.isInteger(look) || look < 1 || look > CURATED_LOOKS) throw new Error(`--look takes a curated look's number, 1 to ${CURATED_LOOKS}, not \`${text}\``)
         break
       }
       case '--realm':
@@ -750,8 +754,11 @@ export function parseLoginArgs(rest: string): HudLoginRequest {
   return request
 }
 
-/** Sign the HUD in as `/hud_login` asks; the session answers once the sign-in has landed. */
+/** Sign the HUD in as `/hud_login` asks; the session answers once the sign-in has landed. Only
+ *  for a test runner driving the browser (`window.__dclTrustedInput`), as the command's
+ *  registration is. */
 export function loginThroughHud(request: HudLoginRequest): Promise<HudLoginReply> {
+  if (!trustedInputAvailable()) return Promise.reject(new Error('/hud_login takes a test runner driving the browser (window.__dclTrustedInput)'))
   if (hudLogin == null) return Promise.reject(new Error('no HUD session takes a sign-in here: the HUD is not mounted'))
   return hudLogin(request)
 }
@@ -825,7 +832,8 @@ export interface PageCommand {
 const SELECTOR_ARG: PageCommandArg = { name: 'json', kind: 'json', optional: false, help: 'the accessible name, or a JSON selector' }
 
 // The same commands and help as the engine registers natively (src/automation.rs,
-// src/react_hud_cef/automation.rs).
+// src/react_hud_cef/automation.rs), but /hud_login, which only the web has: natively the engine
+// signs in. It is kept apart (LOGIN_COMMANDS), registered only under a test runner.
 export const PAGE_COMMANDS: Record<string, PageCommand> = {
   '/hud_list': {
     args: [{ name: 'role', kind: 'string', optional: true, help: 'only controls with this role' }],
@@ -855,11 +863,6 @@ export const PAGE_COMMANDS: Record<string, PageCommand> = {
       if (typeof selector.text !== 'string') throw new Error('expected JSON {"name": ..., "text": ...}')
       return JSON.stringify(await fillControl(selector, selector.text))
     }
-  },
-  '/hud_login': {
-    args: [{ name: 'identity', kind: 'string', optional: false, help: 'base64(JSON) of an AuthIdentity, as /login_identity takes it' }],
-    help: "Sign in through the HUD's own flow with an identity (base64 JSON of an AuthIdentity, as /login_identity takes it), as a stored sign-in's Jump In. The sign-in accepts the terms the welcome page asks for; --name <name> and --look <n> pick a first login's profile (an existing one keeps its own), --guest marks a guest account, --default-on-error continues with a default profile when the account's can't be fetched, and --realm <realm> and --position <x,y> go there from the lobby as a link would. Replies JSON {\"address\", \"guest\", \"phase\"} once the sign-in has landed and the page is done (phase lobby, entering on the way to the destination, picking or world), and fails with the sign-in's error. Web only: natively the engine signs in",
-    run: async (rest) => JSON.stringify(await loginThroughHud(parseLoginArgs(rest)))
   },
   '/press_key': {
     args: [{ name: 'code', kind: 'string', optional: false, help: "the key's code name" }],
@@ -893,10 +896,22 @@ export const PAGE_COMMANDS: Record<string, PageCommand> = {
   }
 }
 
+/** The commands only a test runner driving the browser gets (`window.__dclTrustedInput` present
+ *  when the page installs them): a sign-in with no screen shown is no command for a page script
+ *  in a browser nobody drives. */
+export const LOGIN_COMMANDS: Record<string, PageCommand> = {
+  '/hud_login': {
+    args: [{ name: 'identity', kind: 'string', optional: false, help: 'base64(JSON) of an AuthIdentity, as /login_identity takes it' }],
+    help: "Sign in through the HUD's own flow with an identity (base64 JSON of an AuthIdentity, as /login_identity takes it), as a stored sign-in's Jump In. The sign-in accepts the terms the welcome page asks for; --name <name> and --look <n> pick a first login's profile (needed for an account with no profile yet; an existing one keeps its own), --guest marks a guest account, --default-on-error continues with a default profile when the account's can't be fetched, and --realm <realm> and --position <x,y> go there from the lobby as a link would. Replies JSON {\"address\", \"guest\", \"phase\"} once the sign-in has landed and the page is done (phase lobby, entering on the way to the destination, picking or world), and fails with the sign-in's error. Web only, under a test runner driving the browser: natively the engine signs in",
+    run: async (rest) => JSON.stringify(await loginThroughHud(parseLoginArgs(rest)))
+  }
+}
+
 /** Web: hand engine.js the commands it runs in the page instead of sending them to the engine, and
- *  the hook a test runner answers its trusted input requests through. */
+ *  the hook a test runner answers its trusted input requests through; the sign-in command only
+ *  when such a runner is driving the browser. */
 export function installHudAutomation(): void {
   const w = window as Window & { __dclPageCommands?: Record<string, PageCommand> } & TrustedInputWindow
-  w.__dclPageCommands = { ...(w.__dclPageCommands ?? {}), ...PAGE_COMMANDS }
+  w.__dclPageCommands = { ...(w.__dclPageCommands ?? {}), ...PAGE_COMMANDS, ...(trustedInputAvailable() ? LOGIN_COMMANDS : {}) }
   w.__dclTrustedInputDone = settleTrustedInput
 }

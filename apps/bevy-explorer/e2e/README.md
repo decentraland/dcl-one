@@ -43,9 +43,10 @@ through the web driver (`rendering/bevy-explorer/source/local-harness/web-driver
 `/?baseDomain=<domain>` (no realm or position on the url: a destination there makes the HUD launch
 the engine only once a sign-in is submitted on its start page, and the console the sign-in needs
 comes up only with the engine; without one the engine launches at once, holding the world), signs
-in with `/hud_login` and the worker's account (the HUD's own sign-in flow: it takes the identity as
-the page's stored sign-in and goes to the realm and the parcel from the lobby as a link would;
-the engine's `/login_identity` alone leaves the HUD on its start page and the world held), waits
+in with `/hud_login` and the worker's account (the HUD's own sign-in flow, which the page registers
+only under a test runner driving the browser, the web driver's `__dclTrustedInput`: it takes the
+identity as the page's stored sign-in and goes to the realm and the parcel from the lobby as a link
+would; the engine's `/login_identity` alone leaves the HUD on its start page and the world held), waits
 for `/world_state` `inWorld`, and corrects the parcel by console if the realm ignored it. The
 sign-in accepts the terms the welcome page asks for; the name and look it carries are a first
 login's, and an account that has its profile keeps it. The Visual suite signs in the same way as

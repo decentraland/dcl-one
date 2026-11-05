@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { FakeConsole } from '../driver/console.ts'
+import { ConsoleError, FakeConsole } from '../driver/console.ts'
 import { Explorer, type WorldState } from '../driver/explorer.ts'
 import { type AuthIdentity, addressOf } from '../driver/identity.ts'
 import { MAX_BOOTS, arrive, closeSessions, openSession, parsePosition, sameRealm, signIn } from '../driver/session.ts'
@@ -117,6 +117,21 @@ describe('signIn', () => {
     assert.match(line!, /^\/hud_login \S+ --name e2etester --look 1 --guest --realm https:\/\/realm\.example\.test --position 0,0$/)
     assert.notEqual(identityOf(line!).authChain[0]!.payload, addressOf(account))
     assert.deepEqual(fake.sent('login_guest'), [])
+  })
+
+  test("a web sign-in the HUD refuses fails the boot with the HUD's reason, the identity redacted", async () => {
+    const fake = new FakeConsole({
+      hud_login: (line) => {
+        throw new ConsoleError(line, 'the account has no profile yet: a first login needs --name and --look')
+      },
+      world_state: () => world()
+    })
+    await assert.rejects(signIn(new Explorer(fake), web, 'account'), (error: unknown) => {
+      assert.ok(error instanceof ConsoleError)
+      assert.match(error.message, /^`\/hud_login <redacted> --name e2etester --look 1 --realm \S+ --position 0,0` failed: the account has no profile yet/)
+      return true
+    })
+    assert.deepEqual(fake.sent('world_state'), [])
   })
 
   test('on the standalone the engine signs in, already at its realm', async () => {

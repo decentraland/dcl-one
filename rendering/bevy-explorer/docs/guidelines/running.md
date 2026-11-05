@@ -143,15 +143,17 @@ The HUD and input:
   enabled and not covered, and several matches need an `index`. `/hud_fill` answers with the field
   as the typing left it. The page's side is `react-web/src/lib/hudAutomation.ts`.
 - `/hud_login <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
-  [--position <x,y>]` (web): sign in through the HUD's own flow with an AuthIdentity encoded as
-  `/login_identity` takes it. The HUD takes it as the page's stored sign-in and goes in as its Jump
-  In does, so it leaves its start page, which `/login_identity` alone never makes it do; the
-  sign-in accepts the terms the welcome page asks for, the pick names and dresses a first login's
-  profile (an existing one keeps its own), and the destination is picked from the lobby as a link's
-  would be, which releases the held world. Replies `{"address", "guest", "phase"}` (`lobby`,
-  `entering` on the way to the destination, `picking` or `world`) once the sign-in has landed and
-  the page is done, or fails with its error. The page's side is
-  `react-web/src/features/session/useEngineSession.ts` (`provideHudLogin`).
+  [--position <x,y>]` (web, and only while a test runner drives the browser: the page registers it
+  when `window.__dclTrustedInput` is present): sign in through the HUD's own flow with an
+  AuthIdentity encoded as `/login_identity` takes it. The HUD takes it as the page's stored sign-in
+  and goes in as its Jump In does, so it leaves its start page, which `/login_identity` alone never
+  makes it do; the sign-in accepts the terms the welcome page asks for, the pick names and dresses
+  a first login's profile (needed for an account with no profile yet; an existing one keeps its
+  own), and the destination is picked from the lobby as a link's would be, which releases the held
+  world. Replies `{"address", "guest", "phase"}` (`lobby`, `entering` on the way to the destination,
+  `picking` or `world`) once the sign-in has landed and the page is done, or fails with its error.
+  The command is `react-web/src/lib/hudAutomation.ts` (`LOGIN_COMMANDS`, `provideHudLogin`); the
+  session provides the sign-in in `react-web/src/features/session/useEngineSession.ts`.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
   `/click_at <x> <y> [--button left|right|middle]`.
 

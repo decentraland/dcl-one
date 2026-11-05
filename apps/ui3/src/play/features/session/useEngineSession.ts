@@ -849,10 +849,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // landed (`landed`: the engine took it) and the welcome page is done, or failed; `restore` puts
   // the page's stored sign-in back as it was when the sign-in never took. The destination it then
   // goes to from the lobby, as a link's would.
-  const hudLoginPending = useRef<{ resolve: (reply: HudLoginReply) => void; reject: (error: Error) => void; landed: boolean; restore: () => void } | null>(null)
+  const hudLoginPending = useRef<{ resolve: (reply: HudLoginReply) => void; reject: (error: Error) => void; landed: boolean; welcomeAwaited: boolean; restore: () => void } | null>(null)
   const hudDestination = useRef<Destination>(null)
-  // ticks when the pending sign-in lands, so the effect that answers it runs again
-  const [hudLoginLanded, setHudLoginLanded] = useState(0)
+  // ticks as the pending sign-in moves on (landed, the welcome page in), so the effect that
+  // answers it runs again where no state of its own changes (a link's page sets none)
+  const [hudLoginTick, setHudLoginTick] = useState(0)
   // Answers the pending /hud_login, if any: with where it landed, or the error that ended it.
   const settleHudLogin = useCallback((outcome: HudLoginReply | Error): void => {
     const pending = hudLoginPending.current
@@ -1405,7 +1406,15 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'welcome': {
           // ACCEPT AND PLAY's pick accepted the terms already, and a /hud_login's sign-in stands
-          // for them too (lib/hudAutomation.ts): the page is answered, with the pick's name
+          // for them too (lib/hudAutomation.ts): the page is answered, with the pick's name. A
+          // first login deploys its profile under the pick's name, so without one a /hud_login
+          // fails here and the page shows, as it would to a person.
+          const hudLogin = hudLoginPending.current
+          if (hudLogin != null) {
+            hudLogin.welcomeAwaited = false
+            setHudLoginTick((n) => n + 1)
+            if (msg.newProfile && guestPick.current == null) settleHudLogin(new Error('the account has no profile yet: a first login needs --name and --look'))
+          }
           const chosen: { name?: string } | null = guestPick.current ?? (hudLoginPending.current != null ? {} : null)
           guestPick.current = null
           if (chosen == null || (!msg.terms && !msg.newProfile)) setWelcomePending(false)
@@ -2111,7 +2120,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         urlDestination.current = null
         if (hudLoginPending.current != null) {
           hudLoginPending.current.landed = true
-          setHudLoginLanded((n) => n + 1)
+          hudLoginPending.current.welcomeAwaited = welcomeShown()
+          setHudLoginTick((n) => n + 1)
         }
         setBusy(false)
         if (welcomeShown()) driver.send({ kind: 'getWelcome' })
@@ -2715,6 +2725,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           resolve,
           reject,
           landed: false,
+          welcomeAwaited: false,
           restore: () => {
             setStored(previous)
             storedRef.current = previous
@@ -2982,20 +2993,20 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         : 'world'
 
   // A /hud_login is answered once the engine took the sign-in and the HUD is past the welcome page
-  // (shown, or its accept still saving): in the lobby, where its destination is picked as a card's
-  // would be (or from the picker), or already entering a link's destination, which wins over its
-  // own. On a link the phase is `entering` from the submit on, so the sign-in's landing is waited
-  // for apart (`landed`).
+  // (still to come, shown, or its accept still saving): in the lobby, where its destination is
+  // picked as a card's would be (or from the picker), or already entering a link's destination,
+  // which wins over its own. On a link the phase is `entering` from the submit on and no lobby
+  // waits for the page, so the sign-in's landing and the page are waited for apart.
   useEffect(() => {
     const pending = hudLoginPending.current
-    if (pending == null || !pending.landed || phase === 'login' || phase === 'welcome' || welcomeSaving) return
+    if (pending == null || !pending.landed || pending.welcomeAwaited || phase === 'login' || phase === 'welcome' || welcomeSaving) return
     if (phase === 'lobby' && busy) return
     const destination = hudDestination.current
     const picking = destination != null && (phase === 'lobby' || phase === 'picking')
     if (picking) pickDestination(destination)
     const stored = storedRef.current
     settleHudLogin({ address: stored?.address ?? '', guest: stored?.guest === true, phase: picking ? 'entering' : phase })
-  }, [phase, busy, welcomeSaving, hudLoginLanded, pickDestination, settleHudLogin])
+  }, [phase, busy, welcomeSaving, hudLoginTick, pickDestination, settleHudLogin])
 
   // The screens a phase shows (the loading screen's own are the engine's: LOADING_START / END /
   // TIMEOUT come from `crates/analytics/src/loading.rs`).

@@ -2,23 +2,26 @@
 // session takes the identity as this page's stored sign-in and goes in as Jump In does; the
 // command answers once the sign-in has landed and the welcome page is done, in the lobby or on
 // the way to its destination, or with what ended it.
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
 import type { NewAccountPick } from '../engine/driver'
 import type { PageToScene } from '../engine/protocol'
 import type { AuthIdentity } from '../features/auth/sso'
-import { PAGE_COMMANDS, loginThroughHud, parseLoginArgs, provideHudLogin } from '../lib/hudAutomation'
+import { LOGIN_COMMANDS, loginThroughHud, parseLoginArgs, provideHudLogin } from '../lib/hudAutomation'
 import { FakeDriver, renderSession } from './harness'
 
 const ADDRESS = '0x' + 'Ab'.repeat(20)
-const IDENTITY: AuthIdentity = {
-  ephemeralIdentity: { address: '0x' + '12'.repeat(20), publicKey: '0x04' + '34'.repeat(64), privateKey: '0x' + '56'.repeat(32) },
-  expiration: '2099-01-01T00:00:00.000Z',
-  authChain: [
-    { type: 'SIGNER', payload: ADDRESS, signature: '' },
-    { type: 'ECDSA_EPHEMERAL', payload: `Decentraland Login\nEphemeral address: 0x${'12'.repeat(20)}\nExpiration: 2099-01-01T00:00:00.000Z`, signature: '0x' + '78'.repeat(65) }
-  ]
+function identityOf(address: string): AuthIdentity {
+  return {
+    ephemeralIdentity: { address: '0x' + '12'.repeat(20), publicKey: '0x04' + '34'.repeat(64), privateKey: '0x' + '56'.repeat(32) },
+    expiration: '2099-01-01T00:00:00.000Z',
+    authChain: [
+      { type: 'SIGNER', payload: address, signature: '' },
+      { type: 'ECDSA_EPHEMERAL', payload: `Decentraland Login\nEphemeral address: 0x${'12'.repeat(20)}\nExpiration: 2099-01-01T00:00:00.000Z`, signature: '0x' + '78'.repeat(65) }
+    ]
+  }
 }
+const IDENTITY = identityOf(ADDRESS)
 const ENCODED = btoa(JSON.stringify(IDENTITY))
 const REALM = 'https://realm.example.test'
 
@@ -55,8 +58,10 @@ interface Reply {
   phase: string
 }
 
+const runnerWindow = window as Window & { __dclTrustedInput?: (request: string) => void }
+
 async function login(rest: string): Promise<Reply> {
-  return JSON.parse(await PAGE_COMMANDS['/hud_login'].run(rest)) as Reply
+  return JSON.parse(await LOGIN_COMMANDS['/hud_login'].run(rest)) as Reply
 }
 
 async function ready(driver: IdentityDriver): Promise<ReturnType<typeof renderSession>> {
@@ -66,7 +71,22 @@ async function ready(driver: IdentityDriver): Promise<ReturnType<typeof renderSe
   return h
 }
 
-afterEach(() => provideHudLogin(null))
+/** A link's page: `search` on the address until the test is over. */
+function onPage(search: string): () => void {
+  const url = new URL(location.href)
+  history.replaceState(null, '', search)
+  return () => history.replaceState(null, '', url.pathname + url.search)
+}
+
+// the test runner's hook, which the command takes as its licence
+beforeEach(() => {
+  runnerWindow.__dclTrustedInput = () => undefined
+})
+afterEach(() => {
+  provideHudLogin(null)
+  delete runnerWindow.__dclTrustedInput
+  localStorage.clear()
+})
 
 describe('/hud_login arguments', () => {
   it('takes the identity and its flags', () => {
@@ -95,7 +115,8 @@ describe('/hud_login arguments', () => {
     expect(message('not-base64-json')).toBe('the identity is not base64 JSON')
     expect(message(btoa('{"ephemeralIdentity":{"address":"0x1"},"authChain":[{"payload":"nope"}]}'))).toMatch(/^the identity is not an AuthIdentity/)
     expect(message(`${ENCODED} --name tester`)).toBe("a first login's pick is --name and --look together")
-    expect(message(`${ENCODED} --name tester --look x`)).toBe("--look takes a curated look's number, from 1, not `x`")
+    expect(message(`${ENCODED} --name tester --look x`)).toBe("--look takes a curated look's number, 1 to 160, not `x`")
+    expect(message(`${ENCODED} --name tester --look 161`)).toBe("--look takes a curated look's number, 1 to 160, not `161`")
     expect(message(`${ENCODED} --name a_name --look 1`)).toBe('--name takes 1 to 15 letters and digits')
     expect(message(`${ENCODED} --position here`)).toBe('--position takes a parcel as x,y, not `here`')
     expect(message(`${ENCODED} --realm`)).toMatch(/^--realm takes a value/)
@@ -103,8 +124,10 @@ describe('/hud_login arguments', () => {
     for (const rest of ['', '--guest', `${ENCODED} --name tester`, `${ENCODED} --jump`]) expect(message(rest)).not.toContain(ENCODED)
   })
 
-  it('fails when no session is mounted to take it', async () => {
+  it('fails when no session is mounted to take it, and without a test runner driving the browser', async () => {
     await expect(loginThroughHud(parseLoginArgs(ENCODED))).rejects.toThrow('no HUD session takes a sign-in here')
+    delete runnerWindow.__dclTrustedInput
+    await expect(loginThroughHud(parseLoginArgs(ENCODED))).rejects.toThrow('/hud_login takes a test runner driving the browser')
   })
 })
 
@@ -143,13 +166,23 @@ describe('/hud_login through the session', () => {
     expect(h.session().phase).toBe('lobby')
   })
 
-  it('stands for the terms without a pick', async () => {
+  it('stands for the terms without a pick, for an account that has its profile', async () => {
     const driver = new IdentityDriver()
     driver.welcome = { terms: true, newProfile: false }
     const h = await ready(driver)
     await expect(login(ENCODED)).resolves.toMatchObject({ phase: 'lobby' })
     expect(driver.sentOf('acceptWelcome')).toEqual([{ kind: 'acceptWelcome' }])
     expect(h.session().phase).toBe('lobby')
+  })
+
+  it('refuses a first login without a pick, and the welcome page shows as it would to a person', async () => {
+    const driver = new IdentityDriver()
+    driver.welcome = { terms: true, newProfile: true }
+    const h = await ready(driver)
+    await expect(login(ENCODED)).rejects.toThrow('a first login needs --name and --look')
+    expect(driver.sentOf('acceptWelcome')).toEqual([])
+    await waitFor(() => expect(h.session().phase).toBe('welcome'))
+    expect(h.session().welcome.newProfile).toBe(true)
   })
 
   it("reports the sign-in's failure, puts the stored sign-in back, and leaves the HUD on its start page with the error", async () => {
@@ -165,6 +198,18 @@ describe('/hud_login through the session', () => {
     driver.failWith = null
     await expect(login(ENCODED)).resolves.toMatchObject({ phase: 'lobby' })
     expect(h.session().login.account).toBe(ADDRESS)
+  })
+
+  it('puts a stored sign-in the page had back after a failure', async () => {
+    const previous = '0x' + 'Cd'.repeat(20)
+    localStorage.setItem(`single-sign-on-${previous.toLowerCase()}`, JSON.stringify(identityOf(previous)))
+    const driver = new IdentityDriver()
+    driver.failWith = 'profile fetch failed: 503'
+    const h = await ready(driver)
+    await waitFor(() => expect(h.session().login.account).toBe(previous))
+    await expect(login(ENCODED)).rejects.toThrow('profile fetch failed: 503')
+    // the stored sign-in goes back with the failure's state update, which lands on the next render
+    await waitFor(() => expect(h.session().login.account).toBe(previous))
   })
 
   it('reports a welcome page whose accept failed', async () => {
@@ -211,24 +256,38 @@ describe('/hud_login through the session', () => {
     driver.release()
   })
 
-  it("on a page with a link's destination the reply waits for the sign-in, and a failure is reported", async () => {
-    const url = new URL(location.href)
-    history.replaceState(null, '', '/?position=1,2')
+  it("on a page with a link's destination the reply waits for the sign-in and the welcome page, and a failure is reported", async () => {
+    const leave = onPage('/?position=1,2')
     try {
       const driver = new IdentityDriver()
+      driver.welcome = { terms: true, newProfile: false }
       driver.failWith = 'profile fetch failed: 503'
       const h = await ready(driver)
       await expect(login(ENCODED)).rejects.toThrow('profile fetch failed: 503')
       expect(driver.identityLogins).toHaveLength(1)
       await waitFor(() => expect(h.session().phase).toBe('login'))
       driver.failWith = null
-      // the link's destination wins over the command's own
+      // the link's destination wins over the command's own; the terms are accepted before the reply
       const reply = await login(`${ENCODED} --realm ${REALM} --position 10,20`)
       expect(reply).toMatchObject({ address: ADDRESS.toLowerCase(), phase: 'entering' })
       expect(driver.identityLogins).toHaveLength(2)
+      expect(driver.sentOf('acceptWelcome')).toEqual([{ kind: 'acceptWelcome' }])
       expect(h.session().phase).toBe('entering')
     } finally {
-      history.replaceState(null, '', url.pathname + url.search)
+      leave()
+    }
+  })
+
+  it("on a page with a link's destination a welcome page whose accept failed is reported", async () => {
+    const leave = onPage('/?position=1,2')
+    try {
+      const driver = new IdentityDriver()
+      driver.welcome = { terms: true, newProfile: false }
+      driver.accept = { ok: false, error: 'deploy refused' }
+      await ready(driver)
+      await expect(login(ENCODED)).rejects.toThrow('accepting the welcome page failed: deploy refused')
+    } finally {
+      leave()
     }
   })
 
