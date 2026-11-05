@@ -79,6 +79,14 @@ fn scene(pointers: &[&str], files: &[(&str, &str)]) -> Value {
 
 /// The multipart form the SDK sends: `entityId`, `authChain` as JSON, and
 /// every file as a part named by its hash.
+/// A chain of the right shape for `entity_id` whose signature checks fail.
+fn unsigned_chain(entity_id: &str) -> Value {
+    json!([
+        {"type": "SIGNER", "payload": "0x0000000000000000000000000000000000000001", "signature": ""},
+        {"type": "ECDSA_SIGNED_ENTITY", "payload": entity_id, "signature": "0x01"}
+    ])
+}
+
 fn deploy_request(
     path: &str,
     entity_id: &str,
@@ -464,7 +472,7 @@ async fn an_unsynced_copy_takes_the_deploy_types_it_names() {
         let id = crate::auth::hash_bytes_v1(&file);
         let (status, _, body) = call(
             &node.router(),
-            deploy_request("/content/entities", &id, &json!([]), &[(&id, &file)]),
+            deploy_request("/content/entities", &id, &unsigned_chain(&id), &[(&id, &file)]),
         )
         .await;
         let refused = (status, json_of(&body))
@@ -487,7 +495,7 @@ async fn an_unsynced_copy_takes_the_deploy_types_it_names() {
         deploy_request(
             "/content/entities",
             "bafynotthefile",
-            &json!([]),
+            &unsigned_chain("bafynotthefile"),
             &[("x", &other)],
         ),
     )
@@ -511,15 +519,16 @@ async fn pointers_differing_only_by_case_are_repeated() {
     node.state.sync.set_state(SyncState::Syncing);
     let pointer =
         "urn:decentraland:matic:collections-v2:0xAbC0000000000000000000000000000000000001:0";
-    let file = Bytes::from(
+    // Signed: the signature is checked before the validator's rules.
+    let (file, id, chain) = signed_entity(
+        &PrivateKeySigner::random(),
         json!({"version": "v3", "type": "wearable", "pointers": [pointer, pointer.to_lowercase()],
-               "timestamp": chrono::Utc::now().timestamp_millis(), "content": [], "metadata": {}})
-        .to_string(),
-    );
-    let id = crate::auth::hash_bytes_v1(&file);
+               "timestamp": chrono::Utc::now().timestamp_millis(), "content": [], "metadata": {}}),
+    )
+    .await;
     let (status, _, body) = call(
         &node.router(),
-        deploy_request("/content/entities", &id, &json!([]), &[(&id, &file)]),
+        deploy_request("/content/entities", &id, &chain, &[(&id, &file)]),
     )
     .await;
     assert_eq!(
@@ -1551,7 +1560,7 @@ async fn a_form_over_its_field_limits_is_refused() {
     let router = node.router();
 
     let mut many = entity_form();
-    many.extend((0..30).map(|i| (format!("extra{i}"), "x".to_string())));
+    many.extend((0..31).map(|i| (format!("extra{i}"), "x".to_string())));
     let (status, _, body) = call(&router, form_request("203.0.113.1", &many)).await;
     assert_eq!(
         (status, json_of(&body)),
@@ -1978,7 +1987,12 @@ async fn an_unsynced_copys_refusals_count_toward_the_quota() {
     );
     let id = hash_bytes_v1(&file);
     let profile = || {
-        let mut req = deploy_request("/content/entities", &id, &json!([]), &[(&id, &file)]);
+        let mut req = deploy_request(
+            "/content/entities",
+            &id,
+            &unsigned_chain(&id),
+            &[(&id, &file)],
+        );
         req.headers_mut()
             .insert("x-real-ip", HeaderValue::from_static("203.0.113.11"));
         req

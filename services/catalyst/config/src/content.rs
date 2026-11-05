@@ -472,11 +472,11 @@ mod tests {
         assert_eq!(cli.content.deployments_default_rate_limit_ttl_ms, None);
         let with = |extra: &[&str]| parse(&[&base[..], extra].concat());
         let cli = with(&[
-            "--request-ttl-backwards",
+            "--request-ttl-backwards-ms",
             "90s",
-            "--deployments-default-rate-limit-ttl",
+            "--deployments-default-rate-limit-ttl-ms",
             "1m",
-            "--deployment-rate-limit-ttl-profile",
+            "--deployment-rate-limit-ttl-profile-ms",
             "1500",
         ])
         .unwrap();
@@ -486,7 +486,7 @@ mod tests {
             Some(60_000)
         );
         assert_eq!(cli.content.deployment_rate_limit_ttl_profile_ms, Some(1500));
-        assert!(with(&["--request-ttl-backwards", "soon"]).is_err());
+        assert!(with(&["--request-ttl-backwards-ms", "soon"]).is_err());
         // A rate below one entity file and one maximal file, a source share
         // below one maximal upload, or no upload at all refuse to start.
         assert!(with(&["--max-partial-upload-bytes-per-minute", "1048576"]).is_err());
