@@ -67,6 +67,7 @@ pub mod items;
 pub mod lambdas_catalog;
 pub mod lambdas_crypto;
 pub mod lambdas_explorer;
+pub mod lambdas_http;
 pub mod lambdas_land;
 pub mod listings;
 pub mod lists;
@@ -111,7 +112,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{any, get, post};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower_http::timeout::TimeoutLayer;
@@ -876,9 +877,10 @@ async fn lambdas_status(
     }))
 }
 
-/// The routes this module serves, with the lambdas' own CORS, NUL guard and
-/// request timeout: `main.rs` merges it into the content router, whose
-/// layers cover only the routes it built itself.
+/// The routes this module serves, with lamb2's CORS and the gateway's 404
+/// under `/lambdas/` ([`lambdas_http`]), the NUL guard and the request
+/// timeout: `main.rs` merges it into the content router, whose layers cover
+/// only the routes it built itself.
 pub fn router(state: SharedState) -> Router {
     let request_timeout = state.settings.request_timeout;
     let mut app = Router::new()
@@ -977,12 +979,13 @@ pub fn router(state: SharedState) -> Router {
             post(lambdas_crypto::validate_signature).layer(DefaultBodyLimit::max(256 * 1024)),
         )
         .route("/lambdas/status", get(lambdas_status))
+        .route("/lambdas/{*rest}", any(lambdas_http::not_found))
         .route("/v1/trades", get(trades::get_trades))
         .route("/v1/trades-mirror", get(trades::get_mirror_status))
         .route("/v1/trades/{id}", get(trades::get_trade))
         .layer(axum::middleware::from_fn(mirrors::stamp_copies))
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
-        .layer(axum::middleware::from_fn(cors::cors_middleware));
+        .layer(axum::middleware::from_fn(lambdas_http::cors_middleware));
     if let Some(timeout) = request_timeout {
         app = app.layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,

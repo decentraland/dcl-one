@@ -337,7 +337,7 @@ async fn post_json(router: Router, uri: &str, body: Value) -> (StatusCode, Value
 }
 
 #[tokio::test]
-async fn status_carries_version_commit_and_time_and_cors_reflects_the_origin() {
+async fn status_carries_version_commit_and_time_and_lamb2_cors() {
     let state = state_without_db();
     let (status, body) = get_json(router(state.clone()), "/lambdas/status").await;
     assert_eq!(status, StatusCode::OK);
@@ -358,7 +358,7 @@ async fn status_carries_version_commit_and_time_and_cors_reflects_the_origin() {
         resp.headers()
             .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
             .unwrap(),
-        "https://example.org"
+        "*"
     );
 }
 
