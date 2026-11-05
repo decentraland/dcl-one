@@ -58,10 +58,11 @@ serve; guest sessions work.
 
 `tooling/upstream-forks.py` writes `forks.toml` (git sources, locked revisions, crates; ahead/behind
 with `--check-upstream`) and `cargo-patches.toml` (`[patch.crates-io]` pins for
-`cargo --config rendering/bevy-explorer/cargo-patches.toml …`; Bevy stays lock-pinned) from
-`source/Cargo.lock`; `--check` fails on drift, `--verify` resolves a lock copy. The daily
+`cargo --config rendering/bevy-explorer/cargo-patches.toml …`) from `source/Cargo.lock`;
+`--check` fails on drift, `--verify` resolves a lock copy. The daily
 `bevy-explorer-upstream.yml` runs it, opens the `upstream/forks` PR and uploads the drift page
-(`tooling/upstream-drift.py`, `tooling/upstream-drift-site.py`).
+(`tooling/upstream-drift.py`, `tooling/upstream-drift-site.py`). Bevy is not among these forks:
+it is vendored at `bevy/` and changed in place ([the bevy fork](docs/guidelines/bevy-fork.md)).
 
 ## Native builds and HUD updates
 
