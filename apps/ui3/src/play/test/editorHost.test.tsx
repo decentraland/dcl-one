@@ -5,7 +5,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { act, render, renderHook, screen } from '@testing-library/react'
 import { ToastHost } from '../design'
 import userEvent from '@testing-library/user-event'
-import { editorOffered, EditorOffered } from '../features/editorHost/config'
+import { editorFeatures, editorOffered, EditorOffered } from '../features/editorHost/config'
 import { CreatePage } from '../features/editorHost/CreatePage'
 import EditorHost, { useEditorHost } from '../features/editorHost/EditorHost'
 import { type DclEditorHostV1, type EditorPackage } from '../features/editorHost/host/host'
@@ -38,7 +38,25 @@ describe('editor host', () => {
     ['an untrusted host', 'evil.example'],
     ['a lookalike of an allowed host', 'decentraland.zone.evil.example']
   ])('has no editor on %s', (_, hostname) => {
-    expect(editorOffered(hostname)).toBe(false)
+    expect(editorOffered(hostname, '?editor-features=experimental,advanced')).toBe(false)
+  })
+
+  it('offers the editor on a released host only to an entry url with editor-features=experimental', () => {
+    for (const hostname of ['decentraland.zone', 'decentraland.org']) {
+      expect(editorOffered(hostname, '')).toBe(false)
+      expect(editorOffered(hostname, '?editor')).toBe(false)
+      expect(editorOffered(hostname, '?editor-features=advanced')).toBe(false)
+      expect(editorOffered(hostname, '?editor&editor-features=experimental')).toBe(true)
+      expect(editorOffered(hostname, '?editor-features=advanced,%20experimental')).toBe(true)
+    }
+    expect(editorOffered('localhost', '')).toBe(true)
+  })
+
+  it('reads the features from the entry url, and nothing it does not name', () => {
+    expect(editorFeatures('')).toEqual({ experimental: false, advanced: false })
+    expect(editorFeatures('?editor-features=experimental')).toEqual({ experimental: true, advanced: false })
+    expect(editorFeatures('?editor-features=experimental,advanced')).toEqual({ experimental: true, advanced: true })
+    expect(editorFeatures('?editor-features=advanced-ish&editor=advanced')).toEqual({ experimental: false, advanced: false })
   })
 
   it('reads the project and the local service overrides from the entry url', async () => {
@@ -288,6 +306,8 @@ describe('editor host', () => {
   it("runs an authoritative preview's scene server beside the client, one at a time, until the preview is left", async () => {
     const { result } = renderHook(() => useEditorHost('', session))
     await act(async () => void result.current!.load().catch(() => {}))
+    // an entry url without editor-features: the editor shows the assistant alone
+    expect(host().features).toEqual({ advanced: false })
     const bridge = new BroadcastChannel(bridgeChannelName())
     bridge.onmessage = ({ data }: MessageEvent<Envelope>) => {
       const msg = data.msg

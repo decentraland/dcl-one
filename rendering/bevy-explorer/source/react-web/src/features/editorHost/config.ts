@@ -5,11 +5,12 @@ import { createContext } from 'react'
 import type { EditorRelease } from './source'
 
 /** The released package the page follows (README "Releasing the editor") and the hosts besides
- *  loopback that offer it; null = none, so a production build carries no editor at all. */
+ *  loopback that offer it, each only to an entry url with `editor-features=experimental`; null =
+ *  none, so a production build carries no editor at all. */
 export const RELEASED_EDITOR = {
   package: '@dcl-regenesislabs/web-editor',
   tag: 'latest',
-  hosts: ['decentraland.zone']
+  hosts: ['decentraland.zone', 'decentraland.org']
 } as (EditorRelease & { hosts: string[] }) | null
 
 // false folds every Create entry point out of a production build that has no release
@@ -17,8 +18,23 @@ export const EDITOR_BUILD = import.meta.env.DEV || RELEASED_EDITOR != null
 
 export const isLoopback = (hostname: string): boolean => hostname === 'localhost' || hostname === '127.0.0.1'
 
-export const editorOffered = (hostname: string): boolean =>
-  EDITOR_BUILD && (isLoopback(hostname) || (RELEASED_EDITOR?.hosts.includes(hostname) ?? false))
+/** `?editor-features=<a,b>`: what the entry url turns on. `experimental` offers the editor on a
+ *  released host; `advanced` lets the editor show its whole machinery beside the assistant. A link
+ *  can set either, so neither is a boundary: they keep the editor out of sight, nothing more. */
+export const FEATURES_PARAM = 'editor-features'
+export interface EditorFeatures {
+  experimental: boolean
+  advanced: boolean
+}
+export function editorFeatures(search: string): EditorFeatures {
+  const named = new Set((new URLSearchParams(search).get(FEATURES_PARAM) ?? '').split(',').map((name) => name.trim()))
+  return { experimental: named.has('experimental'), advanced: named.has('advanced') }
+}
+
+/** `search`: the ENTRY url's query. */
+export const editorOffered = (hostname: string, search: string): boolean =>
+  EDITOR_BUILD &&
+  (isLoopback(hostname) || ((RELEASED_EDITOR?.hosts.includes(hostname) ?? false) && editorFeatures(search).experimental))
 
 /** Whether the Create entry points (menu top bar, sidebar rail) are offered. */
 export const EditorOffered = createContext(false)

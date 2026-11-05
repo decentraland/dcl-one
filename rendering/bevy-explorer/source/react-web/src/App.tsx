@@ -57,7 +57,7 @@ import { openRealmError } from './features/error/RealmErrorModal'
 import { DIALOG_TITLE, isDialogSource } from './features/error/fatalError'
 import { openEntryParamsDialog } from './features/gate/EntryParamsDialog'
 import { unrecognisedEntryParams } from './lib/entryParams'
-import { EDITOR_BUILD, editorOffered, EditorOffered } from './features/editorHost/config'
+import { EDITOR_BUILD, editorOffered, EditorOffered, FEATURES_PARAM } from './features/editorHost/config'
 // The scene editor's host and Create page: loaded once Create is first opened. lazy() keeps a
 // failed load, so a crash swaps in a fresh one for the next open.
 const loadEditorHost = () => lazy(() => import('./features/editorHost/EditorHost'))
@@ -103,12 +103,12 @@ const GATE_REASON = gateReason()
 // front-end doesn't recognise get an interstitial before anything boots — captured at module
 // scope, from the ENTRY url, so a later history.replaceState can't retire the warning.
 const UNTRUSTED_PARAMS = untrustedLaunchParams({ native: MODE === 'native' })
-const EDITOR = EDITOR_BUILD && MODE === 'engine' && editorOffered(location.hostname)
+const EDITOR = EDITOR_BUILD && MODE === 'engine' && editorOffered(location.hostname, location.search)
 // the ENTRY url: the engine's url sync rewrites it
 const ENTRY_SEARCH = location.search
 // Entry-url params nothing reads (lib/entryParams.ts) — told to the user once the HUD is up.
 const UNRECOGNISED_PARAMS = unrecognisedEntryParams(params, [
-  ...(EDITOR_BUILD && EDITOR ? ['editor', 'editor-projects', 'editor-worlds'] : []),
+  ...(EDITOR_BUILD && EDITOR ? ['editor', 'editor-projects', 'editor-worlds', FEATURES_PARAM] : []),
   // the benchmark's switches are known only where they do something (lib/bootMode.ts)
   ...(benchmarkSwitchesHonoured() ? BENCHMARK_PARAMS : [])
 ])
