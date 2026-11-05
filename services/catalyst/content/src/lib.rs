@@ -87,6 +87,7 @@ pub mod content_get_limit;
 mod deployments;
 pub mod entity_thumbnail;
 mod failed_deployments;
+mod fixed_windows;
 pub mod get_content;
 mod pointer_changes;
 pub mod routing;
