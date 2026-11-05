@@ -11,7 +11,7 @@ import { Rail } from './Rail'
 import { HeaderButton } from './HeaderButton'
 import { OptionMenu } from './OptionMenu'
 import { HintsButton, KeyCap } from './HintsButton'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { ControlButton } from './ControlButton'
 import { Tooltip } from './Tooltip'
 import { Toggle } from './Toggle'
@@ -27,7 +27,8 @@ import { DclLogo } from './DclLogo'
 import { Avatar } from './Avatar'
 import { WearableCard, type Rarity } from './WearableCard'
 import { EquippedItemCard } from './EquippedItemCard'
-import { ShopItemCard } from './ShopItemCard'
+import { ShopItemCard, ShopItemSkeleton } from './ShopItemCard'
+import { ScrollThumb } from './ScrollThumb'
 import { showConfirm, showDialog, PopupHost } from './popups'
 import { Icon, type IconName } from './icons'
 import { ChatBubble, DaySeparator, MemberRow } from '../features/chat/Chat'
@@ -562,6 +563,10 @@ export function Showcase(): React.JSX.Element {
         </div>
       </Section>
 
+      <Section title="ShopItemSkeleton · ScrollThumb (Shop grid)">
+        <ShowcaseScroller />
+      </Section>
+
       <Section title="ShopItemCard (Shop grid)">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 197px)', gap: 20 }}>
           {(['epic', 'legendary', 'mythic', 'base'] as Rarity[]).map((r, i) => (
@@ -601,6 +606,21 @@ export function Showcase(): React.JSX.Element {
           </div>
         </div>
       </Section>
+    </div>
+  )
+}
+
+// A short scroller with the Shop's thumb beside it, over loading cards.
+function ShowcaseScroller(): React.JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  return (
+    <div style={{ position: 'relative', width: 440, height: 320 }}>
+      <div ref={ref} style={{ height: '100%', overflowY: 'auto', scrollbarWidth: 'none', display: 'grid', gridTemplateColumns: 'repeat(2, 197px)', gap: 20 }}>
+        {Array.from({ length: 6 }, (_, i) => (
+          <ShopItemSkeleton key={i} />
+        ))}
+      </div>
+      <ScrollThumb target={ref} className={undefined} />
     </div>
   )
 }

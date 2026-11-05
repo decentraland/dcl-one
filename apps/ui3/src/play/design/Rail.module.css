@@ -89,3 +89,22 @@
   width: 24px;
   background: var(--rail-dot-active);
 }
+
+/* The Shop home's dots: a 40px pill and 14px dots, 30px under the cards. */
+.shop {
+  padding-bottom: 54px;
+}
+.shop .dots {
+  bottom: 10px;
+  gap: 12px;
+  height: 14px;
+}
+.shop .dot {
+  width: 14px;
+  height: 14px;
+  background: var(--divider-strong);
+}
+.shop .dotActive {
+  width: 40px;
+  background: var(--brand);
+}

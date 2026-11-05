@@ -2,7 +2,7 @@
 // the Trending and New rows, each with a way to the full catalogue.
 
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
-import { ChevronRight, Rail } from '../../design'
+import { ChevronRight, Rail, ShopItemSkeleton } from '../../design'
 import { useNewest, useShopOutfits, useTrending, type OutfitSummary } from './homeQuery'
 import styles from './ShopHome.module.css'
 
@@ -26,7 +26,7 @@ export function ShopHome({
   return (
     <div className={styles.home}>
       {outfits.data != null && outfits.data.length > 0 && (
-        <Rail perPage={4} gap={20} className={styles.outfits}>
+        <Rail variant="shop" perPage={4} gap={20} className={styles.outfits}>
           {outfits.data.map((o) => (
             <button
               key={o.id}
@@ -73,7 +73,7 @@ function HomeRow({
       {pending ? (
         <div className={styles.skeletons} aria-busy="true">
           {Array.from({ length: 6 }, (_, i) => (
-            <span key={i} className={styles.skeleton} />
+            <ShopItemSkeleton key={i} />
           ))}
         </div>
       ) : (

@@ -15,7 +15,7 @@ import { saleDiscountPct } from '../../../shop/discovery/lib/sale'
 import { itemUrn } from '../../../shop/detail/lib/urn'
 import { CHAIN } from '../../../shop/model/chain'
 import { SIGNED_OUT } from '../../../shop/model/settlement'
-import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, SearchField, ShopItemCard, showConfirm, Spinner, Tabs, type TabItem } from '../../design'
+import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, ShopItemCard, ShopItemSkeleton, showConfirm, Spinner, Tabs, type TabItem } from '../../design'
 import type { PreviewFocus, Wearable } from '../../engine/protocol'
 import { siteUrl } from '../../lib/baseDomain'
 import { shortAddr } from '../../lib/identity'
@@ -100,6 +100,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   const [selected, setSelected] = useState<CatalogItem | null>(null)
   const [tryingOn, setTryingOn] = useState<string | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
+  const homeScroller = useRef<HTMLDivElement>(null)
 
   // Any change of what is listed starts again at its first page, at the top.
   const patch = useCallback((next: Partial<CatalogueFilters>) => {
@@ -268,13 +269,14 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
           </div>
           {grid.isPending && section !== 'all' && (
             <div className={styles.avatarLoading} role="status" aria-label="Loading the avatar">
-              <Spinner />
+              <Spinner size={72} />
             </div>
           )}
           <section className={styles.content} aria-label={section === 'all' ? 'Shop home' : section === 'emotes' ? 'Emotes' : 'Wearables'}>
             {section === 'all' ? (
-              <div className={`${styles.body} ${selected != null ? styles.withPanel : ''}`.trim()}>
-                <div className={styles.scroller}>
+              <div className={`${styles.body} ${styles.homeBody} ${selected != null ? styles.withPanel : ''}`.trim()}>
+                <div className={styles.scrollWrap}>
+                <div ref={homeScroller} className={styles.scroller}>
                   <ShopHome
                     enabled={shop.open}
                     creatorSales={creatorSales}
@@ -292,6 +294,8 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                       />
                     )}
                   />
+                </div>
+                <ScrollThumb target={homeScroller} className={styles.thumb} />
                 </div>
                 {selected != null && selectedPrice != null && (
                   <ShopItemPanel key={selected.id} item={selected} price={selectedPrice} urn={tryOnUrn(selected)} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(selected)} />
@@ -322,11 +326,12 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
               </div>
             )}
             <div className={`${styles.body} ${selected != null ? styles.withPanel : ''}`.trim()}>
+              <div className={styles.scrollWrap}>
               <div ref={scroller} className={styles.scroller}>
                 {grid.isPending ? (
                   <div className={styles.grid} role="status" aria-label="Loading the catalogue">
                     {Array.from({ length: 18 }, (_, i) => (
-                      <span key={i} className={styles.skeleton} />
+                      <ShopItemSkeleton key={i} />
                     ))}
                   </div>
                 ) : grid.isError && items.length === 0 ? (
@@ -368,6 +373,8 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                     <Pager variant="shop" className={styles.pager} page={page} count={pageCount(total)} onChange={setPage} />
                   </>
                 )}
+              </div>
+              <ScrollThumb target={scroller} className={styles.thumb} />
               </div>
               {selected != null && selectedPrice != null && (
                 <ShopItemPanel key={selected.id} item={selected} price={selectedPrice} urn={tryOnUrn(selected)} onClose={closePanel} onOpenOnWeb={() => void openOnWeb(selected)} />

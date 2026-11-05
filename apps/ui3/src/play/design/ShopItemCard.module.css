@@ -53,7 +53,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  aspect-ratio: 197 / 203;
+  height: 203px;
   overflow: hidden;
   border-radius: var(--r-lg);
   background-size: cover;
@@ -187,4 +187,39 @@
 .hasActions:hover .actions,
 .hasActions:focus-within .actions {
   display: flex;
+}
+
+/* Loading: a dark card with the tile and two bars in the purple ramp. */
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  height: 299px;
+  border-radius: var(--r-md) var(--r-md) var(--r-xl) var(--r-xl);
+  background: var(--black-40);
+}
+.skeletonTile,
+.skeletonBar {
+  background: linear-gradient(270deg, color-mix(in srgb, var(--slot-edge) 30%, transparent), color-mix(in srgb, var(--slot-edge) 80%, transparent));
+}
+.skeletonTile {
+  flex: none;
+  height: 203px;
+  margin-bottom: -14px;
+  border-radius: var(--r-md);
+}
+.skeletonCaption {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  height: 80px;
+  margin: 22px 11px 12px;
+}
+.skeletonBar {
+  height: 20px;
+  border-radius: var(--r-pill);
+}
+.skeletonBarShort {
+  width: 140px;
+  height: 14px;
 }

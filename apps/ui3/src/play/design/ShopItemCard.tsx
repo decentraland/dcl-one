@@ -72,3 +72,16 @@ export function ShopItemCard({
     </div>
   )
 }
+
+/** A ShopItemCard's place while the grid loads: the tile and two caption bars. */
+export function ShopItemSkeleton(): React.JSX.Element {
+  return (
+    <span className={styles.skeleton} aria-hidden="true">
+      <span className={styles.skeletonTile} />
+      <span className={styles.skeletonCaption}>
+        <span className={styles.skeletonBar} />
+        <span className={`${styles.skeletonBar} ${styles.skeletonBarShort}`} />
+      </span>
+    </span>
+  )
+}

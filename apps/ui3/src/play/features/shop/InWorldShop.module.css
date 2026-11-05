@@ -96,8 +96,8 @@
 /* Over the avatar while the Shop's first page loads, where the preview avatar will stand. */
 .avatarLoading {
   position: absolute;
-  left: 260px;
-  top: 460px;
+  left: 286px;
+  top: 470px;
   transform: translate(-50%, -50%);
 }
 
@@ -146,25 +146,32 @@
   background: var(--panel);
 }
 
-/* The HUD's list scrollbar (Friends, Chat): the standard property, which the compositor paints; a
-   ::-webkit-scrollbar is painted on the main thread the engine keeps busy. */
 .body {
   display: flex;
   flex: 1;
   gap: 20px;
   min-height: 0;
 }
+.scrollWrap {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+/* The design's own scroll thumb (ScrollThumb) stands in for the native bar, past the cards' edge. */
+.thumb {
+  right: -13px;
+}
 .scroller {
   flex: 1;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
+  scrollbar-width: none;
   /* Room for a hovered card's ring, taken back so the grid starts where the design's does. */
   margin-left: -4px;
-  /* Six 197px columns and their gaps fill what is left beside the scrollbar's gutter. */
+  /* Six 197px columns and their gaps fill what is left beside the thumb's gutter. */
   padding: 4px 13px 20px 4px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--divider-strong) transparent;
 }
 .grid {
   display: grid;
@@ -176,27 +183,21 @@
 .stale {
   opacity: 0.5;
 }
-.skeleton {
-  aspect-ratio: 197 / 299;
-  border-radius: var(--r-lg);
-  background: linear-gradient(180deg, var(--skeleton) 0%, var(--skeleton) 66%, var(--black-40) 66%, var(--black-40) 100%);
-}
-.more {
-  display: flex;
-  justify-content: center;
-  padding: 20px 0;
-}
 /* With the item panel open the grid narrows to four columns and the panel sits at the right, 8px in. */
 .withPanel .grid {
   grid-template-columns: repeat(4, 197px);
   column-gap: 26px;
 }
-.withPanel .scroller {
+.withPanel .scrollWrap {
   flex: none;
   width: 883px;
 }
 .withPanel > aside {
   margin: 0 8px 0 auto;
+}
+/* Over the home the panel starts lower, level with the carousel's top band. */
+.homeBody.withPanel > aside {
+  margin-top: 48px;
 }
 .pager {
   justify-content: center;

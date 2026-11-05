@@ -15,12 +15,15 @@ function pageStride(el: HTMLDivElement, perPage: number, gap: number): number {
 export function Rail({
   perPage,
   gap,
+  variant = 'default',
   children,
   className
 }: {
   perPage: number
   /** Space between cards, px. */
   gap: number
+  /** `shop`: the Shop home's larger page dots, set further below the cards. */
+  variant?: 'default' | 'shop'
   children: React.ReactNode
   className?: string
 }): React.JSX.Element {
@@ -59,7 +62,7 @@ export function Rail({
   }, [count])
 
   return (
-    <div className={`${styles.rail} ${className ?? ''}`.trim()}>
+    <div className={`${styles.rail} ${variant === 'shop' ? styles.shop : ''} ${className ?? ''}`.trim()}>
       <div ref={viewport} className={styles.viewport}>
         <div className={styles.track} style={{ gap }}>
           {children}
