@@ -1160,8 +1160,17 @@ async fn undetermined_world_token_routes_request_retry() {
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(response.headers()["retry-after"], "1");
         let (_, body) = body_json(response).await;
-        assert_eq!(body["ok"], false);
-        assert_eq!(body["error"], body["message"]);
+        let reason = "World access could not be decided; retry shortly.";
+        // WCS's world comms handler puts the reason in `error`; the adapter route keeps the label.
+        let error = if path.starts_with("/get-comms-adapter") {
+            "Service Unavailable"
+        } else {
+            reason
+        };
+        assert_eq!(
+            body,
+            serde_json::json!({ "error": error, "message": reason })
+        );
     }
 }
 
@@ -2184,7 +2193,21 @@ async fn the_livekit_webhook_verifies_always_and_feeds_the_worlds_sink_verified_
         )
         .with_room_event_sink(sink.clone()),
     );
-    let app = super::router(state);
+    let app = super::router(state.clone());
+    // The worlds host's copy (`serve` nests it under `/worlds-content-server`).
+    let worlds_app =
+        axum::Router::new().nest("/worlds-content-server", super::webhook_router(state));
+    let worlds_post = |authorization: Option<String>| {
+        let mut req = Request::post("/worlds-content-server/livekit-webhook")
+            .header("content-type", "application/webhook+json");
+        if let Some(a) = authorization {
+            req = req.header("authorization", a);
+        }
+        let req = req.body(Body::from(body.clone())).unwrap();
+        let app = worlds_app.clone();
+        async move { app.oneshot(req).await.unwrap().status() }
+    };
+    assert_eq!(worlds_post(None).await, StatusCode::UNAUTHORIZED);
 
     assert_eq!(
         post_webhook(&app, None, &body).await,
@@ -2214,6 +2237,10 @@ async fn the_livekit_webhook_verifies_always_and_feeds_the_worlds_sink_verified_
             "world-w.dcl.eth".to_string(),
             "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()
         )]
+    );
+    assert_eq!(
+        worlds_post(Some(webhook_jwt(&body, &key, &secret))).await,
+        StatusCode::OK
     );
 
     let dev = Settings {
@@ -2888,6 +2915,73 @@ async fn the_island_feed_needs_no_switch() {
     .await
     .expect("the announced session is looked up");
     jobs.shutdown(Duration::from_secs(5)).await;
+}
+
+/// WCS `isWorldValid`: an unknown world, or one blocked past its grace, is 404
+/// on every mint, not a retryable 503.
+#[tokio::test]
+async fn world_mints_answer_404_for_an_unknown_or_blocked_world() {
+    use crate::access::WorldAdmission;
+    use crate::rooms::ResolvedRoom;
+    use crate::world_identity::{RealmId, WorldName};
+    let world = WorldName::parse("alice.dcl.eth").unwrap();
+    let handshake = r#"{"signer":"dcl:explorer","intent":"dcl:explorer:comms-handshake"}"#;
+    for (admission, expected) in [
+        (WorldAdmission::Unknown, StatusCode::NOT_FOUND),
+        (WorldAdmission::Blocked, StatusCode::NOT_FOUND),
+        (
+            WorldAdmission::Open(crate::access::AccessType::Unrestricted),
+            StatusCode::OK,
+        ),
+    ] {
+        let scenes = StubScenes {
+            room: Ok(ResolvedRoom {
+                realm: RealmId::World(world.clone()),
+                scene_id: None,
+                deployment: None,
+                room: crate::rooms::worlds_service_world_room(&world),
+            }),
+            ..Default::default()
+        };
+        let state = Arc::new(
+            CommsState::new(
+                lazy_pool(),
+                Outbound::for_tests(),
+                Settings::for_tests(),
+                None,
+                None,
+                Arc::new(StubPolicy {
+                    admission: Some(admission),
+                    ..Default::default()
+                }),
+                Arc::new(scenes),
+                Arc::new(crate::presence::Presence::new()),
+                Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+            )
+            .with_ban_status(Arc::new(super::moderation::test_support::StubBanStatus(
+                Ok(None),
+            ))),
+        );
+        let app = super::admission::world_mint::router(state.clone());
+        for (path, metadata) in [
+            ("/worlds/alice.dcl.eth/comms", "{}"),
+            ("/get-comms-adapter/world-alice.dcl.eth", handshake),
+        ] {
+            state.presence.complete_empty_fixture();
+            let mut request = Request::post(path).body(Body::empty()).unwrap();
+            request
+                .headers_mut()
+                .extend(signed(KEY, "post", path, metadata).await);
+            let (status, body) = body_json(app.clone().oneshot(request).await.unwrap()).await;
+            assert_eq!(status, expected, "{admission:?} {path}: {body}");
+            if expected == StatusCode::NOT_FOUND {
+                assert_eq!(
+                    body["message"], "World \"alice.dcl.eth\" is invalid or blocked.",
+                    "{body}"
+                );
+            }
+        }
+    }
 }
 
 /// Signed metadata is checked after cryptographic verification.

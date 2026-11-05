@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { WalletStatsSchema } from "../generated-schemas/worlds";
+
 const NameSchema = z.object({
   name: z.string(),
   contractAddress: z.string().nullish().transform((v) => v ?? null),
@@ -22,14 +24,7 @@ const ManagedWorldSchema = z.object({
 });
 export type ManagedWorld = z.infer<typeof ManagedWorldSchema>;
 
-export const WalletStatsSchema = z.object({
-  wallet: z.string(),
-  dclNames: z.array(z.object({ name: z.string(), size: z.string() })),
-  ensNames: z.array(z.object({ name: z.string(), size: z.string() })),
-  usedSpace: z.string(),
-  maxAllowedSpace: z.string(),
-  blockedSince: z.string().nullish().transform((v) => v ?? null),
-});
+export { WalletStatsSchema };
 export type WalletStats = z.infer<typeof WalletStatsSchema>;
 
 const FILTERS = ["published", "unpublished"] as const;

@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Avatar, Button, EquippedItemCard, Icon, Pencil, Tabs, Tooltip, showConfirm, type EquippedItemCardProps, type TabItem } from '../../design'
+import { nativeProfileImage } from '../../lib/baseDomain'
 import { CategoryIcon } from '../backpack/categoryIcons'
 import { catalystThumbUrl, shortAddr, splitName, userColor } from '../../lib/identity'
 import type { Badge, Emote, Profile, ProfileEdit, Wearable } from '../../engine/protocol'
@@ -404,7 +405,7 @@ export function ProfilePassport({
             {tab === 'badges' && !editMode && selectedBadge != null ? (
               <BadgeDetail badge={selectedBadge} tierId={selectedTier} isSelf={isSelf} onSelectTier={(tier) => setPicked({ badge: selectedBadge.id, tier })} />
             ) : profile.bodyImage ? (
-              <img className={styles.avatarImg} src={profile.bodyImage} alt={base} />
+              <img className={styles.avatarImg} src={nativeProfileImage(profile.bodyImage)} alt={base} />
             ) : (
               <Avatar src={profile.picture} name={base} color={userColor(profile.address, profile.name, profile.hasClaimedName, profile.nameColor)} size={180} status="online" />
             )}
