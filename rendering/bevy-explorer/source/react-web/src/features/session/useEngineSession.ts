@@ -604,6 +604,9 @@ export interface ChatState {
 }
 
 const MAX_CHAT_LINES = 200
+// The least time between two notification pings of one conversation and kind: a flood of lines
+// is one sound, not one per line.
+const PING_INTERVAL_MS = 400
 
 // Render-settle: after a scene first reports loaded, hold the loader at least this long for the
 // engine to render the first frame (so the world isn't revealed as black models), and at most this
@@ -1093,6 +1096,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const answeredPermissions = useRef(new Map<string, boolean | null>())
   const [worldPassword, setWorldPassword] = useState<WorldPasswordRequestMessage | null>(null)
   const chatId = useRef(0)
+  // when each conversation last pinged, per kind of ping
+  const pingAtRef = useRef<Map<string, number>>(new Map())
+  // the lines appended to a shown tab since its history was last read, by conversation: a read
+  // queued before such a line was stored answers without it
+  const appendedRef = useRef<Map<string, Set<string>>>(new Map())
   // The speed to restore when Time progression is turned back on (the last running speed seen).
   const skyboxDaySpeed = useRef(SKYBOX_DAY_SPEED)
   // Catalog fetches done once per session (cache; relays re-emit on change).
@@ -1173,7 +1181,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           const system = msg.chat.sender === '' || msg.chat.sender.toLowerCase() === 'system'
           const mentioned = !own && !system && me != null && mentionsName(msg.chat.message, mentionName(me.name, me.address, me.hasClaimedName))
           const ping = (channel: string): void => {
-            if (!own && !system && shouldPing(channel, mentioned)) driver.send({ kind: 'playUiSound', sound: mentioned ? 'chatMention' : 'chatMessage' })
+            if (own || system || !shouldPing(channel, mentioned)) return
+            const slot = `${channel}|${mentioned ? 'mention' : 'message'}`
+            const now = Date.now()
+            if (now - (pingAtRef.current.get(slot) ?? -Infinity) < PING_INTERVAL_MS) return
+            pingAtRef.current.set(slot, now)
+            driver.send({ kind: 'playUiSound', sound: mentioned ? 'chatMention' : 'chatMessage' })
           }
           const communityId = communityIdOf(msg.chat.channel)
           if (communityId != null) {
@@ -1194,6 +1207,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
               return [c, ...prev.slice(0, i), ...prev.slice(i + 1)]
             })
             if (shown) {
+              if (msg.chat.messageId !== '') {
+                const appended = appendedRef.current.get(key) ?? new Set<string>()
+                appended.add(msg.chat.messageId)
+                appendedRef.current.set(key, appended)
+              }
               setDmLines((prev) => {
                 const lines = prev[key] ?? []
                 const id = lines.length > 0 ? lines[lines.length - 1].id + 1 : 0
@@ -1247,7 +1265,17 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             ts: e.receivedAt,
             reactions: e.reactions
           }))
-          setDmLines((prev) => ({ ...prev, [key]: lines }))
+          // a line appended while this read was pending, and stored after the read was queued, is
+          // not in the answer: it stays behind the stored rows until a later read returns it
+          const appended = appendedRef.current.get(key)
+          setDmLines((prev) => {
+            if (appended == null || appended.size === 0) return { ...prev, [key]: lines }
+            const stored = new Set(lines.map((l) => l.messageId))
+            const pending = (prev[key] ?? []).filter((l) => appended.has(l.messageId) && !stored.has(l.messageId))
+            appendedRef.current.set(key, new Set(pending.map((l) => l.messageId)))
+            const last = lines.length > 0 ? lines[lines.length - 1].id : -1
+            return { ...prev, [key]: [...lines, ...pending.map((l, i) => ({ ...l, id: last + 1 + i }))].slice(-MAX_CHAT_LINES) }
+          })
           break
         }
         case 'chatReaction': {

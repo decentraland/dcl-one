@@ -76,12 +76,22 @@ export async function dmHistoryDelete(account, partner) {
   })
 }
 
-// keeps only the last `keep` records of a conversation (ids are arrival order)
+// keeps only the last `keep` messages of a conversation and every record after the oldest of
+// them (the reactions to them); ids are arrival order
 export async function dmHistoryTrim(account, partner, keep) {
   await withDb(async (db) => {
     const tx = db.transaction(MESSAGES, 'readwrite')
-    const keys = await request(tx.objectStore(MESSAGES).index(BY_CONVERSATION).getAllKeys(conversationKey(account, partner)))
-    for (const key of keys.slice(0, Math.max(0, keys.length - keep))) tx.objectStore(MESSAGES).delete(key)
+    const rows = await request(tx.objectStore(MESSAGES).index(BY_CONVERSATION).getAll(conversationKey(account, partner)))
+    // the oldest message to keep is the `keep`-th from the end; fewer messages than that keeps all
+    let seen = 0
+    let firstKept = keep === 0 ? rows.length : 0
+    for (let i = rows.length - 1; i >= 0 && keep > 0; i--) {
+      if (rows[i].reaction == null && ++seen === keep) {
+        firstKept = i
+        break
+      }
+    }
+    for (const row of rows.slice(0, firstKept)) tx.objectStore(MESSAGES).delete(row.id)
     await complete(tx)
   })
 }

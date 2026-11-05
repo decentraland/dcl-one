@@ -48,7 +48,7 @@ enum DmStoreOp {
         account: String,
         partner: String,
     },
-    /// Keeps the last `keep` records of a conversation.
+    /// Keeps the last `keep` messages of a conversation, and the reactions to them.
     Trim {
         account: String,
         partner: String,
@@ -56,10 +56,10 @@ enum DmStoreOp {
     },
 }
 
-/// The most records a community's history keeps: what the HUD shows of a conversation
-/// (`MAX_CHAT_LINES`). A busy community would otherwise grow its store without limit, each line
-/// decrypted again on every read; unity-explorer keeps community history in memory only. A DM
-/// history is not trimmed.
+/// The most messages a community's history keeps, with the reactions to them: what the HUD shows
+/// of a conversation (`MAX_CHAT_LINES`). A busy community would otherwise grow its store without
+/// limit, each line decrypted again on every read; unity-explorer keeps community history in
+/// memory only. A DM history is not trimmed.
 const MAX_COMMUNITY_HISTORY: usize = 200;
 
 /// Pending store operations and the one in flight.
@@ -287,23 +287,26 @@ pub fn record_dms(
         ));
     }
 
-    // a community's history is trimmed behind its appends, once per community per frame
-    let mut trimmed = Vec::<String>::new();
+    // a community's history is trimmed behind the frame's appends, once per community
+    let mut communities = Vec::<String>::new();
     for (partner, entry) in entries {
-        let community = partner.starts_with(comms::community_chat::CHANNEL_PREFIX);
+        if partner.starts_with(comms::community_chat::CHANNEL_PREFIX)
+            && !communities.contains(&partner)
+        {
+            communities.push(partner.clone());
+        }
         store.queue.push_back(DmStoreOp::Append {
             account: account.clone(),
-            partner: partner.clone(),
+            partner,
             entry,
         });
-        if community && !trimmed.contains(&partner) {
-            store.queue.push_back(DmStoreOp::Trim {
-                account: account.clone(),
-                partner: partner.clone(),
-                keep: MAX_COMMUNITY_HISTORY,
-            });
-            trimmed.push(partner);
-        }
+    }
+    for partner in communities {
+        store.queue.push_back(DmStoreOp::Trim {
+            account: account.clone(),
+            partner,
+            keep: MAX_COMMUNITY_HISTORY,
+        });
     }
 }
 

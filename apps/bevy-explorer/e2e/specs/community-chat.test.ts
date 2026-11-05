@@ -63,6 +63,7 @@ scenario("a member's community card opens its chat, whose tab and title bar name
   assert.ok(await explorer.hud.isVisible(OPTIONS), 'the community title bar should offer the conversation options')
   const state = await explorer.communityState()
   assert.ok(state.channelCount > 0, 'the engine should listen to the opened community')
+  assert.ok(state.routerInRoom, 'the message router should be in the private chat room, or nothing sent can reach anyone')
 
   // a message typed in the community's chat is counted as a community message sent
   const text = `community hello ${Date.now()}`

@@ -109,8 +109,31 @@ pub async fn dm_history_read(account: &str, partner: &str) -> Result<Vec<DmHisto
     read_records(&key, &path)
 }
 
-/// Keeps only the last `keep` records of a conversation. Records are kept as stored, so no key
-/// is needed to count them.
+/// The stored lines to keep so that the last `keep` messages stay, with every record after the
+/// oldest of them (the reactions to them); `None` when nothing has to go. A line that does not
+/// decrypt to a record counts as a message, so a damaged line never drops its neighbours.
+fn trimmed_lines(key: &[u8; 32], lines: &[String], keep: usize) -> Option<Vec<String>> {
+    let is_message = |line: &String| {
+        decrypt_record(key, line)
+            .and_then(|plain| serde_json::from_slice::<DmHistoryEntry>(&plain).ok())
+            .is_none_or(|entry| entry.reaction.is_none())
+    };
+    if keep == 0 {
+        return (!lines.is_empty()).then(Vec::new);
+    }
+    // the oldest message to keep: the `keep`-th from the end
+    let mut seen = 0;
+    let first_kept = lines.iter().rposition(|line| {
+        if !is_message(line) {
+            return false;
+        }
+        seen += 1;
+        seen == keep
+    })?;
+    (first_kept > 0).then(|| lines[first_kept..].to_vec())
+}
+
+/// Keeps only the last `keep` messages of a conversation, and the reactions to them.
 pub async fn dm_history_trim(account: &str, partner: &str, keep: usize) -> Result<(), String> {
     let key = key(account);
     let path = account_dir(&key)?.join(hashed_name(&key, partner));
@@ -124,13 +147,12 @@ pub async fn dm_history_trim(account: &str, partner: &str, keep: usize) -> Resul
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e.to_string()),
     };
-    if lines.len() <= keep {
+    let Some(kept) = trimmed_lines(&key, &lines, keep) else {
         return Ok(());
-    }
-    let kept = lines[lines.len() - keep..].join("\n") + "\n";
+    };
     // written whole, then renamed over the old file, so a crash leaves one or the other
     let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, kept).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, kept.join("\n") + "\n").map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
 }
 
@@ -142,5 +164,63 @@ pub async fn dm_history_delete(account: &str, partner: &str) -> Result<(), Strin
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e.to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::DmHistoryReaction;
+
+    fn message(key: &[u8; 32], n: u32) -> String {
+        let entry = DmHistoryEntry {
+            from: "0xa".to_owned(),
+            message: format!("m{n}"),
+            received_at: n as f64,
+            sent_at: Some(n as f64),
+            reaction: None,
+        };
+        encrypt_record(key, &serde_json::to_vec(&entry).unwrap())
+    }
+
+    fn reaction(key: &[u8; 32], to: u32) -> String {
+        let entry = DmHistoryEntry {
+            from: "0xb".to_owned(),
+            message: String::new(),
+            received_at: to as f64 + 0.5,
+            sent_at: None,
+            reaction: Some(DmHistoryReaction {
+                message_id: format!("0xa:{to}"),
+                emoji: "\u{1f44d}".to_owned(),
+                remove: false,
+            }),
+        };
+        encrypt_record(key, &serde_json::to_vec(&entry).unwrap())
+    }
+
+    #[test]
+    fn the_trim_keeps_the_last_messages_and_their_reactions() {
+        let key = key("0xaccount");
+        // m1 r1 m2 r2 r2 m3 r3 m4: keeping 2 messages keeps m3 r3 m4, and orphans r1 r2 go
+        let lines = vec![
+            message(&key, 1),
+            reaction(&key, 1),
+            message(&key, 2),
+            reaction(&key, 2),
+            reaction(&key, 2),
+            message(&key, 3),
+            reaction(&key, 3),
+            message(&key, 4),
+        ];
+        assert_eq!(trimmed_lines(&key, &lines, 2), Some(lines[5..].to_vec()));
+        assert_eq!(trimmed_lines(&key, &lines, 4), None);
+        assert_eq!(trimmed_lines(&key, &lines, 0), Some(Vec::new()));
+        // a line that is not a record counts as a message
+        let mut with_junk = lines.clone();
+        with_junk.push("not base64!".to_owned());
+        assert_eq!(
+            trimmed_lines(&key, &with_junk, 1),
+            Some(vec!["not base64!".to_owned()])
+        );
     }
 }

@@ -407,7 +407,12 @@ fn participant_payload(
     };
     let identity = identity.to_string();
     let now = time.elapsed_secs_f64();
-    if !rate_limiter.allow(*room, &identity, now) {
+    let router = message_router_identity();
+    // the router relays every community's traffic (itself limiting each author to a few
+    // packets a second), so its packets are limited per author below, not as one sender: a burst
+    // in one community must not cost the others their lines
+    let from_router = identity.eq_ignore_ascii_case(&router);
+    if !from_router && !rate_limiter.allow(*room, &identity, now) {
         stats.dropped.rate_limited += 1;
         return;
     }
@@ -431,7 +436,6 @@ fn participant_payload(
 
     if let Some(id) = topic.as_deref().and_then(community_id) {
         let id = id.to_ascii_lowercase();
-        let router = message_router_identity();
         match message {
             rfc4::packet::Message::Chat(chat) => {
                 let Some(from) = resolve_author(&identity, &router, chat.forwarded_from.as_deref())
@@ -440,13 +444,18 @@ fn participant_payload(
                     debug!(target: "comms::private_chat", "dropping community message from {identity} ({:?})", chat.forwarded_from);
                     return;
                 };
+                // the local user's own line is recorded as it is sent; the router does not echo
+                // it, and one that did must not be taken for a line to show, store or ping
+                if from == me {
+                    debug!(target: "comms::private_chat", "dropping an echo of the local user's community message");
+                    return;
+                }
                 if !channels.contains(&id) {
                     stats.dropped.not_member += 1;
                     debug!(target: "comms::private_chat", "dropping message on community {id}, not listening");
                     return;
                 }
-                // the router's window above is shared by every community message; this one is
-                // the author's own, as unity-explorer limits
+                // per author, as unity-explorer limits
                 if !rate_limiter.allow(*room, &format!("{CHANNEL_PREFIX}{from:#x}"), now) {
                     stats.dropped.rate_limited += 1;
                     return;
@@ -470,8 +479,18 @@ fn participant_payload(
                     debug!(target: "comms::private_chat", "dropping community reaction from {identity} ({})", reaction.address);
                     return;
                 };
+                // the local user's reactions are sent from the same event stream this writes to:
+                // an echo of one would be sent again, so it is dropped here
+                if from == me {
+                    debug!(target: "comms::private_chat", "dropping an echo of the local user's community reaction");
+                    return;
+                }
                 if !channels.contains(&id) {
                     stats.dropped.not_member += 1;
+                    return;
+                }
+                if !rate_limiter.allow(*room, &format!("{CHANNEL_PREFIX}{from:#x}"), now) {
+                    stats.dropped.rate_limited += 1;
                     return;
                 }
                 if reaction.message_id.is_empty()
@@ -902,21 +921,65 @@ mod tests {
         (world, room)
     }
 
-    fn community_chat(from: &str, forwarded_from: Option<&str>) -> ParticipantPayload {
+    fn payload(from: &str, message: rfc4::packet::Message, topic: &str) -> ParticipantPayload {
         let packet = rfc4::Packet {
-            message: Some(rfc4::packet::Message::Chat(rfc4::Chat {
-                message: "hello".to_owned(),
-                timestamp: 1.0,
-                forwarded_from: forwarded_from.map(str::to_owned),
-            })),
+            message: Some(message),
             protocol_version: 100,
         };
         ParticipantPayload {
             room: Entity::PLACEHOLDER,
             identity: ParticipantIdentity(from.to_owned()),
             payload: Arc::new(packet.encode_to_vec()),
-            topic: Some(channel_for(COMMUNITY)),
+            topic: Some(topic.to_owned()),
         }
+    }
+
+    fn community_chat(from: &str, forwarded_from: Option<&str>) -> ParticipantPayload {
+        community_chat_at(from, forwarded_from, 1.0)
+    }
+
+    fn community_chat_at(
+        from: &str,
+        forwarded_from: Option<&str>,
+        timestamp: f64,
+    ) -> ParticipantPayload {
+        payload(
+            from,
+            rfc4::packet::Message::Chat(rfc4::Chat {
+                message: "hello".to_owned(),
+                timestamp,
+                forwarded_from: forwarded_from.map(str::to_owned),
+            }),
+            &channel_for(COMMUNITY),
+        )
+    }
+
+    fn community_reaction(from: &str, address: &str) -> ParticipantPayload {
+        payload(
+            from,
+            rfc4::packet::Message::ChatReaction(rfc4::ChatReaction {
+                emoji_index: 0,
+                message_id: format!("{ALICE}:1"),
+                address: address.to_owned(),
+                emoji: "\u{1f44d}".to_owned(),
+                remove: false,
+            }),
+            &channel_for(COMMUNITY),
+        )
+    }
+
+    fn community_received(world: &World) -> usize {
+        world
+            .resource::<Events<CommunityChatReceived>>()
+            .iter_current_update_events()
+            .count()
+    }
+
+    fn reactions_received(world: &World) -> usize {
+        world
+            .resource::<Events<ChatReactionEvent>>()
+            .iter_current_update_events()
+            .count()
     }
 
     #[test]
@@ -948,11 +1011,108 @@ mod tests {
             room,
             ..community_chat(BOB, None)
         });
-        let events = world.resource::<Events<CommunityChatReceived>>();
-        assert_eq!(events.iter_current_update_events().count(), 1);
+        assert_eq!(community_received(&world), 1);
         let stats = world.get::<CommunityChatStats>(room).unwrap();
         assert_eq!(stats.received, 1);
         assert_eq!(stats.dropped.unattributed, 2);
         assert_eq!(stats.dropped.not_member, 0);
+    }
+
+    #[test]
+    fn a_community_reaction_is_taken_from_the_router_with_a_wallet_in_it() {
+        let (mut world, room) = world();
+        let router = message_router_identity();
+        world.trigger(ParticipantPayload {
+            room,
+            ..community_reaction(&router, ALICE)
+        });
+        assert_eq!(reactions_received(&world), 1);
+        let from = world
+            .resource::<Events<ChatReactionEvent>>()
+            .iter_current_update_events()
+            .next()
+            .map(|ev| (ev.channel.clone(), ev.from))
+            .unwrap();
+        assert_eq!(from, (channel_for(COMMUNITY), ALICE.as_h160().unwrap()));
+        // a peer's, and the router's without a wallet: dropped
+        world.trigger(ParticipantPayload {
+            room,
+            ..community_reaction(BOB, ALICE)
+        });
+        world.trigger(ParticipantPayload {
+            room,
+            ..community_reaction(&router, "not a wallet")
+        });
+        assert_eq!(reactions_received(&world), 1);
+        let stats = world.get::<CommunityChatStats>(room).unwrap();
+        assert_eq!(stats.reactions_received, 1);
+        assert_eq!(stats.dropped.unattributed, 2);
+    }
+
+    #[test]
+    fn a_community_the_user_does_not_listen_to_is_dropped() {
+        let (mut world, room) = world();
+        let router = message_router_identity();
+        let other = ParticipantPayload {
+            room,
+            topic: Some(channel_for("other-1")),
+            ..community_chat(&router, Some(ALICE))
+        };
+        world.trigger(other);
+        world.trigger(ParticipantPayload {
+            room,
+            topic: Some(channel_for("other-1")),
+            ..community_reaction(&router, ALICE)
+        });
+        assert_eq!(community_received(&world), 0);
+        assert_eq!(reactions_received(&world), 0);
+        assert_eq!(
+            world
+                .get::<CommunityChatStats>(room)
+                .unwrap()
+                .dropped
+                .not_member,
+            2
+        );
+    }
+
+    #[test]
+    fn the_router_is_limited_per_author_not_as_one_sender() {
+        let (mut world, room) = world();
+        let router = message_router_identity();
+        let limit = crate::livekit::participant::plugin::MAX_MESSAGES_PER_WINDOW;
+        // one author over the window: their extra line goes, nobody else's does
+        for i in 0..=limit {
+            world.trigger(ParticipantPayload {
+                room,
+                ..community_chat_at(&router, Some(ALICE), i as f64)
+            });
+        }
+        world.trigger(ParticipantPayload {
+            room,
+            ..community_chat(&router, Some(BOB))
+        });
+        assert_eq!(community_received(&world), limit + 1);
+        let stats = world.get::<CommunityChatStats>(room).unwrap();
+        assert_eq!(stats.dropped.rate_limited, 1);
+    }
+
+    #[test]
+    fn an_echo_of_the_local_users_own_packet_is_dropped() {
+        let (mut world, room) = world();
+        let router = message_router_identity();
+        let me = format!("{:#x}", world.resource::<Wallet>().address().unwrap());
+        world.trigger(ParticipantPayload {
+            room,
+            ..community_chat(&router, Some(&me))
+        });
+        world.trigger(ParticipantPayload {
+            room,
+            ..community_reaction(&router, &me)
+        });
+        assert_eq!(community_received(&world), 0);
+        assert_eq!(reactions_received(&world), 0);
+        let stats = world.get::<CommunityChatStats>(room).unwrap();
+        assert_eq!((stats.received, stats.reactions_received), (0, 0));
     }
 }

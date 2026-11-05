@@ -40,7 +40,7 @@ use crate::{
 };
 
 const INBOUND_RATE_WINDOW_SECS: f64 = 1.0;
-const MAX_MESSAGES_PER_WINDOW: usize = 300;
+pub(crate) const MAX_MESSAGES_PER_WINDOW: usize = 300;
 const GRACE_PERIOD: f32 = 3.;
 
 /// Windows beyond which idle ones are dropped on the next check: keys that no participant

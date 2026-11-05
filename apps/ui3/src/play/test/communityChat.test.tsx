@@ -85,6 +85,10 @@ describe('community chat domain', () => {
     act(() => h.driver.emit({ kind: 'chat', chat: { sender: me(h), message: 'my own words', channel: 'community:c1', messageId: `${me(h)}:4` } }))
     expect(h.driver.last('playUiSound')).toBeUndefined()
     expect(h.session().chat.communities.find((c) => c.id === 'c1')?.unread).toBe(2)
+    // a flood of lines on one conversation is one sound, a mention among them another
+    for (let i = 0; i < 5; i++) act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: `line ${i}`, channel: 'community:c1', messageId: `${MOJITO}:1${i}` } }))
+    act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: `@${MY_NAME}#${ME.slice(-4)} hey`, channel: 'community:c1', messageId: `${MOJITO}:20` } }))
+    expect(h.driver.sent.filter((m) => m.kind === 'playUiSound').map((m) => m.sound)).toEqual(['chatMessage', 'chatMention'])
   })
 
   it('a line on a community that is not open is dropped', async () => {
@@ -124,6 +128,12 @@ describe('community chat domain', () => {
     expect(chat().communities.find((c) => c.id === 'c1')?.unread).toBe(0)
     expect(h.driver.sent.filter((m) => m.kind === 'dmHistory').length).toBe(1)
     expect(chat().messages.map((m) => [m.sender, m.message, m.id])).toEqual([[MOJITO, 'hi', 0], [MOJITO, 'again', 1]])
+    // a read answered without that line (it was queued first) keeps the line behind the stored
+    // rows; a read that has it settles it
+    act(() => h.driver.emit({ kind: 'dmHistory', address: 'community:c1', entries: [{ from: MOJITO, message: 'hi', receivedAt: 1000, messageId: `${MOJITO}:6`, reactions: [] }] }))
+    expect(chat().messages.map((m) => [m.message, m.id])).toEqual([['hi', 0], ['again', 1]])
+    act(() => h.driver.emit({ kind: 'dmHistory', address: 'community:c1', entries: [{ from: MOJITO, message: 'hi', receivedAt: 1000, messageId: `${MOJITO}:6`, reactions: [] }, { from: MOJITO, message: 'again', receivedAt: 2000, messageId: `${MOJITO}:7`, reactions: [] }] }))
+    expect(chat().messages.map((m) => [m.message, m.id, m.ts])).toEqual([['hi', 0, 1000], ['again', 1, 2000]])
     // sends and reactions name the community channel
     act(() => chat().send('hello all'))
     expect(h.driver.last('sendChat')).toEqual({ kind: 'sendChat', message: 'hello all', channel: 'community:c1' })

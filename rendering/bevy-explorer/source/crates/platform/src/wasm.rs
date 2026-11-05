@@ -359,7 +359,7 @@ pub async fn dm_history_delete(account: &str, partner: &str) -> Result<(), Strin
         .map_err(|e| js_error_message(&e))
 }
 
-/// Keeps only the last `keep` records of a conversation.
+/// Keeps only the last `keep` messages of a conversation, and the reactions to them.
 pub async fn dm_history_trim(account: &str, partner: &str, keep: usize) -> Result<(), String> {
     web_dm_history::trim(account, partner, keep.min(u32::MAX as usize) as u32)
         .await
