@@ -4,8 +4,8 @@
       "repository": "https://github.com/decentraland/figma-design-system",
       "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
       "license": {
-        "spdx": "NOASSERTION",
-        "status": "The upstream repository is private and has no LICENSE file. Its copyright holder and the grant that allows publishing this port are unresolved; this tree is not published until that grant exists."
+        "spdx": "AGPL-3.0",
+        "status": "Published in dcl-one under the repository's root license (LICENSE, declared as AGPL-3.0 in README.md) with the written confirmation of figma-design-system's author and rights holder (2026-11-05)."
       },
       "imported": {
         "dcl-mcp-figma/src, test, capture": "figma/src, figma/test, figma/capture",
