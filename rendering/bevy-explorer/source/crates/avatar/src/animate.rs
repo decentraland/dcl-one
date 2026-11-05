@@ -1439,8 +1439,8 @@ struct Played {
 
 /// Play a slot for one frame: its clip on the avatar's player (started unless it's the one already
 /// running, and on a `restart`), with its loop, `speed` and `seek`, the prop clip alongside, and
-/// the sound due. `playback` gets the clip duration and end. A sound still loading holds the clip
-/// only with `wait_for_sound`; otherwise the clip plays and that sound is skipped.
+/// the sound due. `playback` gets the clip duration and end.
+/// `wait_for_sound`: hold the clip while its sound loads, else skip that sound.
 #[allow(clippy::too_many_arguments)]
 fn play_slot(
     commands: &mut Commands,
@@ -1773,9 +1773,7 @@ fn play_current_emote(
                 active_emote.speed,
                 &mut active_emote.pending_seek,
                 active_emote.initial_audio_mark,
-                // Locomotion never waits on its footsteps: the step wavs decode on the async
-                // pool alongside the avatar's own load, and holding walk/run/jump on them
-                // leaves a freshly loaded avatar sliding around in idle.
+                // locomotion skips loading footsteps instead of gliding in idle
                 active_emote.source != ActiveEmoteSource::VelocitySelected,
             ) {
                 Err(Hold::Failed) => {

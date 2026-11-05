@@ -89,10 +89,7 @@ pub struct EmoteRepresentation {
 enum AnimLoadState {
     #[default]
     Init,
-    /// The animation glbs still loading, and every default animation's sounds, requested up front
-    /// so they load alongside the glbs rather than after them (and behind the avatar's and the
-    /// scene's own loads) — a locomotion clip skips its steps until they're in. Held until the
-    /// emotes built from the glbs own the same handles.
+    /// glbs still loading, plus default sounds requested early and held until the emotes own them
     WaitingForGltfs(
         Vec<Handle<Gltf>>,
         #[allow(dead_code)] Vec<Handle<bevy_kira_audio::AudioSource>>,
