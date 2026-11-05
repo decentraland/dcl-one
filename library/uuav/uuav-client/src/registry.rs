@@ -86,6 +86,10 @@ pub struct PlayerMirror {
     /// Set when the helper dies: getters report OPENING and the frozen
     /// resume time until the first snapshot from the resurrected helper.
     pub awaiting_snapshot: AtomicBool,
+    /// Set when the render event could not present (a generation this side
+    /// refused, a failed wrap or copy): the player reads ERROR until a
+    /// present succeeds or new media is opened.
+    pub present_failed: AtomicBool,
     pub desired: Mutex<Desired>,
 }
 
@@ -101,6 +105,7 @@ impl PlayerMirror {
             helper_id: AtomicU64::new(0),
             binding: Mutex::new(()),
             awaiting_snapshot: AtomicBool::new(false),
+            present_failed: AtomicBool::new(false),
             desired: Mutex::default(),
         }
     }

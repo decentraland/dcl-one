@@ -17,14 +17,16 @@
 //! the synthesized `Movement` carries `scene_driven_animation = None`; the real rider keeps
 //! arriving over LiveKit and converges on the same wallet `Address`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use alloy_core::primitives::Address;
 use bevy::math::{IVec2, Vec3};
 use dcl_component::proto_components::{kernel::comms::rfc4, pulse};
 
+pub mod pacing;
 pub mod plugin;
+pub mod reconnect;
 pub mod transport;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -131,8 +133,9 @@ pub enum PulseEvent {
         error: Option<String>,
     },
     /// Reconstructed full movement state for a subject, ready to push through the rfc4 pipeline.
-    /// `teleport` marks state from a `TeleportPerformed` — foreign dynamics snaps to it instead of
-    /// interpolating, since it represents a discontinuous reposition, not travel.
+    /// `teleport` marks a discontinuous reposition, not travel — a `TeleportPerformed`, a replay,
+    /// or another subject taking the wallet's avatar over — so foreign dynamics snaps to it instead
+    /// of interpolating.
     Movement {
         address: Address,
         movement: Box<rfc4::Movement>,
@@ -158,7 +161,8 @@ pub enum PulseEvent {
         parcel: IVec2,
         realm: Arc<str>,
     },
-    /// Subject left the interest set (or disconnected). Drop the alias / foreign player.
+    /// The wallet's subject left the interest set (or disconnected), or was replaced by a newer
+    /// session of the wallet that joined in another realm. Drop the alias / foreign player.
     Left { address: Address },
     /// Subject announced a new profile version. `realm` is where the server last placed them, as on
     /// every per-subject event.
@@ -188,19 +192,35 @@ pub enum PulseEvent {
     Resync(pulse::ResyncRequest),
 }
 
+/// The local emote as last started, kept whether or not anything is sent, for the next handshake's
+/// initial state.
+#[derive(Debug, PartialEq)]
+pub struct LocalEmote {
+    pub urn: String,
+    /// `Some` for a one-shot, as sent; `None` for a loop.
+    pub duration_ms: Option<u32>,
+    /// The wire mask, as sent.
+    pub mask: Option<i32>,
+    /// The engine clock when it was started.
+    pub started_at: f64,
+}
+
 /// Borrowed context handed to `Broadcast::to_pulse` so an outbound message can build its Pulse frame:
-/// the parcel grid (to encode world position) and the last `PlayerState` we sent (movement caches it
-/// here so an emote can attach the full state the server requires on an `EmoteStart`).
+/// the parcel grid (to encode world position) and the last `PlayerState` we built (movement caches it
+/// here so an emote can attach the full state the server requires on an `EmoteStart`). The emote
+/// last started is cached here too, stamped with `now`, the engine clock; both are kept whether or
+/// not anything is sent, and go into the next handshake's initial state.
 pub struct PulseCtx<'a> {
     pub grid: &'a PulseParcelGrid,
     pub last_state: &'a mut Option<pulse::PlayerState>,
+    pub local_emote: &'a mut Option<LocalEmote>,
+    pub now: f64,
 }
 
 /// Per-subject baseline. Pulse sends field-masked deltas against the last sequence we acked, so we
 /// keep the last reconstructed full state and overlay deltas onto it.
 struct Subject {
     wallet: Address,
-    active_emote: Option<String>,
     /// The realm the server last placed them in — from `PlayerJoined`, updated by a
     /// `TeleportPerformed` (the only thing that can move a peer between realms). Deltas carry
     /// none and don't need to: a realm change is always a teleport. A listener observing several
@@ -212,6 +232,47 @@ struct Subject {
     /// Raw server tick of the state in `baseline`, so a replay can stamp it honestly.
     last_tick: u32,
     baseline: SubjectState,
+    emote: EmoteTrack,
+}
+
+/// What a subject's emote events have left of its emote. It keeps a sequence of its own because an
+/// emote event can arrive after a delta has taken the baseline past it, and can carry the sequence
+/// of a state already held (see [`PulseDecoder::on_full`]).
+#[derive(Default)]
+struct EmoteTrack {
+    /// Sequence of the last start or stop taken in.
+    seq: Option<u32>,
+    /// The emote playing, as its urn and wire mask; `None` before the first start and after a stop.
+    active: Option<(String, Option<i32>)>,
+}
+
+impl EmoteTrack {
+    /// Take in a start; `false` if it is not news. It is not when it is behind the last emote
+    /// event, or at the sequence of a stop: a stop stays terminal for its sequence, and an emote
+    /// needs a higher one to play again.
+    fn start(&mut self, seq: u32, urn: &str, mask: Option<i32>) -> bool {
+        if self
+            .seq
+            .is_some_and(|held| seq < held || (seq == held && self.active.is_none()))
+        {
+            return false;
+        }
+        self.seq = Some(seq);
+        self.active = Some((urn.to_owned(), mask));
+        true
+    }
+
+    /// Take in a stop; `false` if it is behind the last emote event. At that event's own sequence
+    /// it still lands, ending the emote that started there or repeating the stop already taken in:
+    /// only an older sequence is stale.
+    fn stop(&mut self, seq: u32) -> bool {
+        if self.seq.is_some_and(|held| seq < held) {
+            return false;
+        }
+        self.seq = Some(seq);
+        self.active = None;
+        true
+    }
 }
 
 /// A subject's reconstructed full state, in floats. Both full [`pulse::PlayerState`] snapshots and
@@ -329,10 +390,32 @@ impl SubjectState {
     }
 }
 
+/// The message a full state came in. It decides what the state may replace, and what it announces.
+enum FullKind {
+    /// A `PlayerStateFull`. Replaces a state of a lower sequence.
+    Refresh,
+    /// A `TeleportPerformed`, with the realm it puts the subject in. Replaces as `Refresh` does.
+    Teleport(String),
+    /// An `EmoteStarted` or `EmoteStopped`. Replaces a state of the same sequence too: when the
+    /// server has evicted the snapshot for the sequence a delta or a teleport already carried, the
+    /// emote event reuses it, and its state is the authoritative one.
+    Emote,
+}
+
 /// Owns all Pulse-specific sliding-window state. Single-threaded; lives inside the Pulse transport.
 pub struct PulseDecoder {
     grid: PulseParcelGrid,
     subjects: HashMap<u32, Subject>,
+    /// The subject held for each wallet. Both servers disconnect a wallet's older session once a
+    /// newer one authenticates, though the older one's `PlayerLeft` can arrive after the newer
+    /// one's join, so a join replaces the subject held for its wallet under another id.
+    wallets: HashMap<Address, u32>,
+    /// Subjects with a `Resync` sent that nothing has answered yet. A gap in a subject's deltas
+    /// shows in every one after it, so without this each would ask again. A full state, a delta
+    /// that applies, a join (its own, or a newer one of its wallet's, which replaces it), a leave
+    /// and `reset` each end the wait, as does `resync_not_sent`. Only a held subject is asked for
+    /// (a delta for any other is dropped, see `on_delta`), so no entry outlives its subject.
+    pending_resync: HashSet<u32>,
     /// Server ticks are `u32` milliseconds since the Pulse server started, so they roll over after
     /// ~49.7 days of server uptime. The newest raw tick seen, and the number of milliseconds to
     /// add to it (a multiple of 2^32) to keep the emitted timestamps monotonic across rollovers.
@@ -345,6 +428,8 @@ impl PulseDecoder {
         Self {
             grid,
             subjects: HashMap::new(),
+            wallets: HashMap::new(),
+            pending_resync: HashSet::new(),
             newest_tick: None,
             tick_epoch_ms: 0,
         }
@@ -370,8 +455,7 @@ impl PulseDecoder {
                 f.sequence,
                 f.server_tick,
                 f.state,
-                false,
-                None,
+                FullKind::Refresh,
             ),
             // Teleport / emote start / stop all piggyback full state; treat them as a full refresh
             // so the subject's position never goes stale, then (for emotes) emit the emote event so
@@ -386,50 +470,11 @@ impl PulseDecoder {
                     t.sequence,
                     t.server_tick,
                     t.state,
-                    true,
-                    Some(t.realm),
+                    FullKind::Teleport(t.realm),
                 )
             }
-            Message::EmoteStarted(e) => {
-                let mut events = self.on_full(
-                    e.subject_id,
-                    e.sequence,
-                    e.server_tick,
-                    e.player_state,
-                    false,
-                    None,
-                );
-                if let Some(subject) = self.subjects.get_mut(&e.subject_id) {
-                    subject.active_emote = Some(e.emote_id.clone());
-                    events.push(PulseEvent::EmoteStart {
-                        address: subject.wallet,
-                        urn: e.emote_id,
-                        tick: e.server_tick,
-                        realm: subject.realm.clone(),
-                        mask: e.mask,
-                    });
-                }
-                events
-            }
-            Message::EmoteStopped(e) => {
-                let mut events = self.on_full(
-                    e.subject_id,
-                    e.sequence,
-                    e.server_tick,
-                    e.player_state,
-                    false,
-                    None,
-                );
-                if let Some(subject) = self.subjects.get_mut(&e.subject_id) {
-                    subject.active_emote = None;
-                    events.push(PulseEvent::EmoteStop {
-                        address: subject.wallet,
-                        completed: e.reason == pulse::EmoteStopReason::Completed as i32,
-                        realm: subject.realm.clone(),
-                    });
-                }
-                events
-            }
+            Message::EmoteStarted(e) => self.on_emote_started(e),
+            Message::EmoteStopped(e) => self.on_emote_stopped(e),
             Message::PlayerStateDelta(d) => self.on_delta(d),
             Message::PlayerProfileVersionAnnounced(p) => self.on_profile(p.subject_id, p.version),
             // The server's v4 handshake, batched deltas and application relay are not on this
@@ -459,23 +504,47 @@ impl PulseDecoder {
             return Vec::new();
         };
 
+        // The server has handed the id to another wallet: the subject that held it is gone.
+        let mut events = match self.subjects.get(&full.subject_id) {
+            Some(held) if held.wallet != address => self.on_left(full.subject_id),
+            _ => Vec::new(),
+        };
+        // A newer session of a wallet held under another id: that subject's session is already
+        // gone (`wallets`).
+        let replaced = match self.wallets.insert(address, full.subject_id) {
+            Some(previous) if previous != full.subject_id => {
+                self.pending_resync.remove(&previous);
+                self.subjects.remove(&previous)
+            }
+            _ => None,
+        };
+
         let baseline = SubjectState::from_player_state(&state);
         let movement = self.to_movement(&baseline);
         let realm: Arc<str> = Arc::from(joined.realm.as_str());
+        // A newcomer in another realm: the wallet leaves the replaced subject's, and its emote
+        // goes with it.
+        let elsewhere = replaced
+            .as_ref()
+            .is_some_and(|previous| previous.realm != realm);
+        if elsewhere {
+            events.push(PulseEvent::Left { address });
+        }
         self.subjects.insert(
             full.subject_id,
             Subject {
                 wallet: address,
-                active_emote: None,
                 realm: realm.clone(),
                 profile_version: joined.profile_version,
                 last_seq: full.sequence,
                 last_tick: full.server_tick,
                 baseline,
+                emote: EmoteTrack::default(),
             },
         );
+        self.pending_resync.remove(&full.subject_id);
 
-        vec![
+        events.extend([
             PulseEvent::Joined {
                 subject_id: full.subject_id,
                 address,
@@ -490,32 +559,57 @@ impl PulseDecoder {
             PulseEvent::Movement {
                 address,
                 movement: Box::new(movement),
-                realm,
-                teleport: false,
+                realm: realm.clone(),
+                // the avatar jumps from wherever the subject it replaces left it
+                teleport: replaced.is_some(),
                 timestamp: self.tick_secs(full.server_tick),
             },
-        ]
-    }
-
-    fn on_left(&mut self, subject_id: u32) -> Vec<PulseEvent> {
-        match self.subjects.remove(&subject_id) {
-            Some(subject) => vec![PulseEvent::Left {
-                address: subject.wallet,
-            }],
-            None => Vec::new(),
+        ]);
+        // The avatar may be playing the replaced subject's emote, and this one has none yet.
+        if replaced.is_some_and(|previous| !elsewhere && previous.emote.active.is_some()) {
+            events.push(PulseEvent::EmoteStop {
+                address,
+                completed: false,
+                realm,
+            });
         }
+        events
     }
 
-    /// Replace a known subject's baseline from a server-supplied full state. Unknown subjects are
-    /// dropped: full state carries no wallet, so without a prior `PlayerJoined` we can't address it.
+    /// A leave for an id not held, such as a subject a newer join of its wallet replaced, is
+    /// ignored.
+    fn on_left(&mut self, subject_id: u32) -> Vec<PulseEvent> {
+        self.pending_resync.remove(&subject_id);
+        let Some(leaver) = self.subjects.remove(&subject_id) else {
+            return Vec::new();
+        };
+        self.wallets.remove(&leaver.wallet);
+        vec![PulseEvent::Left {
+            address: leaver.wallet,
+        }]
+    }
+
+    /// The emote playing on `wallet`'s avatar, by urn, as its subject's emote track holds it:
+    /// `None` when the wallet is not held, `Some(None)` when it plays none. For the debug panel.
+    fn emote_of(&self, wallet: Address) -> Option<Option<&str>> {
+        let subject = self.subjects.get(self.wallets.get(&wallet)?)?;
+        Some(subject.emote.active.as_ref().map(|(urn, _)| urn.as_str()))
+    }
+
+    /// Replace a known subject's baseline from a server-supplied full state, if it is newer than the
+    /// one held: a higher sequence, or for an emote event an equal one too ([`FullKind`]). An older
+    /// state leaves the baseline as it is, an older teleport's realm included, and announces
+    /// nothing. Any state for a known subject ends the wait for its resync, an older one too; a
+    /// message without a state does not, and an unknown subject has no wait to end. Unknown
+    /// subjects are dropped: full state carries no wallet, so without a prior `PlayerJoined` we
+    /// can't address it.
     fn on_full(
         &mut self,
         subject_id: u32,
         sequence: u32,
         server_tick: u32,
         state: Option<pulse::PlayerState>,
-        teleport: bool,
-        realm: Option<String>,
+        kind: FullKind,
     ) -> Vec<PulseEvent> {
         let Some(state) = state else {
             return Vec::new();
@@ -524,16 +618,26 @@ impl PulseDecoder {
             return Vec::new();
         };
 
+        self.pending_resync.remove(&subject_id);
+        let newer = match kind {
+            FullKind::Refresh | FullKind::Teleport(_) => sequence > subject.last_seq,
+            FullKind::Emote => sequence >= subject.last_seq,
+        };
+        if !newer {
+            return Vec::new();
+        }
+
         subject.baseline = SubjectState::from_player_state(&state);
         subject.last_seq = sequence;
         subject.last_tick = server_tick;
+        let teleport = matches!(kind, FullKind::Teleport(_));
         // Only a teleport carries one, and only then can it differ.
-        let changed_realm = match realm.filter(|realm| &*subject.realm != realm.as_str()) {
-            Some(realm) => {
+        let changed_realm = match kind {
+            FullKind::Teleport(realm) if &*subject.realm != realm.as_str() => {
                 subject.realm = Arc::from(realm.as_str());
                 true
             }
-            None => false,
+            _ => false,
         };
         let address = subject.wallet;
         let realm = subject.realm.clone();
@@ -555,13 +659,59 @@ impl PulseDecoder {
         events
     }
 
+    /// An emote event's state refreshes the baseline as any full state does, but the emote itself is
+    /// judged by [`EmoteTrack`] alone: a state too old to replace the baseline still starts the emote
+    /// if the emote events themselves say it is news.
+    fn on_emote_started(&mut self, e: pulse::EmoteStarted) -> Vec<PulseEvent> {
+        let mut events = self.on_full(
+            e.subject_id,
+            e.sequence,
+            e.server_tick,
+            e.player_state,
+            FullKind::Emote,
+        );
+        if let Some(subject) = self.subjects.get_mut(&e.subject_id) {
+            if subject.emote.start(e.sequence, &e.emote_id, e.mask) {
+                events.push(PulseEvent::EmoteStart {
+                    address: subject.wallet,
+                    urn: e.emote_id,
+                    tick: e.server_tick,
+                    realm: subject.realm.clone(),
+                    mask: e.mask,
+                });
+            }
+        }
+        events
+    }
+
+    fn on_emote_stopped(&mut self, e: pulse::EmoteStopped) -> Vec<PulseEvent> {
+        let mut events = self.on_full(
+            e.subject_id,
+            e.sequence,
+            e.server_tick,
+            e.player_state,
+            FullKind::Emote,
+        );
+        if let Some(subject) = self.subjects.get_mut(&e.subject_id) {
+            if subject.emote.stop(e.sequence) {
+                events.push(PulseEvent::EmoteStop {
+                    address: subject.wallet,
+                    completed: e.reason == pulse::EmoteStopReason::Completed as i32,
+                    realm: subject.realm.clone(),
+                });
+            }
+        }
+        events
+    }
+
     fn on_delta(&mut self, delta: pulse::PlayerStateDeltaTier0) -> Vec<PulseEvent> {
         let Some(subject) = self.subjects.get_mut(&delta.subject_id) else {
-            // No baseline yet — ask the server for full state (known_seq 0 = "I have nothing").
-            return vec![PulseEvent::Resync(pulse::ResyncRequest {
-                subject_id: delta.subject_id,
-                known_seq: 0,
-            })];
+            // Not held. Either its `PlayerJoined`, reliable and carrying the full state, is still
+            // on its way, or it has left, or a newer join of its wallet replaced it, and this delta
+            // arrived after that (the two channels keep no order between them), and the server
+            // answers nothing for a subject out of our view. A resync is no use either way, so the
+            // delta is dropped.
+            return Vec::new();
         };
 
         // Already have this (e.g. a reliable resync retransmit of a seq we applied unreliably).
@@ -570,7 +720,7 @@ impl PulseDecoder {
         }
 
         // The delta is diffed from `baseline_seq`; we can only apply it if our state is exactly
-        // that sequence. Otherwise we missed an intermediate delta — resync from what we have.
+        // that sequence. Ahead of us, we missed an intermediate delta — resync from what we have.
         //
         // Known gap: a delta whose baseline is AHEAD of us is dropped here even though the missing
         // link may be a reliable full state still in flight (unreliable deltas can overtake it):
@@ -579,13 +729,18 @@ impl PulseDecoder {
         // shows up in practice, hold the single ahead-of-us delta per subject and chain it after
         // the next successful apply (delta or full) instead of dropping it — still send the resync,
         // since the gap may be genuine loss.
-        if delta.baseline_seq != subject.last_seq {
-            return vec![PulseEvent::Resync(pulse::ResyncRequest {
-                subject_id: delta.subject_id,
-                known_seq: subject.last_seq,
-            })];
+        if delta.baseline_seq > subject.last_seq {
+            let known_seq = subject.last_seq;
+            return self.request_resync(delta.subject_id, known_seq);
+        }
+        // Behind us, it leads on from a state we are already past — the reply to a resync that a
+        // later state has since answered. There is nothing to ask for.
+        if delta.baseline_seq < subject.last_seq {
+            return Vec::new();
         }
 
+        // Back on track, whether this is the next in line or the reply to the resync.
+        self.pending_resync.remove(&delta.subject_id);
         subject.baseline.apply_delta(&delta);
         subject.last_seq = delta.new_seq;
         subject.last_tick = delta.server_tick;
@@ -610,6 +765,23 @@ impl PulseDecoder {
         }]
     }
 
+    /// The `Resync` for `subject_id` never left (no link, or a full queue), so nothing will answer
+    /// it: the next gap may ask again.
+    pub fn resync_not_sent(&mut self, subject_id: u32) {
+        self.pending_resync.remove(&subject_id);
+    }
+
+    /// A `Resync` for `subject_id`, unless one is already waiting on its answer.
+    fn request_resync(&mut self, subject_id: u32, known_seq: u32) -> Vec<PulseEvent> {
+        if !self.pending_resync.insert(subject_id) {
+            return Vec::new();
+        }
+        vec![PulseEvent::Resync(pulse::ResyncRequest {
+            subject_id,
+            known_seq,
+        })]
+    }
+
     fn on_profile(&mut self, subject_id: u32, version: i32) -> Vec<PulseEvent> {
         match self.subjects.get_mut(&subject_id) {
             Some(subject) => {
@@ -624,12 +796,18 @@ impl PulseDecoder {
         }
     }
 
-    /// Forget every subject. For a new connection: the server starts it with an empty view set and
-    /// re-announces everyone, and the ids it hands out are its own, so nothing from the previous
-    /// connection can be trusted — least of all the promise that a `PlayerLeft` would have arrived
-    /// for anyone who left while the link was down.
-    pub fn reset(&mut self) {
+    /// Forget every subject and return each wallet that was held, once. For a new connection: the
+    /// server starts it with an empty view set and re-announces everyone, and the ids it hands out
+    /// are its own, so nothing from the previous connection can be trusted — least of all the
+    /// promise that a `PlayerLeft` would have arrived for anyone who left while the link was down.
+    /// Nor is any resync still waiting on its answer: that request went to the connection that is
+    /// gone, and the new one has to be able to ask again.
+    pub fn reset(&mut self) -> Vec<Address> {
         self.subjects.clear();
+        self.pending_resync.clear();
+        let mut wallets: Vec<Address> = self.wallets.drain().map(|(wallet, _)| wallet).collect();
+        wallets.sort_unstable();
+        wallets
     }
 
     /// Re-emit the join + last known state of every subject the server placed in `realm`, as if

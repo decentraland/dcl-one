@@ -15,6 +15,7 @@ SHA_PR = 'a' * 40
 SHA_MAIN = 'b' * 40
 SHA_OLD = 'c' * 40
 SHA_NEW = 'd' * 40
+SHA_SUITE = 'e' * 40
 
 
 def run(run_id, sha, event, branch='main', status='completed', conclusion='success'):
@@ -58,6 +59,7 @@ class ResolveTests(unittest.TestCase):
             f'repos/{REPO}/actions/runs/31/artifacts': artifacts('other'),
             f'repos/{REPO}/actions/runs/32/artifacts': artifacts(f'bevy-explorer-web-{SHA_NEW}', 'other', expired=(f'bevy-explorer-web-{SHA_NEW}',)),
             f'repos/{REPO}/actions/workflows/bevy-explorer-ci.yml/runs?head_sha={SHA_NEW}&status=success': {'workflow_runs': [run(32, SHA_NEW, 'pull_request')]},
+            f'repos/{REPO}/actions/workflows/bevy-explorer-ci.yml/runs?head_sha={SHA_SUITE}&status=success': {'workflow_runs': [run(31, SHA_SUITE, 'pull_request')]},
             f'repos/{REPO}/actions/runs/20/artifacts': artifacts(f'bevy-explorer-web-{SHA_MAIN}'),
             f'repos/{REPO}/actions/runs/10/artifacts': artifacts(f'bevy-explorer-web-{SHA_OLD}'),
             f'repos/{REPO}/actions/workflows/bevy-explorer-ci.yml/runs?branch=main': self.main_runs,
@@ -226,6 +228,12 @@ class ResolveTests(unittest.TestCase):
             inputs.resolve('workflow_dispatch', {'inputs': {'sha': 'abc'}}, REPO)
         result = inputs.resolve('workflow_dispatch', {'inputs': {'sha': ''}}, REPO)
         self.assertEqual(result['sha'], SHA_MAIN)
+
+    def test_a_manual_run_of_a_commit_without_a_web_app_takes_mains_newest(self):
+        result = inputs.resolve('workflow_dispatch', {'inputs': {'sha': SHA_SUITE}}, REPO)
+        self.assertEqual((result['run'], result['sha'], result['web_artifact'], result['web_run_id'], result['pr']),
+                         (True, SHA_SUITE, f'bevy-explorer-web-{SHA_MAIN}', '20', ''))
+        self.assertIn('built no web app', result['reason'])
 
     # --- the files and the summary ---
 

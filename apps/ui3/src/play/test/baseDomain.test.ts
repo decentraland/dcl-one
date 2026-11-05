@@ -53,6 +53,7 @@ describe('engineServiceOptions', () => {
     expect(options.baseDomain).toBeUndefined()
     for (const s of SERVICES) expect(options[s.name], s.name).toBe(m.serviceUrl(s.name))
     expect(options.realmProvider).toBe(`${window.location.origin}/realm-provider-ea`)
+    expect(options.reels).toBe(`${window.location.origin}/reels`)
   })
 
   it('upstream: only the base domain, which the engine composes every service from', async () => {

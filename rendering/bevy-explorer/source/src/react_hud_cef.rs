@@ -218,20 +218,25 @@ fn spawn_hud(
     url.push_str(&urlencoding::encode(&analytics.common().session_id));
     // A non-default --base-domain reaches the HUD the same way it reaches the web page: as the
     // ?baseDomain= param the page composes all its backend fetch hosts from.
-    if common::base_domain::get() != common::base_domain::DEFAULT {
+    let image_base = common::base_domain::profile_image_base();
+    if image_base.is_some() || common::base_domain::get() != common::base_domain::DEFAULT {
         url.push_str(if url.contains('?') { "&" } else { "?" });
         url.push_str("baseDomain=");
         url.push_str(&urlencoding::encode(common::base_domain::get()));
+    }
+    if let Some(base) = image_base {
+        url.push_str("&nativeProfileImageBase=");
+        url.push_str(&urlencoding::encode(&base));
     }
     // and so does each explicit service override the HUD has a param for (it resolves its own
     // service urls); a native-only service is not in its table, so it would land in the page's
     // unrecognised-parameter dialog
     for service in common::base_domain::Service::all().filter(|s| s.has_web_param()) {
-        if let Some(override_url) = common::base_domain::service_override(service) {
+        if let Some(override_url) = common::base_domain::public_endpoint_override(service) {
             url.push_str(if url.contains('?') { "&" } else { "?" });
             url.push_str(&service.param());
             url.push('=');
-            url.push_str(&urlencoding::encode(override_url));
+            url.push_str(&urlencoding::encode(&override_url));
         }
     }
 

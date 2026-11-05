@@ -262,21 +262,30 @@ impl ClientLoginDelivery {
         let wallet = wallet.snapshot();
         self.task = Some(IoTaskPool::get().spawn_compat(async move {
             // Includes remote signing and HTTP headers; login never waits for this work.
-            async_std::future::timeout(Duration::from_secs(10), send(&wallet, &event))
-                .await
-                .unwrap_or(AttemptResult::Retry)
+            async_std::future::timeout(
+                Duration::from_secs(10),
+                send(&wallet, &event, reqwest_client()),
+            )
+            .await
+            .unwrap_or(AttemptResult::Retry)
         }));
     }
 }
 
-async fn send(wallet: &Wallet, event: &PendingClientLogin) -> AttemptResult {
-    let Ok(uri) = event.endpoint.parse() else {
+async fn send(
+    wallet: &Wallet,
+    event: &PendingClientLogin,
+    client: reqwest::Client,
+) -> AttemptResult {
+    if event.endpoint.parse::<reqwest::Url>().is_err() {
         return AttemptResult::Rejected;
-    };
-    let Ok(headers) = wallet::sign_request("post", &uri, wallet, event.metadata()).await else {
+    }
+    let Ok(headers) =
+        wallet::sign_service_request("post", &event.endpoint, wallet, event.metadata()).await
+    else {
         return AttemptResult::Retry;
     };
-    let mut request = reqwest_client().post(&event.endpoint);
+    let mut request = client.post(&event.endpoint);
     for (name, value) in headers {
         request = request.header(name, value);
     }
@@ -562,6 +571,68 @@ mod tests {
     }
 
     #[test]
+    fn gateway_login_signs_the_forwarded_path_and_sends_the_public_path() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let gateway = format!("http://gateway.example.test:{}", address.port());
+        base_domain::set_gateway(&gateway).unwrap();
+        let endpoint = base_domain::url(Service::SocialApi, "/v1/client-login");
+        assert_eq!(endpoint, format!("{gateway}/social-api/v1/client-login"));
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut bytes = Vec::new();
+            while !bytes.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                stream.read_exact(&mut byte).unwrap();
+                bytes.push(byte[0]);
+            }
+            write!(
+                stream,
+                "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            String::from_utf8(bytes).unwrap()
+        });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .resolve("gateway.example.test", address)
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest();
+        let event = PendingClientLogin {
+            wallet: format!("{:#x}", wallet.address().unwrap()),
+            endpoint,
+            login_id: uuid::Uuid::new_v4().to_string(),
+            occurred_at: now_ms(),
+        };
+        async_std::task::block_on(platform::compat(async {
+            assert_eq!(send(&wallet, &event, client).await, AttemptResult::Accepted);
+        }));
+        let request = server.join().unwrap();
+        assert!(request.starts_with("POST /social-api/v1/client-login HTTP/1.1\r\n"));
+        let headers = request
+            .lines()
+            .filter_map(|line| line.split_once(": "))
+            .map(|(key, value)| (key.to_lowercase(), value.to_string()))
+            .collect::<std::collections::HashMap<_, _>>();
+        let signed: serde_json::Value =
+            serde_json::from_str(&headers["x-identity-auth-chain-1"]).unwrap();
+        assert_eq!(
+            signed["payload"],
+            format!(
+                "post:/v1/client-login:{}:{}",
+                headers["x-identity-timestamp"],
+                event.metadata()
+            )
+        );
+    }
+
+    #[test]
     fn retry_resigns_same_event_and_keeps_snapshot_account() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let endpoint = format!(
@@ -603,9 +674,15 @@ mod tests {
             occurred_at: now_ms(),
         };
         async_std::task::block_on(platform::compat(async {
-            assert_eq!(send(&wallet, &event).await, AttemptResult::Retry);
+            assert_eq!(
+                send(&wallet, &event, reqwest_client()).await,
+                AttemptResult::Retry
+            );
             async_std::task::sleep(Duration::from_millis(2)).await;
-            assert_eq!(send(&wallet, &event).await, AttemptResult::Accepted);
+            assert_eq!(
+                send(&wallet, &event, reqwest_client()).await,
+                AttemptResult::Accepted
+            );
         }));
         let requests = server.join().unwrap();
         let headers = requests
@@ -632,6 +709,16 @@ mod tests {
             let signer: serde_json::Value =
                 serde_json::from_str(&header["x-identity-auth-chain-0"]).unwrap();
             assert_eq!(signer["payload"], address);
+            let signed: serde_json::Value =
+                serde_json::from_str(&header["x-identity-auth-chain-1"]).unwrap();
+            assert_eq!(
+                signed["payload"],
+                format!(
+                    "post:/social-api/v1/client-login:{}:{}",
+                    header["x-identity-timestamp"],
+                    event.metadata()
+                )
+            );
         }
     }
 }

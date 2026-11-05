@@ -31,12 +31,18 @@ npm test                               # the driver's tests (a stub page in head
 DCL_E2E_ACCOUNT_KEYS=0x... npm run e2e -- --inworld     # the InWorld scenarios against zone
 npm run e2e -- --visual                # the Visual suite (build the scenes first, see below)
 npm run e2e -- --filter 'opens the Backpack'            # a name pattern
+npm run gpu-probe                      # the GPU the browser gives, started as the scenarios start it (chrome://gpu to report/)
+npm run gpu-probe -- --adapter nvidia  # and once more on that adapter when the browser runs on another (Windows)
 ```
 
-The suite serves the web app on loopback (`driver/serve.ts`, the benchmark's headers), starts
-Chrome through the web driver (`rendering/bevy-explorer/source/local-harness/web-driver`), opens
-`/?realm=<realm>&position=<x,y>&baseDomain=<domain>`, signs in with `/login_identity` and the
-worker's account, presses the lobby's `Jump In` if it shows one, and waits for `/world_state`
+The suite serves the web app on loopback (`driver/serve.ts`, with the isolation headers the app's
+own dev server sets per path: the shell plain, the app frame isolated on its own), starts Chrome
+through the web driver (`rendering/bevy-explorer/source/local-harness/web-driver`), opens
+`/?baseDomain=<domain>` (a realm or a position on the url would make the HUD launch the engine only
+once a sign-in is submitted on its start page, and the sign-in here goes through the engine's
+console; the realm and the parcel are reached by console afterwards), signs in with
+`/login_identity` and the worker's account, presses the lobby's `Jump In` if it shows one, and
+waits for `/world_state`
 `inWorld`. One client serves every spec file of a run (`--test-isolation=none`); the Visual suite
 boots a second one on its own realm.
 
@@ -53,13 +59,22 @@ boots a second one on its own realm.
 | `DCL_E2E_WINDOW` | The window size, `<width>x<height>` | `1600x900` (the Visual suite uses 960x540) |
 | `DCL_E2E_RECORD` | `1` records a missing visual reference instead of failing | unset |
 | `DCL_E2E_TRANSPORT` | `native` drives the standalone through `dcl/console` instead of a browser | `web` |
-| `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added) | unset |
+| `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added); the UUAV runtime set must be staged next to it (`tooling/uuav/stage-dist.py`) for scene video to play | unset |
 | `DCL_E2E_NATIVE_PORT`, `DCL_E2E_NATIVE_TOKEN` | A running standalone's loopback console and the token it was started with | `15702`, unset |
+
+To run the native Explorer against a gateway, set
+`DCL_E2E_NATIVE_ARGS="--gateway https://gateway.example.test"`.
+The [running guide](../../../rendering/bevy-explorer/docs/guidelines/running.md#gateway-routing)
+describes the gateway layouts and service overrides.
 
 The report goes to `report/`: `junit-<groups>.xml`, and per scenario `commands.jsonl` (every
 console command, its reply or error and its time; `/login_identity` payloads redacted) and
 `final.png` (the engine's frame as the scenario left it). A failed visual scenario adds
-`frame.png`, `reference.png` and `diff.png`.
+`frame.png`, `reference.png` and `diff.png`. A client that fails to boot, at the open, at the
+console's coming or on the way into the world, leaves `boot-failures/boot-<n>.console.txt`, what
+the page said, and `boot-<n>.jpg`, how it looked; it is booted once more for the next scenario,
+and after a second failure every later scenario fails at once with that error, which the run logs
+as it happens.
 
 ## How a spec is written
 
@@ -112,6 +127,7 @@ test is in the spec file's header. Port 40, Partial 32, Gap 15, Drop 2.
 | SelfPreview (2) | `self-preview` | | | 2 | | No `--self-preview-wearables` launch option |
 | ViewSignalSmoke (2) | `view-signal` | | | | 2 | A Unity harness self-test |
 | Visual (17) | `visual/visual` | 17 | | | | The scenes at their own parcels; references recorded anew |
+| UUAV PlayMode (unity-explorer's player tests) | `visual/video` | 2 | 1 | 4 | | One scenario on the `video` scene: the state reaches Playing, the clock runs, the frame is red; seek, audio capture and helper recovery stay in the UUAV workspace's tests |
 
 What the HUD would need for more Ports, found while porting: roles or labels on the minimap's
 name and coordinates, the chat message text, the communities titles and counts, the passport
@@ -127,6 +143,14 @@ header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed`
 the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
 differs when any RGB channel differs by more than 8, and the scene passes when at most 0.3% of the
 pixels differ (1.5% for `avatar-shape`), as explorer-automation compared.
+
+`specs/visual/video.test.ts` plays the `video` scene ([scenes/README.md](scenes/README.md), after
+unity-explorer's UUAV PlayMode suite) on the same realm (`specs/visual/realm.ts` serves every
+workspace scene once per process) and asserts through the engine instead of a reference: the
+player's `VideoEvent`s (`/inspect_component`) reach Playing without an error and report a running
+clock, and the frame's pixel at the screen (`/entity_screen_position`) is the fixture's red. On
+the web the player is the browser's video element; on the standalone it is UUAV, which the
+scenes workflow runs (below).
 
 Build the scenes first with `apps/dcl-scene-cli`:
 
@@ -159,7 +183,17 @@ A reference counts as approved once a reviewer has checked it against the scene'
   scenarios, then builds the scenes and runs the Visual ones, and uploads `report/`. It runs on the Windows runner with a GPU that the
   `BEVY_E2E_WINDOWS_RUNNER` repository variable names (explorer-automation's
   `win-gpu-t4-explorer`, which an org admin enables for this repository), in the `e2e`
-  environment, whose `DCL_E2E_ACCOUNT_KEYS` secret reaches only the two scenario steps. The label
+  environment, whose `DCL_E2E_ACCOUNT_KEYS` secret reaches only the two scenario steps. That
+  image carries MinGit alone, so the job runs its steps in PowerShell, puts a pinned git-lfs on
+  PATH before the checkout, and drives Chrome where the image has it, else a pinned Chrome for
+  Testing build it downloads and checks against the sum the workflow records (the image's Edge gave
+  WebGPU no adapter), with `--enable-unsafe-webgpu --ignore-gpu-blocklist`, the first of which the
+  app's own GPU page asks for. A GPU probe step says first what GPU that browser gives, bare and
+  with those flags (`npm run gpu-probe`), and when the browser runs on an adapter other than the
+  NVIDIA one (the VM's paravirtual display adapter comes first, the GPU second), the scenarios get
+  `--use-adapter-luid=<its LUID>` as well, so the browser's GPU process starts on the GPU. The
+  scenes' CLI is built on a
+  hosted Windows runner and handed over, so the image needs no Rust toolchain. The label
   is what admits a pull request's code to that runner and those accounts; the Inputs summary
   names the pull request and the commit under test; the job holds no write permission and saves
   no cache; required reviewers on the environment (a repository setting) add an approval on top.
@@ -168,10 +202,21 @@ A reference counts as approved once a reviewer has checked it against the scene'
   *InWorld* and *Automation* sections of the PR's CI status comment from the uploaded report
   (`tooling/bevy-e2e-report.py`).
 
-`tooling/bevy-ci.py` selects no engine lane for a change under this folder.
+`tooling/bevy-ci.py` selects the scenes lane of `bevy-explorer-ci.yml` for a change to an
+input of the video run below (the scenes, the driver, the runner scripts, the visual specs and
+the package files) and no engine lane for the rest of this folder.
 
-Not in this workflow yet: the standalone (`DCL_E2E_TRANSPORT=native` drives a native build
-through its loopback console; no CI job runs one), a macOS leg, and sharding across accounts.
+The standalone runs in `.github/workflows/bevy-explorer-scenes.yml` only: its graphical job
+plays the video spec (`npm run e2e -- --visual --filter 'video plays'`) on the Linux release
+build it made, through the loopback console under xvfb (`DCL_E2E_TRANSPORT=native`,
+`UUAV_FORCE_SW_DECODE=1`: hosted runners have no VA driver), and uploads `report/` as
+`bevy-explorer-video-e2e-<sha>`. That build has no HUD bundle: the standalone holds the world for
+its welcome page until the first realm change, and with no `Jump In` to press the driver asks for
+the realm through the console (`driver/session.ts`, `enterWorld`), which is what the button does. `tooling/bevy-ci.py` selects that job for the scenes, the
+driver, the runner scripts, the video spec and its realm.
+
+Not in this workflow yet: the standalone for the other specs, a macOS leg, and sharding across
+accounts.
 
 ## Practices
 
@@ -208,6 +253,7 @@ change on the left updates what is on the right in the same change, then runs th
 | A console command's name, arguments or reply, in the engine or in `hudAutomation.ts` | `driver/explorer.ts` and `test/explorer.test.ts`; the Explorer readme's "Agents and tests" | `npm test` |
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `npm test`; the web driver's tests |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
+| The `video` scene, its fixture (`scenes/video/generate-fixture.sh`), the engine's `VideoEvent` reporting or the video player's source resolution (`crates/media/src/uuav`, `crates/av`) | `specs/visual/video.test.ts` (the states, the clock mark, the colour probe); `scenes/README.md`; the scenes workflow's video steps | `npm run typecheck`; the video scenario on the web (this workflow) and on the standalone (the scenes workflow) |
 | A path moved under `apps/bevy-explorer/e2e`, `tooling/bevy-e2e-*.py` or the workflow | The workflow's `paths` filters, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
 | The CI workflow's name, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests; the e2e workflow's `workflow_run` | the tooling tests |
 | A scenario the HUD can no longer run, or a Gap whose feature landed | A `todo` with the reason, or the todo back into a scenario; its header row and the scenario map | the scenarios in CI |
@@ -224,3 +270,8 @@ storage tests also force a failed quarantine copy and verify that valid records 
 deployment-order retries and explicit memory-only delivery; they also check save-before-send,
 account cancellation and storage recovery. These are focused runtime tests, not a built Explorer
 signed-in journey. `/client_login_state` exposes `memoryOnly` and `storageFailures` for HUD diagnosis.
+
+The Rust login sender regression also checks gateway routing: the HTTP request uses the public
+`/social-api/v1/client-login` path while its signature binds the forwarded `/v1/client-login` path.
+The direct-origin retry test checks that its signature retains the full request path. These tests
+run in the Bevy CI native suite (`cargo test --all --profile ci-test --locked -- --test-threads=1`).
