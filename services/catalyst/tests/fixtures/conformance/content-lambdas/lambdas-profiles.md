@@ -15,16 +15,17 @@ Files read (dcl-one): `shop/src/market/{mod,profiles,contracts,lambdas_crypto,la
 
 | method | upstream path | production prefix | dcl-one route(s) | status |
 |---|---|---|---|---|
-| POST | `/profiles` | `/lambdas` | `/lambdas/profiles` `services/catalyst/shop/src/market/mod.rs:885` | DIVERGENT |
-| GET | `/profiles/:id` | `/lambdas` | `/lambdas/profiles/{id}` `services/catalyst/shop/src/market/mod.rs:889` | DIVERGENT |
-| GET | `/profile/:id` | `/lambdas` | `/lambdas/profile/{id}` `services/catalyst/shop/src/market/mod.rs:890` | DIVERGENT |
-| GET | `/outfits/:id` | `/lambdas` | `/lambdas/outfits/{id}` and root `/outfits/{id}` `services/catalyst/shop/src/market/mod.rs:957-958` | DIVERGENT |
-| GET | `/status` | `/lambdas` | `/lambdas/status` `services/catalyst/shop/src/market/mod.rs:979` | MATCH |
+| POST | `/profiles` | `/lambdas` | `/lambdas/profiles` `services/catalyst/shop/src/market/mod.rs:888-891` | DIVERGENT |
+| POST | `/profiles/metadata` (asset-bundle-registry, not lamb2) | not under `/lambdas` on production (lamb2 answers it: POST 405, GET 404, `captures/abr/AB-14-*`) | `/lambdas/profiles/metadata` `services/catalyst/shop/src/market/mod.rs:892-895` | dcl-one only (see section 13) |
+| GET | `/profiles/:id` | `/lambdas` | `/lambdas/profiles/{id}` `services/catalyst/shop/src/market/mod.rs:896` | DIVERGENT |
+| GET | `/profile/:id` | `/lambdas` | `/lambdas/profile/{id}` `services/catalyst/shop/src/market/mod.rs:897` | DIVERGENT |
+| GET | `/outfits/:id` | `/lambdas` | `/lambdas/outfits/{id}` and root `/outfits/{id}` `services/catalyst/shop/src/market/mod.rs:964-965` | DIVERGENT |
+| GET | `/status` | `/lambdas` | `/lambdas/status` `services/catalyst/shop/src/market/mod.rs:986` | MATCH |
 | GET | `/about` | `/lambdas` (the root `/about` of a production node is this same handler) | `/lambdas/about` and root `/about`, one handler `services/catalyst/content/src/lib.rs:698-700` | DIVERGENT |
-| GET | `/contracts/servers` | `/lambdas` | `/lambdas/contracts/servers` `services/catalyst/shop/src/market/mod.rs:911` | DIVERGENT |
-| GET | `/contracts/pois` | `/lambdas` | `/lambdas/contracts/pois` `services/catalyst/shop/src/market/mod.rs:915` | DIVERGENT |
-| GET | `/contracts/denylisted-names` | `/lambdas` | `/lambdas/contracts/denylisted-names` `services/catalyst/shop/src/market/mod.rs:916` | DIVERGENT |
-| POST | `/crypto/validate-signature` | `/lambdas` | `/lambdas/crypto/validate-signature` `services/catalyst/shop/src/market/mod.rs:975` | DIVERGENT |
+| GET | `/contracts/servers` | `/lambdas` | `/lambdas/contracts/servers` `services/catalyst/shop/src/market/mod.rs:918-921` | DIVERGENT |
+| GET | `/contracts/pois` | `/lambdas` | `/lambdas/contracts/pois` `services/catalyst/shop/src/market/mod.rs:922` | DIVERGENT |
+| GET | `/contracts/denylisted-names` | `/lambdas` | `/lambdas/contracts/denylisted-names` `services/catalyst/shop/src/market/mod.rs:923-926` | DIVERGENT |
+| POST | `/crypto/validate-signature` | `/lambdas` | `/lambdas/crypto/validate-signature` `services/catalyst/shop/src/market/mod.rs:982-985` | DIVERGENT |
 
 Counts: 10 endpoints. MATCH 1, GAP 0, DIVERGENT 9, MISSING 0.
 
@@ -41,7 +42,7 @@ Upstream routes: `decentraland/lamb2:src/controllers/routes.ts:41-73`.
 | 500 body | `{"error":"Internal Server Error"}`, no `message` `decentraland/lamb2:src/controllers/handlers/errorHandler.ts:66-77` | the same on this area's routes (profiles, outfits, contracts) through `lambdas_internal_error` `services/catalyst/shared/src/http_util.rs`; `internal_server_error` (with `message`) stays for the other services that share the helper | MATCH (LP-30) |
 | 405 | `router.allowedMethods()` `decentraland/lamb2:src/service.ts:15`. Captured: `PUT` and `GET /lambdas/profiles` answer `405`, empty body, `Content-Length: 0`, `Allow: POST` (`captures/lambdas-profiles/LP-31-put-profiles.json`, `LP-31-get-profiles.json`) | axum method router: 405, empty body, `Allow` with the route's methods; pinned by `services/catalyst/shop/src/market/lambdas_http.rs` (`a_wrong_method_is_an_empty_405`) and `fixtures/profiles-put-405.json` | MATCH for a single-method route (axum joins several methods with `,` and no space; upstream content writes `HEAD, GET`) |
 | CORS | http-server `cors: { maxAge: 36000 }` `decentraland/lamb2:src/components.ts:62-69`. Captured preflight (`OPTIONS /lambdas/profiles`): `204`, `access-control-allow-headers` reflected, `access-control-allow-origin: *`, `access-control-max-age: 36000`, `vary: Access-Control-Request-Headers`, no `Allow-Methods`, no `Expose-Headers`. A `GET` with `Origin` gets only `access-control-allow-origin: *` (`captures/lambdas-profiles/LP-31-preflight.json`, `LP-31-get-with-origin.json`) | the `/lambdas/` paths of the shop router: the same headers, plus `X-Content-Type-Options: nosniff` (the peer sends it too); without `Origin` no CORS header `services/catalyst/shop/src/market/lambdas_http.rs:24-66`. The router's other paths (`/outfits`, `/explorer`, `/v1/trades`) and the `/lambdas/` routes of other routers (content's `/lambdas/about`, `/lambdas/explore/realms`, `/lambdas/collections/contents/…`; land-authz's `/lambdas/parcels/…`, `/lambdas/users/…/parcels/…`, `/lambdas/users/…/lands-permissions`) keep the shared CORS (origin echoed with credentials, max-age 86400) `services/catalyst/shared/src/cors.rs` | MATCH for this area's routes; the other routers' `/lambdas/` routes are their areas' |
-| Rate limits | none in lamb2 for this area | none; body limit 256 KiB on the two POST routes (413 above it) `services/catalyst/shop/src/market/mod.rs:887,977` | DIVERGENT (413 only on huge bodies) |
+| Rate limits | none in lamb2 for this area | none; body limit 256 KiB on the three POST routes (413 above it) `services/catalyst/shop/src/market/mod.rs:890,894,984` | DIVERGENT (413 only on huge bodies) |
 | Request timeout | none | `TimeoutLayer` → 408 when `request_timeout` is set `services/catalyst/shop/src/market/mod.rs:986-991` | DIVERGENT (config-dependent) |
 | Path case / trailing slash | Captured on the production peer: an unknown path (`/lambdas/nope`), a different case (`/lambdas/Status`, `/lambdas/Profiles/0x…01`) and `/lambdas/status/` answer the gateway's nginx `404` HTML page (`text/html`), not lamb2; `POST /lambdas/profiles/` reaches lamb2 and answers as `/lambdas/profiles` (`captures/lambdas-profiles/LP-31-*.json`) | axum is case-sensitive; a `/lambdas/` path no merged router routes answers the same nginx page, `text/html` (`/lambdas/{*rest}` `services/catalyst/shop/src/market/mod.rs:982`, `lambdas_http.rs:68-76`). A trailing slash is trimmed for the whole app (`services/catalyst/src/serve.rs:1355`), so `POST /lambdas/profiles/` answers as captured and `/lambdas/status/` answers 200 | MATCH except `/lambdas/status/` (200 here, the gateway's 404 on the peer; LP-31) |
 | Content-Type of JSON answers | `application/json` | `application/json` | MATCH |
@@ -556,6 +557,7 @@ LP-32. **Replay fixtures.**
 
 ## 13. Endpoints dcl-one serves in this area that upstream does not
 
-- `GET /outfits/{id}` at the root (`services/catalyst/shop/src/market/mod.rs:958`), an alias of `/lambdas/outfits/{id}`.
+- `POST /lambdas/profiles/metadata` (`services/catalyst/shop/src/market/mod.rs:892-895`, `services/catalyst/shop/src/market/profiles.rs` `profiles_metadata`): asset-bundle-registry's compact profile tier (`decentraland/asset-bundle-registry@f9578d4a`, `src/controllers/handlers/get-profiles-metadata.ts`, `getMetadata` in `src/logic/sync/profile-sanitizer.ts`), served from this node's processed profiles. On production lamb2 answers this path (POST 405, GET 404 "Profile not found", `captures/abr/AB-14-*`); here the catalyst serves it. Same shape and key order (`pointer, hasClaimedName, name, nameColor, thumbnailUrl`; absent stays absent, `null` stays `null`), the same 400 for `ids` that are not an array of non-empty strings, `[]` for `[]`, and the bare 500 for a body that is not JSON. Differences, by decision: at most 1000 distinct ids and a 256 KiB body (each id costs an ownership pass here, where the registry reads precomputed rows); a failed read answers 500 or 503 where the registry logs it and answers what it found; `nameColor`'s inner keys come out sorted. GET answers 405.
+- `GET /outfits/{id}` at the root (`services/catalyst/shop/src/market/mod.rs:965`), an alias of `/lambdas/outfits/{id}`.
 - `GET /lambdas/explore/realms` (`services/catalyst/content/src/lib.rs:694`, `services/catalyst/content/src/about.rs:255-282`): not a route in lamb2 at the pinned revision.
 - The root `GET /about` (`services/catalyst/content/src/lib.rs:693`) is not an upstream lamb2 path. It corresponds to the production node's root `/about`, which is lamb2's `/about` behind the gateway.

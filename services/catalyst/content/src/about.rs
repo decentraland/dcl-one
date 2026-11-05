@@ -134,13 +134,20 @@ fn above_ninety_percent(
         0 => 0.0,
         total => total.saturating_sub(mem_available) as f64 * 100.0 / total as f64,
     };
-    if cpu_load > 90.0 {
-        tracing::info!("CPU usage is above 90%: {cpu_load:.2}%");
+    let overloaded = cpu_load > 90.0 || mem_load > 90.0;
+    // `/about` is polled several times a second: log the transitions, not
+    // every busy answer.
+    static OVERLOADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if OVERLOADED.swap(overloaded, std::sync::atomic::Ordering::Relaxed) != overloaded {
+        if overloaded {
+            tracing::info!(
+                "host overloaded, not accepting users: CPU {cpu_load:.2}%, memory {mem_load:.2}%"
+            );
+        } else {
+            tracing::info!("host load back under 90%, accepting users");
+        }
     }
-    if mem_load > 90.0 {
-        tracing::info!("Memory usage is above 90%: {mem_load:.2}%");
-    }
-    cpu_load > 90.0 || mem_load > 90.0
+    overloaded
 }
 
 /// The host figures Node's `os` module reads: `loadavg()[0]`, the online
@@ -227,13 +234,20 @@ fn map_configuration(
     }
 }
 
+/// lamb2 turns `acceptingUsers` off on an overloaded host, never `healthy`;
+/// the host is read only when `ABOUT_RESOURCE_CHECK` is on.
+fn accepting_users(healthy: bool, resource_check: bool, overloaded: impl FnOnce() -> bool) -> bool {
+    healthy && !(resource_check && overloaded())
+}
+
 pub async fn get_about(State(state): State<SharedState>) -> impl IntoResponse {
     let sync_state = state.sync.state_name().to_string();
     let content_healthy = content_is_healthy(&sync_state);
     let settings = &state.settings;
 
     let mut healthy = content_healthy;
-    let mut accepting_users = healthy && !(settings.about_resource_check && resources_overloaded());
+    let mut accepting_users =
+        accepting_users(healthy, settings.about_resource_check, resources_overloaded);
     let comms = state.about_comms().map(|about| {
         let probe = about.probe();
         let comms = build_comms_config(probe, &about.settings, about.sfu.is_alive());
@@ -376,6 +390,16 @@ mod tests {
         assert_eq!(meminfo_kb(meminfo, "MemTotal:"), 16_000_000);
         assert_eq!(meminfo_kb(meminfo, "MemAvailable:"), 1_500_000);
         assert_eq!(meminfo_kb(meminfo, "SwapTotal:"), 0);
+    }
+
+    #[test]
+    fn the_resource_check_reads_the_host_only_when_on() {
+        let unread = || -> bool { panic!("the host is read only with the check on") };
+        assert!(accepting_users(true, false, unread));
+        assert!(!accepting_users(false, false, unread));
+        assert!(accepting_users(true, true, || false));
+        assert!(!accepting_users(true, true, || true));
+        assert!(!accepting_users(false, true, || false));
     }
 
     #[test]

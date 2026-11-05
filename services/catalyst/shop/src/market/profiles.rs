@@ -553,17 +553,13 @@ impl Failure {
     }
 }
 
-/// Per-id hits are reused across id sets; only misses are fetched; answer in request order.
+/// Per-id hits are reused across id sets; only misses are fetched; answer
+/// `(pointer, profile)` in request order, each pointer once.
 async fn profiles_via_cache(
     state: &MarketplaceState,
     pointers: &[String],
-) -> Result<Vec<Value>, Failure> {
-    let mut wanted: Vec<String> = Vec::with_capacity(pointers.len());
-    for pointer in pointers {
-        if !wanted.contains(pointer) {
-            wanted.push(pointer.clone());
-        }
-    }
+) -> Result<Vec<(String, Value)>, Failure> {
+    let wanted = unique_pointers(pointers);
     let mut found: HashMap<String, Value> = Default::default();
     let mut missing: Vec<String> = Vec::new();
     for pointer in &wanted {
@@ -586,10 +582,40 @@ async fn profiles_via_cache(
         }
     }
     Ok(wanted
-        .iter()
-        .filter_map(|p| found.get(p))
-        .filter(|v| !v.is_null())
-        .cloned()
+        .into_iter()
+        .filter_map(|p| {
+            let profile = found.remove(&p).filter(|v| !v.is_null())?;
+            Some((p, profile))
+        })
+        .collect())
+}
+
+/// Processed profiles of the lowercased `pointers` as `(pointer, profile)`,
+/// in request order and each once: through the per-id cache for a small
+/// batch, one database read and ownership pass for a larger one.
+async fn processed_profiles(
+    state: &MarketplaceState,
+    pointers: &[String],
+) -> Result<Vec<(String, Value)>, Failure> {
+    if pointers.len() <= PROFILE_BATCH_MAX {
+        return profiles_via_cache(state, pointers).await;
+    }
+    let entities = active_entities(state, pointers)
+        .await
+        .map_err(|()| Failure::Db)?;
+    let mut by_pointer: HashMap<String, Value> = HashMap::new();
+    for (pointer, profile) in process_and_cache_profiles(state, pointers, &entities)
+        .await
+        .map_err(Failure::Reader)?
+    {
+        by_pointer.entry(pointer).or_insert(profile);
+    }
+    Ok(unique_pointers(pointers)
+        .into_iter()
+        .filter_map(|p| {
+            let profile = by_pointer.remove(&p)?;
+            Some((p, profile))
+        })
         .collect())
 }
 
@@ -703,12 +729,7 @@ pub async fn profiles(
     // a non-empty string fails that server's body schema (catalyst
     // `activeEntitiesBodySchema`), and `getProfiles` turns the failure into
     // `[]` for the whole batch.
-    let Some(ids) = ids
-        .unwrap_or_default()
-        .iter()
-        .map(|id| id.as_str().filter(|s| !s.is_empty()).map(str::to_string))
-        .collect::<Option<Vec<String>>>()
-    else {
+    let Some(ids) = string_ids(ids.unwrap_or_default()) else {
         return Json(json!([])).into_response();
     };
 
@@ -722,7 +743,9 @@ pub async fn profiles(
     let cache_eligible = modified_since.is_none() && pointers.len() <= PROFILE_BATCH_MAX;
     if cache_eligible {
         return match profiles_via_cache(&state, &pointers).await {
-            Ok(profiles) => Json(Value::Array(profiles)).into_response(),
+            Ok(profiles) => {
+                Json(profiles.into_iter().map(|(_, p)| p).collect::<Vec<_>>()).into_response()
+            }
             Err(f) => f.into_response(),
         };
     }
@@ -781,6 +804,13 @@ pub fn profile_metadata(pointer: &str, profile: &Value) -> Option<ProfileMetadat
     })
 }
 
+/// Every id a non-empty string, or `None`.
+fn string_ids(ids: &[Value]) -> Option<Vec<String>> {
+    ids.iter()
+        .map(|id| id.as_str().filter(|s| !s.is_empty()).map(str::to_string))
+        .collect()
+}
+
 /// The request's pointers lowercased, each once, in request order, as
 /// asset-bundle-registry's `getProfiles` keys them.
 fn unique_pointers(ids: &[String]) -> Vec<String> {
@@ -794,8 +824,10 @@ fn unique_pointers(ids: &[String]) -> Vec<String> {
 /// `getProfilesMetadataHandler` of asset-bundle-registry, served from this
 /// node's processed profiles (the same ownership filtering and claimed-name
 /// check as `profiles`, so the compact and full answers agree). `ids` must be
-/// an array of non-empty strings, with no cap; a body that is not JSON is the
-/// bare 500 `request.json()` throws into.
+/// an array of non-empty strings; a body that is not JSON is the bare 500
+/// `request.json()` throws into. Unlike the registry, which reads precomputed
+/// rows, every id here costs an ownership pass, so the distinct ids are
+/// capped at `PROFILE_IDS_MAX` as on `/lambdas/profiles`.
 pub async fn profiles_metadata(
     State(state): State<SharedState>,
     body: axum::body::Bytes,
@@ -803,61 +835,28 @@ pub async fn profiles_metadata(
     let Ok(body) = serde_json::from_slice::<Value>(&body) else {
         return lambdas_internal_error();
     };
-    let ids: Option<Vec<String>> = body.get("ids").and_then(Value::as_array).and_then(|ids| {
-        ids.iter()
-            .map(|id| id.as_str().filter(|s| !s.is_empty()).map(str::to_string))
-            .collect()
-    });
-    let Some(ids) = ids else {
+    let Some(ids) = body
+        .get("ids")
+        .and_then(Value::as_array)
+        .and_then(|ids| string_ids(ids))
+    else {
         return bad_request(METADATA_IDS_MSG);
     };
     let pointers = unique_pointers(&ids);
-    if pointers.is_empty() {
-        return Json(json!([])).into_response();
+    if pointers.len() > PROFILE_IDS_MAX {
+        return early_profiles_response(ProfileIdsCheck::TooMany)
+            .expect("TooMany is an early response");
     }
-
-    let found: Result<Vec<(String, Value)>, Failure> = if pointers.len() <= PROFILE_BATCH_MAX {
-        profiles_via_cache(&state, &pointers).await.map(|profiles| {
-            profiles
-                .into_iter()
-                .filter_map(|profile| {
-                    let pointer = profile_pointer(&profile)?;
-                    Some((pointer, profile))
-                })
-                .collect()
-        })
-    } else {
-        match active_entities(&state, &pointers).await {
-            Ok(entities) => process_and_cache_profiles(&state, &pointers, &entities)
-                .await
-                .map_err(Failure::Reader),
-            Err(()) => Err(Failure::Db),
-        }
-    };
-    match found {
+    match processed_profiles(&state, &pointers).await {
         Ok(found) => {
-            let mut by_pointer: HashMap<String, Value> = HashMap::with_capacity(found.len());
-            for (pointer, profile) in found {
-                by_pointer.entry(pointer).or_insert(profile);
-            }
-            let compact: Vec<ProfileMetadata> = pointers
+            let compact: Vec<ProfileMetadata> = found
                 .iter()
-                .filter_map(|pointer| profile_metadata(pointer, by_pointer.get(pointer)?))
+                .filter_map(|(pointer, profile)| profile_metadata(pointer, profile))
                 .collect();
             Json(compact).into_response()
         }
         Err(f) => f.into_response(),
     }
-}
-
-/// The lowercased owner of a processed profile, the pointer it was deployed to.
-fn profile_pointer(profile: &Value) -> Option<String> {
-    let avatar = profile.get("avatars")?.as_array()?.first()?;
-    avatar
-        .get("ethAddress")
-        .or_else(|| avatar.get("userId"))
-        .and_then(Value::as_str)
-        .map(str::to_lowercase)
 }
 
 pub async fn profile_by_id(State(state): State<SharedState>, Path(id): Path<String>) -> Response {
