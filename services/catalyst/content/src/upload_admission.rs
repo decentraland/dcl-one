@@ -105,6 +105,10 @@ pub struct SourceUploads {
     in_flight: Mutex<HashMap<String, (u32, u64)>>,
 }
 
+/// A source with its share in flight.
+#[derive(Debug)]
+pub struct SourceBusy;
+
 /// One admitted upload's share of its source's allowance, returned on drop.
 pub struct SourceLease<'a> {
     limits: &'a SourceUploads,
@@ -123,7 +127,7 @@ impl SourceUploads {
 
     /// Admits an upload of up to `bytes` from `client_ip`: `Err` when the
     /// source already has its share in flight, `Ok(None)` without a source.
-    pub fn try_acquire(&self, client_ip: &str, bytes: u64) -> Result<Option<SourceLease<'_>>, ()> {
+    pub fn try_acquire(&self, client_ip: &str, bytes: u64) -> Result<Option<SourceLease<'_>>, SourceBusy> {
         if client_ip.trim().is_empty() {
             return Ok(None);
         }
@@ -131,7 +135,7 @@ impl SourceUploads {
         let mut in_flight = self.in_flight.lock();
         let (uploads, held) = in_flight.get(&key).copied().unwrap_or((0, 0));
         if uploads >= self.max_uploads || held.saturating_add(bytes) > self.max_bytes {
-            return Err(());
+            return Err(SourceBusy);
         }
         in_flight.insert(key.clone(), (uploads + 1, held + bytes));
         Ok(Some(SourceLease {
