@@ -112,6 +112,11 @@ Types, subjects and caps: `comms::protocol::bus`. Record reviewed channel contra
 
 A publish returns after bounded local SDK acceptance: `Submitted` proves neither broker authorization nor delivery. Require per-process NATS credentials and subject permissions matching the producer/consumer table. Verify deployment enforcement through the private release review.
 
+Social login/referral work and notification persistence stay inside `serve`:
+authenticated login ingress commits local SQL and the existing worker handles
+reward providers. They use no SQS/SNS transport and add no NATS subject. See the
+[native social events ADR](../../../../docs/adr/2026-11-04-native-social-events.md).
+
 ## Social subscription fanout
 
 Each `serve` attaches Social to its existing `CommsState::bus` link and subscribes

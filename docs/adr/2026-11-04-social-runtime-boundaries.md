@@ -37,8 +37,8 @@ With social writes enabled, the fleet-leased `social-referral-rewards` job selec
 at most 64 due rows every 60 seconds. It checks the live restore-stamp write hold
 before selecting work and before each attempt. Failed attempts defer eligibility
 by one minute; bans also block retry. Confirmed responses resume downstream work
-without another login or provider POST. Known completed notifications are skipped
-on image retry, but an ambiguous publish failure can repeat a notification.
+without another login or provider POST. Local image, notification/email outbox and pending-state completion now share
+one transaction, as specified by the accepted [native events decision](2026-11-04-native-social-events.md). Imported receipts marked notified skip another notice.
 Exactly-once external delivery is not claimed.
 
 Migration 0024 imports object-valued historical paid responses, preserving their
@@ -55,12 +55,15 @@ use schema version 3, but an older binary interprets non-null `reward_tier` as a
 owed POST and ignores the new claim and advisory lock. It can repeat a reward
 that the new code has claimed, confirmed or quarantined.
 
-Before migrating 0024, pause referral/login ingress; stop every SQS consumer,
+Before migrating 0024, pause referral/login ingress; stop every login consumer,
 retry worker and administrative writer; and drain or stop in-flight reward work.
 Stop all pre-0024 binaries sharing the database and disable their restart or
 rollback before running the compatible `catalyst schema migrate` and schema
-status. Resume retained queue delivery only on compatible binaries after
-inspecting the migration and quarantined rows. A fleet lease alone does not
+status. Resume native signed login delivery only on compatible binaries after
+inspecting the migration and quarantined rows. Retained legacy SQS messages
+cannot be submitted to the new endpoint: they have no user signature, and no
+importer exists. Undrained messages will not advance referral progress after
+cutover; retaining them is not a replay strategy. A fleet lease alone does not
 prevent an older login consumer from issuing a reward.
 
 This process gate is required even on an already-version-3 database. The migrator
@@ -80,6 +83,5 @@ adds a durable idempotency or reconciliation contract.
 
 Local tests cover concurrency, restart, cancellation, unknown responses,
 notification/image failures, restore holds and populated additive upgrades.
-Deployment still requires verified backups/restores, configured providers, queue
-policies, reconciliation of quarantined rewards and evidence that all old
+Deployment still requires verified backups/restores, configured providers, reconciliation of quarantined rewards and evidence that all old
 processes stopped. No acceptance or rollout approval is recorded here.
