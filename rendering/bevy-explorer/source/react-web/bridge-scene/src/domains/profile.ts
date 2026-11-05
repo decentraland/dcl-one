@@ -10,6 +10,7 @@ import { getPlayer } from '@dcl/sdk/players'
 import { catalystBase, getJson } from '../http'
 import { resolveEquippedSet, resolveWearables } from './wearables'
 import { equippedSlots, resolveEquippedEmotes } from './emotes'
+import { profileSaveSettled } from './avatarDraft'
 import type { Badge, Profile, ProfileInfo, SaveProfileRequest } from '../../../src/engine/protocol'
 import type { SetAvatarData } from '../../../src/engine/generated'
 // Not via the generated barrel: it only re-exports the top-level files, not serde_json/.
@@ -85,16 +86,21 @@ export type CompactProfile = {
   thumbnailUrl: string
 }
 
+/** The most addresses one `getCompactProfiles` call takes (the engine rejects more). */
+const MAX_IDENTITIES = 200
+
 /**
  * Resolve display identity for a list of addresses through the ENGINE's profile cache —
  * the one the nametags, chat and passport UI already read — in one call: the engine asks the
  * catalyst for the compact profiles of every address it doesn't already hold, in batches, and
  * anyone already on screen costs nothing. Returns a lookup that always answers: an address
- * with no (or an unresolvable) profile falls back to its shortened form.
+ * with no (or an unresolvable) profile falls back to its shortened form, as does every address
+ * past the first `MAX_IDENTITIES`.
  */
 export async function fetchIdentities(addresses: string[]): Promise<(address: string) => ProfileIdentity> {
   const unique = [...new Set(addresses.filter((a) => a !== '').map(profileKey))]
-  const found = await BevyApi.getCompactProfiles(unique).catch((): CompactProfile[] => [])
+  if (unique.length > MAX_IDENTITIES) console.error(`[profile] ${unique.length} addresses asked for, resolving the first ${MAX_IDENTITIES}`)
+  const found = await BevyApi.getCompactProfiles(unique.slice(0, MAX_IDENTITIES)).catch((): CompactProfile[] => [])
   const resolved = new Map(found.map((profile) => [profileKey(profile.pointer), profile]))
   return (address) => identityOf(resolved.get(profileKey(address)), address)
 }
@@ -395,12 +401,15 @@ export function registerProfile(ctx: Ctx): void {
       await BevyApi.setAvatar(data)
     } catch (e) {
       if (signedOut()) return
+      // a save that a later one replaced settles nothing: the later one carries it
+      if (!String(e).includes('cancelled')) profileSaveSettled(false)
       console.error('[profile] save failed', e)
       ctx.send({ kind: 'profileSaved', ok: false, error: e instanceof Error ? e.message : String(e) })
       return
     }
 
     if (signedOut()) return
+    profileSaveSettled(true)
     ctx.send({ kind: 'profileSaved', ok: true })
     // setAvatar amends the engine's own copy of the profile before it resolves, so re-reading it
     // is the post-save state — no need to fold the edit in by hand.

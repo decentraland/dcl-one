@@ -58,6 +58,10 @@ an engine-side revert of a failed publish.
   version is announced once the deploy lands. A failed deploy puts that profile back in the world
   (the player's avatar, scenes' `PLAYER` data, the profile cache, the HUD's profile-changed stream)
   without deploying again.
+- **An edit's version is new for the session.** It goes above every version this session gave the
+  account, not just above the profile held: a deploy that failed here may still have reached the
+  server (an error after the catalyst took it, or a replaced deploy that kept running on the web),
+  and a peer that read that version skips any other profile announced under it.
 
 ## Rejected
 

@@ -130,7 +130,7 @@ module.exports.getUserProfile = async function(address) {
 
 // the compact profiles of a list of addresses in one call, through the engine's profile cache:
 // what a list row shows, without fetching whole profiles. In request order; an address that
-// can't be resolved is left out.
+// can't be resolved is left out. At most 200 addresses a call; more rejects.
 // addresses: string[] => CompactProfile[]
 // type CompactProfile = {
 //   pointer: string,               // lowercase 0x address

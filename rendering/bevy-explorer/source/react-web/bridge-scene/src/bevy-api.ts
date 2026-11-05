@@ -191,7 +191,7 @@ export type BevyApiInterface = {
   getUserProfile: (address: string) => Promise<SerializedProfile>
   /** The compact profiles (name, claimed-name flag, name colour, face) of a list of addresses in
    *  one call, through the engine's profile cache: what a list row shows. In request order; an
-   *  address the engine can't resolve is left out. */
+   *  address the engine can't resolve is left out. At most 200 addresses; more rejects. */
   getCompactProfiles: (addresses: string[]) => Promise<CompactProfile[]>
   kernelFetch: (req: KernelFetchRequest) => Promise<KernelFetchResponse>
   getRealmProvider: () => Promise<string>

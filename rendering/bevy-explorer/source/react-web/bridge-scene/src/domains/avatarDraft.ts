@@ -3,7 +3,7 @@
 // publishes the profile when its Backpack closes: BackpackController.Deactivate).
 //   from: equip / equipEmote / equipOutfit (editLook), commitAvatar (the page, on close or Retry),
 //         revertAvatar (the page, Revert), /lambdas/collections (which body shapes each item fits,
-//         via ./collections)
+//         via ./collections), profileSaveSettled (./profile, a profile save that replaced a commit)
 //   to:   BevyApi.setAvatar; avatarSaveFailed to the page
 import { getPlayer } from '@dcl/sdk/players'
 import { BevyApi } from '../bevy-api'
@@ -20,14 +20,21 @@ let draft: AvatarLook | null = null
 // deploy keeps the draft, so the next close (or Retry) deploys it again; the engine has already put
 // the deployed look back on the player.
 let deployed: AvatarLook | null = null
+// A commit that a later setAvatar replaced before it deployed: its draft and the look it sent. The
+// later save carries that look, so its outcome settles the commit (`profileSaveSettled`; another
+// close and the welcome page's save cover it with their own result).
+let superseded: { edited: AvatarLook; look: AvatarLook } | null = null
 // The look the stage wears before there is a player: the guest start page's pick, which the
 // sign-in then carries, so the player arrives already wearing it.
 let standIn: AvatarLook | null = null
 identity.onChange(() => {
   draft = null
   deployed = null
+  superseded = null
   standIn = null
 })
+
+const isCancelled = (e: unknown): boolean => String(e).includes('cancelled')
 
 function playerLook(): AvatarLook | null {
   const p = getPlayer()
@@ -55,6 +62,7 @@ export function setStandInLook(look: AvatarLook): void {
   standIn = look
   draft = null
   deployed = null
+  superseded = null
 }
 
 /** Change the draft (seeded from the live player on the first edit). Nothing deploys until commit. */
@@ -76,19 +84,38 @@ export async function deployLookAs(name: string): Promise<void> {
   const look = currentLook()
   if (look == null) throw new Error('no player')
   const edited = draft
-  await BevyApi.setAvatar({
-    base: {
-      name,
-      bodyShapeUrn: look.bodyShape,
-      eyesColor: look.eyes,
-      hairColor: look.hair,
-      skinColor: look.skin,
-      talking: null
-    },
-    equip: { wearableUrns: look.wearables, emoteUrns: look.emotes, forceRender: look.forceRender }
-  })
+  try {
+    await BevyApi.setAvatar({
+      base: {
+        name,
+        bodyShapeUrn: look.bodyShape,
+        eyesColor: look.eyes,
+        hairColor: look.hair,
+        skinColor: look.skin,
+        talking: null
+      },
+      equip: { wearableUrns: look.wearables, emoteUrns: look.emotes, forceRender: look.forceRender }
+    })
+  } catch (e) {
+    // a failed save took a replaced commit's look out of the engine with its own
+    if (!isCancelled(e)) superseded = null
+    throw e
+  }
   deployed = look
+  superseded = null
   if (draft === edited) draft = null
+}
+
+/** A profile save (name, about) finished. It settles a Backpack commit it replaced before that one
+ *  deployed: the save carried the commit's look, so a save that deployed put the look on the
+ *  server, and a failed one took it out of the engine with the rest of the edit, leaving the draft
+ *  for the next close or Retry. */
+export function profileSaveSettled(saved: boolean): void {
+  const replaced = superseded
+  superseded = null
+  if (replaced == null || !saved) return
+  deployed = replaced.look
+  if (draft === replaced.edited) draft = null
 }
 
 // The look as it deploys: without the wearables that can't render on its body shape (Unity unequips
@@ -129,15 +156,19 @@ export function registerAvatarDraft(ctx: Ctx, sendEquipped: () => Promise<void>)
       // "cancelled" isn't a failure of its own: a later setAvatar (another close, a profile save)
       // replaced this one before it deployed and carries this look. The server only has it once
       // that one lands, and if that one fails the engine goes back to the look from before both,
-      // so the draft and `deployed` stay as they are for the next close or Retry.
-      if (!String(e).includes('cancelled')) {
-        console.error('[avatar] deploy failed', e)
-        ctx.send({ kind: 'avatarSaveFailed', message: String(e) })
+      // so the draft and `deployed` stay as they are until the later save settles them.
+      if (isCancelled(e)) {
+        superseded = { edited, look }
+        return
       }
+      superseded = null
+      console.error('[avatar] deploy failed', e)
+      ctx.send({ kind: 'avatarSaveFailed', message: String(e) })
       return
     }
     if (signedOut()) return
     deployed = look
+    superseded = null
     if (draft === edited) draft = null
     if (dropped) await sendEquipped()
   })

@@ -36,6 +36,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   tier, which falls back to full where the route is missing, as unity-explorer forces full on a
   catalyst. No flag, and no catalyst named by another player. See the
   [ADR](../../../../docs/adr/2026-11-04-explorer-profiles-from-the-catalyst.md).
+- **Own profile versions never repeat.** unity-explorer's `SelfProfile` numbers an edit one above
+  the profile it holds, so after a failed publish puts the old profile back, the next edit reuses
+  the failed version. A failed deploy may still have reached the server, and a peer that read it
+  skips any other profile under that number, so our next edit goes above every version this session
+  gave the account (`CurrentUserProfile::bump_version`).
 
 ## Deliberate choices that look like mistakes
 

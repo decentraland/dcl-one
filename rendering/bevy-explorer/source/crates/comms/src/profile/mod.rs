@@ -664,24 +664,28 @@ pub fn setup_primary_profile(
             }
         } else if let Some(peer) = current_profile.peer_profile() {
             let now = time.elapsed_secs_f64();
-            if *announced != Some(peer.version) {
-                // the deploy that held this version back has landed
-                announce_version(&transports, peer);
-                *announced = Some(peer.version);
-                *last_announce = now;
-            } else if now > *last_announce + 5.0 {
-                debug!("announcing profile v {}", peer.version);
-                // The keepalive re-announce goes the same way as the version bump above: Pulse
-                // only, converted to a `ProfileVersionAnnouncement`.
-                broadcast(
-                    transports.iter(),
-                    BroadcastTarget::PULSE,
-                    false,
-                    rfc4::AnnounceProfileVersion {
-                        profile_version: peer.version,
-                    },
-                );
-                *last_announce = now;
+            match due_announcement(*announced, peer.version, *last_announce, now) {
+                Some(Announcement::Version) => {
+                    // the deploy that held this version back has landed
+                    announce_version(&transports, peer);
+                    *announced = Some(peer.version);
+                    *last_announce = now;
+                }
+                Some(Announcement::Keepalive) => {
+                    debug!("announcing profile v {}", peer.version);
+                    // The keepalive re-announce goes the same way as the version bump above:
+                    // Pulse only, converted to a `ProfileVersionAnnouncement`.
+                    broadcast(
+                        transports.iter(),
+                        BroadcastTarget::PULSE,
+                        false,
+                        rfc4::AnnounceProfileVersion {
+                            profile_version: peer.version,
+                        },
+                    );
+                    *last_announce = now;
+                }
+                None => (),
             }
         }
     }
@@ -698,6 +702,7 @@ pub fn setup_primary_profile(
                     .bypass_change_detection()
                     .deploy_finished(address, true);
                 commands.send_event(ProfileDeployedEvent {
+                    address,
                     version,
                     success: true,
                 });
@@ -712,6 +717,7 @@ pub fn setup_primary_profile(
                     current_profile.set_changed();
                 }
                 commands.send_event(ProfileDeployedEvent {
+                    address,
                     version,
                     success: false,
                 });
@@ -719,6 +725,30 @@ pub fn setup_primary_profile(
             }
             None => *deploy_task = Some((version, address, task)),
         }
+    }
+}
+
+/// What peers are owed about the profile they may know (`peer_version`, see `peer_profile`).
+#[derive(Debug, PartialEq)]
+enum Announcement {
+    /// Its version, which differs from the last one announced: a deploy that held it back landed.
+    Version,
+    /// The five-second keepalive of the version already announced.
+    Keepalive,
+}
+
+fn due_announcement(
+    announced: Option<u32>,
+    peer_version: u32,
+    last_announce: f64,
+    now: f64,
+) -> Option<Announcement> {
+    if announced != Some(peer_version) {
+        Some(Announcement::Version)
+    } else if now > last_announce + 5.0 {
+        Some(Announcement::Keepalive)
+    } else {
+        None
     }
 }
 
@@ -747,9 +777,30 @@ pub struct CurrentUserProfile {
     /// The profile from before the first edit still deploying: what other players are told
     /// about meanwhile, and what a failed deploy puts back (Unity's `SelfProfile` revert).
     pub revert_to: Option<UserProfile>,
+    /// The highest version this session gave an edit of an account's profile. A deploy that
+    /// failed here may still have reached the server (an error after the catalyst took it, or on
+    /// the web a replaced deploy that kept running), and a peer that read it skips any other
+    /// profile announced under the same number, so the next edit never reuses it.
+    pub last_version: Option<(Address, u32)>,
 }
 
 impl CurrentUserProfile {
+    /// Give the edited profile its version: one above its own and above every version this
+    /// session already gave an edit of the same account.
+    pub fn bump_version(&mut self) {
+        let Some(profile) = self.profile.as_mut() else {
+            return;
+        };
+        let address = profile.content.eth_address.as_h160();
+        let used = match self.last_version {
+            Some((last, version)) if Some(last) == address => version,
+            _ => 0,
+        };
+        profile.version = profile.version.max(used) + 1;
+        profile.content.version = profile.version as i64;
+        self.last_version = address.map(|address| (address, profile.version));
+    }
+
     /// Keep the profile as it is before an edit that will deploy; an older edit still deploying
     /// keeps the snapshot it took.
     pub fn snapshot_for_revert(&mut self) {
@@ -1292,8 +1343,10 @@ pub struct Deployment<'a> {
     metadata: serde_json::Value,
 }
 
+/// A deploy of the local player's profile settled: which account and version it carried.
 #[derive(Event)]
 pub struct ProfileDeployedEvent {
+    pub address: Option<Address>,
     pub version: u32,
     pub success: bool,
 }
@@ -1489,17 +1542,7 @@ async fn fetch_compact_profiles(
         .send()
         .await
         .map_err(|e| CompactFetchError::Failed(anyhow!("compact profile fetch from {url}: {e}")))?;
-    match response.status() {
-        StatusCode::OK => (),
-        StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED => {
-            return Err(CompactFetchError::Unsupported)
-        }
-        status => {
-            return Err(CompactFetchError::Failed(anyhow!(
-                "compact profile fetch from {url}: bad response: {status}"
-            )))
-        }
-    }
+    compact_status(&url, response.status())?;
     let found = response
         .json::<Vec<CompactProfile>>()
         .await
@@ -1507,15 +1550,32 @@ async fn fetch_compact_profiles(
     Ok(compact_profiles_for(found, addresses))
 }
 
+/// What a compact POST's status says: 404 or 405 is a catalyst without the route (lamb2 has none;
+/// a node whose `/lambdas/profiles/{id}` takes the path refuses the method), any other status but
+/// 200 a failure of this request alone.
+fn compact_status(url: &str, status: StatusCode) -> Result<(), CompactFetchError> {
+    match status {
+        StatusCode::OK => Ok(()),
+        StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED => {
+            Err(CompactFetchError::Unsupported)
+        }
+        status => Err(CompactFetchError::Failed(anyhow!(
+            "compact profile fetch from {url}: bad response: {status}"
+        ))),
+    }
+}
+
 /// The asked addresses, in order, each with the compact profile whose `pointer` is that
-/// address; a later entry never displaces an earlier one.
+/// address (written as the lowercase address, however the server cased it, as
+/// `CompactProfile::from` does); a later entry never displaces an earlier one.
 fn compact_profiles_for(
     found: Vec<CompactProfile>,
     addresses: Vec<Address>,
 ) -> Vec<(Address, Option<CompactProfile>)> {
     let mut by_address = HashMap::<Address, CompactProfile>::default();
-    for profile in found {
+    for mut profile in found {
         if let Some(address) = profile.pointer.as_h160() {
+            profile.pointer = format!("{address:#x}");
             by_address.entry(address).or_insert(profile);
         }
     }
@@ -1607,7 +1667,32 @@ pub async fn get_remote_profile(
 }
 
 enum ProcessProfileState {
-    Deploying(u32, RpcResultSender<Result<u32, String>>),
+    /// An edit's deploy: the account and version it carries, and who waits for its result.
+    Deploying {
+        address: Option<Address>,
+        version: u32,
+        sender: RpcResultSender<Result<u32, String>>,
+    },
+}
+
+/// What the edit waiting on the deploy of `version` of `address` hears from a deploy that
+/// settled: that deploy's result, "cancelled" when another deploy replaced it, and nothing from an
+/// older deploy of the same account, which settled before the edit was made (versions only climb:
+/// `CurrentUserProfile::bump_version`).
+fn deploy_answer(
+    address: Option<Address>,
+    version: u32,
+    settled: &ProfileDeployedEvent,
+) -> Option<Result<u32, String>> {
+    if settled.address != address || settled.version > version {
+        Some(Err("cancelled".to_owned()))
+    } else if settled.version < version {
+        None
+    } else if settled.success {
+        Some(Ok(version))
+    } else {
+        Some(Err("failed to deploy to server.".to_owned()))
+    }
 }
 
 fn process_profile(
@@ -1710,24 +1795,46 @@ fn process_profile(
             profile.content.name_color = name_color.to_color3();
         }
 
-        profile.version += 1;
-        profile.content.version = profile.version as i64;
-
+        current_profile.bump_version();
+        let Some(profile) = current_profile.profile.as_ref() else {
+            return;
+        };
         debug!("{:#?}", profile.content);
+        let address = profile.content.eth_address.as_h160();
+        let version = profile.version;
+        let deploys = profile.content.has_connected_web3.unwrap_or_default();
 
-        if let Some(existing) = processing.take() {
-            match existing {
-                ProcessProfileState::Deploying(_, sender) => {
-                    sender.send(Err("cancelled".to_owned()));
-                }
+        // The deploy this edit replaces hears its own result if that has already come in, else
+        // "cancelled": the new deploy carries its change too. Every result queued now settled
+        // before this edit, so none of them is the new deploy's.
+        match processing.take() {
+            Some(ProcessProfileState::Deploying {
+                address: replaced,
+                version: replaced_version,
+                sender: waiting,
+            }) => {
+                let own = deployed
+                    .read()
+                    .filter(|settled| {
+                        settled.address == replaced && settled.version == replaced_version
+                    })
+                    .last()
+                    .map(|settled| settled.success);
+                waiting.send(match own {
+                    Some(true) => Ok(replaced_version),
+                    Some(false) => Err("failed to deploy to server.".to_owned()),
+                    None => Err("cancelled".to_owned()),
+                });
             }
+            None => deployed.clear(),
         }
 
-        if profile.content.has_connected_web3.unwrap_or_default() {
-            *processing = Some(ProcessProfileState::Deploying(
-                profile.version,
-                sender.clone(),
-            ));
+        if deploys {
+            *processing = Some(ProcessProfileState::Deploying {
+                address,
+                version,
+                sender: sender.clone(),
+            });
             current_profile.is_deployed = false;
         } else {
             sender.send(Ok(u32::MAX))
@@ -1736,23 +1843,25 @@ fn process_profile(
         return;
     }
 
-    if let Some(ProcessProfileState::Deploying(version, sender)) = processing.take() {
+    if let Some(ProcessProfileState::Deploying {
+        address,
+        version,
+        sender,
+    }) = processing.take()
+    {
         debug!("checking for response: {}", version);
-        if let Some(ev) = deployed.read().next() {
-            debug!("got response: {} vs {}", version, ev.version);
-            let res = if version == ev.version {
-                if ev.success {
-                    Ok(version)
-                } else {
-                    Err("failed to deploy to server.".to_owned())
-                }
-            } else {
-                Err("cancelled".to_owned())
-            };
-            sender.send(res);
-            return;
+        for settled in deployed.read() {
+            debug!("got response: {} vs {}", version, settled.version);
+            if let Some(answer) = deploy_answer(address, version, settled) {
+                sender.send(answer);
+                return;
+            }
         }
-        *processing = Some(ProcessProfileState::Deploying(version, sender));
+        *processing = Some(ProcessProfileState::Deploying {
+            address,
+            version,
+            sender,
+        });
     } else {
         deployed.clear();
     }
@@ -2013,9 +2122,8 @@ mod tests {
     /// as `process_profile` amends a profile that will deploy
     fn edit(current: &mut CurrentUserProfile, name: &str) {
         current.snapshot_for_revert();
-        let profile = current.profile.as_mut().unwrap();
-        profile.version += 1;
-        profile.content.name = name.to_owned();
+        current.bump_version();
+        current.profile.as_mut().unwrap().content.name = name.to_owned();
     }
 
     fn deployed(profile: UserProfile) -> CurrentUserProfile {
@@ -2097,6 +2205,163 @@ mod tests {
         current.deploy_finished(own_address(), true);
         current.adopt_server_profile(own(6, "server"));
         assert_eq!(version_and_name(current.profile.as_ref()), (6, "server"));
+    }
+
+    #[test]
+    fn a_failed_version_is_not_reused() {
+        let mut current = deployed(own(5, "before"));
+        edit(&mut current, "rejected");
+        current.deploy_finished(own_address(), false);
+        assert_eq!(version_and_name(current.profile.as_ref()), (5, "before"));
+
+        // the rejected v6 may still have reached the server: the next edit goes above it
+        edit(&mut current, "next");
+        assert_eq!(version_and_name(current.profile.as_ref()), (7, "next"));
+    }
+
+    #[test]
+    fn another_account_counts_from_its_own_version() {
+        let mut current = deployed(own(5, "before"));
+        edit(&mut current, "edited");
+        let mut other = profile(2, "other");
+        other.content.eth_address = format!("{:#x}", Address::repeat_byte(9));
+        current.profile = Some(other);
+        current.revert_to = None;
+
+        edit(&mut current, "other edited");
+        assert_eq!(
+            version_and_name(current.profile.as_ref()),
+            (3, "other edited")
+        );
+    }
+
+    #[test]
+    fn peers_hear_the_new_version_once_its_deploy_lands() {
+        let mut current = deployed(own(5, "before"));
+        let announced = Some(5);
+        edit(&mut current, "pending");
+
+        // pending: peers keep the version from before the edit, repeated by the keepalive
+        let peer = current.peer_profile().unwrap().version;
+        assert_eq!(peer, 5);
+        assert_eq!(due_announcement(announced, peer, 0.0, 1.0), None);
+        assert_eq!(
+            due_announcement(announced, peer, 0.0, 6.0),
+            Some(Announcement::Keepalive)
+        );
+
+        // landed: the edit's version goes out once
+        current.deploy_finished(own_address(), true);
+        let peer = current.peer_profile().unwrap().version;
+        assert_eq!(peer, 6);
+        assert_eq!(
+            due_announcement(announced, peer, 0.0, 1.0),
+            Some(Announcement::Version)
+        );
+        assert_eq!(due_announcement(Some(6), peer, 1.0, 2.0), None);
+    }
+
+    fn web3(version: u32, name: &str) -> UserProfile {
+        let mut profile = own(version, name);
+        profile.content.has_connected_web3 = Some(true);
+        profile
+    }
+
+    /// `process_profile` alone: edits go in as `SetAvatar`s, deploys settle as events.
+    struct Saves(App);
+
+    impl Saves {
+        fn new(profile: UserProfile) -> Self {
+            let mut app = App::new();
+            app.add_event::<SystemApi>()
+                .add_event::<ProfileDeployedEvent>()
+                .insert_resource(AppConfig::default())
+                .insert_resource(deployed(profile))
+                .add_systems(Update, process_profile);
+            Self(app)
+        }
+
+        fn edit(&mut self) -> common::rpc::RpcResultReceiver<Result<u32, String>> {
+            let (sender, receiver) = RpcResultSender::channel();
+            let data = system_bridge::SetAvatarData {
+                base: None,
+                equip: None,
+                has_claimed_name: None,
+                profile_extras: None,
+                name_color: None,
+            };
+            self.0
+                .world_mut()
+                .send_event(SystemApi::SetAvatar(data, sender));
+            receiver
+        }
+
+        fn settle(&mut self, version: u32, success: bool) {
+            self.0.world_mut().send_event(ProfileDeployedEvent {
+                address: own_address(),
+                version,
+                success,
+            });
+        }
+
+        fn current(&mut self) -> Mut<'_, CurrentUserProfile> {
+            self.0.world_mut().resource_mut::<CurrentUserProfile>()
+        }
+    }
+
+    #[test]
+    fn an_edit_replacing_a_pending_deploy_cancels_it() {
+        let mut saves = Saves::new(web3(5, "before"));
+        let mut first = saves.edit();
+        saves.0.update();
+        assert_eq!(first.poll_once(), Ok(None));
+
+        let mut second = saves.edit();
+        saves.0.update();
+        assert_eq!(first.poll_once(), Ok(Some(Err("cancelled".to_owned()))));
+        assert_eq!(second.poll_once(), Ok(None));
+
+        saves.settle(7, true);
+        saves.0.update();
+        assert_eq!(second.poll_once(), Ok(Some(Ok(7))));
+    }
+
+    #[test]
+    fn a_stale_result_does_not_answer_the_next_edit() {
+        let mut saves = Saves::new(web3(5, "before"));
+        let mut first = saves.edit();
+        saves.0.update();
+
+        // the first deploy fails (the engine puts v5 back) in the frame a second edit arrives:
+        // the first edit hears its own result, and the second edit becomes v7, not v6 again
+        saves.current().deploy_finished(own_address(), false);
+        saves.settle(6, false);
+        let mut second = saves.edit();
+        saves.0.update();
+        assert_eq!(
+            first.poll_once(),
+            Ok(Some(Err("failed to deploy to server.".to_owned())))
+        );
+        assert_eq!(saves.current().profile.as_ref().unwrap().version, 7);
+
+        // a result of the first deploy that comes in late leaves the second edit waiting
+        saves.settle(6, false);
+        saves.0.update();
+        assert_eq!(second.poll_once(), Ok(None));
+
+        saves.settle(7, true);
+        saves.0.update();
+        assert_eq!(second.poll_once(), Ok(Some(Ok(7))));
+    }
+
+    #[test]
+    fn a_missing_compact_route_is_told_from_a_failed_request() {
+        let status = |code: u16| compact_status("url", StatusCode::from_u16(code).unwrap());
+        assert!(status(200).is_ok());
+        assert!(matches!(status(404), Err(CompactFetchError::Unsupported)));
+        assert!(matches!(status(405), Err(CompactFetchError::Unsupported)));
+        assert!(matches!(status(403), Err(CompactFetchError::Failed(_))));
+        assert!(matches!(status(500), Err(CompactFetchError::Failed(_))));
     }
 
     #[test]
@@ -2184,6 +2449,8 @@ mod tests {
         let matched = compact_profiles_for(found, vec![address, Address::ZERO]);
         assert_eq!(matched[0].0, address);
         let row = matched[0].1.as_ref().unwrap();
+        // the server's checksummed pointer comes back as the lowercase address
+        assert_eq!(row.pointer, format!("{address:#x}"));
         assert_eq!(
             (row.name.as_str(), row.has_claimed_name, row.name_color),
             ("Ryumi", true, None)
