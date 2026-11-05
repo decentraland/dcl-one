@@ -608,6 +608,12 @@ impl CommsState {
         self
     }
 
+    /// `SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE` for the world comms mints (3 by default).
+    pub fn with_shared_secret_max_attempts(mut self, max: u32) -> Self {
+        self.world_mint.max_secret_attempts = max.max(1);
+        self
+    }
+
     pub fn eip1654(&self) -> Option<&dyn Eip1654Validator> {
         self.eip1654.as_deref()
     }
@@ -655,6 +661,22 @@ impl CommsState {
             move |_ctx| {
                 let state = state.clone();
                 async move { moderation::maintenance::run_once(&state).await }
+            },
+        );
+        let pool = self.pool.clone();
+        jobs.spawn_periodic_leased(
+            "comms-secret-attempts-sweep",
+            PeriodicCfg::every(Duration::from_secs(300))
+                .with_error_backoff(Duration::from_secs(600)),
+            move |_ctx| {
+                let pool = pool.clone();
+                async move {
+                    admission::world_mint::sweep_secret_attempts(
+                        &pool,
+                        chrono::Utc::now().naive_utc(),
+                    )
+                    .await
+                }
             },
         );
         let state = self.clone();
@@ -881,6 +903,18 @@ pub fn router(state: SharedState) -> Router {
             state.clone(),
             service_token_layer,
         ))
+        .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
+        .layer(axum::middleware::from_fn(cors::cors_middleware))
+        .with_state(state)
+}
+
+/// `POST /livekit-webhook` alone, with the gatekeeper router's body cap and
+/// guards; `serve` also nests it under `/worlds-content-server`, where WCS
+/// received the same webhook.
+pub fn webhook_router(state: SharedState) -> Router {
+    Router::new()
+        .route("/livekit-webhook", post(webhook::livekit_webhook))
+        .layer(axum::extract::DefaultBodyLimit::max(512 * 1024))
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
         .layer(axum::middleware::from_fn(cors::cors_middleware))
         .with_state(state)

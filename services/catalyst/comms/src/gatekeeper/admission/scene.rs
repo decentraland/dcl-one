@@ -28,7 +28,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use sqlx::Row;
 
-use crate::access::{Access, LandOperators, SceneRef};
+use crate::access::{Access, AccessType, LandOperators, SceneRef, WorldAdmission};
 use crate::shared::cache::TtlMap;
 use crate::world_identity::{Parcel, ParcelSet, SceneId, WorldName, is_world_realm_name};
 use crate::{Address, AuthorityNotEstablished, PermissionDecision};
@@ -972,32 +972,132 @@ pub(crate) async fn live_world_rooms(
 }
 
 /// Evicts from `world`'s rooms every participant the access setting no
-/// longer admits (the owner stays; a shared-secret participant must mint
-/// again with the new secret, as the host requires).
+/// longer admits, as WCS's access-change handler: switching to unrestricted
+/// evicts nobody; the owner and the deployment/streaming grantees of the
+/// world or of a live scene (`protected_addresses`) stay; a shared-secret
+/// participant must mint again with the new secret; an allow-list edit
+/// evicts only who lost access; an undetermined decision evicts nobody.
+/// Only participants that joined by `cutoff` (unix seconds) are considered:
+/// a later joiner was admitted under the new setting, e.g. with the new secret.
+/// `Ok(false)`: some roster, decision or eviction did not complete; the pass may run again.
 pub(crate) async fn readmit_world_rooms(
     state: &CommsState,
     world: &WorldName,
-) -> Result<(), String> {
+    cutoff: i64,
+) -> Result<bool, String> {
     let now = chrono::Utc::now().naive_utc();
-    for room in live_world_rooms(state, world).await? {
-        let client = state.room_service();
-        for identity in client.list_participant_identities(&room).await {
+    match state.policy.world_admission(world, now).await {
+        Ok(WorldAdmission::Open(AccessType::Unrestricted)) => return Ok(true),
+        Ok(_) => {}
+        Err(error) => return Err(format!("access setting undetermined: {error}")),
+    }
+    let rooms = live_world_rooms(state, world).await?;
+    let (protected, undecided) = readmit_protected(state, world, &rooms).await?;
+    let mut complete = undecided.is_empty();
+    let client = state.room_service();
+    for room in rooms {
+        if undecided.contains(&room) {
+            continue;
+        }
+        let participants = match client.list_participants(&room).await {
+            Ok(participants) => participants,
+            Err(error) => {
+                complete = false;
+                tracing::warn!(%error, room = %room, "roster unavailable; participants kept for now");
+                continue;
+            }
+        };
+        for participant in participants {
+            if participant.joined_at.is_some_and(|joined| joined > cutoff) {
+                continue;
+            }
+            let identity = participant.identity;
             let Ok(address) = Address::parse(&identity) else {
                 continue;
             };
-            let allowed = matches!(
-                state
-                    .policy
-                    .can_access(world, &address, None, None, None, now)
-                    .await,
-                Ok(Access::Allowed(_))
-            );
-            if !allowed && let Err(error) = client.remove_participant(&room, &identity).await {
-                tracing::warn!(%error, room = %room, %address, "failed to evict a revoked participant (best-effort)");
+            if protected.contains(&address) {
+                continue;
+            }
+            match state
+                .policy
+                .can_access(world, &address, None, None, None, now)
+                .await
+            {
+                Ok(Access::Allowed(_)) => {}
+                Ok(_) => {
+                    if let Err(error) = client.remove_participant(&room, &identity).await {
+                        complete = false;
+                        tracing::warn!(%error, room = %room, %address, "failed to evict a revoked participant");
+                    }
+                }
+                Err(error) => {
+                    complete = false;
+                    tracing::warn!(%error, room = %room, %address, "access undetermined; participant kept for now")
+                }
             }
         }
     }
-    Ok(())
+    Ok(complete)
+}
+
+/// [`readmit_world_rooms`] again after each of `delays` until a pass completes; false if none did.
+pub(crate) async fn readmit_until_settled(
+    state: &CommsState,
+    world: &WorldName,
+    delays: &[std::time::Duration],
+) -> bool {
+    let cutoff = chrono::Utc::now().timestamp();
+    let mut delays = delays.iter();
+    loop {
+        match readmit_world_rooms(state, world, cutoff).await {
+            Ok(true) => return true,
+            Ok(false) => tracing::warn!(%world, "access-change readmission incomplete"),
+            Err(error) => tracing::warn!(%error, %world, "access-change readmission failed"),
+        }
+        let Some(delay) = delays.next() else {
+            return false;
+        };
+        tokio::time::sleep(*delay).await;
+    }
+}
+
+/// The wallets an access change never evicts: the owner and the grantees
+/// world-wide or over any live scene of `world` (its active scene included).
+/// A room whose scene lookup fails is returned as undecided: its participants stay.
+async fn readmit_protected(
+    state: &CommsState,
+    world: &WorldName,
+    rooms: &[String],
+) -> Result<(BTreeSet<Address>, BTreeSet<String>), String> {
+    let mut parcels = ParcelSet::new();
+    if let Some(active) = state
+        .scenes
+        .world_active_scene(world)
+        .await
+        .map_err(|e| e.to_string())?
+    {
+        parcels.extend(active.parcels.iter().copied());
+    }
+    let mut undecided = BTreeSet::new();
+    for room in rooms {
+        let Some((_, scene)) = crate::rooms::decode_world_scene_room(room) else {
+            continue;
+        };
+        match state.scenes.world_scene(world, &scene).await {
+            Ok(Some(deployment)) => parcels.extend(deployment.parcels.iter().copied()),
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(%error, room = %room, %world, "scene lookup failed; the room's participants are kept");
+                undecided.insert(room.clone());
+            }
+        }
+    }
+    let protected = state
+        .policy
+        .protected_addresses(world, &parcels)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok((protected, undecided))
 }
 
 #[cfg(test)]

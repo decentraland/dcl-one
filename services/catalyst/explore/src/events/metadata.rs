@@ -74,6 +74,7 @@ pub(super) async fn enrich(
     raw: &mut Map<String, Value>,
     previous: Option<&Map<String, Value>>,
     refresh_url: bool,
+    places: Option<&crate::places::PlacesComponent>,
 ) -> Result<(), ApiError> {
     if refresh_url && let Some(previous) = previous {
         refresh_target(raw, previous);
@@ -117,6 +118,26 @@ pub(super) async fn enrich(
             }
         }
     }
+    if raw.get("world").and_then(Value::as_bool) != Some(true)
+        && let Some(places) = places
+        && let (Some(x), Some(y)) = (
+            raw.get("x")
+                .and_then(Value::as_i64)
+                .and_then(|v| i32::try_from(v).ok()),
+            raw.get("y")
+                .and_then(Value::as_i64)
+                .and_then(|v| i32::try_from(v).ok()),
+        )
+        && let Some(membership) = places.estate_at(conn, x, y).await?
+    {
+        // A fresh native answer supersedes a stale catalogue estate. A name
+        // may only accompany the same known identity; no name is inferred.
+        let old_id = raw.get("estate_id").and_then(Value::as_str);
+        if old_id != membership.estate_id.as_deref() {
+            raw.insert("estate_name".into(), Value::Null);
+        }
+        raw.insert("estate_id".into(), json!(membership.estate_id));
+    }
     // A transient catalogue miss must not remove an already generated scene
     // poster on an unrelated edit. A move must discard that stale fallback.
     if previous.is_none() || moved || place.is_some() {
@@ -131,6 +152,101 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn native_estate_membership_replaces_stale_scene_facts_but_worlds_stay_unknown() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let mut settings = crate::land_authz::Settings::for_tests();
+        settings.network = "ethereum-sepolia".into();
+        settings.land_registry = format!("0x{:040x}", uuid::Uuid::new_v4().as_u128());
+        settings.estate_registry = format!("0x{:040x}", uuid::Uuid::new_v4().as_u128());
+        let places = crate::places::PlacesComponent::new(pool.clone(), "https://content.example");
+        places.set_land_authz(std::sync::Arc::new(crate::land_authz::LandAuthzState::new(
+            pool.clone(),
+            crate::http::Outbound::for_tests(),
+            settings.clone(),
+            None,
+        )));
+        let mut tx = pool.begin().await.unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let token = uuid::Uuid::new_v4().as_u128().to_string();
+        sqlx::query("INSERT INTO explore.place(id,base_position,raw) VALUES($1,'7,8',$2)")
+            .bind(&id)
+            .bind(json!({"estate_id":"old","estate_name":"Old estate"}))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO land_authz.index_cursor(network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started) VALUES($1,$2,$3,1,1,timezone('UTC',now()),true)")
+            .bind(&settings.network).bind(&settings.land_registry).bind(&settings.estate_registry).execute(&mut *tx).await.unwrap();
+        sqlx::query("INSERT INTO land_authz.token_right(token_address,token_id,x,y,updated_block,updated_log) VALUES($1,$2::numeric,7,8,1,0)")
+            .bind(&settings.land_registry).bind(&token).execute(&mut *tx).await.unwrap();
+        sqlx::query("INSERT INTO land_authz.estate_land(land_token_id,estate_token_id,updated_block,updated_log) VALUES($1::numeric,500,1,0)")
+            .bind(&token).execute(&mut *tx).await.unwrap();
+        let mut raw = json!({"place_id":id,"x":7,"y":8,"user":"0xabc"})
+            .as_object()
+            .unwrap()
+            .clone();
+        enrich(&mut tx, &mut raw, None, true, Some(&places))
+            .await
+            .unwrap();
+        assert_eq!(raw["estate_id"], "500");
+        assert_eq!(raw["estate_name"], Value::Null);
+        sqlx::query(r#"UPDATE explore.place SET raw=raw || '{"estate_id":"500","estate_name":"Known estate"}' WHERE id=$1"#)
+            .bind(&id).execute(&mut *tx).await.unwrap();
+        enrich(&mut tx, &mut raw, None, true, Some(&places))
+            .await
+            .unwrap();
+        assert_eq!(
+            raw["estate_name"], "Known estate",
+            "matching native identity preserves its known name"
+        );
+        sqlx::query(r#"UPDATE explore.place SET raw=raw || '{"estate_id":"old","estate_name":"Old estate"}' WHERE id=$1"#)
+            .bind(&id).execute(&mut *tx).await.unwrap();
+        sqlx::query("DELETE FROM land_authz.estate_land WHERE land_token_id=$1::numeric")
+            .bind(&token)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        enrich(&mut tx, &mut raw, None, true, Some(&places))
+            .await
+            .unwrap();
+        assert_eq!(
+            raw["estate_id"],
+            Value::Null,
+            "published non-membership removes stale metadata"
+        );
+        sqlx::query("UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now())-interval '31 minutes' WHERE network=$1").bind(&settings.network).execute(&mut *tx).await.unwrap();
+        enrich(&mut tx, &mut raw, None, true, Some(&places))
+            .await
+            .unwrap();
+        assert_eq!(
+            raw["estate_id"], "old",
+            "unready authority retains known catalogue metadata"
+        );
+        sqlx::query(
+            "UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now()) WHERE network=$1",
+        )
+        .bind(&settings.network)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO land_authz.estate_land(land_token_id,estate_token_id,updated_block,updated_log) VALUES($1::numeric,500,1,0)")
+            .bind(&token).execute(&mut *tx).await.unwrap();
+        raw.insert("world".into(), json!(true));
+        raw.remove("place_id");
+        raw.insert("estate_id".into(), json!("unchanged-world-fact"));
+        let previous = raw.clone();
+        enrich(&mut tx, &mut raw, Some(&previous), true, Some(&places))
+            .await
+            .unwrap();
+        assert_eq!(
+            raw["estate_id"], "unchanged-world-fact",
+            "world enrichment never consults a fresh parcel index at the same coordinates"
+        );
+        tx.rollback().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn missing_sources_preserve_stored_facts_until_the_location_changes() {
         let Some(pool) = crate::db::scratch::pool(1).await else {
             return;
@@ -138,7 +254,7 @@ mod tests {
         let mut conn = pool.acquire().await.unwrap();
         let mut raw=json!({"user":"missing-profile","place_id":"missing-place","user_name":"Stored creator","scene_name":"Stored scene","estate_id":"stored-estate","estate_name":"Stored estate","x":1,"y":2,"image":"/poster/kept.webp"}).as_object().unwrap().clone();
         let previous = raw.clone();
-        enrich(&mut conn, &mut raw, Some(&previous), true)
+        enrich(&mut conn, &mut raw, Some(&previous), true, None)
             .await
             .unwrap();
         for key in [
@@ -153,7 +269,7 @@ mod tests {
         let previous = raw.clone();
         raw.insert("x".into(), json!(5));
         raw.insert("place_id".into(), Value::Null);
-        enrich(&mut conn, &mut raw, Some(&previous), true)
+        enrich(&mut conn, &mut raw, Some(&previous), true, None)
             .await
             .unwrap();
         assert_eq!(raw["user_name"], "Stored creator");
@@ -164,7 +280,7 @@ mod tests {
         // Empty keys have no source; they must not replace stored facts.
         raw.insert("user".into(), json!(""));
         let previous = raw.clone();
-        enrich(&mut conn, &mut raw, Some(&previous), true)
+        enrich(&mut conn, &mut raw, Some(&previous), true, None)
             .await
             .unwrap();
         assert_eq!(raw["user_name"], "Stored creator");
@@ -174,7 +290,7 @@ mod tests {
         );
         raw.insert("_image_source".into(), json!("generated"));
         let previous = raw.clone();
-        enrich(&mut conn, &mut raw, Some(&previous), true)
+        enrich(&mut conn, &mut raw, Some(&previous), true, None)
             .await
             .unwrap();
         assert_eq!(
@@ -183,7 +299,7 @@ mod tests {
         );
         let previous = raw.clone();
         raw.insert("x".into(), json!(8));
-        enrich(&mut conn, &mut raw, Some(&previous), true)
+        enrich(&mut conn, &mut raw, Some(&previous), true, None)
             .await
             .unwrap();
         assert_eq!(
@@ -268,6 +384,7 @@ mod tests {
             &mut raw,
             Some(&previous),
             true,
+            None,
         )
         .await
         .unwrap();

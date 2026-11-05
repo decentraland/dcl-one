@@ -113,8 +113,8 @@ async fn serve_graph(answer: fn(&str) -> Value) -> String {
 
 fn matic_collections(query: &str) -> Value {
     if query.contains("urn_in") {
-        // The ownership document of the profiles and outfits: the owner holds the hat.
-        json!({ "o0": [{ "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1") }] })
+        // The ownership document of the profiles: the owner holds the hat, token 10.
+        json!({ "o0": [{ "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10" }] })
     } else if query.contains("category: \"wearable\"") {
         json!({ "nfts": [
             { "id": "a1", "urn": format!("urn:decentraland:matic:collections-v2:{COFFEE}:1"), "tokenId": "10", "itemType": "wearable_v2", "transferredAt": "200",
@@ -934,11 +934,11 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         body["avatars"][0]["avatar"]["wearables"],
         json!([
             "urn:decentraland:off-chain:base-avatars:eyes_00",
-            hat,
+            format!("{hat}:10"),
             TP_URN,
             linked(2)
         ]),
-        "token 3 is mapped but not held, token 9 is not mapped: {body}"
+        "the held token is appended (ENSURE_ERC_721); token 3 is mapped but not held, token 9 is not mapped: {body}"
     );
 
     // The chain endpoint down: the explorer and the profiles leave the
@@ -989,7 +989,7 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         body["avatars"][0]["avatar"]["wearables"],
         json!([
             "urn:decentraland:off-chain:base-avatars:eyes_00",
-            hat,
+            format!("{hat}:10"),
             TP_URN
         ]),
         "the v1 item needs no check: {body}"
