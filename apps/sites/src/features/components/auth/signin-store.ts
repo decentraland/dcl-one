@@ -37,6 +37,11 @@ export function openSignIn(opts?: { redirectTo?: string; inPlace?: boolean }): v
   }
 }
 
+/** The page the reader asked to come back to, left in place (a sign-in that may still fail keeps it). */
+export function peekPendingRedirect(): string | null {
+  return pendingRedirect;
+}
+
 export function takePendingRedirect(): string | null {
   const r = pendingRedirect;
   pendingRedirect = null;

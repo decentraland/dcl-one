@@ -318,17 +318,13 @@ impl Referral {
             .execute(&mut *tx)
             .await
             .map_err(database_error)?;
-        let (status,granted,mut days,pending,paid): (String,bool,Vec<chrono::NaiveDate>,Option<i32>,Option<Value>) = sqlx::query_as("SELECT status,tier_granted,login_days,reward_tier,reward_paid FROM social.referral_progress WHERE invited_user=$1 FOR UPDATE")
+        let (status,granted,mut days,pending): (String,bool,Vec<chrono::NaiveDate>,Option<i32>) = sqlx::query_as("SELECT status,tier_granted,login_days,reward_tier FROM social.referral_progress WHERE invited_user=$1 FOR UPDATE")
             .bind(&invited).fetch_one(&mut *tx).await.map_err(database_error)?;
         if granted || status == "tier_granted" || status == "rejected_ip_match" {
             drop(tx);
-            // A redelivered login resumes what a failed finalize left: an
-            // unpaid reward from its request, a paid one from its follow-ups.
+            // A redelivered login retries the reward a failed finalize left.
             if let Some(tier) = pending {
                 self.reward(&referrer, invited.as_str(), tier.into())
-                    .await?;
-            } else if let Some(paid) = paid {
-                self.reward_follow_ups(&referrer, invited.as_str(), paid)
                     .await?;
             }
             return Ok(());
@@ -382,110 +378,208 @@ impl Referral {
         }
         Ok(())
     }
-    /// The tier reward of one grant. `reward_tier` marks the rewards request as
-    /// owed; its success moves the grant to `reward_paid` at once, so a later
-    /// failure never sends the reward again. The source's rewards API takes no
-    /// idempotency key (`adapters/rewards.ts` sends only `campaign_key` and
-    /// `beneficiary`); only a request whose answer is lost, or a failed
-    /// `reward_paid` write right after it, can repeat it.
-    async fn reward(&self, referrer: &str, invited: &str, total: i64) -> Result<(), CommError> {
-        let url = self.settings.reward_server_url.as_deref().ok_or_else(|| {
-            CommError::MessageOnly(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Reward server is not configured".into(),
-            )
-        })?;
-        let url = url::Url::parse(url)
-            .and_then(|base| base.join("/api/rewards"))
-            .map_err(|_| CommError::Internal)?;
-        // The source requires every tier's key at boot; an unset key leaves
-        // the reward pending instead of requesting an empty campaign.
-        let key = self
-            .settings
-            .reward_keys
-            .get(&total)
-            .filter(|key| !key.is_empty())
-            .ok_or_else(|| {
-                CommError::MessageOnly(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Reward campaign key is not configured for tier {total}"),
-                )
-            })?;
-        let response = self
-            .http
-            .post(url)
-            .json(&json!({"campaign_key":key,"beneficiary":referrer}))
-            .send()
-            .await
-            .map_err(|_| CommError::Internal)?;
-        let response = response
-            .error_for_status()
-            .map_err(|_| CommError::Internal)?;
-        let value: Value = response.json().await.map_err(|_| CommError::Internal)?;
-        let reward = value["data"]
-            .as_array()
-            .and_then(|values| values.first())
-            .ok_or(CommError::Internal)?;
-        let paid = json!({"tier": total, "reward": reward, "notified": false});
-        sqlx::query(
-            "UPDATE social.referral_progress SET reward_tier=NULL, reward_paid=$3 WHERE invited_user=$1 AND reward_tier=$2",
+    /// Resume a bounded due set without requiring another login. Requests with
+    /// no confirmed response stay quarantined for provider reconciliation.
+    pub async fn drain_pending_rewards(&self) -> Result<(), CommError> {
+        if crate::shared::writes::refusal(true).is_some() {
+            return Ok(());
+        }
+        let rows: Vec<(String, String, i32)> = sqlx::query_as(
+            "SELECT referrer,invited_user,reward_tier FROM social.referral_progress \
+             WHERE reward_tier IS NOT NULL \
+               AND (reward_requested_at IS NULL OR reward_response IS NOT NULL) \
+               AND (reward_retry_at IS NULL OR reward_retry_at <= timezone('UTC',now())) \
+             ORDER BY reward_retry_at NULLS FIRST,invited_user LIMIT 64",
         )
-        .bind(invited)
-        .bind(total as i32)
-        .bind(&paid)
-        .execute(&self.pool)
+        .fetch_all(&self.pool)
         .await
         .map_err(database_error)?;
-        self.reward_follow_ups(referrer, invited, paid).await
+        for (referrer, invited, tier) in rows {
+            // The restore hold is live: a long batch must stop before its next
+            // grant if the stamps expire or are withdrawn during the pass.
+            if crate::shared::writes::refusal(true).is_some() {
+                break;
+            }
+            // The request path checks this too; a later ban also stops retries.
+            if let Err(error) = self.assert_not_banned(&referrer, None).await {
+                tracing::warn!(?error, "pending referral reward is blocked");
+                sqlx::query("UPDATE social.referral_progress SET reward_retry_at=timezone('UTC',now())+interval '1 minute' WHERE invited_user=$1")
+                    .bind(&invited).execute(&self.pool).await.map_err(database_error)?;
+                continue;
+            }
+            if let Err(error) = self.reward(&referrer, &invited, tier.into()).await {
+                tracing::warn!(?error, "pending referral reward failed");
+            }
+        }
+        Ok(())
     }
-    /// A paid reward's notification and image. Promise.all starts both source
-    /// operations independently; once started, either survives the other's
-    /// early failure. A sent notification is recorded in `reward_paid`, and
-    /// the image is stored once per referrer and tier, so a retry repeats
-    /// neither; `reward_paid` clears once both are done.
-    async fn reward_follow_ups(
-        &self,
-        referrer: &str,
-        invited: &str,
-        paid: Value,
-    ) -> Result<(), CommError> {
-        let total = paid["tier"].as_i64().ok_or(CommError::Internal)?;
-        let reward = &paid["reward"];
-        let notice = (paid["notified"] != true).then(|| {
-            let notify = self.notify(referrer, invited, total, Some(reward));
-            let pool = self.pool.clone();
-            let invited = invited.to_owned();
-            tokio::spawn(async move {
-                notify.await?;
-                sqlx::query("UPDATE social.referral_progress SET reward_paid=jsonb_set(reward_paid,'{notified}','true') WHERE invited_user=$1 AND reward_paid IS NOT NULL")
-                    .bind(invited).execute(&pool).await.map_err(database_error)?;
-                Ok::<_, CommError>(())
-            })
-        });
-        let image = reward["image"].as_str().map(str::to_owned);
-        let image_referrer = referrer.to_owned();
-        let pool = self.pool.clone();
-        let image = tokio::spawn(async move {
-            let image = image.ok_or(CommError::Internal)?;
-            sqlx::query("INSERT INTO social.referral_reward_images(referrer,reward_image_url,tier) SELECT $1,$2,$3 WHERE NOT EXISTS (SELECT 1 FROM social.referral_reward_images WHERE referrer=$1 AND tier=$3)")
-                .bind(image_referrer).bind(image).bind(total as i32).execute(&pool).await.map_err(database_error)?;
-            Ok::<_, CommError>(())
-        });
-        futures::try_join!(
-            async {
-                match notice {
-                    Some(notice) => notice.await.map_err(|_| CommError::Internal)?,
-                    None => Ok(()),
-                }
-            },
-            async { image.await.map_err(|_| CommError::Internal)? }
-        )?;
-        sqlx::query("UPDATE social.referral_progress SET reward_paid=NULL WHERE invited_user=$1")
+
+    /// Commit a claim before the non-idempotent provider POST and retain its
+    /// response before attempting any downstream effect. A lost response is
+    /// ambiguous and must never automatically reissue a reward.
+    async fn reward(&self, referrer: &str, invited: &str, total: i64) -> Result<(), CommError> {
+        let mut connection = self.pool.acquire().await.map_err(database_error)?;
+        // Closing this infrequent worker connection also releases a lock when
+        // cancellation interrupts acquisition (SQLx try_acquire is not cancel safe).
+        connection.close_on_drop();
+        let lock = sqlx::postgres::PgAdvisoryLock::new(format!("social-referral-reward:{invited}"));
+        let Some(mut guard) = lock
+            .try_acquire(connection)
+            .await
+            .map_err(database_error)?
+            .left()
+        else {
+            return Ok(());
+        };
+        let state: Option<(Option<chrono::NaiveDateTime>, Option<Value>, Option<Value>)> =
+            sqlx::query_as(
+                "UPDATE social.referral_progress \
+             SET reward_retry_at=timezone('UTC',now())+interval '1 minute' \
+             WHERE invited_user=$1 AND reward_tier=$2 \
+             RETURNING reward_requested_at,reward_response,reward_paid",
+            )
             .bind(invited)
-            .execute(&self.pool)
+            .bind(total as i32)
+            .fetch_optional(&mut *guard)
             .await
             .map_err(database_error)?;
-        Ok(())
+        let Some((requested, stored, paid)) = state else {
+            return Ok(());
+        };
+        let reward = if let Some(reward) = stored {
+            reward
+        } else {
+            if requested.is_some() {
+                // The original failed attempt reports the error. A later login
+                // cannot resolve this receipt, so leave it for reconciliation
+                // without treating every login as another provider failure.
+                return Ok(());
+            }
+            // Configuration failures happen before claiming and remain retryable.
+            let url = self.settings.reward_server_url.as_deref().ok_or_else(|| {
+                CommError::MessageOnly(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Reward server is not configured".into(),
+                )
+            })?;
+            let url = url::Url::parse(url)
+                .and_then(|base| base.join("/api/rewards"))
+                .map_err(|_| CommError::Internal)?;
+            let key = self
+                .settings
+                .reward_keys
+                .get(&total)
+                .filter(|key| !key.is_empty())
+                .ok_or_else(|| {
+                    CommError::MessageOnly(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        format!("Reward campaign key is not configured for tier {total}"),
+                    )
+                })?;
+            let claimed = sqlx::query("UPDATE social.referral_progress SET reward_requested_at=timezone('UTC',now()) WHERE invited_user=$1 AND reward_tier=$2 AND reward_requested_at IS NULL")
+                .bind(invited).bind(total as i32).execute(&mut *guard).await.map_err(database_error)?.rows_affected();
+            if claimed == 0 {
+                return Ok(());
+            }
+            let response = self
+                .http
+                .post(url)
+                // Serve's shared client has only an inactivity limit; this
+                // deadline also bounds a provider that keeps trickling body bytes.
+                .timeout(std::time::Duration::from_secs(30))
+                .json(&json!({"campaign_key":key,"beneficiary":referrer}))
+                .send()
+                .await
+                .map_err(|_| CommError::Internal)?
+                .error_for_status()
+                .map_err(|_| CommError::Internal)?;
+            let value: Value = response.json().await.map_err(|_| CommError::Internal)?;
+            let reward = value["data"]
+                .as_array()
+                .and_then(|values| values.first())
+                .filter(|reward| reward["image"].as_str().is_some())
+                .ok_or(CommError::Internal)?
+                .clone();
+            sqlx::query(
+                "UPDATE social.referral_progress SET reward_response=$2, reward_paid=$3 WHERE invited_user=$1",
+            )
+            .bind(invited)
+            .bind(&reward)
+            .bind(json!({"tier": total, "reward": reward, "notified": false}))
+            .execute(&mut *guard)
+            .await
+            .map_err(database_error)?;
+            reward
+        };
+        let already_notified = paid.as_ref().is_some_and(|paid| paid["notified"] == true);
+        let publish = self.publish_notification(referrer, invited, total, Some(&reward));
+        let notice = async move {
+            if already_notified {
+                Ok(None)
+            } else {
+                publish.await.map(Some)
+            }
+        };
+        let image = reward["image"].as_str().map(str::to_owned);
+        let referrer = referrer.to_owned();
+        let invited = invited.to_owned();
+        let (finished, mut result) = tokio::sync::mpsc::unbounded_channel();
+        // Preserve independent source effects and early error return, but retain
+        // the per-grant guard until both finish so a retry cannot overlap them.
+        // All SQL uses that same connection; concurrent rewards cannot exhaust
+        // the pool while waiting for a second connection to persist their work.
+        tokio::spawn(async move {
+            let image = async {
+                let image = image.ok_or(CommError::Internal)?;
+                sqlx::query("INSERT INTO social.referral_reward_images(referrer,reward_image_url,tier) SELECT $1,$2,$3 WHERE NOT EXISTS (SELECT 1 FROM social.referral_reward_images WHERE referrer=$1 AND tier=$3)")
+                    .bind(referrer).bind(image).bind(total as i32).execute(&mut *guard).await.map_err(database_error)?;
+                Ok::<_, CommError>(())
+            };
+            let (notification, image_ok) = tokio::join!(
+                async {
+                    match notice.await {
+                        Ok(notification) => Some(notification),
+                        Err(error) => {
+                            let _ = finished.send(Err(error));
+                            None
+                        }
+                    }
+                },
+                async {
+                    match image.await {
+                        Ok(()) => true,
+                        Err(error) => {
+                            let _ = finished.send(Err(error));
+                            false
+                        }
+                    }
+                },
+            );
+            let Some(notification) = notification else {
+                return;
+            };
+            if let Some(notification) = notification {
+                // Persist local delivery and the remote receipt together. A
+                // later image retry must not send an already confirmed notice.
+                let saved = async {
+                    let mut tx = sqlx::Connection::begin(&mut *guard).await?;
+                    crate::notifications::insert_notifications(&mut *tx, &[notification]).await?;
+                    sqlx::query("UPDATE social.referral_progress SET reward_paid=jsonb_set(COALESCE(reward_paid,jsonb_build_object('tier',reward_tier,'reward',reward_response)), '{notified}', 'true') WHERE invited_user=$1")
+                        .bind(&invited).execute(&mut *tx).await?;
+                    tx.commit().await
+                }.await;
+                if let Err(error) = saved {
+                    let _ = finished.send(Err(database_error(error)));
+                    return;
+                }
+            }
+            if image_ok {
+                let cleared = sqlx::query("UPDATE social.referral_progress SET reward_tier=NULL,reward_paid=NULL,reward_retry_at=NULL WHERE invited_user=$1 AND reward_tier=$2")
+                    .bind(invited).bind(total as i32).execute(&mut *guard).await.map(|_| ()).map_err(database_error);
+                let _ = finished.send(cleared);
+            }
+        });
+        result.recv().await.ok_or(CommError::Internal)?
     }
     #[cfg(test)]
     async fn accepted(&self, referrer: &str) -> Result<i64, CommError> {
@@ -504,6 +598,23 @@ impl Referral {
         total: i64,
         reward: Option<&Value>,
     ) -> impl std::future::Future<Output = Result<(), CommError>> + Send + 'static + use<> {
+        let notification = self.publish_notification(referrer, invited, total, reward);
+        let pool = self.pool.clone();
+        async move {
+            crate::notifications::insert_notifications(&pool, &[notification.await?]).await?;
+            Ok(())
+        }
+    }
+    fn publish_notification(
+        &self,
+        referrer: &str,
+        invited: &str,
+        total: i64,
+        reward: Option<&Value>,
+    ) -> impl std::future::Future<Output = Result<crate::notifications::NewNotification, CommError>>
+    + Send
+    + 'static
+    + use<> {
         let tier = REWARD_TIERS
             .iter()
             .position(|tier| total <= *tier)
@@ -526,7 +637,6 @@ impl Referral {
         };
         let metadata = json!({"address":referrer,"title":title,"description":description,"tier":tier,"url":format!("{}/accounts/{referrer}/referral",self.settings.profile_url),"image":image,"invitedUserAddress":invited,"invitedUsers":total,"rarity":rarity});
         let publisher = self.publisher.get().cloned();
-        let pool = self.pool.clone();
         let referrer = referrer.to_owned();
         let invited = invited.to_owned();
         async move {
@@ -540,14 +650,9 @@ impl Referral {
                     .map_err(|_| CommError::Internal)?;
             }
             let address = Address::parse(&referrer).map_err(|_| CommError::Internal)?;
-            crate::notifications::insert_notifications(
-                &pool,
-                &[crate::notifications::NewNotification::now(
-                    address, kind, metadata,
-                )],
-            )
-            .await?;
-            Ok(())
+            Ok(crate::notifications::NewNotification::now(
+                address, kind, metadata,
+            ))
         }
     }
 }
@@ -1242,18 +1347,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn referral_receipt_migration_matches_bootstrap_columns() {
+        let Some(pool) = crate::db::scratch::pool(3).await else {
+            return;
+        };
+        let schema = format!("referral_receipt_{}", uuid::Uuid::new_v4().simple());
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "CREATE SCHEMA {schema}; CREATE TABLE {schema}.referral_progress (invited_user text PRIMARY KEY, reward_tier integer, reward_paid jsonb)"
+        ))).execute(&pool).await.unwrap();
+        let step = include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/schemas/migrations/0024_social_referral_reward_receipt.sql"
+        ))
+        .replace("social.", &format!("{schema}."));
+        // The additive step owns the column changes. New indexes are created
+        // by the migrator's object pass, covered by the full upgrade test below.
+        for _ in 0..2 {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(step.clone()))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let columns = |table: String| {
+            let pool = &pool;
+            async move {
+                sqlx::query_as::<_, (String, String, bool)>(
+                    "SELECT attname::text,format_type(atttypid,atttypmod),attnotnull FROM pg_attribute WHERE attrelid=to_regclass($1) AND attname IN ('reward_requested_at','reward_response','reward_retry_at','reward_paid') AND NOT attisdropped ORDER BY attname"
+                ).bind(table).fetch_all(pool).await.unwrap()
+            }
+        };
+        let fresh = columns("social.referral_progress".into()).await;
+        assert_eq!(fresh.len(), 4);
+        assert_eq!(columns(format!("{schema}.referral_progress")).await, fresh);
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn referral_migration_preserves_populated_ids_and_is_repeatable() {
         let Some(pool) = crate::db::scratch::pool(3).await else {
             return;
         };
         let schema = format!("referral_upgrade_{}", uuid::Uuid::new_v4().simple());
         let older = format!(
-            "CREATE SCHEMA {schema}; CREATE TABLE {schema}.referral_progress (id uuid NOT NULL DEFAULT gen_random_uuid(),invited_user text PRIMARY KEY,referrer text NOT NULL,status text NOT NULL,created_at timestamp NOT NULL DEFAULT timezone('UTC',now()),updated_at timestamp NOT NULL DEFAULT timezone('UTC',now())); INSERT INTO {schema}.referral_progress(invited_user,referrer,status) VALUES('invited','referrer','tier_granted'),('pending','referrer','pending')"
+            "CREATE SCHEMA {schema}; CREATE TABLE {schema}.referral_progress (id uuid NOT NULL DEFAULT gen_random_uuid(),invited_user text PRIMARY KEY,referrer text NOT NULL,status text NOT NULL,reward_tier integer,created_at timestamp NOT NULL DEFAULT timezone('UTC',now()),updated_at timestamp NOT NULL DEFAULT timezone('UTC',now())); INSERT INTO {schema}.referral_progress(invited_user,referrer,status,reward_tier) VALUES('invited','referrer','tier_granted',5),('pending','referrer','pending',NULL)"
         );
         sqlx::raw_sql(sqlx::AssertSqlSafe(older))
             .execute(&pool)
             .await
             .unwrap();
+        let paid_receipts = [
+            (
+                "paid",
+                json!({"tier": 10, "reward": {"image": "https://reward.example.org/paid.png"}, "notified": true}),
+            ),
+            (
+                "missing_image",
+                json!({"tier": 10, "reward": {}, "notified": true}),
+            ),
+            (
+                "invalid_image",
+                json!({"tier": 10, "reward": {"image": 42}, "notified": false}),
+            ),
+        ];
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "ALTER TABLE {schema}.referral_progress ADD COLUMN reward_paid jsonb"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (name, paid) in &paid_receipts {
+            sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO {schema}.referral_progress(invited_user,referrer,status,reward_paid) VALUES($1,'referrer','tier_granted',$2)")))
+                .bind(name).bind(paid).execute(&pool).await.unwrap();
+        }
         let ids: Vec<uuid::Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT id FROM {schema}.referral_progress ORDER BY invited_user"
         )))
@@ -1278,7 +1446,7 @@ mod tests {
         .replace("social.", &format!("{schema}."));
         let step_name = format!("0021_referral_test_{}", uuid::Uuid::new_v4().simple());
         let steps = format!(
-            "-- ════ step {step_name} ════\n{}\n-- ════ step {step_name}_reward ════\n{}",
+            "-- ════ step {step_name} ════\n{}\n-- ════ step {step_name}_01_reward ════\n{}\n-- ════ step {step_name}_02_receipt ════\n{}",
             include_str!(concat!(
                 env!("DCL_ONE_ROOT"),
                 "/schemas/migrations/0021_social_referral_lifecycle.sql"
@@ -1286,6 +1454,10 @@ mod tests {
             include_str!(concat!(
                 env!("DCL_ONE_ROOT"),
                 "/schemas/migrations/0023_social_referral_pending_reward.sql"
+            )),
+            include_str!(concat!(
+                env!("DCL_ONE_ROOT"),
+                "/schemas/migrations/0024_social_referral_reward_receipt.sql"
             ))
         )
         .replace("social.", &format!("{schema}."));
@@ -1294,7 +1466,11 @@ mod tests {
             .unwrap();
         assert_eq!(
             done.steps,
-            vec![step_name.clone(), format!("{step_name}_reward")]
+            vec![
+                step_name.clone(),
+                format!("{step_name}_01_reward"),
+                format!("{step_name}_02_receipt")
+            ]
         );
         assert!(
             !done.created.is_empty(),
@@ -1306,6 +1482,24 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+        // New-object reconciliation must produce the same due-work index
+        // as a fresh bootstrap after the additive column steps have run.
+        let index = |name: String| {
+            let pool = &pool;
+            async move {
+                sqlx::query_scalar::<_, String>("SELECT pg_get_indexdef(to_regclass($1))")
+                    .bind(name)
+                    .fetch_one(pool)
+                    .await
+                    .unwrap()
+            }
+        };
+        assert_eq!(
+            index(format!("{schema}.referral_progress_reward_due_idx"))
+                .await
+                .replace(&format!("{schema}."), "social."),
+            index("social.referral_progress_reward_due_idx".into()).await,
+        );
         let count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM meta.schema_steps WHERE step LIKE $1 || '%' AND NOT created_fresh",
         )
@@ -1313,7 +1507,7 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(count, 2);
+        assert_eq!(count, 3);
         let actual: Vec<uuid::Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT id FROM {schema}.referral_progress ORDER BY invited_user"
         )))
@@ -1327,7 +1521,25 @@ mod tests {
         .fetch_one(&pool)
         .await
         .unwrap();
-        assert_eq!(granted, 1);
+        assert_eq!(granted, 4);
+        let receipt: (Option<i32>, bool, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT reward_tier,reward_requested_at IS NOT NULL,reward_response IS NULL FROM {schema}.referral_progress WHERE invited_user='invited'"
+        ))).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            receipt,
+            (Some(5), true, true),
+            "old pending markers have an unknown provider outcome"
+        );
+        for (name, paid) in paid_receipts {
+            let imported: (Option<i32>, Option<Value>, Option<Value>, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "SELECT reward_tier,reward_response,reward_paid,reward_requested_at IS NOT NULL FROM {schema}.referral_progress WHERE invited_user=$1"
+            ))).bind(name).fetch_one(&pool).await.unwrap();
+            assert_eq!(
+                imported,
+                (Some(10), Some(paid["reward"].clone()), Some(paid), true),
+                "{name}: known payment and notification state survives incomplete image metadata"
+            );
+        }
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
             .execute(&pool)
             .await

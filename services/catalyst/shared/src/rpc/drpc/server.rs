@@ -88,13 +88,12 @@ type TransportEvent<T, M> = (T, M);
 enum ServerEvents<T: Transport + ?Sized> {
     AttachTransport(Arc<T>),
     NewTransport(TransportID, Arc<T>),
+    CloseTransport(TransportID),
 }
 
 enum TransportNotification<T: Transport + ?Sized> {
     NewMessage(TransportEvent<(Arc<T>, TransportID), TransportMessage>),
     MustAttachTransport(Arc<T>),
-    /// `ServerReady` went out; sent before any of the transport's messages.
-    Attached(TransportID, Arc<T>),
     CloseTransport(TransportID),
 }
 
@@ -183,12 +182,13 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
     pub async fn attach_transport(&mut self, transport: Arc<T>) -> ServerResult<()> {
         let id = self.next_transport_id;
         self.next_transport_id += 1;
+        self.register_transport(id, transport.clone());
         Self::announce_transport(self.server_events_sender.clone(), id, transport).await
     }
 
     /// Sends `ServerReady` and only then starts reading the transport, so it is the first
-    /// message the client sees (the client refuses any other). The transport is registered
-    /// on the server loop by [`TransportNotification::Attached`], ahead of its first message.
+    /// message the client sees (the client refuses any other). Transport callbacks run
+    /// before this send, preserving attach order even when a handshake stalls.
     async fn announce_transport(
         events: ServerEventsSender<T>,
         id: TransportID,
@@ -198,6 +198,7 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
             error!(
                 "> RpcServer > new_transport_attached > Error while sending server ready message: {error:?}"
             );
+            let _ = events.0.send(ServerEvents::CloseTransport(id));
             if !matches!(error, TransportError::Closed) {
                 transport.close().await;
             }
@@ -208,11 +209,19 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
         events.send_new_transport(id, transport)
     }
 
+    fn register_transport(&mut self, id: TransportID, transport: Arc<T>) {
+        if let Some(handler) = &self.on_transport_connected_handler {
+            handler(transport.clone(), id);
+        }
+        self.transports.insert(id, transport);
+    }
+
     /// The server loop never awaits a send: one client whose socket stops admitting bytes
     /// must not hold up any other client's attach, `CreatePort` or `RequestModule`.
     fn new_transport_attached(&mut self, transport: Arc<T>) {
         let id = self.next_transport_id;
         self.next_transport_id += 1;
+        self.register_transport(id, transport.clone());
         let events = self.server_events_sender.clone();
         tokio::spawn(async move {
             if let Err(error) = Self::announce_transport(events, id, transport).await {
@@ -285,12 +294,6 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                     TransportNotification::MustAttachTransport(transport) => {
                         self.new_transport_attached(transport);
                     }
-                    TransportNotification::Attached(id, transport) => {
-                        if let Some(handler) = &self.on_transport_connected_handler {
-                            handler(transport.clone(), id);
-                        }
-                        self.transports.insert(id, transport);
-                    }
                     TransportNotification::CloseTransport(id) => {
                         if let Some(transport) = self.transports.remove(&id) {
                             if let Some(on_close_handler) = &self.on_transport_closes_handler {
@@ -331,15 +334,6 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
             while let Some(event) = events_receiver.recv().await {
                 match event {
                     ServerEvents::NewTransport(id, transport) => {
-                        if transports_notifier
-                            .send(TransportNotification::Attached(id, transport.clone()))
-                            .is_err()
-                        {
-                            error!(
-                                "> From a Transport > Error while notifying the server of an attached transport"
-                            );
-                            continue;
-                        }
                         let tx_cloned = transports_notifier.clone();
                         tokio::spawn(async move {
                             loop {
@@ -379,6 +373,9 @@ impl<Context: Send + Sync + 'static, T: Transport + ?Sized + 'static> RpcServer<
                                 }
                             }
                         });
+                    }
+                    ServerEvents::CloseTransport(id) => {
+                        let _ = transports_notifier.send(TransportNotification::CloseTransport(id));
                     }
                     ServerEvents::AttachTransport(transport) => {
                         if transports_notifier
