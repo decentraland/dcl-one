@@ -4,65 +4,109 @@ import { readFile } from 'node:fs/promises'
 const source = await readFile(new URL('../../../../rendering/bevy-explorer/source/crates/platform/src/web_client_logins.js', import.meta.url), 'utf8')
 const { clientLoginsRead, clientLoginsWrite } = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'))
 const browserGlobals = globalThis as unknown as { indexedDB?: unknown }
+const tick = () => new Promise(resolve => setImmediate(resolve))
 
-// Resolve each browser transaction explicitly: a successful put request alone is not a commit.
-test('login queue saves await commit and surface transaction aborts', async () => {
-  const previous = browserGlobals.indexedDB
-  let transaction: any
-  let saved: string | undefined
-  let closed = 0
-  const db = {
-    close() { closed++ },
-    transaction() {
-      transaction = {
-        objectStore: () => ({ put(value: string) { saved = value } }),
-      }
-      return transaction
-    },
-  }
-  browserGlobals.indexedDB = { open() {
-    const request: any = { result: db }
-    queueMicrotask(() => request.onsuccess())
-    return request
-  } } as any
-  try {
-    let committed = false
-    const saving = clientLoginsWrite('[{"login_id":"same-event"}]').then(() => { committed = true })
-    await new Promise(resolve => setImmediate(resolve))
-    assert.equal(committed, false)
-    assert.equal(saved, '[{"login_id":"same-event"}]')
-    transaction.oncomplete()
-    await saving
-    assert.equal(committed, true)
-    assert.equal(closed, 1)
-    const failed = clientLoginsWrite('[]')
-    const rejected = assert.rejects(failed, /aborted/)
-    await new Promise(resolve => setImmediate(resolve))
-    transaction.onabort()
-    await rejected
-    assert.equal(closed, 2)
-  } finally { browserGlobals.indexedDB = previous }
-})
-
-test('login queue reads resume persisted JSON and default only a missing record', async () => {
-  const previous = browserGlobals.indexedDB
-  let value: string | undefined = '[{"login_id":"pending"}]'
+// Readwrite transactions serialize across connections and only commit pending writes on complete.
+function database() {
+  let durable: string | undefined
+  const transactions: any[] = []
+  const start = () => queueMicrotask(() => transactions[0]?.request?.onsuccess())
   const db = {
     close() {},
-    transaction: () => ({ objectStore: () => ({ get() {
-      const request: any = { result: value }
+    transaction() {
+      const tx: any = {
+        objectStore: () => ({
+          get() {
+            tx.request = { get result() { return durable } }
+            if (transactions[0] === tx) start()
+            return tx.request
+          },
+          put(value: string) { tx.pending = value },
+        }),
+        abort() {
+          assert.equal(transactions[0], tx)
+          transactions.shift()
+          tx.onabort()
+          start()
+        },
+      }
+      transactions.push(tx)
+      return tx
+    },
+  }
+  return {
+    api: { open() {
+      const request: any = { result: db }
       queueMicrotask(() => request.onsuccess())
       return request
-    } }) }),
+    } },
+    commit() {
+      const tx = transactions.shift()
+      assert.ok(tx)
+      if (tx.pending !== undefined) durable = tx.pending
+      tx.oncomplete()
+      start()
+    },
+    abort() { transactions[0].abort() },
   }
-  browserGlobals.indexedDB = { open() {
-    const request: any = { result: db }
-    queueMicrotask(() => request.onsuccess())
-    return request
-  } } as any
-  try {
-    assert.deepEqual(JSON.parse(await clientLoginsRead()), [{ login_id: 'pending' }])
-    value = undefined
-    assert.deepEqual(JSON.parse(await clientLoginsRead()), [])
-  } finally { browserGlobals.indexedDB = previous }
+}
+const event = (id: string, at = Date.now()) => ({ login_id: id, occurred_at: at })
+const delta = (additions: ReturnType<typeof event>[] = [], removals: string[] = []) => JSON.stringify({ additions, removals })
+
+async function withDatabase(run: (db: ReturnType<typeof database>, finish: (promise: Promise<any>) => Promise<any>) => Promise<void>) {
+  const previous = browserGlobals.indexedDB
+  const db = database()
+  browserGlobals.indexedDB = db.api
+  const finish = async (promise: Promise<any>) => { await tick(); db.commit(); return promise }
+  try { await run(db, finish) } finally { browserGlobals.indexedDB = previous }
+}
+
+test('login queue saves await commit and aborted transactions preserve previous records', async () => {
+  await withDatabase(async (db, finish) => {
+    let committed = false
+    const saving = clientLoginsWrite(delta([event('a')])).then(() => { committed = true })
+    await tick()
+    assert.equal(committed, false)
+    db.commit()
+    await saving
+    assert.equal(committed, true)
+    const failed = assert.rejects(clientLoginsWrite(delta([event('b')], ['a'])), /aborted/)
+    await tick()
+    db.abort()
+    await failed
+    const restarted = JSON.parse(await finish(clientLoginsRead()))
+    assert.deepEqual(restarted.map((item: any) => item.login_id), ['a'])
+  })
+})
+
+test('two runtimes retain both logins after restart and ack cannot erase or resurrect another event', async () => {
+  await withDatabase(async (_db, finish) => {
+    assert.deepEqual(JSON.parse(await finish(clientLoginsRead())), []) // runtime A
+    assert.deepEqual(JSON.parse(await finish(clientLoginsRead())), []) // runtime B
+    const a = event('a'), b = event('b')
+    await finish(clientLoginsWrite(delta([a])))
+    // B has a stale empty view: startup cannot overwrite A's newly persisted occurrence.
+    await finish(clientLoginsWrite(delta()))
+    await finish(clientLoginsWrite(delta([b])))
+    assert.deepEqual(JSON.parse(await finish(clientLoginsRead())).map((item: any) => item.login_id).sort(), ['a', 'b'])
+    await finish(clientLoginsWrite(delta([], ['a'])))
+    // Retrying an uncertain save must not reinsert an event acknowledged by another runtime.
+    await finish(clientLoginsWrite(delta([a])))
+    assert.deepEqual(JSON.parse(await finish(clientLoginsRead())).map((item: any) => item.login_id), ['b'])
+  })
+})
+
+test('concurrent writers merge and the shared store caps pending events across runtimes', async () => {
+  await withDatabase(async (db, finish) => {
+    const now = Date.now()
+    const writes = [clientLoginsWrite(delta([event('a', now)])), clientLoginsWrite(delta([event('b', now)]))]
+    await tick(); db.commit(); await tick(); db.commit()
+    await Promise.all(writes)
+    for (let i = 0; i < 40; i++) await finish(clientLoginsWrite(delta([event('new-' + i, now + i + 1)])))
+    const rows = JSON.parse(await finish(clientLoginsRead()))
+    assert.equal(rows.length, 32)
+    assert.equal(rows.some((item: any) => item.login_id === 'a'), false)
+    await finish(clientLoginsWrite(delta([event('a', now)])))
+    assert.equal(JSON.parse(await finish(clientLoginsRead())).some((item: any) => item.login_id === 'a'), false)
+  })
 })

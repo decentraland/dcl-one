@@ -110,27 +110,23 @@ pub fn write_config_file<T: Serialize>(config: &T) {
     }
 }
 
-/// A dedicated queue avoids races with unrelated configuration saves.
-pub async fn client_logins_read() -> Result<String, String> {
-    let path = project_directories()
-        .ok_or("no config directory")?
-        .config_dir()
-        .join("client-logins.json");
-    match std::fs::read_to_string(path) {
-        Ok(json) => Ok(json),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok("[]".into()),
-        Err(error) => Err(error.to_string()),
-    }
+mod client_logins;
+
+fn login_queue_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
-pub async fn client_logins_write(json: String) -> Result<(), String> {
+pub async fn client_logins_read() -> Result<String, String> {
     let dirs = project_directories().ok_or("no config directory")?;
-    std::fs::create_dir_all(dirs.config_dir()).map_err(|e| e.to_string())?;
-    write_atomically(
-        &dirs.config_dir().join("client-logins.json"),
-        json.as_bytes(),
-    )
-    .map_err(|e| e.to_string())
+    client_logins::read(dirs.config_dir(), login_queue_now())
+}
+
+pub async fn client_logins_write(json: String) -> Result<String, String> {
+    let dirs = project_directories().ok_or("no config directory")?;
+    client_logins::write(dirs.config_dir(), &json, login_queue_now())
 }
 
 /// `bytes` to `path` through a temporary file beside it that is renamed over it, so a reader (or
