@@ -13,7 +13,7 @@ const PREPARED_PENDING_STEPS: [&str; 5] = [
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
     "0024_social_referral_reward_receipt",
-    "0025_land_authz_cleared_legs",
+    "0027_land_authz_cleared_legs",
 ];
 const PREPARED_V2: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),

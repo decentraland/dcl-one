@@ -366,7 +366,7 @@ async fn a_cleared_leg_answers_the_zero_address_and_never_grants() {
     db.drop().await;
 }
 
-/// `schemas/migrations/0025_land_authz_cleared_legs.sql` rewrites the legs
+/// `schemas/migrations/0027_land_authz_cleared_legs.sql` rewrites the legs
 /// the old fold stored as NULL for a grant to the zero address, once, and
 /// leaves a leg a later transfer cleared.
 #[tokio::test]
@@ -433,7 +433,7 @@ async fn the_cleared_legs_step_backfills_the_zero_address() {
         .unwrap();
     let step = include_str!(concat!(
         env!("DCL_ONE_ROOT"),
-        "/schemas/migrations/0025_land_authz_cleared_legs.sql"
+        "/schemas/migrations/0027_land_authz_cleared_legs.sql"
     ));
     for _ in 0..2 {
         sqlx::raw_sql(step).execute(&db.pool).await.unwrap();
