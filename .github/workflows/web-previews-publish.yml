@@ -95,6 +95,8 @@ jobs:
           registry-url: https://registry.npmjs.org
           access: public
           provenance: false
+          registry-wait-attempts: '20'
+          registry-wait-delay: '10'
           custom-tag: pr-${{ needs.source.outputs.pr }}
           branch-to-custom-tag: web-preview-publication
           gitlab-token: ${{ secrets.GITLAB_CDN_DEPLOYER_TOKEN }}
@@ -112,7 +114,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     concurrency:
-      group: web-previews-comment-${{ needs.source.outputs.pr || github.event.workflow_run.head_branch }}-${{ github.event.workflow_run.id }}
+      group: web-previews-comment-${{ github.event.workflow_run.head_branch }}-${{ github.event.workflow_run.id }}
       cancel-in-progress: false
     permissions:
       contents: read

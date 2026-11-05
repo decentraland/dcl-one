@@ -69,6 +69,8 @@ See [production rules](../infra/containers/README.md#sites-explorer-build-input)
 
 `Web previews / Build` selects two independent products: changes under `apps/sites/` build Sites, and changes under `library/ui/` build its standalone UI reviewer. API-only changes do not select previews. Changes to the preview pipeline select both products. The workflow evaluates every PR update against its cumulative diff so later commits keep the selected preview current; PRs with no selected products run no product build.
 
+Sites and its current UI dependency declare `pnpm@10.19.0` in their package manifests, matching the UI reviewer. Corepack resolves each manager from the respective working directory.
+
 The workflow runs `pnpm review:build --base ./` from `library/ui`, invoking Vite with `figma/review/review.vite.config.ts` and producing `library/ui/figma/review/review-dist/`. Versioned CDN navigation, references, render images and JSON fetches still require the pending source change and an exact source commit passing the nested-prefix regression. Publication is disabled unless the repository variable `WEB_PREVIEW_REVIEWER_ENABLED` equals `true`; enable it only after that regression and source audit pass. Builds and artifacts remain available while publication is disabled.
 
 `Web previews / Publish` uses trusted publication code and validated static
@@ -83,8 +85,7 @@ branch before publication can run. The trusted scan uses `node library/ui/figma/
 The public npm package
 `@dcl-regenesislabs/dcl-one-ui-review` needs a trusted publisher for this
 repository and `web-previews-publish.yml` using npm trusted publishing.
-Publication uses timestamp versions so a retry can publish after a previous
-npm upload succeeded. The version's commit suffix identifies trusted
+Publication uses timestamp versions so a retry can publish after a previous npm upload succeeded. Registry polling is limited to 20 attempts at 10-second intervals, leaving time for CDN verification within the publication job timeout. The version's commit suffix identifies trusted
 publication code; `preview-source.json` records the built PR head and source
 build run.
 GitHub artifacts expire after seven days; this does not delete immutable npm
