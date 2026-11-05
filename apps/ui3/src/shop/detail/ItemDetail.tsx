@@ -26,7 +26,7 @@ import { shopClient } from "../api/shop";
 import { fetchCatalogItems, fetchCollection, fetchCollectionItems, fetchRelatedItems, type UnifiedListing } from "../discovery/api";
 import { cardEligibility } from "../discovery/cardPrice";
 import { cartInputFor } from "../discovery/components/AssetCard";
-import { DetailCollection, DetailCreator } from "./components/DetailBadges";
+import { BadgeSkeleton, DetailCollection, DetailCreator } from "./components/DetailBadges";
 import Icon from "../discovery/components/Icon";
 import IndexNotice from "../discovery/components/IndexNotice";
 import Rail from "../discovery/components/Rail";
@@ -68,6 +68,7 @@ import NotifyMe from "./components/NotifyMe";
 import { pdpText } from "./copy";
 import PaymentPanel from "./components/PaymentPanel";
 import ResaleOffers from "./components/ResaleOffers";
+import { ItemOwners, LatestSales } from "./components/TradeHistory";
 import { itemIdFromTokenId } from "./lib/token-id";
 import { itemUrn } from "./lib/urn";
 import { fetchVrmExportBlocked } from "./lib/wearable-rules";
@@ -551,6 +552,9 @@ export default function ItemDetail() {
     emoteHasSound: traitRows.find((r) => r.emoteHasSound !== undefined)?.emoteHasSound,
     emoteHasProps: traitRows.find((r) => r.emoteHasProps !== undefined)?.emoteHasProps,
   };
+  // Upstream's collectionPending: the collection badge holds its place while the name is on its way; a settled
+  // empty answer shows nothing rather than a hanging shimmer.
+  const collectionPending = validContract && !collectionQ.data?.name && collectionQ.isLoading;
   const showCreator = !!current.creator && network !== "ethereum" && (!isTokenRoute || isLand);
   const showOwner = isTokenRoute && isLand && !!current.seller;
   const collectionThumbs = siblings.map((s) => s.thumbnail).filter(Boolean).slice(0, 4);
@@ -693,11 +697,13 @@ export default function ItemDetail() {
                 </div>
               ) : null}
 
-              {showCreator || collectionQ.data?.name || showOwner ? (
+              {showCreator || collectionQ.data?.name || collectionPending || showOwner ? (
                 <div className="shop-detail__meta" data-testid="detail-meta">
                   {showCreator ? <DetailCreator address={current.creator} /> : null}
                   {collectionQ.data?.name ? (
                     <DetailCollection contractAddress={contractAddress} name={collectionQ.data.name} thumbnails={collectionThumbs} label={(name) => <>{t("itemDetail.collection")} {name}</>} />
+                  ) : collectionPending ? (
+                    <BadgeSkeleton testId="collection-loading" />
                   ) : null}
                   {showOwner ? (
                     <div className="shop-pdp__col">
@@ -839,6 +845,13 @@ export default function ItemDetail() {
 
       {showResales ? (
         <ResaleOffers contractAddress={contractAddress} resales={resales} classic={classicQ.data ?? []} network={network} currentTokenId={routeTokenId ?? undefined} viewer={account} />
+      ) : null}
+
+      {/* A token route waits for its token: until then the category is the placeholder's, and LAND has its
+          own sales table. */}
+      {validContract && !isTokenRoute && !isLand && pageItemId ? <ItemOwners contractAddress={contractAddress} itemId={pageItemId} /> : null}
+      {validContract && !isLand && (isTokenRoute ? routeTokenId && token : pageItemId) ? (
+        <LatestSales contractAddress={contractAddress} tokenId={isTokenRoute ? routeTokenId! : undefined} itemId={isTokenRoute ? undefined : pageItemId!} />
       ) : null}
 
       <SuggestedForYouRow exclude={personalExclude} title={pdpText("itemDetail.becauseYouOwn")} first={PERSONAL_RAIL_SIZE} />

@@ -310,6 +310,9 @@ CREATE TABLE camera_reel.images (
     thumbnail_hash text NOT NULL,
     is_public boolean NOT NULL DEFAULT false,
     review_status text NOT NULL DEFAULT 'ok',
+    -- Old rows have no new ranking event. New uploads set false, then publish
+    -- after both blobs exist; a bounded repair pass finishes interrupted work.
+    ranking_published boolean NOT NULL DEFAULT true,
     metadata jsonb NOT NULL,
     place_id text GENERATED ALWAYS AS (metadata->>'placeId') STORED,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
@@ -339,6 +342,9 @@ CREATE INDEX images_place_public_created_idx ON camera_reel.images (place_id, cr
 -- bitmap OR of the two).
 CREATE INDEX images_image_hash_idx ON camera_reel.images (image_hash);
 CREATE INDEX images_thumbnail_hash_idx ON camera_reel.images (thumbnail_hash);
+-- Only pending publications enter this repair keyset; an empty due set does
+-- not scan the complete retained photo gallery once per minute.
+CREATE INDEX images_ranking_pending_idx ON camera_reel.images (id) WHERE NOT ranking_published;
 
 -- ══ Domain-agent sections: append inside the matching block only ═══════════
 

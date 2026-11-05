@@ -73,6 +73,51 @@ async fn ready(server: &Server, who: &PrivateKeySigner) -> WsStream {
     socket
 }
 
+/// The close frame `socket` ends with, past whatever comes before it.
+async fn closing_frame<S>(socket: &mut S) -> tokio_tungstenite::tungstenite::protocol::CloseFrame
+where
+    S: futures::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin,
+{
+    tokio::time::timeout(crate::shared::test_wait::HANG_GUARD, async {
+        loop {
+            match socket.next().await {
+                Some(Ok(WsMessage::Close(Some(frame)))) => return frame,
+                Some(Ok(WsMessage::Close(None))) | Some(Err(_)) | None => {
+                    panic!("the socket ended without a close frame")
+                }
+                Some(Ok(_)) => continue,
+            }
+        }
+    })
+    .await
+    .expect("the socket never closed")
+}
+
+/// A ready stream socket of `who` whose client receives through a tiny
+/// buffer, so what it does not read soon backs up on the server.
+async fn ready_with_small_buffer(server: &Server, who: &PrivateKeySigner) -> WsStream {
+    let tcp = tokio::net::TcpSocket::new_v4().unwrap();
+    tcp.set_recv_buffer_size(1024).unwrap();
+    let tcp = tcp.connect(server.addr).await.unwrap();
+    let mut request = format!("ws://{}{STREAM}", server.addr)
+        .into_client_request()
+        .unwrap();
+    let frame: serde_json::Map<String, Value> =
+        serde_json::from_str(&signed_frame(who, "/v1/stream").await).unwrap();
+    for (name, value) in frame {
+        request.headers_mut().insert(
+            HeaderName::from_bytes(name.as_bytes()).unwrap(),
+            HeaderValue::from_str(value.as_str().unwrap()).unwrap(),
+        );
+    }
+    let (mut socket, _) =
+        tokio_tungstenite::client_async(request, tokio_tungstenite::MaybeTlsStream::Plain(tcp))
+            .await
+            .unwrap();
+    assert_eq!(next_json(&mut socket).await, json!({ "type": "ready" }));
+    socket
+}
+
 /// Nothing arrives on `socket` for a while.
 async fn silent(socket: &mut WsStream) -> bool {
     tokio::time::timeout(Duration::from_millis(200), socket.next())
@@ -90,6 +135,7 @@ async fn a_subscription_receives_the_update_its_rpc_stream_would() {
     let address = format!("{:#x}", me.address());
     let other = addr("str1");
     let ctx = server.state.ctx.clone();
+    seed_profiles(&ctx, &[&address, &other]).await;
 
     let mut socket = ready(&server, &me).await;
     send_json(&mut socket, json!({ "type": "ping" })).await;
@@ -235,8 +281,8 @@ async fn both_handshakes_are_over_the_stream_route_only() {
         .unwrap();
     assert_eq!(close_code(&next_message(&mut socket).await), Some(3003));
 
-    // The first-frame fallback, over the route or the served path.
-    for path in ["/v1/stream", STREAM] {
+    // The first-frame fallback signs the source protocol path.
+    for path in ["/v1/stream"] {
         let mut socket = connect(&server, STREAM).await;
         socket
             .send(WsMessage::Text(signed_frame(&me, path).await.into()))
@@ -248,8 +294,8 @@ async fn both_handshakes_are_over_the_stream_route_only() {
             "{path}"
         );
     }
-    // And the upgrade headers over the served path.
-    let mut socket = with_headers(&server, &signed_frame(&me, STREAM).await)
+    // Upgrade headers use that same source protocol path.
+    let mut socket = with_headers(&server, &signed_frame(&me, "/v1/stream").await)
         .await
         .unwrap();
     assert_eq!(next_json(&mut socket).await, json!({ "type": "ready" }));
@@ -289,19 +335,15 @@ async fn the_ninth_socket_of_an_address_ends_its_oldest() {
     );
 
     let mut streams = Vec::new();
-    for _ in 0..crate::rpc::limits::MAX_SOCKETS_PER_ADDRESS {
+    for _ in 0..crate::rpc::limits::DEFAULT_MAX_SOCKETS_PER_ADDRESS {
         streams.push(ready(&server, &me).await);
     }
-    let ended = tokio::time::timeout(crate::shared::test_wait::HANG_GUARD, async {
-        loop {
-            match rpc.next().await {
-                None | Some(Err(_)) | Some(Ok(WsMessage::Close(_))) => break,
-                Some(Ok(_)) => continue,
-            }
-        }
-    })
-    .await;
-    assert!(ended.is_ok(), "the displaced RPC socket stayed open");
+    // The displaced RPC socket gets the close a stream socket gets.
+    let close = closing_frame(&mut rpc).await;
+    assert_eq!(
+        (u16::from(close.code), close.reason.as_str()),
+        (3005, "Replaced by a newer connection")
+    );
     assert_eq!(admission.sockets_of(&address), 8);
 
     let _ninth = ready(&server, &me).await;
@@ -316,5 +358,152 @@ async fn the_ninth_socket_of_an_address_ends_its_oldest() {
     // Another address is unaffected.
     let _other = ready(&server, &PrivateKeySigner::random()).await;
     assert!(silent(&mut streams[1]).await);
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}
+
+/// RPC sockets take their address slot at authentication. With one socket
+/// admitted and the cap's worth of newer ones authenticating at once, the
+/// oldest is the one ended (3005) and every newer one keeps its slot, however
+/// their ServerReady frames interleave.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_rpc_sockets_always_end_the_oldest() {
+    let server = spawn_server(None, 5).await;
+    let me = PrivateKeySigner::random();
+    let address = format!("{:#x}", me.address());
+    let admission = server.state.ctx.admission();
+    let rpc = async |server: &Server| {
+        let mut socket = connect(server, "/social-rpc").await;
+        let (_, frame) = crate::rpc::handshake::test_support::frame_for(
+            &me,
+            "/",
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .await;
+        socket.send(WsMessage::Text(frame.into())).await.unwrap();
+        socket
+    };
+    let mut oldest = rpc(&server).await;
+    assert!(matches!(next_message(&mut oldest).await, WsMessage::Binary(_)));
+    assert!(
+        crate::shared::test_wait::until(async || admission.sockets_of(&address) == 1).await,
+        "the oldest socket holds a slot"
+    );
+    let mut newer = futures::future::join_all(
+        (0..crate::rpc::limits::DEFAULT_MAX_SOCKETS_PER_ADDRESS).map(|_| rpc(&server)),
+    )
+    .await;
+    let close = closing_frame(&mut oldest).await;
+    assert_eq!(u16::from(close.code), 3005);
+    for socket in &mut newer {
+        assert!(matches!(next_message(socket).await, WsMessage::Binary(_)));
+    }
+    for socket in &mut newer {
+        assert!(silent(socket).await, "a newer socket keeps its slot");
+    }
+    assert_eq!(admission.sockets_of(&address), 8);
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}
+
+/// Upstream `safeSend` (`src/adapters/stream-sessions/component.ts:110-131`):
+/// a frame sent while more than `WS_MAX_BACKPRESSURE` bytes wait to be
+/// written closes the socket 1008 "Slow consumer". Here a client that sends
+/// pings and reads none of the pongs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_send_past_the_backpressure_limit_closes_slow_consumer() {
+    let settings = Settings {
+        auth_window_secs: 5,
+        // The handler retains this raw number; the native writer wraps to 1024.
+        ws_max_backpressure_bytes: 4294968320.5,
+        stream: crate::rpc::stream::StreamLimits {
+            messages_per_second: 1e9,
+            message_burst: 1_000_000_000,
+            ..Default::default()
+        },
+        ..Settings::default()
+    };
+    let server = spawn_server_with(None, settings, None).await;
+    let me = PrivateKeySigner::random();
+    let address = format!("{:#x}", me.address());
+    let socket = ready(&server, &me).await;
+    let (mut sink, mut stream) = socket.split();
+    // Stop sending once the server retires the session. Writing after the peer
+    // closes can put tungstenite in an error state before its read half exposes
+    // the close frame, which measures a client-side write failure instead.
+    for _ in 0..2_000_000 {
+        if server.state.ctx.admission().sockets_of(&address) == 0 {
+            break;
+        }
+        let ping = sink.send(WsMessage::Text(r#"{"type":"ping"}"#.into()));
+        match tokio::time::timeout(Duration::from_millis(200), ping).await {
+            Ok(Ok(())) => continue,
+            _ => break,
+        }
+    }
+    let close = closing_frame(&mut stream).await;
+    assert_eq!(
+        (u16::from(close.code), close.reason.as_str()),
+        (1008, "Slow consumer")
+    );
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}
+
+/// Upstream's per-subscription queue (`src/utils/emitterToGenerator.ts:4`,
+/// `:37-45`, `stream-sessions/component.ts:303-304`): a subscription whose
+/// client stops reading waits for the socket to drain, and once 1,000 of
+/// its events wait the socket closes 1008 "Subscription overflow; reconnect
+/// and resync". Events of streams it does not listen to never fill it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_full_subscription_queue_closes_subscription_overflow() {
+    let server = spawn_server(None, 5).await;
+    let me = PrivateKeySigner::random();
+    let address = format!("{:#x}", me.address());
+    let mut socket = ready_with_small_buffer(&server, &me).await;
+    send_json(
+        &mut socket,
+        json!({ "type": "subscribe", "id": "b", "stream": "block_updates" }),
+    )
+    .await;
+    assert_eq!(
+        next_json(&mut socket).await,
+        json!({ "type": "subscribed", "id": "b" })
+    );
+    let pubsub = server.state.ctx.pubsub().clone();
+    let community = || {
+        SocialEvent::CommunityVoice(CommunityVoiceChatUpdate {
+            community_id: "c".into(),
+            ..Default::default()
+        })
+    };
+    for _ in 0..20 {
+        for _ in 0..100 {
+            pubsub.publish(&address, community());
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(
+        silent(&mut socket).await,
+        "another stream's events reach nothing"
+    );
+    let (_sink, mut stream) = socket.split();
+    let mut published = 0;
+    while !server.state.ctx.admission().sockets_of(&address).eq(&0) && published < 1_000_000 {
+        pubsub.publish(
+            &address,
+            SocialEvent::Block(BlockUpdate {
+                address: addr("blocker"),
+                is_blocked: true,
+                ..Default::default()
+            }),
+        );
+        published += 1;
+        if published % 64 == 0 {
+            tokio::task::yield_now().await;
+        }
+    }
+    let close = closing_frame(&mut stream).await;
+    assert_eq!(
+        (u16::from(close.code), close.reason.as_str()),
+        (1008, "Subscription overflow; reconnect and resync")
+    );
     server.jobs.shutdown(Duration::from_secs(2)).await;
 }

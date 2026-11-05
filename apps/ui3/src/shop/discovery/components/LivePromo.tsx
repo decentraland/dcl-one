@@ -85,6 +85,8 @@ export default function LivePromo({ to, urns, title, cta, ariaLabel, fallback, f
               controls={false}
               zoom={1.1}
               pauseOffscreen
+              // The promo's items, not a bare body: where they cannot be resolved the still picture stays.
+              requireWearables
               onStatus={(s) => {
                 if (s === "ready") setReady(true);
                 else if (s === "error" || s === "empty") setFailed(true);

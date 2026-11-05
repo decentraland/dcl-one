@@ -26,10 +26,46 @@ const TIMESTAMP_RESET_SECS: f64 = 60.0;
 /// update is genuinely late — which is exactly when extrapolating a stale velocity is unsound.
 const COAST_SECS: f32 = 1.0;
 
+use bevy_console::ConsoleCommand;
+use common::util::AsH160;
+use comms::profile::UserProfile;
+use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+use serde_json::json;
+
 pub struct PlayerMovementPlugin;
 
 impl Plugin for PlayerMovementPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<MovementProfile>()
+            .add_console_command::<MovementProfileCommand, _>(movement_profile)
+            .add_console_command::<ForeignMovementCommand, _>(foreign_movement)
+            .add_debug_section(DebugSection {
+                title: "Multiplayer movement",
+                query: "/foreign_movement",
+                fields: &[
+                    ("Remote players", "count"),
+                    ("Profile", "name"),
+                    ("Wallet", "wallet"),
+                    ("Entity", "entity"),
+                    ("Profile version", "version"),
+                    ("Last target was a teleport", "teleport"),
+                    ("Packet timestamp (s)", "timestamp"),
+                    ("Time since receipt (s)", "age"),
+                    ("Estimated packet interval (s)", "interval"),
+                    ("Rendered position (X / Y / Z)", "position"),
+                    ("Target position (X / Y / Z)", "target"),
+                    ("Target yaw (degrees)", "yaw"),
+                    ("Packet velocity (X / Y / Z)", "velocity"),
+                    ("Movement kind", "movement"),
+                ],
+                actions: &[("Inspect first remote player", "/movement_profile")],
+                inputs: &[DebugInput {
+                    label: "Inspect name or wallet",
+                    field: "selector",
+                    command: "/movement_profile {value}",
+                    kind: DebugInputKind::Text,
+                }],
+            });
         app.add_systems(
             Update,
             (
@@ -40,6 +76,104 @@ impl Plugin for PlayerMovementPlugin {
                 .chain(),
         );
     }
+}
+
+#[derive(Resource, Default)]
+struct MovementProfile(Option<String>);
+
+/// Select a remote player by name or wallet. Omit the selector to inspect the first peer.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/movement_profile")]
+struct MovementProfileCommand {
+    selector: Vec<String>,
+}
+
+fn movement_profile(
+    mut input: ConsoleCommand<MovementProfileCommand>,
+    mut profile: ResMut<MovementProfile>,
+) {
+    if let Some(Ok(command)) = input.take() {
+        profile.0 = (!command.selector.is_empty()).then(|| command.selector.join(" "));
+        input.reply_ok("Movement profile selected");
+    }
+}
+
+/// Read the accepted network target and current rendered transform of a remote player.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/foreign_movement")]
+struct ForeignMovementCommand;
+
+#[allow(clippy::type_complexity)]
+fn foreign_movement(
+    mut input: ConsoleCommand<ForeignMovementCommand>,
+    filter: Res<MovementProfile>,
+    time: Res<Time>,
+    peers: Query<(
+        Entity,
+        &ForeignPlayer,
+        Option<&UserProfile>,
+        Option<&Transform>,
+        Option<&PlayerTargetPosition>,
+        Option<&AvatarDynamicState>,
+    )>,
+) {
+    let Some(Ok(_)) = input.take() else { return };
+    let selector = filter.0.as_deref();
+    let address = selector.and_then(|id| id.as_h160());
+    let count = peers.iter().count();
+    let mut report = json!({"count": count, "selector": selector});
+    if let Some((entity, player, profile, pose, target, dynamics)) = peers
+        .iter()
+        .filter(|(_, player, profile, ..)| {
+            selector.is_none_or(|id| {
+                Some(player.address) == address
+                    || profile.is_some_and(|p| p.content.name.eq_ignore_ascii_case(id))
+            })
+        })
+        .min_by_key(|(entity, player, ..)| (player.address, *entity))
+    {
+        report["entity"] = json!(format!("{entity:?}"));
+        report["wallet"] = json!(format!("{:#x}", player.address));
+        report["name"] = json!(profile.map(|p| p.content.name.as_str()));
+        report["version"] = json!(player.profile_version);
+        report["position"] = json!(pose.map(|t| t.translation.to_array()));
+        report["movement"] = json!(dynamics.map(|d| match d.move_kind {
+            MoveKind::Idle => "idle",
+            MoveKind::Walk => "walk",
+            MoveKind::Jog => "jog",
+            MoveKind::Run => "run",
+            MoveKind::Jump => "jump",
+            MoveKind::DoubleJump => "double jump",
+            MoveKind::Falling => "falling",
+            MoveKind::LongFalling => "long falling",
+            MoveKind::Glide => "glide",
+            MoveKind::Emote => "emote",
+        }));
+        report["unavailable"] = json!({
+            "": "No movement packet received for this player",
+            "name": "Waiting for the player profile",
+            "position": "The player has no rendered transform",
+            "movement": "The player has no animation state",
+        });
+        if let Some(target) = target {
+            report["teleport"] = json!(target.teleport);
+            report["timestamp"] = json!(target.timestamp);
+            report["age"] = json!((time.elapsed_secs_f64() - target.time).max(0.0));
+            report["interval"] = json!(target.update_freq);
+            report["target"] = json!(target.translation.to_array());
+            report["velocity"] = json!(target.velocity.map(|v| v.to_array()));
+            report["yaw"] = json!(target.rotation.to_euler(EulerRot::YXZ).0.to_degrees());
+            report["unavailable"]["timestamp"] = json!("The movement packet has no timestamp");
+            report["unavailable"]["velocity"] = json!("The movement packet has no velocity");
+        }
+    } else {
+        report["unavailable"] = json!({"": if count == 0 {
+            "No remote players are present"
+        } else {
+            "No remote player matches this name or wallet"
+        }});
+    }
+    input.reply_ok(report.to_string());
 }
 
 #[derive(Component)]

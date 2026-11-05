@@ -7,33 +7,44 @@
 
 use std::collections::HashMap;
 
+use crate::rpc::http::Kind;
 use axum::Json;
-use axum::body::Bytes;
 use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::json;
 
+use sqlx::Connection as _;
+
 use crate::{Address, CommunityId, CommunityPermission};
 
 use super::dto::{CommunityDetail, CommunityListItem};
-use super::friendship::community_friends;
 use super::http::{
-    CommError, EnvelopeData, Paginated, Pagination, err_json, get_all, get_bool, get_first,
-    get_pagination_params,
+    CommError, EnvelopeData, Paginated, Pagination, get_all, get_bool, get_first,
+    get_pagination_params, handler_error as err_json,
 };
 use super::profiles::ProfileInfo;
 use super::thumbnail::{detect_image_mime_type, store_thumbnail, validate_thumbnail};
 use super::write_support::{
-    ClientCommunityWriteAuthority, Refusal, boundary, load_client_standing, map_db,
-    parse_community_id, parse_multipart, refuse,
+    ClientCommunityWriteAuthority, Refusal, acquire_membership, load_client_standing, map_db,
+    parse_community_id, parse_form,
 };
 use super::{SharedState, queries, signed_path, validate};
 use crate::notifications::community::{Audience, CommunityEvent, notify};
 
 const MIN_SEARCH_LENGTH_FOR_MINIMAL_RESPONSE: usize = 3;
 const MAX_LIMIT_FOR_MINIMAL_RESPONSE: i64 = 50;
+
+/// Both source owner callsites use the strict single-profile reader and catch
+/// registry failures as their own 500 `{message}` response.
+fn owner_profile_failure(error: super::profiles::RegistryError) -> CommError {
+    let message = match &error {
+        super::profiles::RegistryError::Database(error) => super::http::database_message(error),
+        _ => error.to_string(),
+    };
+    CommError::MessageOnly(StatusCode::INTERNAL_SERVER_ERROR, message)
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum MinimalError {
@@ -52,7 +63,7 @@ fn plan_minimal_search(
     let Some(s) = search else {
         return Err(MinimalError::TooShort);
     };
-    if s.chars().count() < MIN_SEARCH_LENGTH_FOR_MINIMAL_RESPONSE {
+    if s.encode_utf16().count() < MIN_SEARCH_LENGTH_FOR_MINIMAL_RESPONSE {
         return Err(MinimalError::TooShort);
     }
     Ok((s, requested_limit.min(MAX_LIMIT_FOR_MINIMAL_RESPONSE)))
@@ -73,8 +84,7 @@ fn plan_membership_filters(
 ) -> Result<Vec<String>, MembershipFilterError> {
     let requested: Vec<String> = raw_roles
         .into_iter()
-        .map(|r| r.trim().to_string())
-        .filter(|r| !r.is_empty())
+        .filter(|r| !r.trim().is_empty())
         .collect();
     let roles: Vec<String> = requested
         .iter()
@@ -144,12 +154,7 @@ fn enrich_list_v1(
 ) {
     for item in items.iter_mut() {
         set_thumbnail_list(cdn_url, item);
-        item.owner_name = Some(
-            owner_names
-                .get(&item.owner_address.to_lowercase())
-                .cloned()
-                .unwrap_or_default(),
-        );
+        item.owner_name = owner_names.get(&item.owner_address.to_lowercase()).cloned();
     }
 }
 
@@ -173,28 +178,31 @@ fn friend_profile(address: &str, info: &ProfileInfo) -> serde_json::Value {
     })
 }
 
-async fn friends_by_community(
-    state: &SharedState,
-    viewer: &Address,
-    items: &[CommunityListItem],
-) -> HashMap<CommunityId, Vec<String>> {
-    let ids: Vec<CommunityId> = items.iter().map(|o| CommunityId::from_uuid(o.id)).collect();
-    if ids.is_empty() {
-        return HashMap::new();
-    }
-    community_friends(&state.pool, viewer, &ids).await
+fn friends_by_community(items: &[CommunityListItem]) -> HashMap<CommunityId, Vec<String>> {
+    items
+        .iter()
+        .map(|item| {
+            let addresses = item
+                .friends
+                .iter()
+                .flatten()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect();
+            (CommunityId::from_uuid(item.id), addresses)
+        })
+        .collect()
 }
 
 async fn enrich_with_friends(
     state: &SharedState,
     by_community: HashMap<CommunityId, Vec<String>>,
     items: &mut [CommunityListItem],
-) {
+) -> sqlx::Result<()> {
     if by_community.is_empty() {
-        return;
+        return Ok(());
     }
     let all_addresses: Vec<String> = by_community.values().flatten().cloned().collect();
-    let profiles = state.profiles.get_profiles(&all_addresses).await;
+    let profiles = state.profiles.try_get_profiles(&all_addresses).await?;
     for item in items.iter_mut() {
         let Some(addresses) = by_community.get(&CommunityId::from_uuid(item.id)) else {
             continue;
@@ -211,6 +219,7 @@ async fn enrich_with_friends(
             item.friends = Some(friends);
         }
     }
+    Ok(())
 }
 
 pub async fn get_raw_thumbnail(
@@ -296,22 +305,28 @@ pub async fn get_communities(
         only_with_active_voice_chat,
         &roles,
         community_id,
+        state.voice_presence_config(),
     )
-    .await?;
+    .await
+    .map_err(super::http::database_error)?;
 
+    let by_community = friends_by_community(&results);
     let owners = owner_addresses(&results);
-    let (owner_names, by_community) =
-        tokio::join!(state.profiles.get_owner_names(&owners), async {
-            match signer.as_ref() {
-                Some(user) => friends_by_community(&state, user, &results).await,
-                None => HashMap::new(),
-            }
-        });
+    let owner_names = state
+        .profiles
+        .get_owner_names(&owners)
+        .await
+        .map_err(super::http::database_error)?;
     enrich_list_v1(&state.settings.cdn_url, &mut results, &owner_names);
-    enrich_with_friends(&state, by_community, &mut results).await;
+    enrich_with_friends(&state, by_community, &mut results)
+        .await
+        .map_err(super::http::database_error)?;
 
     Ok(Json(EnvelopeData {
-        data: Paginated::new(results, total, &pagination),
+        data: Paginated {
+            page: pagination.offset / pagination.limit + 1,
+            ..Paginated::new(results, total, &pagination)
+        },
     })
     .into_response())
 }
@@ -330,13 +345,18 @@ async fn minimal_search(
     })?;
     let viewer = signer.expect("plan_minimal_search refused the anonymous caller");
     let (results, total) =
-        queries::search_communities(&state.pool, term, viewer, limit, pagination.offset).await?;
+        queries::search_communities(&state.pool, term, viewer, limit, pagination.offset)
+            .await
+            .map_err(super::http::database_error)?;
     let capped = Pagination {
         limit,
         offset: pagination.offset,
     };
     Ok(Json(EnvelopeData {
-        data: Paginated::new(results, total, &capped),
+        data: Paginated {
+            page: capped.offset / capped.limit + 1,
+            ..Paginated::new(results, total, &capped)
+        },
     })
     .into_response())
 }
@@ -356,25 +376,34 @@ pub async fn get_community(
             &signed_path(&original, format!("/v1/communities/{id_str}")),
         )
         .await;
-    let Some(mut detail) = queries::get_by_id(&state.pool, id, signer.as_ref()).await? else {
+    let Some(mut detail) = queries::get_by_id(
+        &state.pool,
+        id,
+        signer.as_ref(),
+        state.voice_presence_config(),
+    )
+    .await
+    .map_err(|error| {
+        CommError::MessageOnly(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            super::http::database_message(&error),
+        )
+    })?
+    else {
         return Err(CommError::not_found(format!(
             "Community not found: {id_str}"
         )));
     };
-    let owner_names = state
+    let owner_name = state
         .profiles
-        .get_owner_names(&[detail.owner_address.to_lowercase()])
-        .await;
+        .get_owner_name(&detail.owner_address)
+        .await
+        .map_err(owner_profile_failure)?;
     if signer.is_some() {
         detail.is_hosting_live_event = Some(is_hosting_live_event(&state, id).await);
     }
     set_thumbnail_detail(&state.settings.cdn_url, &mut detail);
-    detail.owner_name = Some(
-        owner_names
-            .get(&detail.owner_address.to_lowercase())
-            .cloned()
-            .unwrap_or_default(),
-    );
+    detail.owner_name = Some(owner_name);
     Ok(Json(EnvelopeData { data: detail }))
 }
 
@@ -410,26 +439,18 @@ pub async fn get_communities_v2(
         only_with_active_voice_chat,
         &roles,
         community_id,
+        state.voice_presence_config(),
     )
-    .await?;
+    .await
+    .map_err(super::http::database_error)?;
     for item in results.iter_mut() {
         set_thumbnail_list(&state.settings.cdn_url, item);
     }
-    if let Some(user) = signer.as_ref() {
-        let by_community = friends_by_community(&state, user, &results).await;
-        for item in results.iter_mut() {
-            if let Some(addresses) = by_community.get(&CommunityId::from_uuid(item.id)) {
-                item.friends = Some(
-                    addresses
-                        .iter()
-                        .map(|a| serde_json::Value::String(a.clone()))
-                        .collect(),
-                );
-            }
-        }
-    }
     Ok(Json(EnvelopeData {
-        data: Paginated::new(results, total, &pagination),
+        data: Paginated {
+            page: pagination.offset / pagination.limit + 1,
+            ..Paginated::new(results, total, &pagination)
+        },
     })
     .into_response())
 }
@@ -449,7 +470,20 @@ pub async fn get_community_v2(
             &signed_path(&original, format!("/v2/communities/{id_str}")),
         )
         .await;
-    let Some(mut detail) = queries::get_by_id(&state.pool, id, signer.as_ref()).await? else {
+    let Some(mut detail) = queries::get_by_id(
+        &state.pool,
+        id,
+        signer.as_ref(),
+        state.voice_presence_config(),
+    )
+    .await
+    .map_err(|error| {
+        CommError::MessageOnly(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            super::http::database_message(&error),
+        )
+    })?
+    else {
         return Err(CommError::not_found(format!(
             "Community not found: {id_str}"
         )));
@@ -486,9 +520,8 @@ fn parse_enum_field(value: String, allowed: [&str; 2], field: &str) -> Result<St
     if allowed.contains(&trimmed.as_str()) {
         return Ok(trimmed);
     }
-    Err(refuse(
-        StatusCode::BAD_REQUEST,
-        format!(
+    Err(Box::new(
+        CommError::bad_request(format!(
             "Invalid {}: {}. Valid values are {}",
             field,
             if trimmed.is_empty() {
@@ -497,7 +530,8 @@ fn parse_enum_field(value: String, allowed: [&str; 2], field: &str) -> Result<St
                 trimmed.as_str()
             },
             allowed.join(", ")
-        ),
+        ))
+        .into_response(),
     ))
 }
 
@@ -510,13 +544,14 @@ fn parse_visibility(value: String) -> Result<String, Refusal> {
 }
 
 async fn signer_or_refusal(
+    caller: &super::auth::Caller,
     state: &SharedState,
     headers: &HeaderMap,
     method: &str,
     path: super::auth::SignedPath,
 ) -> Result<Address, Response> {
-    state
-        .require_signer(headers, method, &path)
+    caller
+        .require_signer(state, headers, method, &path)
         .await
         .map_err(IntoResponse::into_response)
 }
@@ -532,11 +567,13 @@ macro_rules! try_resp {
 
 pub async fn create_community(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
-    body: Bytes,
+    body: super::http::DeferredBody,
 ) -> Response {
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "post",
@@ -547,27 +584,13 @@ pub async fn create_community(
         Ok(s) => s,
         Err(r) => return r,
     };
-    let Some(b) = boundary(&headers) else {
-        return err_json(StatusCode::BAD_REQUEST, "expected multipart/form-data");
+    let body = match body.form().await {
+        Ok(body) => body,
+        Err(error) => return error.into_response(),
     };
-    let fields = try_resp!(parse_multipart(b, body).await);
+    let fields = try_resp!(parse_form(&headers, body).await);
     let name = fields.name.unwrap_or_default();
     let description = fields.description.unwrap_or_default();
-    let privacy = match fields.privacy {
-        Some(p) => try_resp!(parse_privacy(p)),
-        None => "public".to_string(),
-    };
-    let visibility = match fields.visibility {
-        Some(v) => try_resp!(parse_visibility(v)),
-        None => "all".to_string(),
-    };
-    let place_ids = fields.place_ids.unwrap_or_default();
-    let thumbnail = fields.thumbnail;
-    if let Some(bytes) = thumbnail.as_deref()
-        && let Err(e) = validate_thumbnail(bytes)
-    {
-        return err_json(StatusCode::BAD_REQUEST, e.message());
-    }
     if let Err(e) = validate::validate_name(&name) {
         return err_json(StatusCode::BAD_REQUEST, e);
     }
@@ -577,16 +600,47 @@ pub async fn create_community(
     if let Err(e) = validate::validate_description(&description) {
         return err_json(StatusCode::BAD_REQUEST, e);
     }
-    if let Some(false) = state.profiles.has_owned_name(signer.as_str()).await {
+    let thumbnail = fields.thumbnail;
+    if let Some(bytes) = thumbnail.as_deref()
+        && let Err(e) = validate_thumbnail(bytes)
+    {
+        return err_json(StatusCode::BAD_REQUEST, e.message());
+    }
+    let privacy = match fields.privacy {
+        Some(p) => try_resp!(parse_privacy(p)),
+        None => "public".to_string(),
+    };
+    let visibility = match fields.visibility {
+        Some(v) => try_resp!(parse_visibility(v)),
+        None => "all".to_string(),
+    };
+    let place_ids = fields.place_ids.unwrap_or_default();
+    if !match state.has_owned_name(&signer).await {
+        Ok(owns) => owns,
+        Err(error) => return error.into_response(),
+    } {
         return err_json(
             StatusCode::UNAUTHORIZED,
             format!("The user {signer} doesn't have any names"),
         );
     }
+    let owner_name = match state.profiles.get_owner_name(signer.as_str()).await {
+        Ok(name) => name,
+        Err(error) => return owner_profile_failure(error).into_response(),
+    };
     if let Err(e) = state.validate_places_ownership(&place_ids, &signer).await {
         return e.into_response();
     }
-
+    if let Err(error) = state
+        .validate_content(super::compliance::Content {
+            name: Some(&name),
+            description: Some(&description),
+            thumbnail: thumbnail.as_deref(),
+        })
+        .await
+    {
+        return error.into_response();
+    }
     let private = privacy == "private";
     let unlisted = visibility == "unlisted";
     let id = CommunityId::new();
@@ -648,16 +702,15 @@ pub async fn create_community(
         "privacy": if private { "private" } else { "public" },
         "visibility": if unlisted { "unlisted" } else { "all" },
         "active": true,
-        "role": "owner",
-        "membersCount": 1,
+        "ownerName": owner_name,
         "isHostingLiveEvent": false,
     });
     if thumbnail.is_some()
         && let Some(m) = data.as_object_mut()
     {
         m.insert(
-            "thumbnailUrl".to_string(),
-            serde_json::Value::String(state.thumbnail_url(id)),
+            "thumbnails".to_string(),
+            json!({ "raw": state.thumbnail_url(id) }),
         );
     }
     (
@@ -669,13 +722,14 @@ pub async fn create_community(
 
 pub async fn update_community(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
-    body: Bytes,
+    body: super::http::DeferredBody,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "put",
@@ -686,20 +740,21 @@ pub async fn update_community(
         Ok(s) => s,
         Err(r) => return r,
     };
-    try_resp!(
-        ClientCommunityWriteAuthority::resolve_requiring_capability(
-            &state,
-            uuid,
-            &signer,
-            CommunityPermission::EditInfo,
-            "edit the community"
-        )
-        .await
-    );
-    let Some(b) = boundary(&headers) else {
-        return err_json(StatusCode::BAD_REQUEST, "expected multipart/form-data");
+    let body = match body.form().await {
+        Ok(body) => body,
+        Err(error) => return error.into_response(),
     };
-    let fields = try_resp!(parse_multipart(b, body).await);
+    let fields = try_resp!(parse_form(&headers, body).await);
+    if fields.name.is_none()
+        && fields.description.is_none()
+        && fields.privacy.is_none()
+        && fields.visibility.is_none()
+        && fields.place_ids.is_none()
+        && fields.thumbnail.is_none()
+    {
+        return CommError::bad_request("At least one field must be provided for update")
+            .into_response();
+    }
     let name = fields.name;
     let description = fields.description;
     if let Err(e) = validate::validate_name_opt(name.as_deref()) {
@@ -713,6 +768,12 @@ pub async fn update_community(
     if let Err(e) = validate::validate_description_opt(description.as_deref()) {
         return err_json(StatusCode::BAD_REQUEST, e);
     }
+    let thumbnail = fields.thumbnail;
+    if let Some(bytes) = thumbnail.as_deref()
+        && let Err(e) = validate_thumbnail(bytes)
+    {
+        return err_json(StatusCode::BAD_REQUEST, e.message());
+    }
     let privacy: Option<bool> = match fields.privacy {
         Some(p) => Some(try_resp!(parse_privacy(p)) == "private"),
         None => None,
@@ -721,14 +782,27 @@ pub async fn update_community(
         Some(v) => Some(try_resp!(parse_visibility(v)) == "unlisted"),
         None => None,
     };
+    let uuid = try_resp!(parse_community_id(&id));
+    try_resp!(
+        ClientCommunityWriteAuthority::resolve_requiring_capability(
+            &state,
+            uuid,
+            &signer,
+            CommunityPermission::EditInfo,
+            "edit the community"
+        )
+        .await
+    );
     // EditName and EditSettings are owner-only in the capability matrix: a
     // name, privacy or visibility that differs from the stored one needs the
     // matching cell (upstream `updateCommunity`, `communities.ts` at `fb3dcb8`).
-    let current: Option<(String, bool, bool)> = try_resp!(map_db(
-        sqlx::query_as("SELECT name, private, unlisted FROM social.communities WHERE id = $1")
-            .bind(uuid)
-            .fetch_optional(&state.pool)
-            .await
+    let current: Option<(String, bool, bool, String)> = try_resp!(map_db(
+        sqlx::query_as(
+            "SELECT name, private, unlisted, description FROM social.communities WHERE id = $1"
+        )
+        .bind(uuid)
+        .fetch_optional(&state.pool)
+        .await
     ));
     let current = current.as_ref();
     if name
@@ -793,14 +867,25 @@ pub async fn update_community(
             .await
         );
     }
-    let thumbnail = fields.thumbnail;
-    if let Some(bytes) = thumbnail.as_deref()
-        && let Err(e) = validate_thumbnail(bytes)
-    {
-        return err_json(StatusCode::BAD_REQUEST, e.message());
+    let content_changed =
+        name.as_deref().is_some_and(|name| {
+            current.is_some_and(|old| super::compliance::changed(name, &old.0))
+        }) || description.as_deref().is_some_and(|description| {
+            current.is_some_and(|old| super::compliance::changed(description, &old.3))
+        }) || thumbnail.is_some();
+    if content_changed {
+        if let Err(error) = state
+            .validate_content(super::compliance::Content {
+                name: name.as_deref(),
+                description: description.as_deref(),
+                thumbnail: thumbnail.as_deref(),
+            })
+            .await
+        {
+            return error.into_response();
+        }
     }
     let becomes_public = privacy == Some(false) && current.is_some_and(|c| c.1);
-    let mut tx = try_resp!(map_db(state.pool.begin().await));
     try_resp!(map_db(
         sqlx::query(
             "UPDATE social.communities SET \
@@ -816,9 +901,48 @@ pub async fn update_community(
         .bind(description.as_deref())
         .bind(privacy)
         .bind(visibility)
-        .execute(&mut *tx)
+        .execute(&state.pool)
         .await
     ));
+    // A rename broadcast starts after the first committed UPDATE, before the
+    // separately fallible thumbnail, places and request-acceptance stages.
+    if let (Some(new_name), Some((old_name, _, _, _))) = (name.as_deref(), current)
+        && new_name.trim() != old_name.trim()
+    {
+        let (state, old_name, new_name) = (state.clone(), old_name.clone(), new_name.to_owned());
+        tokio::spawn(async move {
+            let Ok(has_thumbnail) = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM social.community_thumbnails WHERE community_id=$1)",
+            )
+            .bind(uuid)
+            .fetch_one(&state.pool)
+            .await
+            else {
+                return;
+            };
+            let slug = |n: &str| n.trim().to_lowercase().replace(' ', "-");
+            let event = CommunityEvent {
+                kind: "community_renamed",
+                key: format!("{uuid}-{}-{}", slug(&new_name), slug(&old_name)),
+                community_id: uuid,
+                metadata: json!({"communityId":uuid.as_uuid(), "oldName":old_name,
+                    "newName":new_name, "thumbnailUrl":stored_thumbnail_or_na(&state,has_thumbnail,uuid)}),
+            };
+            state
+                .publish_community_event(&event, &Audience::Members)
+                .await;
+            notify(&state.pool, event, Audience::Members).await;
+        });
+    }
+    if let Some(bytes) = thumbnail.as_deref()
+        && let Err(e) = store_thumbnail(&state.pool, &state.storage, uuid, bytes).await
+    {
+        tracing::error!(error = %e, "failed to store community thumbnail");
+        return err_json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to store thumbnail",
+        );
+    }
     if let Some(ids) = &place_ids {
         try_resp!(map_db(
             sqlx::query(
@@ -826,7 +950,7 @@ pub async fn update_community(
             )
             .bind(uuid)
             .bind(ids)
-            .execute(&mut *tx)
+            .execute(&state.pool)
             .await
         ));
         try_resp!(map_db(
@@ -838,43 +962,51 @@ pub async fn update_community(
             .bind(ids)
             .bind(uuid)
             .bind(&signer)
-            .execute(&mut *tx)
+            .execute(&state.pool)
             .await
         ));
     }
-    if becomes_public {
-        // upstream `acceptAllRequestsToJoin`: every pending request to join
-        // of a wallet the community does not ban becomes a membership
-        try_resp!(map_db(
-            sqlx::query(
-                "WITH accepted AS ( \
-                   UPDATE social.community_requests r \
-                      SET status = 'accepted', updated_at = timezone('UTC', now()) \
-                    WHERE r.community_id = $1 AND r.type = 'request_to_join' AND r.status = 'pending' \
-                      AND NOT EXISTS (SELECT 1 FROM social.community_bans b \
-                                      WHERE b.community_id = r.community_id \
-                                        AND b.banned_address = r.member_address AND b.active) \
-                   RETURNING r.member_address) \
-                 INSERT INTO social.community_members (community_id, member_address, role) \
-                 SELECT $1, member_address, 'member' FROM accepted \
-                 ON CONFLICT (community_id, member_address) DO NOTHING",
-            )
-            .bind(uuid)
-            .execute(&mut *tx)
-            .await
-        ));
-    }
-    try_resp!(map_db(tx.commit().await));
-    if let Some(bytes) = thumbnail.as_deref()
-        && let Err(e) = store_thumbnail(&state.pool, &state.storage, uuid, bytes).await
-    {
-        tracing::error!(error = %e, "failed to store community thumbnail");
-        return err_json(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to store thumbnail",
+    let accepted_request_ids: Vec<uuid::Uuid> = if becomes_public {
+        // The source bulk acceptance owns its transaction. Failure rolls back
+        // its membership/request changes, preserving the preceding UPDATE.
+        // Only pending requests: federation decisions keep rejected and
+        // cancelled rows, which the source deletes.
+        let mut guard = try_resp!(map_db(acquire_membership(&state.pool, uuid).await));
+        let mut tx = try_resp!(map_db(guard.begin().await));
+        try_resp!(map_db(sqlx::query(
+            "INSERT INTO social.community_members (community_id,member_address,role) \
+             SELECT $1,r.member_address,'member' FROM social.community_requests r \
+              WHERE r.community_id=$1 AND r.type='request_to_join' AND r.status='pending' \
+                AND NOT EXISTS (SELECT 1 FROM social.community_bans b \
+                    WHERE b.community_id=r.community_id AND b.banned_address=r.member_address AND b.active) \
+             ON CONFLICT (community_id,member_address) DO NOTHING"
+        ).bind(uuid).execute(&mut *tx).await));
+        let ids = try_resp!(map_db(sqlx::query_scalar(
+            "DELETE FROM social.community_requests r WHERE r.community_id=$1 AND r.type='request_to_join' \
+                AND r.status='pending' AND NOT EXISTS (SELECT 1 FROM social.community_bans b \
+                    WHERE b.community_id=r.community_id AND b.banned_address=r.member_address AND b.active) \
+             RETURNING r.id"
+        ).bind(uuid).fetch_all(&mut *tx).await));
+        try_resp!(map_db(tx.commit().await));
+        drop(guard);
+        ids
+    } else {
+        Vec::new()
+    };
+    if !accepted_request_ids.is_empty() {
+        state.fire_analytics(
+            "ACCEPT_ALL_REQUESTS_TO_JOIN",
+            json!({"community_id":id,"requests_ids":accepted_request_ids}),
         );
     }
-    let data = match queries::get_by_id(&state.pool, uuid, Some(&signer)).await {
+    let detail = match queries::get_by_id(
+        &state.pool,
+        uuid,
+        Some(&signer),
+        state.voice_presence_config(),
+    )
+    .await
+    {
         Ok(Some(mut obj)) => {
             if obj.has_thumbnail {
                 obj.thumbnail_url = Some(state.thumbnail_url(uuid));
@@ -884,26 +1016,13 @@ pub async fn update_community(
         Ok(None) => return err_json(StatusCode::NOT_FOUND, "Community not found"),
         Err(e) => return *map_db::<()>(Err(e)).unwrap_err(),
     };
-    if let (Some(new_name), Some((old_name, _, _))) = (name.as_deref(), current)
-        && new_name.trim() != old_name.trim()
-    {
-        let slug = |n: &str| n.trim().to_lowercase().replace(' ', "-");
-        notify(
-            &state.pool,
-            CommunityEvent {
-                kind: "community_renamed",
-                key: format!("{uuid}-{}-{}", slug(new_name), slug(old_name)),
-                community_id: uuid,
-                metadata: json!({
-                    "communityId": uuid.as_uuid(),
-                    "oldName": old_name,
-                    "newName": new_name,
-                    "thumbnailUrl": stored_thumbnail_or_na(&state, data.has_thumbnail, uuid),
-                }),
-            },
-            Audience::Members,
-        )
-        .await;
+    let mut data = json!({
+        "id": detail.id, "name": detail.name, "description": detail.description,
+        "ownerAddress": detail.owner_address, "privacy": detail.privacy,
+        "visibility": detail.visibility, "active": detail.active,
+    });
+    if thumbnail.is_some() {
+        data["thumbnails"] = json!({ "raw": state.thumbnail_url(uuid) });
     }
     (
         StatusCode::OK,
@@ -934,13 +1053,14 @@ pub struct PatchBody {
 /// first sort key (upstream `updateEditorChoice`).
 pub async fn update_community_partially(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
-    body: Bytes,
+    body: super::http::DeferredBody,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "patch",
@@ -951,6 +1071,19 @@ pub async fn update_community_partially(
         Ok(s) => s,
         Err(r) => return r,
     };
+    let body = match body.schema().await {
+        Ok(body) => body,
+        Err(error) => return error.into_response(),
+    };
+    if let Err(error) = crate::rpc::http::body(
+        &body,
+        &[("editorsChoice", Kind::Bool)],
+        &["editorsChoice"],
+        0,
+    ) {
+        return error.into_response();
+    }
+    let uuid = try_resp!(parse_community_id(&id));
     let parsed: PatchBody = match serde_json::from_slice(&body) {
         Ok(b) => b,
         Err(e) => return err_json(StatusCode::BAD_REQUEST, format!("invalid body: {e}")),
@@ -986,12 +1119,13 @@ async fn active_community_exists(state: &SharedState, id: CommunityId) -> Result
 
 pub async fn delete_community(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "delete",
@@ -1002,6 +1136,7 @@ pub async fn delete_community(
         Ok(s) => s,
         Err(r) => return r,
     };
+    let uuid = try_resp!(parse_community_id(&id));
     // upstream `deleteCommunity`: a missing community is a 404 first; the
     // owner or a global moderator may delete it
     if !try_resp!(active_community_exists(&state, uuid).await) {
@@ -1034,30 +1169,36 @@ pub async fn delete_community(
         "communityName": name,
         "thumbnailUrl": stored_thumbnail_or_na(&state, has_thumbnail, uuid),
     });
-    if !owner_deleting {
-        notify(
-            &state.pool,
-            CommunityEvent {
-                kind: "community_deleted_content_violation",
-                key: uuid.to_string(),
-                community_id: uuid,
-                metadata: metadata.clone(),
-            },
-            Audience::One(&owner),
-        )
-        .await;
+    let violation = (!owner_deleting).then(|| CommunityEvent {
+        kind: "community_deleted_content_violation",
+        key: uuid.to_string(),
+        community_id: uuid,
+        metadata: metadata.clone(),
+    });
+    let deleted = CommunityEvent {
+        kind: "community_deleted",
+        key: uuid.to_string(),
+        community_id: uuid,
+        metadata,
+    };
+    let violation_publish = violation
+        .as_ref()
+        .map(|event| state.publish_community_event(event, &Audience::One(&owner)));
+    let deleted_publish = state.publish_community_event(&deleted, &Audience::MembersButOwner);
+    let updates = state.clone();
+    tokio::spawn(async move {
+        if let Some(publish) = violation_publish {
+            publish.await;
+        }
+        deleted_publish.await;
+        // Source publishes connectivity deletion after both best-effort SNS
+        // broadcasts inside the same background helper.
+        updates.community_deleted_update(uuid).await;
+    });
+    if let Some(event) = violation {
+        notify(&state.pool, event, Audience::One(&owner)).await;
     }
-    notify(
-        &state.pool,
-        CommunityEvent {
-            kind: "community_deleted",
-            key: uuid.to_string(),
-            community_id: uuid,
-            metadata,
-        },
-        Audience::MembersButOwner,
-    )
-    .await;
+    notify(&state.pool, deleted, Audience::MembersButOwner).await;
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -1077,7 +1218,7 @@ mod tests {
             active: true,
             members_count: 5,
             is_live: false,
-            voice_chat_status: VoiceChatStatus::idle(),
+            voice_chat_status: Some(VoiceChatStatus::idle()),
             visibility: Some("all".to_string()),
             role: Some("member".to_string()),
             is_banned: None,
@@ -1102,7 +1243,6 @@ mod tests {
             "description",
             "ownerAddress",
             "ownerName",
-            "thumbnailUrl",
             "privacy",
             "visibility",
             "role",
@@ -1114,10 +1254,7 @@ mod tests {
         }
         assert!(!m.contains_key("_hasThumbnail"));
         assert_eq!(m["ownerName"], "OwnerName");
-        assert_eq!(
-            m["thumbnailUrl"],
-            "https://cdn.example/social/communities/11111111-1111-1111-1111-111111111111/raw-thumbnail.png"
-        );
+        assert!(!m.contains_key("thumbnailUrl"));
         assert!(m["friends"].is_array());
     }
 
@@ -1132,10 +1269,7 @@ mod tests {
             !m.contains_key("ownerName"),
             "v2 shaping must not resolve/add ownerName"
         );
-        assert_eq!(
-            m["thumbnailUrl"],
-            "https://cdn.example/social/communities/11111111-1111-1111-1111-111111111111/raw-thumbnail.png"
-        );
+        assert!(!m.contains_key("thumbnailUrl"));
 
         let mut items = vec![sample_item(false)];
         enrich_list_v1("https://cdn.example", &mut items, &HashMap::new());
@@ -1144,7 +1278,7 @@ mod tests {
             v.get("thumbnailUrl").is_none(),
             "a community without a thumbnail has no thumbnailUrl, as production"
         );
-        assert_eq!(v["ownerName"], "");
+        assert!(v.get("ownerName").is_none());
     }
 
     #[test]

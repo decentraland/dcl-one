@@ -47,10 +47,18 @@ use spin_sleep::SpinSleeper;
 use ui_core::ui_actions::{Click, On};
 use update_world::lights::LightsPlugin;
 use util::SceneUtilPlugin;
+mod debug_panel;
 
 use web_time::Instant;
 
-use crate::{asset_preload::plugin::AssetPreloadPlugin, initialize_scene::SuperUserScene};
+use crate::{
+    asset_preload::plugin::AssetPreloadPlugin,
+    initialize_scene::SuperUserScene,
+    scene_partition::{
+        publish_download_priorities, update_scene_partitions, Partition, BEHIND_SCENE_TICK_PENALTY,
+    },
+};
+use common::partition::PartitionData;
 
 use self::{
     initialize_scene::{
@@ -69,9 +77,12 @@ pub mod automatic_testing;
 pub use common::bounds_calc;
 pub mod gltf_resolver;
 pub mod initialize_scene;
+pub mod load_timing;
 pub mod permissions;
 pub mod primary_entities;
 pub mod renderer_context;
+pub mod scene_partition;
+mod scene_traffic;
 #[cfg(test)]
 pub mod test;
 pub mod update_scene;
@@ -386,7 +397,12 @@ impl Plugin for SceneRunnerPlugin {
 
         app.add_systems(
             Update,
-            (update_scene_priority, run_scene_loop)
+            (
+                update_scene_partitions,
+                publish_download_priorities,
+                update_scene_priority,
+                run_scene_loop,
+            )
                 .chain()
                 .in_set(SceneSets::RunLoop),
         );
@@ -418,11 +434,18 @@ impl Plugin for SceneRunnerPlugin {
         app.add_plugins(SceneOutputPlugin);
         app.add_plugins(SceneUtilPlugin);
         if app.world().get_resource::<NoRenderApp>().is_none() {
+            app.add_systems(Update, scene_traffic::track_parcel.in_set(SceneSets::Input));
+            debug_panel::register(app);
             app.add_plugins(LightsPlugin);
         }
         app.add_plugins(AssetPreloadPlugin);
 
         app.add_systems(Update, update_scene_room.in_set(SceneSets::PostLoop));
+        app.init_resource::<load_timing::FirstRingTiming>();
+        app.add_systems(
+            Update,
+            load_timing::report_scene_load_times.in_set(SceneSets::PostLoop),
+        );
         app.add_systems(Update, log_app_errors.in_set(SceneSets::PostLoop));
         app.add_systems(Update, set_ui_constraints.in_set(SceneSets::PostLoop));
 
@@ -508,13 +531,13 @@ fn update_scene_priority(
     mut scenes: Query<
         (
             Entity,
-            &GlobalTransform,
+            Option<&Partition>,
             &mut RendererSceneContext,
             Option<&SuperUserScene>,
         ),
         Without<SceneLoading>,
     >,
-    player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
+    player: Query<Entity, With<PrimaryUser>>,
     mut updates: ResMut<SceneUpdates>,
     time: Res<Time>,
     containing_scene: ContainingScene,
@@ -522,9 +545,9 @@ fn update_scene_priority(
     updates.eligible_jobs = 0;
     updates.frames += 1;
 
-    let (active_scenes, player_translation) = player
+    let active_scenes = player
         .single()
-        .map(|(e, gt)| (containing_scene.get(e), gt.translation()))
+        .map(|e| containing_scene.get(e))
         .unwrap_or_default();
 
     // mark scenes that have been in-flight past the timeout as broken and free their
@@ -583,31 +606,22 @@ fn update_scene_priority(
             }
             allow
         })
-        .filter_map(|(ent, transform, mut context, _)| {
-            // clamp to scene bounds instead of using distance to scene origin
-            let nearest_point = player_translation.xz().clamp(
-                transform.translation().xz() - Vec2::Y * PARCEL_SIZE,
-                transform.translation().xz() + Vec2::X * PARCEL_SIZE,
-            );
-            let distance = (nearest_point - player_translation.xz()).length_squared();
-            context.priority = if active_scenes.contains(&ent) {
-                0.0
-            } else {
-                distance
-            };
+        .filter_map(|(ent, maybe_partition, mut context, _)| {
+            let partition = maybe_partition.map_or(PartitionData::NEAREST, |p| p.0);
+            let active = active_scenes.contains(&ent);
+            context.priority = if active { 0.0 } else { partition.sqr_distance };
             let not_yet_run = context.last_sent < time.elapsed_secs_f64();
 
             if !context.in_flight() && !not_yet_run {
                 skipped_already_sent += 1;
             }
 
-            (!context.in_flight() && not_yet_run).then(|| {
-                updates.eligible_jobs += 1;
-                let priority = FloatOrd(
-                    context.priority / (time.elapsed_secs_f64() - context.last_sent) as f32,
-                );
-                (ent, priority)
-            })
+            if context.in_flight() || !not_yet_run {
+                return None;
+            }
+            let age = time.elapsed_secs_f64() - context.last_sent;
+            updates.eligible_jobs += 1;
+            Some((ent, scene_tick_key(partition, active, age)))
         })
         .collect();
     updates.skipped_in_flight += skipped_in_flight;
@@ -621,6 +635,22 @@ fn update_scene_priority(
     updates.jobs_in_flight = &updates.jobs_in_flight - &missing_in_flight;
 }
 
+/// The queue key of a scene due this frame: its distance over the time since it was last
+/// sent, 0 for the player's scenes. A scene behind the camera counts as
+/// `BEHIND_SCENE_TICK_PENALTY` times farther: it still ticks, and yields first when frame time
+/// runs short.
+fn scene_tick_key(partition: PartitionData, active: bool, age: f64) -> FloatOrd {
+    if active {
+        return FloatOrd(0.0);
+    }
+    let penalty = if partition.is_behind {
+        BEHIND_SCENE_TICK_PENALTY
+    } else {
+        1.0
+    };
+    FloatOrd(partition.sqr_distance / age as f32 * penalty)
+}
+
 // TODO: work out how to set this intelligently
 // we need to keep enough scheduler time to ensure the main loop wakes enough
 // otherwise we end up overrunning the budget
@@ -629,6 +659,9 @@ fn update_scene_priority(
 // - reduce bevy primary thread pool
 // - see if we can get v8 single threaded / no native threads working
 // const MAX_CONCURRENT_SCENES: usize = 8;
+
+#[cfg(test)]
+mod tick_key_tests;
 
 pub use common::structs::OutOfWorld;
 
@@ -739,6 +772,16 @@ impl ContainingScene<'_, '_> {
                     self.get_position(gt.translation())
                 }
             })
+            .unwrap_or_default()
+    }
+
+    // the parcel at the entity's position, even if they are out of world (arriving: the player
+    // is placed in the destination and kept out of world until it is ready), plus any global
+    // scenes
+    pub fn get_oow(&self, ent: Entity) -> HashSet<Entity> {
+        self.transforms
+            .get(ent)
+            .map(|(gt, _)| self.get_position(gt.translation()))
             .unwrap_or_default()
     }
 
@@ -909,6 +952,7 @@ fn send_scene_updates(
         &mut RendererSceneContext,
         &GlobalTransform,
         Has<SuperUserScene>,
+        Option<&mut scene_traffic::SceneTraffic>,
     )>,
     mut updates: ResMut<SceneUpdates>,
     time: Res<Time>,
@@ -1004,7 +1048,7 @@ fn send_scene_updates(
 
     updates.scene_queue.pop_front();
 
-    let (_, mut context, scene_transform, is_super) = scenes.get_mut(ent).unwrap();
+    let (_, mut context, scene_transform, is_super, traffic) = scenes.get_mut(ent).unwrap();
 
     // only live scenes are queued, so this only fails if the scene broke this frame
     let Some(sender) = context.sender().cloned() else {
@@ -1180,11 +1224,11 @@ fn send_scene_updates(
     let now = time.elapsed_secs_f64();
     let dt = dispatch_dt(context.tick_number, context.last_sent, now);
 
-    if let Err(e) = sender.send(RendererResponse::Ok(
-        context.crdt_store.take_updates(),
-        census,
-        dt,
-    )) {
+    let crdt = context.crdt_store.take_updates();
+    if let Some(mut traffic) = traffic {
+        traffic.record_sent(&crdt);
+    }
+    if let Err(e) = sender.send(RendererResponse::Ok(crdt, census, dt)) {
         error!(
             "failed to send updates to scene {ent:?} [{:?}]: {e:?}",
             context.base
@@ -1211,6 +1255,7 @@ fn receive_scene_updates(
     mut toaster: Toaster,
     mut snapshot_events: EventWriter<CrdtSnapshotEvent>,
     mut entity_allocated_events: EventWriter<EntityAllocatedEvent>,
+    mut traffic: Query<&mut scene_traffic::SceneTraffic>,
 ) {
     loop {
         let maybe_completed_job = match updates.receiver().try_recv() {
@@ -1232,6 +1277,16 @@ fn receive_scene_updates(
                 }
                 SceneResponse::Stats(counters) => {
                     if let Ok(mut context) = scenes.get_mut(scene_id.0) {
+                        let now = Instant::now();
+                        context.crdt_bytes_per_second = context
+                            .counter_sample_time
+                            .zip(context.resource_counters.as_ref())
+                            .and_then(|(time, previous)| {
+                                let seconds = (now - time).as_secs_f64();
+                                let bytes = counters.crdt_bytes.checked_sub(previous.crdt_bytes)?;
+                                (seconds > 0.0).then(|| bytes as f64 / seconds)
+                            });
+                        context.counter_sample_time = Some(now);
                         context.resource_counters = Some(counters);
                     }
                     None
@@ -1295,6 +1350,9 @@ fn receive_scene_updates(
                                 context.refreeze_at_tick = None;
                             }
                             context.last_update_dt = runtime.0 - context.total_runtime;
+                            if let Ok(mut history) = traffic.get_mut(root) {
+                                history.record_received(&crdt, context.last_update_dt);
+                            }
                             context.total_runtime = runtime.0;
                             context.last_update_frame = frame.0;
                             // extend (not assign) so renderer-side births (the inspector's /new_entity
