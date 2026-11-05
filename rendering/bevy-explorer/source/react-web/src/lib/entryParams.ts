@@ -46,6 +46,7 @@ export function entryRealm(q: URLSearchParams): string | null {
 // carrying them is told they were ignored.
 const INTERNAL_PARAMS = [
   'native',
+  'nativeProfileImageBase',
   'hud',
   'mock',
   'showcase',

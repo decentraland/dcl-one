@@ -47,11 +47,12 @@ fn undetermined(e: AuthorityNotEstablished) -> AdmissionRefused {
 }
 
 /// May `address` be in `scene` at `now`? A world scene asks
-/// `Policy::can_access` (bans, owner, the access setting; `secret` from the
+/// `Policy::readmit` (bans, owner, the access setting; `secret` from the
 /// signed metadata), a Genesis scene `Policy::is_banned`, the local
 /// development scene nobody. `prior` is how the client was admitted before
 /// (a re-check without the secret): a shared-secret world keeps a client it
-/// admitted by secret until a ban or an access-type change refuses it.
+/// admitted by secret until a ban or an access-type change refuses it, and
+/// an authority fault leaves a client admitted as owner undetermined.
 pub async fn admit(
     state: &SceneHostState,
     scene: &Scene,
@@ -65,7 +66,7 @@ pub async fn admit(
         SceneKey::Local => Ok(None),
         SceneKey::World(world) => match state
             .policy
-            .can_access(world, address, secret, scene_id, None, now)
+            .readmit(world, address, secret, scene_id, None, prior, now)
             .await
             .map_err(undetermined)?
         {

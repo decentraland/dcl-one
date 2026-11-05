@@ -106,6 +106,25 @@ pub fn write_config_file<T: Serialize>(config: &T) {
     }
 }
 
+mod client_logins;
+
+fn login_queue_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+pub async fn client_logins_read() -> Result<String, String> {
+    let dirs = project_directories().ok_or("no config directory")?;
+    client_logins::read(dirs.config_dir(), login_queue_now())
+}
+
+pub async fn client_logins_write(json: String) -> Result<String, String> {
+    let dirs = project_directories().ok_or("no config directory")?;
+    client_logins::write(dirs.config_dir(), &json, login_queue_now())
+}
+
 /// `bytes` to `path` through a temporary file beside it that is renamed over it, so a reader (or
 /// the next run after a kill) sees the old file or the new one, never a part. Nothing is synced to
 /// disk, which would stall the frame that saves the settings: a killed process loses nothing it

@@ -1020,8 +1020,9 @@ pub async fn create(
     body: &CreateEvent,
     operator: &str,
     settings: &crate::Settings,
+    places: Option<&crate::places::PlacesComponent>,
 ) -> Result<String, ApiError> {
-    create_as(pool, body, ADMIN_CREATOR, operator, settings).await
+    create_as(pool, body, ADMIN_CREATOR, operator, settings, places).await
 }
 
 /// Creates the event with `creator` as its `user` and `signer` as its
@@ -1032,6 +1033,7 @@ pub async fn create_as(
     creator: &str,
     signer: &str,
     settings: &crate::Settings,
+    places: Option<&crate::places::PlacesComponent>,
 ) -> Result<String, ApiError> {
     let mut body = body.clone();
     for (image, kind) in [
@@ -1059,7 +1061,7 @@ pub async fn create_as(
     doc["id"] = json!(id);
     if let Some(raw) = doc.as_object_mut() {
         let mut conn = pool.acquire().await?;
-        super::metadata::enrich(&mut conn, raw, None, true).await?;
+        super::metadata::enrich(&mut conn, raw, None, true, places).await?;
     }
     if creator != ADMIN_CREATOR {
         if let Some(community) = body.community_id.as_deref() {
@@ -1757,7 +1759,7 @@ mod tests {
             ..body(start)
         };
         let operator = "0x00000000000000000000000000000000000000e2";
-        let id = create(&pool, &b, operator, &crate::Settings::for_tests())
+        let id = create(&pool, &b, operator, &crate::Settings::for_tests(), None)
             .await
             .unwrap();
         let (approved, user, raw, origin): (bool, Option<String>, Value, String) = sqlx::query_as(

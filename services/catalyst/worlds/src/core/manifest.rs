@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use crate::shared::identity::Address;
 
 use super::SharedState;
-use super::http::{ApiError, clamp_limit};
+use super::http::{ApiError, pagination_of};
 use super::permissions::parse_world;
 use super::store::{
     self, OrderDirection, WorldInfoRow, WorldsListFilters, WorldsListOptions, WorldsOrderBy,
@@ -47,15 +47,13 @@ pub async fn get_world_manifest(
 }
 
 const MAX_SEARCH_TERM_LENGTH: usize = 64;
-const DEFAULT_LIMIT: i64 = 100;
-const MAX_LIMIT: i64 = 1000;
 
 #[derive(Debug, Deserialize)]
 pub struct WorldsQuery {
     #[serde(default)]
-    pub limit: Option<i64>,
+    pub limit: Option<String>,
     #[serde(default)]
-    pub offset: Option<i64>,
+    pub offset: Option<String>,
     #[serde(default)]
     pub authorized_deployer: Option<String>,
     #[serde(default)]
@@ -72,8 +70,7 @@ pub async fn get_worlds(
     State(state): State<SharedState>,
     Query(q): Query<WorldsQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    let limit = clamp_limit(q.limit, DEFAULT_LIMIT, MAX_LIMIT);
-    let offset = q.offset.unwrap_or(0).max(0);
+    let (limit, offset) = pagination_of(q.limit.as_deref(), q.offset.as_deref());
 
     let deployer = match q.authorized_deployer.as_deref() {
         Some(d) if !d.is_empty() => Some(
@@ -130,7 +127,7 @@ pub async fn get_worlds(
 
 fn rfc3339(t: chrono::NaiveDateTime) -> String {
     t.and_utc()
-        .to_rfc3339_opts(chrono::SecondsFormat::AutoSi, true)
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 fn world_info_json(w: &WorldInfoRow) -> Value {

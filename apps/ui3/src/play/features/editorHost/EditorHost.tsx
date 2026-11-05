@@ -10,6 +10,7 @@ import { CreatePage } from './CreatePage'
 import { confirmDeployment, confirmUndeploy } from './DeployConfirm'
 import { bridgeScene, bridgeTravel } from './host/bridge'
 import { guardUrlSync, loadEditor, type EditorPackage } from './host/host'
+import { editorFeatures } from './config'
 import { editorEntry, editorSource, hasEditor, type EditorSource } from './source'
 
 type HostWindow = Window & {
@@ -28,7 +29,11 @@ export interface EditorEntry {
 export function useEditorHost(entrySearch: string, session: EngineSession): EditorEntry | null {
   const latest = useRef(session)
   latest.current = session
-  const [{ offered, entry }] = useState(() => ({ offered: hasEditor(location.hostname), entry: editorEntry(entrySearch) }))
+  const [{ offered, entry, features }] = useState(() => ({
+    offered: hasEditor(location.hostname),
+    entry: editorEntry(entrySearch),
+    features: editorFeatures(entrySearch)
+  }))
   const flag = entry.project ?? entry.open
   const [loading, setLoading] = useState(false)
   // resolved once per page; a failed resolution is retried by the next load
@@ -58,6 +63,7 @@ export function useEditorHost(entrySearch: string, session: EngineSession): Edit
           {
             busSession: (window as HostWindow).__bridgeSession ?? '',
             defaultRealm: DEFAULT_REALM,
+            features,
             engineConsole: (line) =>
               (window as HostWindow).engine_console_command?.(line) ?? Promise.reject(new Error('the engine console is not available')),
             identity: () => {
@@ -83,7 +89,7 @@ export function useEditorHost(entrySearch: string, session: EngineSession): Edit
         setLoading(false)
       }
     },
-    [offered, entrySearch, flag]
+    [offered, entrySearch, flag, features]
   )
 
   // once: Create opens when the player is first in-world

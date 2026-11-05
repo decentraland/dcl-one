@@ -1,0 +1,33 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/lambdas/users/0x0000000000000000000000000000000000000021/lands?pageSize=1000",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "elements": [
+        {
+          "contractAddress": "0x000000000000000000000000000000000000001f",
+          "tokenId": "115792089237316195423570985008687907812095818268207009960389256508669176053699",
+          "category": "parcel",
+          "x": "-122",
+          "y": "-61",
+          "price": "200000000000000000000000",
+          "image": "https://api.decentraland.org/v1/parcels/-122/-61/map.png"
+        }
+      ],
+      "totalAmount": 1,
+      "pageNum": 1,
+      "pageSize": 1000
+    }
+  },
+  "note": "The only element's activeOrder is the open order with expiresAt 1767916800000 (2026-01-09) in LL-13-subgraph-expired-open-orders.json."
+}

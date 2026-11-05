@@ -36,6 +36,11 @@ jobs:
         if: success() || failure()
         working-directory: tooling/shop-parity
         run: node --test lib/*.test.mts
+      # No install either: the settings parser needs only Node. The wallet's tests need viem (README).
+      - name: Test the shop trade journey's settings
+        if: success() || failure()
+        working-directory: tooling/shop-trade-journey
+        run: node --test lib/env.test.mts
   # Advisory until its default-branch run history supports required-check promotion.
   social-service-contracts:
     runs-on: ubuntu-26.04

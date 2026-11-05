@@ -430,3 +430,16 @@ describe('the command line', () => {
     });
   });
 });
+
+describe('console and screenshot', { skip: noChrome }, () => {
+  const page = openPage({ isolated: true, mode: 'hud' });
+
+  test('collects what the page said, the app frame included, and takes a picture of it', async () => {
+    await page.driver.console('/fixture_log {"text":"hello from the app"}');
+    const said = page.driver.consoleMessages().filter((message) => message.text === 'hello from the app');
+    assert.equal(said.length, 1);
+    assert.equal(said[0].kind, 'log');
+    const shot = await page.driver.screenshot();
+    assert.deepEqual([...shot.subarray(0, 2)], [0xff, 0xd8]);
+  });
+});

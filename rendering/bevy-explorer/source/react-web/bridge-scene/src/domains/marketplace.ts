@@ -1,6 +1,6 @@
 // Marketplace: shop deep links for on-chain collectibles (wearables and emotes alike).
 //   from: marketplace-api GET /v1/items?id=<contract>-<slug> (legacy collections-v1 item ids).
-import { getJson } from '../http'
+import { getJson, serviceBase } from '../http'
 
 // The shop link is /shop/item/<contract>/<numeric item id>. A collections-v2 (matic) urn already
 // ends in that item id, so it's built for free. Legacy collections-v1 (ethereum) items are
@@ -10,7 +10,6 @@ import { getJson } from '../http'
 // segment>` for BOTH versions, and repeated `id=` params batch, so one request resolves every
 // legacy item at once.
 const SHOP_ITEM_BASE = 'https://decentraland.org/shop/item'
-const MARKETPLACE_ITEMS = 'https://marketplace-api.decentraland.org/v1/items'
 
 // Resolved links are cached for the session: an item's contract + item id are immutable on-chain.
 const shopUrlByItemUrn = new Map<string, string>()
@@ -51,11 +50,13 @@ export async function resolveShopUrls(items: Array<{ urn: string; collectionAddr
   const CHUNK = 25 // bounds URL length, like the catalyst resolves in ./collections
   for (let i = 0; i < pendingIds.length; i += CHUNK) {
     const qs = pendingIds.slice(i, i + CHUNK).map((id) => `id=${encodeURIComponent(id)}`).join('&')
-    const data = await getJson<{ data?: MarketplaceItem[] }>(`${MARKETPLACE_ITEMS}?${qs}`).catch((e: unknown) => {
-      // Non-fatal: those items just show no SHOP button (and aren't cached, so a later open retries).
-      console.error('[marketplace] item-id lookup failed', e)
-      return undefined
-    })
+    const data = await serviceBase('marketplaceApi')
+      .then(async (api) => await getJson<{ data?: MarketplaceItem[] }>(`${api}/v1/items?${qs}`))
+      .catch((e: unknown) => {
+        // Non-fatal: those items just show no SHOP button (and aren't cached, so a later open retries).
+        console.error('[marketplace] item-id lookup failed', e)
+        return undefined
+      })
     for (const it of data?.data ?? []) {
       if (it.urn == null || it.contractAddress == null || it.itemId == null) continue
       const url = `${SHOP_ITEM_BASE}/${encodeURIComponent(it.contractAddress)}/${encodeURIComponent(it.itemId)}`
