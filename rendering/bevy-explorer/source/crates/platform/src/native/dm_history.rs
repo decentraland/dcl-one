@@ -109,9 +109,9 @@ pub async fn dm_history_read(account: &str, partner: &str) -> Result<Vec<DmHisto
     read_records(&key, &path)
 }
 
-/// The stored lines to keep so that the last `keep` messages stay, with every record after the
-/// oldest of them (the reactions to them); `None` when nothing has to go. A line that does not
-/// decrypt to a record counts as a message, so a damaged line never drops its neighbours.
+/// The lines from the `keep`-th last message on, so its reactions stay with it; `None` when
+/// nothing has to go. A line that does not decrypt to a record counts as a message, so a damaged
+/// line never drops its neighbours.
 fn trimmed_lines(key: &[u8; 32], lines: &[String], keep: usize) -> Option<Vec<String>> {
     let is_message = |line: &String| {
         decrypt_record(key, line)
@@ -121,7 +121,6 @@ fn trimmed_lines(key: &[u8; 32], lines: &[String], keep: usize) -> Option<Vec<St
     if keep == 0 {
         return (!lines.is_empty()).then(Vec::new);
     }
-    // the oldest message to keep: the `keep`-th from the end
     let mut seen = 0;
     let first_kept = lines.iter().rposition(|line| {
         if !is_message(line) {

@@ -855,9 +855,9 @@ async fn run_one_connection(
         .map_err(dbgerr)?;
     debug!("[social] Subscribed to block updates");
 
-    // Subscribe to community member connectivity updates (community chat presence). Unlike the
-    // subscriptions above, a refusal is not fatal: a server without it (unity-explorer subscribes
-    // to it on its own, apart from friends) costs community presence, not friends, DMs or blocks.
+    // Subscribe to community member connectivity updates. Unlike the subscriptions above, a
+    // refusal is not fatal: a server without them costs community presence, not friends, DMs or
+    // blocks.
     debug!("[social] Subscribing to community member connectivity updates...");
     let community_connectivity_updates = match service_module
         .subscribe_to_community_member_connectivity_updates()
@@ -1237,8 +1237,8 @@ async fn run_one_connection(
     .fuse();
 
     // Inbound: receive community member connectivity updates. `Away` is not a presence change
-    // for community chat (unity-explorer ignores it too). A server-closed stream ends the
-    // connection, so every subscription is made again on reconnect.
+    // for community chat. A server-closed stream ends the connection, so every subscription is
+    // made again on reconnect.
     let sx_community = response_sx.clone();
     let f_community_connectivity_read = async move {
         let Some(mut community_connectivity_updates) = community_connectivity_updates else {

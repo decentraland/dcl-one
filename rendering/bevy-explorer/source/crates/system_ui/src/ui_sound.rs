@@ -1,5 +1,5 @@
-//! UI sounds the HUD asks for by name: the HUD knows when a chat line warrants a ping (its
-//! per-channel setting, mentions, focus); the engine only owns the clips and the mixer.
+//! UI sounds the HUD asks for by name. The HUD decides when a line warrants a ping; the engine
+//! owns the clips and the mixer.
 
 use bevy::prelude::*;
 use common::structs::SystemAudio;

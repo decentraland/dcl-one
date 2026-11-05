@@ -1,24 +1,20 @@
-//! Community text chat on the wire, as unity-explorer speaks it (`LiveKitChatMessagesBus.cs`,
+//! Community text chat on the wire (unity-explorer's `LiveKitChatMessagesBus.cs` and
 //! `MultiplayerReactionMessageBus.cs`): a community channel is `community:<id>`, which is also the
 //! data-packet topic on the private chat room. A client never addresses members itself; it sends
 //! to the server's message router participant, which fans the packet out to the community's
 //! members and stamps the author into `Chat.forwarded_from` (a reaction carries the author in its
-//! own `address` field). A receiver trusts that stamped author only when the packet really came
-//! from the router, and drops a community packet from anyone else: the router is what checks
-//! the author's membership.
+//! own `address` field). The router is what checks the author's membership, so a receiver trusts
+//! the stamped author only on a packet from the router and drops a community packet from anyone
+//! else.
 
 use alloy_core::primitives::Address;
 use common::util::AsH160;
 
-/// A community channel id: this prefix and the community id.
 pub const CHANNEL_PREFIX: &str = "community:";
 
-/// The longest community id accepted: it lands in a packet topic and a history key.
+/// An id lands in a packet topic and a history key.
 const MAX_ID_LEN: usize = 64;
 
-/// The router's environment: `prd` on decentraland.org, `dev` anywhere else (unity-explorer maps
-/// zone and custom base domains both to `dev`; its `local` needs a domain without a dot, which
-/// `base_domain::set` rejects).
 pub fn router_env(base_domain: &str) -> &'static str {
     if base_domain == common::base_domain::DEFAULT {
         "prd"
@@ -35,7 +31,6 @@ pub fn message_router_identity() -> String {
     )
 }
 
-/// The community id a channel or topic names, if it is a well-formed community channel.
 pub fn community_id(channel: &str) -> Option<&str> {
     let id = channel.strip_prefix(CHANNEL_PREFIX)?;
     let well_formed = !id.is_empty()
@@ -44,7 +39,7 @@ pub fn community_id(channel: &str) -> Option<&str> {
     well_formed.then_some(id)
 }
 
-/// The canonical channel (and topic, and history key) of a community.
+/// The channel of a community, which is also its packet topic and history key: lowercased.
 pub fn channel_for(community_id: &str) -> String {
     format!("{CHANNEL_PREFIX}{}", community_id.to_ascii_lowercase())
 }
@@ -66,11 +61,9 @@ impl PrivateChatTarget {
     }
 }
 
-/// The author of a community packet on the private chat room. A packet from the router carries
-/// its author in `claimed` (`Chat.forwarded_from`, or `ChatReaction.address`), trusted only
-/// because the router put it there after checking the author's membership. A community packet
-/// from anyone else is `None`: a peer sending straight to a member skips that check, so it is
-/// dropped (unity-explorer accepts it under the sender's own identity instead).
+/// The author of a community packet: the one the router stamped into `claimed`
+/// (`Chat.forwarded_from`, or `ChatReaction.address`), trusted because the router checked their
+/// membership. `None` for a packet from anyone else, which skipped that check.
 pub fn resolve_author(identity: &str, router: &str, claimed: Option<&str>) -> Option<Address> {
     if !identity.eq_ignore_ascii_case(router) {
         return None;

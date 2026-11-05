@@ -49,9 +49,8 @@ const MAX_RATE_WINDOWS: usize = 1024;
 
 // Per-peer sliding-window rate limit; entries are evicted when the participant entity is removed
 // or an unannounced sender is retired, which bounds the map by the senders the rooms know about,
-// and idle windows are swept once the map outgrows `MAX_RATE_WINDOWS`, which bounds the keys no
-// entity owns. Keyed per room as well as identity so the same identity string in two rooms
-// (island + scene) can't share a window.
+// and idle windows are swept once the map outgrows `MAX_RATE_WINDOWS`. Keyed per room as well as
+// identity so the same identity string in two rooms (island + scene) can't share a window.
 #[derive(Resource, Default)]
 pub(crate) struct InboundRateLimiter {
     windows: HashMap<(Entity, String), VecDeque<f64>>,

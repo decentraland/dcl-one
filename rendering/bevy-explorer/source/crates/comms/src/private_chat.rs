@@ -144,7 +144,7 @@ struct DroppedCommunityPackets {
 /// The community channels the local user listens to: the communities they are a member of,
 /// minus those whose chat they closed, as lowercased ids. Pushed by the HUD
 /// (`SystemApi::SetCommunityChannels`); packets on any other community channel are dropped
-/// before they are recorded, as unity-explorer drops them. Cleared with the identity.
+/// before they are recorded. Cleared with the identity.
 #[derive(Resource, Default)]
 pub struct CommunityChannels(pub HashSet<String>);
 
@@ -232,7 +232,6 @@ fn connect_private_chat_room(
         }
         *gatekeeper_task = None;
         *retry = None;
-        // the next account's channels are its own
         channels.0.clear();
 
         if wallet.address().is_none() {
@@ -294,8 +293,7 @@ fn connect_private_chat_room(
     }
 }
 
-/// The HUD's community channel set replaces the current one. Ids that could not be a channel
-/// are dropped with a warning.
+/// The HUD's community channel set replaces the current one.
 fn apply_community_channels(
     mut requests: EventReader<SystemApi>,
     mut channels: ResMut<CommunityChannels>,
@@ -408,9 +406,8 @@ fn participant_payload(
     let identity = identity.to_string();
     let now = time.elapsed_secs_f64();
     let router = message_router_identity();
-    // the router relays every community's traffic (itself limiting each author to a few
-    // packets a second), so its packets are limited per author below, not as one sender: a burst
-    // in one community must not cost the others their lines
+    // the router relays every community's traffic, so it is limited per stamped author below,
+    // not as one sender
     let from_router = identity.eq_ignore_ascii_case(&router);
     if !from_router && !rate_limiter.allow(*room, &identity, now) {
         stats.dropped.rate_limited += 1;
@@ -444,8 +441,8 @@ fn participant_payload(
                     debug!(target: "comms::private_chat", "dropping community message from {identity} ({:?})", chat.forwarded_from);
                     return;
                 };
-                // the local user's own line is recorded as it is sent; the router does not echo
-                // it, and one that did must not be taken for a line to show, store or ping
+                // the local user's own line is recorded as it is sent; an echo of it would be
+                // shown, stored and pinged again
                 if from == me {
                     debug!(target: "comms::private_chat", "dropping an echo of the local user's community message");
                     return;
@@ -455,7 +452,6 @@ fn participant_payload(
                     debug!(target: "comms::private_chat", "dropping message on community {id}, not listening");
                     return;
                 }
-                // per author, as unity-explorer limits
                 if !rate_limiter.allow(*room, &format!("{CHANNEL_PREFIX}{from:#x}"), now) {
                     stats.dropped.rate_limited += 1;
                     return;
@@ -479,8 +475,8 @@ fn participant_payload(
                     debug!(target: "comms::private_chat", "dropping community reaction from {identity} ({})", reaction.address);
                     return;
                 };
-                // the local user's reactions are sent from the same event stream this writes to:
-                // an echo of one would be sent again, so it is dropped here
+                // the local user's reactions are sent from the event stream this writes to, so
+                // an echo of one would be sent again
                 if from == me {
                     debug!(target: "comms::private_chat", "dropping an echo of the local user's community reaction");
                     return;
@@ -569,8 +565,6 @@ fn participant_payload(
     });
 }
 
-/// The topic and recipient a target's packets carry: a DM goes to the partner by identity, a
-/// community message to the router, on the community's channel.
 fn route(target: &PrivateChatTarget) -> (String, NetworkMessageRecipient) {
     match target {
         PrivateChatTarget::Dm(to) => (format!("{to:#x}"), NetworkMessageRecipient::Peer(*to)),

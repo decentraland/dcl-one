@@ -57,9 +57,7 @@ enum DmStoreOp {
 }
 
 /// The most messages a community's history keeps, with the reactions to them: what the HUD shows
-/// of a conversation (`MAX_CHAT_LINES`). A busy community would otherwise grow its store without
-/// limit, each line decrypted again on every read; unity-explorer keeps community history in
-/// memory only. A DM history is not trimmed.
+/// of a conversation (`MAX_CHAT_LINES`). A DM history is not trimmed.
 const MAX_COMMUNITY_HISTORY: usize = 200;
 
 /// Pending store operations and the one in flight.
