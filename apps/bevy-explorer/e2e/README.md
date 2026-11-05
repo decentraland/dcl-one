@@ -31,12 +31,18 @@ npm test                               # the driver's tests (a stub page in head
 DCL_E2E_ACCOUNT_KEYS=0x... npm run e2e -- --inworld     # the InWorld scenarios against zone
 npm run e2e -- --visual                # the Visual suite (build the scenes first, see below)
 npm run e2e -- --filter 'opens the Backpack'            # a name pattern
+npm run gpu-probe                      # the GPU the browser gives, started as the scenarios start it (chrome://gpu to report/)
+npm run gpu-probe -- --adapter nvidia  # and once more on that adapter when the browser runs on another (Windows)
 ```
 
-The suite serves the web app on loopback (`driver/serve.ts`, the benchmark's headers), starts
-Chrome through the web driver (`rendering/bevy-explorer/source/local-harness/web-driver`), opens
-`/?realm=<realm>&position=<x,y>&baseDomain=<domain>`, signs in with `/login_identity` and the
-worker's account, presses the lobby's `Jump In` if it shows one, and waits for `/world_state`
+The suite serves the web app on loopback (`driver/serve.ts`, with the isolation headers the app's
+own dev server sets per path: the shell plain, the app frame isolated on its own), starts Chrome
+through the web driver (`rendering/bevy-explorer/source/local-harness/web-driver`), opens
+`/?baseDomain=<domain>` (a realm or a position on the url would make the HUD launch the engine only
+once a sign-in is submitted on its start page, and the sign-in here goes through the engine's
+console; the realm and the parcel are reached by console afterwards), signs in with
+`/login_identity` and the worker's account, presses the lobby's `Jump In` if it shows one, and
+waits for `/world_state`
 `inWorld`. One client serves every spec file of a run (`--test-isolation=none`); the Visual suite
 boots a second one on its own realm.
 
@@ -59,7 +65,11 @@ boots a second one on its own realm.
 The report goes to `report/`: `junit-<groups>.xml`, and per scenario `commands.jsonl` (every
 console command, its reply or error and its time; `/login_identity` payloads redacted) and
 `final.png` (the engine's frame as the scenario left it). A failed visual scenario adds
-`frame.png`, `reference.png` and `diff.png`.
+`frame.png`, `reference.png` and `diff.png`. A client that fails to boot, at the open, at the
+console's coming or on the way into the world, leaves `boot-failures/boot-<n>.console.txt`, what
+the page said, and `boot-<n>.jpg`, how it looked; it is booted once more for the next scenario,
+and after a second failure every later scenario fails at once with that error, which the run logs
+as it happens.
 
 ## How a spec is written
 
@@ -162,7 +172,17 @@ A reference counts as approved once a reviewer has checked it against the scene'
   scenarios, then builds the scenes and runs the Visual ones, and uploads `report/`. It runs on the Windows runner with a GPU that the
   `BEVY_E2E_WINDOWS_RUNNER` repository variable names (explorer-automation's
   `win-gpu-t4-explorer`, which an org admin enables for this repository), in the `e2e`
-  environment, whose `DCL_E2E_ACCOUNT_KEYS` secret reaches only the two scenario steps. The label
+  environment, whose `DCL_E2E_ACCOUNT_KEYS` secret reaches only the two scenario steps. That
+  image carries MinGit alone, so the job runs its steps in PowerShell, puts a pinned git-lfs on
+  PATH before the checkout, and drives Chrome where the image has it, else a pinned Chrome for
+  Testing build it downloads and checks against the sum the workflow records (the image's Edge gave
+  WebGPU no adapter), with `--enable-unsafe-webgpu --ignore-gpu-blocklist`, the first of which the
+  app's own GPU page asks for. A GPU probe step says first what GPU that browser gives, bare and
+  with those flags (`npm run gpu-probe`), and when the browser runs on an adapter other than the
+  NVIDIA one (the VM's paravirtual display adapter comes first, the GPU second), the scenarios get
+  `--use-adapter-luid=<its LUID>` as well, so the browser's GPU process starts on the GPU. The
+  scenes' CLI is built on a
+  hosted Windows runner and handed over, so the image needs no Rust toolchain. The label
   is what admits a pull request's code to that runner and those accounts; the Inputs summary
   names the pull request and the commit under test; the job holds no write permission and saves
   no cache; required reviewers on the environment (a repository setting) add an approval on top.

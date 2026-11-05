@@ -16,6 +16,7 @@
     /fixture_events   the recorded events, as JSON
     /fixture_reset    clear them, reset the field ({"value": "..."}, default "old") and the focus
     /fixture_state    {crossOriginIsolated, hasFocus, active, value}
+    /fixture_log      console.log the text ({"text": "..."}), for the driver's console capture
 -->
 <html lang="en">
 <head>
@@ -63,6 +64,14 @@
           window.__events.length = 0
           search.value = rest.trim() ? JSON.parse(rest).value : 'old'
           return 'reset'
+        }
+      },
+      '/fixture_log': {
+        args: [{ name: 'json', kind: 'json' }],
+        help: 'console.log the text',
+        run: (rest) => {
+          console.log(JSON.parse(rest).text)
+          return 'logged'
         }
       },
       '/fixture_state': {

@@ -1,19 +1,45 @@
-// Serves the built web app on loopback the way the benchmark runner does (local-harness/benchmark
-// `server.rs`): the same headers on every response, `GET` and `HEAD` only, loopback peers only.
-// The app's own service worker adds Document-Isolation-Policy to the app frame.
+// Serves the built web app on loopback with the isolation headers the app's own dev server sets
+// per path (react-web `vite.config.ts`, which the app's service worker mirrors for a deployed
+// host): the shell (`/`, `index.html`) is not isolated, or it refuses to start rather than take
+// the app into its process; the app frame (`app.html`, and the scene server's
+// `engine/headless.html`) isolates itself with Document-Isolation-Policy; everything else
+// carries the opener and embedder policies. `GET` and `HEAD` only, loopback peers only.
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { stat } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import path from 'node:path'
 import { pipeline } from 'node:stream'
 
-export const WEB_APP_HEADERS: Record<string, string> = {
-  'cross-origin-opener-policy': 'same-origin',
-  'cross-origin-embedder-policy': 'require-corp',
+/** On every response: the origin's own pages may frame each other and no other site may, and
+ *  nothing is cached across the builds served on this origin (the benchmark runner's `server.rs`). */
+export const COMMON_HEADERS: Record<string, string> = {
   'cross-origin-resource-policy': 'cross-origin',
   'content-security-policy': "frame-ancestors 'self'",
   'x-frame-options': 'SAMEORIGIN',
   'cache-control': 'no-store'
+}
+
+/** On the pages the app isolates for itself: the app frame, and the scene server's frame. */
+export const APP_ISOLATION_HEADERS: Record<string, string> = {
+  'document-isolation-policy': 'isolate-and-credentialless'
+}
+
+/** On everything but the shell and the app's own pages. `credentialless`, as the dev server and
+ *  the worker set it: the engine pulls scene assets from catalysts that send no CORP. */
+export const ISOLATION_HEADERS: Record<string, string> = {
+  'cross-origin-opener-policy': 'same-origin',
+  'cross-origin-embedder-policy': 'credentialless'
+}
+
+const SHELL_PAGES = new Set(['/', '/index.html'])
+const APP_PAGES = new Set(['/app.html', '/engine/headless.html'])
+
+/** The headers a request path gets, by the dev server's rule. */
+export function headersFor(requestPath: string): Record<string, string> {
+  const requested = requestPath.split('?')[0] ?? ''
+  if (SHELL_PAGES.has(requested)) return COMMON_HEADERS
+  if (APP_PAGES.has(requested)) return { ...COMMON_HEADERS, ...APP_ISOLATION_HEADERS }
+  return { ...COMMON_HEADERS, ...ISOLATION_HEADERS }
 }
 
 const CONTENT_TYPES: Record<string, string> = {
@@ -69,7 +95,7 @@ export interface StaticServer {
 }
 
 async function serveFile(root: string, request: IncomingMessage, response: ServerResponse): Promise<void> {
-  for (const [name, value] of Object.entries(WEB_APP_HEADERS)) response.setHeader(name, value)
+  for (const [name, value] of Object.entries(headersFor(request.url ?? '/'))) response.setHeader(name, value)
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     response.writeHead(405, { allow: 'GET, HEAD' }).end()
     return
