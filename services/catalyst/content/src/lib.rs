@@ -259,6 +259,7 @@ impl Settings {
                 ipv6_prefix_length: config.content.content_get_rate_limit_ipv6_prefix_length,
                 trusted_sync_peer_ips: config.content.trusted_sync_peer_ips.clone(),
                 trusted_client_ip_header: config.content.trusted_client_ip_header.clone(),
+                trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
             },
             partial_uploads: partial_deployments::Limits::from_config(config),
         }

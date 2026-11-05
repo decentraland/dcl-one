@@ -189,14 +189,16 @@ pub struct ContentConfig {
     #[arg(long, env = "CONTENT_GET_RATE_LIMIT_IPV6_PREFIX_LENGTH", default_value_t = 64, value_parser = clap::value_parser!(u8).range(1..=128))]
     pub content_get_rate_limit_ipv6_prefix_length: u8,
 
-    /// Comma list of the IPs of peers that sync from this node: never limited
-    /// on `/contents`. Invalid entries are dropped with a warning.
+    /// Comma list of the addresses or networks (CIDR) of peers that sync from
+    /// this node: never limited on `/contents`. Invalid entries are dropped
+    /// with a warning.
     #[arg(long, env = "TRUSTED_SYNC_PEER_IPS", default_value = "")]
     pub trusted_sync_peer_ips: String,
 
     /// The header whose rightmost entry is the client address of the
-    /// `/contents` limit. Unset, the address the gateway stamps (`X-Real-IP`,
-    /// else the last `X-Forwarded-For` entry), else the socket.
+    /// `/contents` limit, read only from a peer in `HTTP_TRUSTED_PROXY_CIDRS`.
+    /// Unset, such a peer's one `X-Real-IP`; any other peer is its socket
+    /// address.
     #[arg(long, env = "TRUSTED_CLIENT_IP_HEADER")]
     pub trusted_client_ip_header: Option<String>,
 

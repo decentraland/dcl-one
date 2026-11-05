@@ -690,16 +690,8 @@ fn client_ip(
     trusted_proxies: &[ipnet::IpNet],
 ) -> Option<String> {
     let peer = peer?.ip().to_canonical();
-    let ip = if trusted_proxies
-        .iter()
-        .any(|network| network.contains(&peer))
-    {
-        let mut values = headers.get_all("x-real-ip").iter();
-        let candidate = values.next()?.to_str().ok()?;
-        if values.next().is_some() {
-            return None;
-        }
-        candidate.parse::<std::net::IpAddr>().ok()?.to_canonical()
+    let ip = if crate::shared::client_ip::is_trusted_proxy(peer, trusted_proxies) {
+        crate::shared::client_ip::single_real_ip(headers)?
     } else {
         peer
     };
