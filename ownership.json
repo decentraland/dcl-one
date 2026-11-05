@@ -214,7 +214,8 @@
       "paths": [
         "/apps/ui3/src/shop/",
         "/apps/sites/src/routes/shop/",
-        "/tooling/shop-parity/"
+        "/tooling/shop-parity/",
+        "/tooling/shop-trade-journey/"
       ]
     },
     {

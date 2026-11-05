@@ -13,7 +13,7 @@ The one exception is `ui/apps/<app>/`, which holds UI used by a single app
 | `dcl-scene-build/` | SDK7 scene build, native and WASI | sites, scene CLI tests |
 | `dcl-preview-tunnel{,-protocol}/` | Preview relay and wire types | scene CLI |
 | `catalyst-api/` | TypeScript DTOs, OpenAPI documents | sites, ui3, catalyst |
-| `protocol/` | The `.proto` contract, the npm package `@dcl/protocol` | Explorer (`dcl_component`), comms, the SDK; social and the scene crates to follow (#82) |
+| `protocol/` | The `.proto` contract, the npm package `@dcl/protocol` | Explorer (`dcl_component`), comms, social, scene CLI, scene authoring, the SDK |
 | `js-sdk-toolchain/` | The creator SDK: `@dcl/sdk`, `ecs`, `react-ecs`, `js-runtime`, `sdk-commands`, `playground-assets` (npm, own lockfiles) | scenes; reads `protocol/` |
 | `ui/` | Shared UI foundations, components, app-specific UI (`apps/<app>/`) and Figma tooling ([standard](../docs/ui-standards.md#shared-ui-libraryui)); only the component template exists today | None yet; planned: web apps under `apps/`, the Explorer React HUD |
 | `vendor/rusty_enet/` | Pinned ENet-CSharp transport source, MIT license and reviewed local patches | Catalyst Pulse, native Bevy Pulse client |
