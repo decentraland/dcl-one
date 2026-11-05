@@ -398,7 +398,9 @@ impl Referral {
             if duplicate {
                 return Ok(());
             }
-            sqlx::query("DELETE FROM social.referral_login_receipts WHERE invited_user=$1 AND expires_at<$2")
+            // Legacy receipts retain their old expiry after migration; their
+            // backfilled server quota window must also finish before deletion.
+            sqlx::query("DELETE FROM social.referral_login_receipts WHERE invited_user=$1 AND expires_at<$2 AND received_at <= $2::timestamp - interval '24 hours'")
                 .bind(&invited).bind(now).execute(&mut *tx).await.map_err(login_database_error)?;
             let count: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM social.referral_login_receipts WHERE invited_user=$1 AND received_at > $2::timestamp - interval '24 hours'",
@@ -483,7 +485,7 @@ impl Referral {
         if crate::shared::writes::refusal(true).is_some() {
             return Ok(());
         }
-        if let Err(error) = sqlx::query("DELETE FROM social.referral_login_receipts WHERE (invited_user,login_id) IN (SELECT invited_user,login_id FROM social.referral_login_receipts WHERE expires_at < timezone('UTC',clock_timestamp()) ORDER BY expires_at,invited_user,login_id LIMIT 1000 FOR UPDATE SKIP LOCKED)")
+        if let Err(error) = sqlx::query("DELETE FROM social.referral_login_receipts WHERE (invited_user,login_id) IN (SELECT invited_user,login_id FROM social.referral_login_receipts WHERE expires_at < timezone('UTC',clock_timestamp()) AND received_at <= timezone('UTC',clock_timestamp()) - interval '24 hours' ORDER BY expires_at,invited_user,login_id LIMIT 1000 FOR UPDATE SKIP LOCKED)")
             .execute(&self.pool).await {
             tracing::warn!(%error, "login receipt cleanup failed; continuing reward delivery");
         }

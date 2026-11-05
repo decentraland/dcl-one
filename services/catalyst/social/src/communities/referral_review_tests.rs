@@ -14,6 +14,10 @@ struct RewardDatabase {
 }
 
 async fn reward_database() -> Option<RewardDatabase> {
+    reward_database_with_legacy_receipts(false).await
+}
+
+async fn reward_database_with_legacy_receipts(legacy: bool) -> Option<RewardDatabase> {
     let Ok(url) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
         eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
         return None;
@@ -34,7 +38,32 @@ async fn reward_database() -> Option<RewardDatabase> {
         .connect_with(base.database(&name).options([("TimeZone", "UTC")]))
         .await
         .unwrap();
-    crate::db::apply_schema(&pool).await.unwrap();
+    if legacy {
+        // Reproduce the earlier PR bootstrap in a new, owned database. No
+        // existing database is reset or altered to manufacture the old shape.
+        let column = "    received_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),\n";
+        assert_eq!(crate::db::SCHEMA_SQL.matches(column).count(), 1);
+        let schema = crate::db::SCHEMA_SQL.replace(column, "");
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(schema))
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        let steps = crate::db::schema_migrate::fresh_steps(crate::db::schema_migrate::parse_steps(
+            crate::db::MIGRATIONS_SQL,
+        ))
+        .unwrap();
+        let earlier: Vec<_> = steps
+            .into_iter()
+            .filter(|step| step.name != "0025_social_referral_login_received_at")
+            .collect();
+        crate::db::schema_migrate::record_steps(&mut *tx, &earlier, true)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+    } else {
+        crate::db::apply_schema(&pool).await.unwrap();
+    }
     Some(RewardDatabase { pool, admin, name })
 }
 
@@ -1145,7 +1174,7 @@ async fn native_receipt_cleanup_skips_locked_rows_and_failures_do_not_stop_rewar
         let (referrer, invited) = (wallet(), wallet());
         sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,status,tier_granted,reward_tier,reward_response) VALUES($1,$2,'tier_granted',true,5,$3)")
             .bind(&referrer).bind(&invited).bind(json!({"image":"https://reward.example.org/confirmed.png"})).execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO social.referral_login_receipts(invited_user,login_id,expires_at) VALUES($1,gen_random_uuid(),timezone('UTC',now())-interval '1 second')")
+        sqlx::query("INSERT INTO social.referral_login_receipts(invited_user,login_id,expires_at,received_at) VALUES($1,gen_random_uuid(),timezone('UTC',now())-interval '1 second',timezone('UTC',now())-interval '25 hours')")
             .bind(&invited).execute(&pool).await.unwrap();
         let mut held = pool.begin().await.unwrap();
         if failure {
@@ -1200,4 +1229,153 @@ async fn native_receipt_cleanup_skips_locked_rows_and_failures_do_not_stop_rewar
         drop(referral);
         database.teardown().await;
     }
+}
+
+#[tokio::test]
+async fn earlier_native_receipts_upgrade_preserves_retries_and_server_quota() {
+    let Some(database) = reward_database_with_legacy_receipts(true).await else {
+        return;
+    };
+    let pool = database.pool.clone();
+    let (referrer, invited) = (wallet(), wallet());
+    sqlx::query("INSERT INTO social.referral_progress(referrer,invited_user,login_days) VALUES($1,$2,ARRAY['2026-01-01'::date])")
+        .bind(&referrer).bind(&invited).execute(&pool).await.unwrap();
+    // Old expiry came from the client's occurrence, so it may already be due
+    // when the migration gives the retained facts a server quota timestamp.
+    sqlx::query("INSERT INTO social.referral_login_receipts(invited_user,login_id,expires_at) SELECT $1,gen_random_uuid(),timezone('UTC',now())-interval '1 second' FROM generate_series(1,120)")
+        .bind(&invited).execute(&pool).await.unwrap();
+    let original: Vec<(uuid::Uuid, chrono::NaiveDateTime)> = sqlx::query_as(
+        "SELECT login_id,expires_at FROM social.referral_login_receipts ORDER BY login_id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let ledger = |pool: sqlx::PgPool| async move {
+        sqlx::query_as::<_, (String, String, bool, chrono::NaiveDateTime)>(
+            "SELECT step,sha256,created_fresh,applied_at FROM meta.schema_steps ORDER BY step",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+    };
+    let before = ledger(pool.clone()).await;
+    let started: chrono::NaiveDateTime =
+        sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let migrated =
+        crate::db::schema_migrate::migrate(&pool, crate::db::SCHEMA_SQL, crate::db::MIGRATIONS_SQL)
+            .await
+            .unwrap();
+    assert_eq!(migrated.steps, ["0025_social_referral_login_received_at"]);
+    assert!(
+        migrated.created.is_empty(),
+        "the populated relation is altered in place"
+    );
+    let after = ledger(pool.clone()).await;
+    assert_eq!(after.len(), before.len() + 1);
+    assert!(before.iter().all(|row| after.contains(row)));
+    let added = after
+        .iter()
+        .find(|row| row.0 == "0025_social_referral_login_received_at")
+        .unwrap();
+    assert!(!added.2, "the production executor records an applied step");
+    let columns: (String, String, String) = sqlx::query_as("SELECT data_type,is_nullable,column_default FROM information_schema.columns WHERE table_schema='social' AND table_name='referral_login_receipts' AND column_name='received_at'")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        (columns.0.as_str(), columns.1.as_str()),
+        ("timestamp without time zone", "NO")
+    );
+    assert!(columns.2.contains("clock_timestamp()"));
+    let receipts: Vec<(uuid::Uuid, chrono::NaiveDateTime, chrono::NaiveDateTime)> = sqlx::query_as(
+        "SELECT login_id,expires_at,received_at FROM social.referral_login_receipts ORDER BY login_id",
+    ).fetch_all(&pool).await.unwrap();
+    assert_eq!(
+        receipts
+            .iter()
+            .map(|row| (row.0, row.1))
+            .collect::<Vec<_>>(),
+        original
+    );
+    assert!(receipts.iter().all(|row| row.2 >= started));
+    let finished: chrono::NaiveDateTime =
+        sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(receipts.iter().all(|row| row.2 <= finished));
+    let replay =
+        crate::db::schema_migrate::migrate(&pool, crate::db::SCHEMA_SQL, crate::db::MIGRATIONS_SQL)
+            .await
+            .unwrap();
+    assert!(replay.steps.is_empty() && replay.created.is_empty());
+    assert_eq!(ledger(pool.clone()).await, after);
+    let reread: Vec<(uuid::Uuid, chrono::NaiveDateTime, chrono::NaiveDateTime)> = sqlx::query_as(
+        "SELECT login_id,expires_at,received_at FROM social.referral_login_receipts ORDER BY login_id",
+    ).fetch_all(&pool).await.unwrap();
+    assert_eq!(reread, receipts, "replay never renews the quota window");
+    let referral = Referral::new(pool.clone(), Outbound::for_tests(), Settings::for_tests());
+    referral
+        .record_authenticated_login(
+            invited.as_str(),
+            original[0].0,
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .await
+        .unwrap();
+    let days: Vec<chrono::NaiveDate> =
+        sqlx::query_scalar("SELECT login_days FROM social.referral_progress WHERE invited_user=$1")
+            .bind(&invited)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        days,
+        [chrono::NaiveDate::from_ymd_opt(2026, 1, 1).unwrap()],
+        "retained duplicate does not advance progress"
+    );
+    referral.drain_pending_rewards().await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM social.referral_login_receipts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 120,
+        "worker cleanup respects the server quota backfill"
+    );
+    let event = uuid::Uuid::new_v4();
+    assert!(
+        matches!(
+            referral
+                .record_authenticated_login(
+                    invited.as_str(),
+                    event,
+                    chrono::Utc::now().timestamp_millis()
+                )
+                .await,
+            Err(CommError::MessageOnly(StatusCode::TOO_MANY_REQUESTS, _))
+        ),
+        "login cleanup cannot discard the quota backfill either"
+    );
+    // Advance the fixture's server receipt window, leaving original expiry and
+    // identity intact. Both horizons must finish before cleanup frees the IDs.
+    sqlx::query("UPDATE social.referral_login_receipts SET received_at=timezone('UTC',now())-interval '25 hours'")
+        .execute(&pool).await.unwrap();
+    referral.drain_pending_rewards().await.unwrap();
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM social.referral_login_receipts")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+    referral
+        .record_authenticated_login(
+            invited.as_str(),
+            event,
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .await
+        .unwrap();
+    drop(referral);
+    database.teardown().await;
 }

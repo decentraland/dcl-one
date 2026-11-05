@@ -558,7 +558,7 @@ async fn native_login_http_bounds_receipts_and_obeys_write_and_restore_gates() {
             .0,
         StatusCode::NO_CONTENT
     );
-    sqlx::query("UPDATE social.referral_login_receipts SET expires_at=timezone('UTC',now())-interval '1 second' WHERE invited_user=$1 AND login_id<>$2")
+    sqlx::query("UPDATE social.referral_login_receipts SET expires_at=timezone('UTC',now())-interval '1 second',received_at=timezone('UTC',now())-interval '25 hours' WHERE invited_user=$1 AND login_id<>$2")
         .bind(&invited.address).bind(first).execute(&rig.pool).await.unwrap();
     assert_eq!(
         hit(&rig.app, login_case(&invited, Uuid::new_v4(), now).await)
