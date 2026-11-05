@@ -17,7 +17,7 @@ pub fn query_param<'a>(q: &'a QueryPairs, key: &str) -> Option<&'a str> {
 /// an optional sign, then the leading digits (saturating); `None` where JS
 /// gives `NaN`.
 pub fn js_parse_int(s: &str) -> Option<i64> {
-    crate::shared::query_params::js_parse_int(s)
+    crate::shared::query_params::js_parse_int(s, false)
 }
 
 pub const MAX_PAGE_LIMIT: i64 = 100;

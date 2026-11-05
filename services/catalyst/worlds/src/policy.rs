@@ -419,10 +419,14 @@ impl Policy {
                 .rights(parcel.x, parcel.y)
                 .await
                 .map_err(|e| store_unavailable("land-authz index", &e))?;
+            // The deploy column: a parcel's cleared update-operator leg (the
+            // zero address lamb2's `/operators` answers) falls back to its
+            // estate's, so storage management and the comms protected set
+            // keep the estate's update operator, as `can_deploy` does.
             return Ok(Some(Arc::new(rights.map(|r| LandOperators {
                 owner: r.subject.owner,
                 operator: r.subject.operator,
-                update_operator: r.subject.update_operator,
+                update_operator: r.subject.deploy_update_operator,
                 update_managers: r.operators.update_managers,
                 approved_for_all: r.operators.approved_for_all,
             }))));
