@@ -67,6 +67,20 @@ clipboard, anything that touches the host OS or a page) must be excluded from th
 at code level, not merely denied by the permissions table: a config-driven deny is one edit away
 from being an allow. The scene promise still gets answered, with a denial.
 
+## Network capabilities
+
+Use the existing engine-assigned scene identity and the transport's Rust address policy when
+granting scene network access. Verify that the dialled addresses are checked, including
+addresses selected after a redirect where the transport follows redirects. Keep link-local
+and metadata addresses blocked. State the scope for each transport and platform in the
+[running guide](running.md).
+
+For signed service routing, verify the path the destination actually checks against the real
+proxy rewrite. Reject paths whose interpretation can shift the request to another service
+during URL normalisation or proxy decoding. Validate untrusted path parameters as single
+segments before building the URI. Backends may trust a forwarded path only on a connection
+from a trusted proxy that overwrites the client-supplied header.
+
 ## Scene signed fetch
 
 For `signedFetch` and `getHeaders`, scene-runtime Rust hashes the UTF-8 bytes of the
