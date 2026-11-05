@@ -109,23 +109,56 @@ fn unwrap_metadata(metadata: Option<&Value>) -> Option<Value> {
     metadata.and_then(|m| m.get("v").cloned())
 }
 
+/// An active entity in the key order the production peer answers
+/// `POST /entities/active` with: `id,type,pointers,content,version,timestamp,metadata`
+/// (`conformance/content-lambdas/captures/content-reads/CR-14-active-entity-key-order.json`).
+/// Upstream serves the entities it holds in its process cache, which a deploy
+/// or sync fills through `parseEntityFromObject` in that order
+/// (`decentraland/catalyst:src/logic/entities/component.ts:125-135`). A struct
+/// keeps its field order where a `Map` would sort the keys.
+#[derive(serde::Serialize)]
+struct ActiveEntityJson {
+    id: String,
+    #[serde(rename = "type")]
+    entity_type: String,
+    pointers: Vec<String>,
+    content: Vec<Value>,
+    version: String,
+    timestamp: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<Value>,
+}
+
+/// A `date_part('epoch', ..) * 1000` double as upstream sends it, a JS number:
+/// an integer in the common case, the fraction kept when there is one
+/// (`decentraland/catalyst:src/logic/deployments/component.ts:357`).
+pub(crate) fn js_millis(ms: f64) -> Value {
+    const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+    if ms.fract() == 0.0 && ms.abs() <= MAX_SAFE_INTEGER {
+        json!(ms as i64)
+    } else {
+        json!(ms)
+    }
+}
+
 fn row_to_doc(row: ActiveEntityRow) -> EntityDoc {
     let content: Vec<Value> = parse_content_json(&row.content_json)
         .into_iter()
         .map(|(key, hash)| json!({"file": key, "hash": hash}))
         .collect();
-    let mut obj = json!({
-        "version": row.version,
-        "id": row.entity_id,
-        "type": row.entity_type,
-        "timestamp": row.entity_timestamp as i64,
-        "pointers": row.entity_pointers,
-        "content": content,
-    });
-    if let Some(m) = unwrap_metadata(row.entity_metadata.as_ref()) {
-        obj["metadata"] = m;
+    let doc = ActiveEntityJson {
+        metadata: unwrap_metadata(row.entity_metadata.as_ref()),
+        id: row.entity_id,
+        entity_type: row.entity_type,
+        pointers: row.entity_pointers,
+        content,
+        version: row.version,
+        timestamp: js_millis(row.entity_timestamp),
+    };
+    EntityDoc {
+        json: Bytes::from(serde_json::to_vec(&doc).unwrap_or_default()),
+        id: doc.id,
     }
-    EntityDoc::from_value(&obj)
 }
 
 // Content lists sort by file name under upstream's collation: upstream reads
@@ -921,7 +954,7 @@ pub async fn audit_info(
         let mut value = json!({
             "version": r.version,
             "authChain": r.auth_chain,
-            "localTimestamp": r.local_timestamp as i64,
+            "localTimestamp": js_millis(r.local_timestamp),
         });
         if let (Some(signer), Some(origin), Some(published_at)) =
             (r.signer, r.origin, r.published_at)
@@ -1040,6 +1073,34 @@ mod tests {
         assert_eq!(EntityDoc::json_array(&[]).as_ref(), b"[]");
         assert_eq!(a.id, "a");
         assert_eq!(a.to_value().unwrap()["x"], 1);
+    }
+
+    #[test]
+    fn active_entity_keys_follow_the_captured_order() {
+        let doc = row_to_doc(ActiveEntityRow {
+            entity_id: "bafy".into(),
+            entity_type: "scene".into(),
+            entity_pointers: vec!["0,0".into()],
+            entity_metadata: Some(json!({"v": {"k": 1}})),
+            entity_timestamp: 1_700_000_000_000.0,
+            version: "v3".into(),
+            content_json: json!([{"key": "a", "hash": "h"}]),
+        });
+        assert_eq!(doc.id, "bafy");
+        assert_eq!(
+            std::str::from_utf8(&doc.json).unwrap(),
+            r#"{"id":"bafy","type":"scene","pointers":["0,0"],"content":[{"file":"a","hash":"h"}],"version":"v3","timestamp":1700000000000,"metadata":{"k":1}}"#
+        );
+    }
+
+    #[test]
+    fn js_millis_keeps_a_fraction_and_drops_a_zero_one() {
+        assert_eq!(js_millis(1_700_000_000_000.0).to_string(), "1700000000000");
+        assert_eq!(
+            js_millis(1_700_000_000_000.5).to_string(),
+            "1700000000000.5"
+        );
+        assert_eq!(js_millis(-1.0).to_string(), "-1");
     }
 
     #[test]

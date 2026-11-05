@@ -89,6 +89,7 @@ pub mod entity_thumbnail;
 mod failed_deployments;
 pub mod get_content;
 mod pointer_changes;
+pub mod routing;
 mod snapshots;
 mod status;
 
@@ -660,6 +661,7 @@ async fn not_found() -> impl IntoResponse {
     (StatusCode::NOT_FOUND, "Not found")
 }
 
+/// The paths here are listed again in [`routing::CONTENT_ROUTE_PATHS`].
 fn content_routes(state: &SharedState) -> Router<SharedState> {
     Router::new()
         .route("/challenge", get(status::get_challenge))
@@ -670,7 +672,12 @@ fn content_routes(state: &SharedState) -> Router<SharedState> {
         )
         .route(
             "/entities/active",
-            post(active_entities::get_active_entities).layer(DefaultBodyLimit::max(256 * 1024)),
+            post(active_entities::get_active_entities)
+                .layer(DefaultBodyLimit::max(
+                    routing::MAX_ACTIVE_ENTITIES_BODY_BYTES,
+                ))
+                .layer(axum::middleware::from_fn(routing::payload_too_large_text))
+                .get(active_entities::get_entities_active),
         )
         .route(
             "/contents/{hashId}",

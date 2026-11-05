@@ -206,12 +206,12 @@ async fn post(node: &TestNode, uri: &str, body: &Value) -> (StatusCode, Option<S
 }
 
 fn masked_bytes(full: &[EntityDoc], fields: &[EntityField]) -> Vec<u8> {
-    let masked: Vec<Value> = full
+    let masked: Vec<_> = full
         .iter()
         .filter_map(EntityDoc::to_value)
         .map(|e| mask_entity(&e, Some(fields)))
         .collect();
-    serde_json::to_vec(&Value::Array(masked)).unwrap()
+    serde_json::to_vec(&masked).unwrap()
 }
 
 const FIELD_QUERIES: &[&str] = &[
