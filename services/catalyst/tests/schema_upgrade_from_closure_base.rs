@@ -100,9 +100,16 @@ struct Old {
 async fn stamped_with_the_closure_base() -> Option<Old> {
     with_schema(CLOSURE_BASE).await
 }
+/// One capture import at a time per process, like `apply_schema`: each runs
+/// as one implicit transaction holding up to about 3,000 object locks until
+/// commit, so overlapping imports exhaust a default cluster's shared lock
+/// table ("out of shared memory").
+static IMPORTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn prepared_v2(rows: Option<&str>) -> Option<Old> {
     let old = with_schema(PREPARED_V2).await?;
     if let Some(rows) = rows {
+        let _one_at_a_time = IMPORTING.lock().await;
         sqlx::raw_sql(sqlx::AssertSqlSafe(rows.to_owned()))
             .execute(&old.pool)
             .await
@@ -133,17 +140,13 @@ async fn with_schema(schema: &str) -> Option<Old> {
         )
         .await
         .unwrap();
-    // One captured schema at a time per process, like `apply_schema`: each
-    // applies as one implicit transaction holding thousands of object locks
-    // until commit, so overlapping applies exhaust the cluster's shared lock
-    // table ("out of shared memory").
-    static APPLYING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-    let applying = APPLYING.lock().await;
-    sqlx::raw_sql(sqlx::AssertSqlSafe(schema.to_owned()))
-        .execute(&pool)
-        .await
-        .expect("the closure base's schema.sql applies");
-    drop(applying);
+    {
+        let _one_at_a_time = IMPORTING.lock().await;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(schema.to_owned()))
+            .execute(&pool)
+            .await
+            .expect("the closure base's schema.sql applies");
+    }
     Some(Old { pool, admin, name })
 }
 
