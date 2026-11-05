@@ -36,10 +36,10 @@ outside the repository. The journey prints addresses, never keys.
 
 | Variable | |
 | --- | --- |
-| `E2E_SELLER_KEY`, `E2E_BUYER_KEY` | Private keys of two testnet wallets. Never use a wallet that holds anything on mainnet. |
+| `E2E_SELLER_KEY`, `E2E_BUYER_KEY` | Private keys of two testnet-only wallets. They must hold nothing on mainnet: `personal_sign` is not chain-bound. |
 | `E2E_TOKEN` | `<contract>:<tokenId>`, an Amoy NFT the seller owns. |
 | `E2E_PRICE`, `E2E_REPRICE`, `E2E_BID` | MANA amounts. The defaults are 1, 2 and 1. |
-| `E2E_SITES_URL` | The stack's Sites URL. The default is `FOUNDATION_DEV_SITES_URL`, and any other value is refused, since `FOUNDATION_DEV_STACK_PROFILE` describes only that stack. Both come from the shell, never from `E2E_ENV_FILE`. |
+| `E2E_SITES_URL` | The stack's Sites URL. The default is `FOUNDATION_DEV_SITES_URL`, and any other value is refused, since `FOUNDATION_DEV_STACK_PROFILE` describes only that stack. `FOUNDATION_DEV_SITES_URL` and `FOUNDATION_DEV_STACK_PROFILE` come from the shell, never from `E2E_ENV_FILE`; `E2E_SITES_URL` may be set in either, and must match. |
 | `E2E_ITEM` | `--primary` only: `<collection>:<itemId>`, an Amoy item of a collection the seller created, listed in the Shop for credits and MANA. |
 | `E2E_DISCOUNT` | `--primary` only: the discount, a whole percentage from 5 to 70. The default is 10. |
 | `E2E_TOPUP` | `--primary` only: the test credits the buyer tops up with the mock card. The default is 100. |
@@ -126,6 +126,9 @@ up. `GET /credits/usage-index/status` reports both, and the primary preflight re
 the preflight says so and the full loop stops before the discount.
 
 ## The wallet
+
+It signs in the way a MetaMask user does: the Shop's Sign in opens the login page, and the provider reports
+`isMetaMask` on `window.ethereum`, which is the login page's injected-wallet option.
 
 `lib/wallet.mts` is the EIP-1193 provider the page sees, as an extension and as `window.ethereum`. The key
 stays in Node: the page forwards each request over a Playwright binding, and signing and sending happen

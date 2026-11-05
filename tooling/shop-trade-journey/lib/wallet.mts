@@ -168,7 +168,10 @@ export const PAGE_PROVIDER = String.raw`(() => {
   const listeners = new Map();
   const emit = (event, value) => (listeners.get(event) || []).forEach((fn) => { try { fn(value); } catch {} });
   const provider = {
-    isMetaMask: false,
+    // The login page (/auth/login) offers an injected wallet only as MetaMask, enabled when window.ethereum says
+    // isMetaMask, and then signs in through window.ethereum itself: the path a MetaMask user takes. The wallet's
+    // refusals do not depend on this flag.
+    isMetaMask: true,
     isE2eWallet: true,
     request: async ({ method, params }) => {
       const answer = await window.__e2eWallet({ method, params: params ?? [] });

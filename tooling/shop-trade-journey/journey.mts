@@ -119,9 +119,16 @@ async function signIn(a: Actor): Promise<void> {
   // networkidle: the dev server's first visit compiles modules, and a click before hydration does nothing.
   await a.page.goto(`${sites}/shop`, { waitUntil: "networkidle" });
   await a.page.getByRole("button", { name: "Sign in" }).or(a.page.getByRole("link", { name: "Sign in" })).first().click();
-  await a.page.getByText("Continue with wallet").click();
-  await a.page.getByRole("button", { name: /Continue with E2E testnet wallet/ }).click();
-  // Signed in: the top bar's sign-in entry gives way to the account's avatar.
+  // The Shop's sign-in leaves for the login page, whose injected-wallet option is MetaMask's (PAGE_PROVIDER
+  // reports isMetaMask). It is a first option when the browser has a wallet, or under "More options".
+  await a.page.waitForURL(/\/auth\/login/, { timeout: 60_000 });
+  await a.page.getByTestId("login-page").waitFor({ timeout: 60_000 });
+  await a.page.waitForLoadState("networkidle");
+  const metamask = a.page.locator('[data-testid="primary-metamask-button"], [data-testid="more-metamask-button"]');
+  if (!(await metamask.first().isVisible())) await a.page.getByTestId("show-more-button").click();
+  await metamask.first().click();
+  // Back on the Shop, signed in: the top bar's sign-in entry gives way to the account's avatar.
+  await a.page.waitForURL((url) => url.pathname.startsWith("/shop"), { timeout: 60_000 });
   await a.page.locator(".dtb__signin").waitFor({ state: "detached", timeout: 60_000 });
 }
 
@@ -187,7 +194,7 @@ async function trade(seller: Actor, buyer: Actor, s: Funds, b: Funds, token: { c
     await step("token page renders", seller, async () => {
       await seller.page.goto(tokenPath(token));
       await seller.page.getByRole("heading").first().waitFor({ timeout: 60_000 });
-      if (await seller.page.getByText(/not found/i).first().isVisible().catch(() => false)) throw new Error("the Shop does not know this token: has the NFT index caught up?");
+      if (await seller.page.getByText(/not found/i).first().isVisible().catch(() => false)) throw new Error("the Shop does not know this token: is it in the Amoy collections subgraph?");
     });
     await step("no bid of the buyer is left open", seller, async () => {
       await seller.page.goto(`${tokenPath(token)}/bids`, { waitUntil: "networkidle" });
