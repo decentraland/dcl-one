@@ -24,6 +24,11 @@ understand the change in one sitting.
   quirk. Not what the code does, and no archaeological commentary: not what the old design was,
   not why the new one doesn't need X, not an argument addressed to the reviewer. Strip those
   before pushing. Rationale goes in the PR description.
+- No provenance in comments: not a Unity file, type, constant or PR, not "as in unity-explorer",
+  and not who decided. Such citations go stale as Unity moves, and justify the code by where it
+  came from rather than why it is right. A comment gives the code's own reason, or nothing if the
+  code is clear. Unity sources go in the PR description; who decided goes there or in
+  [decisions](decisions.md).
 - Existing comments survive a refactor unless they became wrong.
 - Limit each `Drop` implementation to one blocking operation. Release a lock before taking
   another or doing file I/O. Put multi-step cleanup in an explicit completion path.

@@ -316,6 +316,7 @@ async fn websocket_room_handler_inner(
                     from_alias,
                     body,
                     unreliable: next.unreliable,
+                    recipients: Vec::new(),
                 })),
             };
             let mut buf = Vec::default();
