@@ -206,7 +206,8 @@ function EquippedRow({ tiles }: { tiles: EquippedTile[] }): React.JSX.Element {
 
 // The Creations tab's tiles, after unity-explorer's CreationsDetailsPassportModuleController: an item
 // on primary sale offers Buy with its Credits price, any other item View. Both open the item's shop
-// page, as unity-explorer does whenever it can't buy in-world.
+// page, as unity-explorer does whenever it can't buy in-world. The button stays on the card, as in
+// unity-explorer, so a hovered card doesn't cover the row below.
 const creationTile = (item: CreationItem, emote: boolean): EquippedTile => ({
   key: item.urn || item.id,
   thumbnail: item.thumbnail,
@@ -214,6 +215,7 @@ const creationTile = (item: CreationItem, emote: boolean): EquippedTile => ({
   rarity: item.rarity,
   shopUrl: item.url ? marketplaceUrl(item) : undefined,
   shopLabel: item.isOnSale ? 'Buy' : 'View',
+  pinShop: true,
   price: item.isOnSale && (item.priceCredits ?? 0) > 0 ? `${item.priceCredits} Credits` : undefined,
   categoryIcon: emote ? <Icon name="emotes" size={15} /> : <CategoryIcon category={item.data?.wearable?.category ?? item.category} size={15} />
 })

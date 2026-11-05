@@ -145,6 +145,19 @@
   bottom: calc(-1 * var(--shop-ext));
   animation: ringShift 2.5s linear infinite;
 }
+/* Pinned shop link (pinShop): the same hover frame and lift, but the card doesn't grow, since
+   the link already sits inside it. */
+.pinnedShop:hover {
+  z-index: 2;
+  transform: scale(1.04);
+}
+.pinnedShop:hover::before {
+  box-shadow: 0 0 18px var(--brand-active);
+}
+.pinnedShop:hover::after {
+  opacity: 1;
+  animation: ringShift 2.5s linear infinite;
+}
 @keyframes ringShift {
   0% {
     background-position: 0% 50%;
@@ -155,6 +168,19 @@
   100% {
     background-position: 0% 50%;
   }
+}
+
+/* Pinned: in the card's flow, always shown; margin-top:auto keeps it on the card's bottom edge,
+   so the buttons of a row line up whether or not a card has a price line. */
+.pinnedShop .shopBtn {
+  position: static;
+  align-self: stretch;
+  margin: auto 10px 10px;
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  pointer-events: auto;
+  transition: none;
 }
 
 /* SHOP — revealed inside the extended card on hover. */

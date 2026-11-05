@@ -24,12 +24,17 @@ export interface EquippedItemCardProps {
   price?: string
   /** Body-part / item-kind glyph shown in the top-left rarity-colored corner flap. */
   categoryIcon?: React.ReactNode
+  /** Keep the shop link inside the card at all times instead of revealing it below the card on
+   *  hover, so a hovered card never covers the row beneath (the passport's Creations grid, like
+   *  unity-explorer's creation tiles). */
+  pinShop?: boolean
 }
 
-export function EquippedItemCard({ thumbnail, name, rarity, shopUrl, shopLabel = 'Shop', price, categoryIcon }: EquippedItemCardProps): React.JSX.Element {
+export function EquippedItemCard({ thumbnail, name, rarity, shopUrl, shopLabel = 'Shop', price, categoryIcon, pinShop = false }: EquippedItemCardProps): React.JSX.Element {
   const [failed, setFailed] = useState(false)
+  const shopClass = shopUrl == null ? '' : pinShop ? styles.pinnedShop : styles.hasShop
   return (
-    <div className={`${styles.card} ${shopUrl != null ? styles.hasShop : ''}`.trim()} data-rarity={rarity ?? 'base'}>
+    <div className={`${styles.card} ${shopClass}`.trim()} data-rarity={rarity ?? 'base'}>
       <div className={styles.thumbWrap}>
         {thumbnail && !failed ? (
           <img className={styles.thumb} src={thumbnail} alt="" onError={() => setFailed(true)} />
