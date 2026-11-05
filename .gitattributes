@@ -70,3 +70,13 @@ library/uuav/**/*.sb text eol=lf
 library/uuav/**/*.sh text eol=lf
 tooling/uuav/*.sh text eol=lf
 tooling/uuav/uuav-binaries.lock.json text eol=lf
+# The shared UI library's Figma capture and its frozen test copy, Review references and evidence, generated Review SVG assets,
+# the sealed promotion manifest and the bundled font live in Git LFS (library/ui/README.md). Tooling
+# fails loudly when it meets an unmaterialized pointer. Files promote-reviewed writes into
+# library/ui/components and library/ui/foundations stay plain git.
+library/ui/figma/figma-snapshot/** filter=lfs diff=lfs merge=lfs -text
+library/ui/figma/test/fixtures/figma-snapshot/** filter=lfs diff=lfs merge=lfs -text
+library/ui/figma/review/public/dcl-ui-review/**/*.png filter=lfs diff=lfs merge=lfs -text
+library/ui/figma/review/public/dcl-ui-review/**/*.svg filter=lfs diff=lfs merge=lfs -text
+library/ui/figma/review/src/generated/components/assets/*.svg filter=lfs diff=lfs merge=lfs -text
+library/ui/figma/review/src/review/promotion.json filter=lfs diff=lfs merge=lfs -text

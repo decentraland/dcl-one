@@ -1,0 +1,43 @@
+{
+  "sources": [
+    {
+      "repository": "https://github.com/decentraland/figma-design-system",
+      "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
+      "license": {
+        "spdx": "NOASSERTION",
+        "status": "The upstream repository is private and has no LICENSE file. Its copyright holder and the grant that allows publishing this port are unresolved; this tree is not published until that grant exists."
+      },
+      "imported": {
+        "dcl-mcp-figma/src, test, capture": "figma/src, figma/test, figma/capture",
+        "dcl-mcp-figma/src/guard": "figma/src/guard (whole, keyless, on the library/ui layout)",
+        "dcl-mcp-figma/figma-snapshot": "figma/figma-snapshot",
+        "dcl-mcp-figma/figma.config.json": "figma/figma.config.json",
+        "dcl-ui-review/src, public, scripts, test, dcl-ui-review/index.html, review.vite.config.ts": "figma/review/",
+        "component-library/agent-kit": "figma/agent-kit",
+        "dcl-mcp-figma/scripts/freeze-test-snapshot.mjs": "figma/scripts/freeze-test-snapshot.mjs",
+        ".github/workflows/ci.yml": ".github/workflows/ui-library.yml"
+      },
+      "changes": [
+        "The Figma file key is never stored: it comes from the FIGMA_FILE_KEY environment variable, snapshot ingest strips it, generated headers, catalogs and the promotion manifest omit it, API errors redact it, and mappings name the file through the <DCL_FIGMA_FILE> placeholder. figma/key-guard.mjs enforces this.",
+        "Generation selects pages from the keyless generation inventory (figma-snapshot/generation-inventory.json) and skips retired pages and components per figma-snapshot/retirements.json; neither file, nor sync-state, carries a file key.",
+        "Paths follow library/ui; promote-reviewed writes components/<Name>/, components/assets, components/runtime and foundations/<family>/ instead of component-library/src/generated, and promotes only figma.config.json promotion.include plus their preview dependencies.",
+        "Review render signature resolves packages from pnpm node_modules instead of package-lock.json; the Cloudflare deploy (wrangler, _headers) and three unused styled-components Review helpers are removed; Review links to Figma were replaced by node ids.",
+        "Git LFS pointers fail loudly wherever the tooling hashes, parses or ships a file.",
+        "Upstream's frozen test capture (dcl-mcp-figma/test/fixtures/figma-snapshot) is not imported, because it stores the file key; figma/test/fixtures keeps this tree's keyless frozen capture, plus upstream's keyless test inputs (generation-inventory.json, pr38-sync-state.json) with the key dropped.",
+        "Supersession fails closed: a synced component replaces a hand-written one only when promotion.include names it explicitly (never as a preview dependency or through the all-eligible default); a pending or ineligible replacement fails promotion before anything is written. check-mappings skips components already in components/promotion.json, and an unmaterialized capture still fails it instead of falling back.",
+        "pull-live rejects a Colors swatch label that names the Figma file or its key before anything is staged, writes variables.json through the key-stripping sanitizer, and reports alpha before and after in colorChanges.",
+        "Pinned at 9c6dfbe6 (revision above), re-baselined from 0ec2a91 as one keyless import of the upstream sources plus the named deviations here, instead of a commit-by-commit replay. Snapshot inputs (8 changed, 3 new files) imported from 9c6dfbe6, key-stripped. References (PNGs and references.json) imported from figma-design-system 9c6dfbe6, sanitized; renders and fidelity.json generated locally by our review capture; Review generated code regenerated locally. Exception: the 10 Footer renders (Footer-0 and -1, FooterAccordion-0 to -3, FooterLink-0 to -3) are upstream-rendered unowned legacy evidence for Footer (excluded from Review); retained pending an owner decision on a retirement record. Upstream's orphaned-assets.json is not imported (it accounts for upstream's generated Review).",
+        "Review capture teardown, the stalled-capture retry and the staged evidence publication are upstream's (capture-review.mjs, capture-retry.mjs, 9c6dfbe); this tree's earlier capture-teardown.mjs port is superseded behaviourally (keep-alive close, SIGTERM then SIGKILL, profile removal retried 10 times 200 ms apart), but its test coverage is lost upstream: capture-review.mjs is a top-level-await script, so no test can reach its teardown. Known gap, to be fixed upstream by extracting the teardown into a tested module and taken on the next port. Cases no longer covered: a browser that honours SIGTERM stops without waiting for the grace period; a hung browser is SIGKILLed; an already exited browser returns at once; profile removal is retried while a helper holds the profile; it fails loudly once the retries are spent; an error that waiting cannot fix is not retried; a real profile directory is removed. The capture checks Node against library/ui/package.json engines.node instead of a repository .node-version.",
+        "pull-live --page selects a page by id or unique name and keeps every other page's saved readiness (page-identity.ts, mergeSyncState); this tree's earlier name-based selection (nextSyncState) is superseded. A refresh must still contain every saved component unless it is retired (capture-completeness.ts).",
+        "The generator keeps Figma layer order over absolute layers and captures image fills as data URIs (4a94d9e). The Review playground drives the SearchBar through its Figma states (ebcc6a8), and the Review signature excludes the playground files, which audit mode never renders, while keeping the lockfile-based dependency signature.",
+        "figma/src/promotion/manifest.ts ports, adapted, the spec-hash seal of dcl-mcp-figma/src/promotion/manifest.ts (223d30c): promotion.json schema 2 seals one sha256 per eligible spec instead of embedding it; verification validates every field, names the stale file or component, and reports a schema 1 manifest as legacy and stale. Upstream promotion.json is not imported and this tree is not resealed.",
+        "The Figma sync and promotion workflows (figma-sync.yml, figma-promote.yml) and the promotion commit script they ran (scripts/commit-figma-promotion.mjs) are not imported: the full sync stays in figma-design-system.",
+        "Keyless identity: retirements, the generation inventory, sync-state and live-source carry no file key; a retirement is identified by [pageId, componentId], and its strict schema rejects a record carrying a key. Upstream's file-identity checks (records, inventory and sync state against config.fileKey) are removed: the tool works on the one file FIGMA_FILE_KEY names.",
+        "Layout: upstream's three repository roots map to library/ui (figma/src/layout.ts; layout.test.ts fails on any upstream repo-root path left in the sources). The library is components/ plus index.ts and components/promotion.json, so the guard stages index.ts and pnpm-lock.yaml with the workspace and treats index.ts as part of a removals-only components/ root.",
+        "Skipped, sync-only: the per-PR library release versioning of 120e8f1 (release-version, release-base-tree and their tests); they are not imported and their call sites are removed, since @dcl/one-ui is versioned by hand; the retirement cleanup is scope-checked against the working tree it starts from instead of a materialized release-base commit, and the guard takes no --release-* options. Skipped as not applicable: e0c4e04 (the Review imports Tabs from its own generated output, there is no promoted Tabs), 6959444 and the sync PR body test (they test files not imported).",
+        "The sealed Review promotion manifest (figma/review/src/review/promotion.json) is schema 2 and key-free; the stale-seal check of 6f1e800 compares the schema and the sealed entries, never a file key.",
+        "The 58 orphaned Review assets ledgered when the Review was regenerated from the 9c6dfbe6 snapshot are drained with upstream's developer cleanup (sync --developer --apply-retirements): no consumer and no generated owner remains, the ledger is empty, and the Review promotion manifest is resealed over the remaining files. Nothing under components/ changes."
+      ]
+    }
+  ]
+}

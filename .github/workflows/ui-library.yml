@@ -1,0 +1,94 @@
+name: Shared UI library
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+  push:
+    branches: [main]
+    paths: ['library/ui/**', '.github/workflows/ui-library.yml', '.gitattributes']
+  pull_request:
+    paths: ['library/ui/**', '.github/workflows/ui-library.yml', '.gitattributes']
+
+concurrency:
+  group: ui-library-${{ inputs.ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Runs before anything is installed, without secrets on forks: the url check always runs; the key
+  # check runs only where the FIGMA_FILE_KEY secret is available and is reported as skipped elsewhere.
+  key-guard:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          lfs: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Scan the tree and the outgoing commits for the Figma file key
+        env:
+          FIGMA_FILE_KEY: ${{ secrets.FIGMA_FILE_KEY }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
+        run: |
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then BASE=origin/main; fi
+          node library/ui/figma/key-guard.mjs --range "$BASE..HEAD"
+
+  library:
+    needs: key-guard
+    runs-on: ubuntu-26.04
+    defaults:
+      run:
+        working-directory: library/ui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          # The pull request's base parent is checked out for the retirement guard below.
+          fetch-depth: 2
+          lfs: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      # Fails when committed generated output no longer matches the committed snapshot.
+      - run: pnpm figma diff
+      # Retirements, removals and listings must agree with the base: nothing disappears without a committed
+      # retirement or orphan-ledger record. Keyless and secret-free: it reads only the two checkouts.
+      - name: Check retirements and removals against the base
+        if: github.event_name == 'pull_request'
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/figma-base" HEAD^1
+          # Scope, not tolerance: with no library in the base there is nothing to guard against yet.
+          if [ ! -d "$RUNNER_TEMP/figma-base/library/ui/figma" ]; then
+            echo "first introduction of library/ui; no base ledger to compare"
+            exit 0
+          fi
+          git -C "$RUNNER_TEMP/figma-base" lfs pull
+          pnpm figma guard --base "$RUNNER_TEMP/figma-base/library/ui" --run-kind developer
+      - run: pnpm figma promotion-verify
+      - run: pnpm figma review-manifest
+      - run: git diff --exit-code -- figma/review/src/review/catalog.json figma/review/public/dcl-ui-review/icons
+      - run: pnpm review:build
+      - run: pnpm review:check
+      - name: Scan the Review build before upload
+        env:
+          FIGMA_FILE_KEY: ${{ secrets.FIGMA_FILE_KEY }}
+        run: node figma/key-guard.mjs --no-worktree --no-range --path library/ui/figma/review/review-dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ui-review-${{ github.event.pull_request.number || github.sha }}
+          path: library/ui/figma/review/review-dist
+          retention-days: 14
