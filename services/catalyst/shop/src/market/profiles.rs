@@ -11,6 +11,9 @@
 //! fails the request closed (503) rather than serving cosmetics nobody
 //! proved. The one exception is a linked third-party item whose chain read
 //! failed: only that profile's linked items are left out.
+//!
+//! `POST /lambdas/profiles/metadata` serves the compact projection of the same
+//! processed profiles, as asset-bundle-registry's `/profiles/metadata`.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -19,14 +22,13 @@ use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::content::queries::active_entity_docs_by_pointers;
 
-use super::graph::{self, normalize_urn};
+use super::graph;
 use super::third_party;
-use super::{MarketplaceState, SharedState, bad_request, internal_server_error, not_found};
+use super::{MarketplaceState, SharedState, bad_request, lambdas_internal_error, not_found};
 
 /// Bounds staleness for changes that arrive on chain rather than through a
 /// deployment (a wearable or name bought, sold or transferred).
@@ -34,6 +36,7 @@ pub const PROFILE_CACHE_TTL: Duration = Duration::from_secs(10);
 pub const PROFILE_CACHE_MAX_ENTRIES: usize = 50_000;
 const PROFILE_BATCH_MAX: usize = 50;
 const PROFILE_IDS_MAX: usize = 1000;
+const METADATA_IDS_MSG: &str = "The ids property must be an array of non-empty strings";
 /// Profiles whose linked third-party items are checked at once.
 const THIRD_PARTY_CONCURRENCY: usize = 8;
 const MISSING_PROFILE_IDS_MSG: &str =
@@ -46,12 +49,11 @@ fn is_base_wearable(urn: &str) -> bool {
     urn.contains("base-avatars")
 }
 
-/// Base-emote classification from @dcl/schemas 27.2.0 `isBaseEmote`.
+/// `profiles.ts` `isBaseEmote`: a substring test for the off-chain base
+/// emotes only; a `base-scene-emotes` URN goes through ownership like any
+/// other item (and nobody owns one).
 pub fn is_base_emote(urn: &str) -> bool {
-    let parts: Vec<_> = urn.split(':').collect();
-    parts.len() == 5
-        && parts[1] == "decentraland"
-        && matches!(parts[3], "base-emotes" | "base-scene-emotes")
+    urn.contains("urn:decentraland:off-chain:base-emotes")
 }
 
 /// Pointers `default*` hold the curated default looks: they own nothing.
@@ -86,7 +88,7 @@ fn collect_ownership_urns(metadata: &Value) -> Vec<String> {
                     continue;
                 }
                 let (urn, _token_id) = split_urn_and_token_id(wearable);
-                to_check.push(normalize_urn(urn));
+                to_check.push(urn.to_string());
             }
         }
         if let Some(emotes) = avatar_obj.get("emotes").and_then(|e| e.as_array()) {
@@ -98,7 +100,7 @@ fn collect_ownership_urns(metadata: &Value) -> Vec<String> {
                     continue;
                 }
                 let (urn, _token_id) = split_urn_and_token_id(emote_urn);
-                to_check.push(normalize_urn(urn));
+                to_check.push(urn.to_string());
             }
         }
     }
@@ -107,18 +109,19 @@ fn collect_ownership_urns(metadata: &Value) -> Vec<String> {
 
 /// An owned item as `profiles.ts` re-emits it: `<owned urn>:<the named token
 /// id, or the first one held>`; `None` when the URN is not held or the named
-/// token is not among the held ones.
+/// token is not among the held ones. The URN must equal the inventory's
+/// exactly, as lamb2's `Map` lookup does: the subgraphs spell L1 `ethereum`,
+/// so a `mainnet` spelling is not owned.
 fn owned_item(item: &str, owned: &OwnedTokens) -> Option<String> {
     let (urn, token_id) = split_urn_and_token_id(item);
-    let urn = normalize_urn(urn);
-    let held = owned.get(&urn)?;
+    let held = owned.get(urn)?;
     let token = match token_id {
         Some(t) => Some(held.iter().find(|h| *h == t)?),
         None => held.first(),
     };
     Some(match token {
         Some(token) => format!("{urn}:{token}"),
-        None => urn,
+        None => urn.to_string(),
     })
 }
 
@@ -283,6 +286,10 @@ fn link_url_regex() -> &'static regex::Regex {
     })
 }
 
+/// `profiles.ts` `sanitizeLinks`: a link whose `url` passes `LinkUrl.validate`
+/// is kept as deployed, else one whose URL-decoded `url` passes is kept with
+/// the decoded value; nothing else is checked (this node never fetches these
+/// URLs, so a loopback or private host is kept as lamb2 keeps it).
 pub fn sanitize_links(metadata: &mut Value) {
     let Some(avatars) = metadata.get_mut("avatars").and_then(|v| v.as_array_mut()) else {
         return;
@@ -297,13 +304,12 @@ pub fn sanitize_links(metadata: &mut Value) {
             let Some(url) = link.get("url").and_then(|u| u.as_str()) else {
                 continue;
             };
-            if re.is_match(url) && crate::http::is_safe_http_url(url) {
+            if re.is_match(url) {
                 sanitized.push(link.clone());
                 continue;
             }
             if let Ok(decoded) = urlencoding::decode(url)
                 && re.is_match(&decoded)
-                && crate::http::is_safe_http_url(&decoded)
             {
                 let mut link_clone = link.clone();
                 if let Some(obj) = link_clone.as_object_mut() {
@@ -533,7 +539,7 @@ enum Failure {
 impl Failure {
     fn into_response(self) -> Response {
         match self {
-            Failure::Db => internal_server_error(),
+            Failure::Db => lambdas_internal_error(),
             // lamb2's retryable 503 envelope (`ServiceOverloadedError`).
             Failure::Reader(e) => {
                 tracing::warn!(error = %e, "profiles: ownership reader failed");
@@ -547,17 +553,13 @@ impl Failure {
     }
 }
 
-/// Per-id hits are reused across id sets; only misses are fetched; answer in request order.
+/// Per-id hits are reused across id sets; only misses are fetched; answer
+/// `(pointer, profile)` in request order, each pointer once.
 async fn profiles_via_cache(
     state: &MarketplaceState,
     pointers: &[String],
-) -> Result<Vec<Value>, Failure> {
-    let mut wanted: Vec<String> = Vec::with_capacity(pointers.len());
-    for pointer in pointers {
-        if !wanted.contains(pointer) {
-            wanted.push(pointer.clone());
-        }
-    }
+) -> Result<Vec<(String, Value)>, Failure> {
+    let wanted = unique_pointers(pointers);
     let mut found: HashMap<String, Value> = Default::default();
     let mut missing: Vec<String> = Vec::new();
     for pointer in &wanted {
@@ -580,10 +582,40 @@ async fn profiles_via_cache(
         }
     }
     Ok(wanted
-        .iter()
-        .filter_map(|p| found.get(p))
-        .filter(|v| !v.is_null())
-        .cloned()
+        .into_iter()
+        .filter_map(|p| {
+            let profile = found.remove(&p).filter(|v| !v.is_null())?;
+            Some((p, profile))
+        })
+        .collect())
+}
+
+/// Processed profiles of the lowercased `pointers` as `(pointer, profile)`,
+/// in request order and each once: through the per-id cache for a small
+/// batch, one database read and ownership pass for a larger one.
+async fn processed_profiles(
+    state: &MarketplaceState,
+    pointers: &[String],
+) -> Result<Vec<(String, Value)>, Failure> {
+    if pointers.len() <= PROFILE_BATCH_MAX {
+        return profiles_via_cache(state, pointers).await;
+    }
+    let entities = active_entities(state, pointers)
+        .await
+        .map_err(|()| Failure::Db)?;
+    let mut by_pointer: HashMap<String, Value> = HashMap::new();
+    for (pointer, profile) in process_and_cache_profiles(state, pointers, &entities)
+        .await
+        .map_err(Failure::Reader)?
+    {
+        by_pointer.entry(pointer).or_insert(profile);
+    }
+    Ok(unique_pointers(pointers)
+        .into_iter()
+        .filter_map(|p| {
+            let profile = by_pointer.remove(&p)?;
+            Some((p, profile))
+        })
         .collect())
 }
 
@@ -614,12 +646,6 @@ async fn fetch_profile_for_id(
     Ok(if cached.is_null() { None } else { Some(cached) })
 }
 
-#[derive(Debug, Deserialize)]
-pub struct ProfilesRequest {
-    #[serde(default)]
-    pub ids: Option<Vec<String>>,
-}
-
 #[derive(Debug, PartialEq, Eq)]
 enum ProfileIdsCheck {
     MissingOrEmpty,
@@ -627,7 +653,10 @@ enum ProfileIdsCheck {
     TooMany,
 }
 
-fn validate_profile_ids(ids: Option<&[String]>) -> ProfileIdsCheck {
+/// `profilesHandler`: `ids` must be a non-empty array (anything else,
+/// including a body that is not an object, is the "No profile ids" 400) of
+/// at most 1000 entries.
+fn validate_profile_ids(ids: Option<&[Value]>) -> ProfileIdsCheck {
     match ids {
         None | Some([]) => ProfileIdsCheck::MissingOrEmpty,
         Some(ids) if ids.len() > PROFILE_IDS_MAX => ProfileIdsCheck::TooMany,
@@ -686,16 +715,23 @@ pub async fn profiles(
     headers: HeaderMap,
     body: axum::body::Bytes,
 ) -> Response {
-    let body: ProfilesRequest = match serde_json::from_slice(&body) {
+    // lamb2 reads `(await request.json()).ids`: a body that is not JSON, or
+    // is `null`, throws before any check and is its bare 500.
+    let body: Value = match serde_json::from_slice(&body) {
+        Ok(Value::Null) | Err(_) => return lambdas_internal_error(),
         Ok(b) => b,
-        Err(e) => return bad_request(&format!("Failed to parse the request body as JSON: {e}")),
     };
-    if let Some(resp) = early_profiles_response(validate_profile_ids(body.ids.as_deref())) {
+    let ids = body.get("ids").and_then(Value::as_array).map(Vec::as_slice);
+    if let Some(resp) = early_profiles_response(validate_profile_ids(ids)) {
         return resp;
     }
-    let ids = body
-        .ids
-        .expect("validate_profile_ids guarantees a non-empty id list");
+    // lamb2 sends the ids to the content server as they are; one that is not
+    // a non-empty string fails that server's body schema (catalyst
+    // `activeEntitiesBodySchema`), and `getProfiles` turns the failure into
+    // `[]` for the whole batch.
+    let Some(ids) = string_ids(ids.unwrap_or_default()) else {
+        return Json(json!([])).into_response();
+    };
 
     let modified_since: Option<i64> = headers
         .get("if-modified-since")
@@ -707,13 +743,15 @@ pub async fn profiles(
     let cache_eligible = modified_since.is_none() && pointers.len() <= PROFILE_BATCH_MAX;
     if cache_eligible {
         return match profiles_via_cache(&state, &pointers).await {
-            Ok(profiles) => Json(Value::Array(profiles)).into_response(),
+            Ok(profiles) => {
+                Json(profiles.into_iter().map(|(_, p)| p).collect::<Vec<_>>()).into_response()
+            }
             Err(f) => f.into_response(),
         };
     }
     let entities = match active_entities(&state, &pointers).await {
         Ok(e) => e,
-        Err(()) => return internal_server_error(),
+        Err(()) => return lambdas_internal_error(),
     };
 
     if let Some(threshold) = modified_since
@@ -728,6 +766,96 @@ pub async fn profiles(
             Json(Value::Array(profiles)).into_response()
         }
         Err(e) => Failure::Reader(e).into_response(),
+    }
+}
+
+/// Compact form of a processed profile, the shape of `getMetadata` in
+/// `decentraland/asset-bundle-registry@f9578d4a`
+/// (`src/logic/sync/profile-sanitizer.ts`), in its key order: the first
+/// avatar's `hasClaimedName`, `name` and `nameColor` as they are (absent stays
+/// absent, `null` stays `null`) and its face snapshot.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileMetadata {
+    pointer: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    has_claimed_name: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name_color: Option<Value>,
+    thumbnail_url: String,
+}
+
+/// `None` for a profile without an avatar, where upstream's mapper would throw.
+pub fn profile_metadata(pointer: &str, profile: &Value) -> Option<ProfileMetadata> {
+    let avatar = profile.get("avatars")?.as_array()?.first()?;
+    let field = |key: &str| avatar.get(key).cloned();
+    Some(ProfileMetadata {
+        pointer: pointer.to_string(),
+        has_claimed_name: field("hasClaimedName"),
+        name: field("name"),
+        name_color: field("nameColor"),
+        thumbnail_url: avatar
+            .pointer("/avatar/snapshots/face256")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
+/// Every id a non-empty string, or `None`.
+fn string_ids(ids: &[Value]) -> Option<Vec<String>> {
+    ids.iter()
+        .map(|id| id.as_str().filter(|s| !s.is_empty()).map(str::to_string))
+        .collect()
+}
+
+/// The request's pointers lowercased, each once, in request order, as
+/// asset-bundle-registry's `getProfiles` keys them.
+fn unique_pointers(ids: &[String]) -> Vec<String> {
+    let mut seen = HashSet::with_capacity(ids.len());
+    ids.iter()
+        .map(|id| id.to_lowercase())
+        .filter(|pointer| seen.insert(pointer.clone()))
+        .collect()
+}
+
+/// `getProfilesMetadataHandler` of asset-bundle-registry, served from this
+/// node's processed profiles (the same ownership filtering and claimed-name
+/// check as `profiles`, so the compact and full answers agree). `ids` must be
+/// an array of non-empty strings; a body that is not JSON is the bare 500
+/// `request.json()` throws into. Unlike the registry, which reads precomputed
+/// rows, every id here costs an ownership pass, so the distinct ids are
+/// capped at `PROFILE_IDS_MAX` as on `/lambdas/profiles`.
+pub async fn profiles_metadata(
+    State(state): State<SharedState>,
+    body: axum::body::Bytes,
+) -> Response {
+    let Ok(body) = serde_json::from_slice::<Value>(&body) else {
+        return lambdas_internal_error();
+    };
+    let Some(ids) = body
+        .get("ids")
+        .and_then(Value::as_array)
+        .and_then(|ids| string_ids(ids))
+    else {
+        return bad_request(METADATA_IDS_MSG);
+    };
+    let pointers = unique_pointers(&ids);
+    if pointers.len() > PROFILE_IDS_MAX {
+        return early_profiles_response(ProfileIdsCheck::TooMany)
+            .expect("TooMany is an early response");
+    }
+    match processed_profiles(&state, &pointers).await {
+        Ok(found) => {
+            let compact: Vec<ProfileMetadata> = found
+                .iter()
+                .filter_map(|(pointer, profile)| profile_metadata(pointer, profile))
+                .collect();
+            Json(compact).into_response()
+        }
+        Err(f) => f.into_response(),
     }
 }
 
@@ -849,18 +977,20 @@ mod tests {
         assert_eq!(split_urn_and_token_id(tp).1, None);
     }
 
+    /// `profiles.ts` `isBaseEmote` is a substring test for the base emotes.
     #[test]
-    fn schemas_27_2_base_emote_classification() {
-        for collection in ["base-emotes", "base-scene-emotes"] {
-            assert!(is_base_emote(&format!(
-                "urn:decentraland:off-chain:{collection}:wave"
-            )));
+    fn base_emotes_are_the_off_chain_base_emotes_only() {
+        for urn in [
+            "urn:decentraland:off-chain:base-emotes:wave",
+            "urn:decentraland:off-chain:base-emotes:wave:extra",
+            "urn:decentraland:off-chain:base-emotes-fake:wave",
+        ] {
+            assert!(is_base_emote(urn), "{urn}");
         }
         for urn in [
+            "urn:decentraland:off-chain:base-scene-emotes:wave",
             "urn:decentraland:off-chain:base-avatars:wave",
-            "urn:decentraland:off-chain:base-scene-emotes-fake:wave",
-            "urn:decentraland:off-chain:base-scene-emotes:wave:extra",
-            "urn:other:off-chain:base-scene-emotes:wave",
+            "URN:decentraland:off-chain:base-emotes:wave",
             "invalid",
         ] {
             assert!(!is_base_emote(urn), "{urn}");
@@ -911,8 +1041,10 @@ mod tests {
                 "emotes": [
                     {"slot": 0, "urn": "handsair"},
                     {"slot": 1, "urn": "urn:decentraland:off-chain:base-emotes:wave", "extra": 1},
-                    {"slot": 2, "urn": "urn:decentraland:mainnet:collections-v1:0xc:dance", "extra": 1},
-                    {"slot": 3, "urn": "urn:decentraland:matic:collections-v2:0xx:1"}
+                    {"slot": 2, "urn": "urn:decentraland:ethereum:collections-v1:0xc:dance", "extra": 1},
+                    {"slot": 3, "urn": "urn:decentraland:matic:collections-v2:0xx:1"},
+                    {"slot": 4, "urn": "urn:decentraland:mainnet:collections-v1:0xc:dance"},
+                    {"slot": 5, "urn": "urn:decentraland:off-chain:base-scene-emotes:clap"}
                 ]
             }
         })];
@@ -923,7 +1055,8 @@ mod tests {
                 {"slot": 0, "urn": "handsair"},
                 {"slot": 1, "urn": "urn:decentraland:off-chain:base-emotes:wave", "extra": 1},
                 {"slot": 2, "urn": "urn:decentraland:ethereum:collections-v1:0xc:dance:3"},
-            ])
+            ]),
+            "the `mainnet` spelling and a base-scene emote are not owned"
         );
     }
 
@@ -953,7 +1086,7 @@ mod tests {
         assert_eq!(
             collect_ownership_urns(&metadata),
             vec![
-                "urn:decentraland:ethereum:collections-v1:0xc:hat",
+                "urn:decentraland:mainnet:collections-v1:0xc:hat",
                 "urn:decentraland:matic:collections-v2:0xabc:0",
                 "urn:decentraland:matic:collections-v2:0xabc:9",
             ]
@@ -1015,37 +1148,105 @@ mod tests {
         );
     }
 
+    /// `sanitizeLinks`: `LinkUrl.validate`, then the decoded retry; the
+    /// host is not checked.
     #[test]
-    fn links_keep_only_safe_http_targets() {
+    fn links_keep_what_link_url_accepts() {
         let mut m = json!({ "avatars": [{ "links": [
             { "title": "ok", "url": "https://decentraland.org/x" },
             { "title": "encoded", "url": "https%3A%2F%2Fdecentraland.org%2Fy" },
             { "title": "js", "url": "javascript:alert(1)" },
             { "title": "internal", "url": "http://127.0.0.1/" },
+            { "title": "single label", "url": "HTTP://intranet" },
+            { "title": "space", "url": "https://ab c" },
             { "title": "none" }
         ] }] });
         sanitize_links(&mut m);
-        let links = m["avatars"][0]["links"].as_array().unwrap();
-        assert_eq!(links.len(), 2, "{links:?}");
-        assert_eq!(links[1]["url"], "https://decentraland.org/y");
+        let urls: Vec<&str> = m["avatars"][0]["links"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l["url"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            urls,
+            [
+                "https://decentraland.org/x",
+                "https://decentraland.org/y",
+                "http://127.0.0.1/",
+                "HTTP://intranet",
+            ]
+        );
+    }
+
+    fn metadata_input(with_color: bool) -> Value {
+        let mut avatar = json!({
+            "ethAddress": "0xabc", "userId": "0xabc", "name": "Ryumi", "hasClaimedName": true,
+            "avatar": { "snapshots": {
+                "face256": "https://cdn.example/entities/bafy/face.png",
+                "body": "https://cdn.example/entities/bafy/body.png"
+            } }
+        });
+        if with_color {
+            avatar["nameColor"] = json!({ "r": 1.0, "g": 0.5, "b": 0.0 });
+        }
+        json!({ "avatars": [avatar], "timestamp": 1 })
+    }
+
+    fn metadata_json(pointer: &str, profile: &Value) -> String {
+        serde_json::to_string(&profile_metadata(pointer, profile).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn profile_metadata_projects_the_first_avatar_in_upstream_key_order() {
+        // The top-level keys follow `getMetadata`; `nameColor` is passed
+        // through as a `Value`, whose keys serde_json writes sorted.
+        assert_eq!(
+            metadata_json("0xabc", &metadata_input(true)),
+            r#"{"pointer":"0xabc","hasClaimedName":true,"name":"Ryumi","nameColor":{"b":0.0,"g":0.5,"r":1.0},"thumbnailUrl":"https://cdn.example/entities/bafy/face.png"}"#
+        );
+    }
+
+    #[test]
+    fn profile_metadata_leaves_absent_fields_absent_and_null_null() {
+        assert_eq!(
+            metadata_json("0xabc", &metadata_input(false)),
+            r#"{"pointer":"0xabc","hasClaimedName":true,"name":"Ryumi","thumbnailUrl":"https://cdn.example/entities/bafy/face.png"}"#
+        );
+        let bare = json!({ "avatars": [{ "ethAddress": "0xabc", "nameColor": null }] });
+        assert_eq!(
+            metadata_json("0xabc", &bare),
+            r#"{"pointer":"0xabc","nameColor":null,"thumbnailUrl":""}"#
+        );
+    }
+
+    #[test]
+    fn profile_metadata_skips_a_profile_without_avatars() {
+        assert!(profile_metadata("0xabc", &json!({ "avatars": [], "timestamp": 1 })).is_none());
+    }
+
+    #[test]
+    fn unique_pointers_lowercase_and_keep_the_first() {
+        let ids: Vec<String> = ["0xB", "0xa", "0xb", "0xA"].map(String::from).to_vec();
+        assert_eq!(unique_pointers(&ids), ["0xb", "0xa"]);
     }
 
     #[test]
     fn validate_profile_ids_boundaries() {
         assert_eq!(validate_profile_ids(None), ProfileIdsCheck::MissingOrEmpty);
-        let empty: Vec<String> = Vec::new();
+        let empty: Vec<Value> = Vec::new();
         assert_eq!(
             validate_profile_ids(Some(&empty)),
             ProfileIdsCheck::MissingOrEmpty
         );
-        let ids = vec!["0xabc".to_string()];
+        let ids = vec![json!("0xabc")];
         assert_eq!(validate_profile_ids(Some(&ids)), ProfileIdsCheck::Valid);
-        let ids: Vec<String> = (0..PROFILE_IDS_MAX).map(|i| format!("0x{i}")).collect();
+        let ids: Vec<Value> = (0..PROFILE_IDS_MAX).map(|i| json!(i)).collect();
         assert_eq!(validate_profile_ids(Some(&ids)), ProfileIdsCheck::Valid);
-        let ids: Vec<String> = (0..=PROFILE_IDS_MAX).map(|i| format!("0x{i}")).collect();
+        let ids: Vec<Value> = (0..=PROFILE_IDS_MAX).map(|i| json!(i)).collect();
         assert_eq!(validate_profile_ids(Some(&ids)), ProfileIdsCheck::TooMany);
         const { assert!(PROFILE_BATCH_MAX < PROFILE_IDS_MAX) };
-        let ids: Vec<String> = (0..=PROFILE_BATCH_MAX).map(|i| format!("0x{i}")).collect();
+        let ids: Vec<Value> = (0..=PROFILE_BATCH_MAX).map(|i| json!(i)).collect();
         assert_eq!(
             validate_profile_ids(Some(&ids)),
             ProfileIdsCheck::Valid,
@@ -1067,8 +1268,53 @@ mod tests {
                 .status(),
             StatusCode::BAD_REQUEST
         );
-        let ids = vec!["0xabc".to_string()];
+        let ids = vec![json!("0xabc")];
         assert!(early_profiles_response(validate_profile_ids(Some(&ids))).is_none());
+    }
+
+    async fn post_profiles(body: &'static str) -> (StatusCode, Value) {
+        let state = super::super::tests::support::state_without_db();
+        let resp = profiles(
+            State(state),
+            HeaderMap::new(),
+            axum::body::Bytes::from_static(body.as_bytes()),
+        )
+        .await;
+        let status = resp.status();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    /// `profilesHandler`: `request.json()` throws on a body that is not JSON
+    /// and `null.ids` throws, both the bare 500; any other body without an
+    /// `ids` array is the "No profile ids" 400; a non-string id fails the
+    /// content read, which `getProfiles` answers `[]`.
+    #[tokio::test]
+    async fn malformed_profile_bodies_answer_as_lamb2() {
+        let internal = json!({ "error": "Internal Server Error" });
+        let missing = json!({ "error": "Bad request", "message": MISSING_PROFILE_IDS_MSG });
+        let empty = json!([]);
+        for (body, status, expected) in [
+            ("not json", StatusCode::INTERNAL_SERVER_ERROR, &internal),
+            ("", StatusCode::INTERNAL_SERVER_ERROR, &internal),
+            ("null", StatusCode::INTERNAL_SERVER_ERROR, &internal),
+            ("5", StatusCode::BAD_REQUEST, &missing),
+            ("[]", StatusCode::BAD_REQUEST, &missing),
+            (r#"{"ids":"0xabc"}"#, StatusCode::BAD_REQUEST, &missing),
+            (
+                r#"{"ids":{"0":"0xabc"}}"#,
+                StatusCode::BAD_REQUEST,
+                &missing,
+            ),
+            (r#"{"ids":["0xabc",5]}"#, StatusCode::OK, &empty),
+            (r#"{"ids":[null]}"#, StatusCode::OK, &empty),
+            (r#"{"ids":[""]}"#, StatusCode::OK, &empty),
+        ] {
+            let got = post_profiles(body).await;
+            assert_eq!((got.0, &got.1), (status, expected), "{body}");
+        }
     }
 
     #[test]

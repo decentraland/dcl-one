@@ -1,0 +1,32 @@
+{
+  "description": "POST /lambdas/crypto/validate-signature with a lone SIGNER whose address is the signed message: @dcl/crypto takes it as the final authority.",
+  "request": {
+    "method": "POST",
+    "path": "/lambdas/crypto/validate-signature",
+    "query": {},
+    "headers": {},
+    "body": {
+      "authChain": [
+        {
+          "type": "SIGNER",
+          "payload": "0x0000000000000000000000000000000000000001",
+          "signature": ""
+        }
+      ],
+      "signedMessage": "0x0000000000000000000000000000000000000001"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "valid": true,
+      "ownerAddress": "0x0000000000000000000000000000000000000001"
+    }
+  },
+  "captured_from": "services/catalyst/tests/fixtures/conformance/content-lambdas/captures/lambdas-profiles/LP-28-single-signer-match.json (peer.decentraland.org, lamb2 02a37f5)",
+  "captured_at": "2026-11-04T00:00:00Z",
+  "volatile_paths": []
+}
