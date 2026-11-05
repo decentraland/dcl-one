@@ -823,3 +823,41 @@ async fn a_withheld_hash_is_absent_to_every_byte_read_and_present_to_the_probes(
 
     let _ = tokio::fs::remove_dir_all(&tmp).await;
 }
+
+#[tokio::test]
+async fn store_file_links_a_spooled_file_and_leaves_the_source() {
+    let (tmp, storage) = fresh("storefile").await;
+    let scratch = storage.scratch_dir();
+    assert_eq!(scratch, tmp.join("tmp"));
+    tokio::fs::create_dir_all(&scratch).await.unwrap();
+    let src = scratch.join("part-0");
+    tokio::fs::write(&src, b"spooled bytes").await.unwrap();
+
+    storage.store_file(HASH, &src).await.unwrap();
+    assert_eq!(
+        storage.retrieve(HASH).await.unwrap().unwrap(),
+        Bytes::from_static(b"spooled bytes")
+    );
+    assert!(src.is_file(), "the caller owns the spooled source");
+    {
+        use std::os::unix::fs::MetadataExt;
+        let stored = storage.file_path(HASH).await.unwrap().unwrap();
+        assert_eq!(
+            std::fs::metadata(&stored).unwrap().ino(),
+            std::fs::metadata(&src).unwrap().ino(),
+            "same filesystem: linked, not copied"
+        );
+    }
+    let mut ids = storage.all_file_ids(None);
+    let mut listed = Vec::new();
+    while let Some(id) = ids.next().await.unwrap() {
+        listed.push(id);
+    }
+    assert_eq!(
+        listed,
+        strings(&[HASH]),
+        "no staging file, nothing from tmp"
+    );
+
+    let _ = tokio::fs::remove_dir_all(&tmp).await;
+}

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::Json;
 use axum::extract::{Path, State};
 use serde::Serialize;
@@ -90,14 +92,57 @@ pub struct AboutResponse {
     pub comms: AboutComms,
 }
 
+/// Whether this node's own content (and lambdas, same process) can serve a
+/// world's visitors: the shared sync state, read locally. `None` (an external
+/// `CONTENT_URL`, or tests) has no local signal and reports healthy.
+#[derive(Clone, Default)]
+pub struct ContentReadiness(Option<Arc<crate::content::SyncStatus>>);
+
+impl ContentReadiness {
+    pub fn local(sync: Arc<crate::content::SyncStatus>) -> Self {
+        Self(Some(sync))
+    }
+
+    /// Unhealthy only when the content sync failed; a bootstrapping node or one with sync off still serves worlds.
+    pub fn content_healthy(&self) -> bool {
+        self.0.as_ref().is_none_or(|s| s.state_name() != "Failed")
+    }
+}
+
+impl std::fmt::Debug for ContentReadiness {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("ContentReadiness")
+            .field(&self.0.as_ref().map(|s| s.state_name()))
+            .finish()
+    }
+}
+
 /// GET /world/{world_name}/about.
 pub async fn get_about(
     State(state): State<SharedState>,
     Path(world_name): Path<String>,
 ) -> AppResult<Json<AboutResponse>> {
+    if !state
+        .names
+        .check_name_deny_list(&state.pool, &world_name)
+        .await
+    {
+        return Err(AppError::not_found(format!(
+            "World \"{world_name}\" has no scene deployed."
+        )));
+    }
     let mut about = queries::world_about(&state.pool, &world_name).await?;
     if about.scenes.is_empty() && state.fill_world(&world_name).await {
         about = queries::world_about(&state.pool, &world_name).await?;
+    }
+    // The live NAME holder's quota block, not the stored owner's.
+    if let (Some(policy), Some(world)) = (state.policy(), about.world.as_mut())
+        && let Ok(name) = crate::comms::world_identity::WorldName::parse(&world.name)
+    {
+        world.quota_blocked_since = policy
+            .quota_blocked_since(&name)
+            .await
+            .map_err(|e| AppError::Internal(format!("quota block: {e}")))?;
     }
     Ok(Json(build_about(&state.settings, &world_name, about)?))
 }
@@ -115,9 +160,19 @@ pub fn build_about(
             "World \"{world_name}\" has no scenes deployed."
         )));
     }
-    if let Some(since) = world.as_ref().and_then(|w| w.blocked_since) {
+    let (disabled, quota) = world
+        .as_ref()
+        .map_or((None, None), |w| (w.blocked_since, w.quota_blocked_since));
+    if let Some(since) = disabled.or(quota)
+        && crate::comms::access::world_blocked(disabled, quota, chrono::Utc::now().naive_utc())
+    {
+        let cause = if disabled.is_some() {
+            "by an operator"
+        } else {
+            "as it exceeded its allowed storage space"
+        };
         return Err(AppError::Unauthorized(format!(
-            "World \"{world_name}\" has been blocked since {} as it exceeded its allowed storage space.",
+            "World \"{world_name}\" has been blocked since {} {cause}.",
             since
                 .and_utc()
                 .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
@@ -181,9 +236,11 @@ pub fn build_about(
         cfg.comms_online && cfg.sfu.is_alive(),
     );
 
+    // Lambdas run in this process: only content's sync state can make the node unhealthy.
+    let content_healthy = cfg.content_readiness.content_healthy();
     Ok(AboutResponse {
-        healthy: true,
-        accepting_users: true,
+        healthy: content_healthy,
+        accepting_users: content_healthy,
         spawn_coordinates,
         configurations: AboutConfigurations {
             network_id: cfg.network_id,
@@ -210,7 +267,7 @@ pub fn build_about(
         },
         content: AboutContentStatus {
             synchronization_status: "Syncing".to_string(),
-            healthy: true,
+            healthy: content_healthy,
             public_url: cfg.content_public_url.clone(),
         },
         lambdas: AboutServiceStatus {
@@ -515,6 +572,7 @@ mod tests {
                 world: Some(WorldRecord {
                     name: "mirrored.dcl.eth".into(),
                     blocked_since: None,
+                    quota_blocked_since: None,
                     spawn_coordinates: None,
                     skybox_time: Some(43200),
                     single_player: false,
@@ -646,6 +704,7 @@ mod tests {
             Some(WorldRecord {
                 name: "mine.dcl.eth".into(),
                 blocked_since: None,
+                quota_blocked_since: None,
                 spawn_coordinates: None,
                 skybox_time: None,
                 single_player: true,
@@ -698,6 +757,7 @@ mod tests {
                         .unwrap()
                         .naive_utc(),
                 ),
+                quota_blocked_since: None,
                 spawn_coordinates: None,
                 skybox_time: None,
                 single_player: false,
@@ -705,9 +765,77 @@ mod tests {
             }),
             scenes: vec![scene(Some("https://up.example"))],
         };
-        let err = build_about(&cfg, "b.dcl.eth", blocked).unwrap_err();
+        let err = build_about(&cfg, "b.dcl.eth", blocked.clone()).unwrap_err();
         assert!(
-            matches!(err, AppError::Unauthorized(m) if m.contains("blocked since 2023-11-14T22:13:20.000Z"))
+            matches!(err, AppError::Unauthorized(m) if m.ends_with("blocked since 2023-11-14T22:13:20.000Z by an operator."))
         );
+
+        // A quota block refuses only after its two-day grace.
+        let quota = |age: chrono::TimeDelta| {
+            let mut about = blocked.clone();
+            let world = about.world.as_mut().unwrap();
+            world.blocked_since = None;
+            world.quota_blocked_since = Some(chrono::Utc::now().naive_utc() - age);
+            about
+        };
+        assert!(build_about(&cfg, "b.dcl.eth", quota(chrono::TimeDelta::hours(47))).is_ok());
+        let err = build_about(&cfg, "b.dcl.eth", quota(chrono::TimeDelta::hours(49))).unwrap_err();
+        assert!(
+            matches!(err, AppError::Unauthorized(m) if m.contains("as it exceeded its allowed storage space"))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_deny_listed_world_is_404_before_any_read() {
+        use tower::ServiceExt;
+        let dir = std::env::temp_dir().join(format!(
+            "catalyst-worlds-about-deny-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let state = Arc::new(crate::WorldsState::new(
+            sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap(),
+            Arc::new(catalyst_storage::Storage::from_config(&dir).await.unwrap()),
+            super::super::Settings::for_tests("https://worlds.example.org"),
+            None,
+            crate::http::Outbound::for_tests(),
+        ));
+        state.names.seed(vec!["banned".to_string()]);
+        let resp = crate::router(state)
+            .oneshot(
+                axum::http::Request::get("/world/Banned.dcl.eth/about")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), 404);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            body["error"],
+            "World \"Banned.dcl.eth\" has no scene deployed."
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn health_follows_the_local_content_sync_state() {
+        let sync = Arc::new(crate::content::SyncStatus::default());
+        let cfg = super::super::Settings {
+            content_readiness: ContentReadiness::local(sync.clone()),
+            ..super::super::Settings::for_tests("https://worlds.example.org")
+        };
+        let bootstrapping = local_about(&cfg, None);
+        assert!(bootstrapping.healthy && bootstrapping.accepting_users);
+        assert!(bootstrapping.content.healthy);
+        sync.set_state(crate::content::SyncState::Syncing);
+        let syncing = local_about(&cfg, None);
+        assert!(syncing.healthy && syncing.accepting_users && syncing.content.healthy);
+        sync.set_state(crate::content::SyncState::Failed);
+        let failed = local_about(&cfg, None);
+        assert!(!failed.healthy && !failed.accepting_users);
+        assert!(!failed.content.healthy && failed.lambdas.healthy);
     }
 }

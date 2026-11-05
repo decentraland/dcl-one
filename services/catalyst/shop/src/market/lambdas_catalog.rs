@@ -1097,9 +1097,12 @@ pub async fn nfts_collections(State(state): State<SharedState>) -> Response {
 }
 
 /// `GET /lambdas/outfits/{address}`, `/outfits/{address}`: the address's
-/// outfits entity, keeping only the outfits it may wear
-/// (`sanitize_outfits`), with `namesForExtraSlots` (the names it owns);
-/// an address without names keeps only slots 0-4.
+/// outfits entity (through the read-through, as profiles), keeping only the
+/// outfits it may wear (`sanitize_outfits`), with `namesForExtraSlots` (the
+/// names it owns); an address without names keeps only slots 0-4. An entity
+/// without outfits is answered as deployed (decentraland/lamb2's
+/// `getOutfits`). A failed content read is a 500, a failed ownership or
+/// names read lamb2's 502 `FetcherError`.
 pub async fn outfits(State(state): State<SharedState>, Path(id): Path<String>) -> Response {
     let address = id.to_lowercase();
     let st = state.clone();
@@ -1108,29 +1111,31 @@ pub async fn outfits(State(state): State<SharedState>, Path(id): Path<String>) -
         .outfits
         .get_or_fetch(address.clone(), || async move {
             let pointer = format!("{address}:outfits");
-            let names_leg = async {
-                if st.settings.marketplace_subgraph_url.is_none()
-                    || !super::is_valid_eth_address(&address)
-                {
-                    return Vec::new();
-                }
-                match super::graph::owned_names(&st.index, &address).await {
-                    Ok(names) => names.iter().map(|n| n.name.clone()).collect(),
-                    Err(e) => {
-                        tracing::warn!(error = %e, "outfits: owned names reader failed");
-                        Vec::new()
-                    }
-                }
-            };
-            let (docs, owned_names) = tokio::join!(
-                active_entity_docs_by_pointers(&st.pool, std::slice::from_ref(&pointer)),
-                names_leg
-            );
-            let Some(mut entity) = docs.ok().and_then(|d| d.first().and_then(|d| d.to_value()))
-            else {
+            let entities = super::profiles::active_entities(&st, std::slice::from_ref(&pointer))
+                .await
+                .map_err(|()| super::internal_server_error())?;
+            let Some(mut entity) = entities.into_iter().next() else {
                 return Ok::<Value, Response>(Value::Null);
             };
-            sanitize_outfits(&st, &address, &mut entity).await?;
+            let has_outfits = entity
+                .pointer("/metadata/outfits")
+                .and_then(Value::as_array)
+                .is_some_and(|o| !o.is_empty());
+            if !has_outfits {
+                return Ok(entity);
+            }
+            // `owned_names` answers empty without a marketplace subgraph or
+            // for an id that is not an address.
+            let (sanitized, names) = tokio::join!(
+                sanitize_outfits(&st, &address, &mut entity),
+                super::graph::owned_names(&st.index, &address)
+            );
+            sanitized?;
+            let owned_names: Vec<String> = names
+                .map_err(|e| super::third_party::fetch_error(&address, &e))?
+                .iter()
+                .map(|n| n.name.clone())
+                .collect();
             apply_names(&mut entity, &owned_names);
             Ok(entity)
         })
@@ -1268,19 +1273,28 @@ async fn sanitize_outfits(
     Ok(())
 }
 
+/// lamb2's metadata: `{ outfits, namesForExtraSlots }` only, the slots 0-4
+/// first and the extra slots (> 4) after them only for a name owner; an
+/// outfit without a numeric slot is in neither group.
 fn apply_names(entity: &mut Value, owned_names: &[String]) {
-    if let Some(metadata) = entity.get_mut("metadata").and_then(|m| m.as_object_mut()) {
-        if owned_names.is_empty()
-            && let Some(outfits) = metadata.get_mut("outfits").and_then(|o| o.as_array_mut())
-        {
-            outfits.retain(|o| {
-                o.get("slot")
-                    .and_then(|s| s.as_i64())
-                    .is_none_or(|s| s <= 4)
-            });
-        }
-        metadata.insert("namesForExtraSlots".into(), json!(owned_names));
+    let Some(metadata) = entity.get_mut("metadata").filter(|m| m.is_object()) else {
+        return;
+    };
+    let outfits = metadata
+        .get_mut("outfits")
+        .and_then(Value::as_array_mut)
+        .map(std::mem::take)
+        .unwrap_or_default();
+    let slot = |o: &Value| o.get("slot").and_then(Value::as_f64);
+    let (normal, extra): (Vec<Value>, Vec<Value>) = outfits
+        .into_iter()
+        .filter(|o| slot(o).is_some())
+        .partition(|o| slot(o).is_some_and(|s| s <= 4.0));
+    let mut kept = normal;
+    if !owned_names.is_empty() {
+        kept.extend(extra);
     }
+    *metadata = json!({ "outfits": kept, "namesForExtraSlots": owned_names });
 }
 
 #[cfg(test)]
@@ -1607,15 +1621,21 @@ mod tests {
         );
     }
 
+    /// lamb2's `getOutfits`: slots 0-4 first, the extra ones after them for a
+    /// name owner only, an outfit without a slot dropped, other keys dropped.
     #[test]
     fn outfits_without_names_keep_the_first_five_slots() {
-        let mut e = json!({ "metadata": { "outfits": [{ "slot": 0 }, { "slot": 4 }, { "slot": 5 }, { "slot": 9 }, {}] } });
+        let mut e = json!({ "metadata": { "outfits": [{ "slot": 0 }, { "slot": 4 }, { "slot": 5 }, { "slot": 9 }, {}], "extra": 1 } });
         apply_names(&mut e, &[]);
-        assert_eq!(e["metadata"]["outfits"].as_array().unwrap().len(), 3);
-        assert_eq!(e["metadata"]["namesForExtraSlots"], json!([]));
-        let mut e = json!({ "metadata": { "outfits": [{ "slot": 0 }, { "slot": 7 }] } });
+        assert_eq!(
+            e["metadata"],
+            json!({ "outfits": [{ "slot": 0 }, { "slot": 4 }], "namesForExtraSlots": [] })
+        );
+        let mut e = json!({ "metadata": { "outfits": [{ "slot": 7 }, { "slot": 0 }, {}] } });
         apply_names(&mut e, &["alice".to_string()]);
-        assert_eq!(e["metadata"]["outfits"].as_array().unwrap().len(), 2);
-        assert_eq!(e["metadata"]["namesForExtraSlots"], json!(["alice"]));
+        assert_eq!(
+            e["metadata"],
+            json!({ "outfits": [{ "slot": 0 }, { "slot": 7 }], "namesForExtraSlots": ["alice"] })
+        );
     }
 }

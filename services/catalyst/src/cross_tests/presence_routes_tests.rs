@@ -279,7 +279,7 @@ async fn both_public_mounts_keep_real_worker_source_time_through_outage_expiry_r
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert_eq!(
             absent,
-            json!({"ok":false,"error":"Wallet 0xabc is not connected to any world","message":"Wallet 0xabc is not connected to any world"})
+            json!({"error":"Not Found","message":"Wallet 0xabc is not connected to any world"})
         );
     }
     mode.store(0, Ordering::SeqCst);
@@ -325,7 +325,7 @@ async fn both_mounts_return_retryable_503_for_recovered_multiworld_wallet_withou
         assert_eq!(headers[header::RETRY_AFTER], "1");
         assert_eq!(
             body,
-            json!({"ok":false,"error":"Connected world could not be decided; retry shortly.","message":"Connected world could not be decided; retry shortly."})
+            json!({"error":"Service Unavailable","message":"Connected world could not be decided; retry shortly."})
         );
         assert_eq!(
             mounted_read(&app, &format!("{prefix}/live-data")).await.2["data"],
