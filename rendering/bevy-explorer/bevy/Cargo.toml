@@ -76,6 +76,9 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(docsrs_dep)'] }
 unsafe_code = "deny"
 unsafe_op_in_unsafe_fn = "warn"
 unused_qualifications = "warn"
+# dcl-one: as a path dependency these are no longer capped; see bevy-fork.md.
+dead_code = "allow"
+mismatched_lifetime_syntaxes = "allow"
 
 # Unfortunately, cargo does not currently support overriding workspace lints
 # inside a particular crate. See https://github.com/rust-lang/cargo/issues/13157
