@@ -1,0 +1,23 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "HEAD",
+    "path": "/content/Contents/bafkreibykjawac3ea2nh7bxguwi4v3xxtjgcmrisfujxzar3pbb3f4dcsa",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/octet-stream",
+      "content-length": "2527",
+      "accept-ranges": "bytes",
+      "access-control-expose-headers": "ETag, Content-Range, Accept-Ranges, Content-Length",
+      "cache-control": "public,max-age=31536000,s-maxage=31536000,immutable",
+      "etag": "\"bafkreibykjawac3ea2nh7bxguwi4v3xxtjgcmrisfujxzar3pbb3f4dcsa\"",
+      "vary": "accept-encoding"
+    },
+    "body": ""
+  }
+}

@@ -3,6 +3,8 @@
 **/target/
 **/__pycache__/
 **/.DS_Store
+# IDE state (JetBrains writes .idea/ next to whichever folder is opened as a project).
+**/.idea/
 /.cache/
 /state/
 /credentials/
