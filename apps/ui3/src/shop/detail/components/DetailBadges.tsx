@@ -16,13 +16,27 @@ const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
  * The item page's creator line: the avatar (or a coloured initial) and "By {name}", linking to the creator's
  * storefront. `size="sm"` is the cart line's: a 20px avatar and the bare name (upstream's `hidePrefix`).
  */
+/**
+ * A badge still resolving (upstream's SkBadge: a 48px circle and a 96px name bar), so the meta row keeps its
+ * height and the name does not jump from an address to the profile's name when it lands.
+ */
+export function BadgeSkeleton({ testId }: { testId: string }) {
+  return (
+    <div className={styles.sk} aria-hidden data-testid={testId}>
+      <span className={styles.skAva} />
+      <span className={styles.skName} />
+    </div>
+  );
+}
+
 export function DetailCreator({ address, size = "md", className }: { address?: string; size?: "md" | "sm"; className?: string }) {
-  const { profile } = useCreatorProfile(address);
+  const { profile, loading } = useCreatorProfile(address);
   const face = profile?.picture ?? null;
   // A face URL can 404 (an undeployed snapshot); fall back to the initial, and retry when the URL changes.
   const [broken, setBroken] = useState(false);
   useEffect(() => setBroken(false), [face]);
   if (!address) return null;
+  if (loading && size === "md") return <BadgeSkeleton testId="creator-loading" />;
   const own = profile?.name?.trim();
   return (
     <Link className={className ? `${styles.root} ${className}` : styles.root} to={`${SHOP_BASE}/items/creator/${address}`} data-testid="creator" data-size={size}>

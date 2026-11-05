@@ -4,7 +4,7 @@ Conformance backlog for the lambdas names, LAND and parcel-permission endpoints.
 
 - Upstream lambdas: `decentraland/lamb2` @ `02a37f5d88fb895339c20e84c2470be68cdf3f57` (2026-10-21), served in production under `/lambdas/*`.
 - dcl-one: `dcl-one-conformance` @ `37e91aed` (origin/main, 2026-11-04), Rust workspace `services/catalyst`.
-- Method: static reading only. Nothing was built or run, so nothing in this file is verified. Every verdict is "read".
+- Method: static reading only. Nothing was built or run, so nothing in this file is verified. Every verdict is "read", except where a row cites a capture under [`captures/lambdas-land/`](captures/lambdas-land/): those state what the production peer, its subgraphs and the marketplace API answered on 2026-11-04 ([`captures/README.md`](captures/README.md)).
 - `@dcl/schemas` `Parcel.validate` comes from a local `@dcl/schemas` 23.1.0 copy (`dist/core/parcel-validation.js`, `dist/core/parcel-exceptions.js`). lamb2 pins `^26.5.0`. The exception blocks are assumed to still exist in 26.x; this was not read in 26.x. dcl-one's `services/catalyst/shared/src/parcel.rs:1-13` states the same four ranges for 26.5.0.
 
 Upstream files read:
@@ -87,7 +87,7 @@ Counts: 6 endpoints. MATCH 0, GAP 0, DIVERGENT 6, MISSING 0.
 
 | Trigger | Status | Body | Headers | Upstream | dcl-one | Verdict |
 |---|---|---|---|---|---|---|
-| OK, marketplace API answers (primary) | 200 | `{"elements":[{"name":"alice","contractAddress":"0x00000000000000000000000000000000000000aa","tokenId":"123","price":"1000000000000000000"}],"totalAmount":1,"pageNum":1,"pageSize":100}`. `price` is a string, or absent when there is no order. Page and total come from the API (`limit`/`offset`). | JSON | `names-handler.ts:13-31`, `marketplace-api-fetcher.ts:474-512` | `user_items.rs:364-379` (subgraph only) | DIVERGENT: dcl-one never calls the marketplace API. Element order is subgraph `id asc`, not the API's order. The API's `total` is replaced by the subgraph count. |
+| OK, marketplace API answers (primary) | 200 | `{"elements":[{"name":"alice","contractAddress":"0x00000000000000000000000000000000000000aa","tokenId":"123","price":"1000000000000000000"}],"totalAmount":1,"pageNum":1,"pageSize":100}`. `price` is a string, or absent when there is no order. Page and total come from the API (`limit`/`offset`). | JSON | `names-handler.ts:13-31`, `marketplace-api-fetcher.ts:474-512` | `user_items.rs:364-379` (subgraph only) | DIVERGENT in source: dcl-one never calls the marketplace API. For one address holding 16 names, the API, lamb2 and the subgraph's `id asc` gave the same order; the API's `total` (16) equalled the count; the API's `price: null` reached the client as an absent key, as dcl-one's `OwnedName` does (`captures/lambdas-land/LL-7-*.json`). |
 | OK, marketplace API failed, subgraph fallback | 200 | Same fields, but `elements` is **every** name: the handler does not slice, because `fetchNames` ignores `pagination` on the graph leg (`fetch-names.ts:58-72`). `totalAmount` = count. `pageNum` and `pageSize` are echoed. | JSON | `fetch-names.ts:58`, `names-handler.ts:13` | `user_items.rs:371-378` slices JS-style | DIVERGENT (upstream quirk; dcl-one slices) |
 | `pageSize` > 1000 | 400 | `{"error":"Bad request","message":"max allowed pageSize is 1000"}` | | `pagination.ts:12` | The same 400 (`user_items.rs:355`; fixture `shop/src/market/fixtures/users-names-400-pagesize-over-1000.json`) | MATCH |
 | `pageSize=abc` | 200 | `elements: []` (slice NaN), `"pageSize": null` | | `pagination.ts:5` | 200 with default 100 | DIVERGENT (P2) |
@@ -155,7 +155,7 @@ Undefined keys are omitted. `x` and `y` are present only when `category == "parc
 | `name` | Subgraph `nft.name`; null is omitted | `fetch-lands.ts:69` | Index: `shop.land_data.name`. Reader: `nft.name`. Omitted when null (`lambdas_land.rs:112`). | MATCH (shape) |
 | `x`/`y` | Strings from `parcel.x/y` | `fetch-lands.ts:65` | Strings from `token_right.x/y` or `searchParcelX/Y`, parcels only (`lambdas_land.rs:115`) | MATCH |
 | `description` | `data.description`; null when the data record exists with a null description; absent when there is no data | `fetch-lands.ts:67` | `""` when the data record exists with a null description (`lambdas_land.rs:231`, `services/catalyst/chain-index/src/graph.rs:691`) | DIVERGENT (P2) |
-| `price` | Subgraph `activeOrder.price` (wei string). The subgraph's active order does not test expiry. | `fetch-lands.ts:76` | Index: `shop.nft_order` with `status='open' AND expires_at > now AND seller = owner` (`lambdas_land.rs:80`). Reader: `activeOrder.price`. | DIVERGENT on the index path: expired or foreign-seller orders are dropped |
+| `price` | Subgraph `activeOrder.price` (wei string). The marketplace subgraph keeps `activeOrder` on an expired open order and on an order whose status became `transferred` (placed by a previous owner); lamb2 emits `price` for both (`captures/lambdas-land/LL-13-*.json`). | `fetch-lands.ts:76` | Index: `shop.nft_order` with `status='open' AND expires_at > now AND seller = owner` (`lambdas_land.rs:80`). Reader: `activeOrder.price`. | DIVERGENT on the index path: expired, transferred and foreign-seller orders are dropped |
 | `image` | Subgraph `nft.image` (production: `https://api.decentraland.org/v1/{parcels/x/y,estates/id}/map.png`; dcl-one's test in `lambdas_land.rs` assumes the same) | `fetch-lands.ts:77` | Reader: the subgraph's `image` as is (`services/catalyst/chain-index/src/graph.rs:685`). Index: synthesized as `<LAND_IMAGE_BASE_URL>/v1/parcels/{x}/{y}/map.png` or `/v1/estates/{id}/map.png`; `NODE_POSTURE=mirror` sets the base to `https://api.decentraland.org` (`services/catalyst/config/src/posture.rs:469`), other postures to the node's own `/api` | MATCH under `mirror` (index path: read, not captured) |
 | Order | `orderBy: transferredAt desc` per 1000-row page, paged by `id_gt` (so the order is only page-local beyond 1000) | `fetch-lands.ts:9` | Index: latest `Transfer` event (block, log) desc, then contract and token (`lambdas_land.rs:86`). Reader: full sort by `transferredAt` desc (`services/catalyst/chain-index/src/graph.rs:762`). | MATCH for ≤1000 lands. Tie-break differs (P2). |
 | `pageSize` > 1000 | 200 with the requested size | `lands-handler.ts:10` | 200 with the requested size | MATCH |
@@ -187,7 +187,7 @@ Estate vs parcel: in both trees a parcel inside an estate belongs on chain to th
 | Trigger | Status | Upstream | dcl-one | Verdict |
 |---|---|---|---|---|
 | OK, from the LAND subgraph | 200 `{elements,totalAmount,pageNum,pageSize}`. `parcels(where:{updateOperator})`, `orderBy: id asc`, every page fetched (`fetch-permissions.ts:37`). | `user-lands-permissions-handler.ts:15` | Index not ready + `LAND_SUBGRAPH_URL`: same query (`services/catalyst/chain-index/src/land_graph.rs:90`), every page (`land_graph.rs:24`, the runaway guard) | MATCH |
-| OK, from the index | 200 | n/a | `token_right` where `update_operator = lower($addr)`, `ORDER BY token_id` (numeric), `LIMIT/OFFSET` (`services/catalyst/land-authz/src/resolve.rs:387`). `id` = decimal LAND token id; `owner` = the parcel's direct owner, lowercased; `updateOperator` = the queried address. | DIVERGENT unless the land-manager subgraph `Parcel.id` is the decimal token id and sorts the same way (the id format is not in the sources read; needs a capture). A string `id` order differs from a numeric order. |
+| OK, from the index | 200 | n/a | `token_right` where `update_operator = lower($addr)`, `ORDER BY token_id` (numeric), `LIMIT/OFFSET` (`services/catalyst/land-authz/src/resolve.rs:387`). `id` = decimal LAND token id; `owner` = the parcel's direct owner, lowercased; `updateOperator` = the queried address. | DIVERGENT: the land-manager subgraph `Parcel.id` is the token id in lower-case hex (`0x1000000000000000000000000000000009` for 16,9), sorted as a string, and lamb2 passes it through (`captures/lambdas-land/LL-17-*.json`). |
 | Estate-level update operator | Not listed (parcel query only) | | Not listed (LAND registry rows only) | MATCH |
 | `pageSize` > 1000 | Honoured | | Honoured | MATCH |
 | non-positive / NaN paging | JS `slice` semantics, as in `/lands` | | Clamped | DIVERGENT (P2) |
@@ -238,7 +238,7 @@ Estate handling is the same in both trees: the owner, operator and approved-for-
 |---|---|---|---|---|---|
 | Parcel known | 200 | `{"owner":"0x…01","operator":null,"updateOperator":"0x…02","updateManagers":["0x…03"],"approvedForAll":[]}` | `parcel-rights-fetcher.ts:166-210` | Index (`routes.rs:160-168`) or land-manager subgraph (`routes.rs:147-155`, the same query as `services/catalyst/chain-index/src/land_graph.rs:64`) | MATCH (shape) |
 | `updateManagers` / `approvedForAll` order | | Insertion order of the authorization log (a JS `Map`, timestamps ascending) | `parcel-rights-fetcher.ts:120-163` | Subgraph path: log order (`land_graph.rs:145`). Index path: the position of the approval that opened the current grant, its first approval after its latest revocation (`GRANTED_SINCE`, `resolve.rs:185`) | MATCH (block and log order stand in for the subgraph's `timestamp` order) |
-| Cleared legs | | Whatever the land-manager subgraph stores for a cleared leg (null or the zero address; not in the sources read) | | Index: `NULLIF(…, zero)`, so `null` (`services/catalyst/land-authz/src/indexer.rs:959-960`) | Unconfirmed: needs a capture |
+| Cleared legs | | The land-manager subgraph stores `null` for a leg never set and the zero address for a leg cleared on chain; lamb2 passes the zero address through: `"updateOperator":"0x0000000000000000000000000000000000000000"` (`captures/lambdas-land/LL-18-*.json`) | | Index: `NULLIF(…, zero)`, so `null` (`services/catalyst/land-authz/src/indexer.rs:959-960`) | DIVERGENT on the index path for a cleared leg |
 | More than 1000 authorizations | All pages fetched | `parcel-rights-fetcher.ts:123` | Subgraph path: every page (the runaway guard). Index: no cap. | MATCH |
 | Exception-block parcel | 200 / 404 | | | Accepted (`routes.rs:121-127`) | MATCH |
 | Not found (no estate or parcel row) | 404 | `{"error":"Bad Request","message":"Parcel or estate rights not found for x: X, y: Y"}` | `parcel-rights-fetcher.ts:189` | `routes.rs:156` / `routes.rs:169` | MATCH |
@@ -283,6 +283,7 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
 7. **LL-7: Names come from the subgraph only.** Endpoint: `/users/:a/names`.
    - Gap: no marketplace API leg, and the order is subgraph id order.
    - Expected: page, order and total as the marketplace-server `/v1/users/:a/names` returns them (`decentraland/lamb2:src/adapters/marketplace-api-fetcher.ts:474`).
+   - Capture: for one address with 16 names, the API order equals the subgraph's `id asc`, `total` equals the count and a null `price` is dropped by lamb2 (`captures/lambdas-land/LL-7-marketplace-api-names.json`, `LL-7-lambdas-names.json`, `LL-7-subgraph-names.json`). dcl-one's subgraph answer matches that sample. One sample does not establish the API's ordering rule.
    - Change: serve from dcl-one's own `/v1/users/{address}/names` logic (`services/catalyst/shop/src/market/mod.rs:1048`) or from the `shop.nft` index, with the marketplace API's ordering, in `user_items.rs:364`.
    - Severity: P1.
 8. **LL-8: Names rejects invalid addresses.** Endpoint: `/users/:a/names`.
@@ -310,9 +311,10 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
     - Change: default `LAND_IMAGE_BASE_URL` in `services/catalyst/config/src/config.rs:530`, or read `image` in `QUERY_OWNED_LANDS` (`services/catalyst/chain-index/src/graph.rs:663`).
     - Severity: P1.
 13. **LL-13: `price` filter on the index path.** Endpoint: `/users/:a/lands`.
-    - Gap: dcl-one drops expired orders and orders by a seller other than the owner.
+    - Gap: dcl-one drops orders that are not `open`, expired orders, and orders by a seller other than the owner.
     - Expected: the subgraph's `activeOrder.price`, which does not test expiry (`decentraland/lamb2:src/logic/fetch-elements/fetch-lands.ts:76`).
-    - Change: `services/catalyst/shop/src/market/lambdas_land.rs:80`, after a capture confirms whether the subgraph clears `activeOrder` on expiry or transfer.
+    - Capture: the marketplace subgraph clears neither. Open orders that expired in 2026 stay the parcel's `activeOrder`, and lamb2 emits their `price` (`captures/lambdas-land/LL-13-subgraph-expired-open-orders.json`, `LL-13-lands-expired-order.json`). Orders that a previous owner placed have status `transferred` and stay the `activeOrder` after the sale; lamb2 emits their `price` too (`LL-13-subgraph-active-order-status.json`, `LL-13-lands-transferred-order.json`).
+    - Change: `services/catalyst/shop/src/market/lambdas_land.rs:80`: follow the subgraph's `activeOrder`, which survives expiry and transfer (and, in one sampled row, cancellation). Read the marketplace subgraph's mappings for the exact rule before replacing the filter.
     - Severity: P1.
 14. **LL-14: `description` when the data record has a null description.** Endpoint: `/users/:a/lands`.
     - Gap: dcl-one answers `""`.
@@ -332,12 +334,14 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
 17. **LL-17: `lands-permissions` `id` and order on the index path.**
     - Gap: `id` is the decimal token id, ordered numerically.
     - Expected: the land-manager subgraph `Parcel.id` in subgraph `id asc` order (`decentraland/lamb2:src/logic/fetch-elements/fetch-permissions.ts:4-21`).
-    - Change: capture one real response first, then `services/catalyst/land-authz/src/routes.rs:224-233` and `services/catalyst/land-authz/src/resolve.rs:397`.
+    - Capture: `id` is the token id as lower-case `0x` hex without leading zeros (`0x1000000000000000000000000000000009` is 16,9; `0x16ffffffffffffffffffffffffffffffed` is 22,-19), and elements come in ascending order of that id (`captures/lambdas-land/LL-17-lands-permissions.json`, `LL-17-subgraph-parcels-id-order.json`). Every id in the `lands-permissions` capture has the same length, so it does not tell string order from numeric order; the subgraph sample, where x=16 sorts first, points to string order but does not prove it.
+    - Change: emit that hex id and sort by it as a string, in `services/catalyst/land-authz/src/routes.rs:224-233` and `services/catalyst/land-authz/src/resolve.rs:397`.
     - Severity: P1.
 18. **LL-18: Cleared operator legs.** Endpoint: `/operators`.
-    - Gap: unconfirmed whether the subgraph returns `null` or the zero address for a cleared leg; dcl-one returns `null`.
+    - Gap: dcl-one returns `null` for a cleared leg.
     - Expected: the value the land-manager subgraph stores (`decentraland/lamb2:src/adapters/parcel-rights-fetcher.ts:55-56`).
-    - Change: capture, then `services/catalyst/land-authz/src/indexer.rs:959-960` if needed.
+    - Capture: a leg never set is `null`; a leg cleared on chain is the zero address, and `/parcels/16/65/operators` answers `"updateOperator":"0x0000000000000000000000000000000000000000"` (`captures/lambdas-land/LL-18-*.json`).
+    - Change: keep the zero address for a leg that was set and then cleared (`services/catalyst/land-authz/src/indexer.rs:959-960`).
     - Severity: P1.
 19. **LL-19: Lenient coordinate parsing.** Endpoints: `/operators`, `/permissions`.
     - Gap: `"1.5"`, `"12abc"` and `"0x10"` answer 400.

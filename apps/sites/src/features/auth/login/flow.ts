@@ -11,6 +11,7 @@ import { connectWallet, detectWallets, getConnectedAddress, selectWallet } from 
 export type ConnectionState =
   | "connecting"
   | "signing"
+  | "validating"
   | "redirecting"
   | "error"
   | "error-generic"
@@ -18,7 +19,7 @@ export type ConnectionState =
   | "error-signature-unsupported"
   | "error-connection-failed";
 
-export const LOADING_STATES: readonly ConnectionState[] = ["connecting", "signing", "redirecting"];
+export const LOADING_STATES: readonly ConnectionState[] = ["connecting", "signing", "validating", "redirecting"];
 
 type WalletFailure = { code?: unknown; message?: unknown; name?: unknown };
 
@@ -80,11 +81,12 @@ export function hasMetaMask(): boolean {
  */
 export async function signInWithBrowserWallet(
   rdns: string | null,
+  expirationMs: number,
   onPhase: (phase: "connecting" | "signing") => void,
 ): Promise<AuthIdentity> {
   selectWallet(rdns);
   onPhase("connecting");
   const signer = (await getConnectedAddress()) ?? (await connectWallet());
   onPhase("signing");
-  return createIdentityFor(signer);
+  return createIdentityFor(signer, { expirationMs });
 }
