@@ -56,6 +56,14 @@
   --shop-radius-card: 12px;
   --shop-radius-btn: 8px;
   --shop-radius-pill: 50px;
+  --shop-radius-tile: 16px;
+  /* darkSurface.ts and theme.ts tokens the dark popovers and loading cards draw from. */
+  --shop-hairline: rgba(255, 255, 255, 0.12);
+  --shop-raised: rgba(255, 255, 255, 0.06);
+  --shop-glass-text: rgba(255, 255, 255, 0.7);
+  --shop-name-link: #a0abff;
+  --shop-loading-wash: rgba(143, 66, 219, 0.8);
+  --shop-loading-wash-faint: rgba(143, 66, 219, 0.3);
   --shop-field: radial-gradient(61.64% 109.58% at 50% 54.49%, #952dc6 0%, #7c27a8 25%, #642089 50%, #4b1a6b 75%, #32134c 100%);
   --shop-gutter: 54px;
   --shop-nav-h: 92px;

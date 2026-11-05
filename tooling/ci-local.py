@@ -169,7 +169,8 @@ def image_system():
 
 def pre_push_steps(changed):
     steps = list(STRUCTURE)
-    development = triggered('development.yml', changed)
+    # Pull requests run it unfiltered (its CI gate always reports); what it tests is its push.paths.
+    development = triggered('development.yml', changed, event='push')
     images = triggered('apis-sites-images.yml', changed)
     gateway = triggered('gateway-images.yml', changed)
     if gateway:
