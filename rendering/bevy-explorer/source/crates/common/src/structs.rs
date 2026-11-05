@@ -1719,6 +1719,20 @@ pub enum GlobalCrdtStateUpdate {
     CameraFov(f32),
 }
 
+/// The animation graph nodes an avatar or a glTF container exposes: the default clip, and the
+/// named clips with the time each was last played. Scenes drive them through their animator,
+/// avatars through emote playback.
+#[derive(Component, Default)]
+pub struct Clips {
+    pub default: Option<AnimationNodeIndex>,
+    pub named: HashMap<String, (AnimationNodeIndex, f32)>,
+}
+
+/// A remote player's avatar; comms spawns it beside `ForeignPlayer`. Avatar systems that
+/// treat remote and local emotes differently read this instead of the comms type.
+#[derive(Component, Default, Debug, Clone, Copy)]
+pub struct ForeignAvatar;
+
 // used for responses to scenes which require strict monotonic timestamps
 // by convention we use T = the protobuf struct containing the timestamp (e.g. PbPointerEventsResult, PbTriggerAreaResult)
 #[derive(Resource)]

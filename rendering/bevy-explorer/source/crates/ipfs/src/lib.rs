@@ -8,6 +8,7 @@ pub use priority_gate::{PriorityGate, Ticket};
 #[cfg(feature = "ipfs_debug")]
 mod ipfs_debug;
 pub mod ipfs_path;
+pub mod partition;
 mod request_metrics;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod web_cache;

@@ -15,28 +15,31 @@ use bevy::{
     prelude::*,
     scene::InstanceId,
 };
+#[cfg(feature = "explorer")]
 use bevy_console::ConsoleCommand;
 use collectibles::{
     ext::AvatarEmotesExt, Collectible, CollectibleData, CollectibleError, CollectibleManager,
     Emote, EmoteExtraData, EmoteUrn,
 };
+#[cfg(feature = "explorer")]
+use common::rpc::{RpcCall, RpcCallEvent, RpcEventSender, RpcOrigin};
 use common::{
-    rpc::{RpcCall, RpcCallEvent, RpcEventSender, RpcOrigin},
     sets::SceneSets,
     structs::{
-        AudioEmitter, AudioType, AvatarDynamicState, EmoteCommand, EmoteLifecycle,
-        EmoteLifecycleEvent, EmoteLifecycleSource, EmoteMask, MoveKind, OneShotAudio,
-        PlayerModifiers, PrimaryUser, SceneDrivenAnim, SceneDrivenAnimationFeedback,
+        AudioEmitter, AudioType, AvatarDynamicState, Clips, EmoteCommand, EmoteLifecycle,
+        EmoteLifecycleEvent, EmoteLifecycleSource, EmoteMask, ForeignAvatar, MoveKind,
+        OneShotAudio, PlayerModifiers, PrimaryUser, SceneDrivenAnim, SceneDrivenAnimationFeedback,
         SceneDrivenAnimationFeedbackState,
     },
     util::TryPushChildrenEx,
 };
-use comms::{
-    broadcast, global_crdt::ForeignPlayer, profile::CurrentUserProfile, BroadcastTarget, Transport,
-};
+#[cfg(feature = "explorer")]
+use comms::{broadcast, profile::CurrentUserProfile, BroadcastTarget, Transport};
+#[cfg(feature = "explorer")]
 use console::DoAddConsoleCommand;
 use ipfs::IpfsAssetServer;
-use scene_runner::{permissions::Permission, update_world::animation::Clips};
+#[cfg(feature = "explorer")]
+use scene_runner::permissions::Permission;
 
 use crate::{process_avatar, AvatarDefinition};
 
@@ -154,7 +157,6 @@ impl Plugin for AvatarAnimationPlugin {
         app.add_systems(
             Update,
             (
-                (handle_trigger_emotes, broadcast_emote).before(animate),
                 (animate, play_current_emote, play_masked_emote)
                     .chain()
                     .after(process_avatar),
@@ -162,13 +164,23 @@ impl Plugin for AvatarAnimationPlugin {
             )
                 .in_set(SceneSets::PostLoop),
         );
-        app.add_console_command::<EmoteConsoleCommand, _>(emote_console_command);
+        #[cfg(feature = "explorer")]
+        {
+            app.add_systems(
+                Update,
+                (handle_trigger_emotes, broadcast_emote)
+                    .before(animate)
+                    .in_set(SceneSets::PostLoop),
+            );
+            app.add_console_command::<EmoteConsoleCommand, _>(emote_console_command);
+        }
     }
 }
 
 #[derive(Component, Default)]
 pub struct LastEmoteCommand(EmoteCommand);
 
+#[cfg(feature = "explorer")]
 #[allow(clippy::type_complexity)]
 fn handle_trigger_emotes(
     mut commands: Commands,
@@ -230,6 +242,7 @@ fn handle_trigger_emotes(
 // one-shot can carry its resolved duration and a loop is known. A start goes out on first appearance
 // (or a switch to a different urn); a looping emote also sends an explicit stop when it ends —
 // one-shots end on the receiver's own timer (and the Pulse server's), so they need no stop.
+#[cfg(feature = "explorer")]
 #[allow(clippy::too_many_arguments)]
 fn broadcast_emote(
     q: Query<(&ActiveEmote, &MaskedEmote), With<PrimaryUser>>,
@@ -485,7 +498,7 @@ fn animate(
         Option<&EmoteCommand>,
         &GlobalTransform,
         Option<(&mut ActiveEmote, &mut AvatarAnimState, &mut MaskedEmote)>,
-        Option<&ForeignPlayer>,
+        Option<&ForeignAvatar>,
         Option<&mut LastEmoteCommand>,
         Option<Ref<SceneDrivenAnim>>,
     )>,
@@ -1969,6 +1982,7 @@ fn play_masked_emote(
 }
 
 /// emote
+#[cfg(feature = "explorer")]
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/emote")]
 struct EmoteConsoleCommand {
@@ -1981,6 +1995,7 @@ struct EmoteConsoleCommand {
     upper_body: bool,
 }
 
+#[cfg(feature = "explorer")]
 fn emote_console_command(
     mut commands: Commands,
     mut input: ConsoleCommand<EmoteConsoleCommand>,

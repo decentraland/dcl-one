@@ -1,8 +1,8 @@
 # Avatar preview renderer: a standalone wasm build of the Explorer's avatar look, for the
 # web preview the shop and the creator hub embed. Its own workspace, lockfile, target and
 # release; the avatar, collectible, material and asset code comes from the Explorer crates by
-# path, with the same engine fork pins, so the look stays the Explorer's (see
-# .agent-work/avatar-preview-bevy/research.md until the ADR lands).
+# path, with the same engine fork pins, so the look stays the Explorer's
+# (docs/adr/2026-11-05-avatar-preview-renderer.md).
 [workspace]
 members = ["."]
 resolver = "2"
@@ -26,6 +26,9 @@ console = { path = "../bevy-explorer/source/crates/console" }
 ipfs = { path = "../bevy-explorer/source/crates/ipfs" }
 collectibles = { path = "../bevy-explorer/source/crates/collectibles" }
 scene_material = { path = "../bevy-explorer/source/crates/scene_material" }
+# the avatar renderer without the Explorer glue (players, scenes, comms)
+avatar = { path = "../bevy-explorer/source/crates/avatar", default-features = false }
+dcl_component = { path = "../bevy-explorer/source/crates/dcl_component" }
 # the scene material registers imposter-bake render commands; their draw functions come from here
 boimp = { git = "https://github.com/robtfm/boimp", branch = "feat/composite-bake-via-storage-texture" }
 

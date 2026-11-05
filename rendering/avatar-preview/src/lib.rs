@@ -1,90 +1,80 @@
 //! Avatar preview renderer: the Explorer's avatar look as a standalone, single-threaded wasm
-//! module. Size-and-feasibility spike: boots the shared Explorer plugins (embedded shaders,
-//! scene material, collectibles over ipfs) and renders one base body with the toon material.
-
-use std::f32::consts::PI;
+//! module. It boots the shared Explorer plugins (embedded shaders, scene material, collectibles
+//! over ipfs, the avatar renderer) and renders one avatar from a body shape and wearable urns.
 
 use assets::EmbedAssetsPlugin;
+use avatar::{AvatarRenderPlugin, AvatarSelection, AvatarShape};
 use bevy::{
     asset::UnapprovedPathMode,
-    gltf::GltfLoaderSettings,
     core_pipeline::core_3d::{AlphaMask3d, Opaque3d, Transparent3d},
     prelude::*,
-    render::{
-        mesh::{skinning::SkinnedMesh, MeshTag},
-        primitives::Aabb,
-        render_phase::DrawFunctions,
-        RenderApp,
-    },
+    render::{render_phase::DrawFunctions, RenderApp},
     window::WindowResolution,
 };
 use boimp::bake::ImposterPhaseItem;
-use collectibles::{
-    base_wearables,
-    wearables::{Wearable, WearableUrn},
-    CollectibleError, CollectibleManager, CollectiblesPlugin,
-};
-use common::structs::{AppConfig, PreviewMode, ShowOutOfBounds};
+use collectibles::{base_wearables, wearables::WearableUrn, CollectiblesPlugin};
+use common::structs::{AppConfig, AvatarDynamicState, PreviewMode, ShowOutOfBounds};
+use dcl_component::proto_components::sdk::components::PbAvatarShape;
 use ipfs::{EndpointConfig, IpfsIoPlugin, IpfsResource, ServerAbout};
-use scene_material::{
-    SceneBoundPlugin, SceneMaterial, SceneMaterialExt, SCENE_MATERIAL_NO_DITHERING_MESH_TAG,
-    SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG, SCENE_MATERIAL_TOON_MESH_TAG,
-};
+use scene_material::SceneBoundPlugin;
 
 /// What the page asked for.
 #[derive(Resource, Clone, Debug)]
 pub struct PreviewRequest {
     pub body_shape: WearableUrn,
+    pub wearables: Vec<String>,
     pub content_url: String,
     pub lambdas_url: String,
 }
 
-/// Diagnostic switches from the page (`?flags=plain,cube`).
+/// Diagnostic switches from the page (`?flags=cube`).
 #[derive(Resource, Default, Debug)]
 pub struct PreviewFlags {
-    /// keep the glTF's standard materials instead of the Explorer's scene material
-    pub plain: bool,
     /// spawn a reference cube at the origin
     pub cube: bool,
-    /// strip the skin component from the body meshes (renders the bind pose, no skinning)
-    pub noskin: bool,
-    /// reload the body glTF through bevy's loader with default asset usage (bypasses the
-    /// wearable loader's main-world-only meshes)
-    pub direct: bool,
 }
 
-/// The root of the spawned avatar, with the glTF it was spawned from (for material names).
+/// The root of the previewed avatar.
 #[derive(Component)]
-struct PreviewAvatar(Handle<Gltf>);
-
-/// Explorer default avatar colours (`avatar::AvatarShape::from(&UserProfile)`), linear.
-const DEFAULT_SKIN: Color = Color::linear_rgb(0.6, 0.462, 0.356);
-const DEFAULT_HAIR: Color = Color::linear_rgb(0.283, 0.142, 0.0);
-
-/// A mesh whose material has been swapped for the Explorer's scene material.
-#[derive(Component)]
-struct Retagged;
+struct PreviewAvatar;
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn start(
     canvas: String,
     body_shape: Option<String>,
+    wearables: Option<String>,
     base_domain: Option<String>,
     flags: Option<String>,
 ) {
     console_error_panic_hook::set_once();
     let flags = flags.unwrap_or_default();
     let flags = PreviewFlags {
-        plain: flags.split(',').any(|f| f == "plain"),
         cube: flags.split(',').any(|f| f == "cube"),
-        noskin: flags.split(',').any(|f| f == "noskin"),
-        direct: flags.split(',').any(|f| f == "direct"),
     };
-    run(&canvas, body_shape.as_deref(), base_domain.as_deref(), flags);
+    let wearables = wearables
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|urn| !urn.is_empty())
+        .map(str::to_owned)
+        .collect();
+    run(
+        &canvas,
+        body_shape.as_deref(),
+        wearables,
+        base_domain.as_deref(),
+        flags,
+    );
 }
 
-pub fn run(canvas: &str, body_shape: Option<&str>, base_domain: Option<&str>, flags: PreviewFlags) {
+pub fn run(
+    canvas: &str,
+    body_shape: Option<&str>,
+    wearables: Vec<String>,
+    base_domain: Option<&str>,
+    flags: PreviewFlags,
+) {
     info!("{flags:?}");
     if let Some(domain) = base_domain {
         if let Err(e) = common::base_domain::set(domain) {
@@ -97,6 +87,7 @@ pub fn run(canvas: &str, body_shape: Option<&str>, base_domain: Option<&str>, fl
         .unwrap_or_else(base_wearables::default_bodyshape_urn);
     let request = PreviewRequest {
         body_shape,
+        wearables,
         content_url: format!("{catalyst}/content"),
         lambdas_url: format!("{catalyst}/lambdas"),
     };
@@ -139,6 +130,7 @@ pub fn run(canvas: &str, body_shape: Option<&str>, base_domain: Option<&str>, fl
         SceneBoundPlugin,
         bevy_kira_audio::AudioPlugin,
         CollectiblesPlugin,
+        AvatarRenderPlugin,
     ));
     app.insert_resource(AppConfig::default())
         .insert_resource(PreviewMode::default())
@@ -150,11 +142,8 @@ pub fn run(canvas: &str, body_shape: Option<&str>, base_domain: Option<&str>, fl
         })
         .insert_resource(request)
         .insert_resource(flags);
-    app.add_systems(Startup, (point_at_catalyst, setup_stage));
-    app.add_systems(
-        Update,
-        (spawn_body, promote_meshes, retag_materials, spin, debug_meshes, strip_skins),
-    );
+    app.add_systems(Startup, (point_at_catalyst, setup_stage, spawn_avatar));
+    app.add_systems(Update, (spin, debug_meshes));
     app.run();
 }
 
@@ -235,212 +224,56 @@ fn setup_stage(
     ));
 }
 
-/// Resolves the body shape through the Explorer's collectible manager and spawns its glTF scene.
-fn spawn_body(
-    mut commands: Commands,
-    request: Res<PreviewRequest>,
-    flags: Res<PreviewFlags>,
-    asset_server: Res<AssetServer>,
-    mut wearables: CollectibleManager<Wearable>,
-    gltfs: Res<Assets<Gltf>>,
-    mut done: Local<bool>,
-    mut direct: Local<Option<Handle<Gltf>>>,
-) {
-    if *done {
-        return;
-    }
-    match wearables.get_representation(&request.body_shape, request.body_shape.as_str()) {
-        Ok(wearable) => {
-            let Some(model) = &wearable.model else {
-                warn!("body shape has no model");
-                *done = true;
-                return;
-            };
-            let handle = if flags.direct {
-                let Some(path) = model.gltf.path() else {
-                    warn!("body glTF has no path");
-                    *done = true;
-                    return;
-                };
-                direct
-                    .get_or_insert_with(|| {
-                        info!("direct load of {path}");
-                        asset_server.load_with_settings::<Gltf, GltfLoaderSettings>(
-                            path.clone(),
-                            |s| {
-                                s.load_meshes = bevy::render::render_asset::RenderAssetUsages::default();
-                                s.load_materials = bevy::render::render_asset::RenderAssetUsages::default();
-                            },
-                        )
-                    })
-                    .clone()
-            } else {
-                model.gltf.clone()
-            };
-            let Some(gltf) = gltfs.get(&handle) else {
-                return;
-            };
-            let Some(scene) = gltf
-                .default_scene
-                .clone()
-                .or_else(|| gltf.scenes.first().cloned())
-            else {
-                warn!("body shape glTF has no scene");
-                *done = true;
-                return;
-            };
-            commands.spawn((
-                SceneRoot(scene),
-                Transform::from_rotation(Quat::from_rotation_y(PI)),
-                PreviewAvatar(handle.clone()),
-            ));
-            info!("spawned {}", request.body_shape.as_str());
-            *done = true;
-        }
-        Err(CollectibleError::Loading) => {}
-        Err(e) => {
-            warn!("body shape {} failed: {e:?}", request.body_shape.as_str());
-            *done = true;
-        }
-    }
-}
-
-/// The wearable loader keeps meshes in the main world only (`load_meshes = MAIN_WORLD` in
-/// `collectibles`); the Explorer's avatar processing normalises the joint weights and then
-/// promotes each mesh to the render world. The same step, for the meshes spawned here.
-fn promote_meshes(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    pending: Query<(Entity, &Mesh3d), Without<Promoted>>,
-) {
-    use bevy::render::render_asset::RenderAssetUsages;
-    for (entity, mesh) in pending.iter() {
-        let Some(data) = meshes.get(&mesh.0) else {
-            continue;
-        };
-        info!("mesh {entity} usage before promotion: {:?}", data.asset_usage);
-        if !data.asset_usage.contains(RenderAssetUsages::RENDER_WORLD) {
-            if let Some(data) = meshes.get_mut(&mesh.0) {
-                data.normalize_joint_weights();
-                data.asset_usage |= RenderAssetUsages::RENDER_WORLD;
-                info!("mesh {entity} promoted to {:?}", data.asset_usage);
-            }
-        }
-        commands.entity(entity).insert(Promoted);
-    }
-}
-
-/// A mesh whose asset usage has been checked (and promoted to the render world when needed).
-#[derive(Component)]
-struct Promoted;
-
-/// Swaps every glTF material for the Explorer's scene material with the avatar mesh tags, so
-/// the toon ramp and the outline apply as in the Explorer.
-fn retag_materials(
-    mut commands: Commands,
-    meshes: Query<(Entity, &MeshMaterial3d<StandardMaterial>), Without<Retagged>>,
-    standard: Res<Assets<StandardMaterial>>,
-    mut scene_materials: ResMut<Assets<SceneMaterial>>,
-    flags: Res<PreviewFlags>,
-    avatars: Query<&PreviewAvatar>,
-    gltfs: Res<Assets<Gltf>>,
-) {
-    if flags.plain {
-        return;
-    }
-    let count = meshes.iter().count();
-    if count > 0 {
-        info!("retagging {count} meshes");
-    }
-    // the Explorer tints materials by name: "skin" and "hair" (case-insensitive) take the
-    // avatar's colours (`avatar::spawn_scenes` + `derived_scene_material`)
-    let named: Vec<(String, AssetId<StandardMaterial>)> = avatars
-        .iter()
-        .filter_map(|avatar| gltfs.get(&avatar.0))
-        .flat_map(|gltf| {
-            gltf.named_materials
-                .iter()
-                .map(|(name, handle)| (name.to_lowercase(), handle.id()))
-        })
-        .collect();
-    for (entity, material) in meshes.iter() {
-        let Some(base) = standard.get(&material.0) else {
-            continue;
-        };
-        let name = named
-            .iter()
-            .find(|(_, id)| *id == material.0.id())
-            .map(|(name, _)| name.as_str())
-            .unwrap_or("");
-        let mut base = base.clone();
-        if name.contains("skin") {
-            base.base_color = DEFAULT_SKIN;
-        } else if name.contains("hair") {
-            base.base_color = DEFAULT_HAIR;
-        }
-        let handle = scene_materials.add(SceneMaterial::new_unbounded(base));
-        commands
-            .entity(entity)
-            .remove::<MeshMaterial3d<StandardMaterial>>()
-            .insert((
-                MeshMaterial3d(handle),
-                MeshTag(
-                    SCENE_MATERIAL_TOON_MESH_TAG
-                        | SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG
-                        | SCENE_MATERIAL_NO_DITHERING_MESH_TAG,
-                ),
-                Retagged,
-            ));
-    }
-}
-
-/// Diagnostic (`noskin`): remove skinning so the meshes draw in their bind pose.
-fn strip_skins(
-    mut commands: Commands,
-    flags: Res<PreviewFlags>,
-    skinned: Query<Entity, (With<SkinnedMesh>, With<Mesh3d>)>,
-) {
-    if !flags.noskin {
-        return;
-    }
-    for entity in skinned.iter() {
-        commands.entity(entity).remove::<SkinnedMesh>();
-    }
+/// The avatar: a selection the Explorer's renderer dresses, animates and emotes, exactly as a
+/// scene-placed avatar in the world, minus the scene.
+fn spawn_avatar(mut commands: Commands, request: Res<PreviewRequest>) {
+    let shape = PbAvatarShape {
+        id: "preview".to_owned(),
+        body_shape: Some(request.body_shape.as_str().to_owned()),
+        wearables: request.wearables.clone(),
+        ..Default::default()
+    };
+    commands.spawn((
+        // the shape component itself, as on the Explorer's player and NPC entities: the
+        // attach-point observer keys on it
+        AvatarShape(shape.clone()),
+        AvatarSelection {
+            scene: None,
+            shape: AvatarShape(shape),
+            automatic_delete: false,
+            disable_dither: true,
+        },
+        AvatarDynamicState::default(),
+        Transform::default(),
+        Visibility::default(),
+        PreviewAvatar,
+    ));
+    info!(
+        "avatar {} with {} wearables",
+        request.body_shape.as_str(),
+        request.wearables.len()
+    );
 }
 
 /// Once, a few seconds in: what every mesh looks like to the renderer.
 #[allow(clippy::type_complexity)]
 fn debug_meshes(
     mut frames: Local<u32>,
-    meshes: Query<(
-        Entity,
-        Option<&Name>,
-        &GlobalTransform,
-        Option<&Aabb>,
-        Option<&SkinnedMesh>,
-        &ViewVisibility,
-        &InheritedVisibility,
-        &Mesh3d,
-    ), With<Mesh3d>>,
+    meshes: Query<(Entity, Option<&Name>, &ViewVisibility, &Mesh3d)>,
     assets: Res<Assets<Mesh>>,
 ) {
     *frames += 1;
-    if *frames != 240 {
+    if *frames != 300 {
         return;
     }
-    for (entity, name, transform, aabb, skin, view, inherited, mesh) in meshes.iter() {
+    for (entity, name, view, mesh) in meshes.iter() {
         let data = assets.get(&mesh.0);
         info!(
-            "mesh {entity} {:?} at {:?} aabb={:?} skinned={} inherited={} view={} usage={:?} verts={:?} attrs={:?}",
+            "mesh {entity} {:?} view={} usage={:?} verts={:?}",
             name.map(|n| n.as_str()),
-            transform.translation(),
-            aabb.map(|a| (a.center, a.half_extents)),
-            skin.map(|s| s.joints.len()).unwrap_or(0),
-            inherited.get(),
             view.get(),
             data.map(|d| d.asset_usage),
             data.map(|d| d.count_vertices()),
-            data.map(|d| d.attributes().map(|(a, _)| a.name).collect::<Vec<_>>()),
         );
     }
 }

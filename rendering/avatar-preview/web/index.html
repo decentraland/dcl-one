@@ -44,7 +44,7 @@
       const { default: init, start } = await import('./pkg/dcl_avatar_preview.js');
       await init();
       status.textContent = `wasm ready in ${Math.round(performance.now() - t0)} ms`;
-      start('#preview-canvas', params.get('bodyShape'), params.get('baseDomain'), params.get('flags'));
+      start('#preview-canvas', params.get('bodyShape'), params.get('wearables'), params.get('baseDomain'), params.get('flags'));
     } catch (e) {
       status.textContent = `failed: ${e}`;
       console.error(e);

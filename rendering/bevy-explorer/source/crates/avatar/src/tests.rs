@@ -17,7 +17,7 @@ fn app_with_render_avatar() -> App {
         .init_asset::<Collectible<Wearable>>()
         .init_asset::<CollectibleData<Wearable>>()
         .init_resource::<Collectibles<Wearable>>()
-        .init_resource::<MonotonicTimestamp<PbAssetLoadLoadingState>>()
+        .add_event::<AvatarLoadReport>()
         .init_resource::<AppConfig>()
         .insert_resource(IpfsResource {
             inner: Arc::new(IpfsIo::new(

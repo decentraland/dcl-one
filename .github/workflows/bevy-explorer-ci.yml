@@ -474,6 +474,11 @@ jobs:
         run: ../../../apps/bevy-explorer/install-clang.sh
       - run: cargo clippy --locked -- -D warnings
         shell: bash
+      # The avatar renderer alone, the configuration rendering/avatar-preview links: it is not
+      # exercised by any Explorer binary, so it is checked here before it can rot.
+      - name: Avatar crate without the explorer feature
+        run: cargo check --locked -p avatar --no-default-features
+        shell: bash
     defaults:
       run:
         working-directory: rendering/bevy-explorer/source

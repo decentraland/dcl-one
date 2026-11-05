@@ -1200,6 +1200,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "avatar"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bevy",
+ "bevy_console",
+ "bevy_kira_audio",
+ "clap",
+ "collectibles",
+ "common",
+ "console",
+ "dcl_component",
+ "ipfs",
+ "platform",
+ "rand 0.8.8",
+ "scene_material",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "avif-serialize"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3274,6 +3295,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assets",
+ "avatar",
  "bevy",
  "bevy_kira_audio",
  "boimp",
@@ -3281,6 +3303,7 @@ dependencies = [
  "common",
  "console",
  "console_error_panic_hook",
+ "dcl_component",
  "getrandom 0.3.4",
  "ipfs",
  "js-sys",

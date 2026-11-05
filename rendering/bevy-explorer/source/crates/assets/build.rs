@@ -14,7 +14,8 @@ fn visit_dirs(writer: &mut BufWriter<File>, dir: &Path, base_dir: &Path) -> std:
             } else if path.is_file() {
                 let relative_path = path.strip_prefix(base_dir).unwrap();
                 let relative_path = relative_path.to_string_lossy().replace('\\', "/");
-                if env::var_os("CARGO_FEATURE_PREVIEW").is_some() && !preview_asset(&relative_path) {
+                if env::var_os("CARGO_FEATURE_PREVIEW").is_some() && !preview_asset(&relative_path)
+                {
                     continue;
                 }
                 let full_path = path.canonicalize()?;
