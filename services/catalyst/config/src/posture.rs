@@ -395,6 +395,16 @@ const ROWS: &[Row] = &[
         "PROFILE_IMAGES_ORIGIN_URL",
         "https://profile-images.decentraland.org",
     ),
+    // lamb2's default snapshot base: a mirror's profiles name Decentraland's
+    // profile images, as the Catalyst it replaces does; island and journey
+    // name their own `/profile-images`.
+    row(
+        "upstreams",
+        "PROFILE_CDN_BASE_URL",
+        Is("https://profile-images.decentraland.org"),
+        Own("<PUBLIC_URL>/profile-images"),
+        Own("<PUBLIC_URL>/profile-images"),
+    ),
     upstream(
         "upstreams",
         "EXPLORER_REGISTRY_SOURCE_URL",
@@ -448,10 +458,11 @@ const ROWS: &[Row] = &[
         "MAP_SATELLITE_BASE_URL",
         "https://genesis.city/map/latest",
     ),
+    // lamb2's /about parcel view; island and journey draw their own minimap.
     row(
         "map",
         "MAP_PARCEL_VIEW_URL",
-        Own("<PUBLIC_URL>/api/v1/minimap.png"),
+        Is("https://api.decentraland.org/v1/minimap.png"),
         Own("<PUBLIC_URL>/api/v1/minimap.png"),
         Own("<PUBLIC_URL>/api/v1/minimap.png"),
     ),
@@ -640,6 +651,9 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
     let Some(posture) = posture else {
         return Ok(());
     };
+    if posture == Posture::Mirror {
+        refuse_unfiltered_profiles(config)?;
+    }
     if posture != Posture::Mirror {
         let name = posture.name();
         for (key, value) in [
@@ -690,6 +704,41 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
                 if open.len() == 1 { "is" } else { "are" },
             );
         }
+    }
+    Ok(())
+}
+
+/// A mirror replaces a Catalyst whose lambdas always check the profiles'
+/// items and names against their owner: the collections and marketplace
+/// subgraphs the posture names may not be blanked (an island, with no
+/// ownership source, serves the items as deployed).
+fn refuse_unfiltered_profiles(config: &Config) -> anyhow::Result<()> {
+    let upstreams = &config.market_upstreams;
+    let blank: Vec<&str> = [
+        (
+            "ETH_COLLECTIONS_SUBGRAPH_URL",
+            &upstreams.eth_collections_subgraph_url,
+        ),
+        (
+            "MATIC_COLLECTIONS_SUBGRAPH_URL",
+            &upstreams.matic_collections_subgraph_url,
+        ),
+        (
+            "MARKETPLACE_SUBGRAPH_URL",
+            &upstreams.marketplace_subgraph_url,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(key, value)| Config::non_empty(value).is_none().then_some(key))
+    .collect();
+    if !blank.is_empty() {
+        anyhow::bail!(
+            "{ENV}=mirror checks every profile's wearables, emotes and names against their owner, \
+             but {} {} empty: unset {} to read Decentraland's subgraphs",
+            blank.join(", "),
+            if blank.len() == 1 { "is" } else { "are" },
+            if blank.len() == 1 { "it" } else { "them" },
+        );
     }
     Ok(())
 }
@@ -776,6 +825,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("CAMERA_REEL_API_URL", LINK),
     ("CAMERA_REEL_BUCKET_URL", LINK),
     ("BFF_URL", LINK),
+    ("BUILDER_URL", LINK),
 ];
 const DATABASE: &str = "this node's own database";
 const LINK: &str = "a link clients follow; the node never dials it";

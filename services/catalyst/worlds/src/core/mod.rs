@@ -34,12 +34,17 @@ pub mod deploy;
 mod deploy_form;
 mod deploy_validate;
 pub mod forwarding;
+pub mod holdings;
 pub mod http;
 pub mod limits;
 pub mod manifest;
 pub mod metrics;
 pub mod names;
+pub mod notices;
+pub mod owners;
+pub mod partial;
 pub mod permissions;
+pub mod quota;
 pub mod scenes;
 pub mod settings;
 pub mod settings_policy;
@@ -71,11 +76,15 @@ use crate::shared::identity::Address;
 use crate::shared::nul_guard;
 use catalyst_storage::Storage;
 
+pub use partial::PartialUploadLimits;
 pub use upload_limits::UploadLimits;
 
 /// Rows per multi-row access-log INSERT; the drain takes whatever is queued up to this.
 const ACCESS_LOG_BATCH: usize = 256;
 
+/// `WORLDS_OWNER_RECONCILE_INTERVAL_SECS`' default: 12 h, as the upstream's job.
+pub const DEFAULT_OWNER_RECONCILE_INTERVAL: std::time::Duration =
+    std::time::Duration::from_secs(12 * 3600);
 /// WCS `SCENE_EVICTION_TTL_MS` default: 7 days.
 pub const DEFAULT_SCENE_EVICTION_TTL: std::time::Duration =
     std::time::Duration::from_secs(7 * 24 * 3600);
@@ -99,6 +108,10 @@ pub struct Settings {
     pub public_url: String,
     /// `MAX_FILE_COUNT`: entries a deployed entity's `content` may list.
     pub max_file_count: usize,
+    /// The partial (multi-request) upload limits (`PENDING_DEPLOYMENT_TTL`, `MAX_PENDING_*`, ...).
+    pub partial_uploads: PartialUploadLimits,
+    /// `WORLDS_OWNER_RECONCILE_INTERVAL_SECS`: the `worlds-owner-reconcile` pause.
+    pub owner_reconcile_interval: std::time::Duration,
 }
 
 impl std::fmt::Debug for Settings {
@@ -124,7 +137,15 @@ impl Settings {
             scene_eviction_ttl: DEFAULT_SCENE_EVICTION_TTL,
             public_url: String::new(),
             max_file_count: deploy::DEFAULT_MAX_FILE_COUNT,
+            partial_uploads: PartialUploadLimits::default(),
+            owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
         })
+    }
+
+    /// The partial upload limits, validated against the world size cap.
+    pub fn with_partial_uploads(mut self, limits: PartialUploadLimits) -> anyhow::Result<Self> {
+        self.partial_uploads = limits.validate(crate::policy::MAX_SCENE_SIZE_BYTES)?;
+        Ok(self)
     }
 
     pub fn with_scene_eviction_ttl_ms(mut self, ms: u64) -> Self {
@@ -134,6 +155,11 @@ impl Settings {
 
     pub fn with_public_url(mut self, public_url: &str) -> Self {
         self.public_url = public_url.trim_end_matches('/').to_string();
+        self
+    }
+
+    pub fn with_owner_reconcile_interval_secs(mut self, secs: u64) -> Self {
+        self.owner_reconcile_interval = std::time::Duration::from_secs(secs);
         self
     }
 
@@ -157,6 +183,8 @@ impl Settings {
             scene_eviction_ttl: DEFAULT_SCENE_EVICTION_TTL,
             public_url: "https://worlds.example".to_string(),
             max_file_count: deploy::DEFAULT_MAX_FILE_COUNT,
+            partial_uploads: PartialUploadLimits::default(),
+            owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
         }
     }
 }
@@ -257,6 +285,10 @@ pub struct CoreState {
     /// `WORLDS_FORWARD_UPSTREAM_URL`: every local publish is queued for it in
     /// the publish transaction and sent by the `worlds-forward` job.
     pub forwarder: Option<Arc<crate::content::forward::Forwarder>>,
+    /// The per-wallet storage allowance (unlimited without chain reads).
+    pub allowance: Arc<dyn quota::SpaceAllowance>,
+    /// The user notices (permission grants, storage quota) and their links.
+    pub notices: Arc<notices::Notices>,
 }
 
 pub type SharedState = Arc<CoreState>;
@@ -282,7 +314,21 @@ impl CoreState {
             access_log_rx: Mutex::new(Some(access_log_rx)),
             revocation_sinks: parking_lot::RwLock::new(Vec::new()),
             forwarder: None,
+            allowance: Arc::new(quota::Unlimited),
+            notices: Arc::new(notices::Notices::default()),
         }
+    }
+
+    /// The storage allowance source ([`holdings::configured`]).
+    pub fn with_allowance(mut self, allowance: Arc<dyn quota::SpaceAllowance>) -> Self {
+        self.allowance = allowance;
+        self
+    }
+
+    /// Where user notices go (social's directory) and the Builder they link.
+    pub fn with_notices(mut self, notices: notices::Notices) -> Self {
+        self.notices = Arc::new(notices);
+        self
     }
 
     /// Turns on upstream forwarding ([`forwarding::LANE`]); `serve` spawns its job.
@@ -408,9 +454,42 @@ impl CoreState {
     }
 
     /// The `worlds-access-log` job: drains the queue into `world_access_log`
-    /// in batches until shutdown, flushing what is left on cancel; and the
-    /// fleet-wide hourly `worlds-scene-eviction` of expired retired scenes.
+    /// in batches until shutdown, flushing what is left on cancel; the
+    /// fleet-wide hourly `worlds-scene-eviction` of expired retired scenes;
+    /// the fleet-wide `worlds-owner-reconcile` ([`owners`]); and the
+    /// fleet-wide `worlds-partial-upload-cleanup` of expired partial uploads.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
+        let state = self.clone();
+        jobs.spawn_periodic_leased(
+            "worlds-owner-reconcile",
+            crate::jobs::PeriodicCfg::every(self.settings.owner_reconcile_interval)
+                .with_jitter(std::time::Duration::from_secs(60)),
+            move |_ctx| {
+                let state = state.clone();
+                async move {
+                    let report = owners::reconcile_owners(&state)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("reconciling world owners: {e:?}"))?;
+                    tracing::info!(?report, "world owners reconciled");
+                    Ok(())
+                }
+            },
+        );
+        let state = self.clone();
+        jobs.spawn_periodic_leased(
+            "worlds-partial-upload-cleanup",
+            crate::jobs::PeriodicCfg::every(std::time::Duration::from_millis(
+                self.settings.partial_uploads.cleanup_interval_ms,
+            )),
+            move |_ctx| {
+                let state = state.clone();
+                async move {
+                    partial::delete_expired_uploads(&state).await;
+                    Ok(())
+                }
+            },
+        );
+        metrics::partial_capacity(self.settings.partial_uploads.max_pending_bytes);
         let state = self.clone();
         jobs.spawn_periodic_leased(
             "worlds-scene-eviction",
@@ -425,6 +504,15 @@ impl CoreState {
                     tracing::info!(evicted, "retired world scenes evicted");
                     Ok(())
                 }
+            },
+        );
+        let state = self.clone();
+        jobs.spawn_periodic_leased(
+            "worlds-quota",
+            crate::jobs::PeriodicCfg::every(quota::QUOTA_PASS_INTERVAL),
+            move |_ctx| {
+                let state = state.clone();
+                async move { state.quota_pass().await }
             },
         );
         let limits = &self.settings.upload_limits;

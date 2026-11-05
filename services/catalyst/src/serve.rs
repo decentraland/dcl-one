@@ -831,13 +831,23 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let personal_worlds = worlds::policy::PersonalWorldsPolicy::new(
         config.worlds.worlds_personal_worlds_max,
         config.worlds.worlds_personal_world_max_size_bytes,
-        worlds::policy::MAX_WORLD_SIZE_BYTES,
+        worlds::policy::MAX_SCENE_SIZE_BYTES,
     )
     .context("WORLDS_PERSONAL_WORLDS_MAX / WORLDS_PERSONAL_WORLD_MAX_SIZE_BYTES")?;
     let land_operators = comms_settings
         .land_operators_url
         .as_deref()
         .map(|url| worlds::policy::LandOperatorsReader::new(http_client.clone(), url));
+    let ens = if config.worlds.allow_ens_domains {
+        let rpc = config.content.eth_rpc_url().context("ETH_RPC_URL")?;
+        Some(Arc::new(worlds::ens::EnsResolver::configured(
+            http_client.clone(),
+            rpc.as_deref(),
+            &config.node.eth_network,
+        )?))
+    } else {
+        None
+    };
     let ban_status: Arc<dyn comms::gatekeeper::moderation::BanStatus> =
         Arc::new(comms::gatekeeper::moderation::Moderation::new(pool.clone()));
     let policy = Arc::new(
@@ -845,8 +855,10 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .with_ban_status(ban_status.clone())
             .with_land_operators(land_operators)
             .with_land_authz(Some(land.clone()))
-            .with_max_parcels(config.worlds.max_parcels),
+            .with_max_parcels(config.worlds.max_parcels)
+            .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024),
     );
+    worlds.attach_policy(policy.clone());
     // A world read-through holds each mirrored scene's signer to this policy and shares the
     // content read-through's download bound.
     if let Some(read_through) = &read_through {
@@ -1633,6 +1645,18 @@ async fn worlds_states(
     jobs: &Arc<jobs::Jobs>,
     presence: Arc<comms::presence::Presence>,
 ) -> anyhow::Result<worlds::Stage5> {
+    let max_concurrent_uploads = worlds::core::partial::uploads_within_pool(
+        config.worlds.max_concurrent_uploads,
+        config.node.pg_pool_size,
+    );
+    if max_concurrent_uploads < config.worlds.max_concurrent_uploads {
+        tracing::warn!(
+            configured = config.worlds.max_concurrent_uploads,
+            effective = max_concurrent_uploads,
+            pg_pool_size = config.node.pg_pool_size,
+            "MAX_CONCURRENT_UPLOADS lowered to three quarters of PG_POOL_SIZE"
+        );
+    }
     let non_empty = Config::non_empty;
 
     let core = Arc::new(
@@ -1644,7 +1668,7 @@ async fn worlds_states(
                 non_empty(&config.worlds.catalyrst_worlds_admin_token),
                 worlds::core::UploadLimits {
                     max_in_flight_upload_bytes: config.worlds.max_in_flight_upload_bytes,
-                    max_concurrent_uploads: config.worlds.max_concurrent_uploads,
+                    max_concurrent_uploads,
                     max_in_flight_upload_files: config.worlds.max_in_flight_upload_files,
                     multipart_upload_timeout_ms: config.worlds.multipart_upload_timeout_ms,
                     deployment_processing_timeout_ms: config
@@ -1658,11 +1682,33 @@ async fn worlds_states(
                         .max_in_flight_upload_bytes_per_source,
                 },
             )
-            .map(|s| {
+            .and_then(|s| {
                 s.with_global_scenes_urn(config.worlds_content.global_scenes_urn.as_deref())
                     .with_scene_eviction_ttl_ms(config.worlds.scene_eviction_ttl_ms)
                     .with_public_url(&worlds::Settings::from_config(config).public_url)
                     .with_max_file_count(config.worlds.max_file_count)
+                    .with_owner_reconcile_interval_secs(
+                        config.worlds.worlds_owner_reconcile_interval_secs,
+                    )
+                    // The variables content's partial uploads share; each domain keeps its own budget.
+                    .with_partial_uploads(worlds::core::PartialUploadLimits {
+                        pending_deployment_ttl_ms: config.content.pending_deployment_ttl_ms,
+                        cleanup_interval_ms: config.worlds.partial_upload_cleanup_interval_ms,
+                        max_pending_per_deployer: u64::from(
+                            config.content.max_pending_deployments_per_deployer,
+                        ),
+                        max_pending_per_world: config.worlds.max_pending_deployments_per_world,
+                        pending_bytes_per_world_factor: config
+                            .worlds
+                            .pending_bytes_per_world_factor,
+                        max_pending_bytes_per_deployer: config
+                            .content
+                            .max_pending_bytes_per_deployer,
+                        max_pending_bytes_per_source: config.worlds.max_pending_bytes_per_source,
+                        max_pending_bytes: config.content.max_pending_bytes,
+                        max_bytes_per_minute: config.content.max_partial_upload_bytes_per_minute,
+                        completed_upload_ttl_ms: config.worlds.completed_upload_ttl,
+                    })
             })
             .context(
                 "MAX_IN_FLIGHT_UPLOAD_* / MAX_CONCURRENT_UPLOADS / *_TIMEOUT_MS configuration",
@@ -1670,6 +1716,19 @@ async fn worlds_states(
             eip1654.clone(),
         )
         .with_presence(presence)
+        .with_allowance(worlds::core::holdings::configured(
+            http_client.clone(),
+            config.content.eth_rpc_url()?.as_deref(),
+            non_empty(&config.economy.rpc_endpoint_polygon).as_deref(),
+            &config.node.eth_network,
+        ))
+        // World notices persist through social's directory, as comms' do.
+        .with_notices(worlds::core::notices::Notices::new(
+            Some(Arc::new(social::comms_directory::Directory::new(
+                pool.clone(),
+            ))),
+            &config.worlds.builder_url,
+        ))
         .with_forwarder(forwarder(
             "WORLDS_FORWARD_UPSTREAM_URL",
             config.worlds.worlds_forward_upstream_url.as_deref(),

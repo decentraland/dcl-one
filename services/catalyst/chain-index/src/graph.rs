@@ -387,14 +387,14 @@ fn alias(i: usize) -> String {
 }
 
 /// One aliased document per network and chunk of owners: `oN: nfts(where:
-/// {owner, urn_in}) { urn }`. Owners are validated hex addresses and the
-/// URNs are JSON-encoded, so the inlined literals cannot break the document.
+/// {owner, urn_in}) { urn tokenId }`. Owners are validated hex addresses and
+/// the URNs are JSON-encoded, so the inlined literals cannot break the document.
 fn ownership_document(chunk: &[(&str, &[String])]) -> String {
     let mut doc = String::from("query {");
     for (i, (owner, urns)) in chunk.iter().enumerate() {
         let urns = serde_json::to_string(urns).unwrap_or_else(|_| "[]".to_string());
         doc.push_str(&format!(
-            " {}: nfts(first: 1000, where: {{ owner: \"{}\", urn_in: {} }}) {{ urn }}",
+            " {}: nfts(first: 1000, where: {{ owner: \"{}\", urn_in: {} }}) {{ urn tokenId }}",
             alias(i),
             owner,
             urns
@@ -412,6 +412,19 @@ pub async fn owned_urns(
     state: &ChainIndex,
     requested: &HashSet<(String, String)>,
 ) -> Result<HashMap<String, HashSet<String>>, String> {
+    Ok(owned_tokens(state, requested)
+        .await?
+        .into_iter()
+        .map(|(owner, urns)| (owner, urns.into_keys().collect()))
+        .collect())
+}
+
+/// [`owned_urns`] with the token ids held of each URN, in subgraph order
+/// (by NFT id, as the reference lambdas' subgraph fallback lists them).
+pub async fn owned_tokens(
+    state: &ChainIndex,
+    requested: &HashSet<(String, String)>,
+) -> Result<HashMap<String, HashMap<String, Vec<String>>>, String> {
     let mut by_network: HashMap<Network, HashMap<String, Vec<String>>> = HashMap::new();
     for (owner, urn) in requested {
         if !is_valid_eth_address(owner) {
@@ -427,7 +440,7 @@ pub async fn owned_urns(
             .or_default()
             .push(normalize_urn(urn));
     }
-    let mut owned: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut owned: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
     for (network, owners) in by_network {
         let Some(url) = network.url(state) else {
             continue;
@@ -440,14 +453,21 @@ pub async fn owned_urns(
         for chunk in owners.chunks(OWNERS_PER_QUERY) {
             let data = graph_query(state, url, &ownership_document(chunk), json!({})).await?;
             for (i, (owner, _)) in chunk.iter().enumerate() {
-                let urns = data
+                let held = owned.entry((*owner).to_string()).or_default();
+                for nft in data
                     .get(alias(i))
                     .and_then(Value::as_array)
                     .into_iter()
                     .flatten()
-                    .filter_map(|n| n.get("urn").and_then(Value::as_str))
-                    .map(normalize_urn);
-                owned.entry((*owner).to_string()).or_default().extend(urns);
+                {
+                    let Some(urn) = nft.get("urn").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let tokens = held.entry(normalize_urn(urn)).or_default();
+                    if let Some(token) = nft.get("tokenId").and_then(Value::as_str) {
+                        tokens.push(token.to_string());
+                    }
+                }
             }
         }
     }
@@ -658,6 +678,72 @@ pub async fn name_owner(state: &ChainIndex, name: &str) -> Result<Option<String>
         })
         .await
         .map(|a| (*a).clone())
+}
+
+const QUERY_NAME_OWNERS: &str = r#"
+query nameOwners($names: [String!]!, $idFrom: ID!, $first: Int!) {
+  nfts(where: { category: ens, searchText_in: $names, id_gt: $idFrom }, orderBy: id, orderDirection: asc, first: $first) {
+    id
+    searchText
+    owner { id }
+  }
+}"#;
+
+/// DCL names asked about in one subgraph query by [`name_owners`].
+const NAMES_PER_QUERY: usize = 100;
+
+/// [`name_owner`] for many names at once, uncached (the background reconcile):
+/// each lowercased name maps to its first holder by id, `None` when nobody holds it.
+pub async fn name_owners(
+    state: &ChainIndex,
+    names: &[String],
+) -> Result<HashMap<String, Option<String>>, String> {
+    let mut names: Vec<String> = names.iter().map(|n| n.to_lowercase()).collect();
+    names.sort_unstable();
+    names.dedup();
+    let mut out: HashMap<String, Option<String>> =
+        names.iter().map(|n| (n.clone(), None)).collect();
+    let Some(url) = state.settings.marketplace_subgraph_url.as_deref() else {
+        return Ok(out);
+    };
+    for chunk in names.chunks(NAMES_PER_QUERY) {
+        let mut id_from = String::new();
+        for _ in 0..MAX_PAGES {
+            let data = graph_query(
+                state,
+                url,
+                QUERY_NAME_OWNERS,
+                json!({ "names": chunk, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
+            )
+            .await?;
+            for nft in data
+                .get("nfts")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let (Some(name), Some(owner)) = (
+                    nft.get("searchText").and_then(Value::as_str),
+                    nft.pointer("/owner/id")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty()),
+                ) else {
+                    continue;
+                };
+                if let Some(slot @ None) = out.get_mut(&name.to_lowercase()) {
+                    *slot = Some(owner.to_lowercase());
+                }
+            }
+            if (page_len(&data) as i64) < THE_GRAPH_PAGE_SIZE {
+                break;
+            }
+            match last_id(&data) {
+                Some(id) => id_from = id,
+                None => break,
+            }
+        }
+    }
+    Ok(out)
 }
 
 const QUERY_OWNED_LANDS: &str = r#"
@@ -968,8 +1054,8 @@ mod tests {
         let a = vec!["urn:decentraland:matic:collections-v2:0xa:1".to_string()];
         let b = vec!["urn:x\"y".to_string(), "urn:z".to_string()];
         let doc = ownership_document(&[("0xaaaa", &a), ("0xbbbb", &b)]);
-        assert!(doc.starts_with("query { o0: nfts(first: 1000, where: { owner: \"0xaaaa\", urn_in: [\"urn:decentraland:matic:collections-v2:0xa:1\"] }) { urn }"), "{doc}");
-        assert!(doc.contains(" o1: nfts(first: 1000, where: { owner: \"0xbbbb\", urn_in: [\"urn:x\\\"y\",\"urn:z\"] }) { urn }"), "{doc}");
+        assert!(doc.starts_with("query { o0: nfts(first: 1000, where: { owner: \"0xaaaa\", urn_in: [\"urn:decentraland:matic:collections-v2:0xa:1\"] }) { urn tokenId }"), "{doc}");
+        assert!(doc.contains(" o1: nfts(first: 1000, where: { owner: \"0xbbbb\", urn_in: [\"urn:x\\\"y\",\"urn:z\"] }) { urn tokenId }"), "{doc}");
         assert!(doc.ends_with(" }"));
     }
 
@@ -983,6 +1069,24 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("not a publicly routable"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn name_owners_answers_many_names_in_one_query_without_caching() {
+        let (index, names) = test_support::index_with_names().await;
+        let holder =
+            crate::shared::identity::Address::parse("0x00000000000000000000000000000000000000aa")
+                .unwrap();
+        names.set(&holder, "Alpha");
+        let asked = ["alpha".to_string(), "BETA".to_string()];
+        let owners = name_owners(&index, &asked).await.unwrap();
+        assert_eq!(owners.len(), 2);
+        assert_eq!(owners["alpha"].as_deref(), Some(holder.as_str()));
+        assert_eq!(owners["beta"], None);
+        assert!(
+            index.graph.name_owner.is_empty(),
+            "the admission memo is untouched"
+        );
     }
 }
 
@@ -1026,7 +1130,35 @@ pub mod test_support {
         axum::Json(body): axum::Json<Value>,
     ) -> axum::response::Response {
         let query = body["query"].as_str().unwrap_or("");
-        let nfts: Vec<Value> = if query.contains("nameOwner(") {
+        let nfts: Vec<Value> = if query.contains("nameOwners(") {
+            if !body["variables"]["idFrom"]
+                .as_str()
+                .unwrap_or("")
+                .is_empty()
+            {
+                return axum::Json(json!({ "data": { "nfts": [] } })).into_response();
+            }
+            let wanted: Vec<String> = body["variables"]["names"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_lowercase)
+                .collect();
+            let registry = names.0.lock().unwrap();
+            let mut out: Vec<Value> = registry
+                .iter()
+                .flat_map(|(owner, labels)| {
+                    labels
+                        .iter()
+                        .map(|l| l.to_lowercase())
+                        .filter(|l| wanted.contains(l))
+                        .map(move |l| json!({ "id": format!("0xname-{l}-{owner}"), "searchText": l, "owner": { "id": owner } }))
+                })
+                .collect();
+            out.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+            out
+        } else if query.contains("nameOwner(") {
             let name = body["variables"]["name"]
                 .as_str()
                 .unwrap_or("")
