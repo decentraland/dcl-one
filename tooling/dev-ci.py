@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Select the Development environment's Rust test platforms: macOS for build, toolchain and dev-stack inputs; platform-neutral source runs on Linux on PRs and on macOS on main.
+"""Plan the Development environment: whether a pull request changed anything it tests (the workflow's push.paths, so
+the jobs skip on the rest and "CI gate" still reports), and the Rust test platforms: macOS for build, toolchain and
+dev-stack inputs; platform-neutral source runs on Linux on PRs and on macOS on main.
 
   python3 tooling/dev-ci.py plan                     in a pull_request run (compares the merge commit's parents)
   python3 tooling/dev-ci.py plan --base origin/main  locally (compares HEAD with its merge base)
@@ -31,7 +33,7 @@ def load_ci_local():
 
 
 def needs_macos(changed, ci):
-    triggers = ci.workflow_paths(WORKFLOW, source=ROOT)
+    triggers = ci.workflow_paths(WORKFLOW, event='push', source=ROOT)
     watched = [ci.glob_regex(p) for p in triggers] if triggers is not None else None
     macos = [ci.glob_regex(p) for p in MACOS]
     linux = [ci.glob_regex(p) for p in LINUX_ONLY]
@@ -42,18 +44,32 @@ def needs_macos(changed, ci):
     return False, 'Only Linux-covered inputs changed' if relevant else 'No watched inputs changed'
 
 
+def watched_changes(changed, ci):
+    """The changed paths the workflow tests: its push.paths, which pull requests no longer filter on."""
+    triggers = ci.workflow_paths(WORKFLOW, event='push', source=ROOT)
+    if triggers is None:
+        return list(changed)
+    watched = [ci.glob_regex(p) for p in triggers]
+    return [path for path in changed if any(r.match(path) for r in watched)]
+
+
 def plan(event, base, head):
+    """(macOS, reason, run): run is False only when a comparison succeeded and found nothing the workflow tests."""
     if event not in ('pull_request', 'local'):
-        return True, f'{event} event runs every platform'
+        return True, f'{event} event runs every platform', True
     try:
         if event == 'local':
             base = subprocess.check_output(['git', 'merge-base', base, head], cwd=ROOT, text=True,
                                            stderr=subprocess.PIPE, timeout=60).strip()
         changed = subprocess.check_output(['git', 'diff', '--name-only', '--no-renames', '-z', base, head],
                                           cwd=ROOT, text=True, stderr=subprocess.PIPE, timeout=60).split('\0')
-        return needs_macos([path for path in changed if path], load_ci_local())
+        changed = [path for path in changed if path]
+        ci = load_ci_local()
+        run = bool(watched_changes(changed, ci))
+        macos, reason = needs_macos(changed, ci)
+        return macos, reason, run
     except Exception as exc:
-        return True, f'Comparison unavailable, running macOS: {exc}'
+        return True, f'Comparison unavailable, running macOS: {exc}', True
 
 
 def main():
@@ -65,14 +81,14 @@ def main():
     event = os.environ.get('GITHUB_EVENT_NAME', 'local')
     if args.base is None and event == 'local':
         parser.error('--base is required outside GitHub Actions')
-    macos, reason = plan(event, args.base or 'HEAD^1', args.head)
-    print(f'macos={str(macos).lower()}: {reason}')
+    macos, reason, run = plan(event, args.base or 'HEAD^1', args.head)
+    print(f'run={str(run).lower()} macos={str(macos).lower()}: {reason}')
     if os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
-            summary.write(f'Rust tests on macOS: {str(macos).lower()} ({reason}).\n')
+            summary.write(f'Tests run: {str(run).lower()}. Rust tests on macOS: {str(macos).lower()} ({reason}).\n')
     if os.environ.get('GITHUB_OUTPUT'):
         with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-            output.write(f'macos={str(macos).lower()}\n')
+            output.write(f'macos={str(macos).lower()}\nrun={str(run).lower()}\n')
 
 
 if __name__ == '__main__':

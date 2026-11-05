@@ -73,6 +73,9 @@ pub fn refused_response(refusal: &Refusal) -> Response {
         [
             (header::CONTENT_TYPE, "application/json"),
             (header::RETRY_AFTER, "3600"),
+            // The gate wraps each router outside its own layers (the Social
+            // API's CORS among them), so its refusal sets this itself.
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         ],
         body.to_string(),
     )
@@ -134,6 +137,28 @@ mod tests {
             .await
             .unwrap();
         (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// The refusal leaves before the Social API's CORS layer, and still
+    /// carries nosniff, on the root mount and under `/social-api`.
+    #[tokio::test]
+    async fn a_write_disabled_refusal_carries_nosniff() {
+        let app = app(false);
+        for path in ["/v1/communities", "/social-api/v1/communities"] {
+            let res = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri(path)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE, "{path}");
+            assert_eq!(res.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff", "{path}");
+        }
     }
 
     #[test]

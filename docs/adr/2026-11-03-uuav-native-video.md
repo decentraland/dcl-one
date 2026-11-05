@@ -40,8 +40,8 @@ follows in a later change.
   mbedTLS); Windows uses the hash-pinned BtbN LGPL shared build, macOS and
   Linux build FFmpeg from the pinned source commit.
 - Two workflows enforce the lock: `uuav-verify.yml` on every change to the
-  tree or the tooling, `uuav-native.yml` on the `ci:uuav-native` label or
-  by hand, rebuilding all targets and running the reproducibility gates
+  tree or the tooling, `uuav-native.yml` on the `ci:uuav-native` label (PRs
+  touching the UUAV inputs) or by hand, rebuilding all targets and running the reproducibility gates
   (same-runner determinism, byte reproduction on the pinned toolchain).
   Neither commits; relocking is a reviewed human step.
 - The workspace pins its own Rust toolchain (`library/uuav/rust-toolchain.toml`),

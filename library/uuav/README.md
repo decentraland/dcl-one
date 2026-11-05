@@ -279,7 +279,7 @@ The committed binaries are pinned by a hash lock,
   `uuav-client`) on Linux, macOS and Windows and asserts nothing in this
   workspace links `uuav-client`.
 - **`uuav-native.yml`** runs on demand (`workflow_dispatch`, or the
-  `ci:uuav-native` PR label). It rebuilds all three targets from pinned
+  `ci:uuav-native` label on a PR that touches UUAV inputs). It rebuilds all three targets from pinned
   inputs - macOS and Linux FFmpeg from the source commits in the lock,
   Windows FFmpeg fetched as the hash-pinned BtbN release asset - lints and
   tests the whole workspace where the FFmpeg headers exist, then runs two

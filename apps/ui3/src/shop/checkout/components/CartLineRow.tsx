@@ -3,7 +3,6 @@
 //       availability, favourite + remove) and Cart.styles.ts (Card, Thumb, Info, Desc, Foot, Stepper, Price)
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 
-import { Trash } from "../../../atoms/icons";
 import Icon from "../../discovery/components/Icon";
 import CategoryFlap from "../../discovery/components/CategoryFlap";
 import { CreditsAmount } from "../../discovery/components/PriceTag";
@@ -276,7 +275,7 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
       <div className="shop-cartline__actions">
         {favKey ? <FavoriteToggle favKey={favKey} name={line.display.name} disabled={disabled} /> : null}
         <button type="button" className="shop-cartline__icon-btn shop-cartline__remove" onClick={onRemove} disabled={disabled} aria-label={`Remove ${line.display.name}`} title="Remove">
-          <Trash size={24} />
+          <Icon name="trash" size={24} />
         </button>
       </div>
     </article>
