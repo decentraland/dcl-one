@@ -317,6 +317,12 @@ fn state_with(pool: PgPool, cfg: StateCfg, market: FakeMarket, broker: MockBroke
     let settings = Settings::parse(RawSettings {
         writes_enabled: cfg.writes_enabled,
         mock_card: cfg.mock_card,
+        // The mock card runs only on Amoy (Settings::parse); the HTTP routes under test do not read the chain.
+        usage_chain_id: if cfg.mock_card {
+            super::usage::CHAIN_AMOY
+        } else {
+            super::usage::CHAIN_POLYGON
+        },
         checkout_fulfillment_mode: cfg.fulfillment_mode.to_string(),
         stripe_webhook_secret: cfg.stripe_webhook_secret.map(str::to_string),
         credits_onchain_authorize_enabled: cfg.onchain_authorize_enabled,
@@ -2300,6 +2306,8 @@ async fn a_five_dollar_pack_signs_the_mana_of_five_hundred_cents_on_the_authoriz
     let mut settings = Settings::parse(RawSettings {
         writes_enabled: true,
         mock_card: true,
+        // Parsed as Amoy, where the mock card may run; the lane below is then pointed at 137 by hand.
+        usage_chain_id: super::usage::CHAIN_AMOY,
         credits_onchain_authorize_enabled: true,
         credits_signer_key: Some(signer_key.into()),
         credits_manager_contract: Some(contract.clone()),
@@ -2547,6 +2555,8 @@ async fn the_authorize_lane_refuses_every_resale_spelling_and_pledges_primaries_
     let mut settings = Settings::parse(RawSettings {
         writes_enabled: true,
         mock_card: true,
+        // Parsed as Amoy, where the mock card may run; the lane below is then pointed at 137 by hand.
+        usage_chain_id: super::usage::CHAIN_AMOY,
         credits_onchain_authorize_enabled: true,
         credits_signer_key: Some(signer_key.into()),
         credits_manager_contract: Some(contract.clone()),

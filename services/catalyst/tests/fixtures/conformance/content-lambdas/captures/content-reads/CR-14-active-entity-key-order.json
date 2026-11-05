@@ -1,0 +1,42 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "POST",
+    "path": "/content/entities/active",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "pointers": [
+        "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000010:1"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": [
+      {
+        "id": "bafkreigerg2fjhac4vmcpn67iz6yltgjynz4yz7avktpul7ljtqsnodyiu",
+        "type": "wearable",
+        "pointers": [
+          "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000010:1"
+        ],
+        "content": [
+          {
+            "file": "male/Tiger.glb",
+            "hash": "bafybeie4vytmglenw5xto7bt6l3fwn4gdkpoueptt2lxmalg354f5tacee"
+          },
+          "<3 more>"
+        ],
+        "version": "v3",
+        "timestamp": 1793821637871,
+        "metadata": "<elided: wearable metadata object>"
+      }
+    ]
+  },
+  "note": "Top-level key order is the captured one. A second entity (the scene at 0,0) had the same order: id, type, pointers, content, version, timestamp, metadata."
+}

@@ -42,9 +42,32 @@ python3 tooling/image-smoke.py
 
 ## Build and transfer reuse
 
-- All refs restore caches; only `main` saves. Tags restore from `main`, the default branch.
-- `images-deps-node-all-<arch>-` holds complete Node sets; cold ARM64 runners may compile Node (METRICS.md).
-- Delete obsolete `refs/pull/*` entries (`gh cache list`, `gh cache delete <id>`) once main has the replacement.
+- PRs build and smoke-test AMD64 only unless they change an
+  architecture-sensitive input (the `arches` job in `apis-sites-images.yml` lists
+  them); main, tag and manual runs build both architectures. Before the APIs image
+  compiles, the build checks the reviewed Sites HUD lock and builds the Sites
+  dependencies, so those failures report within minutes.
+- Image caches separate Catalyst dependencies, Sites dependencies/toolchain and
+  the compiled API runtime closure, keyed by exact Nix derivation identities and
+  architecture. Container revision labels are still rebuilt for each commit.
+- Successful main builds save trusted caches. PR builds save only their explicit
+  PR namespace and merge-ref scope after image smoke tests; they may restore an
+  exact trusted-main match. Main and tag builds never select PR namespaces.
+- The legacy `images-deps-node-all-<arch>-` cache is a read-only migration fallback
+  when a split dependency cache is missing. Sites caches retain complete Node
+  outputs; cold ARM64 runners may otherwise compile Node (METRICS.md).
+- Cache quota and idle eviction apply; dependency keys remain stable across
+  source-only changes. Runtime caches exclude Cargo target trees. Hosted image
+  jobs remove all listed unused SDKs before the LFS checkout, retaining maximum
+  cold-build headroom. Cleanup duration and free space are logged.
+- Closing a PR removes caches for its merge ref through a workflow that never
+  checks out PR code. An hourly trusted sweep also removes uploads that finish
+  after closure and retains only the newest Development Rust snapshot per
+  platform, purpose and ref; image and Explorer caches are not pruned by that rule.
+- Multi-GB Rust PR snapshots require the `ci:cache` label and a same-repository
+  Linux test job. Add the label before pushing the commit to cache; adding it
+  alone does not start a new run. Main continues to refresh test and smoke snapshots. Cache
+  pressure is logged by the sweep; quota and idle eviction still apply between sweeps.
 - Imports use `--no-check-sigs`: only trusted workflows may write caches a publishing branch consumes.
 
 ## Publication and runtime

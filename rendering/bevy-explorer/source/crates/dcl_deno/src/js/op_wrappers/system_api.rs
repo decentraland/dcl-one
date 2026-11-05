@@ -42,6 +42,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_live_scene_info(),
             op_get_home_scene(),
             op_set_home_scene(),
+            op_get_service_urls(),
             op_get_welcome(),
             op_accept_terms(),
             op_get_satellite_view(),
@@ -266,6 +267,14 @@ pub async fn op_live_scene_info(
 #[serde]
 pub async fn op_get_home_scene(state: Rc<RefCell<OpState>>) -> Result<HomeScene, anyhow::Error> {
     dcl_js::system_api::op_get_home_scene(state).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_get_service_urls(
+    state: Rc<RefCell<OpState>>,
+) -> Result<Vec<(String, String)>, anyhow::Error> {
+    dcl_js::system_api::op_get_service_urls(state).await
 }
 
 #[op2(async)]

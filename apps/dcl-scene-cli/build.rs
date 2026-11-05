@@ -5,13 +5,19 @@ use std::path::{Path, PathBuf};
 mod play_embed_select;
 
 fn main() -> Result<()> {
-    println!("cargo:rerun-if-changed=proto");
-    let proto_files = [
-        "proto/decentraland/sdk/development/local_development.proto",
-        "proto/decentraland/kernel/comms/rfc5/ws_comms.proto",
-    ];
-    let proto_files: Vec<PathBuf> = proto_files.iter().map(PathBuf::from).collect();
-    let fds = compile_protos(&proto_files, Path::new("proto"))?;
+    // The one proto source, library/protocol/proto, through DCL_ONE_ROOT (root .cargo/config.toml).
+    println!("cargo:rerun-if-env-changed=DCL_ONE_ROOT");
+    let include = PathBuf::from(std::env::var("DCL_ONE_ROOT").expect("DCL_ONE_ROOT"))
+        .join("library/protocol/proto");
+    println!("cargo:rerun-if-changed={}", include.display());
+    let proto_files: Vec<PathBuf> = [
+        "decentraland/sdk/development/local_development.proto",
+        "decentraland/kernel/comms/rfc5/ws_comms.proto",
+    ]
+    .iter()
+    .map(|f| include.join(f))
+    .collect();
+    let fds = compile_protos(&proto_files, &include)?;
     prost_build::Config::new().compile_fds(fds)?;
     generate_abgen_embed()?;
     generate_livekit_embed()?;
@@ -264,8 +270,8 @@ fn protox_error(e: protox::Error) -> std::io::Error {
     std::io::Error::other(format!("{e:?}"))
 }
 
-/// The vendored protos carry a UTF-8 BOM, which protoc skips and protox's
-/// lexer refuses; this resolver drops it before parsing.
+/// Some protos carry a UTF-8 BOM, which protoc skips and protox's lexer
+/// refuses; this resolver drops it before parsing.
 struct BomTolerant {
     include: PathBuf,
     inner: protox::file::IncludeFileResolver,
