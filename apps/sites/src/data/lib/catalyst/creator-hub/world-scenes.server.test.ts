@@ -15,7 +15,7 @@ describe("loadWorldScenes", () => {
       offsets.push(offset);
       const scenes = Array.from({ length: Math.max(0, Math.min(limit, total - offset)) }, (_, i) => ({
         entityId: `bafy${offset + i}`,
-        baseParcel: `${offset + i},0`,
+        entity: { metadata: { scene: { base: `${offset + i},0`, parcels: [`${offset + i},0`] } } },
         parcels: [`${offset + i},0`],
       }));
       return new Response(JSON.stringify({ scenes, total }), {
@@ -28,6 +28,10 @@ describe("loadWorldScenes", () => {
 
     expect(offsets).toEqual([0, 100, 200]);
     expect(scenes).toHaveLength(total);
-    expect(scenes?.[total - 1]?.entityId).toBe(`bafy${total - 1}`);
+    expect(scenes?.[total - 1]).toEqual({
+      entityId: `bafy${total - 1}`,
+      baseParcel: `${total - 1},0`,
+      parcels: [`${total - 1},0`],
+    });
   });
 });
