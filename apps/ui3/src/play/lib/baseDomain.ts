@@ -60,7 +60,6 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
   'comms-gatekeeper': '/comms-gatekeeper',
   'comms-gatekeeper-local': '/comms-gatekeeper',
   'auth-api': '/auth-api',
-  'asset-bundle-registry': '/asset-bundle-registry',
   storage: '/world-storage',
   rpc: '/rpc',
   'rpc-social-service-ea': '/social-rpc',

@@ -1650,17 +1650,14 @@ pub async fn get_default_look(
     fetch_catalyst_profile_by_id(lambdas_url(), format!("default{index}"), ipfs).await
 }
 
-/// Resolve one profile from the catalyst without the engine cache (used at login, before
-/// any player entities exist): `lambdas` is the sign-in's catalyst, else the centralized
-/// one. Ok(None) means the catalyst authoritatively has no profile, so callers can tell
-/// "no profile" from "couldn't fetch".
+/// Resolve one profile from the centralized catalyst without the engine cache (used at login,
+/// before any player entities exist). Ok(None) means the catalyst authoritatively has no
+/// profile, so callers can tell "no profile" from "couldn't fetch".
 pub async fn get_remote_profile(
     address: Address,
     ipfs: Arc<IpfsIo>,
-    lambdas: Option<String>,
 ) -> Result<Option<UserProfile>, anyhow::Error> {
-    let lambdas = lambdas.unwrap_or_else(lambdas_url);
-    fetch_profiles(lambdas, vec![address], ipfs)
+    fetch_profiles(lambdas_url(), vec![address], ipfs)
         .await
         .pop()
         .map_or(Ok(None), |(_, result)| result)

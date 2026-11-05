@@ -94,8 +94,4 @@ an engine-side revert of a failed publish.
 
 ## Follow-ups
 
-- Drop the `--asset-bundle-registry` service, which no Explorer code reads any more (the engine's
-  service table, the HUD's generated tables, the headless launcher), and the login's
-  `--profiles` lambdas hint (the engine and the react-web, ui3 and e2e drivers), which always names
-  the same catalyst.
 - unity-explorer's four-second deploy window and its skip of an identical profile are not ported.

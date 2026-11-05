@@ -251,14 +251,13 @@ export class Explorer {
 
   /** Sign in with an identity (while the world is held: the lobby, before any realm). `name` and
    *  `look` apply to a first login only. */
-  async loginIdentity(identity: AuthIdentity | string, options: { name?: string; look?: number; guest?: boolean; defaultOnError?: boolean; profiles?: string } = {}): Promise<void> {
+  async loginIdentity(identity: AuthIdentity | string, options: { name?: string; look?: number; guest?: boolean; defaultOnError?: boolean } = {}): Promise<void> {
     const payload = typeof identity === 'string' ? identity : encodeIdentity(identity)
     const flags: string[] = []
     if (options.defaultOnError) flags.push('--default-on-error')
     if (options.guest) flags.push('--guest')
     if (options.name !== undefined) flags.push(`--name ${options.name}`)
     if (options.look !== undefined) flags.push(`--look ${options.look}`)
-    if (options.profiles !== undefined) flags.push(`--profiles ${options.profiles}`)
     await this.run(['/login_identity', payload, ...flags].join(' '))
   }
 

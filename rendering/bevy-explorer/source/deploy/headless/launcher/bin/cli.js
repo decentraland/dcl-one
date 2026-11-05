@@ -61,7 +61,6 @@ function translate(argv) {
     '--content-server': true,
     // the per-service url overrides (crates/system_api_types/src/services.rs — the
     // Service::field names, kebab-cased); keep in sync when a service is added
-    '--asset-bundle-registry': true,
     '--auth-api': true,
     '--auth-page': true,
     '--catalyst': true,
