@@ -1,0 +1,104 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/lambdas/users/0x0000000000000000000000000000000000000027/names?pageSize=100",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "elements": [
+        {
+          "name": "name-03",
+          "contractAddress": "0x0000000000000000000000000000000000000026",
+          "tokenId": "1001"
+        },
+        {
+          "name": "name-12",
+          "contractAddress": "0x0000000000000000000000000000000000000026",
+          "tokenId": "1002"
+        },
+        {
+          "name": "name-09",
+          "contractAddress": "0x0000000000000000000000000000000000000026",
+          "tokenId": "1003"
+        },
+        {
+          "name": "name-11",
+          "contractAddress": "0x0000000000000000000000000000000000000026",
+          "tokenId": "1004"
+        },
+        {
+          "name": "name-13",
+          "contractAddress": "0x0000000000000000000000000000000000000026",
+          "tokenId": "1005"
+        },
+        {
+          "name": "name-07",
+          "contractAddress": "0x0000000000000000000000000000000000000026",
+          "tokenId": "1006"
+        },
+        {
+          "name": "name-04",
+          "contractAddress": "0x0000000000000000000000000000000000000026",
+          "tokenId": "1007"
+        },
+        {
+          "name": "name-14",
+          "contractAddress": "0x0000000000000000000000000000000000000026",
+          "tokenId": "1008"
+        },
+        {
+          "name": "name-08",
+          "contractAddress": "0x0000000000000000000000000000000000000026",
+          "tokenId": "1009"
+        },
+        {
+          "name": "name-02",
+          "contractAddress": "0x0000000000000000000000000000000000000026",
+          "tokenId": "1010"
+        },
+        {
+          "name": "name-16",
+          "contractAddress": "0x0000000000000000000000000000000000000026",
+          "tokenId": "1011"
+        },
+        {
+          "name": "name-06",
+          "contractAddress": "0x0000000000000000000000000000000000000026",
+          "tokenId": "1012"
+        },
+        {
+          "name": "name-10",
+          "contractAddress": "0x0000000000000000000000000000000000000026",
+          "tokenId": "1013"
+        },
+        {
+          "name": "name-01",
+          "contractAddress": "0x0000000000000000000000000000000000000026",
+          "tokenId": "1014"
+        },
+        {
+          "name": "name-15",
+          "contractAddress": "0x0000000000000000000000000000000000000026",
+          "tokenId": "1015"
+        },
+        {
+          "name": "name-05",
+          "contractAddress": "0x0000000000000000000000000000000000000026",
+          "tokenId": "1016"
+        }
+      ],
+      "totalAmount": 16,
+      "pageNum": 1,
+      "pageSize": 100
+    }
+  },
+  "note": "Same placeholders as LL-7-marketplace-api-names.json."
+}
