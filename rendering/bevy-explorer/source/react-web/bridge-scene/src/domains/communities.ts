@@ -3,25 +3,17 @@
 //       + the engine's profile cache (profile.ts) for the names and faces those reads no
 //         longer carry — the v2 endpoints answer with addresses only.
 import { getPlayer } from '@dcl/sdk/players'
-import { getJson, isZone, signed, signedForm } from '../http'
+import { getJson, serviceBase, signed, signedForm } from '../http'
 import { fetchIdentities } from './profile'
 import type { ProfileIdentity } from './profile'
 import type { Ctx } from '../bridge'
 import type { Community, CommunityAction, CommunityEvent, CommunityMember, CommunityPhoto, CommunityPlace, CommunityPost } from '../../../src/engine/protocol'
 
-const ORG = 'https://social-api.decentraland.org'
-const ZONE = 'https://social-api.decentraland.zone'
-// Community events live on the (public) events-api, filtered by community_id.
-const EVENTS_ORG = 'https://events.decentraland.org/api/events'
-const EVENTS_ZONE = 'https://events.decentraland.zone/api/events'
-// Community photos live on the camera-reel service (mirrors /api/users/{a}/images).
-const REEL_ORG = 'https://camera-reel-service.decentraland.org/api/communities'
-const REEL_ZONE = 'https://camera-reel-service.decentraland.zone/api/communities'
-// Community thumbnails are NOT in the list response — Unity builds them from the id against
-// the assets CDN (DecentralandUrl.CommunityThumbnail). Some 404 (no thumbnail set) → the
-// React <img> falls back to the initial.
-const CDN_ORG = 'https://assets-cdn.decentraland.org'
-const CDN_ZONE = 'https://assets-cdn.decentraland.zone'
+// Community events live on the (public) events-api, filtered by community_id. Community photos
+// live on the camera-reel service (mirrors /api/users/{a}/images). Community thumbnails are NOT
+// in the upstream list response — Unity builds them from the id against the assets CDN
+// (DecentralandUrl.CommunityThumbnail); a dcl-one deployment sends `thumbnailUrl`, which wins.
+// Some 404 (no thumbnail set) → the React <img> falls back to the initial.
 
 type CommunityRaw = {
   id: string
@@ -33,6 +25,7 @@ type CommunityRaw = {
   privacy?: string
   pendingActionType?: string
   pendingInviteOrRequestId?: string
+  thumbnailUrl?: string
 }
 
 // The v2 rows are FLAT and address-only: no name, face, or claimed-name flag on any of them.
@@ -48,11 +41,11 @@ const FRIEND = 3
 // Reads take the v2 endpoints, which answer with addresses instead of embedding a profile the
 // service had to resolve per row. Writes (and /places, which carries no profile) have no v2.
 async function base(version: 'v1' | 'v2'): Promise<string> {
-  return `${(await isZone()) ? ZONE : ORG}/${version}/communities`
+  return `${await serviceBase('socialApi')}/${version}/communities`
 }
 
 async function list(): Promise<Community[]> {
-  const cdn = (await isZone()) ? CDN_ZONE : CDN_ORG
+  const cdn = await serviceBase('assetsCdn')
   const res = await signed<{ results?: CommunityRaw[] }>(`${await base('v2')}?limit=50`)
   const raw = res?.results ?? []
   const identity = await fetchIdentities(raw.map((c) => c.ownerAddress ?? ''))
@@ -60,7 +53,7 @@ async function list(): Promise<Community[]> {
     id: c.id,
     name: c.name,
     description: c.description,
-    thumbnail: `${cdn}/social/communities/${c.id}/raw-thumbnail.png`,
+    thumbnail: c.thumbnailUrl || `${cdn}/social/communities/${c.id}/raw-thumbnail.png`,
     membersCount: c.membersCount,
     role: c.role,
     ownerName: identity(c.ownerAddress ?? '').name,
@@ -85,9 +78,8 @@ function mapMember(m: MemberRaw, identity: (address: string) => ProfileIdentity)
 async function detail(id: string): Promise<{ members: CommunityMember[]; posts: CommunityPost[]; places: CommunityPlace[]; events: CommunityEvent[]; photos: CommunityPhoto[] }> {
   const b = await base('v2')
   const placesBase = await base('v1')
-  const zone = await isZone()
-  const eventsBase = zone ? EVENTS_ZONE : EVENTS_ORG
-  const reelBase = zone ? REEL_ZONE : REEL_ORG
+  const eventsBase = `${await serviceBase('events')}/api/events`
+  const reelBase = `${await serviceBase('cameraReel')}/api/communities`
   // The id reaches us from the service (a uuid), but it lands in a URL — encode it so it
   // can only ever be one path segment / one query value.
   const cid = encodeURIComponent(id)

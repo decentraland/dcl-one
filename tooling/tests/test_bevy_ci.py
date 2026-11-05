@@ -23,6 +23,22 @@ def producers(outcome='success'):
     return [{'name': name, 'status': 'completed', 'conclusion': outcome} for name in ci.PRODUCERS.values()]
 
 
+class WorkflowTest(unittest.TestCase):
+    def test_gateway_route_step_requires_the_ignored_fixture_to_pass(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
+        _, _, after = workflow.partition('      - name: Test Explorer routes against the gateway\n')
+        step = after.split('      - name:', 1)[0]
+        self.assertIn("if: runner.os == 'Linux'", step)
+        self.assertIn('set -o pipefail', step)
+        self.assertIn('gateway::gateway_tests::gateway_routes_match_deployment -- --ignored --exact', step)
+        self.assertIn('| tee "$RUNNER_TEMP/explorer-gateway-routes.log"', step)
+        self.assertIn(
+            "grep -Fx 'test gateway::gateway_tests::gateway_routes_match_deployment ... ok'"
+            ' "$RUNNER_TEMP/explorer-gateway-routes.log"',
+            step,
+        )
+
+
 class SelectionTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -238,6 +254,17 @@ class SelectionTest(unittest.TestCase):
         with patch.object(ci, 'api', side_effect=AssertionError('PR must not consult main runs')):
             self.assertFalse(ci.plan('pull_request', self.base, self.commit(), '')['test'])
 
+    def test_gateway_contract_inputs_select_only_the_linux_test_lane_on_prs(self):
+        for name in ('infra/gateway/gateway.py', 'infra/gateway/routes.nix',
+                     'apps/ui3/src/play/lib/baseDomain.ts',
+                     'apps/ui3/src/play/engine/generated/serviceTable.ts'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(name, 'changed')
+                selected = ci.plan('pull_request', before, self.commit(), '')
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
+                                  if selected[lane]}, {'test'})
+
     def test_upstream_watch_and_manual_packaging_are_not_ci_build_inputs(self):
         for name in ('upstream', 'desktop', 'rollout', 'rollout-manual'):
             self.write(f'.github/workflows/bevy-explorer-{name}.yml', 'changed')
@@ -312,7 +339,6 @@ class SelectionTest(unittest.TestCase):
             ci.WORKFLOW: {*ci.LANES, 'native-matrix'},
             'apps/bevy-explorer/README.md': set(),
             'tooling/tests/test_bevy_linux_deps.py': set(),
-            'tooling/bevy-http2-test.mjs': {'test'},
         }
         for path, expected in cases.items():
             with self.subTest(path=path):

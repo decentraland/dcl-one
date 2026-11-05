@@ -88,7 +88,7 @@ fn pulse_state(
             Some(Connection::Down { .. }) => "waiting",
             Some(Connection::Paused) => "paused",
             Some(Connection::Connecting) => "connecting",
-            Some(Connection::Idle { .. }) => "connected",
+            Some(Connection::Idle) => "connected",
             Some(Connection::Signing(_)) => "signing",
             Some(Connection::AwaitingResponse { .. }) => "authenticating",
             Some(Connection::Established) => "authenticated",
@@ -111,16 +111,11 @@ fn pulse_state(
             })
             .unwrap_or_default();
         let emote = lookup.0.map(|wallet| {
-            session
-                .as_ref()
-                .and_then(|s| {
-                    s.decoder
-                        .subjects
-                        .values()
-                        .find(|peer| peer.wallet == wallet)
-                })
-                .map(|peer| peer.active_emote.as_deref().unwrap_or("not emoting"))
-                .unwrap_or("peer not present")
+            match session.as_ref().and_then(|s| s.decoder.emote_of(wallet)) {
+                None => "peer not present",
+                Some(None) => "not emoting",
+                Some(Some(urn)) => urn,
+            }
         });
         let connection = session
             .as_deref()
@@ -147,7 +142,7 @@ enum Operation {
     Disconnect,
 }
 
-/// Pause or resume the player connection. Terminal disconnects still require a fresh session.
+/// Pause or resume the player connection. A terminal disconnect holds until the realm changes.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/pulse_connection")]
 struct PulseConnection {
