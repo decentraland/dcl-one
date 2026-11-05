@@ -1,0 +1,161 @@
+/* ShopItemCard — the Shop grid tile. The thumbnail square overlaps the top of the dark caption, which
+   pads itself down by that overlap; --rm (from data-rarity, tokens.css) tints the flap and the tag. */
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  border-radius: var(--r-lg);
+  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.card:hover,
+.selected {
+  box-shadow: 0 0 0 2px var(--brand), 0 0 18px var(--glow-pink);
+}
+.card:hover {
+  z-index: 1;
+  transform: scale(1.02);
+}
+
+/* The whole tile selects; the actions sit above it. */
+.hit {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-lg);
+  background: none;
+  cursor: pointer;
+}
+.hit:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.thumb {
+  position: relative;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 197 / 203;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  background-size: cover;
+  background-position: center;
+}
+.image {
+  width: 92%;
+  height: 92%;
+  object-fit: contain;
+  pointer-events: none;
+}
+.flap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 46px;
+  height: 46px;
+  padding: 5px 0 0 6px;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--rm) 45%, var(--white)) 0%, var(--rm) 49.8%, transparent 50%);
+  color: var(--ink-95);
+}
+.flapIcon {
+  display: flex;
+}
+.discount {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  padding: 2px 6px;
+  border-radius: var(--r-sm);
+  background: var(--error-text);
+  color: var(--brand);
+  font-size: var(--type-12);
+  font-weight: var(--fw-semibold);
+}
+
+.caption {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: -14px;
+  padding: 22px 11px 12px;
+  border-radius: 0 0 var(--r-lg) var(--r-lg);
+  background: var(--black-40);
+}
+.name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.creator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.face {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--ink-45);
+  border-radius: var(--r-pill);
+  background: var(--white-10);
+  object-fit: cover;
+}
+.creatorName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--type-12);
+  color: var(--text);
+}
+.meta,
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+}
+.rarity {
+  padding: 3px 6px;
+  border-radius: var(--r-xs);
+  background: color-mix(in srgb, var(--rm) 20%, transparent);
+  color: var(--rm);
+  font-size: var(--type-12);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+}
+.price {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--type-14);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Hover or focus swaps the rarity and price for the actions. */
+.actions {
+  position: relative;
+  z-index: 2;
+  display: none;
+}
+.actions > * {
+  flex: 1;
+}
+.hasActions:hover .meta,
+.hasActions:focus-within .meta {
+  display: none;
+}
+.hasActions:hover .actions,
+.hasActions:focus-within .actions {
+  display: flex;
+}

@@ -27,6 +27,7 @@ import { DclLogo } from './DclLogo'
 import { Avatar } from './Avatar'
 import { WearableCard, type Rarity } from './WearableCard'
 import { EquippedItemCard } from './EquippedItemCard'
+import { ShopItemCard } from './ShopItemCard'
 import { showConfirm, showDialog, PopupHost } from './popups'
 import { Icon, type IconName } from './icons'
 import { ChatBubble, DaySeparator, MemberRow } from '../features/chat/Chat'
@@ -436,6 +437,10 @@ export function Showcase(): React.JSX.Element {
           <Chip label="All" onClick={() => undefined} />
           <Chip label="Hair" selected onClick={() => undefined} onClear={() => undefined} />
         </div>
+        <div style={{ ...row, gap: 6, marginTop: 12 }}>
+          <Chip variant="dark" label="All" selected onClick={() => undefined} />
+          <Chip variant="dark" label="Head" onClick={() => undefined} />
+        </div>
       </Section>
 
       <Section title="OptionMenu">
@@ -540,6 +545,31 @@ export function Showcase(): React.JSX.Element {
               rarity={r}
               shopUrl={i % 2 === 0 ? 'https://decentraland.org/shop/item/0xa42e166edac870aa5351b098ae6458d39ca0fca6/0' : undefined}
               categoryIcon={<Icon name="emotes" size={15} />}
+            />
+          ))}
+        </div>
+      </Section>
+
+      <Section title="ShopItemCard (Shop grid)">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 197px)', gap: 20 }}>
+          {(['epic', 'legendary', 'mythic', 'base'] as Rarity[]).map((r, i) => (
+            <ShopItemCard
+              key={r}
+              name={`${r[0].toUpperCase()}${r.slice(1)} Item`}
+              rarity={r}
+              creator="Aurora"
+              price={`${500 - i * 100}`}
+              discount={i === 1 ? '-20%' : undefined}
+              selected={i === 0}
+              categoryIcon={<Icon name="emotes" size={15} />}
+              actions={
+                i === 2 ? (
+                  <>
+                    <Button variant="secondary" size="sm">TRY ON</Button>
+                    <Button size="sm">BUY</Button>
+                  </>
+                ) : undefined
+              }
             />
           ))}
         </div>

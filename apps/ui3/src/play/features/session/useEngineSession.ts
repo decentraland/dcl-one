@@ -1835,7 +1835,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // Places fetches its own HTTP data (no bridge), so opening needs no engine request.
   const togglePlaces = useCallback(() => exclusive(setPlacesOpen), [exclusive])
   const toggleEvents = useCallback(() => exclusive(setEventsOpen), [exclusive])
-  const toggleShop = useCallback(() => exclusive(setShopOpen), [exclusive])
+  // The Shop's try-on dresses the current look, so opening it asks for the look the way the Backpack does.
+  const toggleShop = useCallback(
+    () =>
+      exclusive(setShopOpen, () => {
+        if (playerReadyRef.current) ensure('getWearables')
+      }),
+    [exclusive, ensure]
+  )
   const toggleCreate = useCallback(() => exclusive(setCreateOpen), [exclusive])
   const showCreate = useCallback((open: boolean) => {
     setChatOpen(false)

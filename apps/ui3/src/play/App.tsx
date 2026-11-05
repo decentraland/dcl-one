@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BridgeClient } from './engine/bridge'
 import { EngineDriver } from './engine/EngineDriver'
 import { EngineRpc } from './engine/engineRpc'
@@ -20,6 +21,11 @@ import { MapPage } from './features/map/MapPage'
 import { PlacesPage } from './features/places/PlacesPage'
 import { EventsPage } from './features/events/EventsPage'
 import { ShopPage } from './features/shop/ShopPage'
+import { IN_WORLD_SHOP } from './features/shop/entry'
+// `?shop=new`: the in-world Shop that will replace ShopPage, loaded only when it is asked for. lazy()
+// keeps a failed load, so a crash swaps in a fresh one for the next open.
+const loadInWorldShop = () => lazy(() => import('./features/shop/InWorldShop'))
+let InWorldShop = /* @__PURE__ */ loadInWorldShop()
 import { PlacesPicker } from './features/places/PlacesPicker'
 import { LobbyHome } from './features/lobby/LobbyHome'
 import { WelcomePage } from './features/welcome/WelcomePage'
@@ -194,6 +200,8 @@ function Hud(): React.JSX.Element {
   }, [])
 
   const session = useEngineSession(createDriver)
+  // The HUD's one server-state cache (docs/web-app-standards.md, "QueryClient"), with the reference defaults.
+  const [queryClient] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } }))
   // login.account is the remembered welcome-back identity. The engine's
   // current profile identifies its player; until it arrives, discovery reads
   // the same fresh SSO identity the login driver uses.
@@ -201,6 +209,9 @@ function Hud(): React.JSX.Element {
   // mounted for good once wanted: `?editor`, or Create opened
   const [editorWanted, setEditorWanted] = useState(params.has('editor'))
   if (EDITOR_BUILD && EDITOR && !editorWanted && session.create.open) setEditorWanted(true)
+  // mounted for good once the Shop is first opened (`?shop=new`)
+  const [shopWanted, setShopWanted] = useState(false)
+  if (IN_WORLD_SHOP && !shopWanted && session.shop.open) setShopWanted(true)
 
   // A link with params the Explorer doesn't know gets an ordinary dialog listing what was ignored
   // and what it accepts — informational, nothing is frozen behind it.
@@ -335,6 +346,7 @@ function Hud(): React.JSX.Element {
   }
 
   return (
+    <QueryClientProvider client={queryClient}>
     <SessionProvider value={session}>
       {rpc && <EngineHost rpc={rpc} />}
       {MODE === 'engine' && <BootProgress flow={session.login} />}
@@ -448,8 +460,29 @@ function Hud(): React.JSX.Element {
               onVisitWorld={(realm) => session.map.changeRealm(realm)}
             />
           </SurfaceBoundary>
-          <SurfaceBoundary name="Shop" open={session.shop.open} onCrash={session.closeAllPanels}>
-            <ShopPage shop={session.shop} profile={session.profile} onNavigate={goToMenuPage} />
+          <SurfaceBoundary
+            name="Shop"
+            open={session.shop.open}
+            onCrash={() => {
+              if (IN_WORLD_SHOP) InWorldShop = loadInWorldShop()
+              session.closeAllPanels()
+            }}
+          >
+            {IN_WORLD_SHOP ? (
+              shopWanted && <Suspense fallback={null}>
+                <InWorldShop
+                  shop={session.shop}
+                  profile={session.profile}
+                  onNavigate={goToMenuPage}
+                  setEngineViewport={session.setEngineViewport}
+                  equipped={session.backpack.equipped}
+                  preview={session.backpack.preview}
+                  focus={session.backpack.focus}
+                />
+              </Suspense>
+            ) : (
+              <ShopPage shop={session.shop} profile={session.profile} onNavigate={goToMenuPage} />
+            )}
           </SurfaceBoundary>
           <SurfaceBoundary name="Gallery" open={session.gallery.open} onCrash={session.closeAllPanels}>
             <GalleryPage
@@ -484,5 +517,6 @@ function Hud(): React.JSX.Element {
           the popup layer. A world-not-found is not a crash and opens as a popup instead (see above). */}
       {crash && <CrashModal error={crash} onReload={session.reload} onDismiss={crash.source === 'runtime' ? session.dismissFatal : undefined} />}
     </SessionProvider>
+    </QueryClientProvider>
   )
 }

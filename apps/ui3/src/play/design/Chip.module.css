@@ -9,6 +9,17 @@
   background: var(--surface-light);
   color: var(--ink-on-light);
 }
+.dark {
+  height: 40px;
+  padding: 0 12px 0 10px;
+  gap: 6px;
+  border-radius: var(--r-pill);
+  background: var(--white-10);
+  color: var(--text);
+}
+.dark .main {
+  gap: 6px;
+}
 .selected {
   background: var(--accent);
   color: var(--text);
