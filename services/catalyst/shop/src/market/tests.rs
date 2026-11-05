@@ -727,6 +727,31 @@ async fn unseed_profile(pool: &sqlx::PgPool, address: &str, entity_id: &str) {
 }
 
 #[tokio::test]
+async fn profiles_metadata_validates_ids_as_asset_bundle_registry() {
+    let state = state_without_db();
+    let msg = "The ids property must be an array of non-empty strings";
+    for body in [
+        json!({}),
+        json!({ "ids": "0xabc" }),
+        json!({ "ids": ["0xabc", ""] }),
+        json!({ "ids": [1] }),
+    ] {
+        let (status, resp) =
+            post_json(router(state.clone()), "/lambdas/profiles/metadata", body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(resp, json!({ "error": "Bad request", "message": msg }));
+    }
+    let (status, resp) = post_json(
+        router(state.clone()),
+        "/lambdas/profiles/metadata",
+        json!({ "ids": [] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(resp, json!([]));
+}
+
+#[tokio::test]
 async fn a_synced_profile_is_served_shaped_and_cached() {
     let Some(state) = state_with_db(Settings::for_tests()).await else {
         return;
@@ -899,6 +924,43 @@ async fn default_profiles_are_the_deployed_entities_owning_nothing() {
     let (status, body) = get_json(router(state), "/lambdas/profile/default99999999").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({ "avatars": [], "timestamp": 0 }));
+}
+
+#[tokio::test]
+async fn compact_profiles_agree_with_the_full_answer() {
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let t = tag();
+    let address = format!("0x{}00000001", &t[..32]);
+    let unknown = format!("0x{}00000002", &t[..32]);
+    let entity_id = format!("bafymeta{t}");
+    seed_profile(
+        &state.pool,
+        &address,
+        &entity_id,
+        json!({ "avatars": [{
+            "name": "tester",
+            "avatar": { "snapshots": { "face256": "bafyface", "body": "bafybody" } }
+        }] }),
+    )
+    .await;
+
+    let ids = json!({ "ids": [address.to_uppercase(), unknown, address] });
+    let (status, full) = post_json(router(state.clone()), "/lambdas/profiles", ids.clone()).await;
+    assert_eq!(status, StatusCode::OK);
+    let face = full[0]["avatars"][0]["avatar"]["snapshots"]["face256"].clone();
+    let claimed = full[0]["avatars"][0]["hasClaimedName"].clone();
+    let (status, compact) =
+        post_json(router(state.clone()), "/lambdas/profiles/metadata", ids).await;
+    unseed_profile(&state.pool, &address, &entity_id).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        compact,
+        json!([{
+            "pointer": address, "name": "tester", "hasClaimedName": claimed, "thumbnailUrl": face
+        }])
+    );
 }
 
 fn head(t: &str, i: u64, created_ms: i64) -> Value {

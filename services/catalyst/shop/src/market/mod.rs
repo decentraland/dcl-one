@@ -889,6 +889,10 @@ pub fn router(state: SharedState) -> Router {
             "/lambdas/profiles",
             post(profiles::profiles).layer(DefaultBodyLimit::max(256 * 1024)),
         )
+        .route(
+            "/lambdas/profiles/metadata",
+            post(profiles::profiles_metadata).layer(DefaultBodyLimit::max(1024 * 1024)),
+        )
         .route("/lambdas/profiles/{id}", get(profiles::profile_by_id))
         .route("/lambdas/profile/{id}", get(profiles::profile_alias))
         .route(

@@ -11,6 +11,9 @@
 //! fails the request closed (503) rather than serving cosmetics nobody
 //! proved. The one exception is a linked third-party item whose chain read
 //! failed: only that profile's linked items are left out.
+//!
+//! `POST /lambdas/profiles/metadata` serves the compact projection of the same
+//! processed profiles, as asset-bundle-registry's `/profiles/metadata`.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
@@ -33,6 +36,7 @@ pub const PROFILE_CACHE_TTL: Duration = Duration::from_secs(10);
 pub const PROFILE_CACHE_MAX_ENTRIES: usize = 50_000;
 const PROFILE_BATCH_MAX: usize = 50;
 const PROFILE_IDS_MAX: usize = 1000;
+const METADATA_IDS_MSG: &str = "The ids property must be an array of non-empty strings";
 /// Profiles whose linked third-party items are checked at once.
 const THIRD_PARTY_CONCURRENCY: usize = 8;
 const MISSING_PROFILE_IDS_MSG: &str =
@@ -742,6 +746,108 @@ pub async fn profiles(
     }
 }
 
+/// Compact form of a processed profile, the shape of `getMetadata` in
+/// `decentraland/asset-bundle-registry@f9578d4a`
+/// (`src/logic/sync/profile-sanitizer.ts`): the first avatar's `name`,
+/// `hasClaimedName` and `nameColor` as they are (absent stays absent) and its
+/// face snapshot. `None` for a profile without an avatar, where upstream's
+/// mapper would throw.
+pub fn profile_metadata(pointer: &str, profile: &Value) -> Option<Value> {
+    let avatar = profile.get("avatars")?.as_array()?.first()?;
+    let mut metadata = serde_json::Map::new();
+    metadata.insert("pointer".into(), json!(pointer));
+    for key in ["hasClaimedName", "name", "nameColor"] {
+        if let Some(value) = avatar.get(key).filter(|v| !v.is_null()) {
+            metadata.insert(key.into(), value.clone());
+        }
+    }
+    let face = avatar
+        .pointer("/avatar/snapshots/face256")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    metadata.insert("thumbnailUrl".into(), json!(face));
+    Some(Value::Object(metadata))
+}
+
+/// The request's pointers lowercased, each once, in request order, as
+/// asset-bundle-registry's `getProfiles` keys them.
+fn unique_pointers(ids: &[String]) -> Vec<String> {
+    let mut seen = HashSet::with_capacity(ids.len());
+    ids.iter()
+        .map(|id| id.to_lowercase())
+        .filter(|pointer| seen.insert(pointer.clone()))
+        .collect()
+}
+
+/// `getProfilesMetadataHandler` of asset-bundle-registry, served from this
+/// node's processed profiles (the same ownership filtering and claimed-name
+/// check as `profiles`, so the compact and full answers agree). `ids` must be
+/// an array of non-empty strings, with no cap; a body that is not JSON is the
+/// bare 500 `request.json()` throws into.
+pub async fn profiles_metadata(
+    State(state): State<SharedState>,
+    body: axum::body::Bytes,
+) -> Response {
+    let Ok(body) = serde_json::from_slice::<Value>(&body) else {
+        return lambdas_internal_error();
+    };
+    let ids: Option<Vec<String>> = body.get("ids").and_then(Value::as_array).and_then(|ids| {
+        ids.iter()
+            .map(|id| id.as_str().filter(|s| !s.is_empty()).map(str::to_string))
+            .collect()
+    });
+    let Some(ids) = ids else {
+        return bad_request(METADATA_IDS_MSG);
+    };
+    let pointers = unique_pointers(&ids);
+    if pointers.is_empty() {
+        return Json(json!([])).into_response();
+    }
+
+    let found: Result<Vec<(String, Value)>, Failure> = if pointers.len() <= PROFILE_BATCH_MAX {
+        profiles_via_cache(&state, &pointers).await.map(|profiles| {
+            profiles
+                .into_iter()
+                .filter_map(|profile| {
+                    let pointer = profile_pointer(&profile)?;
+                    Some((pointer, profile))
+                })
+                .collect()
+        })
+    } else {
+        match active_entities(&state, &pointers).await {
+            Ok(entities) => process_and_cache_profiles(&state, &pointers, &entities)
+                .await
+                .map_err(Failure::Reader),
+            Err(()) => Err(Failure::Db),
+        }
+    };
+    match found {
+        Ok(found) => {
+            let mut by_pointer: HashMap<String, Value> = HashMap::with_capacity(found.len());
+            for (pointer, profile) in found {
+                by_pointer.entry(pointer).or_insert(profile);
+            }
+            let compact: Vec<Value> = pointers
+                .iter()
+                .filter_map(|pointer| profile_metadata(pointer, by_pointer.get(pointer)?))
+                .collect();
+            Json(Value::Array(compact)).into_response()
+        }
+        Err(f) => f.into_response(),
+    }
+}
+
+/// The lowercased owner of a processed profile, the pointer it was deployed to.
+fn profile_pointer(profile: &Value) -> Option<String> {
+    let avatar = profile.get("avatars")?.as_array()?.first()?;
+    avatar
+        .get("ethAddress")
+        .or_else(|| avatar.get("userId"))
+        .and_then(Value::as_str)
+        .map(str::to_lowercase)
+}
+
 pub async fn profile_by_id(State(state): State<SharedState>, Path(id): Path<String>) -> Response {
     match fetch_profile_for_id(&state, &id).await {
         Ok(Some(metadata)) => Json(metadata).into_response(),
@@ -1060,6 +1166,59 @@ mod tests {
                 "HTTP://intranet",
             ]
         );
+    }
+
+    fn metadata_input(with_color: bool) -> Value {
+        let mut avatar = json!({
+            "ethAddress": "0xabc", "userId": "0xabc", "name": "Ryumi", "hasClaimedName": true,
+            "avatar": { "snapshots": {
+                "face256": "https://cdn.example/entities/bafy/face.png",
+                "body": "https://cdn.example/entities/bafy/body.png"
+            } }
+        });
+        if with_color {
+            avatar["nameColor"] = json!({ "r": 1.0, "g": 0.5, "b": 0.0 });
+        }
+        json!({ "avatars": [avatar], "timestamp": 1 })
+    }
+
+    #[test]
+    fn profile_metadata_projects_the_first_avatar() {
+        assert_eq!(
+            profile_metadata("0xabc", &metadata_input(true)).unwrap(),
+            json!({
+                "pointer": "0xabc", "hasClaimedName": true, "name": "Ryumi",
+                "nameColor": { "r": 1.0, "g": 0.5, "b": 0.0 },
+                "thumbnailUrl": "https://cdn.example/entities/bafy/face.png"
+            })
+        );
+    }
+
+    #[test]
+    fn profile_metadata_leaves_absent_fields_absent() {
+        let m = profile_metadata("0xabc", &metadata_input(false)).unwrap();
+        let mut keys: Vec<&str> = m.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(keys, ["hasClaimedName", "name", "pointer", "thumbnailUrl"]);
+        let bare = json!({ "avatars": [{ "ethAddress": "0xabc" }], "timestamp": 1 });
+        assert_eq!(
+            profile_metadata("0xabc", &bare).unwrap(),
+            json!({ "pointer": "0xabc", "thumbnailUrl": "" })
+        );
+    }
+
+    #[test]
+    fn profile_metadata_skips_a_profile_without_avatars() {
+        assert_eq!(
+            profile_metadata("0xabc", &json!({ "avatars": [], "timestamp": 1 })),
+            None
+        );
+    }
+
+    #[test]
+    fn unique_pointers_lowercase_and_keep_the_first() {
+        let ids: Vec<String> = ["0xB", "0xa", "0xb", "0xA"].map(String::from).to_vec();
+        assert_eq!(unique_pointers(&ids), ["0xb", "0xa"]);
     }
 
     #[test]
