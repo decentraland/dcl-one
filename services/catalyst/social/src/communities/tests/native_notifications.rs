@@ -365,6 +365,118 @@ async fn real_mutations_write_native_inbox_and_delivery_rows() {
 }
 
 #[tokio::test]
+async fn self_leave_evicts_private_voice_after_commit_without_an_inbox_event() {
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+    };
+
+    struct VoiceExits {
+        pool: PgPool,
+        calls: Mutex<Vec<(CommunityId, String)>>,
+        fail: AtomicBool,
+    }
+    impl super::super::VoiceEviction for VoiceExits {
+        fn evict<'a>(
+            &'a self,
+            community: CommunityId,
+            target: &'a str,
+        ) -> futures::future::BoxFuture<'a, Result<(), String>> {
+            Box::pin(async move {
+                let remaining: (i64, i64) = sqlx::query_as(
+                    "SELECT (SELECT count(*) FROM social.community_members WHERE community_id=$1 AND member_address=$2), \
+                     (SELECT count(*) FROM social.community_post_likes l JOIN social.community_posts p ON p.id=l.post_id WHERE p.community_id=$1 AND l.user_address=$2)"
+                ).bind(community).bind(target).fetch_one(&self.pool).await.unwrap();
+                assert_eq!(
+                    remaining,
+                    (0, 0),
+                    "voice eviction follows the committed membership and likes removal"
+                );
+                self.calls
+                    .lock()
+                    .unwrap()
+                    .push((community, target.to_owned()));
+                if self.fail.load(Ordering::SeqCst) {
+                    Err("fixture voice unavailable".into())
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let voice = Arc::new(VoiceExits {
+        pool: rig.pool.clone(),
+        calls: Mutex::new(Vec::new()),
+        fail: AtomicBool::new(false),
+    });
+    rig.state.set_voice_eviction(voice.clone());
+    for (private, fail) in [(true, false), (true, true), (false, false)] {
+        voice.fail.store(fail, Ordering::SeqCst);
+        voice.calls.lock().unwrap().clear();
+        let (owner, leaver) = (wallet(), wallet());
+        let id = rig.community(&owner, private).await;
+        rig.member(id, &leaver, "member").await;
+        let post = rig.post(id, &owner).await;
+        sqlx::query("INSERT INTO social.community_post_likes(post_id,user_address) VALUES($1,$2)")
+            .bind(post)
+            .bind(&leaver.address)
+            .execute(&rig.pool)
+            .await
+            .unwrap();
+        let path = format!("/v1/communities/{id}/members/{}", leaver.address);
+        let (status, _) = hit(&rig.app, Case::new("delete", &path).forged(&leaver).await).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let (status, _) = hit(
+            &rig.app,
+            Case::new(
+                "delete",
+                format!("/v1/communities/{id}/members/{}", owner.address),
+            )
+            .signed(&owner)
+            .await,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "the owner cannot self-leave"
+        );
+        assert!(voice.calls.lock().unwrap().is_empty());
+
+        for _ in 0..2 {
+            let (status, body) =
+                hit(&rig.app, Case::new("delete", &path).signed(&leaver).await).await;
+            assert_eq!((status, body), (StatusCode::NO_CONTENT, Value::Null));
+        }
+        let expected = if private {
+            vec![(id, leaver.address.to_string())]
+        } else {
+            vec![]
+        };
+        assert_eq!(
+            *voice.calls.lock().unwrap(),
+            expected,
+            "only a real private membership exit evicts, including when voice fails"
+        );
+        let remaining: (i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM social.community_members WHERE community_id=$1 AND member_address=$2), \
+             (SELECT count(*) FROM social.community_post_likes WHERE post_id=$3 AND user_address=$2)"
+        ).bind(id).bind(&leaver.address).bind(post).fetch_one(&rig.pool).await.unwrap();
+        assert_eq!(remaining, (0, 0));
+        assert!(
+            inbox(&rig, id, 0).await.is_empty(),
+            "self-leave has no client notification subtype"
+        );
+        assert_deliveries(&rig, id, 0).await;
+    }
+    rig.finish();
+}
+
+#[tokio::test]
 async fn native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent() {
     let Some(rig) = Rig::new(Settings::for_tests()).await else {
         return;
@@ -373,11 +485,19 @@ async fn native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent()
     let id = rig.community(&owner, false).await;
     let address = |n: usize| format!("0x{}{:08x}", id.as_uuid().simple(), n);
     sqlx::query("INSERT INTO social.community_members(community_id,member_address,role,joined_at) SELECT $1,'0x'||replace($1::text,'-','')||lpad(to_hex(n),8,'0'),CASE WHEN n<4 THEN 'moderator' ELSE 'member' END,timestamp '2026-01-01' FROM generate_series(1101,1,-1) n").bind(id).execute(&rig.pool).await.unwrap();
-    sqlx::query("INSERT INTO social.subscription_opt_outs(address,scope,scope_id) VALUES($1,'community',$2),($3,'community','invalid-id'),($3,'community',$4)").bind(address(2)).bind(id.to_string().to_uppercase()).bind(address(3)).bind(CommunityId::new().to_string()).execute(&rig.pool).await.unwrap();
+    // Several simultaneous exclusions straddle the former 100-recipient page
+    // boundaries; native fanout writes the whole tied-date audience at once.
+    let excluded = [2, 100, 101, 1000, 1001];
+    let opt_outs = excluded.into_iter().map(&address).collect::<Vec<_>>();
+    sqlx::query("INSERT INTO social.subscription_opt_outs(address,scope,scope_id) SELECT unnest($1::text[]),'community',$2")
+        .bind(&opt_outs).bind(id.to_string().to_uppercase()).execute(&rig.pool).await.unwrap();
+    sqlx::query("INSERT INTO social.subscription_opt_outs(address,scope,scope_id) VALUES($1,'community','invalid-id'),($1,'community',$2)").bind(address(3)).bind(CommunityId::new().to_string()).execute(&rig.pool).await.unwrap();
     sqlx::query("INSERT INTO social.subscriptions(address,email,details) VALUES($1,'recipient@example.org','{}'),($2,'ignored@example.org','{\"ignore_all_email\":true}')").bind(address(4)).bind(address(5)).execute(&rig.pool).await.unwrap();
     let online = [
         owner.address.to_string(),
         address(2),
+        address(100),
+        address(101),
         address(4),
         address(5),
         address(2000),
@@ -386,18 +506,22 @@ async fn native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent()
     .collect();
     let opted_out = Address::parse(&address(2)).unwrap();
     let direct = Address::parse(&address(2000)).unwrap();
+    let opener = owner.address.to_string().to_uppercase();
     for (kind, audience, mut expected) in [
         (
             "community_renamed",
             Audience::Members,
             std::iter::once(owner.address.to_string())
-                .chain((1..=1101).filter(|n| *n != 2).map(&address))
+                .chain((1..=1101).filter(|n| !excluded.contains(n)).map(&address))
                 .collect::<Vec<_>>(),
         ),
         (
             "community_deleted",
             Audience::MembersButOwner,
-            (1..=1101).filter(|n| *n != 2).map(&address).collect(),
+            (1..=1101)
+                .filter(|n| !excluded.contains(n))
+                .map(&address)
+                .collect(),
         ),
         (
             "community_request_to_join_received",
@@ -407,13 +531,16 @@ async fn native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent()
         (
             "community_post_added",
             Audience::MembersExcept(&owner.address),
-            (1..=1101).filter(|n| *n != 2).map(&address).collect(),
+            (1..=1101)
+                .filter(|n| !excluded.contains(n))
+                .map(&address)
+                .collect(),
         ),
         (
             "community_voice_chat_started",
             Audience::OnlineMembersExcept {
                 online: &online,
-                except: owner.address.as_str(),
+                except: &opener,
             },
             vec![address(4), address(5)],
         ),
@@ -450,7 +577,7 @@ async fn native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent()
             "community_post_added" => Audience::MembersExcept(&owner.address),
             "community_voice_chat_started" => Audience::OnlineMembersExcept {
                 online: &online,
-                except: owner.address.as_str(),
+                except: &opener,
             },
             "community_member_removed" => Audience::One(&direct),
             "community_member_banned" => Audience::One(&opted_out),
@@ -476,5 +603,56 @@ async fn native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent()
             assert_eq!((state.as_str(), error.as_deref()), expected);
         }
     }
+    rig.finish();
+}
+
+#[tokio::test]
+async fn native_inbox_tied_times_have_a_stable_limit_boundary() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let recipient = wallet();
+    let id = rig.community(&recipient, false).await;
+    for n in (0..105).rev() {
+        let event = CommunityEvent {
+            kind: "community_renamed",
+            key: format!("{id}-{n}"),
+            community_id: id,
+            metadata: json!({"communityId":id.as_uuid(),"communityName":format!("Name {n}")}),
+        };
+        assert_eq!(
+            publish(&rig.pool, &event, Audience::One(&recipient.address))
+                .await
+                .unwrap(),
+            1
+        );
+    }
+    sqlx::query(
+        "UPDATE social.notifications SET occurred_at=timestamp '2026-01-01' WHERE address=$1",
+    )
+    .bind(&recipient.address)
+    .execute(&rig.pool)
+    .await
+    .unwrap();
+    let mut ids: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM social.notifications WHERE address=$1")
+            .bind(&recipient.address)
+            .fetch_all(&rig.pool)
+            .await
+            .unwrap();
+    ids.sort_unstable_by(|a, b| b.cmp(a));
+    assert_eq!(ids.len(), 105);
+    let store = crate::notifications::NotificationsStore::new(rig.pool.clone());
+    for limit in [100, 105, 100] {
+        let listed = store
+            .list(&recipient.address, limit, None, false)
+            .await
+            .unwrap();
+        assert_eq!(
+            listed.iter().map(|item| item.id).collect::<Vec<_>>(),
+            ids[..limit as usize]
+        );
+    }
+    assert_deliveries(&rig, id, 105).await;
     rig.finish();
 }

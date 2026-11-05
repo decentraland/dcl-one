@@ -11,8 +11,8 @@
 //! (a banned wallet has no member row; a re-ban reactivates), the admin
 //! bearer and the global-moderator allow-list. The federation envelopes each
 //! write route also accepts, the federation log and its content routes are
-//! `fed` (over `crate::fed`). A banned or kicked member of a private
-//! community leaves its voice room ([`State::evict_from_private_community_voice`]
+//! `fed` (over `crate::fed`). A member who leaves, is banned or is kicked from a
+//! private community leaves its voice room ([`State::evict_from_private_community_voice`]
 //! through the [`VoiceEviction`] the comms module attaches in `main`). What
 //! did not come along, and why, is listed in `README.md`'s deviations; in
 //! short: the archipelago presence probe, which is configured explicitly and
@@ -443,10 +443,8 @@ impl State {
         }
     }
 
-    /// Upstream #482's ban-side half: a ban or kick landing after the join
-    /// must find the seat in the private community's voice room and remove
-    /// it. As the old service did, a failure is logged and never fails the
-    /// request that banned or kicked.
+    /// A leave, ban or kick removes the wallet's seat in a private community's
+    /// voice room. A failure is logged and never fails the membership request.
     pub async fn evict_from_private_community_voice(
         &self,
         community_id: CommunityId,

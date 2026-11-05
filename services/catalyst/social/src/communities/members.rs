@@ -2,8 +2,8 @@
 //! viewers, refused to signed non-members, open to the admin bearer), the
 //! join/leave/kick/role/ban/unban writes and the per-wallet community
 //! listings. A ban deletes the member row and the wallet's pending requests
-//! in source-defined independent commits; a kick or ban of a private community's member
-//! reaches the voice-eviction seam.
+//! in source-defined independent commits; a leave, kick or ban of a private
+//! community's member reaches the voice-eviction seam.
 
 use std::collections::HashMap;
 
@@ -763,10 +763,10 @@ pub async fn remove_member(
         // upstream `leaveCommunity` / `kickMember`: OFFLINE to the members
         // and the wallet that left
         state.member_status_changed(uuid, &target, false).await;
+        state
+            .evict_from_private_community_voice(uuid, &target)
+            .await;
         if target != signer {
-            state
-                .evict_from_private_community_voice(uuid, &target)
-                .await;
             // upstream `kickMember`: MEMBER_REMOVED to the kicked wallet
             state
                 .notify_community_event(
