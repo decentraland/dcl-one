@@ -77,12 +77,14 @@ class CiLocalTest(unittest.TestCase):
                      'apps/bevy-explorer/Dockerfile.web'):
             self.assertFalse(ci.triggered('bevy-explorer-headless.yml', {name}, event='push'), name)
 
-    def test_gateway_edits_do_not_rebuild_the_applications(self):
+    def test_gateway_edits_select_explorer_contract_but_not_application_images(self):
         changed = {'infra/gateway/gateway.py'}
         self.assertTrue(ci.triggered('gateway-images.yml', changed))
         self.assertFalse(ci.triggered('apis-sites-images.yml', changed))
         self.assertFalse(ci.triggered('development.yml', changed, event='push'))
-        self.assertFalse(ci.triggered('bevy-explorer-ci.yml', changed))
+        for event in ('push', 'pull_request'):
+            with self.subTest(event=event):
+                self.assertTrue(ci.triggered('bevy-explorer-ci.yml', changed, event=event))
         self.assertIn('gateway configuration', [step.name for step in ci.pre_commit_steps(changed)])
 
 

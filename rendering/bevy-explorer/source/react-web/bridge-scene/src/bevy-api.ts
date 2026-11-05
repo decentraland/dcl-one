@@ -194,6 +194,9 @@ export type BevyApiInterface = {
    *  address the engine can't resolve is left out. At most 200 addresses; more rejects. */
   getCompactProfiles: (addresses: string[]) => Promise<CompactProfile[]>
   kernelFetch: (req: KernelFetchRequest) => Promise<KernelFetchResponse>
+  /** Each service's base url by its web param, as the engine resolves it: the service's
+   *  override, else its composition from the base domain. */
+  getServiceUrls: () => Promise<Record<string, string>>
   getRealmProvider: () => Promise<string>
   getPreviousLogin: () => Promise<{ userId: string | null }>
   loginPrevious: () => Promise<{ success: boolean; error: string }>

@@ -33,6 +33,9 @@ is identified by its producer commit in `/play/sites-play.json` (no npm engine p
 - `lib/editorEmbed.ts`: the Creator Hub editor frames `/play/` with its trusted scene, the session
   fragment becomes the sandbox channel suffix, the engine runs with `editor`, and no bridge is
   reported. The shell mounts its app once per document.
+- The native CEF HUD and its SDK bridge receive gateway service URLs from the desktop engine.
+  CEF routes eligible snapshot images when displaying profiles and notifications. Sites uses its
+  web service configuration and the snapshot URLs returned by its backend.
 - Tests that import bridge-scene sources or `deploy/web` were not moved; the rest run with `pnpm test`
   in `apps/ui3` under `tsconfig.play.json`. `?native=1` is not built.
 - The benchmark's unattended run is not carried: the `autopilot` boot mode (`lib/bootMode.ts`) and

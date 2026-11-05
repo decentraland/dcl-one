@@ -498,7 +498,9 @@ impl ProfileManager<'_, '_> {
         if profile.thumbnail_url.is_empty() {
             return Err(ProfileMissingError);
         }
-        let ipfs_path = IpfsPath::new_from_url(&profile.thumbnail_url, "png");
+        // through the deployment's gateway when one serves profile images
+        let url = common::base_domain::profile_image(&profile.thumbnail_url);
+        let ipfs_path = IpfsPath::new_from_url(&url, "png");
         Ok(Some(
             self.ipfs.asset_server().load(PathBuf::from(&ipfs_path)),
         ))
