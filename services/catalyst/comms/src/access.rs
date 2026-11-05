@@ -38,6 +38,31 @@ impl AccessType {
     }
 }
 
+/// How long a quota-blocked owner's worlds stay open (WCS `TWO_DAYS_IN_MS`).
+pub const QUOTA_BLOCK_GRACE: chrono::TimeDelta = chrono::TimeDelta::days(2);
+
+/// The one "world refused" predicate `/about` and the comms mints share: an
+/// operator disable (`worlds.blocked_since`) applies at once, the owner's
+/// quota block (`worlds.quota_blocks.created_at`) after its grace.
+pub fn world_blocked(
+    disabled_since: Option<chrono::NaiveDateTime>,
+    quota_blocked_since: Option<chrono::NaiveDateTime>,
+    now: chrono::NaiveDateTime,
+) -> bool {
+    disabled_since.is_some()
+        || quota_blocked_since.is_some_and(|since| now - since > QUOTA_BLOCK_GRACE)
+}
+
+/// Whether a world can be joined at all, before any actor is considered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorldAdmission {
+    /// No `worlds.worlds` row.
+    Unknown,
+    /// Disabled, or its owner's quota block is past [`QUOTA_BLOCK_GRACE`].
+    Blocked,
+    Open(AccessType),
+}
+
 /// Why a world join is refused before any access setting is consulted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Ban {
@@ -127,5 +152,23 @@ impl LandOperators {
     /// or approvedForAll.
     pub fn manages(&self, actor: &Address) -> bool {
         self.addresses().any(|a| a == actor.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_operator_disable_applies_at_once_and_a_quota_block_after_two_days() {
+        let now = chrono::DateTime::from_timestamp(1_800_000_000, 0)
+            .unwrap()
+            .naive_utc();
+        let ago = |s: i64| Some(now - chrono::TimeDelta::seconds(s));
+        assert!(!world_blocked(None, None, now));
+        assert!(world_blocked(Some(now), None, now));
+        assert!(!world_blocked(None, Some(now), now));
+        assert!(!world_blocked(None, ago(2 * 86_400), now));
+        assert!(world_blocked(None, ago(2 * 86_400 + 1), now));
     }
 }

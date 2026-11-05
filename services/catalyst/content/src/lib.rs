@@ -696,6 +696,8 @@ pub fn build_router(state: SharedState) -> Router {
     let request_timeout = state.settings.request_timeout;
     let mut app = Router::new()
         .route("/about", get(about::get_about))
+        // lamb2's own path for the same handler (`routes.ts`: `/about` under `/lambdas`).
+        .route("/lambdas/about", get(about::get_about))
         .route("/lambdas/explore/realms", get(about::get_explore_realms))
         .route("/scenes", get(empty_scenes))
         .route(
