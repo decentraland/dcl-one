@@ -34,6 +34,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const thirdwebClientId =
     (typeof process !== "undefined" && process.env.THIRDWEB_CLIENT_ID) || "";
   const walletConnectProjectId = process.env.WALLETCONNECT_PROJECT_ID || "";
+  const magicApiKey = process.env.MAGIC_API_KEY || "";
   const telemetryUrl = publicTelemetryUrl(
     (typeof process !== "undefined" &&
       (process.env.VITE_TELEMETRY_URL || process.env.TELEMETRY_URL)) ||
@@ -49,6 +50,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   return {
     thirdwebClientId,
     walletConnectProjectId,
+    magicApiKey,
     telemetryUrl,
     docsBase,
     catalystBase,
@@ -86,11 +88,12 @@ export function meta(_args: Route.MetaArgs) {
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const data = useRouteLoaderData("root") as
-    | { thirdwebClientId?: string; walletConnectProjectId?: string; telemetryUrl?: string; docsBase?: string; catalystBase?: string; shopApiMode?: string }
+    | { thirdwebClientId?: string; walletConnectProjectId?: string; magicApiKey?: string; telemetryUrl?: string; docsBase?: string; catalystBase?: string; shopApiMode?: string }
     | undefined;
   const publicEnv = JSON.stringify({
     thirdwebClientId: data?.thirdwebClientId ?? "",
     walletConnectProjectId: data?.walletConnectProjectId ?? "",
+    magicApiKey: data?.magicApiKey ?? "",
     TELEMETRY_URL: data?.telemetryUrl ?? "",
     docsBase: data?.docsBase ?? "",
   }).replace(/</g, "\\u003c");

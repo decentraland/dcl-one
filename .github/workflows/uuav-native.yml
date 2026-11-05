@@ -2,49 +2,53 @@
 # three targets and proves the build reproducible. Nothing is committed: the
 # relock is a human step (library/uuav/README.md, "Relocking"). Expensive
 # (FFmpeg from source on macOS and Linux), so it runs only on demand or on a
-# PR carrying the `ci:uuav-native` label.
+# PR carrying the `ci:uuav-native` label whose diff touches the paths below.
 name: UUAV native build
 'on':
   workflow_dispatch:
   pull_request:
-    types: [labeled, synchronize]
+    types: [labeled, unlabeled, synchronize, reopened]
+    paths:
+      - library/uuav/**
+      - tooling/uuav/**
+      - tooling/native-lock/**
+      - .gitattributes
+      - .cargo/**
+      - .github/workflows/uuav-native.yml
 permissions:
   contents: read
 concurrency:
-  group: uuav-native-${{ github.event.pull_request.number || github.ref }}
+  group: >-
+    ${{ (github.event.label.name == 'ci:uuav-native'
+      || (github.event.action != 'labeled' && github.event.action != 'unlabeled'))
+      && format('uuav-native-{0}', github.event.pull_request.number || github.ref)
+      || format('uuav-native-skip-{0}', github.run_id) }}
   cancel-in-progress: true
 env:
-  DIST_LFS_GLOB: 'library/uuav/dist/**'
   LOCK: tooling/uuav/uuav-binaries.lock.json
   UUAV: library/uuav
 jobs:
   gate:
     name: Should this run
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.action == 'labeled' && github.event.label.name == 'ci:uuav-native')
+      || (github.event.action != 'labeled' && github.event.action != 'unlabeled'
+          && contains(github.event.pull_request.labels.*.name, 'ci:uuav-native'))
     runs-on: ubuntu-24.04
-    outputs:
-      run: ${{ steps.decide.outputs.run }}
     steps:
-      - id: decide
-        env:
-          LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'ci:uuav-native') }}
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$LABELLED" = "true" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
+      - run: 'true'
 
   macos:
     name: Build macos-universal
     needs: gate
-    if: needs.gate.outputs.run == 'true'
     runs-on: macos-15
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: false
-      - run: git lfs pull --include "$DIST_LFS_GLOB"
+      - run: git lfs pull --include 'library/uuav/dist/macos-universal/**'
 
       - name: Read pins from the lock
         id: pins
@@ -155,7 +159,6 @@ jobs:
   windows:
     name: Build windows-x86_64
     needs: gate
-    if: needs.gate.outputs.run == 'true'
     runs-on: windows-2025
     timeout-minutes: 90
     defaults:
@@ -165,7 +168,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: false
-      - run: git lfs pull --include "$DIST_LFS_GLOB"
+      - run: git lfs pull --include 'library/uuav/dist/windows-x86_64/**'
 
       - name: Read pins from the lock
         id: pins
@@ -249,14 +252,13 @@ jobs:
   linux:
     name: Build linux-x86_64
     needs: gate
-    if: needs.gate.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: false
-      - run: git lfs pull --include "$DIST_LFS_GLOB"
+      - run: git lfs pull --include 'library/uuav/dist/linux-x86_64/**'
 
       - name: Read pins from the lock
         id: pins
@@ -359,7 +361,6 @@ jobs:
   publish:
     name: Publish manifest
     needs: [macos, windows, linux]
-    if: always() && needs.macos.result == 'success' && needs.windows.result == 'success' && needs.linux.result == 'success'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

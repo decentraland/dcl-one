@@ -576,6 +576,10 @@ mod tests {
             "content/src/deploy_remote_entity.rs",
             "content",
         ),
+        (
+            "content/src/partial_deployments.rs",
+            "content",
+        ),
         ("content/src/read_through.rs", "mirror"),
         ("content/src/snapshot_gen.rs", "content"),
         ("content/src/write_deployer.rs", "content"),
@@ -598,6 +602,7 @@ mod tests {
             "mirror",
         ),
         ("worlds/src/core/deploy.rs", "worlds"),
+        ("worlds/src/core/partial.rs", "worlds"),
         ("worlds/src/core/settings.rs", "worlds"),
         ("worlds/src/mirror.rs", "worlds"),
     ];
@@ -629,12 +634,12 @@ mod tests {
                 walk(&krate.path().join("src"), &mut files);
             }
         }
-        // Every call of a Storage writer: `store`, `rekey` and
+        // Every call of a Storage writer: `store`, `store_file`, `rekey` and
         // `create_staging_file`, its arguments read to the closing parenthesis
         // however rustfmt wrapped them. Not a store: an accessor's (no
         // arguments) and an atomic's (its last argument an ordering).
         let writes_blobs = |text: &str| {
-            ["store(", "rekey(", "create_staging_file("]
+            ["store(", "store_file(", "rekey(", "create_staging_file("]
                 .iter()
                 .any(|method| {
                     text.match_indices(&format!(".{method}")).any(|(at, call)| {

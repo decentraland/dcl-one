@@ -67,6 +67,7 @@ pub mod items;
 pub mod lambdas_catalog;
 pub mod lambdas_crypto;
 pub mod lambdas_explorer;
+pub mod lambdas_http;
 pub mod lambdas_land;
 pub mod listings;
 pub mod lists;
@@ -111,7 +112,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{any, get, post};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower_http::timeout::TimeoutLayer;
@@ -152,6 +153,13 @@ pub struct Upstreams {
     /// `<base>/entities/<id>/{face,body}.png` as the old lambdas did;
     /// unset, at this node's `profile-images/entities/<id>/{face,body}.png`.
     pub profile_cdn_base_url: Option<String>,
+    /// `NFT_WORKER_BASE_URL`: the NFT ownership indexer the old lambdas asked
+    /// for an owner's third-party holdings; unset, they are read from the chain.
+    pub nft_worker_base_url: Option<String>,
+    /// `EXPLORER_ESCROW_GRANTS_ENABLED`: the explorer lists escrow grants.
+    pub explorer_escrow_grants_enabled: bool,
+    /// `LAMBDAS_CATALOG_EXTENSIONS_ENABLED`: the wearables catalogue's extended filters.
+    pub lambdas_catalog_extensions_enabled: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -169,11 +177,21 @@ pub struct Settings {
     /// `Config::eth_rpc_url()`: the contracts registry is read over the same
     /// TLS JSON-RPC endpoint the EIP-1654 validator uses.
     pub eth_rpc_url: Option<String>,
-    /// `RPC_ENDPOINT_POLYGON`: the POI list and third-party ownership on
-    /// polygon (the `TRADE_RPC_URLS` 137 entry otherwise).
+    /// `RPC_ENDPOINT_POLYGON`: the POI list, and third-party ownership on
+    /// the L2 of `ETH_NETWORK` (its `TRADE_RPC_URLS` entry otherwise).
     pub polygon_rpc_url: Option<String>,
     /// `THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL`: the approved third-party providers.
     pub third_party_registry_subgraph_url: Option<String>,
+    /// `NFT_WORKER_BASE_URL`: the owner's third-party holdings (`third_party`).
+    pub nft_worker_base_url: Option<String>,
+    /// `EXPLORER_ESCROW_GRANTS_ENABLED`: the explorer backpack's on-chain
+    /// items include this node's active escrow grants (`shop.usage_grants`);
+    /// off under the mirror posture, where lamb2 lists chain-owned tokens only.
+    pub explorer_escrow_grants: bool,
+    /// `LAMBDAS_CATALOG_EXTENSIONS_ENABLED`: `/lambdas/collections/wearables`
+    /// takes `collectionType`, `category`, `rarity`, `name`, `orderBy` and
+    /// `direction`; off under the mirror posture, where lamb2 ignores them.
+    pub lambdas_catalog_extensions: bool,
     /// `LAND_IMAGE_BASE_URL`: the map service `/lambdas/users/{a}/lands` points its images at.
     pub land_image_base_url: String,
     pub trades_sync_upstream_url: Option<String>,
@@ -371,6 +389,9 @@ impl Settings {
                 }
             })
             .transpose()?,
+            nft_worker_base_url: checked("NFT_WORKER_BASE_URL", &upstreams.nft_worker_base_url)?,
+            explorer_escrow_grants: upstreams.explorer_escrow_grants_enabled,
+            lambdas_catalog_extensions: upstreams.lambdas_catalog_extensions_enabled,
             land_image_base_url: config.map_urls().land_image_base,
             trades_sync_upstream_url: checked(
                 "TRADES_SYNC_UPSTREAM_URL",
@@ -428,6 +449,9 @@ impl Settings {
             eth_rpc_url: None,
             polygon_rpc_url: None,
             third_party_registry_subgraph_url: None,
+            nft_worker_base_url: None,
+            explorer_escrow_grants: true,
+            lambdas_catalog_extensions: true,
             land_image_base_url: "https://api.decentraland.org".to_string(),
             trades_sync_upstream_url: None,
             trades_sync_interval: Duration::from_secs(900),
@@ -840,7 +864,8 @@ impl AssetKey {
 }
 
 pub use crate::shared::http_util::{
-    bad_request, internal_server_error, lambdas_error, not_found, service_unavailable,
+    bad_request, internal_server_error, lambdas_error, lambdas_internal_error, not_found,
+    service_unavailable,
 };
 pub use crate::shared::identity::is_valid_eth_address;
 pub use crate::shared::upstream::check_upstream;
@@ -869,15 +894,20 @@ async fn lambdas_status(
     }))
 }
 
-/// The routes this module serves, with the lambdas' own CORS, NUL guard and
-/// request timeout: `main.rs` merges it into the content router, whose
-/// layers cover only the routes it built itself.
+/// The routes this module serves, with lamb2's CORS and the gateway's 404
+/// under `/lambdas/` ([`lambdas_http`]), the NUL guard and the request
+/// timeout: `main.rs` merges it into the content router, whose layers cover
+/// only the routes it built itself.
 pub fn router(state: SharedState) -> Router {
     let request_timeout = state.settings.request_timeout;
     let mut app = Router::new()
         .route(
             "/lambdas/profiles",
             post(profiles::profiles).layer(DefaultBodyLimit::max(256 * 1024)),
+        )
+        .route(
+            "/lambdas/profiles/metadata",
+            post(profiles::profiles_metadata).layer(DefaultBodyLimit::max(256 * 1024)),
         )
         .route("/lambdas/profiles/{id}", get(profiles::profile_by_id))
         .route("/lambdas/profile/{id}", get(profiles::profile_alias))
@@ -970,12 +1000,13 @@ pub fn router(state: SharedState) -> Router {
             post(lambdas_crypto::validate_signature).layer(DefaultBodyLimit::max(256 * 1024)),
         )
         .route("/lambdas/status", get(lambdas_status))
+        .route("/lambdas/{*rest}", any(lambdas_http::not_found))
         .route("/v1/trades", get(trades::get_trades))
         .route("/v1/trades-mirror", get(trades::get_mirror_status))
         .route("/v1/trades/{id}", get(trades::get_trade))
         .layer(axum::middleware::from_fn(mirrors::stamp_copies))
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
-        .layer(axum::middleware::from_fn(cors::cors_middleware));
+        .layer(axum::middleware::from_fn(lambdas_http::cors_middleware));
     if let Some(timeout) = request_timeout {
         app = app.layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,

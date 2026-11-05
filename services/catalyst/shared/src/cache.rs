@@ -118,12 +118,41 @@ where
         (entry.at.elapsed() < self.ttl).then(|| entry.value.clone())
     }
 
+    /// The last value stored under `key`, however old: a failed refresh
+    /// keeps it, so a caller can serve it stale.
+    pub fn get_stale(&self, key: &K) -> Option<V> {
+        let slot = self.map.get(key)?;
+        slot.cached.as_ref().map(|entry| entry.value.clone())
+    }
+
     pub fn insert(&self, key: K, value: V) {
         let mut slot = self.map.entry(key).or_insert_with(Slot::empty);
         slot.cached = Some(Entry {
             at: Instant::now(),
             value,
         });
+    }
+
+    /// The cached value, expired or not, while it is younger than `max_age`:
+    /// a stale-on-error read for a caller that may answer an old value when
+    /// its fetch fails. A failed fetch leaves the expired entry in place.
+    pub fn get_within(&self, key: &K, max_age: Duration) -> Option<V> {
+        let slot = self.map.get(key)?;
+        let entry = slot.cached.as_ref()?;
+        (entry.at.elapsed() < max_age).then(|| entry.value.clone())
+    }
+
+    /// Ages `key`'s entry by `by`, as if it had been stored that much earlier.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn backdate(&self, key: &K, by: Duration) {
+        if let Some(mut slot) = self.map.get_mut(key)
+            && let Some(entry) = slot.cached.as_mut()
+        {
+            entry.at = entry
+                .at
+                .checked_sub(by)
+                .expect("a backdate within the clock");
+        }
     }
 
     pub async fn get_or_fetch<F, Fut, E>(&self, key: K, fetch: F) -> Result<V, E>
@@ -263,6 +292,23 @@ mod tests {
         map.clear();
         assert_eq!(map.get_or_fetch("k".into(), fetch).await, Ok(7));
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a_failed_refresh_keeps_the_stale_value() {
+        let map: TtlMap<String, u32> = TtlMap::new(Duration::ZERO);
+        assert_eq!(map.get_stale(&"k".into()), None);
+        map.insert("k".into(), 3);
+        assert_eq!(
+            map.get_fresh(&"k".into()),
+            None,
+            "a zero TTL is never fresh"
+        );
+        let failed = map
+            .get_or_fetch("k".into(), || async { Err::<u32, &str>("boom") })
+            .await;
+        assert_eq!(failed, Err("boom"));
+        assert_eq!(map.get_stale(&"k".into()), Some(3));
     }
 
     #[tokio::test]

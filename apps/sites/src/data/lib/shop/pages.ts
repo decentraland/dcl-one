@@ -20,6 +20,8 @@ export type ShopPageData = {
   page: ShopPageId;
   seo: ShopSeo;
   queries: PrimedQuery[];
+  /** decentraland.org's `dapps` rollout flags the server rendered with, primed in the browser before it hydrates. */
+  featureFlags?: Readonly<Record<string, boolean>>;
   /** The session id the page's own telemetry is tagged with (set by the route loader). */
   sid?: string;
 };

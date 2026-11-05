@@ -16,6 +16,7 @@ describe('realm', () => {
     await mkdir(path.join(dir, 'assets', 'models'), { recursive: true })
     await writeFile(path.join(dir, 'scene.json'), JSON.stringify({ main: 'bin/index.js', scene: { base: '12,0', parcels: ['12,0', '13,0'] }, display: { title: 'fixture' } }))
     await writeFile(path.join(dir, 'bin', 'index.js'), 'export function main() {}')
+    await writeFile(path.join(dir, 'bin', 'scene.js'), 'chunk')
     await writeFile(path.join(dir, 'assets', 'models', 'a.glb'), Buffer.from([1, 2, 3]))
     scene = await buildScene(dir)
     server = await serveRealm({ scenes: [scene], port: 0 })
@@ -26,14 +27,14 @@ describe('realm', () => {
     await rm(dir, { recursive: true, force: true })
   })
 
-  test('buildScene lists the bundle and the assets by content hash', () => {
+  test('buildScene lists the bundle, its chunks and the assets by content hash', () => {
     assert.deepEqual(scene.entity.pointers, ['12,0', '13,0'])
     assert.equal(scene.entity.type, 'scene')
     assert.deepEqual(
       scene.entity.content.map((entry) => entry.file),
-      ['bin/index.js', 'assets/models/a.glb']
+      ['bin/index.js', 'bin/scene.js', 'assets/models/a.glb']
     )
-    assert.equal(scene.entity.content[1]!.hash, contentHash(Buffer.from([1, 2, 3])))
+    assert.equal(scene.entity.content[2]!.hash, contentHash(Buffer.from([1, 2, 3])))
     assert.match(scene.entity.id, /^e2e[0-9a-f]{64}$/)
     assert.equal(scene.entity.metadata.main, 'bin/index.js')
   })
@@ -67,7 +68,10 @@ describe('realm', () => {
   test('the entity and its files are served by hash', async () => {
     const entity = await (await fetch(`${server.realm}/content/contents/${scene.entity.id}`)).json()
     assert.deepEqual(entity, scene.entity)
-    const file = await fetch(`${server.realm}/content/contents/${scene.entity.content[1]!.hash}`)
+    const chunk = await fetch(`${server.realm}/content/contents/${scene.entity.content[1]!.hash}`)
+    assert.equal(chunk.headers.get('content-type'), 'text/javascript; charset=utf-8')
+    assert.equal(await chunk.text(), 'chunk')
+    const file = await fetch(`${server.realm}/content/contents/${scene.entity.content[2]!.hash}`)
     assert.equal(file.headers.get('content-type'), 'model/gltf-binary')
     assert.deepEqual(Buffer.from(await file.arrayBuffer()), Buffer.from([1, 2, 3]))
     assert.equal((await fetch(`${server.realm}/content/contents/e2enothing`)).status, 404)

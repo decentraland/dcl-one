@@ -16,12 +16,15 @@ pub struct MarketUpstreamsConfig {
     #[arg(long, env = "MATIC_COLLECTIONS_SUBGRAPH_URL")]
     pub matic_collections_subgraph_url: Option<String>,
 
-    /// L1 marketplace subgraph (names); unset answers empty names.
+    /// L1 marketplace subgraph (names, and LAND before the indexes publish);
+    /// `NODE_POSTURE=mirror` sets lamb2's default. Unset, `/lambdas` names
+    /// and lands answer the 503 envelope; profiles and outfits claim no name.
     #[arg(long, env = "MARKETPLACE_SUBGRAPH_URL")]
     pub marketplace_subgraph_url: Option<String>,
 
-    /// Land-manager subgraph: parcel operators and update-operator lookups
-    /// before the land-authz index is published; unset answers the envelope.
+    /// Land-manager subgraph: parcel operators, permissions and
+    /// update-operator lookups before the land-authz index is published;
+    /// unset answers the envelope (lamb2's 500 on the permissions route).
     #[arg(long, env = "LAND_SUBGRAPH_URL")]
     pub land_subgraph_url: Option<String>,
 
@@ -47,9 +50,28 @@ pub struct MarketUpstreamsConfig {
     pub trades_serve_partial: bool,
 
     /// Avatar snapshots become `<base>/entities/<id>/{face,body}.png` when
-    /// set; unset they point at this node's `contents/<hash>`.
+    /// set; unset they point at this node's `/profile-images`.
     #[arg(long, env = "PROFILE_CDN_BASE_URL")]
     pub profile_cdn_base_url: Option<String>,
+
+    /// NFT ownership indexer (`POST <base>/wallets/<owner>/networks/<network>/nfts`)
+    /// for an owner's third-party holdings; unset, they are read over each
+    /// network's JSON-RPC (`TRADE_RPC_URLS`, `ETH_RPC_URL`, `RPC_ENDPOINT_POLYGON`).
+    /// `NODE_POSTURE=mirror` refuses to start with it empty.
+    #[arg(long, env = "NFT_WORKER_BASE_URL")]
+    pub nft_worker_base_url: Option<String>,
+
+    /// Merge this node's active escrow grants (`shop.usage_grants`) into the
+    /// explorer backpack's on-chain items. lamb2 lists chain-owned tokens
+    /// only, so the mirror posture turns it off.
+    #[arg(long, env = "EXPLORER_ESCROW_GRANTS_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
+    pub explorer_escrow_grants_enabled: bool,
+
+    /// Take this node's extended filters on `/lambdas/collections/wearables`
+    /// (`collectionType`, `category`, `rarity`, `name`, `orderBy`,
+    /// `direction`). lamb2 ignores them, so the mirror posture turns it off.
+    #[arg(long, env = "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
+    pub lambdas_catalog_extensions_enabled: bool,
 }
 
 /// The marketplace: the collections and items mirrors, the trade ownership RPCs, the

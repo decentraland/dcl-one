@@ -90,6 +90,11 @@ pub(crate) fn market_settings(
             trades_sync_pages_per_run: config.market_upstreams.trades_sync_pages_per_run,
             trades_serve_partial: config.market_upstreams.trades_serve_partial,
             profile_cdn_base_url: config.market_upstreams.profile_cdn_base_url.clone(),
+            nft_worker_base_url: config.market_upstreams.nft_worker_base_url.clone(),
+            explorer_escrow_grants_enabled: config.market_upstreams.explorer_escrow_grants_enabled,
+            lambdas_catalog_extensions_enabled: config
+                .market_upstreams
+                .lambdas_catalog_extensions_enabled,
         },
     )?
     .with_market(

@@ -243,6 +243,17 @@ const ROWS: &[Row] = &[
     ),
     upstream(
         "mirrors",
+        "FF_URL",
+        "https://feature-flags.decentraland.org",
+    ),
+    upstream("social analytics", "ANALYTICS_API_URL", ""),
+    upstream(
+        "community compliance",
+        "OPENAI_BASE_URL",
+        "https://api.openai.com/v1",
+    ),
+    upstream(
+        "mirrors",
         "EXPLORER_MAP_SOURCE_URL",
         "https://api.decentraland.org",
     ),
@@ -273,6 +284,37 @@ const ROWS: &[Row] = &[
         "mirrors",
         "MARKETPLACE_SUBGRAPH_URL",
         "https://subgraph.decentraland.org/marketplace",
+    ),
+    upstream(
+        "mirrors",
+        "NFT_WORKER_BASE_URL",
+        "https://nfts.decentraland.org",
+    ),
+    // lamb2's explorer backpack lists chain-owned tokens only: a mirror
+    // answers the same; island and journey also list this node's escrow grants.
+    row(
+        "lambdas",
+        "EXPLORER_ESCROW_GRANTS_ENABLED",
+        Is("false"),
+        Is("true"),
+        Is("true"),
+    ),
+    // lamb2's `/collections/wearables` takes `collectionId`, `wearableId`
+    // and `textSearch` only: a mirror answers the same; island and journey
+    // also take this node's extended filters.
+    row(
+        "lambdas",
+        "LAMBDAS_CATALOG_EXTENSIONS_ENABLED",
+        Is("false"),
+        Is("true"),
+        Is("true"),
+    ),
+    // lamb2's LAND subgraph: parcel operators and permissions until the
+    // land-authz index is published.
+    upstream(
+        "mirrors",
+        "LAND_SUBGRAPH_URL",
+        "https://subgraph.decentraland.org/land-manager",
     ),
     mirrored("indexes", "MARKETPLACE_NFT_INDEX_ENABLED"),
     mirrored("indexes", "MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED"),
@@ -372,6 +414,16 @@ const ROWS: &[Row] = &[
         "PROFILE_IMAGES_ORIGIN_URL",
         "https://profile-images.decentraland.org",
     ),
+    // lamb2's default snapshot base: a mirror's profiles name Decentraland's
+    // profile images, as the Catalyst it replaces does; island and journey
+    // name their own `/profile-images`.
+    row(
+        "upstreams",
+        "PROFILE_CDN_BASE_URL",
+        Is("https://profile-images.decentraland.org"),
+        Own("<PUBLIC_URL>/profile-images"),
+        Own("<PUBLIC_URL>/profile-images"),
+    ),
     upstream(
         "upstreams",
         "EXPLORER_REGISTRY_SOURCE_URL",
@@ -425,10 +477,11 @@ const ROWS: &[Row] = &[
         "MAP_SATELLITE_BASE_URL",
         "https://genesis.city/map/latest",
     ),
+    // lamb2's /about parcel view; island and journey draw their own minimap.
     row(
         "map",
         "MAP_PARCEL_VIEW_URL",
-        Own("<PUBLIC_URL>/api/v1/minimap.png"),
+        Is("https://api.decentraland.org/v1/minimap.png"),
         Own("<PUBLIC_URL>/api/v1/minimap.png"),
         Own("<PUBLIC_URL>/api/v1/minimap.png"),
     ),
@@ -439,10 +492,12 @@ const ROWS: &[Row] = &[
         Own("<PUBLIC_URL>/api/v1/estatemap.png"),
         Own("<PUBLIC_URL>/api/v1/estatemap.png"),
     ),
+    // The image lamb2's `/lands` answers is the marketplace subgraph's
+    // `nft.image`, under Decentraland's map API.
     row(
         "map",
         "LAND_IMAGE_BASE_URL",
-        Own("<PUBLIC_URL>/api"),
+        Is("https://api.decentraland.org"),
         Own("<PUBLIC_URL>/api"),
         Own("<PUBLIC_URL>/api"),
     ),
@@ -617,6 +672,9 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
     let Some(posture) = posture else {
         return Ok(());
     };
+    if posture == Posture::Mirror {
+        refuse_unfiltered_profiles(config)?;
+    }
     if posture != Posture::Mirror {
         let name = posture.name();
         for (key, value) in [
@@ -667,6 +725,44 @@ pub fn check(config: &Config, env: &Lookup) -> anyhow::Result<()> {
                 if open.len() == 1 { "is" } else { "are" },
             );
         }
+    }
+    if posture == Posture::Mirror {
+        refuse_chain_read_third_party(config)?;
+    }
+    Ok(())
+}
+
+/// A mirror replaces a Catalyst whose lambdas always check the profiles'
+/// items and names against their owner: the collections and marketplace
+/// subgraphs the posture names may not be blanked (an island, with no
+/// ownership source, serves the items as deployed).
+fn refuse_unfiltered_profiles(config: &Config) -> anyhow::Result<()> {
+    let upstreams = &config.market_upstreams;
+    let blank: Vec<&str> = [
+        (
+            "ETH_COLLECTIONS_SUBGRAPH_URL",
+            &upstreams.eth_collections_subgraph_url,
+        ),
+        (
+            "MATIC_COLLECTIONS_SUBGRAPH_URL",
+            &upstreams.matic_collections_subgraph_url,
+        ),
+        (
+            "MARKETPLACE_SUBGRAPH_URL",
+            &upstreams.marketplace_subgraph_url,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(key, value)| Config::non_empty(value).is_none().then_some(key))
+    .collect();
+    if !blank.is_empty() {
+        anyhow::bail!(
+            "{ENV}=mirror checks every profile's wearables, emotes and names against their owner, \
+             but {} {} empty: unset {} to read Decentraland's subgraphs",
+            blank.join(", "),
+            if blank.len() == 1 { "is" } else { "are" },
+            if blank.len() == 1 { "it" } else { "them" },
+        );
     }
     Ok(())
 }
@@ -724,6 +820,19 @@ fn refuse_followers(posture: Posture, env: &Lookup) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A mirror serves the public third-party routes, which lamb2 answers from
+/// the NFT worker: without `NFT_WORKER_BASE_URL` the chain path leaves an
+/// open mapping's tokens out, so a mirror may not blank it.
+fn refuse_chain_read_third_party(config: &Config) -> anyhow::Result<()> {
+    if Config::non_empty(&config.market_upstreams.nft_worker_base_url).is_none() {
+        anyhow::bail!(
+            "{ENV}=mirror answers the third-party wearables from the NFT worker, as lamb2 does, \
+             but NFT_WORKER_BASE_URL is empty: unset it to read Decentraland's worker"
+        );
+    }
+    Ok(())
+}
+
 /// The worlds federation's peer file: set, the node polls every peer it names.
 const FED_PEERS_FILE: &str = "WORLDS_FED_PEERS_FILE";
 
@@ -736,6 +845,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("PUBLIC_URL", "this node's own address"),
     ("HTTP_SERVER_HOST", "the address it listens on"),
     ("ACCOUNT_BASE_URL", LINK),
+    ("PROFILE_URL", LINK),
     ("MARKETPLACE_BASE_URL", LINK),
     ("SHOP_BASE_URL", LINK),
     ("SHOP_ITEM_BASE_URL", LINK),
@@ -745,12 +855,14 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("BADGES_PUBLIC_ASSET_BASE_URL", LINK),
     ("PROFILE_CDN_BASE_URL", LINK),
     ("COMMUNITIES_CDN_URL", LINK),
+    ("SERVICE_BASE_URL", LINK),
     ("FIRST_WEAR_IMAGE_BASE", LINK),
     ("MAP_EXTERNAL_BASE_URL", LINK),
     ("MAP_IMAGE_BASE_URL", LINK),
     ("CAMERA_REEL_API_URL", LINK),
     ("CAMERA_REEL_BUCKET_URL", LINK),
     ("BFF_URL", LINK),
+    ("BUILDER_URL", LINK),
 ];
 const DATABASE: &str = "this node's own database";
 const LINK: &str = "a link clients follow; the node never dials it";
@@ -948,7 +1060,58 @@ pub fn refuse_remote_secrets(config: &mut Config) -> anyhow::Result<()> {
 /// The secrets that switch on a client of a fixed third-party API, with the
 /// key that can point it elsewhere (then held to loopback above) and the API.
 const THIRD_PARTY_SECRETS: &[(&str, Option<&str>, &str)] = &[
+    (
+        "OPEN_AI_API_KEY",
+        Some("OPENAI_BASE_URL"),
+        "community compliance Responses API",
+    ),
     ("SENDGRID_API_KEY", None, "SendGrid's mail API"),
+    ("SLACK_BOT_TOKEN", None, "Slack Web API"),
+    (
+        "ANALYTICS_API_TOKEN",
+        Some("ANALYTICS_API_URL"),
+        "Social Analytics API",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_5",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_10",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_20",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_25",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_30",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_50",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_60",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_75",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
     (
         "TURNSTILE_SECRET_KEY",
         None,

@@ -56,6 +56,7 @@ pub mod create_entity;
 pub mod denylist;
 pub mod forward;
 pub mod land_publish;
+pub mod partial_deployments;
 #[cfg(test)]
 pub(crate) mod sync_test_support;
 pub mod unpublish_scene;
@@ -143,6 +144,9 @@ pub struct Settings {
     /// node: /about advertises it only while the tile grid it draws from is
     /// loaded ([`ContentState::attach_parcel_grid`]).
     pub map_parcel_view_needs_grid: bool,
+    /// `ABOUT_RESOURCE_CHECK`: /about stops accepting users while the host
+    /// is above 90% CPU or memory, as lamb2 does.
+    pub about_resource_check: bool,
     pub deployments_query_timeout: Duration,
     pub request_timeout: Option<Duration>,
     /// `CATALYRST_CONTENT_ADMIN_TOKEN`: the bearer of the operator routes
@@ -155,6 +159,8 @@ pub struct Settings {
     pub max_in_memory_deployment_bytes: u64,
     /// `POST_ENTITIES_DAILY_QUOTA_MAX`; 0 is off.
     pub post_entities_daily_quota_max: u32,
+    /// The partial-upload limits (`PENDING_DEPLOYMENT_TTL`, ...).
+    pub partial_uploads: partial_deployments::Limits,
 }
 
 /// An operator bearer whose `Debug` never prints it; empty is unset.
@@ -226,6 +232,7 @@ impl Settings {
                     config.node.node_posture.as_deref().map(str::trim),
                     Some("island" | "journey")
                 ),
+            about_resource_check: config.node.about_resource_check,
             deployments_query_timeout: Duration::from_secs(
                 config.node.deployments_query_timeout_secs,
             ),
@@ -238,6 +245,7 @@ impl Settings {
             max_upload_field_bytes: config.content.max_upload_field_size,
             max_in_memory_deployment_bytes: config.content.max_in_memory_deployment_bytes,
             post_entities_daily_quota_max: config.content.post_entities_daily_quota_max,
+            partial_uploads: partial_deployments::Limits::from_config(config),
         }
     }
 
@@ -261,6 +269,7 @@ impl Settings {
             map_satellite_base_url: Some("http://127.0.0.1:5162/satellite".to_string()),
             map_parcel_view_url: "http://127.0.0.1:5162/v1/minimap.png".to_string(),
             map_parcel_view_needs_grid: false,
+            about_resource_check: false,
             deployments_query_timeout: Duration::from_secs(10),
             request_timeout: None,
             admin_token: AdminToken::default(),
@@ -268,6 +277,7 @@ impl Settings {
             max_upload_field_bytes: 32 * 1024,
             max_in_memory_deployment_bytes: 2 * 1024 * 1024 * 1024,
             post_entities_daily_quota_max: 300,
+            partial_uploads: partial_deployments::Limits::default(),
         }
     }
 }
@@ -691,6 +701,8 @@ pub fn build_router(state: SharedState) -> Router {
     let request_timeout = state.settings.request_timeout;
     let mut app = Router::new()
         .route("/about", get(about::get_about))
+        // lamb2's own path for the same handler (`routes.ts`: `/about` under `/lambdas`).
+        .route("/lambdas/about", get(about::get_about))
         .route("/lambdas/explore/realms", get(about::get_explore_realms))
         .route("/scenes", get(empty_scenes))
         .route(

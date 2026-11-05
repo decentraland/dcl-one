@@ -193,17 +193,17 @@ fn register_metrics() {
     ops::telemetry::register_metrics();
 }
 
-fn install_metrics(raw: &str) -> anyhow::Result<()> {
+fn install_metrics(raw: &str) -> anyhow::Result<comms::metrics::PrometheusHandle> {
     let bind = comms::metrics::serve_metrics_bind(raw)?;
-    comms::metrics::install_prometheus_exporter(bind)?;
+    let handle = comms::metrics::install_prometheus_exporter(bind)?;
     register_metrics();
     tracing::info!(%bind, "serve /metrics listening");
-    Ok(())
+    Ok(handle)
 }
 
 pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     config.node.init_tracing();
-    install_metrics(&config.node.serve_metrics_bind)?;
+    let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     config.resolve_secret_files()?;
     config.content.eth_rpc_url()?;
@@ -381,6 +381,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         ),
         events_admin_token: config.explore.catalyrst_events_admin_token.clone(),
         events_slack_webhook: config.explore.events_slack_webhook.clone(),
+        events_upcoming_summaries_enabled: config.explore.events_upcoming_summaries_enabled,
         places_upstream: source(
             config.explore.places_mirror_upstream,
             &config.explore.places_upstream_url,
@@ -512,6 +513,11 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     if let Some(about) = &about_comms {
         worlds_settings.sfu = about.sfu.clone();
     }
+    // Worlds' visitors use this node's content unless CONTENT_URL points elsewhere.
+    if Config::non_empty(&config.node.content_url).is_none() {
+        worlds_settings.content_readiness =
+            worlds::about::ContentReadiness::local(sync_status.clone());
+    }
     let worlds_mirror = worlds::MirrorSettings::from_config(&config, &local_urls)?;
     // The live world presence: ONE map the gatekeeper's LiveKit webhook
     // feeds, read by its world mints, its own routes, worlds' status and the
@@ -584,6 +590,16 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     .with_denylist(content.denylist.clone())
     .with_forwarder(content_forwarder);
     content.attach_writes(config.writes.content_writes_enabled, Arc::new(deployer));
+    // Expired partial uploads (content::partial_deployments) are reclaimed
+    // only where they can be made: a node taking local writes.
+    if config.writes.content_writes_enabled {
+        content::partial_deployments::spawn(
+            &jobs,
+            pool.clone(),
+            storage.clone(),
+            content::partial_deployments::Limits::from_config(&config),
+        );
+    }
     let denylisted = content
         .load_denylist()
         .await
@@ -769,6 +785,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .load_withheld()
         .await
         .context("loading camera_reel.withheld_blobs")?;
+    camera_reel.spawn_ranking_job(&jobs);
     tracing::info!(
         builder = %builder.sources_label(),
         camera_reel_api_url = %camera_reel.settings.api_url,
@@ -815,21 +832,34 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let personal_worlds = worlds::policy::PersonalWorldsPolicy::new(
         config.worlds.worlds_personal_worlds_max,
         config.worlds.worlds_personal_world_max_size_bytes,
-        worlds::policy::MAX_WORLD_SIZE_BYTES,
+        worlds::policy::MAX_SCENE_SIZE_BYTES,
     )
     .context("WORLDS_PERSONAL_WORLDS_MAX / WORLDS_PERSONAL_WORLD_MAX_SIZE_BYTES")?;
     let land_operators = comms_settings
         .land_operators_url
         .as_deref()
         .map(|url| worlds::policy::LandOperatorsReader::new(http_client.clone(), url));
+    let ens = if config.worlds.allow_ens_domains {
+        let rpc = config.content.eth_rpc_url().context("ETH_RPC_URL")?;
+        Some(Arc::new(worlds::ens::EnsResolver::configured(
+            http_client.clone(),
+            rpc.as_deref(),
+            &config.node.eth_network,
+        )?))
+    } else {
+        None
+    };
     let ban_status: Arc<dyn comms::gatekeeper::moderation::BanStatus> =
         Arc::new(comms::gatekeeper::moderation::Moderation::new(pool.clone()));
     let policy = Arc::new(
         worlds::policy::Policy::new(pool.clone(), personal_worlds, Some(market.index.clone()))
             .with_ban_status(ban_status.clone())
             .with_land_operators(land_operators)
-            .with_land_authz(Some(land.clone())),
+            .with_land_authz(Some(land.clone()))
+            .with_max_parcels(config.worlds.max_parcels)
+            .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024),
     );
+    worlds.attach_policy(policy.clone());
     // A world read-through holds each mirrored scene's signer to this policy and shares the
     // content read-through's download bound.
     if let Some(read_through) = &read_through {
@@ -925,14 +955,14 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         comms_stage.gatekeeper.clone(),
         eip1654,
         &explore,
+        metrics_handle,
     )?;
     social
         .rpc
         .start_topology(&jobs, comms_stage.archipelago.feed.topology.clone());
-    // A room the gatekeeper closes reaches the open voice streams as ENDED.
-    comms_stage
-        .social_directory
-        .set_updates(social.rpc.ctx.pubsub().clone());
+    social
+        .rpc
+        .start_fanout(&jobs, comms_stage.gatekeeper.bus.clone());
     market.attach_profile_images(social.profile_images.clone());
     let subscriptions = Arc::new(shop::subscriptions::State::new(
         pool.clone(),
@@ -952,6 +982,20 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     social
         .communities
         .set_voice_eviction(comms_stage.gatekeeper.clone());
+    social.communities.set_chain_index(market.index.clone());
+    social.communities.load_flags().await?;
+    if let Err(error) = social.communities.refresh_flags(&explorer_api).await {
+        tracing::warn!(%error,"initial DAPPS flags refresh failed; retaining the stored document");
+    }
+    social
+        .communities
+        .spawn_flags_job(&jobs, explorer_api.clone());
+    social
+        .communities
+        .referral
+        .set_denylist(explorer_api.denylist.clone());
+    communities::ranking::spawn_jobs(&social.communities, &jobs);
+    communities::compliance::spawn_job(&social.communities, &jobs);
     // A permission, access-setting or block edit reaches the running rooms
     // at once: the host's sockets and comms' LiveKit participants.
     if let Some(host) = &stage5.scene_host {
@@ -990,6 +1034,26 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     comms_stage.gatekeeper.spawn_jobs(&jobs);
     social.media.spawn_jobs(&jobs);
     social.rpc.spawn_jobs(&jobs);
+    if config.writes.social_writes_enabled {
+        let communities = social.communities.clone();
+        jobs.spawn_periodic_leased(
+            "social-referral-rewards",
+            jobs::PeriodicCfg::every(Duration::from_secs(60)),
+            move |_ctx| {
+                let communities = communities.clone();
+                async move {
+                    communities
+                        .referral
+                        .drain_pending_rewards()
+                        .await
+                        .map_err(|error| {
+                            anyhow::anyhow!("referral reward drain failed: {error:?}")
+                        })?;
+                    Ok(())
+                }
+            },
+        );
+    }
     communities::fed::spawn_job(&social.communities, &jobs);
     // Copies of the upstream public communities; not local authority, so
     // not behind SOCIAL_WRITES_ENABLED (the explore mirrors' rule). A join or
@@ -1243,7 +1307,12 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         ))
         .nest(
             "/worlds-content-server",
-            comms::gatekeeper::admission::world_mint::router(comms_stage.gatekeeper.clone()),
+            comms::gatekeeper::admission::world_mint::router(comms_stage.gatekeeper.clone()).merge(
+                social::writes::guard(
+                    comms::gatekeeper::webhook_router(comms_stage.gatekeeper.clone()),
+                    config.writes.social_writes_enabled,
+                ),
+            ),
         )
         .nest(
             "/comms-gatekeeper",
@@ -1299,7 +1368,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let shutdown_jobs = jobs.clone();
     axum::serve(
         listener,
-        axum::ServiceExt::<axum::extract::Request>::into_make_service(app),
+        axum::ServiceExt::<axum::extract::Request>::into_make_service_with_connect_info::<
+            std::net::SocketAddr,
+        >(app),
     )
     .with_graceful_shutdown(async move {
         shutdown_signal().await;
@@ -1559,6 +1630,18 @@ async fn worlds_states(
     jobs: &Arc<jobs::Jobs>,
     presence: Arc<comms::presence::Presence>,
 ) -> anyhow::Result<worlds::Stage5> {
+    let max_concurrent_uploads = worlds::core::partial::uploads_within_pool(
+        config.worlds.max_concurrent_uploads,
+        config.node.pg_pool_size,
+    );
+    if max_concurrent_uploads < config.worlds.max_concurrent_uploads {
+        tracing::warn!(
+            configured = config.worlds.max_concurrent_uploads,
+            effective = max_concurrent_uploads,
+            pg_pool_size = config.node.pg_pool_size,
+            "MAX_CONCURRENT_UPLOADS lowered to three quarters of PG_POOL_SIZE"
+        );
+    }
     let non_empty = Config::non_empty;
 
     let core = Arc::new(
@@ -1570,21 +1653,67 @@ async fn worlds_states(
                 non_empty(&config.worlds.catalyrst_worlds_admin_token),
                 worlds::core::UploadLimits {
                     max_in_flight_upload_bytes: config.worlds.max_in_flight_upload_bytes,
-                    max_concurrent_uploads: config.worlds.max_concurrent_uploads,
+                    max_concurrent_uploads,
                     max_in_flight_upload_files: config.worlds.max_in_flight_upload_files,
                     multipart_upload_timeout_ms: config.worlds.multipart_upload_timeout_ms,
                     deployment_processing_timeout_ms: config
                         .worlds
                         .deployment_processing_timeout_ms,
+                    max_concurrent_uploads_per_source: config
+                        .worlds
+                        .max_concurrent_uploads_per_source,
+                    max_in_flight_upload_bytes_per_source: config
+                        .worlds
+                        .max_in_flight_upload_bytes_per_source,
                 },
             )
-            .map(|s| s.with_global_scenes_urn(config.worlds_content.global_scenes_urn.as_deref()))
+            .and_then(|s| {
+                s.with_global_scenes_urn(config.worlds_content.global_scenes_urn.as_deref())
+                    .with_scene_eviction_ttl_ms(config.worlds.scene_eviction_ttl_ms)
+                    .with_public_url(&worlds::Settings::from_config(config).public_url)
+                    .with_max_file_count(config.worlds.max_file_count)
+                    .with_owner_reconcile_interval_secs(
+                        config.worlds.worlds_owner_reconcile_interval_secs,
+                    )
+                    // The variables content's partial uploads share; each domain keeps its own budget.
+                    .with_partial_uploads(worlds::core::PartialUploadLimits {
+                        pending_deployment_ttl_ms: config.content.pending_deployment_ttl_ms,
+                        cleanup_interval_ms: config.worlds.partial_upload_cleanup_interval_ms,
+                        max_pending_per_deployer: u64::from(
+                            config.content.max_pending_deployments_per_deployer,
+                        ),
+                        max_pending_per_world: config.worlds.max_pending_deployments_per_world,
+                        pending_bytes_per_world_factor: config
+                            .worlds
+                            .pending_bytes_per_world_factor,
+                        max_pending_bytes_per_deployer: config
+                            .content
+                            .max_pending_bytes_per_deployer,
+                        max_pending_bytes_per_source: config.worlds.max_pending_bytes_per_source,
+                        max_pending_bytes: config.content.max_pending_bytes,
+                        max_bytes_per_minute: config.content.max_partial_upload_bytes_per_minute,
+                        completed_upload_ttl_ms: config.worlds.completed_upload_ttl,
+                    })
+            })
             .context(
                 "MAX_IN_FLIGHT_UPLOAD_* / MAX_CONCURRENT_UPLOADS / *_TIMEOUT_MS configuration",
             )?,
             eip1654.clone(),
         )
         .with_presence(presence)
+        .with_allowance(worlds::core::holdings::configured(
+            http_client.clone(),
+            config.content.eth_rpc_url()?.as_deref(),
+            non_empty(&config.economy.rpc_endpoint_polygon).as_deref(),
+            &config.node.eth_network,
+        ))
+        // World notices persist through social's directory, as comms' do.
+        .with_notices(worlds::core::notices::Notices::new(
+            Some(Arc::new(social::comms_directory::Directory::new(
+                pool.clone(),
+            ))),
+            &config.worlds.builder_url,
+        ))
         .with_forwarder(forwarder(
             "WORLDS_FORWARD_UPSTREAM_URL",
             config.worlds.worlds_forward_upstream_url.as_deref(),
@@ -1732,9 +1861,6 @@ async fn worlds_states(
 struct CommsStage {
     archipelago: crate::comms::archipelago::AppState,
     gatekeeper: crate::comms::gatekeeper::SharedState,
-    /// The gatekeeper's social seam, kept to attach the social RPC's
-    /// fan-out once it exists.
-    social_directory: Arc<social::comms_directory::Directory>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1778,7 +1904,7 @@ async fn comms_states(
         policy.clone() as Arc<dyn AccessPolicy>,
         Arc::new(worlds::rooms::SceneResolver::new(pool.clone())),
         presence,
-        social_directory.clone(),
+        social_directory,
     )
     .with_ban_status(ban_status.clone())
     .with_name_owner_reader(market.clone())
@@ -1795,6 +1921,7 @@ async fn comms_states(
     })
     .context("ARCHIPELAGO_CONTROL_V4_AUDIENCE and NATS_URL configuration")?
     .with_max_users_per_world(config.worlds.max_users_per_world)
+    .with_shared_secret_max_attempts(config.worlds.shared_secret_max_attempts_per_minute)
     .with_room_authority_key(non_empty(&config.room_authority.pulse_room_authority_key).as_deref())?
     .with_room_event_sink(room_events);
     let gatekeeper = Arc::new(gatekeeper);
@@ -1810,7 +1937,6 @@ async fn comms_states(
     Ok(CommsStage {
         archipelago,
         gatekeeper,
-        social_directory,
     })
 }
 
@@ -1837,6 +1963,235 @@ impl communities::WorldAccessRevocation for WorldsCommunityAccess {
     }
 }
 
+/// Social's boot-time provider setup: the bootstrap check, then the analytics
+/// adapter, which is configured by its own settings only.
+fn social_analytics(
+    config: &Config,
+    http_client: &http::Outbound,
+) -> anyhow::Result<Option<social::analytics::Analytics>> {
+    config
+        .social
+        .validate_provider_bootstrap()
+        .map_err(anyhow::Error::msg)?;
+    if config.social.community_compliance_api_key.is_none() {
+        tracing::info!(
+            "OPEN_AI_API_KEY unset: community AI compliance runs without its provider and skips classification"
+        );
+    }
+    social::analytics::Analytics::new(
+        http_client,
+        social::analytics::Settings {
+            context: config.social.social_analytics_context.clone(),
+            api_url: config.social.social_analytics_api_url.clone(),
+            api_token: config.social.social_analytics_api_token.clone(),
+            environment: config.social.social_environment.clone(),
+            request_timeout_ms: config.social.social_analytics_request_timeout_ms,
+        },
+    )
+    .map_err(anyhow::Error::msg)
+}
+
+/// The referral settings `social_states` passes on, including the backend
+/// proxies trusted to supply `X-Real-IP` for referral quotas.
+fn referral_settings(config: &Config) -> communities::referral::Settings {
+    communities::referral::Settings {
+        trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
+        max_ip_matches: config.social.referral_max_ip_matches,
+        suspicious_window_ms: config.social.referral_suspicious_window_ms,
+        slack: communities::referral::SlackSettings {
+            token: config.social.referral_slack_token.clone(),
+            dashboard: config.social.referral_metabase_dashboard.clone(),
+            environment: config.social.social_environment.clone().unwrap_or_default(),
+        },
+        min_login_days: config.social.referral_min_login_days,
+        profile_url: config.social.referral_profile_url.clone(),
+        reward_server_url: config.social.referral_reward_server_url.clone(),
+        reward_keys: [
+            (
+                5,
+                &config.social.rewards_api_key_by_referral_invited_users_5,
+            ),
+            (
+                10,
+                &config.social.rewards_api_key_by_referral_invited_users_10,
+            ),
+            (
+                20,
+                &config.social.rewards_api_key_by_referral_invited_users_20,
+            ),
+            (
+                25,
+                &config.social.rewards_api_key_by_referral_invited_users_25,
+            ),
+            (
+                30,
+                &config.social.rewards_api_key_by_referral_invited_users_30,
+            ),
+            (
+                50,
+                &config.social.rewards_api_key_by_referral_invited_users_50,
+            ),
+            (
+                60,
+                &config.social.rewards_api_key_by_referral_invited_users_60,
+            ),
+            (
+                75,
+                &config.social.rewards_api_key_by_referral_invited_users_75,
+            ),
+        ]
+        .into_iter()
+        .map(|(tier, key)| (tier, key.clone().unwrap_or_default()))
+        .collect(),
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod referral_settings_tests {
+    use super::{referral_settings, social_analytics};
+    use crate::config::Config;
+
+    /// The boot path's provider setup with `ENV` set and nothing else: the
+    /// node starts, without analytics.
+    #[test]
+    fn env_alone_boots_without_analytics() {
+        let http = crate::http::Outbound::for_tests();
+        for env in ["prd", "production", ""] {
+            let config = Config::parse_env_for_tests([
+                ("DATABASE_URL", "postgres:///catalyst"),
+                ("ENV", env),
+            ])
+            .unwrap();
+            assert!(social_analytics(&config, &http).unwrap().is_none(), "{env}");
+        }
+        let config = Config::parse_env_for_tests([
+            ("DATABASE_URL", "postgres:///catalyst"),
+            ("ENV", "prd"),
+            ("ANALYTICS_CONTEXT", "fixture"),
+            ("ANALYTICS_API_URL", "https://analytics.example.org"),
+            ("ANALYTICS_API_TOKEN", "fixture"),
+        ])
+        .unwrap();
+        assert!(social_analytics(&config, &http).unwrap().is_some());
+    }
+
+    /// `HTTP_TRUSTED_PROXY_CIDRS` through `referral_settings` into the real
+    /// referral route behind a real socket: a configured proxy's `X-Real-IP`
+    /// is the stored client IP, any other peer is stored as itself.
+    #[tokio::test]
+    async fn configured_proxies_reach_the_referral_client_ip_path() {
+        use crate::social::communities;
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        for (cidrs, expected) in [
+            ("127.0.0.1/32", "198.51.100.7"),
+            ("192.0.2.0/24", "127.0.0.1"),
+        ] {
+            let config = Config::parse_env_for_tests([
+                ("DATABASE_URL", "postgres:///catalyst"),
+                ("HTTP_TRUSTED_PROXY_CIDRS", cidrs),
+            ])
+            .unwrap();
+            let dir =
+                std::env::temp_dir().join(format!("catalyst-referral-ip-{}", uuid::Uuid::new_v4()));
+            let storage =
+                std::sync::Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+            let state = std::sync::Arc::new(communities::State::new(
+                pool.clone(),
+                storage,
+                communities::Settings {
+                    referral: communities::referral::Settings {
+                        suspicious_window_ms: 0.0,
+                        ..referral_settings(&config)
+                    },
+                    ..communities::Settings::for_tests()
+                },
+                None,
+                &crate::http::Outbound::for_tests(),
+                communities::State::explore_for_tests(&pool),
+            ));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!(
+                "http://{}/v1/referral-progress",
+                listener.local_addr().unwrap()
+            );
+            let app = communities::router(state);
+            let server = tokio::spawn(async move {
+                axum::serve(
+                    listener,
+                    app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                )
+                .await
+                .unwrap()
+            });
+            let (referrer, invited) = (
+                alloy::signers::local::PrivateKeySigner::random(),
+                alloy::signers::local::PrivateKeySigner::random(),
+            );
+            let mut request = crate::http::Outbound::for_tests()
+                .post(&endpoint)
+                .header("x-real-ip", "198.51.100.7")
+                .json(&serde_json::json!({ "referrer": format!("{:#x}", referrer.address()) }));
+            let headers = crate::shared::signed_fetch::test_support::signed_headers_by(
+                &invited,
+                "post",
+                "/v1/referral-progress",
+                "{}",
+                true,
+                &chrono::Utc::now().timestamp_millis().to_string(),
+            )
+            .await;
+            for (name, value) in &headers {
+                request = request.header(name.as_str(), value.to_str().unwrap());
+            }
+            let response = request.send().await.unwrap();
+            assert_eq!(
+                response.status(),
+                axum::http::StatusCode::NO_CONTENT,
+                "{cidrs}"
+            );
+            let stored: String = sqlx::query_scalar(
+                "SELECT invited_user_ip FROM social.referral_progress WHERE invited_user = $1",
+            )
+            .bind(format!("{:#x}", invited.address()))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(stored, expected, "{cidrs}");
+            server.abort();
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn referral_quotas_trust_exactly_the_configured_proxy_networks() {
+        let parse = |vars: &[(&str, &str)]| {
+            Config::parse_env_for_tests(
+                [("DATABASE_URL", "postgres:///catalyst")]
+                    .iter()
+                    .chain(vars)
+                    .copied(),
+            )
+            .unwrap()
+        };
+        assert!(
+            referral_settings(&parse(&[]))
+                .trusted_proxy_cidrs
+                .is_empty(),
+            "no proxy is trusted unless configured"
+        );
+        let config = parse(&[("HTTP_TRUSTED_PROXY_CIDRS", "10.0.0.0/8,2001:db8::/32")]);
+        let trusted = referral_settings(&config).trusted_proxy_cidrs;
+        assert_eq!(trusted, config.node.http_trusted_proxy_cidrs);
+        assert_eq!(
+            trusted.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            ["10.0.0.0/8", "2001:db8::/32"]
+        );
+    }
+}
+
 /// The social bundle's states (the old catalyrst-social members: communities,
 /// notifications, badges, media, plus profile-images, the social RPC and the
 /// MLS delivery service), every one over the same pool, client, blob store
@@ -1856,7 +2211,12 @@ fn social_states(
     comms: comms::gatekeeper::SharedState,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     explore: &explore::SharedState,
+    metrics_handle: comms::metrics::PrometheusHandle,
 ) -> anyhow::Result<social::States> {
+    config
+        .social
+        .validate_provider_bootstrap()
+        .map_err(anyhow::Error::msg)?;
     let non_empty = Config::non_empty;
     let public_url = config
         .node
@@ -1896,10 +2256,46 @@ fn social_states(
         pool.clone(),
         storage.clone(),
         communities::Settings {
+            http_max_request_body_bytes: config.social.social_http_max_request_body_bytes,
+            compliance: communities::compliance::Settings {
+                environment: config.social.social_environment.clone().unwrap_or_default(),
+                model: config.social.community_compliance_model.clone(),
+                api_key: config.social.community_compliance_api_key.clone(),
+                base_url: config.social.community_compliance_base_url.clone(),
+                organization: config.social.community_compliance_organization.clone(),
+                project: config.social.community_compliance_project.clone(),
+            },
             admin_token: non_empty(&config.social.communities_admin_token),
             global_moderators: communities::Settings::global_moderators_from(
                 &config.social.communities_global_moderators,
             ),
+            features: communities::features::Settings {
+                base_url: config.social.social_feature_flags_url.clone(),
+                audience: config.social.social_service_base_url.clone(),
+                interval: Duration::from_millis(config.social.social_feature_flags_refresh_ms),
+                timeout: Duration::from_millis(config.social.social_feature_flags_timeout_ms),
+                overrides: [
+                    (
+                        communities::features::AI_COMPLIANCE,
+                        &config.social.social_ai_compliance_override,
+                    ),
+                    (
+                        communities::features::DEV_AI_COMPLIANCE,
+                        &config.social.social_dev_ai_compliance_override,
+                    ),
+                    (
+                        communities::features::GLOBAL_MODERATORS,
+                        &config.social.social_global_moderators_override,
+                    ),
+                    (
+                        communities::features::REFERRAL_REGISTRATION_DISABLED,
+                        &config.social.social_referral_registration_disabled_override,
+                    ),
+                ]
+                .into_iter()
+                .filter_map(|(key, value)| value.clone().map(|value| (key.into(), value)))
+                .collect(),
+            },
             restricted_names: communities::Settings::restricted_names_from(
                 &config.social.restricted_names,
             ),
@@ -1916,11 +2312,16 @@ fn social_states(
             mirror_interval: Duration::from_secs(
                 config.social.communities_mirror_interval_secs.max(1),
             ),
+            referral: referral_settings(config),
         },
         eip1654.clone(),
         http_client,
         explore.clone(),
     ));
+
+    if let Some(analytics) = social_analytics(config, http_client)? {
+        communities.set_analytics(analytics);
+    }
 
     let notifications = Arc::new(notifications::State::new(
         pool.clone(),
@@ -1960,6 +2361,8 @@ fn social_states(
         eip1654.clone(),
         Some(market.index.clone()),
     ));
+
+    communities.referral.set_mailer(notifications.email.clone());
 
     let badges = Arc::new(badges::State::new(
         pool.clone(),
@@ -2020,18 +2423,42 @@ fn social_states(
         },
     ));
 
+    let ordinary_transport = shared::rpc::ws::OrdinaryQueueConfig {
+        max_queue_size: config.social.ws_transport_max_queue_size,
+        min_queue_size: config.social.ws_transport_min_queue_size,
+        max_queue_size_limit: config.social.ws_transport_max_queue_size_limit,
+        estimated_message_size: config.social.ws_transport_estimated_message_size,
+        retry_delay_ms: config.social.ws_transport_retry_delay_ms,
+        max_retry_attempts: config.social.ws_transport_max_retry_attempts,
+        max_backoff_delay_ms: config.social.ws_transport_max_backoff_delay_ms,
+    };
+    ordinary_transport
+        .capacity(config.social.ws_max_backpressure)
+        .map_err(|error| anyhow::anyhow!(error))?;
     let rpc = Arc::new(social_rpc::State::new(
         pool.clone(),
         social_rpc::Settings {
             auth_window_secs: config.social.social_rpc_auth_window_secs,
+            ws_auth_timeout_ms: config.social.ws_auth_timeout_in_ms,
+            ws_auth_signature_expiration_ms: config.social.ws_auth_signature_expiration_in_ms,
+            ws_idle_timeout_secs: config.social.ws_idle_timeout_in_seconds,
             private_voice_chat_expiration_ms: config.social.private_voice_chat_expiration_ms,
             private_voice_chat_job_interval_ms: config.social.private_voice_chat_job_interval_ms,
             private_voice_chat_expiration_batch_size: config
                 .social
                 .private_voice_chat_expiration_batch_size,
+            community_voice_chat_polling_job_interval_ms: config
+                .social
+                .community_voice_chat_polling_job_interval_ms,
             ws_max_concurrent_connections: config.social.ws_max_concurrent_connections,
             ws_max_payload_bytes: config.social.ws_max_payload_length,
             ws_max_backpressure_bytes: config.social.ws_max_backpressure,
+            ordinary_transport,
+            friendship_limits: social_rpc::limits::FriendshipLimits {
+                window_seconds: config.social.friendship_rate_limit_window_seconds,
+                per_actor: config.social.friendship_rate_limit_per_actor,
+                per_pair: config.social.friendship_rate_limit_per_pair,
+            },
             admission: social_rpc::limits::AdmissionLimits {
                 max_per_address: config.social.ws_max_connections_per_address as usize,
                 subscriptions_per_second: config.social.ws_subscriptions_per_second,
@@ -2044,9 +2471,15 @@ fn social_states(
                 message_burst: config.social.stream_ws_message_burst as usize,
             },
             admin_token: non_empty(&config.social.catalyrst_social_rpc_admin_token),
-            faces,
             writes_enabled: config.writes.social_writes_enabled,
-            commit_hash: config.commit_hash(),
+            commit_hash: config.node.commit_hash.clone(),
+            current_version: config.social.social_rpc_current_version.clone(),
+            metrics_path: config.social.wkc_metrics_public_path.clone(),
+            metrics_bearer_token: config.social.wkc_metrics_bearer_token.clone(),
+            metrics_reset_at_night: config.social.wkc_metrics_reset_at_night.as_deref()
+                == Some("true"),
+            metrics_handle: Some(metrics_handle),
+            profile_source: Some(communities.profiles.registry()),
         },
         eip1654,
         comms.clone(),

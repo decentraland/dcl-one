@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use chrono::NaiveDateTime;
 
-use crate::access::{Access, AccessType, LandOperators, SceneRef};
+use crate::access::{Access, AccessType, LandOperators, SceneRef, WorldAdmission};
 use crate::rooms::{ActiveDeployment, ResolveError, ResolvedRoom, RoomRequest};
 use crate::shared::identity::{Address, AuthorityNotEstablished, PermissionDecision};
 use crate::world_identity::{Parcel, ParcelSet, SceneId, WorldName};
@@ -29,8 +29,21 @@ pub trait AccessPolicy: Send + Sync {
         &self,
         world: &WorldName,
     ) -> Result<Option<AccessType>, AuthorityNotEstablished>;
-    /// The stored owner of a known world row, not a fresh chain ownership verdict.
-    /// An unknown world or unset owner is `None`; failed reads remain unavailable.
+    /// Whether `world` exists and is past no block's grace (WCS `isWorldValid`), with its
+    /// access setting. The default derives it from [`Self::access_type`] (no block known).
+    async fn world_admission(
+        &self,
+        world: &WorldName,
+        _now: NaiveDateTime,
+    ) -> Result<WorldAdmission, AuthorityNotEstablished> {
+        Ok(match self.access_type(world).await? {
+            Some(access_type) => WorldAdmission::Open(access_type),
+            None => WorldAdmission::Unknown,
+        })
+    }
+    /// The world's current holder (the name authority's briefly memoized
+    /// answer). `None` when nobody holds it; an authority fault or a failed
+    /// row read is unavailable, never the stored owner.
     async fn world_owner(
         &self,
         world: &WorldName,
@@ -163,6 +176,17 @@ pub enum ModerationNotificationKind {
     },
 }
 
+/// One user notice a lower domain produces (worlds' permission and storage
+/// quota notices); `id` is its idempotency key, `metadata` the inbox payload.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UserNotification {
+    pub id: uuid::Uuid,
+    pub recipient: Address,
+    pub kind: &'static str,
+    pub metadata: serde_json::Value,
+    pub occurred_at: NaiveDateTime,
+}
+
 /// Social owns membership, privacy and notification storage.
 #[async_trait::async_trait]
 pub trait SocialDirectory: Send + Sync {
@@ -198,6 +222,13 @@ pub trait SocialDirectory: Send + Sync {
         transaction: &mut sqlx::PgConnection,
         notification: &ModerationNotification,
     ) -> Result<(), sqlx::Error>;
+    /// Insert user notices (inbox and email delivery rows) in the producer's
+    /// transaction; a repeated `id` is ignored. No network work.
+    async fn notify_user_notifications(
+        &self,
+        transaction: &mut sqlx::PgConnection,
+        notifications: &[UserNotification],
+    ) -> Result<(), sqlx::Error>;
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -213,6 +244,7 @@ pub mod test_support {
         pub community_events: std::sync::Mutex<Vec<serde_json::Value>>,
         pub fail_community_notifications: std::sync::atomic::AtomicUsize,
         pub fail_moderation_notifications: std::sync::atomic::AtomicBool,
+        pub user_notifications: std::sync::Mutex<Vec<UserNotification>>,
     }
 
     #[async_trait::async_trait]
@@ -296,6 +328,19 @@ pub mod test_support {
             }
             Ok(())
         }
+        async fn notify_user_notifications(
+            &self,
+            _: &mut sqlx::PgConnection,
+            notifications: &[UserNotification],
+        ) -> Result<(), sqlx::Error> {
+            let mut saved = self.user_notifications.lock().unwrap();
+            for notification in notifications {
+                if !saved.iter().any(|n| n.id == notification.id) {
+                    saved.push(notification.clone());
+                }
+            }
+            Ok(())
+        }
     }
 
     /// An [`AccessPolicy`] that gives every question the answer its field
@@ -309,6 +354,8 @@ pub mod test_support {
         pub admin: PermissionDecision,
         pub land: Result<Option<Arc<Option<LandOperators>>>, AuthorityNotEstablished>,
         pub protected: Result<BTreeSet<Address>, AuthorityNotEstablished>,
+        /// `None`: the world exists with the `access_type` setting (unrestricted when unknown).
+        pub admission: Option<WorldAdmission>,
     }
 
     impl Default for StubPolicy {
@@ -321,6 +368,7 @@ pub mod test_support {
                 admin: PermissionDecision::refused("stub: not an admin"),
                 land: Ok(None),
                 protected: Ok(BTreeSet::new()),
+                admission: None,
             }
         }
     }
@@ -332,6 +380,20 @@ pub mod test_support {
             _world: &WorldName,
         ) -> Result<Option<AccessType>, AuthorityNotEstablished> {
             self.access_type.as_ref().copied().map_err(copy)
+        }
+
+        async fn world_admission(
+            &self,
+            _world: &WorldName,
+            _now: NaiveDateTime,
+        ) -> Result<WorldAdmission, AuthorityNotEstablished> {
+            if let Some(admission) = self.admission {
+                return Ok(admission);
+            }
+            let access_type = self.access_type.as_ref().copied().map_err(copy)?;
+            Ok(WorldAdmission::Open(
+                access_type.unwrap_or(AccessType::Unrestricted),
+            ))
         }
 
         async fn world_owner(

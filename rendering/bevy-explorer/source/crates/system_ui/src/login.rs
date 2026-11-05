@@ -16,8 +16,8 @@ use common::{
     rpc::{RpcResultReceiver, RpcResultSender},
     sets::SceneSets,
     structs::{
-        ActiveDialog, AppConfig, ChainLink, CurrentRealm, DialogPermit, PreviewMode, PreviousLogin,
-        SystemAudio, WorldHold, ZOrder, TERMS_VERSION,
+        ActiveDialog, AppConfig, ChainLink, CurrentRealm, PreviewMode, PreviousLogin, SystemAudio,
+        WorldHold, ZOrder, TERMS_VERSION,
     },
     util::{TaskCompat, TaskExt},
 };
@@ -39,12 +39,14 @@ use wallet::{
     Wallet,
 };
 
-use crate::version_check::check_update;
+#[path = "client_login.rs"]
+mod client_login;
 
 pub struct LoginPlugin;
 
 impl Plugin for LoginPlugin {
     fn build(&self, app: &mut App) {
+        client_login::register(app);
         app.add_event::<LoginType>().add_systems(
             Update,
             (
@@ -75,7 +77,6 @@ fn login(
     dui: Res<DuiRegistry>,
     active_dialog: Res<ActiveDialog>,
     mut motd_shown: Local<bool>,
-    mut update_check: Local<Option<bevy::tasks::Task<Option<(String, String)>>>>,
     mut bridge: EventWriter<SystemApi>,
     native_active: Res<NativeUi>,
     config: Res<AppConfig>,
@@ -85,55 +86,22 @@ fn login(
     }
 
     if !*motd_shown {
-        // don't block the main thread on the github release check
-        let task = update_check.get_or_insert_with(|| IoTaskPool::get().spawn(check_update()));
-        let Some(update) = task.complete() else {
+        let Some(permit) = active_dialog.try_acquire() else {
             return;
         };
-        *update_check = None;
-        let permit = active_dialog.try_acquire().unwrap();
-
-        if let Some((desc, url)) = update {
-            let components = commands
-                .spawn_template(
-                    &dui,
-                    "update-available",
-                    DuiProps::new()
-                        .with_prop("download", url)
-                        .with_prop("body", desc)
-                        .with_prop("buttons", vec![DuiButton::new_enabled("Ok", (|mut commands: Commands, dui: Res<DuiRegistry>, mut permit: Query<&mut DialogPermit>| {
-                            let mut permit = permit.single_mut().unwrap();
-                            let permit = permit.take();
-                            let components = commands
-                                .spawn_template(
-                                    &dui,
-                                    "motd",
-                                    DuiProps::default()
-                                        .with_prop("buttons", vec![DuiButton::new_enabled("Ok", close_ui_happy)]),
-                                )
-                                .unwrap();
-                            commands.entity(components.root).try_insert((permit, ZOrder::Login.default()));
-                        }).pipe(close_ui_happy))]),
-                )
-                .unwrap();
-            commands
-                .entity(components.root)
-                .try_insert((permit, ZOrder::Login.default()));
-        } else {
-            let components = commands
-                .spawn_template(
-                    &dui,
-                    "motd",
-                    DuiProps::default().with_prop(
-                        "buttons",
-                        vec![DuiButton::new_enabled("Ok", close_ui_happy)],
-                    ),
-                )
-                .unwrap();
-            commands
-                .entity(components.root)
-                .try_insert((permit, ZOrder::Login.default()));
-        }
+        let components = commands
+            .spawn_template(
+                &dui,
+                "motd",
+                DuiProps::default().with_prop(
+                    "buttons",
+                    vec![DuiButton::new_enabled("Ok", close_ui_happy)],
+                ),
+            )
+            .unwrap();
+        commands
+            .entity(components.root)
+            .try_insert((permit, ZOrder::Login.default()));
         *motd_shown = true;
         return;
     }
@@ -628,6 +596,7 @@ fn process_login_bridge(
     >,
     mut wallet: ResMut<Wallet>,
     mut segment_config: ResMut<SegmentConfig>,
+    mut login_events: ResMut<client_login::ClientLoginDelivery>,
     mut current_profile: ResMut<CurrentUserProfile>,
     mut window: Query<&mut Window, With<PrimaryWindow>>,
     mut config: ResMut<AppConfig>,
@@ -637,11 +606,8 @@ fn process_login_bridge(
 ) {
     for ev in e.read().cloned() {
         match ev {
-            SystemApi::CheckForUpdate(rpc_result_sender) => IoTaskPool::get()
-                .spawn(async move {
-                    rpc_result_sender.send(check_update().await);
-                })
-                .detach(),
+            // Desktop packages have no published update feed.
+            SystemApi::CheckForUpdate(sender) => sender.send(None),
             SystemApi::MOTD(rpc_result_sender) => {
                 rpc_result_sender.send("".to_owned());
             }
@@ -865,6 +831,7 @@ fn process_login_bridge(
             }
             SystemApi::LoginGuest => {
                 *login_task = None;
+                login_events.pause();
                 wallet.finalize_as_guest();
                 segment_config.update_identity(format!("{:#x}", wallet.address().unwrap()), true);
                 current_profile.profile = Some(UserProfile {
@@ -884,6 +851,7 @@ fn process_login_bridge(
             }
             SystemApi::Logout => {
                 *login_task = None;
+                login_events.pause();
                 wallet.disconnect();
                 segment_config.reset_identity();
                 current_profile.profile = None;
@@ -927,6 +895,7 @@ fn process_login_bridge(
                         );
                     }
                 }
+                login_events.completed(&wallet);
                 segment_config
                     .update_identity(format!("{:#x}", wallet.address().unwrap()), guest_account);
                 let (profile, deployed) = match profile {
@@ -944,6 +913,7 @@ fn process_login_bridge(
             None => *login_task = Some(task),
         }
     }
+    login_events.drive(&wallet);
 }
 
 #[cfg(test)]

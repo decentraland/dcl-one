@@ -2,10 +2,8 @@
 //! friendship and block RPC mutations
 //! (`social::rpc::limits::FriendshipMutationLimiter`) and the plaintext
 //! direct-message sends (`social::communities::friends`, 60 per signer per
-//! minute, the old `catalyrst-communities` budget) and the shared-secret
-//! attempts of the world comms mints (`comms::gatekeeper::admission::world_mint`, 3 a minute
-//! per world and caller). In-process state that follows the process's
-//! lifetime, never the database.
+//! minute, the old `catalyrst-communities` budget). In-process state that
+//! follows the process's lifetime, never the database.
 
 use dashmap::DashMap;
 use parking_lot::Mutex;

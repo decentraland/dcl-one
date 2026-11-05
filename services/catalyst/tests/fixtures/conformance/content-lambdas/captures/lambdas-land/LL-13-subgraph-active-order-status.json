@@ -1,0 +1,67 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://subgraph.decentraland.org/marketplace",
+  "request": {
+    "method": "POST",
+    "path": "/",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "query": "{ nfts(first: 300, where: { category: parcel, activeOrder_not: null }) { id owner { address } activeOrder { id owner status expiresAt } } }"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*",
+      "vary": "Accept-Encoding, Origin",
+      "access-control-allow-headers": "Content-Type, User-Agent",
+      "access-control-allow-methods": "GET, OPTIONS, POST"
+    },
+    "body": {
+      "data": {
+        "nfts": [
+          {
+            "id": "parcel-0x000000000000000000000000000000000000001f-1020847100762815390390123822295304634218",
+            "owner": {
+              "address": "0x0000000000000000000000000000000000000022"
+            },
+            "activeOrder": {
+              "id": "0x000000000000000000000000000000000000000000000000000000000000010d",
+              "owner": "0x0000000000000000000000000000000000000023",
+              "status": "transferred",
+              "expiresAt": "1639065600000"
+            }
+          },
+          {
+            "id": "parcel-0x000000000000000000000000000000000000001f-1020847100762815390390123822295304634219",
+            "owner": {
+              "address": "0x0000000000000000000000000000000000000022"
+            },
+            "activeOrder": {
+              "id": "0x000000000000000000000000000000000000000000000000000000000000010e",
+              "owner": "0x0000000000000000000000000000000000000023",
+              "status": "transferred",
+              "expiresAt": "1640620800000"
+            }
+          },
+          {
+            "id": "parcel-0x000000000000000000000000000000000000001f-1020847100762815390390123822295304634330",
+            "owner": {
+              "address": "0x0000000000000000000000000000000000000024"
+            },
+            "activeOrder": {
+              "id": "0x000000000000000000000000000000000000000000000000000000000000010f",
+              "owner": "0x0000000000000000000000000000000000000024",
+              "status": "open",
+              "expiresAt": "1640995200000"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "note": "Body reduced to 3 of 300 rows. Of the 300 rows, 178 had activeOrder null despite the filter; of the 122 with an activeOrder, 71 had status transferred, 50 open, 1 cancelled; 72 had an order owner different from the NFT owner; 120 had expiresAt in the past."
+}

@@ -20,7 +20,6 @@
 //! sets it to 0.
 
 use std::collections::{HashMap, VecDeque};
-use std::net::{IpAddr, Ipv6Addr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
@@ -80,22 +79,7 @@ impl Drop for Reservation<'_> {
     }
 }
 
-/// Bits of an IPv6 address that name one client, as for content downloads
-/// (`CONTENT_GET_RATE_LIMIT_IPV6_PREFIX_LENGTH`): a host routed a /64 is one source.
-const IPV6_SOURCE_PREFIX_BITS: u32 = 64;
-
-/// The quota key of a client address: IPv4 as is, IPv6 by its /64 network.
-fn source_key(client_ip: &str) -> String {
-    let Ok(IpAddr::V6(v6)) = client_ip.parse::<IpAddr>() else {
-        return client_ip.to_string();
-    };
-    if let Some(v4) = v6.to_ipv4_mapped() {
-        return v4.to_string();
-    }
-    let mask = u128::MAX << (128 - IPV6_SOURCE_PREFIX_BITS);
-    let network = Ipv6Addr::from(u128::from(v6) & mask);
-    format!("{network}/{IPV6_SOURCE_PREFIX_BITS}")
-}
+use crate::shared::client_ip::source_key;
 
 struct Window {
     started: Instant,
@@ -224,6 +208,23 @@ impl DailyQuota {
             key,
             started,
         }))
+    }
+}
+
+impl DailyQuota {
+    /// `Some(retry_after_secs)` when `client_ip` has spent its quota; counts nothing.
+    pub fn exhausted(&self, client_ip: &str) -> Option<u64> {
+        if self.max == 0 || client_ip.trim().is_empty() {
+            return None;
+        }
+        let now = Instant::now();
+        let mut windows = self.windows.lock();
+        windows.prune(now);
+        windows
+            .by_source
+            .get(&source_key(client_ip))
+            .filter(|w| w.count >= self.max)
+            .map(|w| retry_after(w, now))
     }
 }
 

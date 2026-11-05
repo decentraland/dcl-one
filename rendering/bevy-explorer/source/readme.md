@@ -42,9 +42,17 @@ Common to every target:
 
 Platform libraries (needed by the native and headless builds):
 
-- **linux**: `sudo apt-get install --no-install-recommends libasound2-dev libudev-dev ninja-build clang cmake pkg-config libssl-dev libx11-dev libgl1-mesa-dev libxext-dev` plus ffmpeg dev packages (`libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev`)
-- **macos**: `brew install ffmpeg@6 pkg-config ninja` and `export PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@6/lib/pkgconfig`
-- **windows**: install [clang/LLVM](https://github.com/llvm/llvm-project/releases/) and set `LIBCLANG_PATH`; unzip [ffmpeg 6.0 shared](https://github.com/GyanD/codexffmpeg/releases/download/6.0/ffmpeg-6.0-full_build-shared.7z), set `FFMPEG_DIR` to its root and add `ffmpeg\bin` to `PATH` (ninja and cmake ship with visual studio)
+- **linux**: `sudo apt-get install --no-install-recommends libasound2-dev libudev-dev ninja-build clang cmake pkg-config libssl-dev libx11-dev libgl1-mesa-dev libxext-dev`
+- **macos**: `brew install pkg-config ninja`
+- **windows**: install [clang/LLVM](https://github.com/llvm/llvm-project/releases/) and set `LIBCLANG_PATH` (ninja and cmake ship with visual studio)
+
+Scene video and audio streams play through the UUAV player (`library/uuav`): a sandboxed
+`uuav-helper` process with its own FFmpeg, decoding in hardware where the platform has it. The
+native binary spawns the helper from its own directory, so the committed runtime set has to sit
+next to it: `git lfs pull --include 'library/uuav/dist/**'` once, then
+`python3 ../../../tooling/uuav/stage-dist.py host target/release` (the `just native-*` recipes
+do this; `just stage-uuav-tests` stages it for `cargo test`). Windows builds play the audio of a
+video but do not show its frames yet (`crates/media/src/uuav/platform_windows.rs`).
 
 ## Web client
 
@@ -115,7 +123,7 @@ cargo run --release
 To build without CEF at all (the engine's own bevy-ui HUD instead of React):
 
 ```bash
-cargo run --release --no-default-features --features "livekit,ffmpeg,inspect,social"
+cargo run --release --no-default-features --features "livekit,uuav,inspect,social"
 ```
 
 ## Headless server
@@ -183,10 +191,11 @@ npm test --prefix react-web           # HUD, deterministic (vitest, no engine)
 npm run test:e2e --prefix react-web   # HUD against a real engine (playwright, needs a GPU)
 ```
 
-CI's Test Suite builds the engine tests with the `ci-test` profile. The scene tests spawn the `dcl_deno_ipc` sidecar from the same profile directory, so build it first:
+CI's Test Suite builds the engine tests with the `ci-test` profile. The `dcl_deno_ipc` integration
+test makes Cargo build the runnable sidecar in the same profile directory, where the scene tests
+look for it.
 
 ```bash
-cargo build --package dcl_deno_ipc --profile ci-test --locked
 cargo test --all --profile ci-test --locked -- --test-threads=1
 ```
 

@@ -7,7 +7,7 @@ export { buildAuthIdentity, encodeIdentity, addressOf, newPrivateKey, personalSi
 export { readTarget, accountKey, describeTarget, type Target } from './target.ts'
 export { WebConsole, findChrome } from './web.ts'
 export { NativeConsole, spawnNative } from './native.ts'
-export { serveWebApp, WEB_APP_HEADERS } from './serve.ts'
+export { serveWebApp, headersFor, COMMON_HEADERS, APP_ISOLATION_HEADERS, ISOLATION_HEADERS } from './serve.ts'
 export { serveRealm, buildScene, buildPreviewWearable, previewWearablesDocument, contentHash, aboutDocument, PREVIEW_WEARABLE_URN, type BuiltScene, type PreviewWearable, type RealmServer, type SceneEntity } from './realm.ts'
 export { PACKAGE_ROOT, REPO_ROOT, SCENES_DIR, REFERENCES_DIR, REPORT_DIR } from './paths.ts'
 export { decodePng, encodePng, type Image } from './png.ts'

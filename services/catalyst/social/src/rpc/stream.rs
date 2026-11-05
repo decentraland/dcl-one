@@ -5,8 +5,8 @@
 //! and this one at `/v1/stream`).
 //!
 //! The handshake is the RPC socket's signed fetch, signed for `get` and
-//! `/v1/stream` (the served path, or an `x-original-path` ending in it, too;
-//! never `/`, so a chain captured for one socket cannot open the other):
+//! `/v1/stream`, independently of the connection URL or proxy headers; a
+//! signature for the RPC root cannot open this stream:
 //! either as `x-identity-*` headers of the upgrade request, verified before
 //! the upgrade (`401` refused, `503` when the verification could not run), or
 //! as the first frame, with `auth_in_progress` for any frame sent while it is
@@ -41,7 +41,7 @@ use axum::response::{IntoResponse, Response};
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use serde_json::{Map, Value, json};
-use tokio::sync::{broadcast::error::RecvError, mpsc, watch};
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 use crate::rpc::State;
@@ -52,19 +52,17 @@ use crate::rpc::proto::v2::{
 };
 use crate::rpc::pubsub::SocialEvent;
 use crate::rpc::ws::{AUTH_TIMEOUT, POOL_FULL, UNAUTHORIZED};
-use crate::shared::rpc::handshake::{
-    HandshakeError, handshake_path, validator_ref, verify_handshake,
-};
-use crate::shared::rpc::ws::{SocketClose, close_message};
+use crate::shared::rpc::handshake::{HandshakeError, validator_ref, verify_handshake_number_ms};
+use crate::shared::rpc::ws::{IdleAction, IdleTimer, SocketClose, close_message};
 
 /// The route upstream signs and serves (`src/adapters/stream-sessions/constants.ts`).
 pub const STREAM_PATH: &str = "/v1/stream";
-/// Events queued per subscription (upstream `MAX_VALUE_QUEUE_SIZE`,
-/// `src/utils/emitterToGenerator.ts:4`, a constant there too).
-const SUBSCRIPTION_QUEUE: usize = 1_000;
-/// How long a closing socket may take to write what is queued before its
-/// close frame; past it the connection is dropped.
+/// How long a closing socket may take to flush queued frames and complete
+/// its close handshake; past it the connection is dropped.
 const CLOSE_BUDGET: Duration = Duration::from_secs(10);
+/// A flushed close may drain in-flight client frames without holding a pool
+/// slot through the much longer stalled-writer deadline.
+const CLOSE_HANDSHAKE_BUDGET: Duration = Duration::from_millis(100);
 /// A subscription or unsubscription id: 1 to 64 UTF-16 units, as JS counts.
 const MAX_ID_UNITS: usize = 64;
 
@@ -136,6 +134,7 @@ impl Stream {
 
     /// Whether `event` is one this stream listens to, as each upstream
     /// generator listens to its one event: only these fill its queue.
+    #[cfg(test)]
     fn carries(self, event: &SocialEvent) -> bool {
         use SocialEvent as E;
         match self {
@@ -151,22 +150,19 @@ impl Stream {
             ),
             Self::CommunityMemberConnectivity => matches!(
                 event,
-                E::CommunityMember(_) | E::TopologyCommunityMember(..) | E::ConnectivityResync
+                E::CommunityMember(_)
+                    | E::CommunityMemberStatus(_)
+                    | E::TopologyCommunityMember(..)
+                    | E::ConnectivityResync
             ),
         }
     }
 }
 
-/// The candidate paths of the handshake signature: the route, the path this
-/// node serves it at and a proxy's `x-original-path` ending with the route.
-fn stream_paths(headers: &HeaderMap, served: &str) -> Vec<String> {
-    let mut paths = vec![handshake_path(headers, STREAM_PATH)];
-    for p in [STREAM_PATH, served] {
-        if !paths.iter().any(|q| q == p) {
-            paths.push(p.to_string());
-        }
-    }
-    paths
+/// Keep the source protocol path and the canonical mounted path signed by
+/// shipped clients. Neither the connection URL nor proxy headers add aliases.
+fn stream_paths() -> Vec<String> {
+    vec![STREAM_PATH.to_owned(), "/social-rpc/v1/stream".to_owned()]
 }
 
 /// The upgrade request's `x-identity-*` headers as the first frame's JSON
@@ -185,12 +181,12 @@ fn header_frame(headers: &HeaderMap) -> Option<String> {
 }
 
 async fn verify(state: &State, paths: &[String], frame: &str) -> Result<String, HandshakeError> {
-    let verdict = verify_handshake(
+    let verdict = verify_handshake_number_ms(
         frame,
         "get",
         paths,
-        state.settings.auth_window_secs,
-        chrono::Utc::now().timestamp(),
+        state.settings.auth_signature_expiration_ms(),
+        chrono::Utc::now().timestamp_millis(),
         validator_ref(&state.eip1654),
     )
     .await
@@ -213,7 +209,7 @@ async fn verify(state: &State, paths: &[String], frame: &str) -> Result<String, 
 pub async fn ws_upgrade(
     AxumState(state): AxumState<Arc<State>>,
     headers: HeaderMap,
-    uri: Uri,
+    _uri: Uri,
     ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
 ) -> Response {
     let ws = match ws {
@@ -223,7 +219,10 @@ pub async fn ws_upgrade(
         }
         Err(rejection) => return rejection.into_response(),
     };
-    let paths = stream_paths(&headers, uri.path());
+    if !state.initial_fanout_ready() {
+        return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    let paths = stream_paths();
     let verified = match header_frame(&headers) {
         None => None,
         Some(frame) => match verify(&state, &paths, &frame).await {
@@ -297,14 +296,12 @@ enum Outgoing {
 struct Subscription {
     id: String,
     stream: Stream,
-    tasks: [JoinHandle<()>; 2],
+    tasks: JoinHandle<()>,
 }
 
 impl Drop for Subscription {
     fn drop(&mut self) {
-        for task in &self.tasks {
-            task.abort();
-        }
+        self.tasks.abort();
     }
 }
 
@@ -317,22 +314,46 @@ struct Outbox {
     writer: JoinHandle<()>,
 }
 
+impl Drop for Outbox {
+    fn drop(&mut self) {
+        self.writer.abort();
+    }
+}
+
 impl Outbox {
-    fn spawn(mut sink: SplitSink<WebSocket, Message>, max_backpressure: usize) -> Self {
+    fn spawn(
+        mut sink: SplitSink<WebSocket, Message>,
+        max_backpressure: usize,
+        idle: IdleTimer,
+        close: Arc<SocketClose>,
+    ) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
         let buffered = Arc::new(watch::Sender::new(0usize));
         let written = buffered.clone();
         let writer = tokio::spawn(async move {
-            while let Some(message) = rx.recv().await {
+            loop {
+                let message = tokio::select! {
+                    action = idle.next() => match action {
+                        IdleAction::Ping => {
+                            if sink.send(Message::Ping(Vec::new().into())).await.is_err() { break; }
+                            continue;
+                        }
+                        IdleAction::Expired => { close.peer_gone(); return; }
+                    },
+                    message=rx.recv()=>match message { Some(message)=>message,None=>break },
+                };
                 let len = message_len(&message);
                 let closing = matches!(message, Message::Close(_));
                 let sent = sink.send(message).await.is_ok();
                 written.send_modify(|b| *b = b.saturating_sub(len));
+                if sent {
+                    idle.activity();
+                }
                 if !sent || closing {
                     break;
                 }
             }
-            let _ = tokio::time::timeout(Duration::from_millis(100), sink.close()).await;
+            let _ = tokio::time::timeout(CLOSE_HANDSHAKE_BUDGET, sink.close()).await;
         });
         Self {
             tx: Some(tx),
@@ -356,15 +377,43 @@ impl Outbox {
             .map_err(|_| Dropped::Gone)
     }
 
-    /// Sends the close frame after whatever is queued, then waits for the
-    /// writer to finish.
-    async fn close(mut self, frame: Option<(u16, &'static str)>) {
+    /// Sends the close frame after whatever is queued and drains inbound
+    /// frames until the peer closes. Dropping unread inbound data immediately
+    /// after flushing the close frame can reset the transport instead.
+    async fn close(
+        mut self,
+        frame: Option<(u16, &'static str)>,
+        mut incoming: SplitStream<WebSocket>,
+    ) {
         if let (Some(tx), Some(frame)) = (self.tx.take(), frame) {
             let _ = tx.send(close_message(frame));
         }
         self.tx = None;
-        let _ = tokio::time::timeout(CLOSE_BUDGET, &mut self.writer).await;
-        self.writer.abort();
+        let _ = tokio::time::timeout(CLOSE_BUDGET, async {
+            if frame.is_some() {
+                let drain = async {
+                    while let Some(Ok(message)) = incoming.next().await {
+                        if matches!(message, Message::Close(_)) {
+                            break;
+                        }
+                    }
+                };
+                tokio::pin!(drain);
+                tokio::select! {
+                    _ = &mut self.writer => {
+                        let _ = tokio::time::timeout(CLOSE_HANDSHAKE_BUDGET, &mut drain).await;
+                    }
+                    _ = &mut drain => {
+                        let _ = (&mut self.writer).await;
+                    }
+                }
+            } else {
+                let _ = (&mut self.writer).await;
+            }
+        })
+        .await;
+        // Drop aborts a writer that outlived the single overall close budget,
+        // including when the close future itself is cancelled.
     }
 }
 
@@ -384,6 +433,7 @@ fn message_len(message: &Message) -> usize {
 struct Session {
     state: Arc<State>,
     incoming: SplitStream<WebSocket>,
+    idle: IdleTimer,
     outbox: Outbox,
     close: Arc<SocketClose>,
     /// The close code the socket ended with, for `stream_ws_close_codes`.
@@ -397,10 +447,20 @@ impl Session {
     fn new(state: Arc<State>, socket: WebSocket, close: Arc<SocketClose>) -> Self {
         let (sink, incoming) = socket.split();
         let limits = state.settings.stream;
-        let outbox = Outbox::spawn(sink, state.settings.ws_max_backpressure_bytes);
+        let idle = IdleTimer::new(state.settings.ws_idle_timeout_secs);
+        let outbox = Outbox::spawn(
+            sink,
+            crate::shared::rpc::ws::native_backpressure_limit(
+                state.settings.ws_max_backpressure_bytes,
+            )
+            .expect("validated native backpressure"),
+            idle.clone(),
+            close.clone(),
+        );
         Self {
             state,
             incoming,
+            idle,
             outbox,
             close,
             code: 1006,
@@ -456,7 +516,11 @@ impl Session {
     /// code kept for the metric).
     async fn recv(&mut self) -> Option<Vec<u8>> {
         loop {
-            match self.incoming.next().await {
+            let message = self.incoming.next().await;
+            if matches!(&message, Some(Ok(_))) {
+                self.idle.activity();
+            }
+            match message {
                 Some(Ok(Message::Text(text))) => return Some(text.as_bytes().to_vec()),
                 Some(Ok(Message::Binary(bytes))) => return Some(bytes.to_vec()),
                 Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
@@ -487,14 +551,14 @@ impl Session {
         if let Some((code, _)) = frame {
             self.code = code;
         }
-        self.outbox.close(frame).await;
+        self.outbox.close(frame, self.incoming).await;
         self.code
     }
 
     /// The fallback handshake: the first application frame is the chain.
     async fn first_frame_handshake(&mut self, paths: &[String]) -> Option<String> {
         let close = self.close.clone();
-        let window = Duration::from_secs(self.state.settings.auth_window_secs.max(1) as u64);
+        let window = self.state.settings.auth_timeout();
         let deadline = tokio::time::sleep(window);
         tokio::pin!(deadline);
         let frame = tokio::select! {
@@ -819,11 +883,9 @@ fn connectivity_name(status: i32) -> Option<&'static str> {
 }
 
 /// One subscription: the address's channel, taken before it returns. A
-/// forwarding task moves the events `stream` listens to into the
-/// subscription's queue of [`SUBSCRIPTION_QUEUE`]; a full queue (or a lagging
-/// channel) closes the socket, as an update cannot be replayed. A second
-/// task maps each to its JSON and hands it to the socket loop once nothing
-/// is waiting to be written.
+/// per-subscription queue holds exactly 1,000 matching events; overflow closes
+/// the socket synchronously, including while its consumer waits for drainage.
+/// One task maps updates to JSON and hands them over once the socket drains.
 fn spawn_stream(
     ctx: Context,
     me: String,
@@ -832,36 +894,26 @@ fn spawn_stream(
     tx: mpsc::Sender<Outgoing>,
     close: Arc<SocketClose>,
     mut buffered: watch::Receiver<usize>,
-) -> [JoinHandle<()>; 2] {
-    let mut events = ctx.pubsub().subscribe(&me);
-    let (queue_tx, mut queue) = mpsc::channel::<Arc<SocialEvent>>(SUBSCRIPTION_QUEUE);
-    let overflow = move || {
-        if !close.is_ended() {
-            metrics::counter!("stream_ws_errors", "type" => "subscription_overflow").increment(1);
-        }
-        close.end(SUBSCRIPTION_OVERFLOW.0, SUBSCRIPTION_OVERFLOW.1);
+) -> JoinHandle<()> {
+    use crate::rpc::pubsub::{OverflowPolicy, StreamKind};
+    let kind = match stream {
+        Stream::Friendships => StreamKind::Friendship,
+        Stream::Blocks => StreamKind::Block,
+        Stream::PrivateVoiceChats => StreamKind::PrivateVoice,
+        Stream::CommunityVoiceChats => StreamKind::CommunityVoice,
+        Stream::FriendConnectivity => StreamKind::FriendConnectivity,
+        Stream::CommunityMemberConnectivity => StreamKind::CommunityMember,
     };
-    let forward = tokio::spawn(async move {
-        loop {
-            let event = match events.recv().await {
-                Ok(event) => event,
-                Err(RecvError::Lagged(skipped)) => {
-                    tracing::warn!(skipped, "stream subscription lagged");
-                    return overflow();
-                }
-                Err(RecvError::Closed) => return,
-            };
-            if !stream.carries(&event) {
-                continue;
-            }
-            match queue_tx.try_send(event) {
-                Ok(()) => {}
-                Err(mpsc::error::TrySendError::Full(_)) => return overflow(),
-                Err(mpsc::error::TrySendError::Closed(_)) => return,
-            }
-        }
-    });
-    let process = tokio::spawn(async move {
+    let mut queue = ctx.pubsub().subscribe_stream(
+        &me,
+        kind,
+        OverflowPolicy::Close {
+            socket: close,
+            code: SUBSCRIPTION_OVERFLOW.0,
+            reason: SUBSCRIPTION_OVERFLOW.1,
+        },
+    );
+    tokio::spawn(async move {
         // Upstream waits for the socket to drain before each event.
         let mut hand_off = async |data: Value| {
             buffered.wait_for(|waiting| *waiting == 0).await.is_ok()
@@ -874,7 +926,7 @@ fn spawn_stream(
                 }
             }
         }
-        while let Some(event) = queue.recv().await {
+        while let Ok(event) = queue.recv().await {
             if matches!(&*event, SocialEvent::ConnectivityResync) {
                 break;
             }
@@ -886,8 +938,7 @@ fn spawn_stream(
             }
         }
         let _ = tx.send(Outgoing::Completed { serial }).await;
-    });
-    [forward, process]
+    })
 }
 
 /// The friends online when the subscription starts, one `online` event each,
@@ -1108,23 +1159,27 @@ mod tests {
         let astral = "\u{1F600}".repeat(33);
         assert!(parse(&format!(r#"{{"type":"unsubscribe","id":"{astral}"}}"#)).is_err());
     }
+}
 
-    #[test]
-    fn the_signature_is_over_the_stream_route_never_the_rpc_root() {
-        let mut headers = HeaderMap::new();
-        assert_eq!(
-            stream_paths(&headers, "/social-rpc/v1/stream"),
-            vec!["/v1/stream", "/social-rpc/v1/stream"]
-        );
-        headers.insert(
-            "x-original-path",
-            axum::http::HeaderValue::from_static("/edge/v1/stream?x=1"),
-        );
-        assert_eq!(
-            stream_paths(&headers, "/social-rpc/v1/stream"),
-            vec!["/edge/v1/stream", "/v1/stream", "/social-rpc/v1/stream"]
-        );
-        headers.insert("x-original-path", axum::http::HeaderValue::from_static("/"));
-        assert!(!stream_paths(&headers, "/social-rpc/v1/stream").contains(&"/".to_string()));
+/// Exercise the production mapper through the captured source channel names.
+#[cfg(test)]
+pub(crate) async fn captured_event_data(
+    ctx: &Context,
+    me: &str,
+    id: &str,
+    event: &SocialEvent,
+) -> Option<Value> {
+    let stream = match id {
+        "friendship" => Stream::Friendships,
+        "friend-connectivity" => Stream::FriendConnectivity,
+        "block" => Stream::Blocks,
+        "private-voice" => Stream::PrivateVoiceChats,
+        "community-member" => Stream::CommunityMemberConnectivity,
+        "community-voice" => Stream::CommunityVoiceChats,
+        _ => return None,
+    };
+    if !stream.carries(event) {
+        return None;
     }
+    event_data(ctx, me, stream, event).await
 }

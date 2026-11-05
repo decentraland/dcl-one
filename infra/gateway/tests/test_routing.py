@@ -41,3 +41,10 @@ class HostAliasTest(unittest.TestCase):
                          ("/comms-gatekeeper/get-scene-adapter", "/get-scene-adapter"))
         self.assertEqual(route("gateway.example.test", "/comms-gatekeeper-local/get-scene-adapter"),
                          ("/comms-gatekeeper/get-scene-adapter", "/get-scene-adapter"))
+
+    def test_worlds_host_reaches_the_prefixed_worlds_routes(self):
+        for path in ["/world/w.dcl.eth/settings", "/livekit-webhook", "/health/live",
+                     "/contents/bafy", "/entities"]:
+            with self.subTest(path=path):
+                self.assertEqual(route("worlds-content-server.example.test", path),
+                                 ("/worlds-content-server" + path, path))

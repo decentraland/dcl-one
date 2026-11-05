@@ -1,0 +1,42 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "POST",
+    "path": "/lambdas/crypto/validate-signature",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "authChain": [
+        {
+          "type": "SIGNER",
+          "payload": "0x0000000000000000000000000000000000000001",
+          "signature": ""
+        },
+        {
+          "type": "ECDSA_EPHEMERAL",
+          "payload": "Decentraland Login\nEphemeral address: 0x0000000000000000000000000000000000000002\nExpiration: 2099-01-01T00:00:00.000Z",
+          "signature": "0xdeadbeef"
+        },
+        {
+          "type": "ECDSA_SIGNED_ENTITY",
+          "payload": "hello",
+          "signature": "0xdeadbeef"
+        }
+      ],
+      "signedMessage": "hello"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "88"
+    },
+    "body": {
+      "valid": false,
+      "error": "ERROR. Link type: ECDSA_EPHEMERAL. Invalid ethereum signature."
+    }
+  }
+}

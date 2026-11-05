@@ -63,8 +63,15 @@ From then on the helper adapts IPC messages onto the core's C API:
   ignored, the host creates R8/RG8 views over it); two tightly packed CPU
   buffers (Y at w x h, UV at w/2 x h/2) on Linux that the host uploads to
   its own textures. The pointers are stable across frames and survive
-  resolution changes with a one-poll retire grace. The host converts
-  NV12 to RGB itself.
+  resolution changes with a one-poll retire grace. `uuav_player_get_presented_video`
+  returns the same pointers together with the size the planes were created
+  for (the decoded frame's, even-rounded, which the stream header of
+  `uuav_player_get_video_size` need not match) and a count of presented
+  frames, so a host reads the planes at their own size and skips its upload
+  while nothing new was presented. The host converts NV12 to RGB itself. A frame the client
+  cannot present (a generation past 4096x4096 pixels, a failed wrap or
+  copy) is reported once through the error callback and the player reads
+  `UUAV_ERROR` until a frame presents or new media is opened.
 - **Audio** crosses the boundary as messages: the helper pulls interleaved
   `f32` from the core every 10 ms and the client feeds a ~50 ms jitter ring
   that the host's audio callback drains with `uuav_player_read_audio`
@@ -279,7 +286,7 @@ The committed binaries are pinned by a hash lock,
   `uuav-client`) on Linux, macOS and Windows and asserts nothing in this
   workspace links `uuav-client`.
 - **`uuav-native.yml`** runs on demand (`workflow_dispatch`, or the
-  `ci:uuav-native` PR label). It rebuilds all three targets from pinned
+  `ci:uuav-native` label on a PR that touches UUAV inputs). It rebuilds all three targets from pinned
   inputs - macOS and Linux FFmpeg from the source commits in the lock,
   Windows FFmpeg fetched as the hash-pinned BtbN release asset - lints and
   tests the whole workspace where the FFmpeg headers exist, then runs two

@@ -3,6 +3,9 @@
 - Read `docs/guidelines/README.md` first: the security model, how to contribute,
   scheduling, code style, platforms, the bevy fork, and the things that look like bugs but
   aren't.
+- For changes to service routing, scene network capabilities or request instrumentation,
+  apply the [security rules](docs/guidelines/security.md) and the
+  [test requirements](docs/guidelines/contributing.md#tests).
 - When adding or changing a runtime feature, expose the state and controls a tester needs
   in its owning plugin's [debug panel section](docs/guidelines/recipes.md#a-plugin-section-in-the-runtime-debug-panel).
   Verify the readings and actions through the running HUD.
