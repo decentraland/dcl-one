@@ -1247,8 +1247,7 @@ async fn the_erc721_route_formats_the_active_wearable() {
             "attributes": [
                 {"trait_type": "Rarity", "value": "epic"},
                 {"trait_type": "Category", "value": "hat"},
-                {"trait_type": "Tag", "value": "a"},
-                {"trait_type": "Body Shape", "value": "BaseMale"}
+                {"trait_type": "Tag", "value": "a"}
             ]
         })
     );
