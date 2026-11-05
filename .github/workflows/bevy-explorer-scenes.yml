@@ -157,7 +157,7 @@ jobs:
           set -o pipefail
           xvfb-run -s "-screen 0 320x240x24" target/release/decentra-bevy --realm https://decentraland.github.io/scene-explorer-tests/scene-explorer-tests --test_scenes "$SCENE_PARCELS" --no_fog --distance 1 --scene_log_to_console 2>&1 | tee scene-tests.log
           grep -Fq 'all tests passed!' scene-tests.log
-          passed=$(grep -Ec 'automatic_testing: test .*: true \[[0-9]+ remaining\]' scene-tests.log)
+          passed=$(sed -E 's/\x1b\[[0-?]*[ -/]*[@-~]//g' scene-tests.log | grep -Ec 'automatic_testing: test .*: true \[[0-9]+ remaining\]')
           echo "Functional scene benchmark: $passed passing assertions across four parcels"
           test "$passed" -eq 24
       # Scene video through the UUAV player: the end-to-end suite's `video` scene, played by the
