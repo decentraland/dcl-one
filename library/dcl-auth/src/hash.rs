@@ -191,6 +191,18 @@ pub fn is_canonical_cid(s: &str) -> bool {
     cidv0 || cidv1
 }
 
+/// The raw-leaf CIDv1 whose digest is `hex`, a lowercase SHA-256 hex key (worlds' legacy
+/// thumbnail keys). It names the same bytes only for a blob of at most one chunk.
+pub fn raw_cid_v1_from_sha256_hex(hex: &str) -> Option<String> {
+    if hex.len() != 64 || !hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        return None;
+    }
+    let digest: Vec<u8> = (0..32)
+        .map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16).ok())
+        .collect::<Option<_>>()?;
+    Some(cid_v1_to_string(0x55, &digest))
+}
+
 pub fn verify_hash(data: &[u8], expected: &str) -> bool {
     if !is_canonical_cid(expected) {
         return false;
@@ -207,6 +219,21 @@ pub fn verify_hash(data: &[u8], expected: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sha256_hex_maps_to_the_raw_leaf_cid_of_a_one_chunk_blob() {
+        let data = b"thumbnail bytes";
+        let hex: String = Sha256::digest(data)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(raw_cid_v1_from_sha256_hex(&hex), Some(hash_bytes_v1(data)));
+        let upper = hex.to_uppercase();
+        let bad_char = format!("{}g", &hex[..63]);
+        for bad in [&hex[..63], &upper, &bad_char, ""] {
+            assert_eq!(raw_cid_v1_from_sha256_hex(bad), None, "{bad}");
+        }
+    }
 
     fn streamed(data: &[u8], piece: usize) -> String {
         let mut w = HashV1Writer::new();

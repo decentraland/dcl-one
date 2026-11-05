@@ -1,4 +1,5 @@
-// from: shop@2d3bf62:app/src/components/LivePromo/LivePromo.tsx, app/src/components/LivePromo/LivePromo.styles.ts
+// from: shop@2d3bf62:app/src/components/LivePromo/LivePromo.tsx, app/src/components/LivePromo/LivePromo.styles.ts;
+//       shop@3a322cf9:app/src/components/LivePromo/LivePromo.tsx (emote={PreviewEmote.FASHION}, the emote item first)
 
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
@@ -9,6 +10,7 @@ import "./livepromo.css";
 const SETTLE_MS = 700;
 
 const WearablePreview = lazy(() => import("../../../wearable-preview/WearablePreview"));
+const AnimatedBackground = lazy(() => import("./animated-background/AnimatedBackground"));
 
 type Props = {
   to: string;
@@ -70,6 +72,13 @@ export default function LivePromo({ to, urns, title, cta, ariaLabel, fallback, f
   return (
     <Link ref={ref} className="shop-promo" to={to} aria-label={ariaLabel} data-testid={testId} data-crest={show || undefined}>
       <span className="shop-promo__card">
+        {/* The fitting room's animated backdrop under the avatar, as upstream's tile draws it: only while the tile is
+            on screen, with larger drifting tiles (tiling 1, against the fitting room's 1.66) for the smaller card. */}
+        {live && onScreen ? (
+          <Suspense fallback={null}>
+            <AnimatedBackground patternTiling={1} />
+          </Suspense>
+        ) : null}
         <span className="shop-promo__inner" data-ready={show || undefined}>
           <span className="shop-promo__title">{title}</span>
           <span className="shop-promo__cta">{cta}</span>
@@ -81,6 +90,9 @@ export default function LivePromo({ to, urns, title, cta, ariaLabel, fallback, f
           <Suspense fallback={null}>
             <WearablePreview
               urns={urns}
+              // Upstream's PreviewEmote.FASHION: the walk-through a look is shown off in. An emote item listed in
+              // `urns` (the emotes tile's first) plays instead, in a loop.
+              emote="fashion"
               spin={false}
               controls={false}
               zoom={1.1}

@@ -91,7 +91,7 @@ use crate::comms::world_identity::{Parcel, SceneId, WorldName, is_world_realm_na
 use crate::core::{Revocation, RevocationSink};
 use crate::http::{HttpClientCfg, Outbound};
 use crate::jobs::{Jobs, PeriodicCfg};
-use crate::policy::Policy;
+use crate::policy::{AccessGrant, Policy};
 use crate::shared::cors;
 use crate::shared::nul_guard;
 use catalyst_storage::Storage;
@@ -597,8 +597,14 @@ impl SceneHostState {
                 let Ok(address) = crate::shared::identity::Address::parse(&client.address) else {
                     continue;
                 };
-                let prior = if void_secrets { None } else { client.grant };
+                let prior = client
+                    .grant
+                    .filter(|g| !void_secrets || *g != AccessGrant::SharedSecret);
                 if let Err(reason) = ws::admit(self, &scene, &address, None, prior, now).await {
+                    if let ws::AdmissionRefused::Undetermined(why) = &reason {
+                        tracing::warn!(scene = %scene.identity.key, %address, %why, "admission undetermined; client kept");
+                        continue;
+                    }
                     tracing::info!(scene = %scene.identity.key, %address, %reason, "admission revoked; closing the socket");
                     scene.remove_client(client.index);
                     kicked += 1;
@@ -649,6 +655,11 @@ impl SceneHostState {
                 };
                 match ws::admit(self, &scene, &address, None, client.grant, now).await {
                     Ok(_) => {}
+                    // An authority or store fault keeps the client, as the comms re-admit does.
+                    Err(ws::AdmissionRefused::Undetermined(why)) => {
+                        tracing::warn!(scene = %key, %address, %why, "admission undetermined; client kept");
+                        summary.errors += 1;
+                    }
                     Err(reason) => {
                         tracing::info!(scene = %key, %address, %reason, "admission revoked; closing the socket");
                         scene.remove_client(client.index);
