@@ -629,14 +629,34 @@ fn third_party_item(e: TpwElement) -> OwnedItem {
     }
 }
 
-/// The third-party leg: every provider's wearables, or with
-/// `thirdPartyCollectionId` only those values' providers. As in
-/// decentraland/lamb2's explorer handler (explorer-handler.ts:106-143), the
-/// values are deduplicated as strings, each is cut to its first five parts
+/// The provider names `thirdPartyCollectionId` selects, each once, in
+/// first-seen order. As in decentraland/lamb2's explorer handler
+/// (explorer-handler.ts:106-143), each value is cut to its first five parts
 /// and kept when it names a provider
-/// (`urn:decentraland:<network>:collections-thirdparty:<name>`), and a name
-/// no approved provider has is `Third Party not found`; two distinct values
-/// naming one provider list its wearables twice. Each provider is read once.
+/// (`urn:decentraland:<network>:collections-thirdparty:<name>`). lamb2
+/// deduplicates the values as strings only, so two distinct values naming
+/// one provider list its wearables twice and the response grows with the
+/// number of values; here a provider is listed once, which keeps the
+/// uncapped value list from multiplying the answer.
+fn third_party_provider_names(collection_ids: &[String]) -> Vec<&str> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    collection_ids
+        .iter()
+        .filter_map(|id| {
+            let cleaned = id.splitn(6, ':').take(5).collect::<Vec<_>>().join(":");
+            if !is_third_party_name_urn(&cleaned) {
+                return None;
+            }
+            id.split(':').nth(4)
+        })
+        .filter(|name| seen.insert(name))
+        .collect()
+}
+
+/// The third-party leg: every provider's wearables, or with
+/// `thirdPartyCollectionId` only the providers it names
+/// ([`third_party_provider_names`]); a name no approved provider has is
+/// `Third Party not found`.
 async fn fetch_third_party_items(
     state: &MarketplaceState,
     owner: &str,
@@ -647,27 +667,10 @@ async fn fetch_third_party_items(
         let found = fetch_all_third_party_wearables(state, owner, None, on_failure).await?;
         return Ok(found.into_iter().map(third_party_item).collect());
     }
-    let mut seen: HashSet<&str> = HashSet::new();
-    let names: Vec<&str> = collection_ids
-        .iter()
-        .filter(|id| seen.insert(id.as_str()))
-        .filter_map(|id| {
-            let cleaned = id.splitn(6, ':').take(5).collect::<Vec<_>>().join(":");
-            if !is_third_party_name_urn(&cleaned) {
-                return None;
-            }
-            id.split(':').nth(4)
-        })
-        .collect();
-    let mut by_name: HashMap<&str, Vec<TpwElement>> = HashMap::new();
     let mut items = Vec::new();
-    for name in names {
-        if !by_name.contains_key(name) {
-            let found =
-                fetch_all_third_party_wearables(state, owner, Some(name), on_failure).await?;
-            by_name.insert(name, found);
-        }
-        items.extend(by_name[name].iter().cloned().map(third_party_item));
+    for name in third_party_provider_names(collection_ids) {
+        let found = fetch_all_third_party_wearables(state, owner, Some(name), on_failure).await?;
+        items.extend(found.into_iter().map(third_party_item));
     }
     Ok(items)
 }
@@ -709,7 +712,13 @@ async fn explorer_items(
         q.include_amount,
         q.is_smart_wearable,
         q.network.unwrap_or(""),
-        q.third_party_collection_ids.join(","),
+        if q.third_party_collection_ids.is_empty() {
+            String::new()
+        } else {
+            let mut names = third_party_provider_names(&q.third_party_collection_ids);
+            names.sort_unstable();
+            format!("[{}]", names.join(","))
+        },
     );
     let cache_key: ExplorerKey = (
         addr_lc.clone(),

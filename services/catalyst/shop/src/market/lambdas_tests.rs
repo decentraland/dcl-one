@@ -893,13 +893,21 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
             ),
             1,
         ),
-        // Two distinct values naming one provider list it twice, as lamb2
-        // does (explorer-handler.ts:119-143).
+        // Two distinct values naming one provider list it once (lamb2 lists
+        // it twice, explorer-handler.ts:119-143), so the value list cannot
+        // multiply the answer.
         (
             format!(
                 "thirdPartyCollectionId={tp_collection}:c1&thirdPartyCollectionId={tp_collection}"
             ),
-            2,
+            1,
+        ),
+        (
+            (0..500)
+                .map(|i| format!("thirdPartyCollectionId={tp_collection}:x{i}"))
+                .collect::<Vec<_>>()
+                .join("&"),
+            1,
         ),
         ("thirdPartyCollectionId=not-a-urn".to_string(), 0),
     ] {
