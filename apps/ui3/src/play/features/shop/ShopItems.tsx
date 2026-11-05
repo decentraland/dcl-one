@@ -32,7 +32,8 @@ export function ShopCard({
   lookKnown,
   onSelect,
   onTryOn,
-  onOpenOnWeb
+  onOpenOnWeb,
+  emoteTryOn = false
 }: {
   item: CatalogItem
   selected: boolean
@@ -41,6 +42,8 @@ export function ShopCard({
   onSelect: () => void
   onTryOn: () => void
   onOpenOnWeb: () => void
+  /** Whether an emote can be tried on (InWorldShop's emoteTryOn). */
+  emoteTryOn?: boolean
 }): React.JSX.Element {
   const creator = useProfile(item.creator)
   // Priced signed out: credits for primary sales, MANA for resales. The HUD's identity doesn't say how the
@@ -64,7 +67,7 @@ export function ShopCard({
       actions={
         <ShopCardActions
           tryOn={
-            tryOnUrn(item) == null
+            tryOnUrn(item) == null || (emote && !emoteTryOn)
               ? undefined
               : {
                   label: triedOn ? (emote ? 'STOP' : 'TAKE OFF') : 'TRY ON',

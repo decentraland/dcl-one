@@ -264,6 +264,31 @@ describe('in-world shop', () => {
     expect(await screen.findByText('Nothing on sale right now', {}, { timeout: 5000 })).toBeInTheDocument()
   })
 
+  it('lets a newer pick win over an outfit still loading', async () => {
+    let release: () => void = () => {}
+    const f = serve({
+      outfits: [{ id: 'o1', name: 'Neon Night', thumbnailHash: '', items: [{ contractAddress: CONTRACT, itemId: '1' }], gradientFrom: '#ff0000', gradientTo: '#0000ff' }],
+      trending: [listingRow({ itemId: '2', name: 'Moonwalk', category: 'emote' })],
+      byIds: [catalogueRow()]
+    })
+    const served = f.getMockImplementation() as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+    f.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), location.href)
+      if (url.pathname.endsWith('/v3/catalog/items') && url.searchParams.has('id')) await new Promise<void>((r) => (release = r))
+      return served(input, init)
+    })
+    const { props } = renderShop()
+    await openTab('All')
+    await userEvent.click(await screen.findByRole('button', { name: 'Try on Neon Night' }, { timeout: 5000 }))
+    // An emote (no try-on yet) picked while the outfit's items are still on their way.
+    await userEvent.click(await screen.findByRole('button', { name: 'Moonwalk' }))
+    expect(screen.getByRole('complementary', { name: 'Moonwalk' })).toBeInTheDocument()
+    release()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(props.preview).not.toHaveBeenCalledWith([BODY, ARMOR_URN])
+    expect(screen.getByRole('complementary', { name: 'Moonwalk' })).toBeInTheDocument()
+  })
+
   it("doesn't dress the avatar in an outfit whose items answer after the Shop closed", async () => {
     let release: () => void = () => {}
     const f = serve({
@@ -519,9 +544,21 @@ describe('in-world shop', () => {
     expect(screen.getByRole('status', { name: 'Loading the catalogue' })).toBeInTheDocument()
   })
 
+  it("keeps emotes to browse and open, without trying them on, while the engine can't play them", async () => {
+    serve({ catalogue: [[catalogueRow({ category: 'emote', name: 'Moonwalk', data: { emote: { category: 'dance' } } })]] })
+    const { props } = renderShop()
+    await openTab('Emotes')
+    await findCard('Moonwalk')
+    expect(screen.queryByRole('button', { name: 'TRY ON' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Moonwalk' }))
+    expect(screen.getByRole('complementary', { name: 'Moonwalk' })).toBeInTheDocument()
+    expect(props.emote).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'STOP EMOTE' })).not.toBeInTheDocument()
+  })
+
   it('plays a tried-on emote on the avatar, and STOP EMOTE stops it', async () => {
     serve({ catalogue: [[catalogueRow({ category: 'emote', name: 'Moonwalk', data: { emote: { category: 'dance' } } })]] })
-    const { props } = renderShop({ equipped: [] })
+    const { props } = renderShop({ equipped: [], emoteTryOn: true })
     await openTab('Emotes')
     await findCard('Moonwalk')
     // An emote plays over any look, so it doesn't wait for the equipped one.
@@ -535,7 +572,7 @@ describe('in-world shop', () => {
 
   it('stops the emote when the Shop closes', async () => {
     serve({ catalogue: [[catalogueRow({ category: 'emote', name: 'Moonwalk', data: { emote: { category: 'dance' } } })]] })
-    const { props, rerender } = renderShop()
+    const { props, rerender } = renderShop({ emoteTryOn: true })
     await openTab('Emotes')
     await findCard('Moonwalk')
     await userEvent.click(screen.getByRole('button', { name: 'TRY ON' }))
