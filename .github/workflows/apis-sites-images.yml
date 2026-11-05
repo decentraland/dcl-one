@@ -103,7 +103,7 @@ jobs:
           python3 -m unittest discover -s tooling/tests -p 'test_ci_publication.py' -v
       - name: Require the reviewed Sites HUD before compiling
         run: |
-          locked=$(python3 -c 'import json; print(json.load(open("rendering/bevy-explorer/upstream.lock.json"))["hud_source_sha256"])')
+          locked=$(python3 -c 'import json; print(json.load(open("rendering/bevy-explorer/upstream.lock.json")).get("hud_source_sha256", ""))')
           if [ "$(python3 tooling/play-artifact.py hud-inputs)" != "$locked" ]; then
             echo "::error::Sites HUD adaptation must be reviewed against the current Explorer HUD source"
             exit 1
