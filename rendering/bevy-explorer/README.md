@@ -83,3 +83,4 @@ A pull request that changes the explorer's web app is measured against main in C
 the `benchmark` runner (`source/local-harness/benchmark`, `bevy-explorer-benchmark-<os>-<arch>-<sha>`)
 from CI's artifacts and writes the report into the pull request's CI status comment. How a run
 starts, how to read the report and how to set up a laptop: [Benchmark](docs/guidelines/benchmark.md).
+
