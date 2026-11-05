@@ -152,14 +152,15 @@ fn lands_page(base: &str, lands: &[OwnedLand], page: JsPagination) -> Response {
 
 /// The owner's lands from the marketplace subgraph, paged here (the reader
 /// holds the whole holding for 30 s, so `totalAmount` is the same count the
-/// index path reports).
+/// index path reports). A failed reader answers the owner's last good list,
+/// as lamb2 does (`graph::owned_lands_or_stale`), else lamb2's 502.
 async fn user_lands_from_reader(
     state: &SharedState,
     requested: &str,
     owner: &str,
     page: JsPagination,
 ) -> Response {
-    match graph::owned_lands(&state.index, owner).await {
+    match graph::owned_lands_or_stale(&state.index, owner).await {
         Ok(lands) => lands_page(&state.settings.land_image_base_url, &lands, page),
         Err(e) => {
             tracing::warn!(owner = %owner, error = %e, "marketplace LAND reader failed");

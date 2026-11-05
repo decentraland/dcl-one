@@ -95,7 +95,7 @@ Counts: 6 endpoints. MATCH 0, GAP 0, DIVERGENT 6, MISSING 0.
 | Invalid address (`0x12`) | 200 | The API call fails or returns empty; the subgraph returns `[]`, so the answer is an empty page | | `api-with-fallback.ts:28-45` | 200, an empty page, `pageNum`/`pageSize` echoed (LL-8) | MATCH |
 | Address with `0X` prefix | 200 (lowercased) | | | `elements-fetcher.ts:198` | 200 | MATCH |
 | Marketplace bulkhead full | 503 | `{"error":"Service overloaded, retry shortly","message":…}` | | `marketplace-api-fetcher.ts:136`, `errorHandler.ts:17` | n/a | n/a (dcl-one has no API leg) |
-| Both sources fail | 502 | `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}` (a stale entry is served for up to `maxAge+maxStaleAge` = 120 s) | | `elements-fetcher.ts:265-274` | The same 502, the address as requested (`user_items.rs:368`). No stale serving, 30 s TTL (`services/catalyst/chain-index/src/graph.rs:39`) | MATCH (status and body); stale serving is LL-24 |
+| Both sources fail | 502 | `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}` (a stale entry is served for up to `maxAge+maxStaleAge` = 120 s) | | `elements-fetcher.ts:265-274` | The same 502, the address as requested (`user_items.rs`, `user_names`). The last good list is answered for 120 s after its fetch (`graph::owned_names_or_stale`, LL-24) | MATCH |
 | No subgraph configured | n/a (defaults always exist) | | | `the-graph.ts:38` | 503 envelope, `source:"marketplace-subgraph"`, message "the marketplace subgraph reader (LAND, estates, names) is not configured on this node" (`services/catalyst/shop/src/market/readers.rs:162`) | DIVERGENT |
 | Subgraph name `null` | Element kept with `name: null` | | | `fetch-names.ts:61` | Element dropped (`services/catalyst/chain-index/src/graph.rs:473`) | DIVERGENT (P2) |
 | More than 10,000 names | All returned | | | `fetch-elements.ts:23-44` | Every page walked (`FULL_WALK_PAGES`, a 1,000,000-row runaway guard; `services/catalyst/chain-index/src/graph.rs:34`) | MATCH |
@@ -162,7 +162,7 @@ Undefined keys are omitted. `x` and `y` are present only when `category == "parc
 | `pageSize=0` / `pageNum=0` / negative | `[]`, or JS `slice` with a negative start (e.g. `pageSize=-1` gives every element but the last); the value is echoed | `pagination.ts:16-36` | The same on both paths; the index path counts first when a bound is negative (`lambdas_land.rs`, `user_lands`) | MATCH (LL-6) |
 | `pageSize=abc` | `elements: []`, `"pageSize": null` | | The same | MATCH (LL-6) |
 | More than 10,000 lands | All returned | `fetch-elements.ts:23` | Every page walked on the reader (`FULL_WALK_PAGES`). The index has no cap. | MATCH |
-| Subgraph fails | Stale list served for up to 10 min. With no stale entry: 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}`. | `elements-fetcher.ts:284-315` | The same 502, the address as requested (`lambdas_land.rs:172`); no stale list | MATCH without a stale entry; stale serving is LL-24 |
+| Subgraph fails | The last good list, stored again on each failed refresh, so for the whole outage. With no stale entry: 502 `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}`. | `elements-fetcher.ts:284-315` | The same 502, the address as requested (`lambdas_land.rs`, `user_lands_from_reader`); with a last good list, that list (`graph::owned_lands_or_stale`, LL-24) | MATCH |
 | Indexes not ready, no subgraph | n/a | | 503 envelope `source:"land-authz-index"` or `"nft-index"` (`lambdas_land.rs:186-192`) | DIVERGENT |
 | DB error | n/a | | 500 | n/a |
 
@@ -367,12 +367,11 @@ Each item gives the gap, the expected behaviour, the place to change it in dcl-o
     - Upstream: lamb2's router is case-insensitive (`path-to-regexp` defaults), but the production gateway answers its nginx `404` HTML page for a path whose case differs before lamb2 sees it (`captures/lambdas-profiles/LP-31-path-case-profiles.json`, `LP-31-path-case-status.json`).
     - dcl-one: axum is case-sensitive, so such a path is a 404. The body becomes the gateway page with the `/lambdas/{*rest}` catch-all of `fix/p2-lambdas-profiles` (`services/catalyst/shop/src/market/lambdas_http.rs`): axum prefers the land-authz routes over that wildcard, so the merge needs no change here.
     - Severity: none (closed).
-24. **LL-24: Stale serving on outage.** Endpoints: names, lands. Kept by decision for now.
-    - Gap: dcl-one has a 30 s TTL with no stale serving.
-    - Expected: names serve stale entries up to 60 s + 60 s; lands serve the last good list for 10 min on fetch failure (`decentraland/lamb2:src/adapters/elements-fetcher.ts:38-43`, `elements-fetcher.ts:284-302`).
-    - Why not now: the names cache (`graph::owned_names`) also answers worlds' name ownership and comms admission, which lamb2 itself serves without stale entries (`ownershipDecisions`); stale serving there would let a sold name keep its world for two minutes. Options: (a) a stale-on-error read used only by the `/names` and `/lands` routes, keeping the last good list beside the 30 s entry; (b) keep failing with the 502. (a) is the parity choice and costs one extra map per reader; the decision is the lead's.
-    - Change: `services/catalyst/chain-index/src/graph.rs:34`.
-    - Severity: P2.
+24. **LL-24: Stale serving on outage.** Endpoints: names, lands. Status: MATCH, no work (option (a) by decision).
+    - Upstream: names serve an expired entry up to `maxAge + maxStaleAge` = 120 s after its fetch while one refresh runs, and drop it when that refresh fails (`decentraland/lamb2:src/adapters/elements-fetcher.ts:38-43`). Lands store the stale list again when a refresh fails, so the last good list is answered for as long as the outage lasts (`elements-fetcher.ts:284-315`). The ownership decisions (`ownershipDecisions`) serve nothing stale.
+    - dcl-one: the two routes alone read `graph::owned_names_or_stale` and `graph::owned_lands_or_stale`, which answer the expired 30 s entry when the subgraph fails: names within 120 s of its fetch, lands at any age (`services/catalyst/chain-index/src/graph.rs`; `TtlMap::get_within`, `services/catalyst/shared/src/cache.rs`). Worlds' NAME owner, comms admission and the profiles still read `graph::owned_names`, which fails on an outage. Pinned by `names_and_lands_serve_stale_on_outage_and_ownership_does_not` (`services/catalyst/shop/src/market/lambdas_tests.rs`).
+    - Remaining difference: on an outage lamb2 answers a stale names entry only while the refresh it started runs, then the 502; dcl-one answers it until 120 s after the fetch. Neither serves names older than 120 s. Lands entries are fresh for 30 s here, 10 min upstream.
+    - Severity: none (closed).
 
 ## dcl-one-only endpoints in this area
 

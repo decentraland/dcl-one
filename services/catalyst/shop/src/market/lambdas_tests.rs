@@ -1425,3 +1425,80 @@ async fn a_failing_subgraph_answers_lamb2s_status() {
         );
     }
 }
+
+/// LL-24: on a subgraph outage `/users/{a}/names` answers the last good list
+/// for lamb2's 120 s and `/users/{a}/lands` for as long as the outage lasts,
+/// while `graph::owned_names`, the read worlds' NAME owner and comms
+/// admission take, keeps failing: an ownership decision is never stale.
+#[tokio::test]
+async fn names_and_lands_serve_stale_on_outage_and_ownership_does_not() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    use axum::routing::post;
+
+    let pool = PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
+    pool.close().await;
+    let down = Arc::new(AtomicBool::new(false));
+    let graph = serve(Router::new().route(
+        "/",
+        post({
+            let down = down.clone();
+            move |axum::Json(body): axum::Json<Value>| async move {
+                if down.load(Ordering::Relaxed) {
+                    return axum::Json(json!({ "errors": [{ "message": "indexer down" }] }));
+                }
+                let query = body["query"].as_str().unwrap_or("");
+                let vars = body.get("variables").cloned().unwrap_or(Value::Null);
+                axum::Json(json!({ "data": marketplace_reader(query, &vars) }))
+            }
+        }),
+    ))
+    .await;
+    let state = Arc::new(MarketplaceState::new(
+        pool,
+        crate::http::Outbound::for_tests(),
+        Settings {
+            marketplace_subgraph_url: Some(graph),
+            ..Settings::for_tests()
+        },
+    ));
+    state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let names_uri = format!("/lambdas/users/{OWNER}/names");
+    let lands_uri = format!("/lambdas/users/{OWNER}/lands");
+    let (status, names) = get(&state, &names_uri).await;
+    assert_eq!(status, StatusCode::OK, "{names}");
+    assert_eq!(names["totalAmount"], 1, "{names}");
+    let (status, lands) = get(&state, &lands_uri).await;
+    assert_eq!(status, StatusCode::OK, "{lands}");
+    assert_eq!(lands["totalAmount"], 2, "{lands}");
+
+    // The subgraph goes down and the 30 s entries expire.
+    down.store(true, Ordering::Relaxed);
+    state
+        .index
+        .graph
+        .backdate_owner_for_tests(OWNER, Duration::from_secs(31));
+    assert_eq!(get(&state, &names_uri).await, (StatusCode::OK, names));
+    assert_eq!(
+        get(&state, &lands_uri).await,
+        (StatusCode::OK, lands.clone())
+    );
+    assert!(
+        crate::chain_index::graph::owned_names(&state.index, OWNER)
+            .await
+            .is_err(),
+        "the ownership read fails on the outage, never stale"
+    );
+
+    // Past lamb2's 120 s the names answer the 502; the lands still answer.
+    state
+        .index
+        .graph
+        .backdate_owner_for_tests(OWNER, Duration::from_secs(3600));
+    let (status, body) = get(&state, &names_uri).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert_eq!(get(&state, &lands_uri).await, (StatusCode::OK, lands));
+}

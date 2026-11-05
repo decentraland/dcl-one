@@ -37,6 +37,10 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_ATTEMPTS: u32 = 3;
 const RETRY_BASE_MS: u64 = 500;
 pub const OWNED_TTL: Duration = Duration::from_secs(30);
+/// How long after its fetch the lambdas `/users/{a}/names` route still
+/// answers an owner's names when the subgraph fails: lamb2's `maxAge +
+/// maxStaleAge` (`elements-fetcher.ts`, `ELEMENTS_CACHE_DEFAULTS`).
+pub const NAMES_STALE_MAX_AGE: Duration = Duration::from_secs(120);
 const OWNED_CACHE_MAX_ENTRIES: usize = 20_000;
 /// Owners folded into one aliased ownership document.
 const OWNERS_PER_QUERY: usize = 20;
@@ -151,6 +155,16 @@ pub struct Caches {
     name_owner: TtlMap<String, Arc<Option<String>>>,
     /// `owner` -> the parcels and estates the owner holds, newest transfer first.
     lands: TtlMap<String, Arc<Vec<OwnedLand>>>,
+}
+
+impl Caches {
+    /// Ages `owner`'s names and lands entries by `by`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn backdate_owner_for_tests(&self, owner: &str, by: Duration) {
+        let owner = owner.to_lowercase();
+        self.names.backdate(&owner, by);
+        self.lands.backdate(&owner, by);
+    }
 }
 
 impl Default for Caches {
@@ -535,6 +549,24 @@ pub async fn owned_names(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<Owne
         .await
 }
 
+/// [`owned_names`] for the lambdas `/users/{a}/names` list alone: when the
+/// subgraph fails, the last good list fetched within
+/// [`NAMES_STALE_MAX_AGE`], as lamb2 serves its stale entry. Never for an
+/// ownership decision (worlds' NAME owner, comms admission, profiles), which
+/// reads [`owned_names`] and fails on an outage.
+pub async fn owned_names_or_stale(
+    state: &ChainIndex,
+    owner: &str,
+) -> Result<Arc<Vec<OwnedName>>, String> {
+    owned_names(state, owner).await.or_else(|err| {
+        state
+            .graph
+            .names
+            .get_within(&owner.to_lowercase(), NAMES_STALE_MAX_AGE)
+            .ok_or(err)
+    })
+}
+
 /// The parcel NFTs standing on the requested coordinates. `searchParcelX_in`
 /// x `searchParcelY_in` is a superset (the cross product of the distinct
 /// columns and rows), filtered back to the requested pairs here; the old
@@ -783,6 +815,23 @@ pub async fn owned_lands(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<Owne
             Ok::<_, String>(Arc::new(out))
         })
         .await
+}
+
+/// [`owned_lands`] for the lambdas `/users/{a}/lands` list: when the
+/// subgraph fails, the last good list whatever its age. lamb2's lands cache
+/// (`createLegacyElementsFetcherComponent`) stores the stale value again on
+/// a failed refresh, so it answers it for as long as the outage lasts.
+pub async fn owned_lands_or_stale(
+    state: &ChainIndex,
+    owner: &str,
+) -> Result<Arc<Vec<OwnedLand>>, String> {
+    owned_lands(state, owner).await.or_else(|err| {
+        state
+            .graph
+            .lands
+            .get_within(&owner.to_lowercase(), Duration::MAX)
+            .ok_or(err)
+    })
 }
 
 /// Whether `owner` holds any of the parcels at `coords`, directly or through

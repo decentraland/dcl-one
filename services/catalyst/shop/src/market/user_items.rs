@@ -337,7 +337,9 @@ pub async fn user_emotes(
 
 /// Names page: a `pageSize` over 1000 answers lamb2's 400 (`max allowed
 /// pageSize is 1000`), a non-positive page or size clamps to 1. A failed
-/// reader answers lamb2's 502 `FetcherError`. A string that is not an
+/// reader answers the owner's last good list fetched within lamb2's 120 s
+/// (`graph::owned_names_or_stale`), else lamb2's 502 `FetcherError`. A
+/// string that is not an
 /// address owns nothing: an empty page, as lamb2's fallback answers it,
 /// without a reader call.
 pub async fn user_names(
@@ -363,7 +365,7 @@ pub async fn user_names(
     let names = if !super::is_valid_eth_address(&address) {
         Default::default()
     } else {
-        match graph::owned_names(&state.index, &address).await {
+        match graph::owned_names_or_stale(&state.index, &address).await {
             Ok(n) => n,
             Err(e) => {
                 tracing::warn!(error = %e, address, "names reader failed");
