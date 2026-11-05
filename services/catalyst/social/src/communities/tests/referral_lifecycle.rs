@@ -410,7 +410,7 @@ async fn authenticated_native_logins_preserve_days_threshold_identity_and_duplic
             &rig.app,
             login_case(&stranger, first, now)
                 .await
-                .json(&json!({"userAddress":invited.address}))
+                .json(&json!({"userAddress":invited.address.as_str()}))
         )
         .await
         .0,
