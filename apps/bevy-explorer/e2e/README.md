@@ -56,14 +56,14 @@ boots a second one on its own realm.
 | `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added) | unset |
 | `DCL_E2E_NATIVE_PORT`, `DCL_E2E_NATIVE_TOKEN` | A running standalone's loopback console and the token it was started with | `15702`, unset |
 
-For the native engine's optional Network inspector, add
-`DCL_E2E_NATIVE_ARGS="--network-devtools 9223"`. Its activation and observed transports are
-listed in the [running guide](../../../rendering/bevy-explorer/docs/guidelines/running.md#native-network-inspector).
-
 The report goes to `report/`: `junit-<groups>.xml`, and per scenario `commands.jsonl` (every
 console command, its reply or error and its time; `/login_identity` payloads redacted) and
 `final.png` (the engine's frame as the scenario left it). A failed visual scenario adds
 `frame.png`, `reference.png` and `diff.png`.
+
+For the native engine's optional Network inspector, add
+`DCL_E2E_NATIVE_ARGS="--network-devtools 9223"`. Its activation and observed transports are
+listed in the [running guide](../../../rendering/bevy-explorer/docs/guidelines/running.md#native-network-inspector).
 
 ## How a spec is written
 
