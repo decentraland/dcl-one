@@ -103,6 +103,18 @@ install -m 600 <key file outside the repo> .cache/dev/credits-signer.key
 foundation-dev down && foundation-dev up
 ```
 
+`grant-credits-signer.mts` gives that key the role. It sends `grantRole` from a wallet that holds the
+role's admin role on the contract, and is fixed to Amoy, the CreditsManager and `CREDITS_SIGNER_ROLE`:
+
+```sh
+node grant-credits-signer.mts --check   # reads only: the signer it would grant, and whether it already holds the role
+node grant-credits-signer.mts           # asks for the admin's key at a hidden prompt, or reads CREDITS_ADMIN_KEY_FILE
+```
+
+The signer is the address of `.cache/dev/credits-signer.key` (or of `E2E_CREDITS_SIGNER_KEY_FILE`), or
+`E2E_CREDITS_SIGNER`. The script simulates the call first, refuses a wallet without the admin role, waits for
+the receipt and reads the role back. It prints addresses, never keys.
+
 The profile also runs the CreditsManager usage index on Amoy, and the stack signs only once it has caught
 up. `GET /credits/usage-index/status` reports both, and the primary preflight reads it. Without the key,
 the preflight says so and the full loop stops before the discount.
