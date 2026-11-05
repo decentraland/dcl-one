@@ -16,7 +16,7 @@ use common::{
 use http::Uri;
 use serde::Deserialize;
 use tokio::sync::{oneshot, watch};
-use wallet::{sign_request, SignedLoginMeta, Wallet};
+use wallet::{sign_service_request, SignedLoginMeta, Wallet};
 
 pub const SUPERSEDED: &str = "superseded by a later realm change";
 
@@ -196,15 +196,24 @@ pub async fn check_world_access(
     }
 }
 
-async fn is_community_member(community: &str, wallet: &Wallet, client: &reqwest::Client) -> bool {
-    let url = format!(
-        "{}/v2/communities/{community}",
-        base_domain::service(Service::SocialApi)
+fn community_membership_uri(base: &str, community: &str) -> anyhow::Result<Uri> {
+    // The world owner supplies this identifier. Only the membership route may be signed.
+    anyhow::ensure!(
+        !community.is_empty()
+            && community
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-'),
+        "invalid community identifier"
     );
+    Ok(format!("{base}/v2/communities/{community}").parse()?)
+}
+
+async fn is_community_member(community: &str, wallet: &Wallet, client: &reqwest::Client) -> bool {
     let result: Result<Community, anyhow::Error> = async {
-        let uri = Uri::try_from(&url)?;
-        let headers = sign_request("get", &uri, wallet, "{}".to_owned()).await?;
-        let mut request = client.get(&url).timeout(Duration::from_secs(10));
+        let uri = community_membership_uri(&base_domain::service(Service::SocialApi), community)?;
+        let headers =
+            sign_service_request("get", &uri.to_string(), wallet, "{}".to_owned()).await?;
+        let mut request = client.get(uri.to_string()).timeout(Duration::from_secs(10));
         for (key, value) in headers {
             request = request.header(key, value);
         }
@@ -236,7 +245,7 @@ async fn validate_password(
     let meta =
         SignedLoginMeta::new(wallet.is_guest(), origin).with_secret(Some(password.to_owned()));
     let meta = serde_json::to_string(&meta).map_err(|e| e.to_string())?;
-    let headers = sign_request("post", &uri, wallet, meta)
+    let headers = sign_service_request("post", &uri.to_string(), wallet, meta)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -270,7 +279,29 @@ async fn validate_password(
 
 #[cfg(test)]
 mod tests {
-    use super::{world_name, WorldPermissions};
+    use super::{community_membership_uri, world_name, WorldPermissions};
+
+    #[test]
+    fn a_world_community_is_one_social_api_path_segment() {
+        let base = "https://gateway.example.test/mount/social-api";
+        for id in ["abc-123", "0a40fa82-0892-4b37-95f3-a7c16471b5bb"] {
+            let uri = community_membership_uri(base, id).unwrap();
+            assert_eq!(uri.to_string(), format!("{base}/v2/communities/{id}"));
+        }
+        for id in [
+            "",
+            ".",
+            "..",
+            "../../../auth-api/x",
+            "%2e%2e%2fauth-api",
+            "a/b",
+            "a\\b",
+            "a?query",
+            "a#fragment",
+        ] {
+            assert!(community_membership_uri(base, id).is_err(), "{id}");
+        }
+    }
 
     #[test]
     fn permissions_tolerate_sparse_records() {

@@ -27,14 +27,14 @@ pub(crate) fn admin_authorized(expected: Option<&str>, headers: &HeaderMap) -> b
     crate::auth::admin_bearer::matches(expected, headers)
 }
 
-/// `CATALYRST_WORLDS_ADMIN_TOKEN`: unset fails closed, as the old routes did.
+/// `CATALYRST_WORLDS_ADMIN_TOKEN`: unset fails closed. 401 with upstream's bearer-middleware messages.
 pub fn authorize_admin(expected: Option<&str>, headers: &HeaderMap) -> Result<(), ApiError> {
     if admin_authorized(expected, headers) {
         Ok(())
+    } else if headers.contains_key(axum::http::header::AUTHORIZATION) {
+        Err(ApiError::unauthorized("Invalid authorization header"))
     } else {
-        Err(ApiError::forbidden(
-            "You are not authorized to access this resource",
-        ))
+        Err(ApiError::unauthorized("Authorization header is missing"))
     }
 }
 
@@ -659,7 +659,7 @@ mod tests {
             authorize_admin(None, &HeaderMap::new())
                 .unwrap_err()
                 .status(),
-            403
+            401
         );
     }
 }

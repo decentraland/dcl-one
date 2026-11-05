@@ -347,8 +347,8 @@ impl ProfileManager<'_, '_> {
                 if snapshots.face256.is_empty() {
                     None
                 } else {
-                    // let url = format!("{}{}", profile.base_url, snapshots.face256);
-                    let ipfs_path = IpfsPath::new_from_url(&snapshots.face256, "png");
+                    let url = common::base_domain::profile_image(&snapshots.face256);
+                    let ipfs_path = IpfsPath::new_from_url(&url, "png");
                     Some(PathBuf::from(&ipfs_path))
                 }
             })
@@ -1137,10 +1137,18 @@ fn registry_url(endpoint: Option<&str>) -> String {
             return common::base_domain::url(registry, "/profiles");
         }
         if host.rsplit('.').next() == Some("zone") {
-            return REGISTRY_ZONE.to_owned();
+            return if base == "decentraland.zone" {
+                common::base_domain::url(registry, "/profiles")
+            } else {
+                REGISTRY_ZONE.to_owned()
+            };
         }
     }
-    REGISTRY_ORG.to_owned()
+    if common::base_domain::get() == "decentraland.org" {
+        common::base_domain::url(registry, "/profiles")
+    } else {
+        REGISTRY_ORG.to_owned()
+    }
 }
 
 /// One registry POST for a chunk of ids, reported per item: Ok(Some) found, Ok(None)

@@ -1,0 +1,30 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/content/status",
+    "headers": {
+      "Origin": "https://example.org"
+    },
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "189",
+      "access-control-allow-origin": "*",
+      "access-control-expose-headers": "*"
+    },
+    "body": {
+      "version": "8.3.2",
+      "commitHash": "a416565db1e705cff9523540a2578af642598a29",
+      "ethNetwork": "mainnet",
+      "synchronizationStatus": {
+        "lastSyncWithDAO": 1793826630626,
+        "synchronizationState": "Syncing"
+      }
+    }
+  }
+}

@@ -121,6 +121,68 @@ fn content_is_healthy(sync_state: &str) -> bool {
     sync_state == "Syncing"
 }
 
+/// lamb2's `resource-status.ts`: overloaded when the one-minute load
+/// average per CPU or the used share of memory is above 90%.
+fn above_ninety_percent(
+    load_one_minute: f64,
+    cpus: u64,
+    mem_total: u64,
+    mem_available: u64,
+) -> bool {
+    let cpu_load = load_one_minute * 100.0 / cpus.max(1) as f64;
+    let mem_load = match mem_total {
+        0 => 0.0,
+        total => total.saturating_sub(mem_available) as f64 * 100.0 / total as f64,
+    };
+    let overloaded = cpu_load > 90.0 || mem_load > 90.0;
+    // `/about` is polled several times a second: log the transitions, not
+    // every busy answer.
+    static OVERLOADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if OVERLOADED.swap(overloaded, std::sync::atomic::Ordering::Relaxed) != overloaded {
+        if overloaded {
+            tracing::info!(
+                "host overloaded, not accepting users: CPU {cpu_load:.2}%, memory {mem_load:.2}%"
+            );
+        } else {
+            tracing::info!("host load back under 90%, accepting users");
+        }
+    }
+    overloaded
+}
+
+/// The host figures Node's `os` module reads: `loadavg()[0]`, the online
+/// CPUs, and `MemTotal`/`MemAvailable` from `/proc/meminfo` (`totalmem`,
+/// `freemem`). A figure that cannot be read counts as not overloaded; off
+/// Linux there is no memory figure.
+fn resources_overloaded() -> bool {
+    let mut load = [0f64; 3];
+    // SAFETY: getloadavg writes at most `nelem` doubles into `load`.
+    let load_one_minute = match unsafe { libc::getloadavg(load.as_mut_ptr(), 1) } {
+        1.. => load[0],
+        _ => 0.0,
+    };
+    // SAFETY: sysconf reads a system constant.
+    let cpus = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) }.max(1) as u64;
+    let (mem_total, mem_available) = std::fs::read_to_string("/proc/meminfo")
+        .map(|meminfo| {
+            (
+                meminfo_kb(&meminfo, "MemTotal:"),
+                meminfo_kb(&meminfo, "MemAvailable:"),
+            )
+        })
+        .unwrap_or((0, 0));
+    above_ninety_percent(load_one_minute, cpus, mem_total, mem_available)
+}
+
+fn meminfo_kb(meminfo: &str, key: &str) -> u64 {
+    meminfo
+        .lines()
+        .find_map(|line| line.strip_prefix(key))
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|kb| kb.parse().ok())
+        .unwrap_or(0)
+}
+
 /// The genesis-city parcel bounds every realm advertises.
 fn map_sizes() -> Vec<AboutMapSize> {
     vec![
@@ -172,13 +234,20 @@ fn map_configuration(
     }
 }
 
+/// lamb2 turns `acceptingUsers` off on an overloaded host, never `healthy`;
+/// the host is read only when `ABOUT_RESOURCE_CHECK` is on.
+fn accepting_users(healthy: bool, resource_check: bool, overloaded: impl FnOnce() -> bool) -> bool {
+    healthy && !(resource_check && overloaded())
+}
+
 pub async fn get_about(State(state): State<SharedState>) -> impl IntoResponse {
     let sync_state = state.sync.state_name().to_string();
     let content_healthy = content_is_healthy(&sync_state);
     let settings = &state.settings;
 
     let mut healthy = content_healthy;
-    let mut accepting_users = healthy;
+    let mut accepting_users =
+        accepting_users(healthy, settings.about_resource_check, resources_overloaded);
     let comms = state.about_comms().map(|about| {
         let probe = about.probe();
         let comms = build_comms_config(probe, &about.settings, about.sfu.is_alive());
@@ -307,6 +376,30 @@ mod tests {
             node_base_url("https://peer.example/"),
             "https://peer.example"
         );
+    }
+
+    /// lamb2's thresholds: strictly above 90% load per CPU or used memory.
+    #[test]
+    fn overload_is_above_ninety_percent_of_cpu_or_memory() {
+        assert!(!above_ninety_percent(3.6, 4, 100, 10));
+        assert!(above_ninety_percent(3.7, 4, 100, 50));
+        assert!(above_ninety_percent(0.1, 4, 100, 9));
+        assert!(!above_ninety_percent(0.0, 0, 0, 0));
+        let meminfo =
+            "MemTotal:       16000000 kB\nMemFree:  100 kB\nMemAvailable:    1500000 kB\n";
+        assert_eq!(meminfo_kb(meminfo, "MemTotal:"), 16_000_000);
+        assert_eq!(meminfo_kb(meminfo, "MemAvailable:"), 1_500_000);
+        assert_eq!(meminfo_kb(meminfo, "SwapTotal:"), 0);
+    }
+
+    #[test]
+    fn the_resource_check_reads_the_host_only_when_on() {
+        let unread = || -> bool { panic!("the host is read only with the check on") };
+        assert!(accepting_users(true, false, unread));
+        assert!(!accepting_users(false, false, unread));
+        assert!(accepting_users(true, true, || false));
+        assert!(!accepting_users(true, true, || true));
+        assert!(!accepting_users(false, true, || false));
     }
 
     #[test]

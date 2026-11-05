@@ -245,14 +245,6 @@ pub struct SocialConfig {
     )]
     pub friendship_rate_limit_per_pair: f64,
 
-    #[arg(long, env = "AWS_SQS_ENDPOINT")]
-    pub legacy_sqs_endpoint: Option<String>,
-    #[arg(long, env = "AWS_SQS_QUEUE_URL")]
-    pub legacy_sqs_queue_url: Option<String>,
-    #[arg(long, env = "AWS_SNS_ENDPOINT")]
-    pub legacy_sns_endpoint: Option<String>,
-    #[arg(long, env = "AWS_SNS_ARN")]
-    pub legacy_sns_arn: Option<String>,
     /// Optional source Slack producer; supports SLACK_BOT_TOKEN_FILE.
     #[arg(long, env = "SLACK_BOT_TOKEN", hide_env_values = true)]
     pub referral_slack_token: Option<String>,

@@ -177,7 +177,6 @@ fn face_url(state: &MarketplaceState, entity_id: &str, face: Option<&str>) -> Op
         entity_id,
         &mut metadata,
         state.settings.profile_cdn_base_url.as_deref(),
-        &state.settings.content_public_url,
         &state.settings.profile_images_public_url,
     );
     metadata["avatars"][0]["avatar"]["snapshots"]["face256"]

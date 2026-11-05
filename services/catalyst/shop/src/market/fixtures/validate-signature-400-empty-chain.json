@@ -1,0 +1,37 @@
+{
+  "description": "POST /lambdas/crypto/validate-signature with an empty authChain: AuthChain.schema's minItems fails in the schema-validator middleware before the handler's length check.",
+  "request": {
+    "method": "POST",
+    "path": "/lambdas/crypto/validate-signature",
+    "query": {},
+    "headers": {},
+    "body": {
+      "authChain": [],
+      "timestamp": "1"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "ok": false,
+      "message": "Invalid JSON body",
+      "data": [
+        {
+          "instancePath": "/authChain",
+          "schemaPath": "#/properties/authChain/minItems",
+          "keyword": "minItems",
+          "params": {
+            "limit": 1
+          },
+          "message": "must NOT have fewer than 1 items"
+        }
+      ]
+    }
+  },
+  "captured_from": "services/catalyst/tests/fixtures/conformance/content-lambdas/captures/lambdas-profiles/LP-27-empty-chain.json (peer.decentraland.org, lamb2 02a37f5)",
+  "captured_at": "2026-11-04T00:00:00Z",
+  "volatile_paths": []
+}

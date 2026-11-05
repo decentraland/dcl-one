@@ -36,7 +36,8 @@ pub use eip1654::{Eip1654Validator, PeerValidated, verify_eip1654};
 pub use error::AuthError;
 pub use eth_address::{EthAddress, is_eth_address, normalize_eth_address};
 pub use hash::{
-    HashV1Writer, hash_bytes, hash_bytes_v0_unixfs, hash_bytes_v1, is_canonical_cid, verify_hash,
+    HashV1Writer, hash_bytes, hash_bytes_v0_unixfs, hash_bytes_v1, is_canonical_cid,
+    raw_cid_v1_from_sha256_hex, verify_hash,
 };
 pub use hex0x::{HexDecodeError, decode_hex_0x};
 pub use pointer::{canonicalize_pointer, is_canonical_pointer, parse_pointer};

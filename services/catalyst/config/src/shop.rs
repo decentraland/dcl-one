@@ -16,7 +16,9 @@ pub struct MarketUpstreamsConfig {
     #[arg(long, env = "MATIC_COLLECTIONS_SUBGRAPH_URL")]
     pub matic_collections_subgraph_url: Option<String>,
 
-    /// L1 marketplace subgraph (names); unset answers empty names.
+    /// L1 marketplace subgraph (names, and LAND before the indexes publish);
+    /// `NODE_POSTURE=mirror` sets lamb2's default. Unset, `/lambdas` names
+    /// and lands answer the 503 envelope; profiles and outfits claim no name.
     #[arg(long, env = "MARKETPLACE_SUBGRAPH_URL")]
     pub marketplace_subgraph_url: Option<String>,
 
@@ -48,7 +50,7 @@ pub struct MarketUpstreamsConfig {
     pub trades_serve_partial: bool,
 
     /// Avatar snapshots become `<base>/entities/<id>/{face,body}.png` when
-    /// set; unset they point at this node's `contents/<hash>`.
+    /// set; unset they point at this node's `/profile-images`.
     #[arg(long, env = "PROFILE_CDN_BASE_URL")]
     pub profile_cdn_base_url: Option<String>,
 

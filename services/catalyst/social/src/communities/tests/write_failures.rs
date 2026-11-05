@@ -19,8 +19,6 @@ async fn ban_and_privacy_write_failures_preserve_source_committed_stages() {
         return;
     };
     rig.state.pass_markers.insert(None, None);
-    let sns = super::sns_parity::Sns::new().await;
-    rig.state.referral.set_publisher(sns.publisher.clone());
     let voice = Arc::new(AtomicUsize::new(0));
     rig.state
         .set_voice_eviction(Arc::new(VoiceCalls(voice.clone())));
@@ -123,7 +121,6 @@ async fn ban_and_privacy_write_failures_preserve_source_committed_stages() {
         let mut owner_updates = updates.subscribe(owner.address.as_str());
         let mut member_updates = updates.subscribe(member.address.as_str());
         let old_voice = voice.load(Ordering::SeqCst);
-        let old_sns = sns.events().len();
         let path = format!("/social-api/v1/communities/{id}");
         let call = if name.starts_with("ban-") {
             Case::new("post", format!("{path}/members/{}/bans", member.address))
@@ -199,7 +196,6 @@ async fn ban_and_privacy_write_failures_preserve_source_committed_stages() {
                 member_updates.try_recv().is_err(),
                 "member pubsub after failed {name}"
             );
-            assert_eq!(sns.events().len(), old_sns, "SNS after failed {name}");
             let inbox: i64 = sqlx::query_scalar(
                 "SELECT count(*) FROM social.notifications WHERE metadata->>'communityId'=$1",
             )
@@ -212,13 +208,15 @@ async fn ban_and_privacy_write_failures_preserve_source_committed_stages() {
             assert_eq!(voice.load(Ordering::SeqCst), old_voice + 1);
             assert!(owner_updates.try_recv().is_ok());
             assert!(member_updates.try_recv().is_ok());
-            tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                while sns.events().len() == old_sns {
-                    tokio::time::sleep(std::time::Duration::from_millis(5)).await
-                }
-            })
-            .await
-            .unwrap();
+            let rows: Vec<(String,String,Value)> = sqlx::query_as("SELECT n.address,n.type,n.metadata FROM social.notifications n JOIN social.notification_deliveries d ON d.notification_id=n.id WHERE n.metadata->>'communityId'=$1").bind(id.to_string()).fetch_all(&rig.pool).await.unwrap();
+            assert_eq!(
+                rows,
+                vec![(
+                    member.address.to_string(),
+                    "community_member_banned".into(),
+                    json!({"communityId":id.as_uuid(), "communityName":"Fixture community", "thumbnailUrl":rig.state.thumbnail_url(id)})
+                )]
+            );
         }
         if let Some((table, _, _)) = fault {
             sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
