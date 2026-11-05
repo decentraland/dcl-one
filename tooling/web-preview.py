@@ -2,12 +2,14 @@
 """Select web preview builds and publish only validated static build outputs."""
 
 import argparse
+import http.client
 import json
 import os
 from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import time
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
@@ -62,6 +64,10 @@ def publishable(run, pr, repository):
         and run.get('status') == 'completed'
         and run.get('conclusion') in ('success', 'failure')
         and run.get('path') == WORKFLOW
+        and all(
+            (run.get(field) or {}).get('login') != 'dependabot[bot]'
+            for field in ('actor', 'triggering_actor')
+        )
         and (run.get('head_repository') or {}).get('full_name') == repository
         and pr.get('state') == 'open'
         and (pr.get('head', {}).get('repo') or {}).get('full_name') == repository
@@ -140,9 +146,12 @@ def api(path, *, method='GET', body=None, paginate=False):
         input=json.dumps(body) if body is not None else None,
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
         timeout=120,
     )
+    if result.returncode:
+        print(result.stderr, file=sys.stderr)
+        result.check_returncode()
     value = json.loads(result.stdout)
     return [item for page in value for item in page] if paginate else value
 
@@ -160,13 +169,13 @@ def resolve(repository, run_id):
     )
     for candidate in candidates:
         pr = api(f'repos/{repository}/pulls/{int(candidate["number"])}')
-        if publishable({**run, 'status': 'completed', 'conclusion': 'success'}, pr, repository):
+        if publishable(run, pr, repository):
             return run, pr
     return run, None
 
 
 def cdn_url(version):
-    if not re.fullmatch(r'0\.1\.0-[0-9]+\.commit-[0-9a-f]+', version):
+    if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.commit-[0-9a-f]+', version):
         raise ValueError('Invalid published preview version')
     return f'https://cdn.decentraland.org/{PACKAGE}/{version}'
 
@@ -185,7 +194,7 @@ def verify_cdn(version, revision, run_id, timeout=300):
                     'Content-Type', ''
                 ):
                     return f'{url}/dcl-ui-review/index.html'
-        except (HTTPError, URLError, TimeoutError):
+        except (OSError, HTTPError, URLError, http.client.HTTPException, json.JSONDecodeError):
             pass
         if time.monotonic() >= deadline:
             raise TimeoutError(
@@ -266,6 +275,7 @@ def main():
     select.add_argument('--base', required=True)
     select.add_argument('--head', required=True)
     sub.add_parser('resolve')
+    sub.add_parser('check-publication')
     package = sub.add_parser('package-reviewer')
     package.add_argument('source', type=Path)
     package.add_argument('target', type=Path)
@@ -289,8 +299,6 @@ def main():
         print(f'pr={pr["number"] if pr else ""}')
         print(f'publish={str(pr is not None and publishable(run, pr, repository)).lower()}')
         print('reviewer=' + str(require_reviewer(repository, run_id)).lower())
-        if pr:
-            print(f'head_sha={pr["head"]["sha"]}')
         return
     if args.command == 'report':
         report(
@@ -304,6 +312,8 @@ def main():
         raise ValueError('Source run is no longer eligible for publication')
     if not require_reviewer(repository, run_id):
         raise ValueError('Reviewer did not produce one successful job and static artifact')
+    if args.command == 'check-publication':
+        return
     if args.command == 'package-reviewer':
         package_reviewer(args.source, args.target, run['head_sha'], run_id)
     elif args.command == 'verify-cdn':

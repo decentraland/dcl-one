@@ -80,10 +80,10 @@ CDN serves the matching source receipt and HTML entry.
 Publication needs `GITLAB_CDN_DEPLOYER_TOKEN` and `GITLAB_CDN_DEPLOYER_URL`, as
 used by Bevy, and `FIGMA_FILE_KEY` for the trusted artifact key scan. The
 reviewer and its dependency-free key guard must already be on the default
-branch before publication can run. No Figma key is passed to the PR build.
+branch before publication can run. The trusted scan uses `node library/ui/figma/key-guard.mjs --no-worktree --no-range --path .preview/input`. No Figma key is passed to the PR build.
 The public npm package
 `@dcl-regenesislabs/dcl-one-ui-review` needs a trusted publisher for this
-repository and `web-previews-publish.yml`, or a publishing `NPM_TOKEN`.
+repository and `web-previews-publish.yml` using npm trusted publishing.
 Publication uses timestamp versions so a retry can publish after a previous
 npm upload succeeded. The version's commit suffix identifies trusted
 publication code; `preview-source.json` records the built PR head and source
@@ -91,7 +91,7 @@ build run.
 GitHub artifacts expire after seven days; this does not delete immutable npm
 versions or CDN copies.
 
-Sites currently uploads its SSR build, documentation content, fixtures and dependency manifests as `web-preview-sites`. The planned preview uses a complete container image built from the pull request and runs in Kubernetes at the shared `preview.dcl.dev` address. It is manually triggered and expires after six hours. Charly owns the cluster configuration; the application deployment integration and dev/prod service selector are not implemented. The PR comment reports that the preview is pending.
+Sites currently uploads its SSR build, documentation content, fixtures and dependency manifests as `web-preview-sites`. The planned preview uses a complete container image built from the pull request and runs in Kubernetes at a shared hostname supplied by deployment configuration. It is manually triggered and expires after six hours. The infrastructure owner supplies the cluster configuration; the application deployment integration and dev/prod service selector are not implemented. The PR comment reports that the preview is pending.
 
 ### Local checks
 

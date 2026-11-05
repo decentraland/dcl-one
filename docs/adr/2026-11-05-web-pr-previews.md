@@ -1,6 +1,6 @@
 # ADR: Independent web pull request previews
 
-- Status: Accepted
+- Status: Proposed
 - Date: 2026-11-05
 
 ## Decision
@@ -19,7 +19,7 @@ current open pull request, source repository, successful product job and
 artifact before publication. A preview link is reported only after the CDN
 serves its matching source receipt and HTML entry.
 
-Sites retains server rendering, loaders and actions. Its preview uses a complete container image built from the pull request and runs in Kubernetes at the shared `preview.dcl.dev` address. The initial preview is manually triggered and expires after six hours; it can be triggered again when needed. Charly owns the cluster configuration, and the application deployment integration remains to be agreed. Per-pull-request hosts are a possible later option with prorated cost. Services should default to development, with an explicit production selection; server and browser requests, caches and sessions must agree on that selection. The environment selector remains unimplemented.
+Sites retains server rendering, loaders and actions. Its preview uses a complete container image built from the pull request and runs in Kubernetes at a shared hostname supplied by deployment configuration. The initial preview is manually triggered and expires after six hours; it can be triggered again when needed. The infrastructure owner supplies the cluster configuration, and the application deployment integration remains to be agreed. Per-pull-request hosts are a possible later option with prorated cost. Services should default to development, with an explicit production selection; server and browser requests, caches and sessions must agree on that selection. The environment selector remains unimplemented.
 
 ## Consequences
 

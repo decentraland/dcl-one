@@ -3,6 +3,7 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -209,6 +210,134 @@ class WebPreviewTests(unittest.TestCase):
             with patch.object(preview, 'api', side_effect=[jobs, comments]) as api:
                 preview.report('example/one', 123, '', 'failure')
                 self.assertEqual(api.call_count, 2)
+
+    def test_dependabot_runs_cannot_publish(self):
+        run = {
+            'event': 'pull_request',
+            'status': 'completed',
+            'conclusion': 'success',
+            'path': preview.WORKFLOW,
+            'head_repository': {'full_name': 'example/one'},
+            'head_sha': 'a' * 40,
+        }
+        pr = {'state': 'open', 'head': {'sha': 'a' * 40, 'repo': {'full_name': 'example/one'}}}
+        for field in ('actor', 'triggering_actor'):
+            with self.subTest(field=field):
+                self.assertFalse(
+                    preview.publishable(
+                        {**run, field: {'login': 'dependabot[bot]'}}, pr, 'example/one'
+                    )
+                )
+
+    def test_cdn_accepts_bumped_package_versions(self):
+        self.assertTrue(
+            preview.cdn_url('0.1.1-123.commit-abcdef0').endswith('/0.1.1-123.commit-abcdef0')
+        )
+
+    def test_cdn_retries_transient_decode_and_transport_failures(self):
+        errors = [
+            json.JSONDecodeError('not JSON', '', 0),
+            ConnectionResetError(),
+            preview.http.client.IncompleteRead(b'partial'),
+            preview.http.client.RemoteDisconnected(),
+        ]
+        for error in errors:
+            with self.subTest(error=type(error).__name__):
+                identity = io.BytesIO(json.dumps({'revision': 'a' * 40, 'run': 123}).encode())
+                html = io.BytesIO(b'<html>reviewer</html>')
+                html.status = 200
+                html.headers = {'Content-Type': 'text/html'}
+                with (
+                    patch.object(preview, 'urlopen', side_effect=[error, identity, html]),
+                    patch.object(preview.time, 'sleep') as sleep,
+                ):
+                    self.assertTrue(
+                        preview.verify_cdn('0.1.0-123.commit-abcdef0', 'a' * 40, 123).endswith(
+                            'index.html'
+                        )
+                    )
+                    sleep.assert_called_once_with(5)
+
+    def test_resolve_uses_commit_fallback_and_skips_outdated_candidates(self):
+        run = {
+            'event': 'pull_request',
+            'status': 'completed',
+            'conclusion': 'success',
+            'path': preview.WORKFLOW,
+            'head_repository': {'full_name': 'example/one'},
+            'head_sha': 'a' * 40,
+            'pull_requests': [],
+        }
+        pr = {
+            'number': 2,
+            'state': 'open',
+            'head': {'sha': 'a' * 40, 'repo': {'full_name': 'example/one'}},
+        }
+        with patch.object(
+            preview,
+            'api',
+            side_effect=[run, [{'number': 1}, {'number': 2}], {**pr, 'state': 'closed'}, pr],
+        ) as api:
+            self.assertEqual(preview.resolve('example/one', 123), (run, pr))
+            self.assertTrue(api.call_args_list[1].kwargs['paginate'])
+
+    def test_resolve_rejects_cancelled_runs(self):
+        run = {
+            'event': 'pull_request',
+            'status': 'completed',
+            'conclusion': 'cancelled',
+            'path': preview.WORKFLOW,
+            'head_repository': {'full_name': 'example/one'},
+            'head_sha': 'a' * 40,
+            'pull_requests': [{'number': 1}],
+        }
+        pr = {'state': 'open', 'head': {'sha': 'a' * 40, 'repo': {'full_name': 'example/one'}}}
+        with patch.object(preview, 'api', side_effect=[run, pr]):
+            self.assertEqual(preview.resolve('example/one', 123), (run, None))
+
+    def test_report_posts_or_patches_current_comment(self):
+        run = {
+            'head_sha': 'a' * 40,
+            'run_attempt': 2,
+            'html_url': 'https://github.com/example/one/actions/runs/123',
+        }
+        pr = {'number': 9}
+        jobs = {'jobs': [{'name': 'UI reviewer', 'conclusion': 'success'}]}
+        for comments, method, path in [
+            ([], 'POST', 'repos/example/one/issues/9/comments'),
+            (
+                [
+                    {
+                        'id': 5,
+                        'user': {'login': 'github-actions[bot]'},
+                        'body': preview.MARKER + '\n<!-- source-run:123:1 -->',
+                    }
+                ],
+                'PATCH',
+                'repos/example/one/issues/comments/5',
+            ),
+        ]:
+            with (
+                self.subTest(method=method),
+                patch.object(preview, 'resolve', return_value=(run, pr)),
+                patch.object(preview, 'api', side_effect=[jobs, comments, {}]) as api,
+            ):
+                preview.report('example/one', 123, 'https://cdn.example/review', 'success')
+                self.assertEqual(api.call_args.args[0], path)
+                self.assertEqual(api.call_args.kwargs['method'], method)
+                self.assertIn(
+                    '[Preview](https://cdn.example/review)', api.call_args.kwargs['body']['body']
+                )
+
+    def test_api_prints_error_details_before_raising(self):
+        result = subprocess.CompletedProcess(['gh'], 1, '', 'permission denied')
+        with (
+            patch.object(preview.subprocess, 'run', return_value=result),
+            patch('sys.stderr', new_callable=io.StringIO) as stderr,
+        ):
+            with self.assertRaises(subprocess.CalledProcessError):
+                preview.api('repos/example/one')
+            self.assertIn('permission denied', stderr.getvalue())
 
 
 if __name__ == '__main__':
