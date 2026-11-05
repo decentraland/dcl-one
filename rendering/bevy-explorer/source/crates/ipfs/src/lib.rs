@@ -1256,21 +1256,16 @@ impl IpfsIo {
         let mut about;
         let mut final_url;
         loop {
-            let about_raw = self
-                .client
-                .get(format!("{new_realm}/about"))
-                .send()
-                .await
-                .map_err(|e| anyhow!(e))?;
+            let about_raw =
+                platform::TracedJsonResponse::send(self.client.get(format!("{new_realm}/about")))
+                    .await
+                    .map_err(|e| anyhow!(e))?;
             if about_raw.status() != StatusCode::OK {
-                return Err(anyhow!("status: {}", about_raw.status()));
+                return Err(anyhow!("status: {}", about_raw.discard()));
             }
             final_url = about_raw.url().to_string();
 
-            about = about_raw
-                .json::<ServerAbout>()
-                .await
-                .map_err(|e| anyhow!(e))?;
+            about = about_raw.json::<ServerAbout>().await?;
             if about.configurations.as_ref().is_some_and(|config| {
                 config
                     .scenes_urn
@@ -1452,8 +1447,7 @@ impl IpfsIo {
                         client
                             .post(active_url)
                             .header("content-type", "application/json")
-                            .body(body)
-                            .send(),
+                            .body(body),
                         Duration::from_secs(30),
                         Duration::from_secs(10),
                     )
@@ -1765,21 +1759,17 @@ impl IpfsIo {
         about: &mut ServerAbout,
         new_realm: &str,
     ) -> Result<(), anyhow::Error> {
-        let scenes_raw = self
-            .client
-            .get(format!("{new_realm}/scenes"))
-            .send()
-            .await
-            .map_err(|e| anyhow!(e))?;
+        let scenes_raw =
+            platform::TracedJsonResponse::send(self.client.get(format!("{new_realm}/scenes")))
+                .await
+                .map_err(|e| anyhow!(e))?;
         if scenes_raw.status() == StatusCode::NOT_FOUND {
+            scenes_raw.discard();
             return Ok(());
         } else if scenes_raw.status() != StatusCode::OK {
-            return Err(anyhow!("status: {}", scenes_raw.status()));
+            return Err(anyhow!("status: {}", scenes_raw.discard()));
         }
-        let scenes = scenes_raw
-            .json::<ServerScenes>()
-            .await
-            .map_err(|e| anyhow!(e))?;
+        let scenes = scenes_raw.json::<ServerScenes>().await?;
 
         if scenes.total > 0 {
             if let Some(scenes_urn) = about.configurations.as_mut().and_then(|config| {

@@ -27,12 +27,12 @@ pub async fn signed_login(
         request = request.header(key, value)
     }
 
-    let res = request.send().await?;
+    let res = platform::TracedJsonResponse::send(request).await?;
 
     if res.status() != StatusCode::OK {
-        warn!("signed fetch failed: {res:#?}");
-        return Err(anyhow::anyhow!("status: {}", res.status()));
+        warn!("signed fetch failed: {}", res.status());
+        return Err(anyhow::anyhow!("status: {}", res.discard()));
     }
 
-    res.json().await.map_err(|e| anyhow::anyhow!(e))
+    res.json().await
 }

@@ -60,6 +60,14 @@ describe('readTarget', () => {
     assert.throws(() => accountKey(readTarget({})), /set DCL_E2E_ACCOUNT_KEYS/)
   })
 
+  test('passes the native Network inspector flag to the standalone', () => {
+    const target = readTarget({
+      DCL_E2E_TRANSPORT: 'native',
+      DCL_E2E_NATIVE_ARGS: '--network-devtools 9223'
+    })
+    assert.deepEqual(target.native.args, ['--network-devtools', '9223'])
+  })
+
   test('describeTarget never contains a key', () => {
     const text = describeTarget(readTarget({ DCL_E2E_ACCOUNT_KEYS: KEY_A }))
     assert.ok(!text.includes('aaaa'))

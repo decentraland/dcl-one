@@ -41,6 +41,41 @@ The workflow also stages the CEF helper, runtime libraries, assets and sidecar. 
 platform packaging steps, then launch the packaged executable with `--realm <about-url>
 --position x,y`. A Cargo build alone does not bundle the HUD or package those runtime files.
 
+### Native Network inspector
+
+Explorer engineers and deployment integrators can inspect selected native Rust HTTP
+transfers in Chrome DevTools. These requests run outside the embedded browser and do not
+appear in its Network panel. Start the desktop client with
+`just native-debug --network-devtools 9223`, open `http://127.0.0.1:9223/json/list`, and open
+its `devtoolsFrontendUrl` in Chrome. Attach before reproducing a transfer: the target retains
+no history for future subscribers. The headless executable does not start this target.
+
+The target reports methods, request paths, final response status, elapsed transfer time
+and consumed body bytes. Full normalized paths retain content hashes and identifiers;
+URLs are capped at 4,096 characters. Userinfo, query strings, fragments, headers and bodies
+are excluded. Any values embedded in the path remain visible. The target is read-only,
+binds only to loopback and accepts Chrome DevTools origins or local clients without an Origin
+header. It supports at most eight concurrent clients and disconnects a slow subscriber
+instead of delaying requests.
+
+Observed transports are content-budget downloads (including asset and catalog blobs),
+active-entity POSTs, font metadata, realm `/about` and `/scenes`, registry profiles,
+signed comms login and gatekeeper adapters. Each admitted retry has its own trace; the
+existing scheduler permit remains held through the response body. A status-only response
+reports zero consumed body bytes. Redirects show the initial request and final response,
+without intermediate hops.
+
+Coverage is limited to these transports. Direct reqwest callers such as wallet sign-in,
+world access and profile uploads do not appear. Native scene and HUD Fetch run in a separate
+process and need IPC event forwarding to join this target. Cache hits, admission wait time,
+deduplicated readers, initiators and DNS/TLS timing are also outside the transfer traces.
+The web client continues to use the browser's Network panel.
+
+Run `cargo test --locked -p platform -p ipfs --lib -- --test-threads=1` for the protocol
+fixture, URL display rules and scheduler lifetime tests. From repository-root
+`apps/bevy-explorer/e2e`, run `npm test` and `npm run typecheck` for native launch argument
+forwarding. A packaged desktop run with Chrome is needed to verify the actual frontend.
+
 ## Web
 
 `just wasm` builds the wasm package and the sandbox worker bundle, then starts the page dev
