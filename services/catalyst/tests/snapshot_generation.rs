@@ -551,6 +551,86 @@ fn content_router(state: Arc<ContentState>) -> Router {
     catalyst::content::build_router(state)
 }
 
+const STEP_0026: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/migrations/0026_content_snapshots_outdated.sql"
+));
+
+/// A window's `outdated` mark and whether its generation time is the epoch.
+async fn mark_of(pool: &PgPool, hash: &str) -> (bool, bool) {
+    sqlx::query_as(
+        "SELECT outdated, generation_time = 'epoch'::timestamp FROM content.snapshots WHERE hash = $1",
+    )
+    .bind(hash)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Step 0026 carries a window an older binary marked by stamping the epoch
+/// over its generation time into `outdated`, and leaves the others alone;
+/// run twice it changes nothing more.
+#[tokio::test]
+async fn step_0026_carries_an_epoch_mark_into_outdated() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    sqlx::raw_sql(SEED).execute(&db.pool).await.unwrap();
+    let root = temp_dir("step-0026");
+    let state = content_state(&db.pool, &root).await;
+    let generator = SnapshotGenerator::new(state, false, settings(1000));
+    let (end, _) = golden_pass(0);
+    let (rows, _) = generator.generate(end).await.unwrap();
+    let (marked, kept) = (&rows[2].hash, &rows[1].hash);
+    sqlx::query(
+        "UPDATE content.snapshots SET generation_time = 'epoch'::timestamp, outdated = false WHERE hash = $1",
+    )
+    .bind(marked)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        sqlx::raw_sql(STEP_0026).execute(&db.pool).await.unwrap();
+        assert_eq!(mark_of(&db.pool, marked).await, (true, true));
+        assert_eq!(mark_of(&db.pool, kept).await, (false, false));
+    }
+    db.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A window an older binary marked with the epoch, which the new binary
+/// reads without the step having flagged it, regenerates at the next pass
+/// and comes back with a real generation time and no mark; the others are
+/// reused.
+#[tokio::test]
+async fn an_epoch_mark_from_an_older_binary_regenerates_its_window() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    sqlx::raw_sql(SEED).execute(&db.pool).await.unwrap();
+    let root = temp_dir("epoch-mark");
+    let state = content_state(&db.pool, &root).await;
+    let generator = SnapshotGenerator::new(state, false, settings(1000));
+    let (end, _) = golden_pass(0);
+    let (first, _) = generator.generate(end).await.unwrap();
+    sqlx::query(
+        "UPDATE content.snapshots SET generation_time = 'epoch'::timestamp, outdated = false WHERE hash = $1",
+    )
+    .bind(&first[2].hash)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (rows, summary) = generator.generate(end).await.unwrap();
+    assert_eq!((summary.generated, summary.reused), (1, 3), "{summary:?}");
+    assert!(rows[2].generation_timestamp > 0);
+    assert_eq!(mark_of(&db.pool, &rows[2].hash).await, (false, false));
+    for i in [0, 1, 3] {
+        assert_eq!(rows[i], first[i]);
+    }
+    db.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
 async fn get_json(app: &Router, uri: &str) -> Value {
     use tower::ServiceExt;
     let resp = app

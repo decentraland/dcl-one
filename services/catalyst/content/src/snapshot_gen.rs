@@ -785,40 +785,10 @@ async fn saved_rows(pool: &PgPool) -> Result<Vec<SavedRow>, GenerationError> {
         .collect())
 }
 
-/// hash, init_timestamp, end_timestamp, replaced_hashes, number_of_entities, generation_time.
-type SnapshotRow = (
-    Option<String>,
-    NaiveDateTime,
-    NaiveDateTime,
-    Vec<String>,
-    i32,
-    NaiveDateTime,
-);
-
-/// Every row, oldest window first, in the wire shape `/snapshots` serves.
+/// Every stored snapshot, oldest window first, as `/snapshots` serves them
+/// ([`crate::queries::all_snapshots`]: a row without a hash is left out).
 pub async fn all_snapshots(pool: &PgPool) -> Result<Vec<SnapshotMetadata>, GenerationError> {
-    let rows: Vec<SnapshotRow> = sqlx::query_as(
-        "SELECT hash, init_timestamp, end_timestamp, replaced_hashes, number_of_entities, generation_time
-         FROM content.snapshots
-         ORDER BY init_timestamp, end_timestamp",
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(
-            |(hash, init, end, replaced, entities, generated)| SnapshotMetadata {
-                hash: hash.unwrap_or_default(),
-                time_range: TimeRange {
-                    init_timestamp: init.and_utc().timestamp_millis(),
-                    end_timestamp: end.and_utc().timestamp_millis(),
-                },
-                number_of_entities: entities.max(0) as u64,
-                replaced_snapshot_hashes: Some(replaced),
-                generation_timestamp: generated.and_utc().timestamp_millis(),
-            },
-        )
-        .collect())
+    Ok(crate::queries::all_snapshots(pool).await?)
 }
 
 /// Pinned to the old hash as well as the window, so two repairs racing for

@@ -99,13 +99,23 @@ struct Mount {
 }
 
 impl Mount {
+    /// The root answers `file-type`'s binary signatures only, as upstream's
+    /// catalyst; the worlds mount also answers JSON as `application/json`,
+    /// as worlds-content-server does (services/catalyst/docs/worlds-compatibility.md).
     fn sniff(self, head: &[u8]) -> &'static str {
-        // WCS serves its GIF thumbnails as image/gif.
-        if self.always_sniff && (head.starts_with(b"GIF87a") || head.starts_with(b"GIF89a")) {
-            return "image/gif";
+        match detect_content_type(head) {
+            "application/octet-stream" if self.always_sniff && looks_like_json(head) => {
+                "application/json"
+            }
+            detected => detected,
         }
-        detect_content_type(head)
     }
+}
+
+/// A head that opens a JSON object or array, after an optional UTF-8 BOM.
+fn looks_like_json(head: &[u8]) -> bool {
+    let head = head.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(head);
+    matches!(head.first(), Some(b'{' | b'['))
 }
 
 const ROOT: Mount = Mount {
@@ -641,6 +651,28 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
         assert_eq!(header(&resp, "content-type").unwrap(), "image/png");
         assert_eq!(body_of(resp).await, png.slice(8..11));
+
+        // Worlds JSON keeps WCS's application/json; the root, as upstream's
+        // `file-type`, has no text detector.
+        let json = Bytes::from_static(b"\xEF\xBB\xBF{\"version\":\"v3\"}");
+        let json_cid = crate::auth::hash_bytes_v1(&json);
+        node.store(&json_cid, json.clone()).await;
+        for method in [Method::GET, Method::HEAD] {
+            let resp = world_get(&node, &json_cid, method.clone(), None)
+                .await
+                .unwrap();
+            assert_eq!(
+                header(&resp, "content-type").unwrap(),
+                "application/json",
+                "{method}"
+            );
+        }
+        assert_eq!(
+            Mount::sniff(ROOT, &json),
+            "application/octet-stream",
+            "the root with includeMimeType"
+        );
+        assert_eq!(Mount::sniff(ROOT, b"GIF87a\x01\x00"), "image/gif");
 
         let resp = get(&node, Method::GET, None, None).await.unwrap();
         assert_eq!(
