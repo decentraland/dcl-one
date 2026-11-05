@@ -93,7 +93,9 @@ before delivery. A temporary loss of approval or RSVPs removes the unsent intent
 it can be captured again if eligibility returns before the occurrence starts.
 Successfully delivered keys remain retained to prevent another summary.
 HTTP delivery is at least once. Unfinished work is a dead letter when retries
-are exhausted or the occurrence has started, including after downtime:
+are exhausted or the occurrence has started, including after downtime. This
+operational predicate also includes rows that became ineligible while retry
+backoff extended past their start time; it does not prove delivery failure:
 
 ```sql
 SELECT event_id, occurrence_start, attempts

@@ -739,16 +739,21 @@ mod tests {
                     .unwrap(),
                 0
             );
-            at = sqlx::query_scalar(
-                "SELECT next_attempt_at FROM explore.event_upcoming_hooks WHERE event_id=$1",
+            let next_attempt_at: Option<NaiveDateTime> = sqlx::query_scalar(
+                "SELECT max(next_attempt_at) FROM explore.event_upcoming_hooks \
+                 WHERE event_id=ANY($1) AND completed_at IS NULL AND attempts<6",
             )
-            .bind(&failed)
+            .bind(vec![&failed, &expired])
             .fetch_one(&pool)
             .await
             .unwrap();
-            // Each item settles against its own advancing clock. Move beyond
-            // the tick's small per-item offset so both failures are due.
-            at += chrono::Duration::seconds(1);
+            // Each item settles against its own advancing clock. Wait until
+            // both retries are due, including the row whose occurrence expires
+            // during backoff: the claim predicate must exclude that row.
+            let Some(next_attempt_at) = next_attempt_at else {
+                break;
+            };
+            at = next_attempt_at;
         }
         assert_eq!(
             calls.load(Ordering::SeqCst),
