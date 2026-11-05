@@ -86,8 +86,10 @@ describe("the search box", () => {
     expect(texts.some((t) => t.includes("Nacho Hat"))).toBe(true);
     expect(texts.some((t) => t.includes("Nacho Collection"))).toBe(true);
     expect(texts.at(-1)).toBe("See all 1 results");
-    // One suggest request answers the three sections; the collection row's mosaic then reads its own items.
-    expect(client.calls.map((c) => new URL(c.url).pathname)).toContain("/shop-api/v3/catalog/suggest");
+    // One suggest request answers the three sections (the collection row's mosaic then reads its own items).
+    const suggests = client.calls.map((c) => new URL(c.url)).filter((u) => u.pathname === "/shop-api/v3/catalog/suggest");
+    expect(suggests).toHaveLength(1);
+    expect(suggests[0]!.searchParams.get("search")).toBe("hat");
   });
 
   it("arrows move through one flat list and Enter activates the active row", async () => {

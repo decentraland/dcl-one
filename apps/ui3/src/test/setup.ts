@@ -21,11 +21,4 @@ afterEach(() => {
 beforeEach(() => primeRemoteFlags({}));
 
 // Profiles resolved by one test are kept by the browser profile cache; every test starts with none known.
-beforeEach(() => {
-  try {
-    localStorage.removeItem("dcl:shop:profiles:v1");
-  } catch {
-    // No storage in this environment: nothing to clear.
-  }
-  resetProfileCache();
-});
+beforeEach(() => resetProfileCache());

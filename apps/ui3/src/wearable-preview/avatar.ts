@@ -660,7 +660,8 @@ export function createAvatarScene(
     const bs = bodyShape.toLowerCase();
     const rep = reps.find((r) => (r.bodyShapes || []).some((b) => String(b).toLowerCase() === bs)) || reps[0];
     if (!entity || !rep?.mainFile) return null;
-    const hash = fileMapFor(entity).get(rep.mainFile.toLowerCase()) ?? fileMapFor(entity).get((rep.mainFile.split("/").pop() ?? "").toLowerCase());
+    // fileMapFor indexes every file by its full path and by its basename.
+    const hash = fileMapFor(entity).get(rep.mainFile.toLowerCase());
     return hash ? `${base}/content/contents/${hash}` : null;
   }
 
@@ -677,10 +678,24 @@ export function createAvatarScene(
   }
 
   async function setEmote(input: string | null | undefined): Promise<void> {
-    const url = input?.startsWith("urn:") ? await emoteItemUrl(input, currentBodyShape) : emoteUrlFor(input);
-    if (!url || disposed || !mounted.size) return;
-    cycleGen++;
+    // Claimed before the item's fetch, so a later call wins even when this one's lookup is still in flight.
+    const gen = ++cycleGen;
+    const url = input?.startsWith("urn:") ? await emoteItemUrl(input, currentBodyShape).catch(() => null) : emoteUrlFor(input);
+    if (!url || disposed || !mounted.size || gen !== cycleGen) return;
     await playEmote(url);
+  }
+
+  // The emote item of the outfit now playing (its file's URL), so an outfit swap that adds, drops or changes one,
+  // or changes the body it is drawn for, replays the right motion and props.
+  let outfitEmote: string | null = null;
+
+  async function followOutfitEmote(bodyShape: string, gen: number): Promise<void> {
+    const item = await outfitEmoteUrl(bodyShape).catch(() => null);
+    if (disposed || stale(gen) || item === outfitEmote) return;
+    outfitEmote = item;
+    const claimed = ++cycleGen;
+    const url = item ?? emoteUrlFor(opts.emotes?.length ? opts.emotes[0] : opts.emote) ?? (EMOTES.idle as string);
+    if (claimed === cycleGen) await playEmote(url);
   }
 
   const EMOTE_REST_MS = 1500;
@@ -710,7 +725,9 @@ export function createAvatarScene(
 
   async function bindInitialEmote(bodyShape: string): Promise<void> {
     const wanted = opts.emotes?.length ? opts.emotes[0] : opts.emote;
-    const item = (await outfitEmoteUrl(bodyShape).catch(() => null)) ?? (wanted?.startsWith("urn:") ? await emoteItemUrl(wanted, bodyShape).catch(() => null) : null);
+    const listed = await outfitEmoteUrl(bodyShape).catch(() => null);
+    outfitEmote = listed;
+    const item = listed ?? (wanted?.startsWith("urn:") ? await emoteItemUrl(wanted, bodyShape).catch(() => null) : null);
     if (disposed) return;
     await playEmote(item ?? emoteUrlFor(wanted) ?? (EMOTES.idle as string));
     if (disposed) return;
@@ -815,6 +832,9 @@ export function createAvatarScene(
       currentBodyShape = target.bodyShape;
       if (initial) {
         await bindInitialEmote(target.bodyShape);
+        if (stale(gen)) return;
+      } else {
+        await followOutfitEmote(target.bodyShape, gen);
         if (stale(gen)) return;
       }
       scene.visible = true;

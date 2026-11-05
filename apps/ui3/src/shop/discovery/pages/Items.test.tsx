@@ -3,8 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ShopClient } from "../../api/shop";
-import { createShopClient } from "../../api/shop";
+import { createShopClient, type ShopClient } from "../../api/shop";
 import { catalogClient, catalogTransport, COLLECTION, CREATOR, ShopHarness, type CatalogScenario, type SessionKind } from "../fixtures";
 import { invalidateShopQueries } from "../query";
 import Items from "./Items";

@@ -429,3 +429,32 @@ test("without an emote item, the named emote plays and no props are added", asyn
   expect(renderer.lastScene?.getObjectByName("Prop_Mic")).toBeFalsy();
   scene.dispose();
 });
+
+test("an outfit swap that adds, then drops, an emote item replays the motion and its props", async () => {
+  const { scene, onStatus, renderer } = mount([HAT1], "fashion");
+  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"), { timeout: 10_000 });
+  const prop = () => {
+    renderer.loop!();
+    return renderer.lastScene?.getObjectByName("Prop_Mic") ?? null;
+  };
+  expect(prop()).toBeNull();
+  await scene.setOutfit({ urns: [HAT1, EMOTE] });
+  await vi.waitFor(() => expect(prop()).toBeTruthy(), { timeout: 10_000 });
+  await scene.setOutfit({ urns: [HAT1] });
+  await vi.waitFor(() => expect(prop()).toBeNull(), { timeout: 10_000 });
+  scene.dispose();
+});
+
+test("a later named emote wins over an emote item still being looked up", async () => {
+  const { scene, onStatus } = mount([HAT1], "idle");
+  await vi.waitFor(() => expect(onStatus).toHaveBeenLastCalledWith("ready"), { timeout: 10_000 });
+  autoResolve = false;
+  const slow = scene.setEmote(EMOTE);
+  const quick = scene.setEmote("wave");
+  autoResolve = true;
+  for (const url of [...deferred.keys()]) resolveLoad(url);
+  await Promise.all([slow, quick]);
+  // The item's file was never played: the call that came later claimed the motion first.
+  expect(loads.filter((url) => url === contentUrl(EMOTE))).toHaveLength(0);
+  scene.dispose();
+});

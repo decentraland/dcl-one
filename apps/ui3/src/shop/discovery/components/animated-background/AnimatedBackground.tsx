@@ -1,5 +1,6 @@
 // from: shop@3a322cf9:app/src/components/AnimatedBackground/AnimatedBackground.tsx (+ .styles.ts), kept as upstream
-//       writes it (quotes, no semicolons) so it diffs line for line against the original.
+//       writes it (quotes, no semicolons) so it diffs line for line against the original; here it also gives its
+//       context back on unmount and on a failed setup, and sizes the buffer in whole pixels.
 
 import { useEffect, useRef } from 'react'
 import fallbackBackgroundUrl from './custom-welcome-background.webp'
@@ -28,11 +29,18 @@ export default function AnimatedBackground({ patternTiling = 1.66 }: { patternTi
     const gl = canvas.getContext('webgl', { alpha: false, antialias: false })
     if (!gl) return // fallback image stays visible
 
+    // An opaque context that never draws would cover the still image: hide the canvas and give the context back.
+    const giveUp = () => {
+      canvas.style.opacity = '0'
+      gl.getExtension('WEBGL_lose_context')?.loseContext()
+    }
+
     const vs = createShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER)
     const fs = createShader(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER)
     if (!vs || !fs) {
       if (vs) gl.deleteShader(vs)
       if (fs) gl.deleteShader(fs)
+      giveUp()
       return
     }
 
@@ -40,6 +48,7 @@ export default function AnimatedBackground({ patternTiling = 1.66 }: { patternTi
     if (!program) {
       gl.deleteShader(vs)
       gl.deleteShader(fs)
+      giveUp()
       return
     }
 
@@ -59,8 +68,10 @@ export default function AnimatedBackground({ patternTiling = 1.66 }: { patternTi
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1
-      const w = canvas.clientWidth * dpr
-      const h = canvas.clientHeight * dpr
+      // Whole pixels: the canvas stores integers, so a fractional size (DPR 1.25, 1.5, …) would never compare equal
+      // and the drawing buffer would be reallocated every frame.
+      const w = Math.round(canvas.clientWidth * dpr)
+      const h = Math.round(canvas.clientHeight * dpr)
       if (canvas.width !== w || canvas.height !== h) {
         canvas.width = w
         canvas.height = h
@@ -111,6 +122,9 @@ export default function AnimatedBackground({ patternTiling = 1.66 }: { patternTi
       gl.deleteShader(fs)
       gl.deleteBuffer(buffer)
       gl.deleteTexture(overlayTexture)
+      // Release the context itself, not only its objects: a tile that scrolls in and out mounts a fresh canvas each
+      // time, and browsers drop their OLDEST live context (here the avatar preview's) past about 16 of them.
+      gl.getExtension('WEBGL_lose_context')?.loseContext()
     }
   }, [])
 

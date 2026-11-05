@@ -1,20 +1,19 @@
 /* from: shop@3a322cf9:app/src/components/SkeletonCards/SkeletonCards.styles.ts (SkeletonCard, SkeletonThumb,
    SkeletonInfo, SkeletonBar). Sized to the real AssetCard (300px, 250px below sm) so a loading grid or rail holds
-   its eventual height. Tokens: overlay rgba(0,0,0,.4), radius.tile 16px, radius.pill 50px, loadingWash
-   rgba(143,66,219,.8) fading to loadingWashFaint .3. */
+   its eventual height. Colours and radii are the shop tokens (frames/shoptheme.css) mirroring theme.ts. */
 .shop-skel-card {
   display: flex;
   flex-direction: column;
   min-height: 300px;
-  border-radius: 16px;
-  background: rgba(0, 0, 0, 0.4);
+  border-radius: var(--shop-radius-tile);
+  background: var(--shop-overlay);
   animation: shop-skel-pulse 1.4s ease-in-out infinite;
 }
 .shop-skel-card__thumb {
   flex: 1;
   min-height: 0;
-  border-radius: 16px;
-  background: linear-gradient(to left, rgba(143, 66, 219, 0.3), rgba(143, 66, 219, 0.8));
+  border-radius: var(--shop-radius-tile);
+  background: linear-gradient(to left, var(--shop-loading-wash-faint), var(--shop-loading-wash));
 }
 .shop-skel-card__info {
   flex: 0 0 112px;
@@ -28,8 +27,8 @@
 .shop-skel-card__bar {
   width: 100%;
   height: 20px;
-  border-radius: 50px;
-  background: linear-gradient(to left, rgba(143, 66, 219, 0.3), rgba(143, 66, 219, 0.8));
+  border-radius: var(--shop-radius-pill);
+  background: linear-gradient(to left, var(--shop-loading-wash-faint), var(--shop-loading-wash));
 }
 .shop-skel-card__bar[data-short] {
   width: 140px;
