@@ -36,7 +36,7 @@ it in place from now on. This repository is the source of truth; the fork branch
   vendored root `Cargo.toml` allows `dead_code` (code our feature set leaves unused) and
   `mismatched_lifetime_syntaxes` (a lint newer than Bevy 0.16), with a comment saying why. They
   made up 810 of the 835 warnings Bevy's 47 crates printed in a native workspace check; the
-  complete check afterwards prints 30, from 12 other lints. This is the only change to the fork's
+  complete check afterwards prints 30, from six other lints. This is the only change to the fork's
   files.
 - **Tooling:** the paths that keyed on `source/` also cover the tree: `.gitattributes`,
   `tooling/bevy-ci.py` (a Bevy change selects every lane, the Windows and macOS matrix included),

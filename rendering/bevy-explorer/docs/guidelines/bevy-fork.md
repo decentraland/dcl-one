@@ -162,8 +162,8 @@ across workers:
 - The import left out `assets/` (example assets), the symlink `examples/wasm/assets` into it, and
   the fork's `.gitattributes`. The root `.gitattributes` sets `-text` for the tree, so its bytes
   stay exact on every platform.
-- `source/Cargo.toml` points both patch tables at the tree. `[patch.crates-io]` lists every bevy
-  subcrate because ecosystem crates name them by crates.io version;
+- `source/Cargo.toml` points both patch tables at the tree. `[patch.crates-io]` lists each bevy
+  subcrate an ecosystem crate names by crates.io version (18 today);
   `[patch."https://github.com/robtfm/bevy"]` catches `bevy_dui`, `bevy_ecss` and `boimp`, which
   name the former fork by git. With `Cargo.lock` nothing fetches the fork. A resolve without it
   reads the branch once, so the branch has to stay fetchable while those crates name it.
