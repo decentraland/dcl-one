@@ -1,0 +1,111 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://subgraph.decentraland.org/marketplace",
+  "request": {
+    "method": "POST",
+    "path": "/",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "query": "{ nfts(first: 100, where: { owner_: { address: \"0x0000000000000000000000000000000000000027\" }, category: ens }, orderBy: id, orderDirection: asc) { id name tokenId } }"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*",
+      "vary": "Accept-Encoding, Origin",
+      "access-control-allow-headers": "Content-Type, User-Agent",
+      "access-control-allow-methods": "GET, OPTIONS, POST"
+    },
+    "body": {
+      "data": {
+        "nfts": [
+          {
+            "id": "ens-0x0000000000000000000000000000000000000026-1001",
+            "name": "name-03",
+            "tokenId": "1001"
+          },
+          {
+            "id": "ens-0x0000000000000000000000000000000000000026-1002",
+            "name": "name-12",
+            "tokenId": "1002"
+          },
+          {
+            "id": "ens-0x0000000000000000000000000000000000000026-1003",
+            "name": "name-09",
+            "tokenId": "1003"
+          },
+          {
+            "id": "ens-0x0000000000000000000000000000000000000026-1004",
+            "name": "name-11",
+            "tokenId": "1004"
+          },
+          {
+            "id": "ens-0x0000000000000000000000000000000000000026-1005",
+            "name": "name-13",
+            "tokenId": "1005"
+          },
+          {
+            "id": "ens-0x0000000000000000000000000000000000000026-1006",
+            "name": "name-07",
+            "tokenId": "1006"
+          },
+          {
+            "id": "ens-0x0000000000000000000000000000000000000026-1007",
+            "name": "name-04",
+            "tokenId": "1007"
+          },
+          {
+            "id": "ens-0x0000000000000000000000000000000000000026-1008",
+            "name": "name-14",
+            "tokenId": "1008"
+          },
+          {
+            "id": "ens-0x0000000000000000000000000000000000000026-1009",
+            "name": "name-08",
+            "tokenId": "1009"
+          },
+          {
+            "id": "ens-0x0000000000000000000000000000000000000026-1010",
+            "name": "name-02",
+            "tokenId": "1010"
+          },
+          {
+            "id": "ens-0x0000000000000000000000000000000000000026-1011",
+            "name": "name-16",
+            "tokenId": "1011"
+          },
+          {
+            "id": "ens-0x0000000000000000000000000000000000000026-1012",
+            "name": "name-06",
+            "tokenId": "1012"
+          },
+          {
+            "id": "ens-0x0000000000000000000000000000000000000026-1013",
+            "name": "name-10",
+            "tokenId": "1013"
+          },
+          {
+            "id": "ens-0x0000000000000000000000000000000000000026-1014",
+            "name": "name-01",
+            "tokenId": "1014"
+          },
+          {
+            "id": "ens-0x0000000000000000000000000000000000000026-1015",
+            "name": "name-15",
+            "tokenId": "1015"
+          },
+          {
+            "id": "ens-0x0000000000000000000000000000000000000026-1016",
+            "name": "name-05",
+            "tokenId": "1016"
+          }
+        ]
+      }
+    }
+  },
+  "note": "Same placeholders as LL-7-marketplace-api-names.json."
+}

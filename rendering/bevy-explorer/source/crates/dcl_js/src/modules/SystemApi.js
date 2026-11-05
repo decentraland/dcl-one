@@ -252,6 +252,12 @@ module.exports.setHomeScene = async function(args) {
     await Deno.core.ops.op_set_home_scene(args.realm, args.parcel)
 }
 
+// { [service web param]: base url } for every service the web build can redirect, resolved by
+// the engine: the service's override, else its composition from the base domain
+module.exports.getServiceUrls = async function() {
+    return Object.fromEntries(await Deno.core.ops.op_get_service_urls())
+}
+
 // {
 //   terms: boolean, // the terms aren't accepted on this install; the world is held until they are
 //   newProfile: boolean, // the account has no profile; its new one deploys with the next setAvatar

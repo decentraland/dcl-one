@@ -4,7 +4,7 @@
 - Upstream lambdas: `decentraland/lamb2` @ `02a37f5d88fb895339c20e84c2470be68cdf3f57` (2026-10-21), served at `/lambdas/*` in production.
 - Upstream content server (it backs `content.fetchEntitiesByPointers`): `decentraland/catalyst` @ `a416565db1e705cff9523540a2578af642598a29` (2026-10-21).
 - dcl-one: `dcl-one-conformance` @ `37e91aed` (origin/main, 2026-11-04), workspace `services/catalyst`.
-- Method: static reading only. Nothing in this file was run. "read" means the source was read; "not vendored" means the behaviour lives in an npm package missing from the upstream clone (`@dcl/crypto`, `@dcl/schemas`, `@dcl/catalyst-contracts`, `@dcl/schema-validator-component`, `@well-known-components/http-server`). Those rows need a live capture before anyone acts on them.
+- Method: static reading only, except where a row cites a capture under [`captures/lambdas-profiles/`](captures/lambdas-profiles/): those state what the production peer answered on 2026-11-04 ([`captures/README.md`](captures/README.md)). Nothing in this file was run. "read" means the source was read; "not vendored" means the behaviour lives in an npm package missing from the upstream clone (`@dcl/crypto`, `@dcl/schemas`, `@dcl/catalyst-contracts`, `@dcl/schema-validator-component`, `@well-known-components/http-server`). Those rows need a live capture before anyone acts on them.
 
 Files read (upstream lamb2): `src/controllers/routes.ts`, `src/controllers/handlers/{profiles-handler,errorHandler,status-handler,about-handler,outfits-handler,catalyst-servers-handler,get-pois-handler,get-name-denylist-handler,validate-signature-handler}.ts`, `src/adapters/{profiles,elements-fetcher,status,resource-status,catalysts-fetcher,pois-fetcher,name-denylist-fetcher,marketplace-api-fetcher}.ts`, `src/logic/{outfits,utils,api-with-fallback,pagination-constants}.ts`, `src/logic/fetch-elements/{fetch-elements,fetch-items,fetch-names}.ts`, `src/ports/ownership-checker/{tpw-ownership-checker,contract-helpers,third-party-item-checker}.ts`, `src/components.ts`, `src/service.ts`, `src/types.ts`, `test/unit/{profile-handlers,validate-signature-handler}.spec.ts`, `test/integration/profile-adapter.spec.ts`.
 Upstream catalyst: `src/controllers/handlers/active-entities-handler.ts`, `src/logic/active-entities/component.ts`, `test/integration/controller/active-entities.spec.ts`.
@@ -39,11 +39,11 @@ Upstream routes: `decentraland/lamb2:src/controllers/routes.ts:41-73`.
 | 503 body | `{"error":"Service overloaded, retry shortly","message":<msg>}` for `ServiceOverloadedError` (marketplace API bulkhead full, `decentraland/lamb2:src/adapters/marketplace-api-fetcher.ts:136-141`) `decentraland/lamb2:src/controllers/handlers/errorHandler.ts:17-25` | `{"error":"Service Unavailable","message":<msg>}` `services/catalyst/shared/src/http_util.rs:22-28` | DIVERGENT: `error` label |
 | 502 body | `{"error":"The requested items cannot be fetched right now","message":"Cannot fetch elements for <address>"}` (`FetcherError`) `decentraland/lamb2:src/controllers/handlers/errorHandler.ts:27-35`, `decentraland/lamb2:src/adapters/elements-fetcher.ts:265-274` | the same body, from `third_party::fetch_error` `services/catalyst/shop/src/market/third_party.rs:1645-1656`; produced only by outfits in this area | MATCH (body); the triggers differ per route (see outfits and the profiles failure rows) |
 | 500 body | `{"error":"Internal Server Error"}`, no `message` `decentraland/lamb2:src/controllers/handlers/errorHandler.ts:66-77` | `{"error":"Internal Server Error","message":"Internal Server Error"}` `services/catalyst/shared/src/http_util.rs:30-36` | DIVERGENT: extra `message` |
-| 405 | `router.allowedMethods()` `decentraland/lamb2:src/service.ts:15` (library not vendored) | axum method router 405 | not compared (needs capture) |
-| CORS | http-server `cors: { maxAge: 36000 }` `decentraland/lamb2:src/components.ts:62-69` (header set not vendored) | hand-rolled: reflects `Origin`, `Access-Control-Allow-Credentials: true`, `Access-Control-Max-Age: 86400`, `Access-Control-Expose-Headers: *`, `X-Content-Type-Options: nosniff` `services/catalyst/shared/src/cors.rs:15-86` | DIVERGENT: max-age 36000 vs 86400; other headers need capture |
+| 405 | `router.allowedMethods()` `decentraland/lamb2:src/service.ts:15`. Captured: `PUT` and `GET /lambdas/profiles` answer `405`, empty body, `Content-Length: 0`, `Allow: POST` (`captures/lambdas-profiles/LP-31-put-profiles.json`, `LP-31-get-profiles.json`) | axum method router: 405, empty body, `Allow` with the route's methods | MATCH for a single-method route (axum joins several methods with `,` and no space; upstream content writes `HEAD, GET`) |
+| CORS | http-server `cors: { maxAge: 36000 }` `decentraland/lamb2:src/components.ts:62-69`. Captured preflight (`OPTIONS /lambdas/profiles`): `204`, `access-control-allow-headers` reflected, `access-control-allow-origin: *`, `access-control-max-age: 36000`, `vary: Access-Control-Request-Headers`, no `Allow-Methods`, no `Expose-Headers`. A `GET` with `Origin` gets only `access-control-allow-origin: *` (`captures/lambdas-profiles/LP-31-preflight.json`, `LP-31-get-with-origin.json`) | hand-rolled: reflects `Origin`, `Access-Control-Allow-Credentials: true`, `Access-Control-Max-Age: 86400`, `Access-Control-Expose-Headers: *`, `X-Content-Type-Options: nosniff` `services/catalyst/shared/src/cors.rs:15-86` | DIVERGENT: origin echoed with credentials vs `*`; max-age 86400 vs 36000; extra `Allow-Methods` and `Expose-Headers` |
 | Rate limits | none in lamb2 for this area | none; body limit 256 KiB on the two POST routes (413 above it) `services/catalyst/shop/src/market/mod.rs:887,977` | DIVERGENT (413 only on huge bodies) |
 | Request timeout | none | `TimeoutLayer` → 408 when `request_timeout` is set `services/catalyst/shop/src/market/mod.rs:986-991` | DIVERGENT (config-dependent) |
-| Path case / trailing slash | `@well-known-components/http-server` router (not vendored) | axum: case-sensitive, no trailing-slash match; misses fall to the content 404 | not compared (needs capture) |
+| Path case / trailing slash | Captured on the production peer: an unknown path (`/lambdas/nope`), a different case (`/lambdas/Status`, `/lambdas/Profiles/0x…01`) and `/lambdas/status/` answer the gateway's nginx `404` HTML page (`text/html`), not lamb2; `POST /lambdas/profiles/` reaches lamb2 and answers as `/lambdas/profiles` (`captures/lambdas-profiles/LP-31-*.json`) | axum: case-sensitive; a trailing slash is trimmed for the whole app (`services/catalyst/src/serve.rs:1355`); misses fall to the content 404 (`text/plain` `Not found`) | DIVERGENT: 404 body and type; `/lambdas/status/` is 200 here and 404 on the peer |
 | Content-Type of JSON answers | `application/json` | `application/json` | MATCH |
 
 ---
@@ -244,6 +244,8 @@ Data dependency: none. The fixture's `captured_from` names `lambdas.rs::lambdas_
 
 dcl-one serves `/about` at the root only (`services/catalyst/content/src/lib.rs:693`). `/lambdas/about` is not routed: it falls through to the content 404. `/content/about` is not routed either.
 
+Captured on the production peer: `GET /about` answers lamb2's body below; `GET /lambdas/about` answers the gateway's nginx `404` HTML page, so the production gateway does not expose lamb2's `/about` under `/lambdas`; `GET /content/about` answers the content server's `404` `Not found` (`captures/lambdas-profiles/LP-14-about.json`, `LP-12-lambdas-about.json`, `LP-14-content-about.json`). The captured `/about` has no `comms` key, `content.publicUrl` and `lambdas.publicUrl` end with `/`, and `realmName` is set.
+
 **Upstream computation** (`decentraland/lamb2:src/controllers/handlers/about-handler.ts:27-151`): it fetches `<CONTENT_URL or INTERNAL_CONTENT_URL>/status` and `<LAMBDAS_URL or INTERNAL_LAMBDAS_URL>/status`, plus `<ARCHIPELAGO_URL or INTERNAL_ARCHIPELAGO_URL>/status` when `ARCHIPELAGO_URL` is set. Each answer is cached 60 s; a non-2xx answer or a network error counts as unhealthy `decentraland/lamb2:src/adapters/status.ts:21-51`.
 
 | field | upstream | dcl-one (`services/catalyst/content/src/about.rs:175-232`) | verdict |
@@ -265,7 +267,7 @@ dcl-one serves `/about` at the root only (`services/catalyst/content/src/lib.rs:
 | `configurations.map.minimapEnabled`, `sizes` | `true`; `[{-150,150,150,-150},{62,158,162,151},{151,150,163,59}]` | same `about.rs:125-146` | MATCH |
 | `configurations.map.satelliteView` | always `{version:"v1",baseUrl:"https://genesis.city/map/latest",suffixUrl:".jpg",topLeftOffset:{x:-2,y:-6}}` `:103-108` | present only with `MAP_SATELLITE_BASE_URL`, using that value `about.rs:159-167` | DIVERGENT |
 | `configurations.map.parcelView` | always `{version:"v1",imageUrl:"https://api.decentraland.org/v1/minimap.png"}` `:109-112` | this node's parcel view URL, absent when the node has none `about.rs:168-171` | DIVERGENT |
-| `comms` | present only with `ARCHIPELAGO_URL`: `{healthy, protocol:"v3", version, commitHash, usersCount, adapter:"archipelago:archipelago:wss://<host>/archipelago/ws"}`. `version`/`commitHash` come from archipelago `/status` `:77-93` | present only with `COMMS_FIXED_ADAPTER`: `{healthy, protocol (COMMS_PROTOCOL, default "v3"), version?, commitHash?, usersCount, adapter:"fixed-adapter:<x>", fixedAdapter:"<x>"}`. `"offline:offline"` when the SFU probe fails `services/catalyst/content/src/about_comms.rs:22-37,92-105,202-227` | DIVERGENT: adapter scheme and extra `fixedAdapter` key |
+| `comms` | present only with `ARCHIPELAGO_URL`: `{healthy, protocol:"v3", version, commitHash, usersCount, adapter:"archipelago:archipelago:wss://<host>/archipelago/ws"}`. `version`/`commitHash` come from archipelago `/status` `:77-93`. The production peer sends **no** `comms` key (`captures/lambdas-profiles/LP-14-about.json`) | present only with `COMMS_FIXED_ADAPTER`: `{healthy, protocol (COMMS_PROTOCOL, default "v3"), version?, commitHash?, usersCount, adapter:"fixed-adapter:<x>", fixedAdapter:"<x>"}`. `"offline:offline"` when the SFU probe fails `services/catalyst/content/src/about_comms.rs:22-37,92-105,202-227` | MATCH with production when `COMMS_FIXED_ADAPTER` is unset (no key); DIVERGENT when it is set: adapter scheme and extra `fixedAdapter` key |
 | `bff` | `{healthy:true,protocolVersion:"1.0_0",userCount:0,publicUrl:"/bff"}` | same `about.rs:213-218` | MATCH |
 
 Example (upstream, no archipelago):
@@ -292,7 +294,7 @@ Upstream: the L1 `Catalyst` contract via `@dcl/catalyst-contracts` `getCatalystS
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| success | 200 | `[{"baseUrl":"https://peer.example.org","owner":"0x0000000000000000000000000000000000000001","id":"0x00…01"}]` in contract index order | `catalysts-fetcher.ts:56-59` | `contracts.rs:245-272,354-375` | MATCH as far as read (`baseUrl` normalization needs a capture) |
+| success | 200 | `[{"baseUrl":"https://peer.example.org","owner":"0x0000000000000000000000000000000000000001","id":"0x00…01"}]` in contract index order | `catalysts-fetcher.ts:56-59` | `contracts.rs:236-240,245-272,354-375` | MATCH on values: the production list has only `https://` hosts without a trailing slash, checksummed owners and `0x` + 64-hex ids (`captures/lambdas-profiles/LP-26-contracts-servers.json`). Key order differs: upstream `baseUrl,owner,id`; dcl-one's `json!` sorts to `baseUrl,id,owner` |
 | RPC fails, nothing cached / TTL expired | 500 `{"error":"Internal Server Error"}` (the LRU `fetch` rejects) | | `catalysts-fetcher.ts:45-58` | stale value if any, else `200 []`; a failure is not retried for 60 s `contracts.rs:292-345,369-373` | DIVERGENT |
 | no RPC configured | n/a (the provider is hard-wired to `rpc.decentraland.org`, `decentraland/lamb2:src/components.ts:167`) | `200 []` when `ETH_RPC_URL` is unset `contracts.rs:355-358` | DIVERGENT (config) |
 
@@ -330,14 +332,15 @@ dcl-one (`services/catalyst/shop/src/market/lambdas_crypto.rs:20-83`): serde `{t
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
-| `Content-Type` not `application/json` | 400 | `{"ok":false,"message":"Content-Type must be application/json"}` (library, not vendored) | middleware | ignored; the body is parsed anyway | DIVERGENT (needs capture) |
-| body not JSON | 400 | `{"ok":false,"message":<parse error>}` (library) | middleware | 400 `{"error":"Bad request","message":"Invalid JSON body: <serde error>"}` `lambdas_crypto.rs:61-64` | DIVERGENT |
-| schema violation (missing `authChain`, unknown key, `timestamp` not a string, bad link `type`) | 400 | `{"ok":false,"message":"Invalid JSON body","data":[<ajv errors>]}` (shape confirmed for the same middleware by `decentraland/catalyst:test/integration/controller/active-entities.spec.ts:28-42`) | middleware | missing `authChain`: 400 `{"error":"Bad request","message":"Invalid request. Missing 'authChain'"}` `lambdas_crypto.rs:42`. Unknown keys: accepted. Wrong types / bad `type`: 400 `Invalid JSON body: <serde error>` | DIVERGENT |
-| `authChain` length 0 or > 10 | 400 | `{"error":"Bad request","message":"'authChain' length must be between 1 and 10"}` (an empty array may already fail `AuthChain.schema`; not vendored) | `validate-signature-handler.ts:51-53` | same message `lambdas_crypto.rs:43-47` | MATCH |
-| neither `signedMessage` nor `timestamp` (or the chosen one is `""`) | 400 | `{"error":"Bad request","message":"Expected 'signedMessage' property to be set"}` | `validate-signature-handler.ts:55-58` | same `lambdas_crypto.rs:48-51` | MATCH (`""` `signedMessage` with a `timestamp`: both reject) |
+| `Content-Type` not `application/json`, or absent | **415** | `{"ok":false,"message":"Content-Type must be application/json"}`; `application/json; charset=utf-8` is accepted (`captures/lambdas-profiles/LP-27-text-plain.json`, `LP-27-no-content-type.json`) | middleware | ignored; the body is parsed anyway | DIVERGENT |
+| body not JSON | 400 | `{"ok":false,"message":<V8 JSON.parse message>}`: `Unexpected end of JSON input` for an empty body, `Expected property name or '}' in JSON at position 1 (line 1 column 2)` for `{` (`captures/lambdas-profiles/LP-27-empty-body.json`, `LP-27-not-json.json`) | middleware | 400 `{"error":"Bad request","message":"Invalid JSON body: <serde error>"}` `lambdas_crypto.rs:61-64` | DIVERGENT |
+| schema violation (missing `authChain`, unknown key, `timestamp` not a string, bad link `type`) | 400 | `{"ok":false,"message":"Invalid JSON body","data":[<one ajv error>]}`. Captured `data`: missing `authChain` `[{"instancePath":"","schemaPath":"#/required","keyword":"required","params":{"missingProperty":"authChain"},"message":"must have required property 'authChain'"}]`; unknown key `#/additionalProperties`, `params.additionalProperty`; `timestamp: 1` `/timestamp`, `#/properties/timestamp/type`, `must be string`; bad link type `/authChain/0/type`, `#/properties/authChain/items/properties/type/enum`, `params.allowedValues` = the five link types (`captures/lambdas-profiles/LP-27-*.json`) | middleware | missing `authChain`: 400 `{"error":"Bad request","message":"Invalid request. Missing 'authChain'"}` `lambdas_crypto.rs:42`. Unknown keys: accepted. Wrong types / bad `type`: 400 `Invalid JSON body: <serde error>` | DIVERGENT |
+| `authChain` empty | 400 | the schema rejects it first: `data` `[{"instancePath":"/authChain","schemaPath":"#/properties/authChain/minItems","keyword":"minItems","params":{"limit":1},"message":"must NOT have fewer than 1 items"}]` (`captures/lambdas-profiles/LP-27-empty-chain.json`) | `AuthChain.schema` | `{"error":"Bad request","message":"'authChain' length must be between 1 and 10"}` `lambdas_crypto.rs:43-47` | DIVERGENT |
+| `authChain` length > 10 | 400 | `{"error":"Bad request","message":"'authChain' length must be between 1 and 10"}` (not captured) | `validate-signature-handler.ts:51-53` | same message `lambdas_crypto.rs:43-47` | MATCH as read |
+| neither `signedMessage` nor `timestamp` (or the chosen one is `""`) | 400 | `{"error":"Bad request","message":"Expected 'signedMessage' property to be set"}` (captured: `captures/lambdas-profiles/LP-27-no-signed-message.json`) | `validate-signature-handler.ts:55-58` | same `lambdas_crypto.rs:48-51` | MATCH (`""` `signedMessage` with a `timestamp`: both reject) |
 | valid chain | 200 | `{"valid":true,"ownerAddress":"0x0000000000000000000000000000000000000001"}` (`error` undefined, omitted) | `validate-signature-handler.ts:60-69` | `{"valid":true,"ownerAddress":<authChain[0].payload>}` `lambdas_crypto.rs:79` | MATCH |
-| invalid chain | 200 | `{"valid":false,"error":<@dcl/crypto message>}` | same | `{"valid":false,"error":<dcl-auth message>}` `lambdas_crypto.rs:80`, messages in `library/dcl-auth/src/error.rs` | DIVERGENT: message text (e.g. dcl-auth `Invalid final authority. Expected: X. Got: Y`) |
-| single SIGNER link whose payload equals `signedMessage` | 200 (per `@dcl/crypto` the final authority equals the signer; not vendored) | | | `valid:false`, `Malformed auth chain: auth chain has no signed link after the SIGNER` `library/dcl-auth/src/verify.rs:224-229` | DIVERGENT (edge, needs capture) |
+| invalid chain | 200 | `{"valid":false,"error":<@dcl/crypto message>}`. Captured: a single SIGNER with another `signedMessage` gives `ERROR: Invalid final authority. Expected: hello. Current 0x…01.`; a SIGNER, an `ECDSA_EPHEMERAL` with a bad signature and a signed entity give `ERROR. Link type: ECDSA_EPHEMERAL. Invalid ethereum signature.` (`captures/lambdas-profiles/LP-28-single-signer-other.json`, `LP-28-bad-signature.json`) | same | `{"valid":false,"error":<dcl-auth message>}` `lambdas_crypto.rs:80`, messages in `library/dcl-auth/src/error.rs` | DIVERGENT: message text (e.g. dcl-auth `Invalid final authority. Expected: X. Got: Y`) |
+| single SIGNER link whose payload equals `signedMessage` | 200 `{"valid":true,"ownerAddress":"0x…01"}` (captured: `captures/lambdas-profiles/LP-28-single-signer-match.json`) | | | `valid:false`, `Malformed auth chain: auth chain has no signed link after the SIGNER` `library/dcl-auth/src/verify.rs:224-229` | DIVERGENT (edge) |
 | EIP-1654 link | 200, validated over L1 RPC | | | without `ETH_RPC_URL`: `valid:false`, `EIP-1654 smart-contract wallet verification is not implemented (requires RPC)` | DIVERGENT (config) |
 | body > 256 KiB | n/a | | | 413 | DIVERGENT (edge) |
 
@@ -361,7 +364,7 @@ LP-02. **Outfits: failure codes after the ownership filter.**
 
 LP-03. **Profiles: ERC-721 token handling.**
 - Gap: the tokenId in a wearable/emote URN is ignored, and owned items are returned without a token suffix.
-- Expected: when a tokenId is given it must be among the owned tokens, else drop the item. Output `<ownedUrn>:<tokenId or first owned tokenId>` (`ENSURE_ERC_721` default true). Emotes are re-emitted as exactly `{urn, slot}`. `decentraland/lamb2:src/adapters/profiles.ts:141,212-229,239-253`.
+- Expected: when a tokenId is given it must be among the owned tokens, else drop the item. Output `<ownedUrn>:<tokenId or first owned tokenId>` (`ENSURE_ERC_721` default true). The first owned tokenId is `individualData[0]`; the marketplace API, lamb2's primary source, orders `individualData` by `transferredAt` descending, so it is the most recently received copy (`captures/lambdas-items/LI-18-marketplace-api-wearables-grouped.json`). Emotes are re-emitted as exactly `{urn, slot}`. `decentraland/lamb2:src/adapters/profiles.ts:141,212-229,239-253`.
 - Place: `services/catalyst/shop/src/market/profiles.rs:101-143`; switch from `graph::owned_urns` to owned copies with token ids.
 - Severity: P1.
 
@@ -416,6 +419,7 @@ LP-11. **GET /profiles/:id and /profile/:id: synthetic default profiles.**
 LP-12. **/lambdas/about not routed.**
 - Gap: only the root `/about` exists.
 - Expected: `GET /lambdas/about` with the same body as the root `/about`. `decentraland/lamb2:src/controllers/routes.ts:42`.
+- Capture: the production peer's gateway does not expose it: `GET /lambdas/about` answers the nginx `404` HTML page (`captures/lambdas-profiles/LP-12-lambdas-about.json`). A client of the public peer cannot depend on it.
 - Place: `services/catalyst/content/src/lib.rs:693` (add the route) or `services/catalyst/shop/src/market/mod.rs:979`.
 - Severity: P1.
 
@@ -428,7 +432,8 @@ LP-13. **/about: map views.**
 LP-14. **/about: comms block.**
 - Gap: `adapter` is `fixed-adapter:<x>` with an extra `fixedAdapter` key (or `offline:offline`), driven by `COMMS_FIXED_ADAPTER`.
 - Expected (pinned lamb2): `{healthy, protocol:"v3", version, commitHash, usersCount, adapter:"archipelago:archipelago:wss://<host>/archipelago/ws"}`, present when an archipelago URL is configured. `decentraland/lamb2:src/controllers/handlers/about-handler.ts:77-93`.
-- Place: `services/catalyst/content/src/about_comms.rs:202-227`. Choose the contract explicitly and record it with a dated capture.
+- Capture: the production peer's `/about` has no `comms` key at all (`captures/lambdas-profiles/LP-14-about.json`, 2026-11-04). dcl-one sends none when `COMMS_FIXED_ADAPTER` is unset.
+- Place: `services/catalyst/content/src/about_comms.rs:202-227`. Choose the contract explicitly.
 - Severity: P1.
 
 LP-15. **Profiles: wearable dedup.**
@@ -499,19 +504,20 @@ LP-25. **Contracts: failure behaviour.**
 
 LP-26. **Contracts: library normalization.**
 - Gap: `@dcl/catalyst-contracts` domain and denylist normalization (trailing `/`, trimming, filtering) is not vendored. dcl-one drops `http://`, adds `https://` and trims whitespace only.
-- Expected: capture `GET /lambdas/contracts/servers` and `/denylisted-names` from a pinned lamb2 and diff them.
+- Capture: every production `baseUrl` is `https://` with no trailing slash or whitespace, owners are checksummed, ids are `0x` + 64 hex, keys in order `baseUrl,owner,id` (`captures/lambdas-profiles/LP-26-contracts-servers.json`). The 11 denylisted names are served as stored: 7 have upper-case letters, none has surrounding whitespace (`LP-26-denylisted-names.json`). dcl-one's values agree with both; its `servers` keys are sorted (`baseUrl,id,owner`).
+- Expected: the key order `baseUrl,owner,id`; no value change.
 - Place: `services/catalyst/shop/src/market/contracts.rs:218-243,275-290`.
 - Severity: P2.
 
 LP-27. **validate-signature: schema-validator errors.**
 - Gap: schema failures give a lambdas-style 400; unknown keys are accepted; there is no Content-Type check; a missing `authChain` gets its own message.
-- Expected: `400 {"ok":false,"message":"Invalid JSON body","data":[…ajv errors…]}` for schema violations (including a missing `authChain`, extra keys and non-string `timestamp`/`signedMessage`); `400 {"ok":false,"message":"Content-Type must be application/json"}` for another content type (library behaviour, confirm by capture). `decentraland/lamb2:src/controllers/handlers/validate-signature-handler.ts:20-29`, `decentraland/lamb2:src/controllers/routes.ts:69-73`.
+- Expected: `400 {"ok":false,"message":"Invalid JSON body","data":[<one ajv error>]}` for schema violations (including a missing `authChain`, an empty `authChain`, extra keys, non-string `timestamp`/`signedMessage` and an unknown link `type`); `415 {"ok":false,"message":"Content-Type must be application/json"}` for another or a missing content type; `400 {"ok":false,"message":<V8 parse message>}` for a body that is not JSON. Captured bodies: `captures/lambdas-profiles/LP-27-*.json`. `decentraland/lamb2:src/controllers/handlers/validate-signature-handler.ts:20-29`, `decentraland/lamb2:src/controllers/routes.ts:69-73`.
 - Place: `services/catalyst/shop/src/market/lambdas_crypto.rs:20-69`.
 - Severity: P1.
 
 LP-28. **validate-signature: verdict and messages.**
 - Gap: `dcl-auth` rejects one-link chains and signed entities mid-chain, and its error texts differ from `@dcl/crypto`.
-- Expected: `Authenticator.validateSignature` results and `message` strings. Capture them for a single-SIGNER chain, an expired ephemeral, a bad signature and a final-authority mismatch.
+- Expected: `Authenticator.validateSignature` results and `message` strings. Captured: a single SIGNER whose payload equals `signedMessage` is `{"valid":true,"ownerAddress":…}`; a final-authority mismatch is `ERROR: Invalid final authority. Expected: <message>. Current <authority>.`; a bad ephemeral signature is `ERROR. Link type: ECDSA_EPHEMERAL. Invalid ethereum signature.` (`captures/lambdas-profiles/LP-28-*.json`). An expired ephemeral needs a chain signed by a real key and was not captured.
 - Place: `services/catalyst/shop/src/market/lambdas_crypto.rs:70-81` (map the errors here rather than changing `library/dcl-auth`).
 - Severity: P2.
 
@@ -528,8 +534,9 @@ LP-30. **Shared error bodies.**
 - Severity: P2.
 
 LP-31. **CORS max-age and routing edge cases.**
-- Gap: `Access-Control-Max-Age` is 86400 (upstream config 36000). Trailing-slash, path-case and 405 behaviour of the upstream router are not read.
-- Expected: capture `OPTIONS`, `/lambdas/profiles/`, `/lambdas/Profiles/0x…01` and `PUT /lambdas/profiles` against a pinned lamb2.
+- Gap: the CORS headers differ (origin echoed with credentials, `Max-Age` 86400, extra `Allow-Methods` and `Expose-Headers`); unknown paths answer `text/plain` `Not found`; `/lambdas/status/` is routed.
+- Capture (`captures/lambdas-profiles/LP-31-*.json`): the preflight answers `204` with `access-control-allow-origin: *`, the requested headers, `access-control-max-age: 36000` and `vary: Access-Control-Request-Headers` only; a `GET` with `Origin` gets `access-control-allow-origin: *` only. `PUT`/`GET /lambdas/profiles` answer `405`, empty body, `Allow: POST` (as dcl-one). `POST /lambdas/profiles/` answers as `/lambdas/profiles` (as dcl-one). `/lambdas/Profiles/…`, `/lambdas/Status`, `/lambdas/status/` and `/lambdas/nope` answer the gateway's nginx `404` HTML page.
+- Expected: the captured CORS headers; decide whether to reproduce the gateway's HTML 404 or keep a plain 404.
 - Place: `services/catalyst/shared/src/cors.rs:18`.
 - Severity: P2.
 

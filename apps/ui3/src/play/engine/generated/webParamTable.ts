@@ -96,13 +96,55 @@ export const WEB_PARAMS: WebParam[] = [
     "name": "reels",
     "kind": "string",
     "delivery": "resolved",
-    "doc": "Reels (camera reel) api, used by the HUD; absent = `https://reels.<base>`"
+    "doc": "Share page a camera-reel photo links to, used by the HUD; absent = `https://<base>/reels`"
   },
   {
     "name": "mapApi",
     "kind": "string",
     "delivery": "resolved",
     "doc": "Map tile api, used by the HUD; absent = `https://api.<base>`"
+  },
+  {
+    "name": "cameraReel",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Camera-reel api, used by the HUD; absent = `https://camera-reel-service.<base>`"
+  },
+  {
+    "name": "events",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Events api, used by the HUD; absent = `https://events.<base>`"
+  },
+  {
+    "name": "badges",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Badges api, used by the HUD; absent = `https://badges.<base>`"
+  },
+  {
+    "name": "notifications",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Notifications api, used by the HUD; absent = `https://notifications.<base>`"
+  },
+  {
+    "name": "assetsCdn",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Assets CDN (community thumbnails), used by the HUD; absent = `https://assets-cdn.<base>`"
+  },
+  {
+    "name": "marketplaceApi",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Marketplace api, used by the HUD; absent = `https://marketplace-api.<base>`"
+  },
+  {
+    "name": "autotranslate",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Chat translation, used by the HUD; absent = `https://autotranslate-server.<base>`"
   },
   {
     "name": "pulseServer",
