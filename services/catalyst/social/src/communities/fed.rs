@@ -1,8 +1,9 @@
 //! The communities federation: a write route that receives a wallet-signed
 //! envelope of the `DecentralandCommunities` domain (`crate::fed`) instead
 //! of its client body takes the old federated branch, route for route
-//! ([`envelopes`], the middleware in front of the client handlers). Each
-//! accepted envelope is appended once to ONE log,
+//! ([`envelopes`], the middleware in front of the client handlers). A join
+//! that preserves an existing membership consumes its nonce without a log
+//! entry. Other accepted envelopes are appended once to ONE log,
 //! `social.community_signed_actions` (the old `communities_local` and six
 //! `*_log` tables are its `kind`), and projected into the keyed relations the
 //! REST surface reads (`communities`, `community_members`, `community_bans`,
@@ -20,7 +21,8 @@
 //! proven against `community_members` and `community_bans` (the old
 //! federated twin, `community_role_current`, is not recreated; a role action
 //! older than the member's latest one, by `(signed_at, signature_hash)`, is
-//! logged and not projected, its tie-break).
+//! logged and not projected. Bans and unbans compare only moderator-issued
+//! actions: a member cannot defer a ban with a future-dated self-join).
 //!
 //! What changed from the old projection: a
 //! federated post lands with its body as the text when the body is here
@@ -627,24 +629,29 @@ async fn record(
     Ok(res.rows_affected() > 0)
 }
 
-/// The tie-break the old `community_role_current` applied: a role action
-/// is projected only when no logged role action on the same member is newer
-/// by `(signed_at, signature_hash)`.
+/// Role actions use `(signed_at, signature_hash)` ordering. Bans and unbans
+/// only compare actions issued by someone other than the target: a self-signed
+/// join within the allowed clock skew cannot suppress a moderator's ban.
+/// Promotions and demotions retain ordering against joins and leaves too.
+/// A join that retains an existing membership does not enter this ordering.
 async fn superseded(
     conn: &mut PgConnection,
     community: CommunityId,
     member: &str,
     signed_at: i64,
     signature_hash: &str,
+    ignore_self_actions: bool,
 ) -> sqlx::Result<bool> {
     sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM social.community_signed_actions \
-           WHERE community_uuid = $1 AND target = $2 AND role IS NOT NULL AND (signed_at, signature_hash) > ($3, $4))",
+           WHERE community_uuid = $1 AND target = $2 AND role IS NOT NULL \
+             AND (signed_at, signature_hash) > ($3, $4) AND (NOT $5 OR signer <> target))",
     )
     .bind(community)
     .bind(member)
     .bind(signed_at)
     .bind(signature_hash)
+    .bind(ignore_self_actions)
     .fetch_one(&mut *conn)
     .await
 }
@@ -903,6 +910,21 @@ async fn apply_role_action<T: TypedMessage>(
     {
         return Ok(None);
     }
+    if T::PRIMARY_TYPE == "CommunityJoin"
+        && sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM social.community_members WHERE community_id=$1 AND member_address=$2)",
+        )
+        .bind(community)
+        .bind(member)
+        .fetch_one(&mut *tx)
+        .await?
+    {
+        // Joining again preserves the existing role. Do not let this no-op
+        // create a newer role action that can suppress a real role update.
+        // Preflight already consumed the nonce, so replay still fails.
+        tx.commit().await?;
+        return Ok(Some(signature_hash));
+    }
     let fresh = record(
         &mut tx,
         &signature_hash,
@@ -926,10 +948,15 @@ async fn apply_role_action<T: TypedMessage>(
             member.as_str(),
             signed.signed_at,
             &signature_hash,
+            matches!(T::PRIMARY_TYPE, "CommunityBan" | "CommunityUnban"),
         )
         .await?
     {
         match role {
+            _ if T::PRIMARY_TYPE == "CommunityUnban" => {
+                // Lifting a ban never revokes membership. Another moderator
+                // may already have unbanned this wallet and allowed it to rejoin.
+            }
             _ if grants => {
                 let stored = CommunityRole::parse(role)
                     .map(CommunityRole::as_stored_text)
@@ -2024,6 +2051,377 @@ mod tests {
         .unwrap();
     }
 
+    #[tokio::test]
+    async fn a_delayed_promotion_does_not_override_a_later_leave_and_rejoin() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let dir =
+            std::env::temp_dir().join(format!("catalyst-fed-delayed-role-{}", Uuid::new_v4()));
+        let storage =
+            std::sync::Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let state = std::sync::Arc::new(CommunitiesState::new(
+            pool.clone(),
+            storage,
+            super::super::Settings::for_tests(),
+            None,
+            &crate::http::Outbound::for_tests(),
+            CommunitiesState::explore_for_tests(&pool),
+        ));
+        let app = super::super::router(state);
+        let (owner, member) = (PrivateKeySigner::random(), PrivateKeySigner::random());
+        let id = CommunityId::new();
+        let hex_id = id.as_uuid().simple().to_string();
+        let base = format!("/v1/communities/{id}");
+        sqlx::query("INSERT INTO social.communities (id, name, description, owner_address, private, unlisted) VALUES ($1, 'Delayed role', 'd', $2, FALSE, FALSE)")
+            .bind(id).bind(address(&owner)).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'owner')")
+            .bind(id).bind(address(&owner)).execute(&pool).await.unwrap();
+        let t0 = now();
+        let join = || CommunityJoin {
+            community_id: hex_id.clone(),
+        };
+        let (status, body) = send(
+            &app,
+            &member,
+            "POST",
+            &format!("{base}/members"),
+            &env_at(&member, join(), t0 - 4),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let delayed = env_at(
+            &owner,
+            CommunityRoleUpdate {
+                community_id: hex_id.clone(),
+                target: address(&member),
+                role: "mod".into(),
+            },
+            t0 - 3,
+        );
+        let member_path = format!("{base}/members/{}", address(&member));
+        let (status, body) = send(
+            &app,
+            &member,
+            "DELETE",
+            &member_path,
+            &env_at(
+                &member,
+                CommunityLeave {
+                    community_id: hex_id.clone(),
+                    member: address(&member),
+                },
+                t0 - 2,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(role_of(&pool, id.as_uuid(), &member).await, None);
+        let (status, body) = send(
+            &app,
+            &member,
+            "POST",
+            &format!("{base}/members"),
+            &env_at(&member, join(), t0 - 1),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = send(&app, &owner, "PATCH", &member_path, &delayed).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            role_of(&pool, id.as_uuid(), &member).await.as_deref(),
+            Some("member"),
+            "the old promotion is logged but must not grant authority after a later rejoin"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_future_noop_join_cannot_prevent_a_moderators_demotion() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("catalyst-fed-noop-join-{}", Uuid::new_v4()));
+        let storage =
+            std::sync::Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let state = std::sync::Arc::new(CommunitiesState::new(
+            pool.clone(),
+            storage,
+            super::super::Settings::for_tests(),
+            None,
+            &crate::http::Outbound::for_tests(),
+            CommunitiesState::explore_for_tests(&pool),
+        ));
+        let app = super::super::router(state);
+        let (owner, moderator) = (PrivateKeySigner::random(), PrivateKeySigner::random());
+        let id = CommunityId::new();
+        let hex_id = id.as_uuid().simple().to_string();
+        let base = format!("/v1/communities/{id}");
+        sqlx::query("INSERT INTO social.communities(id,name,description,owner_address,private,unlisted) VALUES($1,'No-op join','d',$2,FALSE,FALSE)")
+            .bind(id).bind(address(&owner)).execute(&pool).await.unwrap();
+        for (signer, role) in [(&owner, "owner"), (&moderator, "moderator")] {
+            sqlx::query("INSERT INTO social.community_members(community_id,member_address,role) VALUES($1,$2,$3)")
+                .bind(id).bind(address(signer)).bind(role).execute(&pool).await.unwrap();
+        }
+        let t0 = now();
+        let join = env_at(
+            &moderator,
+            CommunityJoin {
+                community_id: hex_id.clone(),
+            },
+            t0 + 20,
+        );
+        let (status, body) =
+            send(&app, &moderator, "POST", &format!("{base}/members"), &join).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            role_of(&pool, id.as_uuid(), &moderator).await.as_deref(),
+            Some("moderator")
+        );
+        let logged: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM social.community_signed_actions WHERE signature_hash=$1)",
+        )
+        .bind(join.signature_hash())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!logged, "a no-op join must not advance role ordering");
+        let (status, body) = send(
+            &app,
+            &owner,
+            "PATCH",
+            &format!("{base}/members/{}", address(&moderator)),
+            &env_at(
+                &owner,
+                CommunityRoleUpdate {
+                    community_id: hex_id,
+                    target: address(&moderator),
+                    role: "member".into(),
+                },
+                t0,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            role_of(&pool, id.as_uuid(), &moderator).await.as_deref(),
+            Some("member")
+        );
+        let (status, body) =
+            send(&app, &moderator, "POST", &format!("{base}/members"), &join).await;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "the no-op still consumes its nonce: {body}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_delayed_unban_from_another_moderator_keeps_the_rejoined_member() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let dir =
+            std::env::temp_dir().join(format!("catalyst-fed-delayed-unban-{}", Uuid::new_v4()));
+        let storage =
+            std::sync::Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let state = std::sync::Arc::new(CommunitiesState::new(
+            pool.clone(),
+            storage,
+            super::super::Settings::for_tests(),
+            None,
+            &crate::http::Outbound::for_tests(),
+            CommunitiesState::explore_for_tests(&pool),
+        ));
+        let app = super::super::router(state);
+        let (owner, first, second, member) = (
+            PrivateKeySigner::random(),
+            PrivateKeySigner::random(),
+            PrivateKeySigner::random(),
+            PrivateKeySigner::random(),
+        );
+        let id = CommunityId::new();
+        let hex_id = id.as_uuid().simple().to_string();
+        let base = format!("/v1/communities/{id}");
+        sqlx::query("INSERT INTO social.communities(id,name,description,owner_address,private,unlisted) VALUES($1,'Delayed unban','d',$2,FALSE,FALSE)")
+            .bind(id).bind(address(&owner)).execute(&pool).await.unwrap();
+        for (signer, role) in [
+            (&owner, "owner"),
+            (&first, "moderator"),
+            (&second, "moderator"),
+            (&member, "member"),
+        ] {
+            sqlx::query("INSERT INTO social.community_members(community_id,member_address,role) VALUES($1,$2,$3)")
+                .bind(id).bind(address(signer)).bind(role).execute(&pool).await.unwrap();
+        }
+        let t0 = now();
+        let ban_path = format!("{base}/members/{}/bans", address(&member));
+        let (status, body) = send(
+            &app,
+            &first,
+            "POST",
+            &ban_path,
+            &env_at(
+                &first,
+                CommunityBan {
+                    community_id: hex_id.clone(),
+                    target: address(&member),
+                    reason: None,
+                },
+                t0 - 4,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(role_of(&pool, id.as_uuid(), &member).await, None);
+        let unban = || CommunityUnban {
+            community_id: hex_id.clone(),
+            target: address(&member),
+        };
+        let delayed = env_at(&second, unban(), t0 - 2);
+        let (status, body) = send(
+            &app,
+            &first,
+            "DELETE",
+            &ban_path,
+            &env_at(&first, unban(), t0 - 3),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = send(
+            &app,
+            &member,
+            "POST",
+            &format!("{base}/members"),
+            &env_at(
+                &member,
+                CommunityJoin {
+                    community_id: hex_id.clone(),
+                },
+                t0 - 1,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let joined_at: chrono::NaiveDateTime = sqlx::query_scalar("SELECT joined_at FROM social.community_members WHERE community_id=$1 AND member_address=$2")
+            .bind(id).bind(address(&member)).fetch_one(&pool).await.unwrap();
+        let (status, body) = send(&app, &second, "DELETE", &ban_path, &delayed).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let retained: (String, chrono::NaiveDateTime) = sqlx::query_as("SELECT role,joined_at FROM social.community_members WHERE community_id=$1 AND member_address=$2")
+            .bind(id).bind(address(&member)).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            retained,
+            ("member".into(), joined_at),
+            "unban must not revoke or recreate the newer membership"
+        );
+        let active: bool = sqlx::query_scalar(
+            "SELECT active FROM social.community_bans WHERE community_id=$1 AND banned_address=$2",
+        )
+        .bind(id)
+        .bind(address(&member))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(!active);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_future_self_join_cannot_defer_moderation() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("catalyst-fed-future-{}", Uuid::new_v4()));
+        let storage =
+            std::sync::Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let state = std::sync::Arc::new(CommunitiesState::new(
+            pool.clone(),
+            storage,
+            super::super::Settings::for_tests(),
+            None,
+            &crate::http::Outbound::for_tests(),
+            CommunitiesState::explore_for_tests(&pool),
+        ));
+        let app = super::super::router(state);
+        let (owner, member) = (PrivateKeySigner::random(), PrivateKeySigner::random());
+        let id = CommunityId::new();
+        let hex_id = id.as_uuid().simple().to_string();
+        let base = format!("/v1/communities/{id}");
+        sqlx::query("INSERT INTO social.communities (id, name, description, owner_address, private, unlisted) VALUES ($1, 'Clock skew', 'd', $2, FALSE, FALSE)")
+            .bind(id).bind(address(&owner)).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'owner')")
+            .bind(id).bind(address(&owner)).execute(&pool).await.unwrap();
+        let t0 = now();
+        let (status, body) = send(
+            &app,
+            &member,
+            "POST",
+            &format!("{base}/members"),
+            &env_at(
+                &member,
+                CommunityJoin {
+                    community_id: hex_id.clone(),
+                },
+                t0 + 20,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            role_of(&pool, id.as_uuid(), &member).await.as_deref(),
+            Some("member")
+        );
+        let ban_path = format!("{base}/members/{}/bans", address(&member));
+        let (status, body) = send(
+            &app,
+            &owner,
+            "POST",
+            &ban_path,
+            &env_at(
+                &owner,
+                CommunityBan {
+                    community_id: hex_id.clone(),
+                    target: address(&member),
+                    reason: None,
+                },
+                t0,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(role_of(&pool, id.as_uuid(), &member).await, None);
+        let active = || async {
+            sqlx::query_scalar::<_, bool>("SELECT active FROM social.community_bans WHERE community_id = $1 AND banned_address = $2")
+                .bind(id).bind(address(&member)).fetch_one(&pool).await.unwrap()
+        };
+        assert!(
+            active().await,
+            "moderation must apply despite the future join"
+        );
+        let (status, body) = send(
+            &app,
+            &owner,
+            "DELETE",
+            &ban_path,
+            &env_at(
+                &owner,
+                CommunityUnban {
+                    community_id: hex_id,
+                    target: address(&member),
+                },
+                t0 + 1,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(
+            !active().await,
+            "the future join cannot suppress unbanning either"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A REST ban holds the membership lock while it removes the member and
     /// records the ban. A federation join that passed its ban pre-check
     /// before that ban committed waits for the lock, sees the ban and is
@@ -2457,6 +2855,23 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{body}");
+        let (status, body) = send(
+            &app,
+            &owner,
+            "PATCH",
+            &format!("{base}/members/{}", address(&late)),
+            &env_at(
+                &owner,
+                CommunityRoleUpdate {
+                    community_id: hex_id.clone(),
+                    target: address(&late),
+                    role: "mod".into(),
+                },
+                t0 + 1,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
         let leave = CommunityLeave {
             community_id: hex_id.clone(),
             member: address(&leaver),
@@ -2488,8 +2903,8 @@ mod tests {
         }
         assert_eq!(
             role_of(&pool, id, &late).await.as_deref(),
-            Some("member"),
-            "the ban signed before the join is superseded"
+            Some("moderator"),
+            "the ban signed before the moderator's promotion is superseded"
         );
 
         // A delete whose record already landed (a replay) is not fresh.
