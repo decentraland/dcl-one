@@ -49,8 +49,8 @@ in-app purchases cannot be clawed back by a later Apple refund
   import, or the next mirror pass turns imported rows back into mirrored ones.
   The per-source `MAPPING.md` says which mirror applies.
 - **Freeze upstream writes for the final pass.** Re-runs do not see upstream
-  deletes, so the last `run --since last` happens after the old service stops
-  writing.
+  deletes (except the `whole` reconcile steps a manifest declares), so the
+  last `run --since last` happens after the old service stops writing.
 - **Same secrets.** Values the upstream encrypted (world env variables) are
   copied as ciphertext; the node must run with the upstream key.
 
@@ -136,13 +136,19 @@ start time is read from the source, so `--since last` does not depend on the
 machine running the tool.
 
 The engine creates the `dcl_migration` schema (`checkpoint`, `blob_inventory`,
-`blob_missing`, `world_limit_seeded`) in the target on the first real run. It is outside the
+`blob_missing`, `world_limit_seeded`, and the `*_loaded` records of the
+notifications-workers reconcile steps) in the target on the first real run. It is outside the
 catalyst schema, which only checks for missing objects; drop it when the
 migration is over.
 
 Deletions in a source are not detected: a re-run upserts, it never removes
 rows that disappeared upstream. A load may map an upstream soft-delete or
-status column.
+status column. A `whole = true` step (no watermark) stages its full extract
+in one batch on every run, never resuming part way, so its load sees the
+whole upstream set and can delete what is missing from it; it must only
+delete rows it can prove an import wrote (the notifications-workers
+reconcile steps keep a record in `dcl_migration`). Its set must fit one
+transaction.
 
 ## Manifests
 
@@ -163,6 +169,7 @@ extract = "place.extract.sql"                     # one SELECT on the source
 load = "place.load.sql"                           # SQL on the target, reads `stage`
 key = ["id"]                                      # unique, non-null in the extract
 watermark = "updated_at"                          # optional non-null timestamptz
+whole = false                                     # optional: true loads the full extract in one batch
 columns = [                                       # the extract's output, in order,
   { name = "id", type = "uuid" },                 # typed for the target
   { name = "updated_at", type = "timestamptz" },

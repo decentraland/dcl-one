@@ -8,11 +8,13 @@ time is an epoch-ms `bigint`; extracts convert it exactly
 | Step | Upstream | Target | Notes |
 | --- | --- | --- | --- |
 | `subscription` | `subscriptions` | `social.subscriptions` | `details` copied as is (same `SubscriptionDetails` document; the node normalizes on read). Blank email becomes NULL. Newest `updated_at` wins, also against rows the node wrote. `is_credits_workflow` is not stored upstream: false on insert, kept on update. |
-| `unconfirmed_email` | `unconfirmed_emails` | `social.unconfirmed_emails` | Code kept: neither system expires codes and the node's confirm route checks length (32) and equality only, so links already mailed keep working. `created_at` = upstream `updated_at` (last issue). `source` is not stored upstream: `'account'`. A newer pending request on the node wins. |
-| `opt_out` | `notification_opt_outs` | `social.subscription_opt_outs` | Community `scope_id` canonicalized to the hyphenated lowercase uuid, as the node writes it; opaque ids kept. Earliest `created_at` wins. |
+| `unconfirmed_email` | `unconfirmed_emails` | `social.unconfirmed_emails` | Code kept: neither system expires codes and the node's confirm route checks length (32) and equality only, so links already mailed keep working. `created_at` = upstream `updated_at` (last issue). `source` is not stored upstream: `'account'`. A newer pending request on the node wins. Each row written is recorded as `(address, code)` in `dcl_migration.unconfirmed_email_loaded`. |
+| `unconfirmed_email_reconcile` | `unconfirmed_emails` (addresses, whole set) | `social.unconfirmed_emails` | Deletes, see Deletions. |
+| `opt_out` | `notification_opt_outs` | `social.subscription_opt_outs` | Community `scope_id` canonicalized to the hyphenated lowercase uuid, as the node writes it; opaque ids kept. Earliest `created_at` wins. Each row this load inserts is recorded with its `created_at` in `dcl_migration.notification_opt_out_loaded`; an opt-out the node already held is not. |
+| `opt_out_reconcile` | `notification_opt_outs` (keys, whole set) | `social.subscription_opt_outs` | Deletes, see Deletions. |
 | `notification` | `notifications` with an address | `social.notifications` | Id preserved. `occurred_at` = `timestamp` (values below 1e11 are epoch seconds and are scaled); `read` = `read_at IS NOT NULL`; `in_app` = true (upstream showed every row). Read state only moves forward, so reads on the node survive a re-import. |
-| `broadcast` | `notifications` without an address | `social.notifications` | The node stores a broadcast per recipient: one row per `social.subscriptions` address (the node's own broadcast audience), `broadcast_key = 'notifications-workers:<upstream id>'`, id `md5(upstream id ':' address)::uuid`. Runs after `subscription`. |
-| `broadcast_read` | `broadcast_read` ⨝ `notifications` | `social.notifications` | Marks that reader's copy read, creating it when the reader has no subscription. |
+| `broadcast_read` | `broadcast_read` ⨝ `notifications` | `social.notifications` | The reader's copy of the broadcast (ids and key as in `broadcast`), read. Runs before `broadcast`, so readers are in its audience. |
+| `broadcast` | `notifications` without an address | `social.notifications` | One row per recipient, `broadcast_key = 'notifications-workers:<upstream id>'`, id `md5(upstream id ':' address)::uuid`, so re-runs and `broadcast_read` land on the same row. See Broadcast audience. |
 
 All notification types are imported, including ones no node producer emits
 (governance, rentals, credits...): the bell lists rows regardless of type,
@@ -30,21 +32,104 @@ upstream did the same, and the client decides what it renders.
 - `notification_reader_seen`, `event_notification_intents`: no upstream
   equivalent.
 
+## Broadcast audience
+
+Upstream stored a broadcast once and showed it to every caller
+(`common/src/adapters/db.ts`, `n.address IS NULL`); the node stores one row
+per recipient. The recipients are every wallet in the target's notification
+tables when the batch loads: `social.subscriptions`, `social.notifications`,
+`social.subscription_opt_outs`, `social.unconfirmed_emails` and
+`social.notification_reader_seen`. After the earlier steps these hold every
+valid address upstream knew (subscriptions, addressed notifications,
+broadcast readers, opt-outs, pending emails), plus the wallets the node has
+seen itself, including every wallet that has polled the node's bell. Other
+social tables (friendships, community members, profiles) are not used: a
+wallet there never shown to open the bell would only add rows.
+
+Residual gap: a wallet upstream never stored and the node has not seen when
+`broadcast` last ran gets no copy, though upstream would have shown it the
+broadcast on its first visit. Running `broadcast --restart` again (for
+instance after the final pass, or later) reaches the wallets seen since; new
+wallets after that miss the imported broadcasts.
+
+Volume: the step writes `broadcasts × audience` rows (B address-less upstream
+rows times the distinct wallets above). The extract emits one row per
+broadcast and address shard (the three hex digits after `0x`, 4096 shards),
+keyset-walked on `(updated_at, id, shard)`, so a batch of N stage rows writes
+about `N / 4096 × audience` rows (about 1.2 × audience at the default 5000)
+and reads the audience by address range. A re-run rewrites only copies whose
+payload changed.
+
+## Deletions
+
+Rows carry no provenance, so the loads record what they wrote in engine
+tables: `dcl_migration.notification_opt_out_loaded` (key and `created_at`)
+and `dcl_migration.unconfirmed_email_loaded` (address and code). The
+`*_reconcile` steps are `whole` steps: one batch holding the full upstream
+set, every run (no watermark, `--since` does not narrow them). Each deletes
+a recorded row that upstream no longer holds, and forgets it, when the
+target row still holds the recorded value:
+
+- an opt-out removed upstream goes unless the node created the row (never
+  recorded) or recreated it (another `created_at`);
+- a pending email confirmed or withdrawn upstream goes unless the node
+  issued its own code since (another code).
+
+A row written natively after cutover is never recorded, so it is never
+deleted. A reconcile whose upstream set is empty while recorded rows exist
+fails instead of deleting them all (a wrong source database looks like
+that). Subscriptions and notifications are never deleted upstream and are not
+reconciled.
+
+## Cutover and duplicate events
+
+Upstream deduplicated on `(event_key, type, address)`; the node has no
+event key, and its producers dedupe on their own deterministic ids. An event
+that upstream's processor and a node producer both turn into a notification
+is therefore stored twice if both run. The import cannot give the upstream
+row the node's id:
+
+- node ids are uuid v5 (SHA-1) and the target has no SHA-1 function
+  (`schemas/` installs no pgcrypto or uuid-ossp), so a load cannot compute
+  them;
+- the keys do not line up anyway: community events key on the producer's
+  own `Date.now()` and upstream batches suffix `-batch-N`; event notices key
+  on the node's intent ids, moderation notices on the node's ban ids, world
+  permission notices on the node's change time, quota notices on the
+  block's creation time in microseconds; LAND transfers are a type upstream
+  did not emit.
+
+So the rule is a cutover order:
+
+1. Import while upstream runs (`run`, then `run --since last` as needed),
+   with the node's producers of upstream types disabled or not yet serving
+   these wallets.
+2. Stop upstream's processor (and its producers' SNS feed) so it writes
+   nothing more.
+3. `run notifications-workers --since last` (the final pass, reconciles
+   included), then `run notifications-workers --step broadcast --restart`.
+4. Enable the node's producers.
+
+Types that collide if 4 happens before 2: the community, moderation
+(`banned`, `ban_lifted`, `ban_warning`, scene bans), event, worlds and
+streaming notices the node emits. Rows produced in both systems during an
+overlap stay duplicated; no pass removes them.
+
 ## Watermarks
 
-Every step uses upstream `updated_at` (`read_at` for `broadcast_read`); a read
-or a metadata upsert moves it, so `--since last` picks both up.
+Every upsert step uses upstream `updated_at` (`read_at` for `broadcast_read`);
+a read or a metadata upsert moves it, so `--since last` picks both up. The
+`*_reconcile` steps have none: they read the whole set every run.
 
 Import everything, settings and the whole notification history, with
 `run notifications-workers`, then `run notifications-workers --since last`
-until upstream writes stop.
+until upstream writes stop, following the cutover order above.
 
 ## Caveats
 
-- Deletions are not seen: an opt-out removed upstream, or a code consumed
-  upstream, after its row was copied stays. Do the final pass after upstream
-  writes stop.
-- A broadcast reaches only the subscriptions present when its batch loads;
-  re-run `broadcast` with `--restart` after the final `subscription` pass.
-- Rows re-produced by node producers for the same upstream event get the
-  node's own id and are not deduplicated against imported ids.
+- A broadcast reaches only the audience present when its batch loads; re-run
+  `broadcast` with `--restart` after the final pass (Broadcast audience).
+- Events notified by both systems during an overlap are stored twice
+  (Cutover and duplicate events).
+- `broadcast`'s cursor is `(updated_at, id, shard)`: a checkpoint stored
+  under the former `(updated_at, id)` needs `--restart`.

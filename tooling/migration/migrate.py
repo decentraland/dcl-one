@@ -85,6 +85,19 @@ CREATE TABLE IF NOT EXISTS dcl_migration.world_limit_seeded (
     max_parcels integer,
     max_size_bytes bigint
 );
+-- What the notifications-workers loads wrote, so its reconcile steps delete only imported rows that
+-- upstream no longer holds; a row whose values no longer match was changed on the node and is kept.
+CREATE TABLE IF NOT EXISTS dcl_migration.notification_opt_out_loaded (
+    address text NOT NULL,
+    scope text NOT NULL,
+    scope_id text NOT NULL,
+    created_at timestamp NOT NULL,
+    PRIMARY KEY (address, scope, scope_id)
+);
+CREATE TABLE IF NOT EXISTS dcl_migration.unconfirmed_email_loaded (
+    address text PRIMARY KEY,
+    code text NOT NULL
+);
 RESET client_min_messages;
 """
 
@@ -106,6 +119,7 @@ class Step:
     watermark: str | None
     columns: list  # [(name, type)]
     notes: str = ''
+    whole: bool = False  # one batch holding the whole extract, so the load sees the full upstream set
 
     @property
     def cursor(self):
@@ -194,6 +208,12 @@ def load_source(directory):
         for c in key + ([watermark] if watermark else []):
             if c not in names:
                 problems.append(f'{where}: cursor column {c!r} is not in `columns`')
+        whole = raw.get('whole', False)
+        if not isinstance(whole, bool):
+            problems.append(f'{where}: `whole` must be a boolean')
+            whole = False
+        if whole and watermark:
+            problems.append(f'{where}: a `whole` step reads the full set every run and takes no watermark')
         if watermark and dict(columns).get(watermark, '').lower() not in ('timestamptz', 'timestamp with time zone'):
             problems.append(f'{where}: watermark {watermark!r} must be typed timestamptz')
         files = {}
@@ -204,7 +224,7 @@ def load_source(directory):
                 problems.append(f'{where}: {field} file {rel!r} is missing or outside {directory.name}/')
             files[field] = file
         steps.append(Step(name, step_name, targets, files['extract'], files['load'], key, watermark,
-                          columns, raw.get('notes', '')))
+                          columns, raw.get('notes', ''), whole))
     if problems:
         raise MigrationError('\n'.join(problems))
     source = Source(name, directory, data.get('repository', ''), data.get('revision', ''), database_env,
@@ -450,6 +470,9 @@ class Walk:
 
 def plan_walk(step, checkpoint, *, since, since_last, overlap, restart):
     """The walk a run takes for `step`, given its stored checkpoint (or None)."""
+    if step.whole:
+        # Never a partial set: its load treats what the extract lacks as gone upstream.
+        return Walk(None, None, None, 0, True, 'whole set')
     if since_last:
         if checkpoint and checkpoint.last_completed_walk_started_at:
             since = iso(parse_timestamp(checkpoint.last_completed_walk_started_at) - overlap)
@@ -562,7 +585,7 @@ def checkpoint_upsert(step, walk, batch_size, first_batch):
     started = f'{literal(walk.started_at)}::timestamptz'
     prior = literal(json.dumps(walk.cursor)) + '::jsonb' if walk.cursor is not None else 'NULL'
     rows = '(SELECT count(*) FROM stage)'
-    done = f'({rows} < {int(batch_size)})'
+    done = 'true' if batch_size is None else f'({rows} < {int(batch_size)})'
     walk_rows = 'EXCLUDED.walk_rows' if first_batch else 'c.walk_rows + EXCLUDED.walk_rows'
     return f"""INSERT INTO dcl_migration.checkpoint AS c
   (source, step, since, cursor, walk_started_at, walk_rows, completed_at, last_completed_walk_started_at,
@@ -613,6 +636,8 @@ def source_now(source_url):
 
 def run_step(step, source_url, target_url, walk, checkpoint, *, batch_size, log):
     """Walks `step` batch by batch from `walk`; returns (rows, write summary)."""
+    if step.whole:
+        batch_size = None
     started_at = walk.started_at or iso(parse_timestamp(source_now(source_url)))
     walk = dataclasses.replace(walk, started_at=started_at)
     # The checkpoint row the first batch must find: what this run read, untouched.
@@ -639,7 +664,7 @@ def run_step(step, source_url, target_url, walk, checkpoint, *, batch_size, log)
         expected = (cursor, started_at)
         log(f'    batch {batch_no}: {rows} rows ({summarize_tags(tags)})'
             + (f', cursor {json.dumps(cursor)}' if cursor else ''))
-        if rows < batch_size:
+        if batch_size is None or rows < batch_size:
             return rows_total, summarize_tags(tag_totals)
 
 
@@ -697,7 +722,8 @@ def cmd_list(args, sources):
         print(f'{source.name}{after}: {source.repository} @ {source.revision[:12] or "?"}'
               f' [{source.database_env} {configured}]')
         for step in source.steps:
-            mode = f'watermark {step.watermark}' if step.watermark else 'full re-scan'
+            mode = (f'watermark {step.watermark}' if step.watermark
+                    else 'whole set, one batch' if step.whole else 'full re-scan')
             print(f'  {step.name}: {", ".join(step.targets)} (key {", ".join(step.key)}; {mode})')
     return 0
 

@@ -1,5 +1,6 @@
 """The migration engine resumes, dry-runs and re-imports from a point, and every manifest compiles."""
 import contextlib
+import dataclasses
 import datetime
 import gzip
 import hashlib
@@ -101,6 +102,12 @@ class Manifests(unittest.TestCase):
         with self.assertRaisesRegex(migrate.MigrationError, 'must be typed timestamptz'):
             migrate.discover(self.tmp)
 
+    def test_when_a_whole_step_has_a_watermark_it_should_refuse(self):
+        manifest = MANIFEST.replace('watermark = "updated_at"', 'watermark = "updated_at"\nwhole = true')
+        write_source(self.tmp, {**FILES, 'source.toml': manifest})
+        with self.assertRaisesRegex(migrate.MigrationError, 'takes no watermark'):
+            migrate.discover(self.tmp)
+
     def test_when_a_load_controls_the_transaction_it_should_refuse(self):
         write_source(self.tmp, {**FILES, 'tags.load.sql': 'COMMIT;\nINSERT INTO app.tags SELECT * FROM stage;\n'})
         with self.assertRaisesRegex(migrate.MigrationError, 'must not control the transaction'):
@@ -184,6 +191,12 @@ class Walks(unittest.TestCase):
         cp = migrate.Checkpoint(cursor=['T9'], walk_started_at='2026-02-01T00:00:00Z', completed_at='2026-02-01T00:01:00Z')
         self.assertIsNone(self.plan(self.plain, cp).cursor)
         self.assertIsNone(self.plan(self.plain, cp, since='2026-01-01T00:00:00Z').since)
+
+    def test_when_a_whole_step_was_left_part_way_it_should_read_the_whole_set_again(self):
+        whole = dataclasses.replace(self.plain, whole=True)
+        cp = migrate.Checkpoint(cursor=['T9'], walk_started_at='2026-02-01T00:00:00Z', walk_rows=9)
+        walk = self.plan(whole, cp, since_last=True)
+        self.assertEqual((walk.cursor, walk.since, walk.fresh), (None, None, True))
 
 
 class Cids(unittest.TestCase):
@@ -1096,6 +1109,102 @@ class AgainstPostgres(unittest.TestCase):
         self.assertIn('1 rows written', out)
         rows = self.sql(tgt, 'SELECT world_name, max_parcels FROM worlds.world_limit_overrides ORDER BY 1;\n')
         self.assertEqual(rows.splitlines(), ['edited.dcl.eth\t9', 'node.dcl.eth\t7', 'seeded.dcl.eth\t60'])
+
+
+    # ── notifications-workers: broadcast audience, deletions ──
+
+    NW_SCHEMA = textwrap.dedent("""
+        CREATE TABLE notifications (id uuid PRIMARY KEY, event_key varchar NOT NULL, type varchar NOT NULL,
+          address varchar, metadata jsonb NOT NULL, "timestamp" bigint NOT NULL, read_at bigint,
+          created_at bigint NOT NULL, updated_at bigint NOT NULL);
+        CREATE TABLE broadcast_read (notification_id uuid NOT NULL REFERENCES notifications, address varchar NOT NULL,
+          read_at bigint NOT NULL, PRIMARY KEY (notification_id, address));
+        CREATE TABLE subscriptions (address varchar PRIMARY KEY, email varchar, details jsonb NOT NULL,
+          created_at bigint NOT NULL, updated_at bigint NOT NULL);
+        CREATE TABLE unconfirmed_emails (address varchar PRIMARY KEY, email varchar NOT NULL, code varchar NOT NULL,
+          created_at bigint NOT NULL, updated_at bigint NOT NULL);
+        CREATE TABLE notification_opt_outs (address varchar NOT NULL, scope varchar NOT NULL, scope_id varchar NOT NULL,
+          created_at bigint NOT NULL, updated_at bigint NOT NULL, PRIMARY KEY (address, scope, scope_id));
+    """)
+    BROADCAST = '00000000-0000-4000-8000-0000000000b1'
+    COMMUNITY = '00000000-0000-4000-8000-0000000000c1'
+
+    @staticmethod
+    def wallet(digit):
+        return f'0x{digit * 40}'
+
+    def notifications_dbs(self):
+        src, tgt = self.fresh_db('nw_src'), self.catalyst_db('nw_tgt')
+        self.sql(src, self.NW_SCHEMA)
+        w = self.wallet
+        t = 1767225600000  # 2026-01-01
+        self.sql(src, textwrap.dedent(f"""
+            INSERT INTO subscriptions VALUES ('{w("a")}', NULL, '{{}}', {t}, {t});
+            INSERT INTO notifications VALUES
+              ('00000000-0000-4000-8000-0000000000a1', 'k1', 'item_sold', '{w("b")}', '{{}}', {t}, NULL, {t}, {t}),
+              ('{self.BROADCAST}', 'news', 'announcement', NULL, '{{"title": "hi"}}', {t}, NULL, {t}, {t});
+            INSERT INTO broadcast_read VALUES ('{self.BROADCAST}', '{w("1")}', {t + 1000});
+            INSERT INTO notification_opt_outs VALUES
+              ('{w("c")}', 'community', '{self.COMMUNITY}', {t}, {t}),
+              ('{w("d")}', 'community', '{self.COMMUNITY}', {t}, {t});
+            INSERT INTO unconfirmed_emails VALUES
+              ('{w("e")}', 'e@example.com', '{"e" * 32}', {t}, {t}),
+              ('{w("f")}', 'f@example.com', '{"f" * 32}', {t}, {t});
+        """))
+        # A wallet only the node has seen: it polled the node's bell.
+        self.sql(tgt, f"INSERT INTO social.notification_reader_seen VALUES ('{w('2')}', now());\n")
+        env = {'NOTIFICATIONS_DATABASE_URL': self.url(src), 'TARGET_DATABASE_URL': self.url(tgt)}
+        patcher = unittest.mock.patch.dict(os.environ, env)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return src, tgt
+
+    def broadcast_copies(self, tgt):
+        return self.sql(tgt, "SELECT address, read, id = md5(%s || ':' || address)::uuid FROM social.notifications "
+                             "WHERE broadcast_key = 'notifications-workers:%s' ORDER BY address;\n"
+                        % (f"'{self.BROADCAST}'", self.BROADCAST)).splitlines()
+
+    def test_when_importing_a_broadcast_it_should_reach_every_wallet_the_source_or_node_knows(self):
+        _, tgt = self.notifications_dbs()
+        w = self.wallet
+        code, out = self.migrate('run', 'notifications-workers', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        expected = [f'{w(d)}\t{"t" if d == "1" else "f"}\tt' for d in '12abcdef']
+        self.assertEqual(self.broadcast_copies(tgt), expected)
+        code, out = self.migrate('run', 'notifications-workers', '--step', 'broadcast', '--restart',
+                                 sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.broadcast_copies(tgt), expected)
+
+    def test_when_upstream_drops_an_opt_out_or_pending_email_it_should_delete_only_the_imported_row(self):
+        src, tgt = self.notifications_dbs()
+        w = self.wallet
+        self.assertEqual(self.migrate('run', 'notifications-workers', sources_dir=migrate.SOURCES)[0], 0)
+        # The node's own opt-out, and a code the node issued for f after the import.
+        self.sql(tgt, f"INSERT INTO social.subscription_opt_outs VALUES ('{w('9')}', 'community', "
+                      f"'{self.COMMUNITY}', now());\n"
+                      f"UPDATE social.unconfirmed_emails SET code = '{'9' * 32}' WHERE address = '{w('f')}';\n")
+        self.sql(src, f"DELETE FROM notification_opt_outs WHERE address = '{w('d')}';\n"
+                      f"DELETE FROM unconfirmed_emails;\n"
+                      f"INSERT INTO unconfirmed_emails VALUES ('{w('3')}', 'g@example.com', '{'3' * 32}', "
+                      f"1767225600000, (extract(epoch from now()) * 1000)::bigint);\n")
+        code, out = self.migrate('run', 'notifications-workers', '--since', 'last', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.sql(tgt, 'SELECT address FROM social.subscription_opt_outs ORDER BY 1;\n').split(),
+                         [w('9'), w('c')])
+        self.assertEqual(self.sql(tgt, 'SELECT address FROM social.unconfirmed_emails ORDER BY 1;\n').split(),
+                         [w('3'), w('f')])
+        self.assertEqual(self.sql(tgt, 'SELECT address FROM dcl_migration.unconfirmed_email_loaded;\n').split(),
+                         [w('3')])
+
+    def test_when_upstream_lists_no_opt_outs_it_should_refuse_to_delete_the_imported_ones(self):
+        src, tgt = self.notifications_dbs()
+        self.assertEqual(self.migrate('run', 'notifications-workers', sources_dir=migrate.SOURCES)[0], 0)
+        self.sql(src, 'DELETE FROM notification_opt_outs;\n')
+        code, out = self.migrate('run', 'notifications-workers', '--step', 'opt_out_reconcile',
+                                 sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 1, out)
+        self.assertEqual(self.count(tgt, 'social.subscription_opt_outs'), 2)
 
 
 import unittest.mock  # noqa: E402

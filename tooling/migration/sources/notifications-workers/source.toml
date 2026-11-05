@@ -7,8 +7,9 @@ notes = """See MAPPING.md. Not migrated: `cursors` (upstream producer
 checkpoints; the node's producers keep their own), `pgmigrations`.
 Left to the node: social.notification_deliveries (no email is re-sent for
 imported history), notification_reader_seen, event_notification_intents.
-Upstream deletions (unsubscribed opt-outs, consumed confirmation codes) are
-not detected: run the final pass after upstream writes stop."""
+Deletes: opt_out_reconcile and unconfirmed_email_reconcile delete imported
+opt-outs and pending emails that upstream no longer holds (only rows this
+source wrote, recorded in dcl_migration, and unchanged on the node since)."""
 
 [[step]]
 name = "subscription"
@@ -40,6 +41,19 @@ columns = [
   { name = "updated_at", type = "timestamptz" },
 ]
 
+# The whole upstream set in one batch: imported rows it lacks are deleted.
+[[step]]
+name = "unconfirmed_email_reconcile"
+targets = ["social.unconfirmed_emails"]
+extract = "unconfirmed_email_reconcile.extract.sql"
+load = "unconfirmed_email_reconcile.load.sql"
+key = ["source_address"]
+whole = true
+columns = [
+  { name = "source_address", type = "text" },
+  { name = "address", type = "text" },
+]
+
 [[step]]
 name = "opt_out"
 targets = ["social.subscription_opt_outs"]
@@ -55,6 +69,21 @@ columns = [
   { name = "scope_id", type = "text" },
   { name = "created_at", type = "timestamptz" },
   { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "opt_out_reconcile"
+targets = ["social.subscription_opt_outs"]
+extract = "opt_out_reconcile.extract.sql"
+load = "opt_out_reconcile.load.sql"
+key = ["source_address", "scope", "source_scope_id"]
+whole = true
+columns = [
+  { name = "source_address", type = "text" },
+  { name = "scope", type = "text" },
+  { name = "source_scope_id", type = "text" },
+  { name = "address", type = "text" },
+  { name = "scope_id", type = "text" },
 ]
 
 [[step]]
@@ -75,24 +104,6 @@ columns = [
   { name = "updated_at", type = "timestamptz" },
 ]
 
-# Address-less upstream rows: one per recipient in social.subscriptions,
-# which the subscription step has already filled.
-[[step]]
-name = "broadcast"
-targets = ["social.notifications"]
-extract = "broadcast.extract.sql"
-load = "broadcast.load.sql"
-key = ["id"]
-watermark = "updated_at"
-columns = [
-  { name = "id", type = "uuid" },
-  { name = "type", type = "text" },
-  { name = "metadata", type = "jsonb" },
-  { name = "occurred_at", type = "timestamptz" },
-  { name = "created_at", type = "timestamptz" },
-  { name = "updated_at", type = "timestamptz" },
-]
-
 [[step]]
 name = "broadcast_read"
 targets = ["social.notifications"]
@@ -109,4 +120,24 @@ columns = [
   { name = "occurred_at", type = "timestamptz" },
   { name = "created_at", type = "timestamptz" },
   { name = "read_at", type = "timestamptz" },
+]
+
+# Address-less upstream rows, one stage row per (broadcast, address shard):
+# fanned out to every wallet the earlier steps and the node put in the
+# notification tables.
+[[step]]
+name = "broadcast"
+targets = ["social.notifications"]
+extract = "broadcast.extract.sql"
+load = "broadcast.load.sql"
+key = ["id", "shard"]
+watermark = "updated_at"
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "shard", type = "text" },
+  { name = "type", type = "text" },
+  { name = "metadata", type = "jsonb" },
+  { name = "occurred_at", type = "timestamptz" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
 ]
