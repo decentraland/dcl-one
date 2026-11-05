@@ -748,25 +748,37 @@ pub async fn profiles(
 
 /// Compact form of a processed profile, the shape of `getMetadata` in
 /// `decentraland/asset-bundle-registry@f9578d4a`
-/// (`src/logic/sync/profile-sanitizer.ts`): the first avatar's `name`,
-/// `hasClaimedName` and `nameColor` as they are (absent stays absent) and its
-/// face snapshot. `None` for a profile without an avatar, where upstream's
-/// mapper would throw.
-pub fn profile_metadata(pointer: &str, profile: &Value) -> Option<Value> {
+/// (`src/logic/sync/profile-sanitizer.ts`), in its key order: the first
+/// avatar's `hasClaimedName`, `name` and `nameColor` as they are (absent stays
+/// absent, `null` stays `null`) and its face snapshot.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileMetadata {
+    pointer: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    has_claimed_name: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name_color: Option<Value>,
+    thumbnail_url: String,
+}
+
+/// `None` for a profile without an avatar, where upstream's mapper would throw.
+pub fn profile_metadata(pointer: &str, profile: &Value) -> Option<ProfileMetadata> {
     let avatar = profile.get("avatars")?.as_array()?.first()?;
-    let mut metadata = serde_json::Map::new();
-    metadata.insert("pointer".into(), json!(pointer));
-    for key in ["hasClaimedName", "name", "nameColor"] {
-        if let Some(value) = avatar.get(key).filter(|v| !v.is_null()) {
-            metadata.insert(key.into(), value.clone());
-        }
-    }
-    let face = avatar
-        .pointer("/avatar/snapshots/face256")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    metadata.insert("thumbnailUrl".into(), json!(face));
-    Some(Value::Object(metadata))
+    let field = |key: &str| avatar.get(key).cloned();
+    Some(ProfileMetadata {
+        pointer: pointer.to_string(),
+        has_claimed_name: field("hasClaimedName"),
+        name: field("name"),
+        name_color: field("nameColor"),
+        thumbnail_url: avatar
+            .pointer("/avatar/snapshots/face256")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
 }
 
 /// The request's pointers lowercased, each once, in request order, as
@@ -828,11 +840,11 @@ pub async fn profiles_metadata(
             for (pointer, profile) in found {
                 by_pointer.entry(pointer).or_insert(profile);
             }
-            let compact: Vec<Value> = pointers
+            let compact: Vec<ProfileMetadata> = pointers
                 .iter()
                 .filter_map(|pointer| profile_metadata(pointer, by_pointer.get(pointer)?))
                 .collect();
-            Json(Value::Array(compact)).into_response()
+            Json(compact).into_response()
         }
         Err(f) => f.into_response(),
     }
@@ -1182,37 +1194,36 @@ mod tests {
         json!({ "avatars": [avatar], "timestamp": 1 })
     }
 
+    fn metadata_json(pointer: &str, profile: &Value) -> String {
+        serde_json::to_string(&profile_metadata(pointer, profile).unwrap()).unwrap()
+    }
+
     #[test]
-    fn profile_metadata_projects_the_first_avatar() {
+    fn profile_metadata_projects_the_first_avatar_in_upstream_key_order() {
+        // The top-level keys follow `getMetadata`; `nameColor` is passed
+        // through as a `Value`, whose keys serde_json writes sorted.
         assert_eq!(
-            profile_metadata("0xabc", &metadata_input(true)).unwrap(),
-            json!({
-                "pointer": "0xabc", "hasClaimedName": true, "name": "Ryumi",
-                "nameColor": { "r": 1.0, "g": 0.5, "b": 0.0 },
-                "thumbnailUrl": "https://cdn.example/entities/bafy/face.png"
-            })
+            metadata_json("0xabc", &metadata_input(true)),
+            r#"{"pointer":"0xabc","hasClaimedName":true,"name":"Ryumi","nameColor":{"b":0.0,"g":0.5,"r":1.0},"thumbnailUrl":"https://cdn.example/entities/bafy/face.png"}"#
         );
     }
 
     #[test]
-    fn profile_metadata_leaves_absent_fields_absent() {
-        let m = profile_metadata("0xabc", &metadata_input(false)).unwrap();
-        let mut keys: Vec<&str> = m.as_object().unwrap().keys().map(String::as_str).collect();
-        keys.sort_unstable();
-        assert_eq!(keys, ["hasClaimedName", "name", "pointer", "thumbnailUrl"]);
-        let bare = json!({ "avatars": [{ "ethAddress": "0xabc" }], "timestamp": 1 });
+    fn profile_metadata_leaves_absent_fields_absent_and_null_null() {
         assert_eq!(
-            profile_metadata("0xabc", &bare).unwrap(),
-            json!({ "pointer": "0xabc", "thumbnailUrl": "" })
+            metadata_json("0xabc", &metadata_input(false)),
+            r#"{"pointer":"0xabc","hasClaimedName":true,"name":"Ryumi","thumbnailUrl":"https://cdn.example/entities/bafy/face.png"}"#
+        );
+        let bare = json!({ "avatars": [{ "ethAddress": "0xabc", "nameColor": null }] });
+        assert_eq!(
+            metadata_json("0xabc", &bare),
+            r#"{"pointer":"0xabc","nameColor":null,"thumbnailUrl":""}"#
         );
     }
 
     #[test]
     fn profile_metadata_skips_a_profile_without_avatars() {
-        assert_eq!(
-            profile_metadata("0xabc", &json!({ "avatars": [], "timestamp": 1 })),
-            None
-        );
+        assert!(profile_metadata("0xabc", &json!({ "avatars": [], "timestamp": 1 })).is_none());
     }
 
     #[test]
