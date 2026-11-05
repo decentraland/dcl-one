@@ -6,7 +6,7 @@
 //! `delivery.rs` drains. The time is always a bind parameter.
 
 use crate::shared::now_utc;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Instant;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -17,6 +17,7 @@ use uuid::Uuid;
 use super::email::{EmailSource, make_code};
 use super::errors::ApiError;
 use super::seen::SeenDebounce;
+use super::templates;
 use super::types::{NotificationItem, Subscription, normalize_details};
 use crate::identity::Address;
 
@@ -30,12 +31,12 @@ pub fn naive_to_ms(t: NaiveDateTime) -> i64 {
 
 /// The list statement for one flag combination. The `from` bound and the
 /// unread filter are spelled only when set, never folded as `($2 IS NULL OR
-/// occurred_at > $2)` / `($3 = FALSE OR read = FALSE)`: once PostgreSQL
+/// occurred_at >= $2)` / `($3 = FALSE OR read = FALSE)`: once PostgreSQL
 /// switched the prepared statement to a generic plan those folds left the
 /// index condition and the 30-second bell poll with nothing new read the
 /// wallet's whole history (METRICS.md, "Stage 5 review: the notifications
 /// poll through the plan cache"). With the flags in the text, the generic
-/// plan keeps `occurred_at > $2` in the index condition and the unread poll
+/// plan keeps `occurred_at >= $2` in the index condition and the unread poll
 /// matches the partial `notifications_unread_idx`. Binds: `$1` address,
 /// then `from` when present, then the limit, then the touch time when
 /// `touch` (the reader_seen upsert rides along as a data-modifying CTE;
@@ -48,7 +49,7 @@ fn list_sql(with_from: bool, only_unread: bool, touch: bool) -> String {
         format!("${n}")
     };
     let from_cond = if with_from {
-        format!(" AND occurred_at > {}", bind())
+        format!(" AND occurred_at >= {}", bind())
     } else {
         String::new()
     };
@@ -84,10 +85,14 @@ fn list_sql(with_from: bool, only_unread: bool, touch: bool) -> String {
 }
 
 /// The `email` delivery row of every notification a CTE named `ins`
-/// (columns `id, address, type`) inserted: `pending` when the recipient can
-/// receive it, else `skipped` with the reason. `rows_affected` of the whole
-/// statement is therefore the number of notifications inserted.
-const DELIVERY_ROWS_SQL: &str = r#"
+/// (columns `id, address, type`) inserted: `pending` when the type has a
+/// template and the recipient can receive it, else `skipped` with the
+/// reason (pruned with the other terminal rows). `rows_affected` of the
+/// whole statement is therefore the number of notifications inserted. A
+/// type absent from `message_type` emails, as the old `autoMigrate` defaults.
+static DELIVERY_ROWS_SQL: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        r#"
     INSERT INTO social.notification_deliveries (notification_id, channel, state, last_error)
     SELECT n.id, 'email',
            CASE WHEN d.reason IS NULL THEN 'pending' ELSE 'skipped' END,
@@ -96,13 +101,17 @@ const DELIVERY_ROWS_SQL: &str = r#"
     LEFT JOIN social.subscriptions s ON s.address = n.address
     CROSS JOIN LATERAL (
         SELECT CASE
+            WHEN n.type NOT IN ({}) THEN 'no email template'
             WHEN s.email IS NULL THEN 'no confirmed email'
             WHEN COALESCE((s.details->>'ignore_all_email')::boolean, false) THEN 'ignore_all_email'
             WHEN NOT COALESCE((s.details->'message_type'->n.type->>'email')::boolean, true) THEN 'opted out of this type'
         END AS reason
     ) d
     ON CONFLICT (notification_id, channel) DO NOTHING
-"#;
+"#,
+        templates::EMAILABLE_SQL_LIST
+    )
+});
 
 type ListRow = (Uuid, String, String, i64, bool, String, String, Json);
 
@@ -154,6 +163,40 @@ where
     insert_batch(executor, batch, true).await
 }
 
+/// One notification deduplicated per `(address, broadcast_key)` (the
+/// source's event key) instead of its id, with its delivery row.
+pub async fn insert_keyed_notification<'e, E>(
+    executor: E,
+    broadcast_key: &str,
+    notification: &NewNotification,
+) -> Result<u64, sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    let sql = format!(
+        r#"
+        WITH ins AS (
+            INSERT INTO social.notifications (id, address, type, metadata, broadcast_key, occurred_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO NOTHING
+            RETURNING id, address, type
+        )
+        {delivery}
+        "#,
+        delivery = *DELIVERY_ROWS_SQL
+    );
+    let res = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(notification.id)
+        .bind(&notification.address)
+        .bind(&notification.kind)
+        .bind(&notification.metadata)
+        .bind(broadcast_key)
+        .bind(notification.occurred_at)
+        .execute(executor)
+        .await?;
+    Ok(res.rows_affected())
+}
+
 async fn insert_batch<'e, E>(
     executor: E,
     batch: &[NewNotification],
@@ -188,8 +231,9 @@ where
             ON CONFLICT (id) DO NOTHING
             RETURNING id, address, type
         )
-        {DELIVERY_ROWS_SQL}
-        "#
+        {delivery}
+        "#,
+        delivery = *DELIVERY_ROWS_SQL
     );
     let res = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(&ids)
@@ -272,7 +316,8 @@ impl NotificationsStore {
         only_unread: bool,
         touch_at: Option<NaiveDateTime>,
     ) -> Result<Vec<NotificationItem>, sqlx::Error> {
-        let from = from_ms.and_then(ms_to_naive);
+        // Past chrono's range only `>= MAX` is faithful: no row, not every row.
+        let from = from_ms.map(|ms| ms_to_naive(ms).unwrap_or(NaiveDateTime::MAX));
         let sql = list_sql(from.is_some(), only_unread, touch_at.is_some());
         let mut query = sqlx::query_as::<_, ListRow>(sqlx::AssertSqlSafe(sql)).bind(address);
         if let Some(from) = from {
@@ -321,8 +366,9 @@ impl NotificationsStore {
                     ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO NOTHING
                     RETURNING id, address, type
                 )
-                {DELIVERY_ROWS_SQL}
-                "#
+                {delivery}
+                "#,
+                delivery = *DELIVERY_ROWS_SQL
             );
             let res = sqlx::query(sqlx::AssertSqlSafe(sql))
                 .bind(kind)
@@ -346,8 +392,9 @@ impl NotificationsStore {
                 ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO NOTHING
                 RETURNING id, address, type
             )
-            {DELIVERY_ROWS_SQL}
-            "#
+            {delivery}
+            "#,
+            delivery = *DELIVERY_ROWS_SQL
         );
         let res = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(&ids)
@@ -402,35 +449,30 @@ impl NotificationsStore {
         ))
     }
 
+    /// Writes the flags; `message_type` entries the body omits keep their
+    /// stored value, so an older client's partial list changes only what it sends.
     pub async fn put_subscription_details(
         &self,
         address: &Address,
         details: &Json,
-    ) -> Result<Subscription, ApiError> {
-        let row = sqlx::query_as::<_, (String, Option<String>, Option<String>, Json)>(
+    ) -> Result<(), ApiError> {
+        sqlx::query(
             r#"
-            WITH up AS (
-                INSERT INTO social.subscriptions (address, details, updated_at)
-                VALUES ($1, $2, $3)
-                ON CONFLICT (address) DO UPDATE
-                  SET details = EXCLUDED.details, updated_at = EXCLUDED.updated_at
-                RETURNING address, email, details
-            )
-            SELECT up.address, up.email, u.email, up.details
-            FROM up LEFT JOIN social.unconfirmed_emails u ON u.address = up.address
+            INSERT INTO social.subscriptions (address, details, updated_at)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (address) DO UPDATE
+              SET details = EXCLUDED.details || jsonb_build_object('message_type',
+                    COALESCE(social.subscriptions.details->'message_type', '{}'::jsonb)
+                      || (EXCLUDED.details->'message_type')),
+                  updated_at = EXCLUDED.updated_at
             "#,
         )
         .bind(address)
         .bind(details)
         .bind(now_utc())
-        .fetch_one(&self.pool)
+        .execute(&self.pool)
         .await?;
-        Ok(Subscription {
-            address: row.0,
-            email: row.1,
-            unconfirmed_email: row.2,
-            details: normalize_details(&row.3),
-        })
+        Ok(())
     }
 
     pub async fn set_email(
@@ -438,6 +480,7 @@ impl NotificationsStore {
         address: &Address,
         email: &str,
         is_credits_workflow: bool,
+        blacklisted: bool,
     ) -> Result<SetEmailOutcome, ApiError> {
         let email = email.trim();
         let now = now_utc();
@@ -478,15 +521,23 @@ impl NotificationsStore {
         .fetch_one(&self.pool)
         .await?;
 
+        if taken_by_other {
+            return Err(ApiError::bad_request(
+                "Email already registered to another account. Please use a different email to proceed",
+            ));
+        }
         if current_email
             .as_deref()
-            .map(|e| e.eq_ignore_ascii_case(email))
-            .unwrap_or(false)
+            .is_some_and(|e| e.eq_ignore_ascii_case(email))
         {
+            sqlx::query("DELETE FROM social.unconfirmed_emails WHERE address = $1")
+                .bind(address)
+                .execute(&self.pool)
+                .await?;
             return Ok(SetEmailOutcome::NoEmailSent);
         }
-        if taken_by_other {
-            return Err(ApiError::bad_request("Email already registered"));
+        if blacklisted {
+            return Err(ApiError::bad_request(super::email::INVALID_EMAIL));
         }
 
         let source = EmailSource::from_credits_workflow(is_credits_workflow);
@@ -519,6 +570,19 @@ impl NotificationsStore {
         .await?;
 
         Ok(SetEmailOutcome::SendConfirmation { source, code })
+    }
+
+    /// The pending `(email, code)` of `address`.
+    pub async fn find_unconfirmed_email(
+        &self,
+        address: &Address,
+    ) -> Result<Option<(String, String)>, ApiError> {
+        Ok(
+            sqlx::query_as("SELECT email, code FROM social.unconfirmed_emails WHERE address = $1")
+                .bind(address)
+                .fetch_optional(&self.pool)
+                .await?,
+        )
     }
 
     /// Promotes the pending email when the code matches, in one statement;
@@ -646,7 +710,7 @@ mod sql_shape_tests {
         assert!(!plain.contains("IS NULL OR") && !plain.contains("NOT read"));
         let from = list_sql(true, false, false);
         assert!(
-            from.contains("WHERE address = $1 AND occurred_at > $2") && from.contains("LIMIT $3"),
+            from.contains("WHERE address = $1 AND occurred_at >= $2") && from.contains("LIMIT $3"),
             "{from}"
         );
         let unread = list_sql(false, true, false);
@@ -658,7 +722,7 @@ mod sql_shape_tests {
         assert!(both.starts_with("WITH seen AS"), "{both}");
         assert!(both.contains("VALUES ($1, $4::timestamp)"), "{both}");
         assert!(
-            both.contains("WHERE address = $1 AND occurred_at > $2 AND NOT read")
+            both.contains("WHERE address = $1 AND occurred_at >= $2 AND NOT read")
                 && both.contains("LIMIT $3"),
             "{both}"
         );
@@ -916,8 +980,10 @@ mod pg_tests {
         let (a, b) = (fresh_address(), fresh_address());
         let unique = format!("Foo-{}@Example.com", Uuid::new_v4().simple());
 
-        let SetEmailOutcome::SendConfirmation { source, code } =
-            c.set_email(&a, &format!(" {unique} "), true).await.unwrap()
+        let SetEmailOutcome::SendConfirmation { source, code } = c
+            .set_email(&a, &format!(" {unique} "), true, false)
+            .await
+            .unwrap()
         else {
             panic!("a new email must send a confirmation")
         };
@@ -961,13 +1027,13 @@ mod pg_tests {
             Some(EmailSource::Credits)
         );
         assert!(matches!(
-            c.set_email(&a, &unique.to_lowercase(), false)
+            c.set_email(&a, &unique.to_lowercase(), false, true)
                 .await
                 .unwrap(),
             SetEmailOutcome::NoEmailSent
         ));
         let err = c
-            .set_email(&b, &unique.to_uppercase(), false)
+            .set_email(&b, &unique.to_uppercase(), false, false)
             .await
             .expect_err("taken by another address");
         assert_eq!(err.status(), 400);
@@ -977,7 +1043,7 @@ mod pg_tests {
         );
 
         assert!(matches!(
-            c.set_email(&a, "", false).await.unwrap(),
+            c.set_email(&a, "", false, false).await.unwrap(),
             SetEmailOutcome::NoEmailSent
         ));
         let sub = c.get_subscription(&a).await.unwrap().unwrap();

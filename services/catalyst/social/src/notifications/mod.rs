@@ -17,6 +17,7 @@
 //! `x-original-path` so the signature still verifies.
 
 pub mod admin;
+pub mod common_email;
 pub mod community;
 pub mod delivery;
 pub mod email;
@@ -28,10 +29,13 @@ pub mod handlers;
 pub mod land_transfers;
 pub(crate) mod moderation;
 pub mod seen;
+pub mod signing;
 pub mod store;
+pub mod templates;
 pub mod types;
+pub mod unsubscribe;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use axum::Router;
@@ -56,8 +60,14 @@ pub const ADMIN_TOKEN_ENV: &str = "CATALYRST_NOTIFICATIONS_ADMIN_TOKEN";
 pub struct Settings {
     /// `CATALYRST_NOTIFICATIONS_ADMIN_TOKEN`: bearer of `POST /notifications/broadcast`; unset refuses it.
     pub admin_token: Option<String>,
-    /// `SENDGRID_*`, `ACCOUNT_BASE_URL`, `MARKETPLACE_BASE_URL`, `TURNSTILE_SECRET_KEY`, `EMAIL_DOMAIN_BLACKLIST`.
+    /// `SENDGRID_*`, `ACCOUNT_BASE_URL`, `TURNSTILE_SECRET_KEY`, `EMAIL_DOMAIN_BLACKLIST`.
     pub email: EmailConfig,
+    /// `SIGNING_KEY`: HMAC key of the e-mail unsubscribe links; unset refuses them.
+    pub signing_key: Option<String>,
+    /// Public notifications origin the unsubscribe links are signed under.
+    pub service_base_url: String,
+    /// `NOTIFICATION_SERVICE_TOKEN`: bearer of `POST /notifications/email`; unset refuses it.
+    pub notification_service_token: Option<String>,
     /// `FIRST_WEAR_ENABLED`: run the friend_first_wear producer (the old
     /// binary ran it when its three extra database DSNs were set).
     pub first_wear_enabled: bool,
@@ -69,6 +79,11 @@ pub struct Settings {
     pub events_base_url: String,
     /// Backend event asset origin and mount, distinct from notice links.
     pub events_asset_base_url: String,
+    /// `CURRENT_VERSION` and the node's `COMMIT_HASH`, for `GET /status`.
+    pub current_version: Option<String>,
+    pub commit_hash: Option<String>,
+    /// Community thumbnail CDN (`communities::Settings::cdn_url`).
+    pub community_cdn_url: String,
 }
 
 impl Default for Settings {
@@ -77,14 +92,19 @@ impl Default for Settings {
             admin_token: None,
             email: EmailConfig {
                 account_base_url: "https://account.decentraland.org".to_string(),
-                marketplace_base_url: "https://decentraland.org/marketplace".to_string(),
                 ..Default::default()
             },
+            signing_key: None,
+            service_base_url: "https://notifications.decentraland.org".into(),
+            notification_service_token: None,
             first_wear_enabled: false,
             first_wear: FirstWearSettings::default(),
             delivery_interval: Duration::from_secs(15),
             events_base_url: "https://decentraland.org".into(),
             events_asset_base_url: "http://localhost/events".into(),
+            current_version: None,
+            commit_hash: None,
+            community_cdn_url: "https://decentraland.org".into(),
         }
     }
 }
@@ -100,6 +120,8 @@ pub struct State {
     /// The collections subgraph reader the first-wear producer resolves
     /// items through; `None` means no first wear is ever notifiable.
     pub market: Option<Arc<ChainIndex>>,
+    /// The data-warehouse events client (`context: notification_server`).
+    analytics: OnceLock<crate::analytics::Analytics>,
 }
 
 pub type SharedState = Arc<State>;
@@ -114,11 +136,27 @@ impl State {
     ) -> Self {
         Self {
             store: NotificationsStore::new(pool),
-            email: email::EmailSender::new(settings.email.clone(), http.clone()),
+            email: email::EmailSender::new(settings.email.clone(), http.clone())
+                .with_unsubscribe(settings.signing_key.as_deref(), &settings.service_base_url),
             settings,
             http,
             eip1654,
             market,
+            analytics: OnceLock::new(),
+        }
+    }
+
+    /// Emits the old inbox's data-warehouse events through `analytics`.
+    pub fn set_analytics(&self, analytics: crate::analytics::Analytics) {
+        let _ = self
+            .analytics
+            .set(analytics.with_context("notification_server"));
+    }
+
+    /// Fire-and-forget; a node without analytics drops the event.
+    pub fn track(&self, event: &str, body: serde_json::Value) {
+        if let Some(analytics) = self.analytics.get() {
+            analytics.fire_event(event, body);
         }
     }
 
@@ -128,7 +166,7 @@ impl State {
         let configured = self.email.notifications_configured();
         if !configured {
             tracing::info!(
-                "SENDGRID_NOTIFICATION_TEMPLATE_ID unset: email deliveries are recorded as skipped"
+                "SENDGRID_NOTIFICATION_TEMPLATE_ID or SIGNING_KEY unset: email deliveries are recorded as skipped"
             );
         }
         jobs.spawn_periodic_leased(
@@ -139,11 +177,15 @@ impl State {
             move |ctx| {
                 let state = state.clone();
                 async move {
-                    let summary =
-                        delivery::run_pass(state.store.pool(), &state.email, configured).await?;
+                    let pool = state.store.pool();
+                    let summary = delivery::run_pass(pool, &state.email, configured).await?;
                     if summary.claimed > 0 {
                         tracing::info!(?summary, "notification deliveries pass");
                         ctx.progress(format!("{summary:?}"));
+                    }
+                    let pruned = delivery::prune(pool, crate::shared::now_utc()).await?;
+                    if pruned > 0 {
+                        tracing::info!(pruned, "notification deliveries pruned");
                     }
                     Ok(())
                 }
@@ -152,8 +194,11 @@ impl State {
         land_transfers::spawn(self.store.pool().clone(), jobs);
         events::spawn(
             self.store.pool().clone(),
-            self.settings.events_base_url.clone(),
-            self.settings.events_asset_base_url.clone(),
+            events::Origins {
+                link: self.settings.events_base_url.clone(),
+                assets: self.settings.events_asset_base_url.clone(),
+                community_cdn: self.settings.community_cdn_url.clone(),
+            },
             jobs,
         );
         if self.settings.first_wear_enabled {
@@ -179,9 +224,11 @@ impl admin::AdminSecretSource for SharedState {
 }
 
 /// The routes, unprefixed: nest under `/notifications`. Bodies are capped
-/// at 256 KiB as before; CORS is permissive as the old bundle's was.
+/// at 256 KiB as before; CORS is permissive as the old bundle's was; bodies
+/// and refusals keep upstream's JSON wire ([`errors::json_wire`]).
 pub fn router(state: SharedState) -> Router {
     Router::new()
+        .route("/status", get(handlers::get_status))
         .route("/notifications", get(handlers::get_notifications))
         .route("/notifications/read", put(handlers::put_read))
         .route(
@@ -192,10 +239,18 @@ pub fn router(state: SharedState) -> Router {
         .route("/confirm-email", put(handlers::put_confirm_email))
         .route("/subscription/opt-outs", post(handlers::post_opt_out))
         .route(
-            "/subscription/opt-outs/community/{communityId}",
-            get(handlers::get_community_opt_out).delete(handlers::delete_community_opt_out),
+            "/subscription/opt-outs/{scope}/{scopeId}",
+            get(handlers::get_opt_out).delete(handlers::delete_opt_out),
         )
         .route("/notifications/broadcast", post(handlers::post_broadcast))
+        .route("/notifications/email", post(common_email::post_email))
+        .route("/unsubscribe/{address}", get(unsubscribe::unsubscribe_all))
+        .route(
+            "/unsubscribe/{address}/{notificationType}",
+            get(unsubscribe::unsubscribe_one),
+        )
+        .fallback(|| async { (axum::http::StatusCode::NOT_FOUND, "Not found") })
+        .layer(axum::middleware::from_fn(errors::json_wire))
         .layer(axum::extract::DefaultBodyLimit::max(256 * 1024))
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(state)

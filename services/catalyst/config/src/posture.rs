@@ -810,6 +810,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("ACCOUNT_BASE_URL", LINK),
     ("PROFILE_URL", LINK),
     ("MARKETPLACE_BASE_URL", LINK),
+    ("NOTIFICATIONS_SERVICE_BASE_URL", LINK),
     ("SHOP_BASE_URL", LINK),
     ("SHOP_ITEM_BASE_URL", LINK),
     ("EVENTS_BASE_URL", LINK),

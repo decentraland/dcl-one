@@ -417,7 +417,7 @@ pub struct SocialConfig {
     #[arg(long, env = "CATALYRST_SOCIAL_RPC_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_social_rpc_admin_token: Option<String>,
 
-    /// Source CURRENT_VERSION string returned verbatim by social RPC /status.
+    /// Source CURRENT_VERSION string returned verbatim by the social RPC and notifications /status.
     #[arg(long, env = "CURRENT_VERSION")]
     pub social_rpc_current_version: Option<String>,
 
@@ -539,15 +539,25 @@ pub struct SocialConfig {
     #[arg(long, env = "SENDGRID_FROM_EMAIL")]
     pub sendgrid_from_email: Option<String>,
 
-    #[arg(long, env = "SENDGRID_VALIDATE_EMAIL_TEMPLATE_ID")]
-    pub sendgrid_validate_email_template_id: Option<String>,
-
-    #[arg(long, env = "SENDGRID_VALIDATE_CREDITS_EMAIL_TEMPLATE_ID")]
-    pub sendgrid_validate_credits_email_template_id: Option<String>,
-
-    /// The email channel of the notification outbox; unset records every delivery as skipped.
+    /// The generic template: outbox deliveries, confirmations and ad-hoc emails; unset records every delivery as skipped.
     #[arg(long, env = "SENDGRID_NOTIFICATION_TEMPLATE_ID")]
     pub sendgrid_notification_template_id: Option<String>,
+
+    /// SendGrid validates notification and confirmation emails but delivers none.
+    #[arg(long, env = "SENDGRID_SANDBOX_MODE", default_value_t = false, action = clap::ArgAction::Set)]
+    pub sendgrid_sandbox_mode: bool,
+
+    /// HMAC key of the notification emails' unsubscribe links; unset sends no notification email.
+    #[arg(long, env = "SIGNING_KEY", hide_env_values = true)]
+    pub signing_key: Option<String>,
+
+    /// Public notifications origin of the email unsubscribe links.
+    #[arg(
+        long,
+        env = "NOTIFICATIONS_SERVICE_BASE_URL",
+        default_value = "https://notifications.decentraland.org"
+    )]
+    pub notifications_service_base_url: String,
 
     #[arg(
         long,
@@ -562,6 +572,10 @@ pub struct SocialConfig {
         default_value = "https://decentraland.org/marketplace"
     )]
     pub marketplace_base_url: String,
+
+    /// Bearer of POST /notifications/notifications/email; unset refuses it.
+    #[arg(long, env = "NOTIFICATION_SERVICE_TOKEN", hide_env_values = true)]
+    pub notification_service_token: Option<String>,
 
     /// Cloudflare Turnstile secret for confirm-email; unset turns the check off.
     #[arg(long, env = "TURNSTILE_SECRET_KEY", hide_env_values = true)]

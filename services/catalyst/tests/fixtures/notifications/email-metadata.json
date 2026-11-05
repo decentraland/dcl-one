@@ -1,0 +1,506 @@
+{
+  "ban_lifted": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "liftedAt": 1717243200000,
+      "userName": "TestUser"
+    }
+  },
+  "ban_warning": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "reason": "Inappropriate language",
+      "warnedAt": "2024-06-01T12:00:00.000Z",
+      "userName": "TestUser"
+    }
+  },
+  "banned": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "reason": "Harassment",
+      "bannedAt": "2024-06-01T12:00:00.000Z",
+      "expiresAt": "2024-06-08T12:00:00.000Z",
+      "customMessage": "You have been banned for repeated violations.",
+      "userName": "TestUser"
+    }
+  },
+  "bid_accepted": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://decentraland.org/marketplace/contracts/0x557539e7792dc12a0555f5ff02d6ec0f0bc88e09/tokens/21",
+      "image": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0x557539e7792dc12a0555f5ff02d6ec0f0bc88e09:0/thumbnail",
+      "price": "1500000000000000000",
+      "title": "Bid Accepted",
+      "rarity": "legendary",
+      "seller": "0x072f890d413c5b37b2ee7661929dfb681abc6673",
+      "network": "polygon",
+      "nftName": "Netgate male",
+      "category": "wearable",
+      "description": "Your bid for 1.50 MANA for this Netgate male was accepted.",
+      "userName": "TestUser"
+    }
+  },
+  "bid_received": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://decentraland.org/marketplace/account?assetType=nft&section=bids",
+      "image": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0xf6ed0f2eea302dbd77482bd4771645ee142ecf7c:1/thumbnail",
+      "price": "1500000000000000000",
+      "title": "Bid Received",
+      "rarity": "legendary",
+      "seller": "0x460b8af3f189aa7f396b4ef696f1218f0fcf7f28",
+      "network": "polygon",
+      "nftName": "Space Jams",
+      "category": "wearable",
+      "description": "You received a bid of 1.50 MANA for this Space Jams.",
+      "userName": "TestUser"
+    }
+  },
+  "credits_on_demand_granted": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "creditsGranted": "100",
+      "userName": "TestUser"
+    }
+  },
+  "credits_reminder_claim_credits": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://decentraland.org/marketplace/credits",
+      "userName": "TestUser"
+    }
+  },
+  "credits_reminder_complete_goals": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://decentraland.org/marketplace/credits",
+      "userName": "TestUser"
+    }
+  },
+  "credits_reminder_do_not_miss_out": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://decentraland.org/marketplace/credits",
+      "userName": "TestUser"
+    }
+  },
+  "credits_reminder_usage": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://decentraland.org/marketplace/credits",
+      "balance": "150",
+      "expirationDate": "June 30",
+      "expirationDay": "Monday",
+      "userName": "TestUser"
+    }
+  },
+  "credits_reminder_usage_24_hours": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://decentraland.org/marketplace/credits",
+      "balance": "150",
+      "expirationDate": "June 30",
+      "userName": "TestUser"
+    }
+  },
+  "event_approved": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://play.decentraland.org/?position=14%2C100&realm=main",
+      "image": "https://events-assets-099ac00.decentraland.org/poster/3b8e6fc465ee4488.png",
+      "title": "Live DJ Music and Dancing in the Unity Café",
+      "description": "Your event Live DJ Music and Dancing in the Unity Café has been approved.",
+      "myHangouts": "https://decentraland.org/whats-on?tab=my",
+      "userName": "TestUser"
+    }
+  },
+  "event_deleted": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "image": "https://events-assets-099ac00.decentraland.org/poster/3b8e6fc465ee4488.png",
+      "title": "Live DJ Music and Dancing in the Unity Café",
+      "description": "Your hangout Live DJ Music and Dancing in the Unity Café was deleted.",
+      "reason": "Hangout was removed by an admin.",
+      "myHangouts": "https://decentraland.org/whats-on?tab=my",
+      "userName": "TestUser"
+    }
+  },
+  "event_rejected": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "image": "https://events-assets-099ac00.decentraland.org/poster/3b8e6fc465ee4488.png",
+      "title": "Live DJ Music and Dancing in the Unity Café",
+      "description": "Your event Live DJ Music and Dancing in the Unity Café was not approved.",
+      "reason": "Submission did not meet the event guidelines.",
+      "myHangouts": "https://decentraland.org/whats-on?tab=my",
+      "userName": "TestUser"
+    }
+  },
+  "events_started": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://play.decentraland.org/?position=14%2C100&realm=main",
+      "name": "Live DJ Music and Dancing in the Unity Café",
+      "image": "https://events-assets-099ac00.decentraland.org/poster/3b8e6fc465ee4488.png",
+      "title": "Event started",
+      "description": "The event Live DJ Music and Dancing in the Unity Café has begun!",
+      "userName": "TestUser"
+    }
+  },
+  "events_starts_soon": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://play.decentraland.org/?position=-99%2C35&realm=main",
+      "name": "UNMONDAY YOURSELF",
+      "image": "https://events-assets-099ac00.decentraland.org/poster/215052d46626a2a8.png",
+      "title": "Event starts in an hour",
+      "endsAt": "2024-05-20T21:00:00.000Z",
+      "startsAt": "2024-03-18T19:00:00.000Z",
+      "description": "The event UNMONDAY  YOURSELF starts in an hour.",
+      "userName": "TestUser"
+    }
+  },
+  "governance_announcement": {
+    "address": null,
+    "metadata": {
+      "title": "Some title",
+      "description": "Some content",
+      "link": "https://governance.decentraland.org/some-link",
+      "userName": "TestUser"
+    }
+  },
+  "governance_authored_proposal_finished": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://governance.decentraland.org/proposal/?id=c9564934-1f5e-44a3-836e-c0e94c1f593f",
+      "title": "Voting ended on your proposal Limit Grants Re-Submissions",
+      "proposalId": "c9564934-1f5e-44a3-836e-c0e94c1f593f",
+      "description": "The votes are in! Find out the outcome of the voting on your proposal now",
+      "proposalTitle": "Limit Grants Re-Submissions",
+      "userName": "TestUser"
+    }
+  },
+  "governance_coauthor_requested": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://governance.decentraland.org/proposal/?id=cacb1ce3-b5e9-4133-901a-cb787f43871f",
+      "title": "Co-author request received",
+      "proposalId": "cacb1ce3-b5e9-4133-901a-cb787f43871f",
+      "description": "You've been invited to collaborate as a co-author on a published proposal. Accept it or reject it here",
+      "proposalTitle": "DCL Community Video Library",
+      "userName": "TestUser"
+    }
+  },
+  "governance_new_comment_on_project_update": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://governance.decentraland.org/update/?id=a38ec7d7-7eb2-4f9a-b9c8-363785fdcbd6&proposalId=1b8eef75-add3-49d6-9181-3061daaf22ec",
+      "title": "New comment on your update for your project Duel Arena P2E Continuum, Refinement & Game Expansion [ Resubmission ]",
+      "proposalId": "1b8eef75-add3-49d6-9181-3061daaf22ec",
+      "description": "Engage in a productive conversation by replying to this comment.",
+      "proposalTitle": "Duel Arena P2E Continuum, Refinement & Game Expansion [ Resubmission ]",
+      "userName": "TestUser"
+    }
+  },
+  "governance_new_comment_on_proposal": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://governance.decentraland.org/proposal/?id=578d3d3e-9fd2-48cb-bea3-ddc6fb5ab1dd",
+      "title": "New comment posted on proposal Decentraland No-Code UI Design Studio",
+      "proposalId": "578d3d3e-9fd2-48cb-bea3-ddc6fb5ab1dd",
+      "description": "Engage in a productive conversation by replying to this comment.",
+      "proposalTitle": "Decentraland No-Code UI Design Studio",
+      "userName": "TestUser"
+    }
+  },
+  "governance_pitch_passed": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "proposalId": "c9564934-1f5e-44a3-836e-c0e94c1f593f",
+      "proposalTitle": "Limit Grants Re-Submissions",
+      "title": "The Pitch \"Limit Grants Re-Submissions\" can now receive Tenders",
+      "description": "Help to advance this idea by proposing potential solutions",
+      "link": "https://governance.decentraland.org/proposal/?id=c9564934-1f5e-44a3-836e-c0e94c1f593f",
+      "userName": "TestUser"
+    }
+  },
+  "governance_proposal_enacted": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://governance.decentraland.org/proposal/?id=578d3d3e-9fd2-48cb-bea3-ddc6fb5ab1dd",
+      "title": "Your Project has been funded",
+      "proposalId": "578d3d3e-9fd2-48cb-bea3-ddc6fb5ab1dd",
+      "description": "Congratulations! Your Project has been successfully enacted and a funding Vesting Contract was created",
+      "proposalTitle": "Decentraland No-Code UI Design Studio",
+      "userName": "TestUser"
+    }
+  },
+  "governance_tender_passed": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "proposalId": "c9564934-1f5e-44a3-836e-c0e94c1f593f",
+      "proposalTitle": "Limit Grants Re-Submissions",
+      "title": "The Tender \"Limit Grants Re-Submissions\" can now receive Bid Projects",
+      "description": "If think you can tackle this solution, propose a Project and get funding from the DAO",
+      "link": "https://governance.decentraland.org/proposal/?id=c9564934-1f5e-44a3-836e-c0e94c1f593f",
+      "userName": "TestUser"
+    }
+  },
+  "governance_voting_ended_voter": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://governance.decentraland.org/proposal/?id=c9564934-1f5e-44a3-836e-c0e94c1f593f",
+      "title": "Voting ended on a proposal you voted on Limit Grants Re-Submissions",
+      "proposalId": "c9564934-1f5e-44a3-836e-c0e94c1f593f",
+      "description": "Discover the results of the proposal you participated in as a voter. Your input matters!",
+      "proposalTitle": "Limit Grants Re-Submissions",
+      "userName": "TestUser"
+    }
+  },
+  "item_sold": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://decentraland.org/marketplace/contracts/0xca520eea5aadff51b48d9e9b3038001a751139ca/tokens/180",
+      "image": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0xca520eea5aadff51b48d9e9b3038001a751139ca:0/thumbnail",
+      "title": "Item Sold",
+      "rarity": "epic",
+      "seller": "0x8967ad851ccbd4c1a2d57a128d3c606fcab29bad",
+      "network": "polygon",
+      "nftName": "HeartPrint Shoes",
+      "category": "wearable",
+      "description": "You just sold this HeartPrint Shoes.",
+      "userName": "TestUser"
+    }
+  },
+  "referral_invited_users_accepted": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "url": "https://decentraland.org/referral",
+      "invitedUsers": 5,
+      "userName": "TestUser"
+    }
+  },
+  "referral_new_tier_reached": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "url": "https://decentraland.org/referral",
+      "tier": 10,
+      "userName": "TestUser"
+    }
+  },
+  "rental_ended": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://decentraland.org/marketplace/contracts/0x959e104e1a4db6317fa58f8295f586e1a978c297/tokens/1249/manage",
+      "title": "Rent Period Ending",
+      "lessor": "0x95606705b7452e96a9e88901ee418ef4e3d19847",
+      "tenant": "0x135b17eaa25e3e0f3ce8f0a575bcc8867031f77c",
+      "endedAt": "1710627683",
+      "tokenId": "1249",
+      "contract": "0x959e104e1a4db6317fa58f8295f586e1a978c297",
+      "operator": "0x135b17eaa25e3e0f3ce8f0a575bcc8867031f77c",
+      "startedAt": "1679091683",
+      "land": "3,2",
+      "description": "The rent of your LAND at 3,2 has ended.",
+      "userName": "TestUser"
+    }
+  },
+  "rental_started": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://decentraland.org/marketplace/contracts/0x959e104e1a4db6317fa58f8295f586e1a978c297/tokens/5051/manage",
+      "title": "LAND Rented",
+      "lessor": "0xea09431b6ddc2a52a997d690573934a72c8eb95b",
+      "tenant": "0x951a6698f644a9b1c634abc416b9d9902aaf3db9",
+      "endedAt": "1742748707",
+      "tokenId": "5051",
+      "contract": "0x959e104e1a4db6317fa58f8295f586e1a978c297",
+      "operator": "0x55651e399ca32d7e2f44034fb62996937af0bc49",
+      "startedAt": "1711212707",
+      "land": "1,2",
+      "description": "Your LAND at 1,2 was rented by 0x951a6698f644a9b1c634abc416b9d9902aaf3db9.",
+      "userName": "TestUser"
+    }
+  },
+  "reward_assignment": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "title": "New item received",
+      "tokenName": "MESHfair 2024 Halo",
+      "tokenImage": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0x2cbd78a88c8556ac22186b365c4260e8c7855df0:0/thumbnail",
+      "description": "This MESHfair 2024 Halo is already in your backpack",
+      "tokenRarity": "epic",
+      "userName": "TestUser"
+    }
+  },
+  "reward_campaign_out_of_funds": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "title": "Campaign title",
+      "description": "Campaign description",
+      "link": "https://decentraland.org/rewards/campaign/aksdjlaskjdakl",
+      "owner": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+      "campaignId": "string",
+      "campaignName": "Name of the campaign",
+      "userName": "TestUser"
+    }
+  },
+  "reward_campaign_out_of_stock": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "title": "Campaign title",
+      "description": "Campaign description",
+      "link": "https://decentraland.org/rewards/campaign/aksdjlaskjdakl",
+      "owner": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+      "campaignId": "string",
+      "campaignName": "Name of the campaign",
+      "userName": "TestUser"
+    }
+  },
+  "royalties_earned": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "link": "https://decentraland.org/marketplace/contracts/0x08cbc78c1b2e2eea7627c39c8adf660d52e3d82c/tokens/945",
+      "image": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0x08cbc78c1b2e2eea7627c39c8adf660d52e3d82c:0/thumbnail",
+      "title": "Royalties Earned",
+      "rarity": "uncommon",
+      "network": "polygon",
+      "nftName": "Blue santa hat",
+      "category": "wearable",
+      "description": "You earned 0.90 MANA for this Blue santa hat.",
+      "royaltiesCut": "900000000000000000",
+      "royaltiesCollector": "0x99352b315b769efbacaa4107e68203bd47a8bdda",
+      "userName": "TestUser"
+    }
+  },
+  "streaming_key_expired": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "title": "Streaming Key Expired",
+      "description": "Your streaming key has expired",
+      "position": "10,10",
+      "worldName": "my-world.dcl.eth",
+      "isWorld": true,
+      "url": "https://play.decentraland.org/?position=10%2C10&realm=my-world.dcl.eth",
+      "image": "https://assets-cdn.decentraland.zone/streaming/streaming-notification.png",
+      "userName": "TestUser"
+    }
+  },
+  "streaming_key_reset": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "title": "Streaming Key Reset",
+      "description": "Your streaming key has been reset",
+      "position": "10,10",
+      "worldName": "my-world.dcl.eth",
+      "isWorld": true,
+      "url": "https://play.decentraland.org/?position=10%2C10&realm=my-world.dcl.eth",
+      "image": "https://assets-cdn.decentraland.zone/streaming/streaming-notification.png",
+      "userName": "TestUser"
+    }
+  },
+  "streaming_key_revoke": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "title": "Streaming Key Revoked",
+      "description": "Your streaming key has been revoked",
+      "position": "10,10",
+      "worldName": "my-world.dcl.eth",
+      "isWorld": true,
+      "url": "https://play.decentraland.org/?position=10%2C10&realm=my-world.dcl.eth",
+      "image": "https://assets-cdn.decentraland.zone/streaming/streaming-notification.png",
+      "userName": "TestUser"
+    }
+  },
+  "streaming_place_updated": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "title": "Streaming Place Updated",
+      "description": "The place you are streaming to has been updated",
+      "position": "10,10",
+      "worldName": "my-world.dcl.eth",
+      "isWorld": true,
+      "url": "https://play.decentraland.org/?position=10%2C10&realm=my-world.dcl.eth",
+      "image": "https://assets-cdn.decentraland.zone/streaming/streaming-notification.png",
+      "userName": "TestUser"
+    }
+  },
+  "streaming_time_exceeded": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "title": "Streaming Time Exceeded",
+      "description": "Your stream has exceeded the maximum allowed time",
+      "position": "10,10",
+      "worldName": "my-world.dcl.eth",
+      "isWorld": true,
+      "url": "https://play.decentraland.org/?position=10%2C10&realm=my-world.dcl.eth",
+      "image": "https://assets-cdn.decentraland.zone/streaming/streaming-notification.png",
+      "userName": "TestUser"
+    }
+  },
+  "tip_received": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "amount": "10000000000000000000",
+      "senderAddress": "0xABCDEF1234567890ABCDEF1234567890ABCDEF12",
+      "receiverAddress": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+      "senderUsername": "CoolBuilder",
+      "userName": "SceneCreator"
+    }
+  },
+  "worlds_access_restored": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "url": "https://decentraland.org/builder/worlds?tab=dcl",
+      "title": "Worlds available",
+      "description": "Access to your Worlds has been restored.",
+      "userName": "TestUser"
+    }
+  },
+  "worlds_access_restricted": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "title": "Worlds restricted",
+      "description": "Access to your Worlds has been restricted due to insufficient resources.",
+      "url": "https://decentraland.org/builder/worlds?tab=dcl",
+      "when": 1793900338130,
+      "userName": "TestUser"
+    }
+  },
+  "worlds_missing_resources": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "url": "https://decentraland.org/builder/worlds?tab=dcl",
+      "when": 1711929897037,
+      "title": "Missing Resources",
+      "description": "World access at risk in 48hs. Rectify now to prevent disruption.",
+      "userName": "TestUser"
+    }
+  },
+  "worlds_permission_granted": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "title": "Worlds permission granted",
+      "description": "You have been granted access permission for world el.dcl.eth",
+      "world": "el.dcl.eth",
+      "permissions": [
+        "access"
+      ],
+      "url": "https://decentraland.org/builder/worlds?tab=dcl",
+      "userName": "TestUser"
+    }
+  },
+  "worlds_permission_revoked": {
+    "address": "0x1234567890ABCDEF1234567890ABCDEF12345678",
+    "metadata": {
+      "title": "World permission revoked",
+      "description": "Your streaming permission for world el.dcl.eth has been revoked",
+      "world": "el.dcl.eth",
+      "permissions": [
+        "streaming"
+      ],
+      "url": "https://decentraland.org/builder/worlds?tab=dcl",
+      "userName": "TestUser"
+    }
+  }
+}

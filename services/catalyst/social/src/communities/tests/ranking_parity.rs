@@ -80,14 +80,14 @@ async fn ranking_event_handlers_preserve_clamps_receipts_fanout_and_atomic_retri
     let stream = json!({"metadata":{"communityId":a.as_uuid(),"totalParticipants":9999.8}});
     for _ in 0..2 {
         directory
-            .notify_community_voice_ended(a, &key, &stream, now)
+            .record_community_voice_ended(a, &key, &stream, now)
             .await
             .unwrap();
     }
     assert_eq!(counters(&rig, a).await, (0, 1, 1, 0, 500));
     for (key, participants) in [("solo", 1.0), ("fractional", 1.9)] {
         directory
-            .notify_community_voice_ended(
+            .record_community_voice_ended(
                 a,
                 key,
                 &json!({"metadata":{"totalParticipants":participants}}),
@@ -99,7 +99,7 @@ async fn ranking_event_handlers_preserve_clamps_receipts_fanout_and_atomic_retri
     assert_eq!(counters(&rig, a).await, (0, 1, 2, 0, 501));
     sqlx::query("UPDATE social.communities SET ranking_streams_count=2147483647,ranking_streams_total_participants=2147483640 WHERE id=$1").bind(a).execute(&rig.pool).await.unwrap();
     directory
-        .notify_community_voice_ended(a, "saturation", &stream, now)
+        .record_community_voice_ended(a, "saturation", &stream, now)
         .await
         .unwrap();
     let values = counters(&rig, a).await;

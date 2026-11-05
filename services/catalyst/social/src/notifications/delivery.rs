@@ -5,6 +5,7 @@
 //! The old crate had no out-of-process channel (rows were in-app only), so this
 //! is new behaviour with an explicit degraded mode: without
 //! `SENDGRID_NOTIFICATION_TEMPLATE_ID` every claimed row ends `skipped`.
+//! Terminal rows are pruned after [`RETENTION`].
 
 use std::time::Duration;
 
@@ -14,6 +15,8 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 use super::email::{EmailSender, SendFailure};
+use super::first_wear::creator_profile_name;
+use super::templates;
 use crate::shared::now_utc;
 
 pub const BATCH: i64 = 100;
@@ -21,6 +24,8 @@ pub const MAX_ATTEMPTS: i32 = 5;
 pub const LEASE: Duration = Duration::from_secs(300);
 const BACKOFF_BASE: Duration = Duration::from_secs(30);
 const BACKOFF_MAX: Duration = Duration::from_secs(3600);
+pub const RETENTION: Duration = Duration::from_secs(30 * 86_400);
+pub const PRUNE_BATCH: i64 = 1000;
 
 /// A claimed `email` row with what the send needs, read in the claim.
 #[derive(Debug, Clone)]
@@ -177,9 +182,54 @@ pub struct PassSummary {
     pub retried: usize,
 }
 
+/// The old processor's render-time names, never persisted: `userName` is the
+/// recipient's profile name and a tip's `senderUsername` the sender's, else
+/// `Unknown`.
+async fn enrich_names(pool: &PgPool, row: &mut Claimed) -> anyhow::Result<()> {
+    let name = |n: Option<String>| Json::String(n.unwrap_or_else(|| "Unknown".into()));
+    let user = creator_profile_name(pool, &row.address.to_lowercase()).await?;
+    let sender = match row.metadata.get("senderAddress").and_then(Json::as_str) {
+        Some(s) if row.kind == "tip_received" => {
+            Some(creator_profile_name(pool, &s.to_lowercase()).await?)
+        }
+        _ => None,
+    };
+    if let Some(m) = row.metadata.as_object_mut() {
+        m.insert("userName".into(), name(user));
+        if let Some(sender) = sender {
+            m.insert("senderUsername".into(), name(sender));
+        }
+    }
+    Ok(())
+}
+
+/// Deletes up to [`PRUNE_BATCH`] terminal rows last touched before
+/// `now - RETENTION`, oldest first over `notification_deliveries_terminal_idx`.
+pub async fn prune(pool: &PgPool, now: NaiveDateTime) -> Result<u64, sqlx::Error> {
+    let cutoff = now - chrono::Duration::from_std(RETENTION).expect("RETENTION fits");
+    let res = sqlx::query(
+        r#"
+        DELETE FROM social.notification_deliveries d
+        USING (
+            SELECT notification_id, channel FROM social.notification_deliveries
+            WHERE state <> 'pending' AND updated_at < $1
+            ORDER BY updated_at
+            LIMIT $2
+        ) old
+        WHERE d.notification_id = old.notification_id AND d.channel = old.channel
+          AND d.state <> 'pending'
+        "#,
+    )
+    .bind(cutoff)
+    .bind(PRUNE_BATCH)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
 /// One pass: claim, send each outside any transaction, record. A row whose
-/// recipient lost their email between insert and send is `skipped` without
-/// a send.
+/// recipient lost their email between insert and send, or whose type has no
+/// template (rows written before the allowlist), is `skipped` without a send.
 pub async fn run_pass(
     pool: &PgPool,
     channel: &dyn EmailChannel,
@@ -192,16 +242,22 @@ pub async fn run_pass(
         ..Default::default()
     };
     for row in &claimed {
-        let result = match (&row.email, configured) {
-            (None, _) => Err(SendFailure::Permanent(
-                "no confirmed email at send time".to_string(),
-            )),
-            (Some(_), false) => Err(SendFailure::NotConfigured),
-            (Some(to), true) => channel.send(to, row).await,
-        };
-        let outcome = match (&row.email, result) {
-            (None, Err(SendFailure::Permanent(e))) => Outcome::Skipped(e),
-            (_, result) => outcome_of(row, result),
+        let outcome = match (&row.email, configured) {
+            (None, _) => Outcome::Skipped("no confirmed email at send time".to_string()),
+            _ if !templates::is_emailable(&row.kind) => {
+                Outcome::Skipped("no email template".to_string())
+            }
+            (Some(_), false) => outcome_of(row, Err(SendFailure::NotConfigured)),
+            (Some(to), true) => {
+                let mut row = row.clone();
+                let result = match enrich_names(pool, &mut row).await {
+                    Ok(()) => channel.send(to, &row).await,
+                    Err(e) => Err(SendFailure::Transient(format!(
+                        "profile lookup failed: {e}"
+                    ))),
+                };
+                outcome_of(&row, result)
+            }
         };
         match &outcome {
             Outcome::Sent => summary.sent += 1,
@@ -277,6 +333,7 @@ mod pg_tests {
 
     struct Recorder {
         sent: Mutex<Vec<(String, Uuid)>>,
+        metadata: Mutex<Vec<(Uuid, Json)>>,
         fail_with: Mutex<Option<SendFailure>>,
     }
 
@@ -284,6 +341,7 @@ mod pg_tests {
         fn new() -> Self {
             Self {
                 sent: Mutex::new(Vec::new()),
+                metadata: Mutex::new(Vec::new()),
                 fail_with: Mutex::new(None),
             }
         }
@@ -298,6 +356,9 @@ mod pg_tests {
             self.sent
                 .lock()
                 .push((to.to_string(), claimed.notification_id));
+            self.metadata
+                .lock()
+                .push((claimed.notification_id, claimed.metadata.clone()));
             Ok(())
         }
     }
@@ -306,17 +367,28 @@ mod pg_tests {
         pool: &PgPool,
         address: &crate::identity::Address,
     ) -> Vec<NewNotification> {
+        notify(
+            pool,
+            address,
+            "bid_received",
+            serde_json::json!({"title": "t"}),
+        )
+        .await
+    }
+
+    async fn notify(
+        pool: &PgPool,
+        address: &crate::identity::Address,
+        kind: &str,
+        metadata: Json,
+    ) -> Vec<NewNotification> {
         sqlx::query("INSERT INTO social.subscriptions (address, email) VALUES ($1, $2)")
             .bind(address)
             .bind(format!("{}@example.com", &address.as_str()[2..10]))
             .execute(pool)
             .await
             .unwrap();
-        let batch = vec![NewNotification::now(
-            address.clone(),
-            "bid_received",
-            serde_json::json!({"title": "t"}),
-        )];
+        let batch = vec![NewNotification::now(address.clone(), kind, metadata)];
         assert_eq!(insert_notifications(pool, &batch).await.unwrap(), 1);
         batch
     }
@@ -483,5 +555,118 @@ mod pg_tests {
             delivery_state(&pool, other[0].id).await.unwrap(),
             ("failed".into(), 1, Some("400 bad template".into()))
         );
+    }
+
+    async fn deploy_profile(pool: &PgPool, address: &str, name: &str) {
+        sqlx::query(
+            "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain)
+             VALUES ($1, 'v3', 'profile', $2, $3::json, $4, ARRAY[$1::text], $4, '[]'::json)",
+        )
+        .bind(address)
+        .bind(format!("bafy-{}", Uuid::new_v4().simple()))
+        .bind(serde_json::json!({"v": {"avatars": [{"name": name}]}}))
+        .bind(now_utc())
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_type_without_a_template_gets_a_skipped_row_and_is_never_sent() {
+        let Some(pool) = private_pool("dlv-tpl").await else {
+            return;
+        };
+        let a = fresh_address();
+        let rows = notify(&pool, &a, "land_transfer_received", serde_json::json!({})).await;
+        assert_eq!(
+            delivery_state(&pool, rows[0].id).await.unwrap(),
+            ("skipped".into(), 0, Some("no email template".into()))
+        );
+        // A row written before the allowlist is skipped at send time.
+        sqlx::query("UPDATE social.notification_deliveries SET state = 'pending', last_error = NULL WHERE notification_id = $1")
+            .bind(rows[0].id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let recorder = Recorder::new();
+        run_pass(&pool, &recorder, true).await.unwrap();
+        assert_eq!(
+            delivery_state(&pool, rows[0].id).await.unwrap(),
+            ("skipped".into(), 1, Some("no email template".into()))
+        );
+        assert!(recorder.sent.lock().iter().all(|(_, n)| *n != rows[0].id));
+    }
+
+    #[tokio::test]
+    async fn names_are_enriched_at_send_time_and_never_persisted() {
+        let Some(pool) = private_pool("dlv-names").await else {
+            return;
+        };
+        let named = fresh_address();
+        let sender = fresh_address();
+        deploy_profile(&pool, named.as_str(), "Recipient").await;
+        deploy_profile(&pool, sender.as_str(), "Tipper").await;
+        let tip = notify(
+            &pool,
+            &named,
+            "tip_received",
+            serde_json::json!({"senderAddress": sender.as_str().to_uppercase().replacen("0X", "0x", 1)}),
+        )
+        .await;
+        let anon = pending_for(&pool, &fresh_address()).await;
+        let recorder = Recorder::new();
+        run_pass(&pool, &recorder, true).await.unwrap();
+        let seen: std::collections::HashMap<Uuid, Json> =
+            recorder.metadata.lock().iter().cloned().collect();
+        assert_eq!(seen[&tip[0].id]["userName"], "Recipient");
+        assert_eq!(seen[&tip[0].id]["senderUsername"], "Tipper");
+        assert_eq!(seen[&anon[0].id]["userName"], "Unknown");
+        assert!(seen[&anon[0].id].get("senderUsername").is_none());
+        let stored: Json =
+            sqlx::query_scalar("SELECT metadata FROM social.notifications WHERE id = $1")
+                .bind(tip[0].id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            stored.get("userName").is_none(),
+            "enrichment is not persisted"
+        );
+    }
+
+    #[tokio::test]
+    async fn prune_deletes_only_terminal_rows_past_retention() {
+        let Some(pool) = private_pool("dlv-prune").await else {
+            return;
+        };
+        let old = now_utc() - chrono::Duration::days(31);
+        let mut ids = Vec::new();
+        for state in ["sent", "skipped", "failed", "pending"] {
+            let rows = pending_for(&pool, &fresh_address()).await;
+            sqlx::query("UPDATE social.notification_deliveries SET state = $2, updated_at = $3 WHERE notification_id = $1")
+                .bind(rows[0].id)
+                .bind(state)
+                .bind(old)
+                .execute(&pool)
+                .await
+                .unwrap();
+            ids.push(rows[0].id);
+        }
+        let recent = pending_for(&pool, &fresh_address()).await;
+        sqlx::query(
+            "UPDATE social.notification_deliveries SET state = 'sent' WHERE notification_id = $1",
+        )
+        .bind(recent[0].id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(prune(&pool, now_utc()).await.unwrap(), 3);
+        for id in &ids[..3] {
+            assert_eq!(delivery_state(&pool, *id).await, None);
+        }
+        assert_eq!(delivery_state(&pool, ids[3]).await.unwrap().0, "pending");
+        assert_eq!(delivery_state(&pool, recent[0].id).await.unwrap().0, "sent");
+        assert_eq!(prune(&pool, now_utc()).await.unwrap(), 0);
     }
 }

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use axum::Router;
 use axum::body::Body;
-use axum::http::{Request, header};
+use axum::http::{HeaderMap, Request, header};
 use catalyst_testing::conformance::compare::{
     self, compare_body, query_string, status_and_header_notes,
 };
@@ -33,6 +33,18 @@ pub fn fixture(service: &str, name: &str) -> Fixture {
 /// with `[n]` folded to `[]` (what differs, not the seeded rows' own values),
 /// or `body bytes differ` for a byte body.
 pub async fn replay(app: &Router, prefix: &str, name: &str, fx: &Fixture) -> Vec<String> {
+    replay_signed(app, prefix, name, fx, &HeaderMap::new()).await
+}
+
+/// [`replay`] with `auth` (a fresh signature over the same request) in place
+/// of the recorded, timestamp-bound auth chain.
+pub async fn replay_signed(
+    app: &Router,
+    prefix: &str,
+    name: &str,
+    fx: &Fixture,
+    auth: &HeaderMap,
+) -> Vec<String> {
     let mut uri = format!("{prefix}{}", fx.request.path);
     if let Some(query) = query_string(&fx.request.query, None) {
         uri = format!("{uri}?{query}");
@@ -44,6 +56,9 @@ pub async fn replay(app: &Router, prefix: &str, name: &str, fx: &Fixture) -> Vec
         if !k.to_ascii_lowercase().starts_with("x-identity-") {
             request = request.header(k.as_str(), v.as_str());
         }
+    }
+    for (k, v) in auth {
+        request = request.header(k, v);
     }
     let request = request.body(Body::empty()).unwrap();
     let response = app.clone().oneshot(request).await.unwrap();
