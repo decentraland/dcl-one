@@ -19,8 +19,8 @@ use serde_json::{Value, json};
 
 use crate::content::queries::active_entity_docs_by_pointers;
 use crate::shared::query_params::{
-    MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination, QueryParams,
-    parse_pagination_with, parse_query_string, qs_get_string,
+    JsPagination, MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination, QueryParams,
+    parse_pagination_js, parse_pagination_with, parse_query_string, qs_get_string,
 };
 
 use super::definitions::{
@@ -33,14 +33,8 @@ use super::{MarketplaceState, SharedState, bad_request, service_unavailable};
 fn pagination_object(
     params: &QueryParams,
     max_page_size: i64,
-) -> Result<Pagination, Box<Response>> {
-    parse_pagination_with(
-        params,
-        max_page_size,
-        OversizePolicy::Reject,
-        NonPositivePolicy::PassThrough,
-    )
-    .map_err(|msg| Box::new(bad_request(&msg)))
+) -> Result<JsPagination, Box<Response>> {
+    parse_pagination_js(params, max_page_size).map_err(|msg| Box::new(bad_request(&msg)))
 }
 
 struct GroupedItem {
@@ -126,9 +120,17 @@ fn filter_groups(
 /// lamb2 validates and sorts only when `orderBy` is present
 /// (decentraland/lamb2:src/controllers/handlers/utils.ts:45-48,
 /// src/logic/fetch-elements/fetch-items.ts:82-85): without it the groups keep
-/// the reader's order and a lone `direction` is ignored.
+/// the source's order and a lone `direction` is ignored. That source is the
+/// marketplace API, whose groups come rarest first, then by urn (the
+/// 2026-11-04 capture `LI-18-marketplace-api-wearables-grouped.json`), and
+/// the subgraph copies are put in that order here.
 fn validate_and_sort(items: &mut [GroupedItem], params: &QueryParams) -> Result<(), String> {
     if !params.contains_key("orderBy") {
+        items.sort_by(|a, b| {
+            rarity_rank(&b.rarity)
+                .cmp(&rarity_rank(&a.rarity))
+                .then_with(|| locale_cmp(&a.urn, &b.urn))
+        });
         return Ok(());
     }
     let sort = qs_get_string(params, "orderBy")
@@ -244,12 +246,6 @@ async fn owned_items_response(
     item_category: &str,
     query_string: &str,
 ) -> Response {
-    // Before any reader call, as the old lambdas did: an arbitrary path
-    // string is otherwise forwarded to the subgraphs as `$owner` (two
-    // queries per distinct string) and cached under it.
-    if !super::is_valid_eth_address(address) {
-        return bad_request("Address must be a valid Ethereum address");
-    }
     // The 502 names the address as the path spelled it, as lamb2's does.
     let path_address = address;
     let address = &address.to_lowercase();
@@ -267,6 +263,19 @@ async fn owned_items_response(
     };
     if let Err(msg) = validate_and_sort(&mut [], &params) {
         return bad_request(&msg);
+    }
+
+    // lamb2 takes any `:address`; one that is not an Ethereum address owns
+    // nothing. It is answered here, before any reader call, so an arbitrary
+    // path string is never forwarded to the subgraphs as `$owner`.
+    if !super::is_valid_eth_address(address) {
+        return Json(json!({
+            "elements": [],
+            "totalAmount": 0,
+            "pageNum": pagination.page_num,
+            "pageSize": pagination.page_size,
+        }))
+        .into_response();
     }
 
     if let Err(envelope) = readers::require_both_collections(state) {
@@ -293,7 +302,7 @@ async fn owned_items_response(
     }
 
     let total_amount = items.len();
-    let (start, end) = js_page(total_amount as i64, pagination.offset, pagination.limit);
+    let (start, end) = pagination.slice_range(total_amount);
     let page: Vec<&GroupedItem> = items[start..end].iter().collect();
 
     let by_pointer = if include_definitions || include_entities {
@@ -806,23 +815,33 @@ mod tests {
     }
 
     #[test]
-    fn without_order_by_nothing_is_validated_or_sorted() {
+    fn without_order_by_the_groups_come_in_the_marketplace_order() {
+        // The marketplace API's grouped order (captures/lambdas-items/
+        // LI-18-marketplace-api-wearables-grouped.json): rarest first, then urn.
+        let mk = || {
+            vec![
+                item("urn:c", "C", "exotic", 0, 0),
+                item("urn:b", "B", "common", 0, 0),
+                item("urn:a", "A", "exotic", 0, 0),
+                item("urn:d", "D", "mythic", 0, 0),
+            ]
+        };
+        let mut items = mk();
+        validate_and_sort(&mut items, &parse_query_string("")).unwrap();
+        assert_eq!(urns(&items), vec!["urn:d", "urn:a", "urn:c", "urn:b"]);
+        let mut items = mk();
+        validate_and_sort(&mut items, &parse_query_string("direction=sideways")).unwrap();
+        assert_eq!(
+            urns(&items),
+            vec!["urn:d", "urn:a", "urn:c", "urn:b"],
+            "a lone direction is ignored"
+        );
         let mk = || {
             vec![
                 item("urn:b", "B", "common", 0, 0),
                 item("urn:a", "A", "legendary", 0, 0),
             ]
         };
-        let mut items = mk();
-        validate_and_sort(&mut items, &parse_query_string("")).unwrap();
-        assert_eq!(urns(&items), vec!["urn:b", "urn:a"], "the reader's order");
-        let mut items = mk();
-        validate_and_sort(&mut items, &parse_query_string("direction=sideways")).unwrap();
-        assert_eq!(
-            urns(&items),
-            vec!["urn:b", "urn:a"],
-            "a lone direction is ignored"
-        );
         let mut items = mk();
         validate_and_sort(&mut items, &parse_query_string("orderBy=rarity")).unwrap();
         assert_eq!(

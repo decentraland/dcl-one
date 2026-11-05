@@ -45,8 +45,7 @@ use serde_json::{Value, json};
 use crate::content::queries::{active_entity_docs_by_pointers, active_entity_docs_by_prefix};
 use crate::shared::cache::TtlMap;
 use crate::shared::query_params::{
-    NonPositivePolicy, OversizePolicy, Pagination, parse_pagination_with, parse_query_string,
-    qs_get_array, qs_get_string,
+    JsPagination, parse_pagination_js, parse_query_string, qs_get_array, qs_get_string,
 };
 
 use super::definitions::{extract_wearable_definition, locale_cmp};
@@ -110,10 +109,9 @@ type ContractRead = (String, Result<Vec<String>, String>);
 
 /// The third-party readers' memo: the provider list (6 h), each provider's
 /// mapped entities (5 min), the owner's tokens per network (60 s, a failed
-/// read `FAILED_TTL`) and the integrations list (6 h).
+/// read `FAILED_TTL`).
 pub struct Caches {
     providers: TtlMap<(), Arc<Vec<ThirdPartyProvider>>>,
-    integrations: TtlMap<(), Value>,
     collection_entities: TtlMap<String, Arc<Vec<Value>>>,
     owned: TtlMap<OwnedKey, Arc<Vec<ContractRead>>>,
     failed: TtlMap<OwnedKey, Arc<Vec<ContractRead>>>,
@@ -123,7 +121,6 @@ impl Default for Caches {
     fn default() -> Self {
         Self {
             providers: TtlMap::bounded(PROVIDER_TTL, 1),
-            integrations: TtlMap::bounded(PROVIDER_TTL, 1),
             collection_entities: TtlMap::bounded(COLLECTION_ENTITIES_TTL, 256),
             owned: TtlMap::bounded(OWNED_TTL, OWNED_MAX_ENTRIES),
             failed: TtlMap::bounded(FAILED_TTL, OWNED_MAX_ENTRIES),
@@ -141,6 +138,10 @@ pub struct TpContract {
 pub struct ThirdPartyProvider {
     pub id: String,
     pub contracts: Vec<TpContract>,
+    /// `metadata.thirdParty.name` and `.description` as the registry
+    /// answers them (`null` kept); `None` when absent.
+    pub name: Option<Value>,
+    pub description: Option<Value>,
 }
 
 const TP_QUERY: &str = r#"
@@ -178,9 +179,8 @@ fn parse_providers(data: &Value) -> Vec<ThirdPartyProvider> {
             continue;
         }
         let mut contracts = Vec::new();
-        if let Some(cs) = p
-            .get("metadata")
-            .and_then(|m| m.get("thirdParty"))
+        let third_party = p.get("metadata").and_then(|m| m.get("thirdParty"));
+        if let Some(cs) = third_party
             .and_then(|t| t.get("contracts"))
             .and_then(|c| c.as_array())
         {
@@ -195,7 +195,12 @@ fn parse_providers(data: &Value) -> Vec<ThirdPartyProvider> {
                 }
             }
         }
-        out.push(ThirdPartyProvider { id, contracts });
+        out.push(ThirdPartyProvider {
+            id,
+            contracts,
+            name: third_party.and_then(|t| t.get("name")).cloned(),
+            description: third_party.and_then(|t| t.get("description")).cloned(),
+        });
     }
     out
 }
@@ -1006,7 +1011,9 @@ fn provider_name(id: &str) -> Option<&str> {
 /// only the provider named `only_name` (the URN's fifth part). With a
 /// registry configured, a name no approved provider has is
 /// `ThirdPartyNotFound`, as the old lambdas threw. A contract that could not
-/// be read fails the fetch or is left out, per `on_failure`.
+/// be read fails the fetch or is left out, per `on_failure`. An `owner` that
+/// is not an Ethereum address holds nothing (lamb2 takes any `:address`)
+/// and no holdings reader is asked.
 pub async fn fetch_all_third_party_wearables(
     state: &MarketplaceState,
     owner: &str,
@@ -1024,7 +1031,7 @@ pub async fn fetch_all_third_party_wearables(
         }
     }
     providers.retain(|p| !p.contracts.is_empty());
-    if providers.is_empty() {
+    if providers.is_empty() || !super::is_valid_eth_address(&owner) {
         return Ok(Vec::new());
     }
     let mut contracts_by_network: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
@@ -1221,15 +1228,9 @@ fn tpw_passes_filter(e: &TpwElement, categories: &[String], name: &Option<String
 /// 100): no `pageSize` is too large.
 fn pagination_object(
     query_string: &str,
-) -> Result<(crate::shared::query_params::QueryParams, Pagination), Response> {
+) -> Result<(crate::shared::query_params::QueryParams, JsPagination), Response> {
     let params = parse_query_string(query_string);
-    let pagination = parse_pagination_with(
-        &params,
-        i64::MAX,
-        OversizePolicy::Reject,
-        NonPositivePolicy::PassThrough,
-    )
-    .map_err(|msg| bad_request(&msg))?;
+    let pagination = parse_pagination_js(&params, i64::MAX).map_err(|msg| bad_request(&msg))?;
     Ok((params, pagination))
 }
 
@@ -1239,9 +1240,6 @@ pub async fn user_third_party_wearables(
     Path(address): Path<String>,
     request: Request,
 ) -> Response {
-    if !super::is_valid_eth_address(&address.to_lowercase()) {
-        return bad_request("Address must be a valid Ethereum address");
-    }
     let (params, pagination) = match pagination_object(request.uri().query().unwrap_or("")) {
         Ok(p) => p,
         Err(resp) => return resp,
@@ -1287,9 +1285,6 @@ pub async fn user_third_party_collection_wearables(
     Path((address, collection_id)): Path<(String, String)>,
     request: Request,
 ) -> Response {
-    if !super::is_valid_eth_address(&address.to_lowercase()) {
-        return bad_request("Address must be a valid Ethereum address");
-    }
     let cleaned: String = collection_id
         .split(':')
         .take(5)
@@ -1305,13 +1300,14 @@ pub async fn user_third_party_collection_wearables(
         Ok(p) => p,
         Err(resp) => return resp,
     };
-    let mut elements =
+    // The fetcher's order, unsorted, as lamb2 pages it
+    // (decentraland/lamb2:src/controllers/handlers/third-party-wearables-handler.ts:102-105).
+    let elements =
         match fetch_all_third_party_wearables(&state, &address, Some(&name), OnFailure::Fail).await
         {
             Ok(elements) => elements,
             Err(e) => return e.response(&address),
         };
-    elements.sort_by(|a, b| locale_cmp(&a.name, &b.name).then_with(|| locale_cmp(&a.urn, &b.urn)));
     let include_definitions = params.contains_key("includeDefinitions");
     finish_tpw_response(&state, elements, &pagination, include_definitions)
 }
@@ -1319,24 +1315,12 @@ pub async fn user_third_party_collection_wearables(
 fn finish_tpw_response(
     state: &MarketplaceState,
     elements: Vec<TpwElement>,
-    pagination: &Pagination,
+    pagination: &JsPagination,
     include_definitions: bool,
 ) -> Response {
-    let total = elements.len() as i64;
-    let js_index = |i: i64| -> i64 {
-        if i < 0 {
-            (total + i).max(0)
-        } else {
-            i.min(total)
-        }
-    };
-    let start = js_index(pagination.offset);
-    let end = js_index(pagination.offset.saturating_add(pagination.limit));
-    let page: &[TpwElement] = if start < end {
-        &elements[start as usize..end as usize]
-    } else {
-        &[]
-    };
+    let total = elements.len();
+    let (start, end) = pagination.slice_range(total);
+    let page = &elements[start..end];
     let content_public_url = &state.settings.content_public_url;
     let out: Vec<Value> = page
         .iter()
@@ -1362,58 +1346,34 @@ fn finish_tpw_response(
     .into_response()
 }
 
-const TPI_QUERY: &str = r#"{ thirdParties(where: {isApproved: true}, first: 1000) { id metadata { thirdParty { name description } } } }"#;
-
-fn integrations_from(data: &Value) -> Result<Vec<Value>, String> {
-    let providers = data
-        .get("thirdParties")
-        .and_then(|t| t.as_array())
-        .ok_or_else(|| format!("unexpected subgraph response: {data}"))?;
-    Ok(providers
-        .iter()
-        .map(|p| {
-            let id = p.get("id").and_then(|v| v.as_str()).unwrap_or("");
-            let tp = p.get("metadata").and_then(|m| m.get("thirdParty"));
-            let name = tp
-                .and_then(|t| t.get("name"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let description = tp
-                .and_then(|t| t.get("description"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            json!({ "name": name, "description": description, "urn": id })
-        })
-        .collect())
+/// One `/third-party-integrations` entry: `{name, description, urn}`, a
+/// key the registry left out omitted as lamb2's `undefined` is.
+fn integration_of(p: &ThirdPartyProvider) -> Value {
+    let mut m = serde_json::Map::new();
+    if let Some(name) = &p.name {
+        m.insert("name".into(), name.clone());
+    }
+    if let Some(description) = &p.description {
+        m.insert("description".into(), description.clone());
+    }
+    m.insert("urn".into(), json!(p.id));
+    Value::Object(m)
 }
 
-/// `GET /lambdas/third-party-integrations`: `{data: [...]}`, empty without a
-/// registry subgraph. A failed registry read serves the last list, and with
-/// none is lamb2's 502 `Cannot fetch third party providers`
+/// `GET /lambdas/third-party-integrations`: `{data: [...]}` over the
+/// providers list the other third-party routes read (the registry's
+/// approved providers, its default page of 100), empty without a registry
+/// subgraph (decentraland/lamb2:src/controllers/handlers/third-party-wearables-handler.ts:143-155).
+/// A failed registry read serves the last list, and with none is lamb2's
+/// 502 `Cannot fetch third party providers`
 /// (decentraland/lamb2:src/logic/third-party-providers-storage.ts:46-52).
 pub async fn third_party_integrations(State(state): State<SharedState>) -> Response {
-    let Some(url) = state.settings.third_party_registry_subgraph_url.clone() else {
-        tracing::debug!(
-            "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL is unset; /lambdas/third-party-integrations answers empty"
-        );
-        return Json(json!({ "data": [] })).into_response();
-    };
-    let st = state.clone();
-    match state
-        .third_party
-        .integrations
-        .get_or_fetch((), || async move {
-            let data = graph_query(&st.index, &url, TPI_QUERY, json!({})).await?;
-            integrations_from(&data).map(Value::Array)
-        })
-        .await
-    {
-        Ok(v) => Json(json!({ "data": v })).into_response(),
+    match third_party_providers(&state).await {
+        Ok(providers) => {
+            let data: Vec<Value> = providers.iter().map(integration_of).collect();
+            Json(json!({ "data": data })).into_response()
+        }
         Err(e) => {
-            if let Some(v) = state.third_party.integrations.get_stale(&()) {
-                tracing::warn!("third-party-integrations failed, serving the last list: {e}");
-                return Json(json!({ "data": v })).into_response();
-            }
             tracing::error!("third-party-integrations failed: {e}");
             super::lambdas_error(
                 axum::http::StatusCode::BAD_GATEWAY,
@@ -2294,12 +2254,21 @@ mod tests {
             }]
         );
         assert!(got[1].contracts.is_empty());
-        let tpi = integrations_from(&json!({ "thirdParties": [{ "id": "urn:x", "metadata": { "thirdParty": { "name": "N", "description": "D" } } }] })).unwrap();
+        let tpi: Vec<Value> = parse_providers(&json!({ "thirdParties": [
+            { "id": "urn:x", "metadata": { "thirdParty": { "name": "N", "description": "D" } } },
+            { "id": "urn:y", "metadata": { "thirdParty": { "name": null } } }
+        ] }))
+        .iter()
+        .map(integration_of)
+        .collect();
         assert_eq!(
             tpi,
-            vec![json!({ "name": "N", "description": "D", "urn": "urn:x" })]
+            vec![
+                json!({ "name": "N", "description": "D", "urn": "urn:x" }),
+                json!({ "name": null, "urn": "urn:y" }),
+            ],
+            "a null name stays null and a missing description is left out"
         );
-        assert!(integrations_from(&json!({})).is_err());
     }
 
     #[test]
