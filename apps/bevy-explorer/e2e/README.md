@@ -115,7 +115,7 @@ Specs with no explorer-automation counterpart, outside the counts above:
 | Spec | Scenarios | Needs |
 | --- | --- | --- |
 | `debug-panel` | every debug reading resolves; the panel shows live data and plays an emote | |
-| `smart-wearables` | a realm's `/preview-wearables` runs the fixture as a smart wearable (`/live_scenes`, `/smart_wearables`, its log and UI label, the sidebar's `Smart wearables` button); a kill stops it and a restart runs it again; a configured wearable whose permissions are denied does not run | the fixture built (`npm run build-scenes -- smart-wearable`); `DCL_E2E_SMART_WEARABLE_URN` for the third |
+| `smart-wearables` | a realm's `/preview-wearables` runs the fixture as a smart wearable (`/live_scenes`, `/smart_wearables`, its log and UI label, the sidebar's `Smart wearables` button); a kill stops it and a restart runs it again; a configured wearable, run as a guest through the backend, whose permissions are denied does not run | the fixture built (`npm run build-scenes -- smart-wearable`); `DCL_E2E_SMART_WEARABLE_URN` for the third |
 
 The first two smart-wearable scenarios boot a guest client on a loopback realm of their own
 (`driver/realm.ts` with `previewWearables`, on an ephemeral port) that lists `scenes/smart-wearable`

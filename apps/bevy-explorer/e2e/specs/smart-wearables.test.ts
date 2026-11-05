@@ -4,7 +4,7 @@
 // | Scenario                                                       | Session                         | Needs                          |
 // | a realm that previews the fixture runs it as a smart wearable  | guest, on the loopback realm    | the fixture built              |
 // | a killed smart wearable stops, and a restart runs it again     | guest, on the loopback realm    | the fixture built              |
-// | a denied smart wearable does not run                           | the target's account and realm  | `DCL_E2E_SMART_WEARABLE_URN`   |
+// | a denied smart wearable does not run                           | guest, on the target's realm    | `DCL_E2E_SMART_WEARABLE_URN`   |
 //
 // The first two boot a client on a loopback realm whose `/preview-wearables` lists the fixture in
 // `scenes/smart-wearable` (`driver/realm.ts`), the creator preview path: the engine runs every
@@ -14,8 +14,9 @@
 // `npm run build-scenes -- smart-wearable`.
 //
 // The third runs a published smart wearable from the configured backend with
-// `/smart_wearable run`; when it declares a gated permission the authorization dialog opens and
-// is denied. Skipped unless `DCL_E2E_SMART_WEARABLE_URN` names one.
+// `/smart_wearable run`, which needs no ownership, so a guest session covers the catalyst
+// resolution an equipped wearable goes through; when it declares a gated permission the
+// authorization dialog opens and is denied. Skipped unless `DCL_E2E_SMART_WEARABLE_URN` names one.
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import { after } from 'node:test'
@@ -175,5 +176,5 @@ scenario(
     const started = (await explorer.liveScenes()).filter((scene) => scene.smartWearable && !smartBefore.has(scene.hash))
     assert.deepEqual(started, [], `a denied smart wearable has a live scene: ${started.map((scene) => scene.title).join(', ')}`)
   },
-  { skip: CONFIGURED_URN ? undefined : 'set DCL_E2E_SMART_WEARABLE_URN to a smart wearable on the configured backend' }
+  { session: { signIn: 'guest' }, skip: CONFIGURED_URN ? undefined : 'set DCL_E2E_SMART_WEARABLE_URN to a smart wearable on the configured backend' }
 )

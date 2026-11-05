@@ -941,7 +941,13 @@ fn resolve_entries(
                     sw.model.set_phase(&urn, Phase::NotSmart);
                     continue;
                 };
-                let hash = data.hash.clone();
+                // the pointer's hash, not `CollectibleData::hash`: the data loader reads the
+                // entity through a content-file path and leaves that field empty
+                let Ok(hash) = wearables.get_hash(&wearable_urn) else {
+                    sw.model
+                        .set_phase(&urn, Phase::Failed("wearable hash unavailable".to_owned()));
+                    continue;
+                };
                 let prefix = prefix.clone();
                 IoTaskPool::get().spawn_compat(async move {
                     let (entity, base_url) = ipfs
