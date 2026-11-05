@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use crate::content::queries::active_entity_docs_by_pointers;
 use crate::shared::query_params::{
     JsPagination, MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination, QueryParams,
-    parse_pagination_js, parse_pagination_with, parse_query_string, qs_get_string,
+    js_slice_range, parse_pagination_js, parse_pagination_with, parse_query_string, qs_get_string,
 };
 
 use super::definitions::{
@@ -206,19 +206,6 @@ fn grouped_to_json(item: &GroupedItem) -> Value {
     })
 }
 
-/// JavaScript `slice` semantics on the sorted list: a negative offset counts
-/// from the end, an end past the length clamps.
-fn js_page(len: i64, offset: i64, limit: i64) -> (usize, usize) {
-    let js_index = |i: i64| -> i64 { if i < 0 { (len + i).max(0) } else { i.min(len) } };
-    let start = js_index(offset);
-    let end = js_index(offset.saturating_add(limit));
-    if start < end {
-        (start as usize, end as usize)
-    } else {
-        (0, 0)
-    }
-}
-
 async fn entities_by_pointer(
     state: &MarketplaceState,
     pointers: &[String],
@@ -400,7 +387,7 @@ pub async fn user_names(
         }
     };
     let total = names.len();
-    let (start, end) = js_page(total as i64, p.offset, p.limit);
+    let (start, end) = js_slice_range(total, p.offset, p.limit);
     Json(json!({
         "elements": names[start..end],
         "totalAmount": total,
@@ -871,11 +858,11 @@ mod tests {
 
     #[test]
     fn js_page_slices_like_javascript() {
-        assert_eq!(js_page(10, 0, 3), (0, 3));
-        assert_eq!(js_page(10, 8, 5), (8, 10));
-        assert_eq!(js_page(10, 12, 5), (0, 0));
-        assert_eq!(js_page(10, -3, 2), (7, 9));
-        assert_eq!(js_page(0, 0, 100), (0, 0));
+        assert_eq!(js_slice_range(10, 0, 3), (0, 3));
+        assert_eq!(js_slice_range(10, 8, 5), (8, 10));
+        assert_eq!(js_slice_range(10, 12, 5), (0, 0));
+        assert_eq!(js_slice_range(10, -3, 2), (7, 9));
+        assert_eq!(js_slice_range(0, 0, 100), (0, 0));
     }
 
     #[test]

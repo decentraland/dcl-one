@@ -202,12 +202,16 @@ pub fn extract_emote_definition(entity: &Value, content_public_url: &str) -> Opt
         if let Some(tags) = data.get("tags") {
             adr.insert("tags".into(), tags.clone());
         }
+        // `emoteDataV0.loop`: a `null` throws in lamb2, another non-object
+        // reads `undefined` and leaves `loop` out.
         match meta.remove("emoteDataV0") {
-            Some(v0) => {
-                if let Some(l) = v0.as_object()?.get("loop") {
+            Some(Value::Null) => return None,
+            Some(Value::Object(v0)) => {
+                if let Some(l) = v0.get("loop") {
                     adr.insert("loop".into(), l.clone());
                 }
             }
+            Some(_) => {}
             None => {
                 adr.insert("loop".into(), Value::Bool(false));
             }
@@ -278,6 +282,21 @@ mod tests {
         );
         assert_eq!(def["name"], "Hat");
         assert!(extract_wearable_definition(&json!({ "id": "x" }), "u").is_none());
+    }
+
+    #[test]
+    fn emote_definition_reads_a_non_object_v0_as_lamb2() {
+        let mut e = entity();
+        e["metadata"]["emoteDataV0"] = json!("legacy");
+        let def = extract_emote_definition(&e, "http://localhost/content/").unwrap();
+        assert!(def["emoteDataADR74"].get("loop").is_none(), "{def}");
+        assert_eq!(def["emoteDataADR74"]["category"], "dance");
+        e["metadata"]["emoteDataV0"] = Value::Null;
+        assert_eq!(
+            extract_emote_definition(&e, "http://localhost/content/"),
+            None,
+            "lamb2 throws on a null emoteDataV0"
+        );
     }
 
     #[test]

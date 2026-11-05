@@ -266,7 +266,7 @@ Data dependency: the third-party registry subgraph, in both trees. The cache is 
 | `rarity` | First value, lowercased, validated against `SORTED_RARITIES`: 400 `Invalid rarity requested: '<rarity>'.` Items without a rarity (base, third-party) are excluded (items-commons.ts:16-24). | Same message and rule (lambdas_explorer.rs:108-111, 426-430; services/catalyst/shop/src/market/definitions.rs:19-25). | MATCH |
 | `orderBy`/`direction` | `createCombinedSorting`: default `rarity` (DESC). An invalid value gives 400 `Invalid sorting requested: '<sort> <DIR>'. Valid options are '[rarity, name, date] [ASC, DESC]'.` (sorting.ts:148-167). | Same default and message (definitions.rs:31-43; lambdas_explorer.rs:112-119). | MATCH |
 | `collectionType` | `getAll`, default all three. Any value outside the set gives 400 `Invalid collection type. Valid types are: base-wearable, on-chain, third-party.` (lines 23, 177-195). | Same (lambdas_explorer.rs:80-89). | MATCH |
-| `thirdPartyCollectionId` | `getAll`, deduplicated as strings. When present, the third-party leg holds only those providers' wearables (5-part cut; invalid ids dropped; a name no approved provider has is a 502 `Third Party not found: <name>`). Two distinct values naming one provider list its wearables twice. No count limit (lines 106-143, 180-182). | The same: deduplicated as strings, no count limit, a provider listed once per distinct value naming it (lambdas_explorer.rs `fetch_third_party_items`). The URN check is structural: the network segment is not validated. | MATCH except the network segment (LI-2) |
+| `thirdPartyCollectionId` | `getAll`, deduplicated as strings. When present, the third-party leg holds only those providers' wearables (5-part cut; invalid ids dropped; a name no approved provider has is a 502 `Third Party not found: <name>`). Two distinct values naming one provider list its wearables twice. No count limit (lines 106-143, 180-182). No count limit, but each provider is listed once however many values name it (lambdas_explorer.rs `third_party_provider_names`), so the value list cannot multiply the answer. The cache key holds the provider names, not the raw values. The URN check is structural: the network segment is not validated. | DIVERGENT: a provider named by two distinct values is listed once (LI-2) |
 | `trimmed` | `true` or `1` (lines 183-184). | Same (lambdas_explorer.rs:120, 135). | MATCH |
 | `isSmartWearable` | `true` or `1`: the on-chain leg asks `itemType=smartWearable` (only `smart_wearable_v1`), and **base and third-party are skipped** (lines 75-79, 145-157, 185-186). | Same: the owned copies are kept by their item type (the subgraph `itemType`, else the `shop.items` mirror), and the base and third-party legs are skipped (lambdas_explorer.rs:137, 148-158, 734-756). | MATCH |
 | `network` | `ETHEREUM` or `MATIC` (exact case; anything else is ignored). The on-chain leg is limited to that network's item types (`wearable_v1` for ETHEREUM; `wearable_v2`+`smart_wearable_v1` for MATIC), and base and third-party are skipped (lines 187-189; marketplace-api-fetcher.ts:282-297; graph-pagination.ts:35-56). | Same values, item types and skipped legs (lambdas_explorer.rs:121-125, 148-158, 734-756). An owned copy whose item type neither source knows is dropped by either filter. | MATCH |
@@ -503,9 +503,11 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
 
 **LI-2 (P2). `/explorer/:address/wearables`: `thirdPartyCollectionId` network segment.**
 
-- Status: open, only the network-segment check. The deduplication and the count limit match.
+- Status: open, only the network-segment check. The count limit matches; the deduplication differs by decision.
 - Upstream (explorer-handler.ts:106-143, 180-182): the values are deduplicated as strings, cut to 5 parts and kept when they parse as a `blockchain-collection-third-party-name` URN; only those providers' wearables form the third-party leg, and an unknown name is a 502 `Third Party not found: <name>`. Two distinct values naming one provider list its wearables twice. There is no count limit.
-- dcl-one: the same (`fetch_third_party_items` in services/catalyst/shop/src/market/lambdas_explorer.rs): deduplicated as strings, no count limit, one provider listed once per distinct value that names it (read once). The URN is checked structurally (`is_third_party_name_urn`), without validating the network segment.
+- dcl-one (`third_party_provider_names` and `fetch_third_party_items` in services/catalyst/shop/src/market/lambdas_explorer.rs): no count limit, and each provider is listed once, however many values name it. With no cap, lamb2's per-value listing lets one unauthenticated request with K values that all name one provider build K copies of its wearables, and varying the suffixes defeats the cache.
+  - Kept by decision: each provider once. Its only visible effect is that a provider named by two distinct values (`…:P` and `…:P:c1`) is listed once instead of twice.
+  - The URN is checked structurally (`is_third_party_name_urn`), without validating the network segment.
 - Left: the network segment is validated by `@dcl/urn-resolver`, which is not vendored in the pinned tree; its accepted networks need a capture or the package source.
 - Severity: P2.
 
@@ -594,10 +596,10 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
 - Upstream (decentraland/lamb2:src/adapters/definitions.ts:4-102; decentraland/lamb2:src/adapters/definitions-fetcher.ts:43-60; decentraland/lamb2:src/adapters/content-server-url.ts:8-17):
   - `thumbnail` is the content URL, or **absent** when the file has no hash; `image` is the content URL or kept as it is.
   - Each representation's `contents[]` entry without a hash is `{"key":<file>}` with no `url`.
-  - For a legacy emote, `tags` is `metadata.data.tags`, absent if undefined; `loop` is `emoteDataV0.loop` when `emoteDataV0` exists (absent if it has none), else `false`.
+  - For a legacy emote, `tags` is `metadata.data.tags`, absent if undefined; `loop` is `emoteDataV0.loop` when `emoteDataV0` exists (absent if it has none or is not an object; a `null` `emoteDataV0` throws, so no definition), else `false`.
   - The base URL is `CONTENT_URL` **lowercased**, without a trailing `/`.
   - An entity without a truthy `metadata.id`, or whose representations (`data.representations`, `emoteDataADR74.representations`) or a `contents` list are not arrays, yields no definition.
-- dcl-one: the same, `extract_wearable_definition` and `extract_emote_definition` in services/catalyst/shop/src/market/definitions.rs, with `CONTENT_PUBLIC_URL` normalized as lamb2 normalizes `CONTENT_URL`.
+- dcl-one: the same, `extract_wearable_definition` and `extract_emote_definition` in services/catalyst/shop/src/market/definitions.rs, with `CONTENT_PUBLIC_URL` normalized as lamb2 normalizes `CONTENT_URL`. Lowercasing breaks a `CONTENT_PUBLIC_URL` with a case-sensitive path prefix, in both trees; operators keep that URL lowercase.
 - Remaining edge: lamb2 files a definition under its `metadata.id` and looks it up by the requested URN; dcl-one looks the entity up by pointer. They differ only for an entity whose `metadata.id` is not its pointer.
 - Severity: none (closed).
 
@@ -664,6 +666,7 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
 - Status: MATCH, no work.
 - Upstream: `a.id.toLowerCase().localeCompare(b.id.toLowerCase())` for on-chain items, and the same on lowercased URNs for base items (decentraland/lamb2:src/logic/items-catalog.ts:52-54; wearables-catalog-handler.ts:107).
 - dcl-one: `paginate_merged` and `filter_and_extract_base_wearables` sort with `locale_cmp` (services/catalyst/shop/src/market/lambdas_catalog.rs). The keyset cursor stays byte order, as the subgraph's `urn_gt`.
+- Shared gap: a page sorted by locale and continued by byte order can skip an item. With `limit=1` and the ids `…b1` and `…b_1`, page 1 is `[…b_1]` and the next page starts after it in byte order, so `…b1` is never listed. lamb2 has the same gap, so this is parity.
 - Severity: none (closed).
 
 **LI-24 (no work). Catalog `next` query encoding.**
@@ -685,13 +688,15 @@ Data dependency: the `shop.items` mirror (or the collections subgraphs) and emot
 
 - Status: MATCH, no work.
 - Upstream: `parseInt` semantics for `pageNum`, `pageSize` and `limit`: `"10abc"`→10 and `"abc"`→NaN, so an empty page with `null` echoes (decentraland/lamb2:src/logic/pagination.ts:4-19; items-catalog.ts:88-97). The explorer's negative offset slices from the end (pagination.ts:31-40).
-- dcl-one: `parse_int_js` and `parse_pagination_js` (services/catalyst/shared/src/query_params.rs) on `/users/:address/{wearables,emotes}`, the third-party routes and the explorer; `JsPagination::slice_range` slices as JavaScript; the catalog's `clamp_limit` uses `parse_int_js` (services/catalyst/shop/src/market/lambdas_catalog.rs).
+- dcl-one: `parse_int_js` and `parse_pagination_js` (services/catalyst/shared/src/query_params.rs) on `/users/:address/{wearables,emotes}`, the third-party routes and the explorer; `JsPagination::slice_range` slices as JavaScript; the catalog's `clamp_limit` uses `parse_int_js` (services/catalyst/shop/src/market/lambdas_catalog.rs). `parse_int_js` skips JavaScript's whitespace set (U+FEFF, but not U+0085).
+- Remaining edge: a value past `i64` saturates, so the third-party routes echo `9223372036854775807` where lamb2 echoes the float. The slice is the same.
 - Severity: none (closed).
 
 **LI-27 (no work). `/third-party-integrations` reads the provider list.**
 
 - Status: MATCH, no work.
 - Upstream: the provider cache list, default `first` of 100 (decentraland/lamb2:src/adapters/third-party-providers-graph-fetcher.ts:12-29); `name`/`description` passed through as the subgraph returns them (`null` stays `null`, a missing key is left out).
+- Shared limit: the query sets no `first`, so both trees list at most the subgraph's default of 100 approved providers.
 - dcl-one: `third_party_integrations` maps `third_party_providers` (services/catalyst/shop/src/market/third_party.rs), the list the other third-party routes read, with `name` and `description` as the registry answered them.
 - Severity: none (closed).
 

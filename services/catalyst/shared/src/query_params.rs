@@ -186,9 +186,10 @@ pub fn parse_pagination(params: &QueryParams, max_page_size: i64) -> Result<Pagi
 
 /// JavaScript `parseInt(s, 10)`: leading whitespace and one sign skipped,
 /// then the leading decimal digits, so `"10abc"` is 10 and `"1.5"` is 1;
-/// `None` is `NaN` (no digit). A value past `i64` saturates.
+/// `None` is `NaN` (no digit). A value past `i64` saturates (JS keeps the
+/// float, so only an echoed value differs, never the slice).
 pub fn parse_int_js(s: &str) -> Option<i64> {
-    let t = s.trim_start();
+    let t = s.trim_start_matches(is_js_whitespace);
     let (negative, digits) = match t.as_bytes().first() {
         Some(b'-') => (true, &t[1..]),
         Some(b'+') => (false, &t[1..]),
@@ -204,6 +205,25 @@ pub fn parse_int_js(s: &str) -> Option<i64> {
         n.saturating_mul(10).saturating_add(i64::from(d - b'0'))
     });
     Some(if negative { -magnitude } else { magnitude })
+}
+
+/// JavaScript's `WhiteSpace` and `LineTerminator`, which `parseInt` skips:
+/// Unicode `White_Space` without U+0085, plus U+FEFF.
+fn is_js_whitespace(c: char) -> bool {
+    c == '\u{feff}' || (c != '\u{85}' && c.is_whitespace())
+}
+
+/// The `[start, end)` of JavaScript's `elements.slice(offset, offset +
+/// limit)` over `len` elements: a negative index counts from the end.
+pub fn js_slice_range(len: usize, offset: i64, limit: i64) -> (usize, usize) {
+    let len = len as i64;
+    let js_index = |i: i64| if i < 0 { (len + i).max(0) } else { i.min(len) };
+    let (start, end) = (js_index(offset), js_index(offset.saturating_add(limit)));
+    if start < end {
+        (start as usize, end as usize)
+    } else {
+        (0, 0)
+    }
 }
 
 /// lamb2's `paginationObject` (decentraland/lamb2:src/logic/pagination.ts:4-19):
@@ -226,16 +246,9 @@ impl JsPagination {
     /// The `[start, end)` of `elements.slice(offset, offset + limit)` over
     /// `len` elements: a negative index counts from the end, a `NaN` is 0.
     pub fn slice_range(&self, len: usize) -> (usize, usize) {
-        let Some((offset, limit)) = self.offset_limit() else {
-            return (0, 0);
-        };
-        let len = len as i64;
-        let js_index = |i: i64| if i < 0 { (len + i).max(0) } else { i.min(len) };
-        let (start, end) = (js_index(offset), js_index(offset.saturating_add(limit)));
-        if start < end {
-            (start as usize, end as usize)
-        } else {
-            (0, 0)
+        match self.offset_limit() {
+            Some((offset, limit)) => js_slice_range(len, offset, limit),
+            None => (0, 0),
         }
     }
 }
@@ -506,6 +519,8 @@ mod tests {
         assert_eq!(parse_int_js(""), None);
         assert_eq!(parse_int_js("-"), None);
         assert_eq!(parse_int_js("99999999999999999999"), Some(i64::MAX));
+        assert_eq!(parse_int_js("\u{feff}\u{2028}5"), Some(5), "JS whitespace");
+        assert_eq!(parse_int_js("\u{85}5"), None, "U+0085 is not JS whitespace");
     }
 
     #[test]
