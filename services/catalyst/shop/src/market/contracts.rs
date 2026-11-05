@@ -5,7 +5,8 @@
 //! `/lambdas/contracts/denylisted-names` (the name denylist contract over
 //! `ETH_RPC_URL`): `size()`, then `get(i)` per entry. Each is cached for six
 //! hours with a one-minute back-off after a failed refresh (stale is still
-//! served); without its endpoint a list answers empty, as the old handlers
+//! served); a failure with nothing cached is lamb2's bare 500 (its LRU fetch
+//! rejects); without its endpoint a list answers empty, as the old handlers
 //! did. The old handler batched the calls through Multicall3 and fell back
 //! to one `eth_call` per entry; v2 keeps only the per-entry path (16
 //! concurrent), a few hundred calls every six hours. The
@@ -385,13 +386,13 @@ pub async fn contracts_servers(State(state): State<SharedState>) -> Response {
         Ok(servers) => Json(servers).into_response(),
         Err(e) => {
             tracing::error!("contracts/servers failed: {e}");
-            Json(json!([])).into_response()
+            super::lambdas_internal_error()
         }
     }
 }
 
 /// `GET /lambdas/contracts/pois`: the POI contract's list, over the polygon endpoint.
-pub async fn contracts_pois(State(state): State<SharedState>) -> impl IntoResponse {
+pub async fn contracts_pois(State(state): State<SharedState>) -> Response {
     let Some(rpc) = state
         .settings
         .polygon_rpc_url
@@ -399,7 +400,7 @@ pub async fn contracts_pois(State(state): State<SharedState>) -> impl IntoRespon
         .or_else(|| state.chain_rpc_url(super::chain_walk::ChainNet::Matic))
     else {
         tracing::debug!("RPC_ENDPOINT_POLYGON is unset; /lambdas/contracts/pois answers empty");
-        return Json(json!([]));
+        return Json(json!([])).into_response();
     };
     let contract = contracts_for(&state.settings.eth_network).poi.to_string();
     let st = state.clone();
@@ -409,19 +410,19 @@ pub async fn contracts_pois(State(state): State<SharedState>) -> impl IntoRespon
             .map(|l| Value::Array(l.into_iter().map(Value::String).collect()))
     };
     match state.contracts.pois.get("pois", fetch).await {
-        Ok(v) => Json(v),
+        Ok(v) => Json(v).into_response(),
         Err(e) => {
             tracing::error!("contracts/pois failed: {e}");
-            Json(json!([]))
+            super::lambdas_internal_error()
         }
     }
 }
 
 /// `GET /lambdas/contracts/denylisted-names`: the name denylist contract's list, over `ETH_RPC_URL`.
-pub async fn contracts_denylisted_names(State(state): State<SharedState>) -> impl IntoResponse {
+pub async fn contracts_denylisted_names(State(state): State<SharedState>) -> Response {
     let Some(rpc) = state.settings.eth_rpc_url.clone() else {
         tracing::debug!("ETH_RPC_URL is unset; /lambdas/contracts/denylisted-names answers empty");
-        return Json(json!([]));
+        return Json(json!([])).into_response();
     };
     let contract = contracts_for(&state.settings.eth_network)
         .name_denylist
@@ -438,10 +439,10 @@ pub async fn contracts_denylisted_names(State(state): State<SharedState>) -> imp
         .get("denylisted-names", fetch)
         .await
     {
-        Ok(v) => Json(v),
+        Ok(v) => Json(v).into_response(),
         Err(e) => {
             tracing::error!("contracts/denylisted-names failed: {e}");
-            Json(json!([]))
+            super::lambdas_internal_error()
         }
     }
 }
@@ -579,6 +580,37 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("not a publicly routable"), "{err}");
+    }
+
+    /// A failure with nothing cached is lamb2's bare 500 (`catalysts.fetch`
+    /// rejects); without an endpoint the lists answer `[]`.
+    #[tokio::test]
+    async fn a_cold_failure_is_lamb2s_bare_500() {
+        use axum::http::StatusCode;
+        let rpc = Some("http://127.0.0.1:8545".to_string());
+        let state =
+            crate::market::tests::support::state_without_db_settings(crate::market::Settings {
+                eth_rpc_url: rpc.clone(),
+                polygon_rpc_url: rpc,
+                ..crate::market::Settings::for_tests()
+            });
+        for resp in [
+            contracts_servers(State(state.clone())).await,
+            contracts_pois(State(state.clone())).await,
+            contracts_denylisted_names(State(state)).await,
+        ] {
+            assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Value>(&body).unwrap(),
+                json!({ "error": "Internal Server Error" })
+            );
+        }
+        let state = crate::market::tests::support::state_without_db();
+        let resp = contracts_denylisted_names(State(state)).await;
+        assert_eq!(resp.status(), StatusCode::OK);
     }
 
     #[tokio::test]

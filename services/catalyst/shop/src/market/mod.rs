@@ -848,7 +848,8 @@ impl AssetKey {
 }
 
 pub use crate::shared::http_util::{
-    bad_request, internal_server_error, lambdas_error, not_found, service_unavailable,
+    bad_request, internal_server_error, lambdas_error, lambdas_internal_error, not_found,
+    service_unavailable,
 };
 pub use crate::shared::identity::is_valid_eth_address;
 pub use crate::shared::upstream::check_upstream;
