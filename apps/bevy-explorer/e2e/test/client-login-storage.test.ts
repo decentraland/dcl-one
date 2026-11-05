@@ -9,6 +9,7 @@ const tick = () => new Promise(resolve => setImmediate(resolve))
 // Readwrite transactions serialize across connections and only commit pending writes on complete.
 function database() {
   let durable: string | undefined
+  let quarantine: string | undefined
   const transactions: any[] = []
   const start = () => queueMicrotask(() => transactions[0]?.request?.onsuccess())
   const db = {
@@ -21,7 +22,7 @@ function database() {
             if (transactions[0] === tx) start()
             return tx.request
           },
-          put(value: string) { tx.pending = value },
+          put(value: string, key: string) { if (key === 'corrupt') tx.quarantine = value; else tx.pending = value },
         }),
         abort() {
           assert.equal(transactions[0], tx)
@@ -35,6 +36,8 @@ function database() {
     },
   }
   return {
+    seed(value: string) { durable = value },
+    quarantined() { return quarantine },
     api: { open() {
       const request: any = { result: db }
       queueMicrotask(() => request.onsuccess())
@@ -44,13 +47,14 @@ function database() {
       const tx = transactions.shift()
       assert.ok(tx)
       if (tx.pending !== undefined) durable = tx.pending
+      if (tx.quarantine !== undefined) quarantine = tx.quarantine
       tx.oncomplete()
       start()
     },
     abort() { transactions[0].abort() },
   }
 }
-const event = (id: string, at = Date.now()) => ({ login_id: id, occurred_at: at })
+const event = (id: string, at = Date.now()) => ({ login_id: id, occurred_at: at, wallet: 'alice', endpoint: 'https://example.org/v1/client-login' })
 const delta = (additions: ReturnType<typeof event>[] = [], removals: string[] = []) => JSON.stringify({ additions, removals })
 
 async function withDatabase(run: (db: ReturnType<typeof database>, finish: (promise: Promise<any>) => Promise<any>) => Promise<void>) {
@@ -109,4 +113,32 @@ test('concurrent writers merge and the shared store caps pending events across r
     await finish(clientLoginsWrite(delta([event('a', now)])))
     assert.equal(JSON.parse(await finish(clientLoginsRead())).some((item: any) => item.login_id === 'a'), false)
   })
+})
+
+
+test('empty, corrupt and mixed-version records recover without discarding valid occurrences', async () => {
+  await withDatabase(async (db, finish) => {
+    for (const raw of ['', '{', 'null', '{"events":null,"removed":{}}']) {
+      db.seed(raw)
+      assert.deepEqual(JSON.parse(await finish(clientLoginsRead())), [])
+      assert.equal(db.quarantined(), raw)
+    }
+    const valid = event('good')
+    const mixed = JSON.stringify([valid, null, { login_id: 'bad', occurred_at: Date.now() }])
+    db.seed(mixed)
+    assert.deepEqual(JSON.parse(await finish(clientLoginsRead())), [valid])
+    assert.equal(db.quarantined(), mixed)
+    await finish(clientLoginsWrite(delta([event('new')])))
+    assert.deepEqual(JSON.parse(await finish(clientLoginsRead())).map((row: any) => row.login_id).sort(), ['good', 'new'])
+  })
+})
+
+test('browser storage policy stays aligned with the shared Rust limits', async () => {
+  const rust = await readFile(new URL('../../../../rendering/bevy-explorer/source/crates/platform/src/client_login_store.rs', import.meta.url), 'utf8')
+  assert.match(rust, /MAX_AGE_MS: u64 = 24 \* 60 \* 60 \* 1000/)
+  assert.match(rust, /FUTURE_TOLERANCE_MS: u64 = 5 \* 60 \* 1000/)
+  assert.match(rust, /MAX_PENDING: usize = 32/)
+  assert.match(source, /MAX_AGE_MS = 86_400_000/)
+  assert.match(source, /TOMBSTONE_MS = MAX_AGE_MS \+ 300_000/)
+  assert.match(source, /MAX_PENDING = 32/)
 })

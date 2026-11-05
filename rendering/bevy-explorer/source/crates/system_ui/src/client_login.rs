@@ -23,6 +23,8 @@ pub(super) fn register(app: &mut App) {
                 ("Delivery active", "active"),
                 ("Pending events", "pending"),
                 ("Queue saved", "durable"),
+                ("Memory-only delivery", "memoryOnly"),
+                ("Storage failures", "storageFailures"),
                 ("Storage in flight", "storageInFlight"),
                 ("Request in flight", "inFlight"),
                 ("Attempts", "attempts"),
@@ -35,11 +37,14 @@ pub(super) fn register(app: &mut App) {
         });
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub(super) struct ClientLoginDelivery {
     queue: DurableLogins,
     storage: Option<Task<Result<Stored, String>>>,
     storage_retry: u64,
+    storage_failures: u32,
+    memory_only: bool,
+    storage_needs_load: bool,
     active: Option<String>,
     task: Option<Task<AttemptResult>>,
     event_id: Option<String>,
@@ -47,6 +52,26 @@ pub(super) struct ClientLoginDelivery {
     next_attempt: u64,
     result: &'static str,
     discarded: usize,
+}
+
+impl Default for ClientLoginDelivery {
+    fn default() -> Self {
+        Self {
+            queue: Default::default(),
+            storage: None,
+            storage_retry: 0,
+            storage_failures: 0,
+            memory_only: false,
+            storage_needs_load: true,
+            active: None,
+            task: None,
+            event_id: None,
+            attempts: 0,
+            next_attempt: 0,
+            result: "",
+            discarded: 0,
+        }
+    }
 }
 
 enum Stored {
@@ -58,6 +83,7 @@ enum Stored {
 enum AttemptResult {
     Accepted,
     Retry,
+    EndpointUnavailable,
     Rejected,
 }
 
@@ -99,32 +125,62 @@ impl ClientLoginDelivery {
     }
 
     pub(super) fn drive(&mut self, wallet: &Wallet) {
-        let now = now_ms();
+        self.drive_at(wallet, now_ms(), &endpoint());
+    }
+
+    fn storage_failed(&mut self, now: u64) {
+        self.queue.finish_save(false);
+        self.storage_failures = self.storage_failures.saturating_add(1);
+        if self.storage_failures >= 3 {
+            if !self.memory_only {
+                warn!("login event storage unavailable; delivery continues in memory only");
+            }
+            self.memory_only = true;
+            if !self.queue.loaded {
+                self.discarded += self.queue.load(Vec::new());
+            }
+        }
+        self.result = if self.memory_only {
+            "storage unavailable: memory only"
+        } else {
+            "storage failed"
+        };
+        self.storage_retry = now.saturating_add(if self.memory_only { 60_000 } else { 5_000 });
+    }
+
+    fn drive_at(&mut self, wallet: &Wallet, now: u64, endpoint: &str) {
         if let Some(mut task) = self.storage.take() {
             match task.complete() {
                 None => self.storage = Some(task),
                 Some(Ok(Stored::Loaded(stored))) => {
                     self.discarded += self.queue.load(stored);
+                    self.storage_needs_load = false;
+                    self.storage_failures = 0;
+                    if self.memory_only {
+                        self.result = "storage recovered";
+                    }
+                    self.memory_only = false;
                 }
                 Some(Ok(Stored::Saved(ids))) => {
                     self.queue.finish_save(true);
                     self.discarded += self.queue.observe_saved_ids(&ids);
+                    self.storage_failures = 0;
+                    if self.memory_only {
+                        self.result = "storage recovered";
+                    }
+                    self.memory_only = false;
                 }
                 Some(Err(error)) => {
-                    if self.queue.loaded {
-                        self.queue.finish_save(false);
-                    }
                     warn!("login event storage failed: {error}");
-                    self.result = "storage failed";
-                    self.storage_retry = now.saturating_add(5_000);
+                    self.storage_failed(now);
                 }
             }
         }
         self.discarded += self.queue.expire(now);
         if self.storage.is_none() && now >= self.storage_retry {
-            if !self.queue.loaded {
+            if self.storage_needs_load {
                 self.storage = Some(IoTaskPool::get().spawn_compat(async {
-                    let json = platform::client_logins_read().await?;
+                    let json = storage_timeout(platform::client_logins_read()).await?;
                     serde_json::from_str(&json)
                         .map(Stored::Loaded)
                         .map_err(|e| e.to_string())
@@ -132,7 +188,7 @@ impl ClientLoginDelivery {
             } else if let Some(events) = self.queue.begin_save() {
                 self.storage = Some(IoTaskPool::get().spawn_compat(async move {
                     let json = serde_json::to_string(&events).map_err(|e| e.to_string())?;
-                    let receipt = platform::client_logins_write(json).await?;
+                    let receipt = storage_timeout(platform::client_logins_write(json)).await?;
                     serde_json::from_str(&receipt)
                         .map(Stored::Saved)
                         .map_err(|e| e.to_string())
@@ -154,10 +210,14 @@ impl ClientLoginDelivery {
                 return;
             };
             match result {
-                AttemptResult::Retry => {
+                AttemptResult::Retry | AttemptResult::EndpointUnavailable => {
                     self.result = "retrying";
                     self.next_attempt = now.saturating_add(retry_delay_ms(
-                        self.attempts,
+                        if result == AttemptResult::EndpointUnavailable {
+                            9
+                        } else {
+                            self.attempts
+                        },
                         uuid::Uuid::new_v4().as_u128() as u64,
                     ));
                 }
@@ -176,14 +236,14 @@ impl ClientLoginDelivery {
                 }
             }
         }
-        if !self.queue.ready() {
+        if !self.memory_only && !self.queue.ready() {
             return;
         }
         let Some(event) = self
             .queue
             .events
             .iter()
-            .find(|event| event.eligible(active, &endpoint(), now))
+            .find(|event| event.eligible(active, endpoint, now))
             .cloned()
         else {
             return;
@@ -219,11 +279,44 @@ async fn send(wallet: &Wallet, event: &PendingClientLogin) -> AttemptResult {
         request = request.header(name, value);
     }
     match request.send().await {
-        Ok(response) if response.status().as_u16() == 204 => AttemptResult::Accepted,
-        Ok(response) if retryable_status(response.status().as_u16()) => AttemptResult::Retry,
-        Ok(_) => AttemptResult::Rejected,
+        Ok(mut response) => {
+            let status = response.status().as_u16();
+            // Bound error bodies and wall time; small responses return connections to the pool.
+            let _ = async_std::future::timeout(Duration::from_secs(1), async {
+                let mut bytes = 0;
+                while let Ok(Some(chunk)) = response.chunk().await {
+                    bytes += chunk.len();
+                    if bytes >= 16 * 1024 {
+                        break;
+                    }
+                }
+            })
+            .await;
+            if status == 204 {
+                AttemptResult::Accepted
+            } else if matches!(status, 404 | 405) {
+                warn!(
+                    status,
+                    "login event endpoint unavailable; retaining event for retry"
+                );
+                AttemptResult::EndpointUnavailable
+            } else if retryable_status(status) {
+                AttemptResult::Retry
+            } else {
+                warn!(status, "login event rejected");
+                AttemptResult::Rejected
+            }
+        }
         Err(_) => AttemptResult::Retry,
     }
+}
+
+async fn storage_timeout<T>(
+    future: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    async_std::future::timeout(Duration::from_secs(10), future)
+        .await
+        .map_err(|_| "login event storage timed out".to_owned())?
 }
 
 #[derive(clap::Parser, ConsoleCommand)]
@@ -237,7 +330,8 @@ fn debug(mut cmd: ConsoleCommand<ClientLoginDebug>, state: Res<ClientLoginDelive
             "active": state.active.is_some(), "pending": state.queue.events.len(),
             "inFlight": state.task.is_some(), "attempts": state.attempts,
             "result": if state.result.is_empty() { "idle" } else { state.result },
-            "discarded": state.discarded, "durable": state.queue.ready(),
+            "discarded": state.discarded, "durable": !state.memory_only && state.queue.ready(),
+            "memoryOnly": state.memory_only, "storageFailures": state.storage_failures,
         "storageInFlight": state.storage.is_some(), "retryInMs": state.next_attempt.saturating_sub(now_ms())
         })
         .to_string(),
@@ -248,6 +342,190 @@ fn debug(mut cmd: ConsoleCommand<ClientLoginDebug>, state: Res<ClientLoginDelive
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+
+    fn signed_wallet() -> Wallet {
+        let root = wallet::local_guest::new_root_key();
+        let (ephemeral, delegates) =
+            wallet::local_guest::sign_identity(&root, now_ms() as i64).unwrap();
+        let mut wallet = Wallet::default();
+        wallet.finalize(root.address(), ephemeral, delegates, false);
+        wallet
+    }
+
+    fn pending_state(wallet: &Wallet, endpoint: &str) -> ClientLoginDelivery {
+        IoTaskPool::get_or_init(Default::default);
+        let mut state = ClientLoginDelivery::default();
+        state.active = Some(format!("{:#x}", wallet.address().unwrap()));
+        state.queue.push(PendingClientLogin {
+            wallet: state.active.clone().unwrap(),
+            endpoint: endpoint.into(),
+            login_id: uuid::Uuid::new_v4().to_string(),
+            occurred_at: now_ms(),
+        });
+        // Tests control storage completion without writing to the user's profile.
+        state.storage_retry = u64::MAX;
+        state
+    }
+
+    fn poll_until(
+        state: &mut ClientLoginDelivery,
+        wallet: &Wallet,
+        endpoint: &str,
+        done: impl Fn(&ClientLoginDelivery) -> bool,
+    ) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !done(state) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "delivery did not finish"
+            );
+            state.drive_at(wallet, now_ms(), endpoint);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn drive_persists_before_signed_http_and_handles_ack_rejection_and_deployment_order() {
+        for (status, memory_only) in [
+            (204, false),
+            (400, false),
+            (404, false),
+            (405, false),
+            (204, true),
+        ] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let endpoint = format!("http://{}/v1/client-login", listener.local_addr().unwrap());
+            let wallet = signed_wallet();
+            let mut state = pending_state(&wallet, &endpoint);
+            state.drive_at(&wallet, now_ms(), &endpoint);
+            assert!(state.task.is_none(), "HTTP must wait for load");
+            assert!(listener.accept().is_err());
+            state.queue.load(Vec::new());
+            state.storage_needs_load = false;
+            state.queue.begin_save().unwrap();
+            state.drive_at(&wallet, now_ms(), &endpoint);
+            assert!(
+                state.task.is_none(),
+                "HTTP must wait for save acknowledgment"
+            );
+            state.queue.finish_save(false);
+            state.drive_at(&wallet, now_ms(), &endpoint);
+            assert!(state.task.is_none(), "failed persistence cannot start HTTP");
+            if memory_only {
+                for _ in 0..3 {
+                    state.storage_failed(now_ms());
+                }
+                assert!(state.memory_only);
+                assert!(!state.queue.ready());
+            } else {
+                state.queue.begin_save().unwrap();
+                state.queue.finish_save(true);
+            }
+            listener.set_nonblocking(false).unwrap();
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                while !bytes.ends_with(b"\r\n\r\n") {
+                    let mut byte = [0];
+                    stream.read_exact(&mut byte).unwrap();
+                    bytes.push(byte[0]);
+                }
+                let body = if status == 204 {
+                    ""
+                } else {
+                    "private server detail"
+                };
+                write!(stream, "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                String::from_utf8(bytes).unwrap()
+            });
+            state.drive_at(&wallet, now_ms(), &endpoint);
+            poll_until(&mut state, &wallet, &endpoint, |s| s.task.is_none());
+            let request = server.join().unwrap();
+            assert!(request.contains("x-identity-metadata:"));
+            if status == 204 || status == 400 {
+                assert!(state.queue.events.is_empty());
+                assert_eq!(
+                    state.result,
+                    if status == 204 {
+                        "accepted"
+                    } else {
+                        "rejected"
+                    }
+                );
+                assert_eq!(state.queue.begin_save().unwrap().removals.len(), 1);
+            } else {
+                assert_eq!(state.queue.events.len(), 1);
+                assert_eq!(state.result, "retrying");
+                assert!((149_000..=300_000).contains(&state.next_attempt.saturating_sub(now_ms())));
+                let expiry = state.queue.events[0].occurred_at + common::client_login::MAX_AGE_MS;
+                state.drive_at(&wallet, expiry, &endpoint);
+                assert!(state.queue.events.is_empty());
+                assert!(state.task.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn drive_switch_cancels_inflight_ack_without_removing_another_accounts_event() {
+        for disconnect in [false, true] {
+            let mut wallet = signed_wallet();
+            let endpoint = "https://example.org/v1/client-login";
+            let mut state = pending_state(&wallet, endpoint);
+            state.event_id = Some(state.queue.events[0].login_id.clone());
+            state.task = Some(IoTaskPool::get().spawn_compat(async { AttemptResult::Accepted }));
+            if disconnect {
+                wallet.disconnect();
+            } else {
+                wallet = signed_wallet();
+            }
+            state.drive_at(&wallet, now_ms(), endpoint);
+            assert!(state.task.is_none());
+            assert!(state.active.is_none());
+            assert_eq!(state.queue.events.len(), 1);
+            assert_eq!(state.result, "paused");
+        }
+    }
+
+    #[test]
+    fn drive_storage_failures_enable_visible_memory_fallback_and_recover_unsaved_delta() {
+        let wallet = signed_wallet();
+        let endpoint = "https://example.org/v1/client-login";
+        let mut state = pending_state(&wallet, endpoint);
+        // Keep delivery off while injecting actual asynchronous storage results.
+        state.active = None;
+        for attempt in 1..=3 {
+            state.storage =
+                Some(IoTaskPool::get().spawn_compat(async { Err("storage unavailable".into()) }));
+            poll_until(&mut state, &wallet, endpoint, |s| {
+                s.storage_failures == attempt
+            });
+            assert_eq!(state.memory_only, attempt == 3);
+            assert_eq!(state.queue.events.len(), 1);
+            assert!(state.task.is_none());
+        }
+        assert!(state.queue.loaded);
+        assert!(!state.queue.ready());
+        assert_eq!(state.result, "storage unavailable: memory only");
+        let original = state.queue.events[0].clone();
+        state.storage =
+            Some(IoTaskPool::get().spawn_compat(async { Ok(Stored::Loaded(Vec::new())) }));
+        poll_until(&mut state, &wallet, endpoint, |s| !s.memory_only);
+        assert_eq!(
+            state.queue.begin_save().unwrap().additions,
+            [original.clone()]
+        );
+        state.storage = Some(
+            IoTaskPool::get()
+                .spawn_compat(async move { Ok(Stored::Saved(vec![original.login_id])) }),
+        );
+        poll_until(&mut state, &wallet, endpoint, |s| s.queue.ready());
+        assert_eq!(state.queue.events.len(), 1);
+        assert_eq!(state.storage_failures, 0);
+    }
 
     #[test]
     fn every_identity_completion_queues_without_a_social_consumer() {

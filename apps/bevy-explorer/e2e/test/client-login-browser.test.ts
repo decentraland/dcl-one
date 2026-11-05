@@ -28,8 +28,8 @@ test('real IndexedDB preserves independent page occurrences, acknowledgment and 
       window.engine_console_command = async () => {
         const a = await frame(), b = await frame();
         const first = await Promise.all([a.contentWindow.queue.read(), b.contentWindow.queue.read()]);
-        const eventA = { login_id: 'a', occurred_at: Date.now() };
-        const eventB = { login_id: 'b', occurred_at: Date.now() };
+        const eventA = { login_id: 'a', occurred_at: Date.now(), wallet: 'alice', endpoint: 'https://example.org/v1/client-login' };
+        const eventB = { login_id: 'b', occurred_at: Date.now(), wallet: 'alice', endpoint: 'https://example.org/v1/client-login' };
         const delta = (additions = [], removals = []) => JSON.stringify({ additions, removals });
         await Promise.all([
           a.contentWindow.queue.write(delta([eventA])),
@@ -58,8 +58,21 @@ test('real IndexedDB preserves independent page occurrences, acknowledgment and 
         observer.remove(); restarted.remove();
         const final = await frame();
         const afterAbortRestart = JSON.parse(await final.contentWindow.queue.read());
+        const seed = raw => new Promise((resolve, reject) => {
+          const open = indexedDB.open('dcl-client-logins', 1);
+          open.onsuccess = () => {
+            const db = open.result, tx = db.transaction('queue', 'readwrite');
+            tx.objectStore('queue').put(raw, 'pending');
+            tx.oncomplete = () => { db.close(); resolve(); };
+            tx.onerror = () => reject(tx.error);
+          };
+        });
+        await seed('');
+        const emptyRecovered = JSON.parse(await final.contentWindow.queue.read());
+        await seed(JSON.stringify([eventB, null, { login_id: 'bad', occurred_at: Date.now() }]));
+        const mixedRecovered = JSON.parse(await final.contentWindow.queue.read());
         final.remove();
-        return JSON.stringify({ first: first.map(JSON.parse), afterRestart, afterAck, aborted, afterAbortRestart });
+        return JSON.stringify({ first: first.map(JSON.parse), afterRestart, afterAck, aborted, afterAbortRestart, emptyRecovered, mixedRecovered });
       };
     </script>`)
     const server = await serveWebApp(root, 0)
@@ -68,13 +81,15 @@ test('real IndexedDB preserves independent page occurrences, acknowledgment and 
       web = await WebConsole.launch({ url: server.url, chrome, headless: true, readyTimeoutMs: 60_000, commandTimeoutMs: 20_000 })
       const result = JSON.parse(await web.run('/login_storage')) as {
         first: unknown[][]; afterRestart: { login_id: string }[]; afterAck: { login_id: string }[];
-        aborted: boolean; afterAbortRestart: { login_id: string }[]
+        aborted: boolean; afterAbortRestart: { login_id: string }[]; emptyRecovered: unknown[]; mixedRecovered: { login_id: string }[]
       }
       assert.deepEqual(result.first, [[], []])
       assert.deepEqual(result.afterRestart.map(event => event.login_id).sort(), ['a', 'b'])
       assert.deepEqual(result.afterAck.map(event => event.login_id), ['b'])
       assert.equal(result.aborted, true)
       assert.deepEqual(result.afterAbortRestart.map(event => event.login_id), ['b'])
+      assert.deepEqual(result.emptyRecovered, [])
+      assert.deepEqual(result.mixedRecovered.map(event => event.login_id), ['b'])
     } finally {
       await web?.close()
       await server.close()

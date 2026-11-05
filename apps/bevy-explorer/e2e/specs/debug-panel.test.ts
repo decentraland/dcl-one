@@ -72,7 +72,9 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
 })
 
 scenario('an unsigned guest does not produce authenticated client login events', async ({ explorer }) => {
-  const state = await explorer.json<{ active: boolean; inFlight: boolean; pending: number }>('/client_login_state')
+  const state = await explorer.json<{ active: boolean; inFlight: boolean; pending: number; memoryOnly: boolean; storageFailures: number }>('/client_login_state')
+  assert.equal(typeof state.memoryOnly, 'boolean')
+  assert.equal(typeof state.storageFailures, 'number')
   assert.equal(state.active, false)
   assert.equal(state.inFlight, false)
   assert.ok(Number.isInteger(state.pending) && state.pending >= 0)

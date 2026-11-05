@@ -216,3 +216,10 @@ change on the left updates what is on the right in the same change, then runs th
 cd apps/bevy-explorer/e2e && npm run typecheck && npm test
 python3 -m unittest discover -s tooling/tests -p 'test_bevy_*.py'
 ```
+
+The login-storage adapter and real-Chrome tests exercise corrupt/empty store recovery and mixed
+valid/invalid records as well as independent-context merge/ack behavior. The Rust `system_ui`
+`login::client_login::tests` drive signed requests to a localhost stub for acceptance, rejection,
+deployment-order retries and explicit memory-only delivery; they also check save-before-send,
+account cancellation and storage recovery. These are focused runtime tests, not a built Explorer
+signed-in journey. `/client_login_state` exposes `memoryOnly` and `storageFailures` for HUD diagnosis.

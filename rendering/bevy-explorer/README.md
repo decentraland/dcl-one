@@ -98,9 +98,15 @@ The queue is separate from settings: `client-logins.json` in the native configur
 or the browser's `dcl-client-logins` IndexedDB database. Each instance persists only its new
 IDs and explicit removals. Browser transactions and native file locks merge those changes with
 the latest stored state; a busy native lock defers persistence instead of blocking the worker.
-Removal records remain for 24 hours and 30 seconds so an uncertain earlier save cannot restore
+Removal records remain for 24 hours and five minutes so an uncertain earlier save cannot restore
 an acknowledged or discarded occurrence. The engine awaits the queue save before
-sending; storage failures defer delivery without delaying login. Each retry signs a fresh
+sending. Empty/corrupt stores are repaired, with one `.corrupt` file or IndexedDB `corrupt`
+record retaining the previous contents; malformed records are dropped individually while valid
+records survive. Three consecutive storage failures (ten-second timeout per asynchronous operation,
+five seconds between retries) enable visibly degraded memory-only delivery without delaying login.
+Unsaved changes remain in memory and storage recovery retries every minute. Normal persistence
+gating resumes after recovery; events accepted in memory mode are removed during reconciliation.
+Memory-only records can be lost on process/page shutdown. Each retry signs a fresh
 request with the original event ID and occurrence time. A signing snapshot binds the event to
 its wallet even if the current account changes. Logout cancels active delivery; pending records
 resume when that wallet logs in to the same service again.
@@ -108,10 +114,12 @@ resume when that wallet logs in to the same service again.
 One request runs at a time, with a ten-second deadline covering signing and HTTP. Network
 failures, HTTP 408, 429 and server errors use randomized exponential backoff bounded between
 one second and five minutes. HTTP 204
-acknowledges the event; other statuses stop its delivery, including 404/405 from services without
-this additive endpoint. Records expire after 24 hours. At most 32 pending records are retained per runtime and in shared storage;
+acknowledges the event. HTTP 404/405 retain it with a randomized 150–300 second backoff so client
+and server deployments can arrive in either order. Other client-error statuses stop its delivery
+and log only the status code. Response bodies are drained up to 16 KiB or one second for connection
+reuse; their contents are never logged. Records expire after 24 hours. At most 32 pending records are retained per runtime and in shared storage;
 adding one beyond the limit discards the oldest. The debug panel's **Client login events**
-section and `/client_login_state` expose pending count, persistence, attempts, result and
+section and `/client_login_state` expose pending count, persistence, memory-only mode, consecutive storage failures, attempts, result and
 session discard count. Concurrent processes and browser tabs share the durable queue without
 replacing each other’s pending records; the shared capacity policy discards the oldest occurrence.
 

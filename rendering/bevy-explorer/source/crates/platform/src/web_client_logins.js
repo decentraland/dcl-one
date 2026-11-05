@@ -1,7 +1,37 @@
 // Mutations merge under one IndexedDB transaction, including across Explorer tabs.
 const MAX_AGE_MS = 86_400_000
-const TOMBSTONE_MS = MAX_AGE_MS + 30_000
+const TOMBSTONE_MS = MAX_AGE_MS + 300_000
 const MAX_PENDING = 32
+
+function validEvent(event) {
+  return event !== null && typeof event === 'object' &&
+    ['login_id', 'wallet', 'endpoint'].every(key => typeof event[key] === 'string' && event[key].length > 0) &&
+    Number.isSafeInteger(event.occurred_at) && event.occurred_at >= 0
+}
+
+function recover(raw) {
+  let old
+  let damaged = false
+  try { old = JSON.parse(raw ?? '[]') } catch { damaged = true }
+  const store = { events: Object.create(null), removed: Object.create(null) }
+  let entries = []
+  if (Array.isArray(old)) entries = old.map(event => [event?.login_id, event])
+  else if (old && typeof old === 'object') {
+    if (old.events && typeof old.events === 'object' && !Array.isArray(old.events)) entries = Object.entries(old.events)
+    else damaged = true
+    if (old.removed && typeof old.removed === 'object' && !Array.isArray(old.removed)) {
+      for (const [id, at] of Object.entries(old.removed)) {
+        if (Number.isSafeInteger(at) && at >= 0) store.removed[id] = at
+        else damaged = true
+      }
+    } else damaged = true
+  } else damaged = true
+  for (const [id, event] of entries) {
+    if (validEvent(event) && id === event.login_id) store.events[id] = event
+    else damaged = true
+  }
+  return { store, damaged }
+}
 
 function openDb() {
   return new Promise((resolve, reject) => {
@@ -44,13 +74,16 @@ async function mutate(changes, readEvents) {
       const request = records.get('pending')
       request.onsuccess = () => {
         try {
-          const old = JSON.parse(request.result ?? '[]')
-          const store = Array.isArray(old)
-            ? { events: Object.fromEntries(old.map(event => [event.login_id, event])), removed: {} }
-            : old
+          const { store, damaged } = recover(request.result)
+          if (damaged) {
+            // One recovery snapshot, committed atomically with repaired valid records.
+            records.put(request.result, 'corrupt')
+            console.warn('recovered damaged login event storage; invalid records quarantined')
+          }
           const now = Date.now()
           prune(store, now)
           for (const event of changes.additions) {
+            if (!validEvent(event)) throw new Error('invalid login event')
             if (!Object.hasOwn(store.removed, event.login_id) && !Object.hasOwn(store.events, event.login_id)) {
               store.events[event.login_id] = event
             }

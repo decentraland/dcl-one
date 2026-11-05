@@ -1,8 +1,7 @@
 //! Durable, bounded Explorer login receipts. Signing keys never enter this queue.
 use serde::{Deserialize, Serialize};
 
-pub const MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
-pub const MAX_PENDING: usize = 32;
+pub use platform::client_login_store::{MAX_AGE_MS, MAX_PENDING};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PendingClientLogin {
@@ -50,9 +49,9 @@ pub fn retry_delay_ms(attempt: u32, entropy: u64) -> u64 {
     floor + entropy % (ceiling - floor + 1)
 }
 
-/// A receiver that does not implement the additive endpoint (404/405) must not be hammered.
+/// Deployment ordering can leave the additive endpoint unavailable temporarily.
 pub fn retryable_status(status: u16) -> bool {
-    status == 408 || status == 429 || status >= 500
+    matches!(status, 404 | 405 | 408 | 429) || status >= 500
 }
 
 /// Only new occurrences are added; loading a record never schedules another insertion.
@@ -78,7 +77,16 @@ pub struct DurableLogins {
 }
 
 impl DurableLogins {
-    pub fn load(&mut self, stored: Vec<PendingClientLogin>) -> usize {
+    pub fn load(&mut self, mut stored: Vec<PendingClientLogin>) -> usize {
+        // Recovery can happen after memory-only delivery. Never resurrect its acknowledgments
+        // or duplicate unsaved local additions when the store becomes available again.
+        stored.retain(|event| {
+            !self.changes.removals.contains(&event.login_id)
+                && !self
+                    .events
+                    .iter()
+                    .any(|local| local.login_id == event.login_id)
+        });
         let fresh = std::mem::replace(&mut self.events, stored);
         let mut dropped = 0;
         for event in fresh {
@@ -177,6 +185,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn recovery_does_not_resurrect_memory_ack_or_duplicate_unsaved_events() {
+        let mut queue = DurableLogins::default();
+        queue.load(Vec::new());
+        queue.push(event("acknowledged", 1000));
+        queue.push(event("pending", 1001));
+        queue.remove("acknowledged");
+        queue.load(vec![
+            event("acknowledged", 1000),
+            event("pending", 1001),
+            event("restored", 1002),
+        ]);
+        assert_eq!(
+            queue
+                .events
+                .iter()
+                .map(|e| e.login_id.as_str())
+                .collect::<Vec<_>>(),
+            ["pending", "restored"]
+        );
+        let delta = queue.begin_save().unwrap();
+        assert_eq!(delta.additions, [event("pending", 1001)]);
+        assert_eq!(delta.removals, ["acknowledged"]);
+        queue.finish_save(false);
+        assert_eq!(queue.begin_save().unwrap(), delta);
+    }
     #[test]
     fn restart_and_cached_login_keep_pending_event_and_add_distinct_completion() {
         let original = event("first", 1_000);
@@ -318,10 +352,10 @@ mod tests {
             }
             assert_ne!(retry_delay_ms(attempt, 0), retry_delay_ms(attempt, 1));
         }
-        for status in [408, 429, 500, 503] {
+        for status in [404, 405, 408, 429, 500, 503] {
             assert!(retryable_status(status));
         }
-        for status in [204, 400, 401, 403, 404, 405] {
+        for status in [204, 400, 401, 403] {
             assert!(!retryable_status(status));
         }
     }

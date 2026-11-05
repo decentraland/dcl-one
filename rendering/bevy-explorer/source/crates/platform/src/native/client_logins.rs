@@ -4,9 +4,7 @@ use std::{collections::BTreeMap, fs::OpenOptions, path::Path};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-const MAX_AGE_MS: u64 = 86_400_000;
-const TOMBSTONE_MS: u64 = MAX_AGE_MS + 30_000;
-const MAX_PENDING: usize = 32;
+use crate::client_login_store::{valid_event, MAX_AGE_MS, MAX_PENDING, TOMBSTONE_MS};
 
 #[derive(Default, Serialize, Deserialize)]
 struct Store {
@@ -21,24 +19,66 @@ struct Changes {
 }
 
 fn read_store(path: &Path) -> Result<Store, String> {
-    let text = match std::fs::read_to_string(path) {
+    let text = match std::fs::read(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Store::default()),
         Err(error) => return Err(error.to_string()),
     };
-    let value: Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    if let Some(events) = value.as_array() {
-        let mut store = Store::default();
-        for event in events {
-            let id = event["login_id"]
-                .as_str()
-                .ok_or("invalid stored login ID")?;
-            store.events.insert(id.into(), event.clone());
+    let value = serde_json::from_slice::<Value>(&text).ok();
+    let mut store = Store::default();
+    let mut damaged = false;
+    let entries: Vec<(String, Value)> = match value.as_ref() {
+        Some(Value::Array(events)) => events
+            .iter()
+            .map(|event| {
+                (
+                    event["login_id"].as_str().unwrap_or_default().to_owned(),
+                    event.clone(),
+                )
+            })
+            .collect(),
+        Some(Value::Object(object)) => {
+            match object.get("removed").and_then(Value::as_object) {
+                Some(removed) => {
+                    for (id, at) in removed {
+                        if let Some(at) = at.as_u64() {
+                            store.removed.insert(id.clone(), at);
+                        } else {
+                            damaged = true;
+                        }
+                    }
+                }
+                None => damaged = true,
+            }
+            match object.get("events").and_then(Value::as_object) {
+                Some(events) => events
+                    .iter()
+                    .map(|(id, event)| (id.clone(), event.clone()))
+                    .collect(),
+                None => {
+                    damaged = true;
+                    Vec::new()
+                }
+            }
         }
-        Ok(store)
-    } else {
-        serde_json::from_value(value).map_err(|e| e.to_string())
+        _ => {
+            damaged = true;
+            Vec::new()
+        }
+    };
+    for (id, event) in entries {
+        if valid_event(&event) && event["login_id"].as_str() == Some(id.as_str()) {
+            store.events.insert(id, event);
+        } else {
+            damaged = true;
+        }
     }
+    if damaged {
+        // Keep one bounded recovery snapshot, never log its contents.
+        std::fs::copy(path, path.with_extension("json.corrupt")).map_err(|e| e.to_string())?;
+        bevy::log::warn!("recovered damaged login event storage; invalid records quarantined");
+    }
+    Ok(store)
 }
 
 fn prune(store: &mut Store, now: u64) {
@@ -111,6 +151,9 @@ pub(super) fn write(directory: &Path, json: &str, now: u64) -> Result<String, St
         let mut store = read_store(path)?;
         prune(&mut store, now);
         for event in changes.additions {
+            if !valid_event(&event) {
+                return Err("invalid login event".into());
+            }
             let id = event["login_id"]
                 .as_str()
                 .ok_or("invalid login ID")?
@@ -137,7 +180,7 @@ pub(super) fn write(directory: &Path, json: &str, now: u64) -> Result<String, St
 mod tests {
     use super::*;
     fn change(id: &str, at: u64) -> String {
-        serde_json::json!({"additions":[{"login_id":id,"occurred_at":at}],"removals":[]})
+        serde_json::json!({"additions":[{"login_id":id,"occurred_at":at,"wallet":"alice","endpoint":"https://example.org/v1/client-login"}],"removals":[]})
             .to_string()
     }
     fn directory() -> std::path::PathBuf {
@@ -151,6 +194,41 @@ mod tests {
         ))
     }
     #[test]
+    fn empty_and_mixed_stores_quarantine_only_invalid_records() {
+        let dir = directory();
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("client-logins.json");
+        for text in ["", "{", "null", r#"{"events":null,"removed":{}}"#] {
+            std::fs::write(&path, text).unwrap();
+            assert_eq!(read(&dir, 1000).unwrap(), "[]");
+            assert_eq!(
+                std::fs::read_to_string(dir.join("client-logins.json.corrupt")).unwrap(),
+                text
+            );
+        }
+        std::fs::write(&path, [0xff, 0xfe]).unwrap();
+        assert_eq!(read(&dir, 1000).unwrap(), "[]");
+        assert_eq!(
+            std::fs::read(dir.join("client-logins.json.corrupt")).unwrap(),
+            [0xff, 0xfe]
+        );
+        let valid: Value = serde_json::from_str(&change("good", 1000)).unwrap();
+        let mixed =
+            serde_json::json!([valid["additions"][0], null, {"login_id":"bad","occurred_at":1000}])
+                .to_string();
+        std::fs::write(&path, &mixed).unwrap();
+        let recovered: Vec<Value> = serde_json::from_str(&read(&dir, 1000).unwrap()).unwrap();
+        assert_eq!(recovered, vec![valid["additions"][0].clone()]);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("client-logins.json.corrupt")).unwrap(),
+            mixed
+        );
+        write(&dir, &change("new", 1000), 1000).unwrap();
+        let recovered: Vec<Value> = serde_json::from_str(&read(&dir, 1000).unwrap()).unwrap();
+        assert_eq!(recovered.len(), 2);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn independent_instances_merge_restart_and_ack_without_resurrection() {
         let dir = directory();
         assert_eq!(read(&dir, 1000).unwrap(), "[]");
@@ -161,6 +239,7 @@ mod tests {
         assert_eq!(restarted.len(), 2);
         write(&dir, r#"{"additions":[],"removals":["a"]}"#, 1001).unwrap();
         // An uncertain earlier save retries its addition after another process acknowledged it.
+        write(&dir, &change("a", 1000), 500).unwrap(); // clock rollback retains tombstone
         write(&dir, &change("a", 1000), 1002).unwrap();
         let restarted: Vec<Value> = serde_json::from_str(&read(&dir, 1002).unwrap()).unwrap();
         assert_eq!(restarted.len(), 1);
