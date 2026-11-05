@@ -69,6 +69,11 @@ pub struct ExploreConfig {
     #[arg(long, env = "SLACK_WEBHOOK", hide_env_values = true)]
     pub events_slack_webhook: Option<String>,
 
+    /// Send aggregate upcoming-event summaries to SLACK_WEBHOOK. Disabled by
+    /// default; requires OPS_WRITES_ENABLED and a nonempty webhook.
+    #[arg(long, env = "EVENTS_UPCOMING_SUMMARIES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub events_upcoming_summaries_enabled: bool,
+
     /// The places admin bearer (the reports queue, POIs, moderation,
     /// featured, rankings; also PLACES_ADMIN_AUTH_TOKEN_FILE); unset refuses it.
     #[arg(long, env = "PLACES_ADMIN_AUTH_TOKEN", hide_env_values = true)]
@@ -300,4 +305,25 @@ pub struct AbCdnConfig {
     /// The marketplace the metadata's `external_url` links to; unset yields no link.
     #[arg(long, env = "MAP_EXTERNAL_BASE_URL")]
     pub map_external_base_url: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn upcoming_summary_opt_in_is_independent_of_a_moderation_webhook() {
+        let disabled = crate::config::Config::parse_env_for_tests([
+            ("DATABASE_URL", "postgres://x/y"),
+            ("SLACK_WEBHOOK", "https://example.org/moderation"),
+        ])
+        .unwrap();
+        assert!(!disabled.explore.events_upcoming_summaries_enabled);
+        for (value, expected) in [("true", true), ("false", false)] {
+            let config = crate::config::Config::parse_env_for_tests([
+                ("DATABASE_URL", "postgres://x/y"),
+                ("EVENTS_UPCOMING_SUMMARIES_ENABLED", value),
+            ])
+            .unwrap();
+            assert_eq!(config.explore.events_upcoming_summaries_enabled, expected);
+        }
+    }
 }

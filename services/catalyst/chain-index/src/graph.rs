@@ -27,11 +27,22 @@ pub const THE_GRAPH_PAGE_SIZE: i64 = 1000;
 /// tokens, past which the explorer paginates a truncated set rather than the
 /// node walking a whale's inventory on every request.
 const MAX_PAGES: usize = 10;
+/// Pages walked for the lambdas `/names` and `/lands` lists, which lamb2
+/// walks to the end (`fetchAllNFTs`): a guard against a subgraph that never
+/// answers a short page (1,000,000 rows), not a cut-off. Each page is one
+/// sequential GraphQL request of 1000 rows per uncached owner, so only those
+/// routes walk this far; admission, ownership checks and profiles keep
+/// [`MAX_PAGES`].
+pub(crate) const FULL_WALK_PAGES: usize = 1000;
 const BODY_CAP: usize = 8 * 1024 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_ATTEMPTS: u32 = 3;
 const RETRY_BASE_MS: u64 = 500;
 pub const OWNED_TTL: Duration = Duration::from_secs(30);
+/// How long after its fetch the lambdas `/users/{a}/names` route still
+/// answers an owner's names when the subgraph fails: lamb2's `maxAge +
+/// maxStaleAge` (`elements-fetcher.ts`, `ELEMENTS_CACHE_DEFAULTS`).
+pub const NAMES_STALE_MAX_AGE: Duration = Duration::from_secs(120);
 const OWNED_CACHE_MAX_ENTRIES: usize = 20_000;
 /// Owners folded into one aliased ownership document.
 const OWNERS_PER_QUERY: usize = 20;
@@ -124,17 +135,24 @@ pub struct OwnedLand {
     pub name: Option<String>,
     pub x: Option<i32>,
     pub y: Option<i32>,
-    /// `Some` when the LAND carries a data record (its description, possibly empty).
-    pub description: Option<String>,
+    /// `Some` when the LAND carries a data record, holding its description
+    /// (`None` for a null one, answered `null` as lamb2's `fetch-lands.ts`
+    /// passes it through); `None` without a record (no key).
+    pub description: Option<Option<String>>,
     pub price: Option<String>,
+    /// The subgraph's `nft.image` (the map service's PNG), which lamb2's
+    /// `/lands` answers as is; `None` on the index path, which synthesizes it.
+    pub image: Option<String>,
     pub transferred_at: i64,
 }
 
 pub struct Caches {
     /// `(owner, category)` -> every copy the owner holds across both networks.
     owned: TtlMap<(String, String), Arc<Vec<OwnedCopy>>>,
-    /// `owner` -> the ENS names the owner holds.
+    /// `owner` -> the ENS names the owner holds, cut off at [`MAX_PAGES`].
     pub names: TtlMap<String, Arc<Vec<OwnedName>>>,
+    /// `owner` -> every ENS name the owner holds ([`FULL_WALK_PAGES`]).
+    all_names: TtlMap<String, Arc<Vec<OwnedName>>>,
     /// The sorted coordinate list of a place -> its parcels and their owners.
     land: TtlMap<Vec<(i32, i32)>, Arc<Vec<LandParcel>>>,
     /// lowercased DCL name -> its holder.
@@ -143,11 +161,23 @@ pub struct Caches {
     lands: TtlMap<String, Arc<Vec<OwnedLand>>>,
 }
 
+impl Caches {
+    /// Ages `owner`'s names and lands entries by `by`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn backdate_owner_for_tests(&self, owner: &str, by: Duration) {
+        let owner = owner.to_lowercase();
+        self.names.backdate(&owner, by);
+        self.all_names.backdate(&owner, by);
+        self.lands.backdate(&owner, by);
+    }
+}
+
 impl Default for Caches {
     fn default() -> Self {
         Self {
             owned: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             names: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
+            all_names: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             land: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             name_owner: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             lands: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
@@ -506,13 +536,29 @@ pub(crate) fn parse_names(data: &Value) -> Vec<OwnedName> {
         .collect()
 }
 
-/// The ENS names the owner holds, in subgraph id order. `Ok(empty)` when no
-/// marketplace subgraph is configured.
+/// The ENS names the owner holds, in subgraph id order, cut off at
+/// [`MAX_PAGES`]. `Ok(empty)` when no marketplace subgraph is configured.
 pub async fn owned_names(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<OwnedName>>, String> {
+    walk_names(state, &state.graph.names, owner, MAX_PAGES).await
+}
+
+/// Every ENS name the owner holds, for the lambdas `/names` list, which
+/// lamb2 walks to the end ([`FULL_WALK_PAGES`]).
+pub async fn all_owned_names(
+    state: &ChainIndex,
+    owner: &str,
+) -> Result<Arc<Vec<OwnedName>>, String> {
+    walk_names(state, &state.graph.all_names, owner, FULL_WALK_PAGES).await
+}
+
+async fn walk_names(
+    state: &ChainIndex,
+    cache: &TtlMap<String, Arc<Vec<OwnedName>>>,
+    owner: &str,
+    max_pages: usize,
+) -> Result<Arc<Vec<OwnedName>>, String> {
     let owner = owner.to_lowercase();
-    state
-        .graph
-        .names
+    cache
         .get_or_fetch(owner.clone(), || async move {
             let Some(url) = state.settings.marketplace_subgraph_url.as_deref() else {
                 return Ok(Arc::new(Vec::new()));
@@ -522,7 +568,7 @@ pub async fn owned_names(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<Owne
             }
             let mut out = Vec::new();
             let mut id_from = String::new();
-            for _ in 0..MAX_PAGES {
+            for _ in 0..max_pages {
                 let data = graph_query(
                     state,
                     url,
@@ -543,6 +589,24 @@ pub async fn owned_names(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<Owne
             Ok::<_, String>(Arc::new(out))
         })
         .await
+}
+
+/// [`all_owned_names`] for the lambdas `/users/{a}/names` list alone: when the
+/// subgraph fails, the last good list fetched within
+/// [`NAMES_STALE_MAX_AGE`], as lamb2 serves its stale entry. Never for an
+/// ownership decision (worlds' NAME owner, comms admission, profiles), which
+/// reads [`owned_names`] and fails on an outage.
+pub async fn owned_names_or_stale(
+    state: &ChainIndex,
+    owner: &str,
+) -> Result<Arc<Vec<OwnedName>>, String> {
+    all_owned_names(state, owner).await.or_else(|err| {
+        state
+            .graph
+            .all_names
+            .get_within(&owner.to_lowercase(), NAMES_STALE_MAX_AGE)
+            .ok_or(err)
+    })
 }
 
 /// The parcel NFTs standing on the requested coordinates. `searchParcelX_in`
@@ -760,6 +824,7 @@ query ownedLands($owner: String!, $idFrom: ID!, $first: Int!) {
     parcel { data { description } }
     estate { data { description } }
     activeOrder { price }
+    image
   }
 }"#;
 
@@ -777,8 +842,7 @@ pub(crate) fn parse_owned_lands(data: &Value) -> Vec<OwnedLand> {
             .map(|d| {
                 d.get("description")
                     .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string()
+                    .map(str::to_string)
             })
     };
     data.get("nfts")
@@ -799,6 +863,11 @@ pub(crate) fn parse_owned_lands(data: &Value) -> Vec<OwnedLand> {
                     .filter(|o| !o.is_null())
                     .map(|o| str_of(o, "price"))
                     .filter(|p| !p.is_empty()),
+                image: nft
+                    .get("image")
+                    .and_then(Value::as_str)
+                    .filter(|i| !i.is_empty())
+                    .map(str::to_string),
                 transferred_at: nft
                     .get("transferredAt")
                     .and_then(Value::as_str)
@@ -811,7 +880,7 @@ pub(crate) fn parse_owned_lands(data: &Value) -> Vec<OwnedLand> {
 }
 
 /// The parcels and estates `owner` holds, newest transfer first (the old
-/// `transferred_at DESC`), walked in id pages up to [`MAX_PAGES`].
+/// `transferred_at DESC`), walked in id pages to the end ([`FULL_WALK_PAGES`]).
 /// `Ok(empty)` when no marketplace subgraph is configured.
 pub async fn owned_lands(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<OwnedLand>>, String> {
     let owner = owner.to_lowercase();
@@ -827,7 +896,7 @@ pub async fn owned_lands(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<Owne
             }
             let mut out = Vec::new();
             let mut id_from = String::new();
-            for _ in 0..MAX_PAGES {
+            for _ in 0..FULL_WALK_PAGES {
                 let data = graph_query(
                     state,
                     url,
@@ -854,6 +923,23 @@ pub async fn owned_lands(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<Owne
             Ok::<_, String>(Arc::new(out))
         })
         .await
+}
+
+/// [`owned_lands`] for the lambdas `/users/{a}/lands` list: when the
+/// subgraph fails, the last good list whatever its age. lamb2's lands cache
+/// (`createLegacyElementsFetcherComponent`) stores the stale value again on
+/// a failed refresh, so it answers it for as long as the outage lasts.
+pub async fn owned_lands_or_stale(
+    state: &ChainIndex,
+    owner: &str,
+) -> Result<Arc<Vec<OwnedLand>>, String> {
+    owned_lands(state, owner).await.or_else(|err| {
+        state
+            .graph
+            .lands
+            .get_stale(&owner.to_lowercase())
+            .ok_or(err)
+    })
 }
 
 /// Whether `owner` holds any of the parcels at `coords`, directly or through
@@ -897,7 +983,10 @@ mod tests {
             { "id": "parcel-0xF87E-5", "name": null, "contractAddress": "0xF87E", "tokenId": "5", "category": "parcel", "searchParcelX": "15", "searchParcelY": "-73",
               "transferredAt": "1693411667", "parcel": { "data": null }, "estate": null, "activeOrder": null },
             { "id": "estate-0x959e-9", "name": "Home", "contractAddress": "0x959e", "tokenId": "9", "category": "estate", "searchParcelX": null, "searchParcelY": null,
-              "transferredAt": "1700000000", "parcel": null, "estate": { "data": { "description": "" } }, "activeOrder": { "price": "1000" } }
+              "transferredAt": "1700000000", "parcel": null, "estate": { "data": { "description": "" } }, "activeOrder": { "price": "1000" },
+              "image": "https://api.decentraland.org/v1/estates/9/map.png" },
+            { "id": "parcel-0xF87E-6", "name": null, "contractAddress": "0xF87E", "tokenId": "6", "category": "parcel", "searchParcelX": "15", "searchParcelY": "-72",
+              "transferredAt": "1693411667", "parcel": { "data": { "description": null } }, "estate": null, "activeOrder": null }
         ] });
         let lands = parse_owned_lands(&data);
         assert_eq!(
@@ -911,6 +1000,7 @@ mod tests {
                 y: Some(-73),
                 description: None,
                 price: None,
+                image: None,
                 transferred_at: 1693411667
             }
         );
@@ -923,10 +1013,16 @@ mod tests {
                 name: Some("Home".into()),
                 x: None,
                 y: None,
-                description: Some(String::new()),
+                description: Some(Some(String::new())),
                 price: Some("1000".into()),
+                image: Some("https://api.decentraland.org/v1/estates/9/map.png".into()),
                 transferred_at: 1700000000
             }
+        );
+        assert_eq!(
+            lands[2].description,
+            Some(None),
+            "a null description stays null"
         );
     }
 
