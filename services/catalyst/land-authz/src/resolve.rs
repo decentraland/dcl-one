@@ -114,9 +114,29 @@ impl ParcelRights {
             !self.subject.owner.is_empty() && addresses_match(address, &self.subject.owner);
         flags
     }
+
+    /// The legs a deploy reads: [`Self::flags_for`] with a cleared
+    /// per-token leg (the zero address) read as no leg, so the zero address
+    /// is never granted and a parcel's cleared update operator falls back
+    /// to its estate's ([`ParcelSubject::deploy_update_operator`]).
+    pub fn deploy_flags_for(&self, address: &str) -> ParcelPermissionFlags {
+        if addresses_match(address, ZERO_ADDRESS) {
+            return ParcelPermissionFlags::default();
+        }
+        let mut flags = self.flags_for(address);
+        flags.update_operator = self
+            .subject
+            .deploy_update_operator
+            .as_deref()
+            .is_some_and(|v| addresses_match(address, v));
+        flags
+    }
 }
 
+const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
+
 type ParcelSubjectRow = (
+    Option<String>,
     Option<String>,
     Option<String>,
     Option<String>,
@@ -126,6 +146,7 @@ type ParcelSubjectRow = (
 
 type ParcelRightsRow = (
     i64,
+    Option<String>,
     Option<String>,
     Option<String>,
     Option<String>,
@@ -147,7 +168,14 @@ pub struct Store {
 fn subject_of(
     land_registry: &str,
     estate_registry: &str,
-    (parcel_owner, estate_owner, operator, update_operator, belongs_to_estate): ParcelSubjectRow,
+    (
+        parcel_owner,
+        estate_owner,
+        operator,
+        update_operator,
+        deploy_update_operator,
+        belongs_to_estate,
+    ): ParcelSubjectRow,
 ) -> ParcelSubject {
     let owner = if belongs_to_estate {
         estate_owner.or(parcel_owner)
@@ -163,17 +191,23 @@ fn subject_of(
         },
         operator: operator.map(|o| o.to_lowercase()),
         update_operator: update_operator.map(|o| o.to_lowercase()),
+        deploy_update_operator: deploy_update_operator.map(|o| o.to_lowercase()),
         belongs_to_estate,
     }
 }
 
 /// The subject columns shared by `parcel_subject` and `rights_batch`: `pt`
 /// is the parcel's `token_right`, `el` its `estate_land`, `et` the estate's
-/// `token_right`.
+/// `token_right`. A cleared leg is stored as the zero address: lamb2's
+/// `parcel.updateOperator ?? estate.updateOperator` keeps it, the deploy
+/// column reads it as no leg.
 const SUBJECT_COLUMNS: &str = "pt.owner AS parcel_owner, \
      et.owner AS estate_owner, \
      CASE WHEN el.estate_token_id IS NULL THEN pt.operator ELSE et.operator END AS operator, \
      COALESCE(pt.update_operator, CASE WHEN el.estate_token_id IS NULL THEN NULL ELSE et.update_operator END) AS update_operator, \
+     COALESCE(NULLIF(pt.update_operator, '0x0000000000000000000000000000000000000000'), \
+              CASE WHEN el.estate_token_id IS NULL THEN NULL \
+                   ELSE NULLIF(et.update_operator, '0x0000000000000000000000000000000000000000') END) AS deploy_update_operator, \
      (el.estate_token_id IS NOT NULL) AS belongs_to_estate";
 
 /// Joins `granted`, the position (block, log) of the approval that opened
@@ -201,6 +235,27 @@ const GRANTED_SINCE: &str = "\
 /// The grant order [`GRANTED_SINCE`] joins.
 const GRANTED_ORDER: &str =
     "granted.block_number NULLS LAST, granted.log_index NULLS LAST, ar.operator";
+
+/// A parcel of the `lands-permissions` page. `id` is the land-manager
+/// subgraph's `Parcel.id`, which lamb2 passes through.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OperatedParcel {
+    pub id: String,
+    pub x: i32,
+    pub y: i32,
+    pub owner: String,
+}
+
+/// The land-manager subgraph's `Parcel.id` of the LAND row `tr`, from its
+/// coordinates: the token id `(x << 128) | y`, both halves two's complement,
+/// as lower-case `0x` hex without leading zeros (`0x0` is 0,0;
+/// `0x1000000000000000000000000000000009` is 16,9; captured 2026-11-04).
+/// `to_hex` of a negative `integer` is its 32-bit two's complement, so 24
+/// more `f`s widen it to 128 bits.
+pub(crate) const PARCEL_SUBGRAPH_ID: &str = "'0x' || CASE WHEN tr.x = 0 \
+     THEN CASE WHEN tr.y < 0 THEN 'ffffffffffffffffffffffff' ELSE '' END || to_hex(tr.y) \
+     ELSE CASE WHEN tr.x < 0 THEN 'ffffffffffffffffffffffff' ELSE '' END || to_hex(tr.x) \
+       || lpad(CASE WHEN tr.y < 0 THEN 'ffffffffffffffffffffffff' ELSE '' END || to_hex(tr.y), 32, '0') END";
 
 impl Store {
     pub fn new(pool: PgPool, land_registry: &str, estate_registry: &str) -> Self {
@@ -308,6 +363,7 @@ impl Store {
             estate_owner,
             operator,
             update_operator,
+            deploy_update_operator,
             belongs_to_estate,
             update_managers,
             approved_for_all,
@@ -324,6 +380,7 @@ impl Store {
                     estate_owner,
                     operator,
                     update_operator,
+                    deploy_update_operator,
                     belongs_to_estate,
                 ),
             );
@@ -409,26 +466,30 @@ impl Store {
     }
 
     /// One page of the direct reverse lookup with its total (`count(*) OVER
-    /// ()`, a bare COUNT when the page is past the end).
+    /// ()`, a bare COUNT when the page is past the end), keyed and ordered
+    /// as the land-manager subgraph's `Parcel.id`: the token id as
+    /// lower-case `0x` hex without leading zeros, sorted as a string
+    /// ([`PARCEL_SUBGRAPH_ID`]).
     pub async fn parcels_with_update_operator_page(
         &self,
         address: &str,
         limit: i64,
         offset: i64,
-    ) -> Result<(Vec<UpdatableParcel>, i64), sqlx::Error> {
-        let rows: Vec<(String, i32, i32, Option<String>, i64)> = sqlx::query_as(
-            "SELECT tr.token_id::text, tr.x, tr.y, tr.owner, count(*) OVER () \
+    ) -> Result<(Vec<OperatedParcel>, i64), sqlx::Error> {
+        let rows: Vec<(String, i32, i32, Option<String>, i64)> =
+            sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "SELECT {PARCEL_SUBGRAPH_ID} AS id, tr.x, tr.y, tr.owner, count(*) OVER () \
              FROM land_authz.token_right tr \
              WHERE tr.token_address = $1 AND tr.update_operator = lower($2) \
-             ORDER BY tr.token_id \
-             LIMIT $3 OFFSET $4",
-        )
-        .bind(&self.land_registry)
-        .bind(address)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&self.pool)
-        .await?;
+             ORDER BY ({PARCEL_SUBGRAPH_ID}) COLLATE \"C\" \
+             LIMIT $3 OFFSET $4"
+            )))
+            .bind(&self.land_registry)
+            .bind(address)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await?;
         let total = match rows.first() {
             Some(row) => row.4,
             None => {
@@ -444,7 +505,12 @@ impl Store {
         };
         Ok((
             rows.into_iter()
-                .map(|(token_id, x, y, owner, _)| updatable((token_id, x, y, owner, false)))
+                .map(|(id, x, y, owner, _)| OperatedParcel {
+                    id,
+                    x,
+                    y,
+                    owner: owner.unwrap_or_default().to_lowercase(),
+                })
                 .collect(),
             total,
         ))
@@ -491,7 +557,7 @@ impl Store {
              JOIN land_authz.estate_land el ON el.estate_token_id = et.token_id \
              JOIN land_authz.token_right pt ON pt.token_address = $1 AND pt.token_id = el.land_token_id \
              WHERE et.token_address = $3 AND et.update_operator = lower($2) \
-               AND pt.update_operator IS NULL \
+               AND (pt.update_operator IS NULL OR pt.update_operator = '0x0000000000000000000000000000000000000000') \
              ORDER BY 2, 3",
         )
         .bind(&self.land_registry)
@@ -590,6 +656,7 @@ mod tests {
                 registry: String::new(),
                 operator: None,
                 update_operator: None,
+                deploy_update_operator: None,
                 belongs_to_estate: false,
             },
             operators: LandOperators::default(),

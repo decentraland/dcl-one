@@ -224,7 +224,7 @@ async fn user_lands_permissions(
                 .into_iter()
                 .map(|parcel| {
                     json!({
-                        "id": parcel.token_id,
+                        "id": parcel.id,
                         "x": parcel.x.to_string(),
                         "y": parcel.y.to_string(),
                         "owner": parcel.owner,

@@ -11,11 +11,12 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 4] = [
+const PREPARED_PENDING_STEPS: [&str; 5] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
     "0024_social_referral_reward_receipt",
+    "0025_land_authz_cleared_legs",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
 
