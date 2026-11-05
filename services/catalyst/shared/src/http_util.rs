@@ -45,12 +45,3 @@ pub fn internal_server_error() -> Response {
     )
 }
 
-/// lamb2's unhandled-error answer: 500 `{"error": "Internal Server Error"}`,
-/// with no `message` (decentraland/lamb2:src/controllers/handlers/errorHandler.ts:66-76).
-pub fn lambdas_internal_error() -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(json!({ "error": "Internal Server Error" })),
-    )
-        .into_response()
-}
