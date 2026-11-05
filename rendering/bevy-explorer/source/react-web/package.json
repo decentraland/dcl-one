@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:scene-fetch": "node --test e2e/scene-fetch.browser.mjs",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:visual": "playwright test --config playwright.visual.config.ts",

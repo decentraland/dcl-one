@@ -64,7 +64,7 @@ async fn fetch_server(req_id: String) -> Result<(Address, serde_json::Value), an
         attempt += 1;
 
         let url = format!("{}/{req_id}", auth_server_endpoint_url());
-        let response = reqwest::Client::builder()
+        let response = platform::http_client_builder()
             .use_native_tls()
             .build()
             .unwrap()
@@ -123,7 +123,7 @@ async fn fetch_server(req_id: String) -> Result<(Address, serde_json::Value), an
 async fn init_request(request: CreateRequest) -> Result<InitializedRequest, anyhow::Error> {
     let body = serde_json::to_string(&request).expect("valid json");
 
-    let response = reqwest::Client::builder()
+    let response = platform::http_client_builder()
         .use_native_tls()
         .build()
         .unwrap()
@@ -243,7 +243,7 @@ async fn fetch_identity(identity_id: &str) -> Result<AuthIdentity, anyhow::Error
         common::base_domain::Service::AuthApi,
         &format!("/identities/{identity_id}"),
     );
-    let response = reqwest::Client::builder()
+    let response = platform::http_client_builder()
         .use_native_tls()
         .build()
         .unwrap()

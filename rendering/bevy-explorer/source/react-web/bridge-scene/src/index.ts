@@ -21,6 +21,7 @@ import { registerEmotes } from './domains/emotes'
 import { registerWearables, sendEquipped } from './domains/wearables'
 import { registerCatalog } from './domains/catalog'
 import { registerOutfits } from './domains/outfits'
+import { registerRandomizer } from './domains/randomizer'
 import { registerAvatarDraft } from './domains/avatarDraft'
 import { registerWelcome } from './domains/welcome'
 import { registerNotifications } from './domains/notifications'
@@ -55,6 +56,7 @@ export function main(): void {
     registerWearables(ctx)
     registerCatalog(ctx)
     registerOutfits(ctx)
+    registerRandomizer(ctx)
     registerAvatarDraft(ctx, async () => {
       await sendEquipped(ctx)
     })

@@ -144,6 +144,8 @@ mod tests {
             image: None,
             image_vertical: None,
             description: None,
+            contact: None,
+            details: None,
             start_at: start.map(at),
             finish_at: finish.map(at),
             next_start_at: start.map(at),

@@ -1,0 +1,60 @@
+{
+  "l1Contracts": {
+    "mainnet": {
+      "chainId": 1,
+      "registrar": "0x2a187453064356c898cae034eaed119e1663acb8",
+      "land": "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d",
+      "state": "0x959e104e1a4db6317fa58f8295f586e1a978c297",
+      "checker": "0x49fd6E40548A67a3FB9cA4fE22ab87885ba10454"
+    },
+    "sepolia": {
+      "chainId": 11155111,
+      "registrar": "0x7518456ae93eb98f3e64571b689c626616bb7f30",
+      "land": "0x42f4ba48791e2de32f5fbf553441c2672864bb33",
+      "state": "0x369a7fbe718c870c79f99fb423882e8dd8b20486",
+      "checker": "0x49fd6E40548A67a3FB9cA4fE22ab87885ba10454"
+    }
+  },
+  "l2Contracts": {
+    "polygon": {
+      "checker": "0xC2D0637FE019817b7B307b9B966E4400EB4aC165",
+      "thirdParty": "0x1C436C1EFb4608dFfDC8bace99d2B03c314f3348",
+      "factories": [
+        {
+          "address": "0xB549B2442b2BD0a53795BC5cDcBFE0cAF7ACA9f8",
+          "sinceBlock": 15202563
+        },
+        {
+          "address": "0x3195e88aE10704b359764CB38e429D24f1c2f781",
+          "sinceBlock": 28121692
+        }
+      ],
+      "commitees": [
+        {
+          "address": "0x71d9350Ef44E1e451F00e447C0DfF2d1FB75510a",
+          "sinceBlock": 15202559
+        },
+        {
+          "address": "0xaeec95a8aa671a6d3fec56594827d7804964fa70",
+          "sinceBlock": 19585299
+        }
+      ]
+    },
+    "amoy": {
+      "checker": "0x0ffc7e6d72ee2f287b877533454210621b1b7822",
+      "thirdParty": "0x7d7c0b9d97385bada5fec6861e97d0df414af3c3",
+      "factories": [
+        {
+          "address": "0x802de0c509add2ee29de24de7225daaff4741c43",
+          "sinceBlock": 5763249
+        }
+      ],
+      "commitees": [
+        {
+          "address": "0x53c9c388000b6fc91b91fb466742d0e869785c3b",
+          "sinceBlock": 5706678
+        }
+      ]
+    }
+  }
+}

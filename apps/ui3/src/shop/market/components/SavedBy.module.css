@@ -1,0 +1,50 @@
+/* "Saved by": one row per account, the profile name over its short address. */
+.modal h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.item {
+  margin: 4px 0 16px;
+  color: var(--ink-6);
+  font-size: 14px;
+}
+.empty {
+  margin: 8px 0 0;
+  color: var(--ink-6);
+}
+.list {
+  max-height: min(420px, 60vh);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+.list li + li {
+  border-top: 1px solid var(--line);
+}
+.list a {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 4px;
+  color: var(--text);
+  text-decoration: none;
+}
+.list a:hover strong {
+  text-decoration: underline;
+}
+.list a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.list strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+.list span {
+  color: var(--ink-6);
+  font-size: 12px;
+}

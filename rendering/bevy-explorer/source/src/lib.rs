@@ -4,8 +4,13 @@
 pub mod automation;
 mod autopilot;
 mod commands;
+mod debug_panel;
 mod deep_link;
 mod ext;
+mod gpu_memory;
+mod memory;
+#[cfg(test)]
+mod memory_tests;
 #[cfg(target_arch = "wasm32")]
 mod web;
 pub mod world_state;
@@ -613,7 +618,8 @@ impl DecentralandApp {
         app.insert_resource(decentraland_app_config.app_config);
 
         // Plugins
-        app.add_plugins(SceneRunnerPlugin)
+        app.add_plugins((memory::MemoryStatusPlugin, gpu_memory::GpuMemoryPlugin))
+            .add_plugins(SceneRunnerPlugin)
             .add_plugins(AVPlayerPlugin)
             .add_plugins(RestrictedActionsPlugin)
             .add_plugins(UtilsPlugin)
@@ -701,6 +707,7 @@ impl DecentralandApp {
         app.add_console_command::<SceneThreadsCommand, _>(scene_threads);
         app.add_console_command::<FpsCommand, _>(set_fps);
         app.add_console_command::<SessionGraphicsCommand, _>(session_graphics);
+        debug_panel::register(&mut app);
 
         app
     }

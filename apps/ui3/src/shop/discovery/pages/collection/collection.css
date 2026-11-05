@@ -52,6 +52,8 @@
 }
 .shop-collection .shop-browse__col {
   position: static;
+  /* Not pinned here, so not capped to the screen either: every filter section stays reachable on the page. */
+  max-height: none;
   gap: 0;
 }
 

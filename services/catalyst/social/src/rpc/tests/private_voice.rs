@@ -195,8 +195,8 @@ async fn a_start_follows_the_callers_privacy_and_refuses_yourself() {
 }
 
 /// Unknown ids answer not found (accept, reject, end); a second reject of
-/// the same call too; a malformed id is an invalid request on accept and
-/// reject.
+/// the same call too; malformed identifiers retain PostgreSQL syntax errors
+/// inside application internal-server-error oneofs.
 #[tokio::test]
 async fn an_unknown_call_is_not_found() {
     let Some(rig) = Rig::new().await else {
@@ -219,11 +219,11 @@ async fn an_unknown_call_is_not_found() {
     ));
     assert!(matches!(
         rig.accept(&callee, "not-a-uuid").await,
-        accept_private_voice_chat_response::Response::InvalidRequest(_)
+        accept_private_voice_chat_response::Response::InternalServerError(_)
     ));
     assert!(matches!(
         rig.reject(&callee, "not-a-uuid").await,
-        reject_private_voice_chat_response::Response::InvalidRequest(_)
+        reject_private_voice_chat_response::Response::InternalServerError(_)
     ));
 
     let call_id = rig.call(&caller, &callee).await;
@@ -236,6 +236,71 @@ async fn an_unknown_call_is_not_found() {
         reject_private_voice_chat_response::Response::NotFound(_)
     ));
     rig.forget(&[&caller, &callee]).await;
+}
+
+/// Only the callee rejects (upstream `voice.ts:156-157`) and only a party
+/// ends (`voice.ts:189-191`): anyone else holding the id gets the unknown
+/// call's not-found, the call stays and nobody is told. The callee rejects and
+/// either party ends as before.
+#[tokio::test]
+async fn only_the_callee_rejects_and_only_a_party_ends() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let (caller, callee, stranger) = (addr("pvp1"), addr("pvp2"), addr("pvp3"));
+    let call_id = rig.call(&caller, &callee).await;
+    let (mut to_caller, mut to_callee) = (
+        rig.ctx.pubsub().subscribe(&caller),
+        rig.ctx.pubsub().subscribe(&callee),
+    );
+    let refused_rejects = [
+        rig.reject(&stranger, &call_id).await,
+        rig.reject(&caller, &call_id).await,
+    ];
+    let refused_end = rig.end(&stranger, &call_id).await;
+    let left = rig.calls_between(&caller, &callee).await;
+    let heard = voice_updates(&mut to_caller).len() + voice_updates(&mut to_callee).len();
+    let rejected = rig.reject(&callee, &call_id).await;
+    let mut ended = Vec::new();
+    for party in [&caller, &callee] {
+        let id = rig.call(&caller, &callee).await;
+        ended.push(rig.end(party, &id).await);
+    }
+    let after = rig.calls_between(&caller, &callee).await;
+    rig.forget(&[&caller, &callee, &stranger]).await;
+    for refused in &refused_rejects {
+        assert!(
+            matches!(
+                refused,
+                reject_private_voice_chat_response::Response::NotFound(_)
+            ),
+            "{refused:?}"
+        );
+    }
+    assert!(
+        matches!(
+            refused_end,
+            end_private_voice_chat_response::Response::NotFound(_)
+        ),
+        "{refused_end:?}"
+    );
+    assert_eq!(left, 1, "a refused reject or end deleted the call");
+    assert_eq!(heard, 0, "a refused reject or end told a party");
+    assert!(
+        matches!(
+            rejected,
+            reject_private_voice_chat_response::Response::Ok(_)
+        ),
+        "{rejected:?}"
+    );
+    for answer in &ended {
+        assert!(
+            matches!(answer, end_private_voice_chat_response::Response::Ok(_)),
+            "{answer:?}"
+        );
+    }
+    assert_eq!(after, 0);
 }
 
 /// Each party receives its own grant: the callee in the response, the caller
@@ -276,6 +341,20 @@ async fn each_party_gets_its_own_grant_and_the_callee_sees_the_incoming_call() {
     );
     let url = &updates[0].credentials.as_ref().unwrap().connection_url;
     assert!(url.ends_with(&format!("for={caller}")), "{url}");
+    assert!(updates[0].caller.is_none());
+    assert!(updates[0].callee.is_none());
+    assert!(matches!(
+        rig.incoming(&callee).await,
+        get_incoming_private_voice_chat_request_response::Response::NotFound(_)
+    ));
+    assert!(matches!(
+        rig.accept(&callee, &call_id).await,
+        accept_private_voice_chat_response::Response::NotFound(_)
+    ));
+    assert!(matches!(
+        rig.reject(&callee, &call_id).await,
+        reject_private_voice_chat_response::Response::NotFound(_)
+    ));
     rig.forget(&[&caller, &callee]).await;
 }
 
@@ -414,11 +493,64 @@ async fn either_party_already_in_a_voice_room_is_a_conflict_naming_it() {
     rig.forget(&[&caller, &callee, &third]).await;
 }
 
-/// The start's refusal messages. Recorded difference (RPC.md, private voice,
-/// "start-private-voice-chat (7)"): upstream answers a self-call and a blocked
-/// pair with the not-friends message (`VoiceChatNotAllowedError`,
-/// `src/logic/voice/voice.ts:36-45`, `src/logic/voice/errors.ts:1-5`);
-/// Catalyst names each refusal.
+/// Block and privacy authorization precede presence disclosure (upstream
+/// social-service-ea@b6b2cef voice.ts:48-68), whichever party is in a room.
+#[tokio::test]
+async fn privacy_denial_hides_either_partys_community_call_presence() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let (caller, callee, owner) = (addr("pvpr1"), addr("pvpr2"), addr("pvpr3"));
+    let community = seed_community(rig.db.pool(), true, &owner, "owner").await;
+    let mut updates = rig.ctx.pubsub().subscribe(&callee);
+    for occupant in [&caller, &callee] {
+        sqlx::query("INSERT INTO social.community_voice_chat_users (community_id, address, status) VALUES ($1, $2, 'connected')")
+            .bind(community).bind(occupant).execute(rig.db.pool()).await.unwrap();
+        for restricted in [&caller, &callee] {
+            for who in [&caller, &callee] {
+                rig.db
+                    .upsert_social_settings(
+                        who,
+                        Some(if who == restricted {
+                            "only_friends"
+                        } else {
+                            "all"
+                        }),
+                        None,
+                        None,
+                    )
+                    .await
+                    .unwrap();
+            }
+            match rig.start(&caller, &callee).await {
+                start_private_voice_chat_response::Response::ForbiddenError(error) => {
+                    assert_eq!(
+                        error.message.as_deref(),
+                        Some(
+                            "The callee or the caller are not accepting voice calls from users that are not friends"
+                        )
+                    );
+                }
+                other => panic!("{other:?}"),
+            }
+            assert_eq!(rig.calls_between(&caller, &callee).await, 0);
+            assert!(updates.try_recv().is_err());
+        }
+        sqlx::query("DELETE FROM social.community_voice_chat_users WHERE community_id = $1")
+            .bind(community)
+            .execute(rig.db.pool())
+            .await
+            .unwrap();
+    }
+    drop_community(rig.db.pool(), community).await;
+    rig.forget(&[&caller, &callee]).await;
+}
+
+/// The start's refusal messages: a self-call and a blocked pair answer the
+/// not-friends message, as upstream's `VoiceChatNotAllowedError`
+/// (`src/logic/voice/voice.ts:36-58`, `src/logic/voice/errors.ts:1-5` at
+/// `b6b2cef`).
 #[tokio::test]
 async fn a_refused_start_says_why() {
     let Some(rig) = Rig::new().await else {
@@ -435,17 +567,191 @@ async fn a_refused_start_says_why() {
         message(rig.start(&caller, " ").await).as_deref(),
         Some("Callee address is missing in the request payload")
     );
+    let not_allowed = Some(
+        "The callee or the caller are not accepting voice calls from users that are not friends",
+    );
     assert_eq!(
         message(rig.start(&caller, &caller).await).as_deref(),
-        Some("Cannot start a private voice chat with yourself")
+        not_allowed
     );
     rig.db.block_user(&caller, &callee).await.unwrap();
     assert_eq!(
         message(rig.start(&caller, &callee).await).as_deref(),
-        Some(
-            "This action is not allowed because either you blocked this user or this user blocked you"
-        )
+        not_allowed
     );
     cleanup_pair(&rig.db, &caller, &callee).await;
     rig.forget(&[&caller, &callee]).await;
+}
+
+/// Upstream `parseEmittedUpdateToPrivateVoiceChatUpdate`
+/// (`subscribe-to-private-voice-chat-updates.ts:36-41` at `b6b2cef`): an
+/// update names the caller on REQUESTED only and never the callee; and an end
+/// tells only the party that did not end it (`src/logic/voice/voice.ts:203-208`).
+#[tokio::test]
+async fn updates_name_the_caller_of_a_request_only_and_an_end_tells_the_other_party() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let (caller, callee) = (addr("pvu1"), addr("pvu2"));
+    let subscribe = |me: &str| {
+        let pctx = procedure_ctx(&rig.ctx, me, rand_id());
+        async move {
+            SocialServiceImpl
+                .subscribe_to_private_voice_chat_updates(pctx, Default::default())
+                .await
+                .unwrap()
+        }
+    };
+    let (mut to_caller, mut to_callee) = (subscribe(&caller).await, subscribe(&callee).await);
+    let call_id = rig.call(&caller, &callee).await;
+    let requested = next_update(&mut to_callee).await;
+    assert_eq!(
+        requested.status,
+        PrivateVoiceChatStatus::VoiceChatRequested as i32
+    );
+    assert_eq!(requested.caller.map(|u| u.address), Some(caller.clone()));
+    assert!(requested.callee.is_none());
+    assert!(matches!(
+        rig.end(&caller, &call_id).await,
+        end_private_voice_chat_response::Response::Ok(_)
+    ));
+    let ended = next_update(&mut to_callee).await;
+    assert_eq!(ended.status, PrivateVoiceChatStatus::VoiceChatEnded as i32);
+    assert!(
+        ended.caller.is_none() && ended.callee.is_none(),
+        "{ended:?}"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), to_caller.next())
+            .await
+            .is_err(),
+        "the ender hears nothing"
+    );
+    rig.forget(&[&caller, &callee]).await;
+}
+
+fn rand_id() -> u32 {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(20_000);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Replays actual pinned voice-db/domain/RPC executions, including PostgreSQL's
+/// permissive UUID input forms and the stricter privileged media identifier guard.
+#[tokio::test]
+async fn private_identifier_wire_and_pending_side_effects_match_executed_upstream() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/private-id-source-cases.json"
+    )))
+    .unwrap();
+    let a = fixture["caller"].as_str().unwrap();
+    let b = fixture["target"].as_str().unwrap();
+    let call: Uuid = fixture["call"].as_str().unwrap().parse().unwrap();
+    assert_eq!(fixture["cases"].as_array().unwrap().len(), 48);
+    // Query-only warm samples separate the extra UUID-boundary round trip from
+    // the domain/media operation; this is an observation, not a timing gate.
+    let mut cast_micros = Vec::with_capacity(128);
+    for _ in 0..128 {
+        let at = std::time::Instant::now();
+        let parsed: Uuid = sqlx::query_scalar("SELECT $1::text::uuid")
+            .bind(call.to_string())
+            .fetch_one(rig.db.pool())
+            .await
+            .unwrap();
+        assert_eq!(parsed, call);
+        cast_micros.push(at.elapsed().as_micros());
+    }
+    cast_micros.sort_unstable();
+    println!(
+        "RPC UUID cast query128samples: p50={}us p95={}us max={}us",
+        cast_micros[64], cast_micros[121], cast_micros[127]
+    );
+    for case in fixture["cases"].as_array().unwrap() {
+        let label = case["id"].as_str().unwrap();
+        sqlx::query("DELETE FROM social.private_voice_chats WHERE id=$1")
+            .bind(call)
+            .execute(rig.db.pool())
+            .await
+            .unwrap();
+        if case["pending"].as_bool().unwrap() {
+            sqlx::query("INSERT INTO social.private_voice_chats(id,caller_address,callee_address) VALUES($1,$2,$3)")
+                .bind(call).bind(a).bind(b).execute(rig.db.pool()).await.unwrap();
+        }
+        let mut one = rig.ctx.pubsub().subscribe(a);
+        let mut two = rig.ctx.pubsub().subscribe(b);
+        let actor = case["caller"].as_str().unwrap();
+        let id = case["call_id"].as_str().unwrap();
+        let bytes = match case["method"].as_str().unwrap() {
+            "accept" => AcceptPrivateVoiceChatResponse {
+                response: Some(rig.accept(actor, id).await),
+            }
+            .encode_to_vec(),
+            "reject" => RejectPrivateVoiceChatResponse {
+                response: Some(rig.reject(actor, id).await),
+            }
+            .encode_to_vec(),
+            "end" => EndPrivateVoiceChatResponse {
+                response: Some(rig.end(actor, id).await),
+            }
+            .encode_to_vec(),
+            other => panic!("unknown source operation {other}"),
+        };
+        assert_eq!(
+            hex::encode(bytes),
+            case["expected_hex"].as_str().unwrap(),
+            "{label}"
+        );
+        // Accepted rows also own media facts in the destination. Compare the
+        // source's pending-intent relation, excluding accepted media membership.
+        let remaining: i64 = sqlx::query_scalar("SELECT count(*) FROM social.private_voice_chats c WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=c.id)")
+            .bind(call).fetch_one(rig.db.pool()).await.unwrap();
+        assert_eq!(
+            remaining,
+            case["remaining_rows"].as_i64().unwrap(),
+            "{label}"
+        );
+        let actual: Vec<_> = [&mut one, &mut two]
+            .into_iter()
+            .flat_map(|rx| {
+                let mut updates = Vec::new();
+                while let Ok(event) = rx.try_recv() {
+                    updates.push(event);
+                }
+                updates
+            })
+            .collect();
+        let expected = case["updates"].as_array().unwrap();
+        assert_eq!(
+            actual.len(),
+            expected.len(),
+            "{label}: mutation event count"
+        );
+        for (actual, expected) in actual.iter().zip(expected) {
+            let SocialEvent::PrivateVoice(update) = &**actual else {
+                panic!("wrong mutation event");
+            };
+            assert_eq!(
+                update.call_id,
+                expected["callId"].as_str().unwrap(),
+                "{label}: raw call spelling"
+            );
+            let status = match expected["status"].as_str().unwrap() {
+                "accepted" => PrivateVoiceChatStatus::VoiceChatAccepted,
+                "rejected" => PrivateVoiceChatStatus::VoiceChatRejected,
+                "ended" => PrivateVoiceChatStatus::VoiceChatEnded,
+                other => panic!("unexpected source status {other}"),
+            };
+            assert_eq!(update.status, status as i32, "{label}");
+        }
+    }
+    sqlx::query("DELETE FROM social.private_voice_chats WHERE id=$1")
+        .bind(call)
+        .execute(rig.db.pool())
+        .await
+        .unwrap();
 }

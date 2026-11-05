@@ -1,29 +1,109 @@
-//! A WebSocket as a dRPC [`Transport`]: binary frames in and out, closed by
-//! `close` or a kill handle.
+//! A WebSocket as a dRPC [`Transport`]: binary frames in and out, ended by
+//! `close` or by its [`SocketClose`] handle with the close frame asked for.
 
-use std::sync::Arc;
+mod byte_budget;
+mod idle;
+mod ordinary;
+use byte_budget::ByteBudget;
+pub use idle::{IdleAction, IdleTimer};
+pub use ordinary::{OrdinaryQueueConfig, native_backpressure_limit};
+
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use crate::rpc::drpc::transport::{GuardedDelivery, GuardedSend, MAX_GUARDED_MESSAGE_BYTES};
-use axum::extract::ws::{Message, WebSocket};
+use axum::extract::ws::{CloseFrame, Message, WebSocket};
 use futures::{SinkExt, StreamExt};
+use tokio::sync::Mutex;
 use tokio::sync::mpsc::{
     Receiver, Sender, UnboundedReceiver, UnboundedSender, channel, unbounded_channel,
 };
-use tokio::sync::{Mutex, Notify};
+use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 
 use crate::rpc::drpc::transport::{Transport, TransportError, TransportMessage};
 
+/// The close the RPC layer's own `close` ends a live socket with (upstream
+/// social-service-ea `ws-handler.ts`: `ws.end(1011, 'RPC transport closed')`).
+pub const RPC_TRANSPORT_CLOSED: (u16, &str) = (1011, "RPC transport closed");
+
+/// How long the writer may take to hand the close frame over, and to close.
+const CLOSE_BUDGET: Duration = Duration::from_millis(100);
+
+/// How the server ends one socket: every task serving it stops, and the
+/// first close frame asked for is the one sent. A socket whose peer went
+/// away ends without one.
+#[derive(Default)]
+pub struct SocketClose {
+    ended: CancellationToken,
+    frame: OnceLock<Option<(u16, &'static str)>>,
+    observed_code: OnceLock<u16>,
+}
+
+impl SocketClose {
+    /// Ends the socket with `code` and `reason`, unless it already ended.
+    pub fn end(&self, code: u16, reason: &'static str) {
+        if self.frame.set(Some((code, reason))).is_ok() {
+            let _ = self.observed_code.set(code);
+        }
+        self.ended.cancel();
+    }
+
+    /// The received close code, or the local terminal code when no peer code exists.
+    pub fn observed_code(&self) -> Option<u16> {
+        self.observed_code.get().copied()
+    }
+
+    pub fn peer_closed(&self, code: u16) {
+        if self.frame.set(None).is_ok() {
+            let _ = self.observed_code.set(code);
+        }
+        self.ended.cancel();
+    }
+
+    /// The peer closed the socket: nothing more is sent.
+    pub fn peer_gone(&self) {
+        let _ = self.frame.set(None);
+        self.ended.cancel();
+    }
+
+    pub fn is_ended(&self) -> bool {
+        self.ended.is_cancelled()
+    }
+
+    pub async fn ended(&self) {
+        self.ended.cancelled().await
+    }
+
+    /// The close frame to send; `None` while the socket lives or once its
+    /// peer is gone.
+    pub fn frame(&self) -> Option<(u16, &'static str)> {
+        self.frame.get().copied().flatten()
+    }
+}
+
+/// The close frame axum sends for `(code, reason)`.
+pub fn close_message((code, reason): (u16, &'static str)) -> Message {
+    Message::Close(Some(CloseFrame {
+        code,
+        reason: reason.into(),
+    }))
+}
+
 /// The socket as a [`Transport`]: a reader task feeds binary frames into an
 /// unbounded queue (text, ping and pong are dropped), a writer task drains
-/// the outbound queue; `close` (or the admin disconnect) fires `kill`, which
-/// ends both.
+/// the outbound queue; `close` or the [`SocketClose`] handle ends both, and
+/// the writer then sends the handle's close frame (`RPC_TRANSPORT_CLOSED`
+/// when the RPC layer closed the transport itself).
 pub struct AxumWsTransport {
     inbound_rx: Mutex<UnboundedReceiver<TransportMessage>>,
-    outbound_tx: UnboundedSender<TransportMessage>,
+    outbound_tx: UnboundedSender<OrdinaryOutbound>,
+    ordinary: Option<Arc<ordinary::OrdinaryLane>>,
     guarded_tx: Sender<GuardedOutbound>,
+    guarded_budget: Arc<ByteBudget>,
     closed: AtomicBool,
-    kill: Arc<Notify>,
+    close: Arc<SocketClose>,
     address: String,
 }
 
@@ -32,48 +112,146 @@ impl AxumWsTransport {
         &self.address
     }
 
-    pub fn kill_handle(&self) -> Arc<Notify> {
-        self.kill.clone()
+    pub fn close_handle(&self) -> Arc<SocketClose> {
+        self.close.clone()
     }
 
-    pub fn spawn(socket: WebSocket, address: String) -> Self {
+    /// The transport over `socket`, and the writer task, which finishes once
+    /// the socket's close frame is out.
+    pub fn spawn(
+        socket: WebSocket,
+        address: String,
+        close: Arc<SocketClose>,
+    ) -> (Self, JoinHandle<()>) {
+        Self::spawn_with_idle(socket, address, close, IdleTimer::new(0))
+    }
+
+    pub fn spawn_with_idle(
+        socket: WebSocket,
+        address: String,
+        close: Arc<SocketClose>,
+        idle: IdleTimer,
+    ) -> (Self, JoinHandle<()>) {
+        Self::spawn_with_idle_and_backpressure(
+            socket,
+            address,
+            close,
+            idle,
+            GUARDED_CAPACITY * MAX_GUARDED_MESSAGE_BYTES,
+        )
+    }
+
+    pub fn spawn_with_idle_and_backpressure(
+        socket: WebSocket,
+        address: String,
+        close: Arc<SocketClose>,
+        idle: IdleTimer,
+        max_backpressure: usize,
+    ) -> (Self, JoinHandle<()>) {
+        Self::spawn_configured(socket, address, close, idle, max_backpressure, None)
+    }
+
+    /// Opt-in source ordinary queue, sharing the existing writer and byte budget.
+    /// The source Social handler also forwards authenticated text frames as
+    /// their UTF-8 bytes; the legacy constructors keep dropping text frames.
+    pub fn spawn_with_ordinary_queue(
+        socket: WebSocket,
+        address: String,
+        close: Arc<SocketClose>,
+        idle: IdleTimer,
+        max_backpressure: f64,
+        ordinary: OrdinaryQueueConfig,
+    ) -> (Self, JoinHandle<()>) {
+        ordinary
+            .capacity(max_backpressure)
+            .expect("validated ordinary queue");
+        Self::spawn_configured(
+            socket,
+            address,
+            close,
+            idle,
+            native_backpressure_limit(max_backpressure).expect("validated native backpressure"),
+            Some((ordinary, max_backpressure)),
+        )
+    }
+
+    fn spawn_configured(
+        socket: WebSocket,
+        address: String,
+        close: Arc<SocketClose>,
+        idle: IdleTimer,
+        max_backpressure: usize,
+        ordinary_config: Option<(OrdinaryQueueConfig, f64)>,
+    ) -> (Self, JoinHandle<()>) {
         let (mut sink, mut stream) = socket.split();
         let (inbound_tx, inbound_rx) = unbounded_channel::<TransportMessage>();
-        let (outbound_tx, outbound_rx) = unbounded_channel::<TransportMessage>();
+        let (outbound_tx, outbound_rx) = unbounded_channel::<OrdinaryOutbound>();
+        let budget = ByteBudget::new(max_backpressure);
+        let ordinary = ordinary_config.map(|(config, raw_max_backpressure)| {
+            ordinary::OrdinaryLane::new(
+                config,
+                outbound_tx.clone(),
+                budget.clone(),
+                close.clone(),
+                raw_max_backpressure,
+            )
+        });
         let (guarded_tx, guarded_rx) = channel(GUARDED_CAPACITY);
-        let kill = Arc::new(Notify::new());
 
-        let reader_kill = kill.clone();
+        let reader_close = close.clone();
+        let forward_text = ordinary_config.is_some();
+        let reader_idle = idle.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = reader_kill.notified() => break,
-                    msg = stream.next() => match msg {
+                    _ = reader_close.ended() => break,
+                    _ = reader_idle.expired(), if forward_text => {
+                        reader_close.peer_gone();
+                        break;
+                    },
+                    msg = stream.next() => {
+                        if matches!(&msg, Some(Ok(_))) { reader_idle.activity(); }
+                        match msg {
                         Some(Ok(Message::Binary(b))) => {
+                            if forward_text { metrics::counter!("ws_messages_received").increment(1); }
                             if inbound_tx.send(b.to_vec()).is_err() {
                                 break;
                             }
                         }
+                        Some(Ok(Message::Text(text))) if forward_text => {
+                            metrics::counter!("ws_messages_received").increment(1);
+                            if inbound_tx.send(text.as_bytes().to_vec()).is_err() { break; }
+                        }
                         Some(Ok(Message::Text(_))) | Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {}
-                        Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
-                    }
+                        Some(Ok(Message::Close(frame))) => {
+                            reader_close.peer_closed(frame.map_or(1005, |frame| frame.code));
+                            break;
+                        }
+                        Some(Err(_)) | None => {
+                            reader_close.peer_gone();
+                            break;
+                        }
+                    }}
                 }
             }
         });
 
-        let writer_kill = kill.clone();
-        tokio::spawn(async move {
-            run_writer(&mut sink, outbound_rx, guarded_rx, writer_kill).await;
+        let writer_close = close.clone();
+        let writer = tokio::spawn(async move {
+            run_writer_with_idle(&mut sink, outbound_rx, guarded_rx, &writer_close, idle).await;
         });
 
-        Self {
+        let transport = Self {
             inbound_rx: Mutex::new(inbound_rx),
             outbound_tx,
+            ordinary,
             guarded_tx,
+            guarded_budget: budget,
             closed: AtomicBool::new(false),
-            kill,
+            close,
             address,
-        }
+        };
+        (transport, writer)
     }
 }
 
@@ -85,7 +263,7 @@ impl Transport for AxumWsTransport {
         }
         let mut rx = self.inbound_rx.lock().await;
         let bytes = tokio::select! {
-            _ = self.kill.notified() => None,
+            _ = self.close.ended() => None,
             recv = rx.recv() => recv,
         };
         match bytes {
@@ -101,8 +279,19 @@ impl Transport for AxumWsTransport {
         if self.closed.load(Ordering::Acquire) {
             return Err(TransportError::Closed);
         }
+        if let Some(ordinary) = &self.ordinary {
+            return ordinary
+                .send(message)
+                .await
+                .map_err(|_| TransportError::Closed)?
+                .map_err(|_| TransportError::Closed);
+        }
         self.outbound_tx
-            .send(message)
+            .send(OrdinaryOutbound {
+                social_metrics: false,
+                bytes: message,
+                _permit: None,
+            })
             .map_err(|_| TransportError::Closed)
     }
 
@@ -114,18 +303,22 @@ impl Transport for AxumWsTransport {
         if self.closed.load(Ordering::Acquire) {
             return Err(TransportError::Closed);
         }
-        if message.len() > MAX_GUARDED_MESSAGE_BYTES {
+        if message.len() > delivery.max_frame_bytes {
             return Ok(GuardedSend::Suppressed);
         }
         let expires_at = delivery.expires_at;
+        let cancelled = delivery.cancel.clone();
         let _cancel_on_drop = delivery.cancel.clone().drop_guard();
         let (completion, receiver) = tokio::sync::oneshot::channel();
-        let envelope = GuardedOutbound {
-            bytes: message,
-            delivery,
-            completion,
-        };
         let exchange = async {
+            let permit = self.guarded_budget.reserve(message.len()).await;
+            let envelope = GuardedOutbound {
+                _permit: Some(permit),
+                bytes: message,
+                delivery,
+                completion,
+                social_metrics: self.ordinary.is_some(),
+            };
             self.guarded_tx
                 .send(envelope)
                 .await
@@ -133,32 +326,60 @@ impl Transport for AxumWsTransport {
             receiver.await.map_err(|_| TransportError::Closed)?
         };
         tokio::select! {
-            _ = self.kill.notified() => Err(TransportError::Closed),
+            _ = self.close.ended() => Err(TransportError::Closed),
+            _ = cancelled.cancelled() => Ok(GuardedSend::Suppressed),
             result = tokio::time::timeout_at(expires_at, exchange) => result.unwrap_or(Err(TransportError::Closed)),
         }
     }
+
+    /// The RPC layer ends the transport: a live socket closes with
+    /// [`RPC_TRANSPORT_CLOSED`] unless another close was asked for first.
     async fn close(&self) {
         self.closed.store(true, Ordering::Release);
-        self.kill.notify_waiters();
+        if let Some(ordinary) = &self.ordinary {
+            ordinary.close();
+        }
+        let (code, reason) = RPC_TRANSPORT_CLOSED;
+        self.close.end(code, reason);
     }
 }
 
 // Opt-in lane shares the existing writer; ordinary multiplexed procedure behavior stays intact.
 const GUARDED_CAPACITY: usize = 16;
 struct GuardedOutbound {
+    social_metrics: bool,
+    _permit: Option<byte_budget::Permit>,
     bytes: Vec<u8>,
     delivery: GuardedDelivery,
     completion: tokio::sync::oneshot::Sender<Result<GuardedSend, TransportError>>,
 }
+struct OrdinaryOutbound {
+    social_metrics: bool,
+    bytes: Vec<u8>,
+    _permit: Option<byte_budget::Permit>,
+}
 enum Outbound {
-    Ordinary(Vec<u8>),
+    Idle(IdleAction),
+    Ordinary(OrdinaryOutbound),
     Guarded(GuardedOutbound),
 }
+#[cfg(test)]
 async fn run_writer<S>(
     sink: &mut S,
-    mut ordinary: UnboundedReceiver<Vec<u8>>,
+    ordinary: UnboundedReceiver<OrdinaryOutbound>,
+    guarded: Receiver<GuardedOutbound>,
+    close: &SocketClose,
+) where
+    S: futures::Sink<Message> + Unpin,
+{
+    run_writer_with_idle(sink, ordinary, guarded, close, IdleTimer::new(0)).await
+}
+async fn run_writer_with_idle<S>(
+    sink: &mut S,
+    mut ordinary: UnboundedReceiver<OrdinaryOutbound>,
     mut guarded: Receiver<GuardedOutbound>,
-    kill: Arc<Notify>,
+    close: &SocketClose,
+    idle: IdleTimer,
 ) where
     S: futures::Sink<Message> + Unpin,
 {
@@ -167,13 +388,15 @@ async fn run_writer<S>(
         // Alternate priority when both lanes are ready: neither can indefinitely starve the other.
         let next = if prefer_guarded {
             tokio::select! { biased;
-                _ = kill.notified() => None,
+                _ = close.ended() => None,
+                action = idle.next() => Some(Outbound::Idle(action)),
                 item = guarded.recv(), if !guarded.is_closed() || !guarded.is_empty() => item.map(Outbound::Guarded),
                 item = ordinary.recv() => item.map(Outbound::Ordinary),
             }
         } else {
             tokio::select! { biased;
-                _ = kill.notified() => None,
+                _ = close.ended() => None,
+                action = idle.next() => Some(Outbound::Idle(action)),
                 item = ordinary.recv(), if !ordinary.is_closed() || !ordinary.is_empty() => item.map(Outbound::Ordinary),
                 item = guarded.recv() => item.map(Outbound::Guarded),
             }
@@ -183,26 +406,67 @@ async fn run_writer<S>(
         };
         prefer_guarded = !prefer_guarded;
         match next {
-            Outbound::Ordinary(bytes) => {
-                let sent = tokio::select! { _ = kill.notified() => false, result = sink.send(Message::Binary(bytes.into())) => result.is_ok() };
+            Outbound::Idle(IdleAction::Ping) => {
+                if tokio::time::timeout(CLOSE_BUDGET, sink.send(Message::Ping(Vec::new().into())))
+                    .await
+                    .map_or(true, |r| r.is_err())
+                {
+                    break;
+                }
+            }
+            Outbound::Idle(IdleAction::Expired) => {
+                close.peer_gone();
+                return;
+            }
+            Outbound::Ordinary(OrdinaryOutbound {
+                bytes,
+                _permit,
+                social_metrics,
+            }) => {
+                let sent = tokio::select! { _ = close.ended() => false, result = write_binary(sink, bytes, social_metrics) => result.is_ok() };
                 if !sent {
                     break;
                 }
+                idle.activity();
+                drop(_permit);
             }
             Outbound::Guarded(envelope) => {
-                if !write_guarded(sink, envelope, &kill).await {
+                if !write_guarded(sink, envelope, close).await {
                     break;
                 }
+                idle.activity();
             }
         }
     }
-    // A partial/uncertain guarded sink write poisons this socket and all queued envelopes.
-    kill.notify_waiters();
+    // A partial/uncertain guarded sink write poisons this socket and all queued envelopes;
+    // a socket the writer gives up on is the transport closing.
+    let (code, reason) = RPC_TRANSPORT_CLOSED;
+    close.end(code, reason);
     drop(guarded);
-    let _ = tokio::time::timeout(std::time::Duration::from_millis(100), sink.close()).await;
+    if let Some(frame) = close.frame() {
+        let _ = tokio::time::timeout(CLOSE_BUDGET, sink.send(close_message(frame))).await;
+    }
+    let _ = tokio::time::timeout(CLOSE_BUDGET, sink.close()).await;
 }
 
-async fn write_guarded<S>(sink: &mut S, envelope: GuardedOutbound, kill: &Notify) -> bool
+// Both Social lanes observe a frame only once the actual sink accepts it.
+// SUCCESS here is the Tokio handoff; native uWS buffering/result classification
+// is unavailable in this backend. Flush failure cannot revoke accepted bytes.
+async fn write_binary<S>(sink: &mut S, bytes: Vec<u8>, social_metrics: bool) -> Result<(), S::Error>
+where
+    S: futures::Sink<Message> + Unpin,
+{
+    futures::future::poll_fn(|cx| std::pin::Pin::new(&mut *sink).poll_ready(cx)).await?;
+    let size = bytes.len();
+    std::pin::Pin::new(&mut *sink).start_send(Message::Binary(bytes.into()))?;
+    if social_metrics {
+        metrics::counter!("ws_messages_sent").increment(1);
+        metrics::histogram!("ws_message_size_bytes", "result" => "success").record(size as f64);
+    }
+    futures::future::poll_fn(|cx| std::pin::Pin::new(&mut *sink).poll_flush(cx)).await
+}
+
+async fn write_guarded<S>(sink: &mut S, envelope: GuardedOutbound, close: &SocketClose) -> bool
 where
     S: futures::Sink<Message> + Unpin,
 {
@@ -210,6 +474,8 @@ where
         bytes,
         delivery,
         completion,
+        _permit,
+        social_metrics,
     } = envelope;
     if completion.is_closed() || delivery.cancel.is_cancelled() {
         let _ = completion.send(Ok(GuardedSend::Suppressed));
@@ -220,7 +486,7 @@ where
         return true;
     }
     let eligibility = tokio::select! {
-        _ = kill.notified() => None,
+        _ = close.ended() => None,
         _ = delivery.cancel.cancelled() => None,
         result = tokio::time::timeout_at(delivery.expires_at, (delivery.guard)()) => Some(result.unwrap_or(Err(()))),
     };
@@ -238,10 +504,11 @@ where
     }
     // This is the irrevocable application handoff. A concurrent change after it cannot
     // revoke bytes already given to the sink/network. Any interrupted write retires it.
+    let write = write_binary(sink, bytes, social_metrics);
     let sent = tokio::select! {
-        _ = kill.notified() => false,
+        _ = close.ended() => false,
         _ = delivery.cancel.cancelled() => false,
-        result = tokio::time::timeout_at(delivery.expires_at, sink.send(Message::Binary(bytes.into()))) => matches!(result, Ok(Ok(()))),
+        result = tokio::time::timeout_at(delivery.expires_at, write) => matches!(result, Ok(Ok(()))),
     };
     let _ = completion.send(if sent {
         Ok(GuardedSend::Sent)
@@ -268,7 +535,9 @@ mod guarded_tests {
 
     struct SinkState {
         flush: AtomicBool,
+        reject: AtomicBool,
         frames: std::sync::Mutex<Vec<Vec<u8>>>,
+        closes: std::sync::Mutex<Vec<(u16, String)>>,
         wake: AtomicWaker,
         retired: AtomicBool,
     }
@@ -276,7 +545,9 @@ mod guarded_tests {
         fn new(flush: bool) -> Arc<Self> {
             Arc::new(Self {
                 flush: AtomicBool::new(flush),
+                reject: AtomicBool::new(false),
                 frames: std::sync::Mutex::new(Vec::new()),
+                closes: std::sync::Mutex::new(Vec::new()),
                 wake: AtomicWaker::new(),
                 retired: AtomicBool::new(false),
             })
@@ -293,8 +564,18 @@ mod guarded_tests {
             Poll::Ready(Ok(()))
         }
         fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
-            if let Message::Binary(bytes) = item {
-                self.0.frames.lock().unwrap().push(bytes.to_vec());
+            if self.0.reject.load(Ordering::SeqCst) {
+                return Err(std::io::Error::other("rejected before acceptance"));
+            }
+            match item {
+                Message::Binary(bytes) => self.0.frames.lock().unwrap().push(bytes.to_vec()),
+                Message::Close(Some(frame)) => self
+                    .0
+                    .closes
+                    .lock()
+                    .unwrap()
+                    .push((frame.code, frame.reason.to_string())),
+                _ => {}
             }
             Ok(())
         }
@@ -311,21 +592,176 @@ mod guarded_tests {
             Poll::Ready(Ok(()))
         }
     }
+    #[derive(Default)]
+    struct AcceptedMetrics {
+        sent: std::sync::atomic::AtomicU64,
+        bytes: std::sync::atomic::AtomicU64,
+    }
+    impl metrics::CounterFn for AcceptedMetrics {
+        fn increment(&self, value: u64) {
+            self.sent.fetch_add(value, Ordering::Relaxed);
+        }
+        fn absolute(&self, value: u64) {
+            self.sent.store(value, Ordering::Relaxed);
+        }
+    }
+    impl metrics::HistogramFn for AcceptedMetrics {
+        fn record(&self, value: f64) {
+            self.bytes.fetch_add(value as u64, Ordering::Relaxed);
+        }
+    }
+    struct AcceptedRecorder(Arc<AcceptedMetrics>);
+    impl metrics::Recorder for AcceptedRecorder {
+        fn describe_counter(
+            &self,
+            _: metrics::KeyName,
+            _: Option<metrics::Unit>,
+            _: metrics::SharedString,
+        ) {
+        }
+        fn describe_gauge(
+            &self,
+            _: metrics::KeyName,
+            _: Option<metrics::Unit>,
+            _: metrics::SharedString,
+        ) {
+        }
+        fn describe_histogram(
+            &self,
+            _: metrics::KeyName,
+            _: Option<metrics::Unit>,
+            _: metrics::SharedString,
+        ) {
+        }
+        fn register_counter(
+            &self,
+            key: &metrics::Key,
+            _: &metrics::Metadata<'_>,
+        ) -> metrics::Counter {
+            if key.name() == "ws_messages_sent" {
+                metrics::Counter::from_arc(self.0.clone())
+            } else {
+                metrics::Counter::noop()
+            }
+        }
+        fn register_gauge(&self, _: &metrics::Key, _: &metrics::Metadata<'_>) -> metrics::Gauge {
+            metrics::Gauge::noop()
+        }
+        fn register_histogram(
+            &self,
+            key: &metrics::Key,
+            _: &metrics::Metadata<'_>,
+        ) -> metrics::Histogram {
+            if key.name() == "ws_message_size_bytes" {
+                assert_eq!(
+                    key.labels()
+                        .map(|label| (label.key(), label.value()))
+                        .collect::<Vec<_>>(),
+                    [("result", "success")]
+                );
+                metrics::Histogram::from_arc(self.0.clone())
+            } else {
+                metrics::Histogram::noop()
+            }
+        }
+    }
+    #[tokio::test(start_paused = true)]
+    async fn guarded_social_metrics_count_actual_acceptance_before_a_later_flush_timeout() {
+        for (social_metrics, reject, flush, expected_sent) in [
+            (true, false, false, 1),
+            (false, false, true, 0),
+            (true, true, true, 0),
+        ] {
+            let state = SinkState::new(flush);
+            state.reject.store(reject, Ordering::SeqCst);
+            let recorder = AcceptedRecorder(Arc::new(AcceptedMetrics::default()));
+            let _recording = metrics::set_default_local_recorder(&recorder);
+            let (completion, receiver) = tokio::sync::oneshot::channel();
+            let envelope = GuardedOutbound {
+                social_metrics,
+                _permit: None,
+                bytes: vec![1; 257],
+                completion,
+                delivery: GuardedDelivery {
+                    max_frame_bytes: 1024,
+                    guard: Arc::new(|| Box::pin(async { Ok(true) })),
+                    expires_at: tokio::time::Instant::now() + Duration::from_secs(1),
+                    cancel: CancellationToken::new(),
+                },
+            };
+            let written = write_guarded(
+                &mut TestSink(state.clone()),
+                envelope,
+                &SocketClose::default(),
+            )
+            .await;
+            assert_eq!(written, !reject && flush);
+            assert_eq!(receiver.await.unwrap().is_ok(), written);
+            assert_eq!(recorder.0.sent.load(Ordering::Relaxed), expected_sent);
+            assert_eq!(
+                recorder.0.bytes.load(Ordering::Relaxed),
+                expected_sent * 257
+            );
+            assert_eq!(state.frames.lock().unwrap().len(), usize::from(!reject));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ordinary_social_metrics_defer_admission_and_count_physical_acceptance_once() {
+        let recorder = AcceptedRecorder(Arc::new(AcceptedMetrics::default()));
+        let _recording = metrics::set_default_local_recorder(&recorder);
+        let (output, mut frames) = unbounded_channel();
+        let close = Arc::new(SocketClose::default());
+        let lane = ordinary::OrdinaryLane::new(
+            OrdinaryQueueConfig::default(),
+            output,
+            ByteBudget::new(1024),
+            close,
+            1024.0,
+        );
+        lane.send(vec![1; 257]).await.unwrap().unwrap();
+        assert_eq!(
+            recorder.0.sent.load(Ordering::Relaxed),
+            0,
+            "admission is not physical acceptance"
+        );
+        let OrdinaryOutbound {
+            bytes,
+            social_metrics,
+            _permit,
+        } = frames.recv().await.unwrap();
+        let mut sink = TestSink(SinkState::new(false));
+        assert!(
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                write_binary(&mut sink, bytes, social_metrics)
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(recorder.0.sent.load(Ordering::Relaxed), 1);
+        assert_eq!(recorder.0.bytes.load(Ordering::Relaxed), 257);
+        drop(_permit);
+        assert_eq!(recorder.0.sent.load(Ordering::Relaxed), 1);
+    }
+
     fn transport(state: Arc<SinkState>) -> Arc<AxumWsTransport> {
         let (_, inbound_rx) = unbounded_channel();
         let (outbound_tx, ordinary) = unbounded_channel();
         let (guarded_tx, guarded) = channel(GUARDED_CAPACITY);
-        let kill = Arc::new(Notify::new());
-        let writer_kill = kill.clone();
+        let close = Arc::new(SocketClose::default());
+        let writer_close = close.clone();
         tokio::spawn(async move {
-            run_writer(&mut TestSink(state), ordinary, guarded, writer_kill).await;
+            run_writer(&mut TestSink(state), ordinary, guarded, &writer_close).await;
         });
         Arc::new(AxumWsTransport {
             inbound_rx: Mutex::new(inbound_rx),
             outbound_tx,
+            ordinary: None,
             guarded_tx,
+            guarded_budget: ByteBudget::new(GUARDED_CAPACITY * MAX_GUARDED_MESSAGE_BYTES),
             closed: AtomicBool::new(false),
-            kill,
+            close,
             address: String::new(),
         })
     }
@@ -495,6 +931,31 @@ mod guarded_tests {
         output.close().await;
     }
 
+    /// Upstream `ws-handler.ts:177-181`: the RPC layer closing the transport
+    /// ends a live socket with 1011 "RPC transport closed"; a close asked for
+    /// first keeps its own frame, and a socket whose peer left gets none.
+    #[tokio::test]
+    async fn closing_the_transport_ends_a_live_socket_with_1011() {
+        let closes = async |prepare: &dyn Fn(&AxumWsTransport)| {
+            let sink = SinkState::new(true);
+            let output = transport(sink.clone());
+            prepare(&output);
+            output.close().await;
+            settle().await;
+            assert!(sink.retired.load(Ordering::Acquire));
+            sink.closes.lock().unwrap().clone()
+        };
+        assert_eq!(
+            closes(&|_| {}).await,
+            vec![(1011, "RPC transport closed".to_string())]
+        );
+        assert_eq!(
+            closes(&|t| t.close.end(3005, "Replaced by a newer connection")).await,
+            vec![(3005, "Replaced by a newer connection".to_string())]
+        );
+        assert_eq!(closes(&|t| t.close.peer_gone()).await, vec![]);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn unconfirmed_terminal_writer_stall_retires_socket_instead_of_stranding_subscription() {
         let sink = SinkState::new(false);
@@ -517,6 +978,9 @@ mod guarded_tests {
         settle().await;
         assert!(task.await.unwrap().is_ok());
         assert!(output.closed.load(Ordering::Acquire));
+        // The stalled sink takes the close frame's whole budget before it is closed.
+        tokio::time::advance(CLOSE_BUDGET).await;
+        settle().await;
         assert!(sink.retired.load(Ordering::Acquire));
         assert_eq!(handler.pending_ack_count(), 0);
     }
@@ -528,8 +992,11 @@ mod guarded_tests {
             let mut sink = TestSink(state.clone());
             let (completion, receiver) = tokio::sync::oneshot::channel();
             let envelope = GuardedOutbound {
+                social_metrics: false,
+                _permit: None,
                 bytes: vec![1],
                 delivery: GuardedDelivery {
+                    max_frame_bytes: MAX_GUARDED_MESSAGE_BYTES,
                     guard: Arc::new(|| Box::pin(std::future::pending())),
                     expires_at: tokio::time::Instant::now()
                         + if expired {
@@ -541,7 +1008,7 @@ mod guarded_tests {
                 },
                 completion,
             };
-            assert!(write_guarded(&mut sink, envelope, &Notify::new()).await);
+            assert!(write_guarded(&mut sink, envelope, &SocketClose::default()).await);
             assert!(
                 receiver.await.unwrap().is_err(),
                 "expired/unknown delivery ends affected stream for resync"
@@ -595,6 +1062,7 @@ mod guarded_tests {
                     .send_guarded(
                         vec![1],
                         GuardedDelivery {
+                            max_frame_bytes: MAX_GUARDED_MESSAGE_BYTES,
                             guard: guard(
                                 Arc::new(AtomicBool::new(true)),
                                 Arc::new(AtomicUsize::new(0)),
@@ -844,6 +1312,7 @@ mod guarded_tests {
         let first = transport.clone();
         let second = transport.clone();
         let delivery = || GuardedDelivery {
+            max_frame_bytes: MAX_GUARDED_MESSAGE_BYTES,
             guard: guard(
                 Arc::new(AtomicBool::new(true)),
                 Arc::new(AtomicUsize::new(0)),
@@ -897,5 +1366,54 @@ mod guarded_tests {
         task.abort();
         settle().await;
         assert_eq!(handler.pending_ack_count(), 0);
+    }
+    #[tokio::test(start_paused = true)]
+    async fn large_guarded_frame_holds_byte_admission_until_flush_and_rechecks_next_guard() {
+        let sink = SinkState::new(false);
+        let output = transport(sink.clone());
+        let allowed = Arc::new(AtomicBool::new(true));
+        let first = output.clone();
+        let task = tokio::spawn(async move {
+            first
+                .send_guarded(
+                    vec![1; 300 * 1024],
+                    GuardedDelivery {
+                        max_frame_bytes: 512 * 1024,
+                        guard: guard(
+                            Arc::new(AtomicBool::new(true)),
+                            Arc::new(AtomicUsize::new(0)),
+                        ),
+                        expires_at: tokio::time::Instant::now() + Duration::from_secs(5),
+                        cancel: tokio_util::sync::CancellationToken::new(),
+                    },
+                )
+                .await
+        });
+        settle().await;
+        assert_eq!(output.guarded_budget.used(), 300 * 1024);
+        let second = output.clone();
+        let permission = allowed.clone();
+        let waiting = tokio::spawn(async move {
+            second
+                .send_guarded(
+                    vec![2; 32 * 1024],
+                    GuardedDelivery {
+                        max_frame_bytes: 512 * 1024,
+                        guard: guard(permission, Arc::new(AtomicUsize::new(0))),
+                        expires_at: tokio::time::Instant::now() + Duration::from_secs(5),
+                        cancel: tokio_util::sync::CancellationToken::new(),
+                    },
+                )
+                .await
+        });
+        settle().await;
+        assert_eq!(sink.frames.lock().unwrap().len(), 1);
+        assert_eq!(output.guarded_budget.used(), 300 * 1024);
+        allowed.store(false, Ordering::SeqCst);
+        sink.release();
+        assert_eq!(task.await.unwrap().unwrap(), GuardedSend::Sent);
+        assert_eq!(waiting.await.unwrap().unwrap(), GuardedSend::Suppressed);
+        assert_eq!(sink.frames.lock().unwrap().len(), 1);
+        assert_eq!(output.guarded_budget.used(), 0);
     }
 }

@@ -1,0 +1,1536 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+  },
+  "scope": "Executed actual HTTP controllers, schema middleware and voice/http error middleware; real community domain with deterministic injected dependencies, private voice outcomes injected. 13 unique HTTP operations, including both private PATCH branches; active-community GET is owned separately. Authentication bypassed with explicit verified actor; no live-media claim.",
+  "caller": "0x1111111111111111111111111111111111111111",
+  "target": "0x2222222222222222222222222222222222222222",
+  "community": "33333333-3333-4333-8333-333333333333",
+  "call": "a4444444-4444-4444-8444-444444444444",
+  "cases": [
+    {
+      "id": "private-start.success",
+      "operation": "private-start",
+      "scenario": "success",
+      "method": "POST",
+      "path": "/v1/private-voice-chats",
+      "params": {},
+      "body": {
+        "calleeAddress": "0x2222222222222222222222222222222222222222"
+      },
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 201,
+        "body": {
+          "data": {
+            "callId": "a4444444-4444-4444-8444-444444444444"
+          }
+        }
+      }
+    },
+    {
+      "id": "private-start.runtime-failure",
+      "operation": "private-start",
+      "scenario": "runtime-failure",
+      "method": "POST",
+      "path": "/v1/private-voice-chats",
+      "params": {},
+      "body": {
+        "calleeAddress": "0x2222222222222222222222222222222222222222"
+      },
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      }
+    },
+    {
+      "id": "private-start.schema-required",
+      "operation": "private-start",
+      "scenario": "schema-required",
+      "method": "POST",
+      "path": "/v1/private-voice-chats",
+      "params": {},
+      "body": {},
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "ok": false,
+          "message": "Invalid JSON body",
+          "data": [
+            {
+              "instancePath": "",
+              "schemaPath": "#/required",
+              "keyword": "required",
+              "params": {
+                "missingProperty": "calleeAddress"
+              },
+              "message": "must have required property 'calleeAddress'"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "private-incoming.success",
+      "operation": "private-incoming",
+      "scenario": "success",
+      "method": "GET",
+      "path": "/v1/private-voice-chats/incoming",
+      "params": {},
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "callId": "a4444444-4444-4444-8444-444444444444",
+            "callerAddress": "0x2222222222222222222222222222222222222222"
+          }
+        }
+      }
+    },
+    {
+      "id": "private-incoming.runtime-failure",
+      "operation": "private-incoming",
+      "scenario": "runtime-failure",
+      "method": "GET",
+      "path": "/v1/private-voice-chats/incoming",
+      "params": {},
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      }
+    },
+    {
+      "id": "private-incoming.not-found",
+      "operation": "private-incoming",
+      "scenario": "not-found",
+      "method": "GET",
+      "path": "/v1/private-voice-chats/incoming",
+      "params": {},
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "Not Found",
+          "message": "The incoming voice chat for the address 0x1111111111111111111111111111111111111111 was not found"
+        }
+      }
+    },
+    {
+      "id": "private-accept.success",
+      "operation": "private-accept",
+      "scenario": "success",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "a4444444-4444-4444-8444-444444444444"
+      },
+      "body": {
+        "intention": "accepted"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "callId": "a4444444-4444-4444-8444-444444444444",
+            "connectionUrl": "wss://livekit.test/voice-chat-private-a4444444-4444-4444-8444-444444444444?for=0x2222222222222222222222222222222222222222"
+          }
+        }
+      }
+    },
+    {
+      "id": "private-accept.runtime-failure",
+      "operation": "private-accept",
+      "scenario": "runtime-failure",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "a4444444-4444-4444-8444-444444444444"
+      },
+      "body": {
+        "intention": "accepted"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      }
+    },
+    {
+      "id": "private-accept.invalid-id",
+      "operation": "private-accept",
+      "scenario": "invalid-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/invalid",
+      "params": {
+        "callId": "invalid"
+      },
+      "body": {
+        "intention": "accepted"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-accept.schema-required",
+      "operation": "private-accept",
+      "scenario": "schema-required",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "a4444444-4444-4444-8444-444444444444"
+      },
+      "body": {},
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "ok": false,
+          "message": "Invalid JSON body",
+          "data": [
+            {
+              "instancePath": "",
+              "schemaPath": "#/required",
+              "keyword": "required",
+              "params": {
+                "missingProperty": "intention"
+              },
+              "message": "must have required property 'intention'"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "private-accept.compact-id",
+      "operation": "private-accept",
+      "scenario": "compact-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/a4444444444444448444444444444444",
+      "params": {
+        "callId": "a4444444444444448444444444444444"
+      },
+      "body": {
+        "intention": "accepted"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-accept.braced-id",
+      "operation": "private-accept",
+      "scenario": "braced-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/{a4444444-4444-4444-8444-444444444444}",
+      "params": {
+        "callId": "{a4444444-4444-4444-8444-444444444444}"
+      },
+      "body": {
+        "intention": "accepted"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-accept.uppercase-id",
+      "operation": "private-accept",
+      "scenario": "uppercase-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/A4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "A4444444-4444-4444-8444-444444444444"
+      },
+      "body": {
+        "intention": "accepted"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "callId": "A4444444-4444-4444-8444-444444444444",
+            "connectionUrl": "wss://livekit.test/voice-chat-private-a4444444-4444-4444-8444-444444444444?for=0x2222222222222222222222222222222222222222"
+          }
+        }
+      }
+    },
+    {
+      "id": "private-accept.urn-id",
+      "operation": "private-accept",
+      "scenario": "urn-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/urn:uuid:a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "urn:uuid:a4444444-4444-4444-8444-444444444444"
+      },
+      "body": {
+        "intention": "accepted"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-accept.four-digit-id",
+      "operation": "private-accept",
+      "scenario": "four-digit-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/a444-4444-4444-4444-8444-4444-4444-4444",
+      "params": {
+        "callId": "a444-4444-4444-4444-8444-4444-4444-4444"
+      },
+      "body": {
+        "intention": "accepted"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-accept.not-found",
+      "operation": "private-accept",
+      "scenario": "not-found",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "a4444444-4444-4444-8444-444444444444"
+      },
+      "body": {
+        "intention": "accepted"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "Not Found",
+          "message": "The voice chat with id a4444444-4444-4444-8444-444444444444 was not found"
+        }
+      }
+    },
+    {
+      "id": "private-reject.success",
+      "operation": "private-reject",
+      "scenario": "success",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "a4444444-4444-4444-8444-444444444444"
+      },
+      "body": {
+        "intention": "rejected"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "id": "private-reject.runtime-failure",
+      "operation": "private-reject",
+      "scenario": "runtime-failure",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "a4444444-4444-4444-8444-444444444444"
+      },
+      "body": {
+        "intention": "rejected"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      }
+    },
+    {
+      "id": "private-reject.invalid-id",
+      "operation": "private-reject",
+      "scenario": "invalid-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/invalid",
+      "params": {
+        "callId": "invalid"
+      },
+      "body": {
+        "intention": "rejected"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-reject.schema-required",
+      "operation": "private-reject",
+      "scenario": "schema-required",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "a4444444-4444-4444-8444-444444444444"
+      },
+      "body": {},
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "ok": false,
+          "message": "Invalid JSON body",
+          "data": [
+            {
+              "instancePath": "",
+              "schemaPath": "#/required",
+              "keyword": "required",
+              "params": {
+                "missingProperty": "intention"
+              },
+              "message": "must have required property 'intention'"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "private-reject.compact-id",
+      "operation": "private-reject",
+      "scenario": "compact-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/a4444444444444448444444444444444",
+      "params": {
+        "callId": "a4444444444444448444444444444444"
+      },
+      "body": {
+        "intention": "rejected"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-reject.braced-id",
+      "operation": "private-reject",
+      "scenario": "braced-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/{a4444444-4444-4444-8444-444444444444}",
+      "params": {
+        "callId": "{a4444444-4444-4444-8444-444444444444}"
+      },
+      "body": {
+        "intention": "rejected"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-reject.uppercase-id",
+      "operation": "private-reject",
+      "scenario": "uppercase-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/A4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "A4444444-4444-4444-8444-444444444444"
+      },
+      "body": {
+        "intention": "rejected"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "id": "private-reject.urn-id",
+      "operation": "private-reject",
+      "scenario": "urn-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/urn:uuid:a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "urn:uuid:a4444444-4444-4444-8444-444444444444"
+      },
+      "body": {
+        "intention": "rejected"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-reject.four-digit-id",
+      "operation": "private-reject",
+      "scenario": "four-digit-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/a444-4444-4444-4444-8444-4444-4444-4444",
+      "params": {
+        "callId": "a444-4444-4444-4444-8444-4444-4444-4444"
+      },
+      "body": {
+        "intention": "rejected"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-reject.not-found",
+      "operation": "private-reject",
+      "scenario": "not-found",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "a4444444-4444-4444-8444-444444444444"
+      },
+      "body": {
+        "intention": "rejected"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "Not Found",
+          "message": "The voice chat with id a4444444-4444-4444-8444-444444444444 was not found"
+        }
+      }
+    },
+    {
+      "id": "private-end.success",
+      "operation": "private-end",
+      "scenario": "success",
+      "method": "DELETE",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "a4444444-4444-4444-8444-444444444444"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "id": "private-end.runtime-failure",
+      "operation": "private-end",
+      "scenario": "runtime-failure",
+      "method": "DELETE",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "a4444444-4444-4444-8444-444444444444"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      }
+    },
+    {
+      "id": "private-end.invalid-id",
+      "operation": "private-end",
+      "scenario": "invalid-id",
+      "method": "DELETE",
+      "path": "/v1/private-voice-chats/invalid",
+      "params": {
+        "callId": "invalid"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-end.compact-id",
+      "operation": "private-end",
+      "scenario": "compact-id",
+      "method": "DELETE",
+      "path": "/v1/private-voice-chats/a4444444444444448444444444444444",
+      "params": {
+        "callId": "a4444444444444448444444444444444"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-end.braced-id",
+      "operation": "private-end",
+      "scenario": "braced-id",
+      "method": "DELETE",
+      "path": "/v1/private-voice-chats/{a4444444-4444-4444-8444-444444444444}",
+      "params": {
+        "callId": "{a4444444-4444-4444-8444-444444444444}"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-end.uppercase-id",
+      "operation": "private-end",
+      "scenario": "uppercase-id",
+      "method": "DELETE",
+      "path": "/v1/private-voice-chats/A4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "A4444444-4444-4444-8444-444444444444"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "id": "private-end.urn-id",
+      "operation": "private-end",
+      "scenario": "urn-id",
+      "method": "DELETE",
+      "path": "/v1/private-voice-chats/urn:uuid:a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "urn:uuid:a4444444-4444-4444-8444-444444444444"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-end.four-digit-id",
+      "operation": "private-end",
+      "scenario": "four-digit-id",
+      "method": "DELETE",
+      "path": "/v1/private-voice-chats/a444-4444-4444-4444-8444-4444-4444-4444",
+      "params": {
+        "callId": "a444-4444-4444-4444-8444-4444-4444-4444"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-end.not-found",
+      "operation": "private-end",
+      "scenario": "not-found",
+      "method": "DELETE",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "a4444444-4444-4444-8444-444444444444"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "Not Found",
+          "message": "The voice chat with id a4444444-4444-4444-8444-444444444444 was not found"
+        }
+      }
+    },
+    {
+      "id": "community-start.success",
+      "operation": "community-start",
+      "scenario": "success",
+      "method": "POST",
+      "path": "/v1/community-voice-chats",
+      "params": {},
+      "body": {
+        "communityId": "33333333-3333-4333-8333-333333333333"
+      },
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 201,
+        "body": {
+          "data": {
+            "connectionUrl": "wss://livekit.test/voice-chat-community-33333333-3333-4333-8333-333333333333?for=0x1111111111111111111111111111111111111111"
+          }
+        }
+      }
+    },
+    {
+      "id": "community-start.runtime-failure",
+      "operation": "community-start",
+      "scenario": "runtime-failure",
+      "method": "POST",
+      "path": "/v1/community-voice-chats",
+      "params": {},
+      "body": {
+        "communityId": "33333333-3333-4333-8333-333333333333"
+      },
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      }
+    },
+    {
+      "id": "community-start.schema-required",
+      "operation": "community-start",
+      "scenario": "schema-required",
+      "method": "POST",
+      "path": "/v1/community-voice-chats",
+      "params": {},
+      "body": {},
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "ok": false,
+          "message": "Invalid JSON body",
+          "data": [
+            {
+              "instancePath": "",
+              "schemaPath": "#/required",
+              "keyword": "required",
+              "params": {
+                "missingProperty": "communityId"
+              },
+              "message": "must have required property 'communityId'"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "community-join.success",
+      "operation": "community-join",
+      "scenario": "success",
+      "method": "POST",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/participants",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 201,
+        "body": {
+          "data": {
+            "connectionUrl": "wss://livekit.test/voice-chat-community-33333333-3333-4333-8333-333333333333?for=0x1111111111111111111111111111111111111111"
+          }
+        }
+      }
+    },
+    {
+      "id": "community-join.runtime-failure",
+      "operation": "community-join",
+      "scenario": "runtime-failure",
+      "method": "POST",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/participants",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      }
+    },
+    {
+      "id": "community-join.invalid-id",
+      "operation": "community-join",
+      "scenario": "invalid-id",
+      "method": "POST",
+      "path": "/v1/community-voice-chats/invalid/participants",
+      "params": {
+        "communityId": "invalid"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid communityId"
+        }
+      }
+    },
+    {
+      "id": "community-join.runtime-not-found",
+      "operation": "community-join",
+      "scenario": "runtime-not-found",
+      "method": "POST",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/participants",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "Not Found",
+          "message": "Community voice chat or participant not found for community 33333333-3333-4333-8333-333333333333"
+        }
+      }
+    },
+    {
+      "id": "community-end.success",
+      "operation": "community-end",
+      "scenario": "success",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "id": "community-end.runtime-failure",
+      "operation": "community-end",
+      "scenario": "runtime-failure",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      }
+    },
+    {
+      "id": "community-end.invalid-id",
+      "operation": "community-end",
+      "scenario": "invalid-id",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/invalid",
+      "params": {
+        "communityId": "invalid"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid communityId"
+        }
+      }
+    },
+    {
+      "id": "community-end.runtime-not-found",
+      "operation": "community-end",
+      "scenario": "runtime-not-found",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "Not Found",
+          "message": "Community voice chat or participant not found for community 33333333-3333-4333-8333-333333333333"
+        }
+      }
+    },
+    {
+      "id": "community-request.success",
+      "operation": "community-request",
+      "scenario": "success",
+      "method": "POST",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speak-requests",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "id": "community-request.runtime-failure",
+      "operation": "community-request",
+      "scenario": "runtime-failure",
+      "method": "POST",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speak-requests",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      }
+    },
+    {
+      "id": "community-request.invalid-id",
+      "operation": "community-request",
+      "scenario": "invalid-id",
+      "method": "POST",
+      "path": "/v1/community-voice-chats/invalid/speak-requests",
+      "params": {
+        "communityId": "invalid"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid communityId"
+        }
+      }
+    },
+    {
+      "id": "community-request.runtime-not-found",
+      "operation": "community-request",
+      "scenario": "runtime-not-found",
+      "method": "POST",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speak-requests",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "Not Found",
+          "message": "Community voice chat or participant not found for community 33333333-3333-4333-8333-333333333333"
+        }
+      }
+    },
+    {
+      "id": "community-reject.success",
+      "operation": "community-reject",
+      "scenario": "success",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speak-requests/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "id": "community-reject.runtime-failure",
+      "operation": "community-reject",
+      "scenario": "runtime-failure",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speak-requests/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      }
+    },
+    {
+      "id": "community-reject.invalid-id",
+      "operation": "community-reject",
+      "scenario": "invalid-id",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/invalid/speak-requests/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "invalid",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid communityId"
+        }
+      }
+    },
+    {
+      "id": "community-reject.invalid-target",
+      "operation": "community-reject",
+      "scenario": "invalid-target",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speak-requests/invalid",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "invalid"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid address"
+        }
+      }
+    },
+    {
+      "id": "community-reject.runtime-not-found",
+      "operation": "community-reject",
+      "scenario": "runtime-not-found",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speak-requests/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "Not Found",
+          "message": "Community voice chat or participant not found for community 33333333-3333-4333-8333-333333333333"
+        }
+      }
+    },
+    {
+      "id": "community-promote.success",
+      "operation": "community-promote",
+      "scenario": "success",
+      "method": "PUT",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speakers/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "id": "community-promote.runtime-failure",
+      "operation": "community-promote",
+      "scenario": "runtime-failure",
+      "method": "PUT",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speakers/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      }
+    },
+    {
+      "id": "community-promote.invalid-id",
+      "operation": "community-promote",
+      "scenario": "invalid-id",
+      "method": "PUT",
+      "path": "/v1/community-voice-chats/invalid/speakers/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "invalid",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid communityId"
+        }
+      }
+    },
+    {
+      "id": "community-promote.invalid-target",
+      "operation": "community-promote",
+      "scenario": "invalid-target",
+      "method": "PUT",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speakers/invalid",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "invalid"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid address"
+        }
+      }
+    },
+    {
+      "id": "community-promote.runtime-not-found",
+      "operation": "community-promote",
+      "scenario": "runtime-not-found",
+      "method": "PUT",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speakers/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "Not Found",
+          "message": "Community voice chat or participant not found for community 33333333-3333-4333-8333-333333333333"
+        }
+      }
+    },
+    {
+      "id": "community-demote.success",
+      "operation": "community-demote",
+      "scenario": "success",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speakers/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "id": "community-demote.runtime-failure",
+      "operation": "community-demote",
+      "scenario": "runtime-failure",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speakers/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      }
+    },
+    {
+      "id": "community-demote.invalid-id",
+      "operation": "community-demote",
+      "scenario": "invalid-id",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/invalid/speakers/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "invalid",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid communityId"
+        }
+      }
+    },
+    {
+      "id": "community-demote.invalid-target",
+      "operation": "community-demote",
+      "scenario": "invalid-target",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speakers/invalid",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "invalid"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid address"
+        }
+      }
+    },
+    {
+      "id": "community-demote.runtime-not-found",
+      "operation": "community-demote",
+      "scenario": "runtime-not-found",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speakers/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "Not Found",
+          "message": "Community voice chat or participant not found for community 33333333-3333-4333-8333-333333333333"
+        }
+      }
+    },
+    {
+      "id": "community-kick.success",
+      "operation": "community-kick",
+      "scenario": "success",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/participants/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "id": "community-kick.runtime-failure",
+      "operation": "community-kick",
+      "scenario": "runtime-failure",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/participants/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      }
+    },
+    {
+      "id": "community-kick.invalid-id",
+      "operation": "community-kick",
+      "scenario": "invalid-id",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/invalid/participants/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "invalid",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid communityId"
+        }
+      }
+    },
+    {
+      "id": "community-kick.invalid-target",
+      "operation": "community-kick",
+      "scenario": "invalid-target",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/participants/invalid",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "invalid"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid address"
+        }
+      }
+    },
+    {
+      "id": "community-kick.runtime-not-found",
+      "operation": "community-kick",
+      "scenario": "runtime-not-found",
+      "method": "DELETE",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/participants/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "Not Found",
+          "message": "Community voice chat or participant not found for community 33333333-3333-4333-8333-333333333333"
+        }
+      }
+    },
+    {
+      "id": "community-mute.success",
+      "operation": "community-mute",
+      "scenario": "success",
+      "method": "PATCH",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speakers/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": {
+        "muted": true
+      },
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "id": "community-mute.runtime-failure",
+      "operation": "community-mute",
+      "scenario": "runtime-failure",
+      "method": "PATCH",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speakers/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": {
+        "muted": true
+      },
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal Server Error"
+        }
+      }
+    },
+    {
+      "id": "community-mute.invalid-id",
+      "operation": "community-mute",
+      "scenario": "invalid-id",
+      "method": "PATCH",
+      "path": "/v1/community-voice-chats/invalid/speakers/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "invalid",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": {
+        "muted": true
+      },
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid communityId"
+        }
+      }
+    },
+    {
+      "id": "community-mute.schema-required",
+      "operation": "community-mute",
+      "scenario": "schema-required",
+      "method": "PATCH",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speakers/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": {},
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "ok": false,
+          "message": "Invalid JSON body",
+          "data": [
+            {
+              "instancePath": "",
+              "schemaPath": "#/required",
+              "keyword": "required",
+              "params": {
+                "missingProperty": "muted"
+              },
+              "message": "must have required property 'muted'"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "community-mute.invalid-target",
+      "operation": "community-mute",
+      "scenario": "invalid-target",
+      "method": "PATCH",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speakers/invalid",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "invalid"
+      },
+      "body": {
+        "muted": true
+      },
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid address"
+        }
+      }
+    },
+    {
+      "id": "community-mute.runtime-not-found",
+      "operation": "community-mute",
+      "scenario": "runtime-not-found",
+      "method": "PATCH",
+      "path": "/v1/community-voice-chats/33333333-3333-4333-8333-333333333333/speakers/0x2222222222222222222222222222222222222222",
+      "params": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "address": "0x2222222222222222222222222222222222222222"
+      },
+      "body": {
+        "muted": true
+      },
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "Not Found",
+          "message": "Community voice chat or participant not found for community 33333333-3333-4333-8333-333333333333"
+        }
+      }
+    }
+  ]
+}

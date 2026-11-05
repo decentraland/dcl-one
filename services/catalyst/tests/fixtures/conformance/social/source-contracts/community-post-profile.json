@@ -1,0 +1,169 @@
+{
+  "source": "decentraland/social-service-ea",
+  "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+  "node": "v26.12.0",
+  "sources": [
+    "src/adapters/registry.ts",
+    "src/logic/community/posts.ts",
+    "src/controllers/handlers/http/create-community-post-handler.ts"
+  ],
+  "author": "0x9222222222222222222222222222222222222222",
+  "alias": "0x9333333333333333333333333333333333333333",
+  "timestamp": 1793721600000,
+  "cases": [
+    {
+      "name": "regular",
+      "documents": [
+        {
+          "avatars": [
+            {
+              "userId": "0x9222222222222222222222222222222222222222",
+              "name": "Source author",
+              "hasClaimedName": true,
+              "avatar": {
+                "snapshots": {
+                  "face256": "https://images.example.org/raw-face.png"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "order": [
+        "insert",
+        "profile",
+        "broadcast"
+      ],
+      "response": {
+        "status": 201,
+        "body": {
+          "data": {
+            "communityId": "00000000-0000-4000-8000-000000000001",
+            "authorAddress": "0x9222222222222222222222222222222222222222",
+            "content": "Content",
+            "id": "00000000-0000-4000-8000-000000000002",
+            "createdAt": "2026-11-03T16:00:00.000Z",
+            "authorName": "Source author",
+            "authorProfilePictureUrl": "https://images.example.org/raw-face.png",
+            "authorHasClaimedName": true
+          }
+        }
+      },
+      "events": [
+        {
+          "type": "community",
+          "subType": "community-post-added",
+          "key": "00000000-0000-4000-8000-000000000002",
+          "timestamp": 1793721600000,
+          "metadata": {
+            "postId": "00000000-0000-4000-8000-000000000002",
+            "communityId": "00000000-0000-4000-8000-000000000001",
+            "communityName": "Fixture community",
+            "thumbnailUrl": "N/A",
+            "authorAddress": "0x9222222222222222222222222222222222222222",
+            "addressesToNotify": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "alias",
+      "documents": [
+        {
+          "avatars": [
+            {
+              "userId": "0x9333333333333333333333333333333333333333",
+              "name": "Source author",
+              "hasClaimedName": true,
+              "avatar": {
+                "snapshots": {
+                  "face256": "https://images.example.org/raw-face.png"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "order": [
+        "insert",
+        "profile",
+        "broadcast"
+      ],
+      "response": {
+        "status": 201,
+        "body": {
+          "data": {
+            "communityId": "00000000-0000-4000-8000-000000000001",
+            "authorAddress": "0x9222222222222222222222222222222222222222",
+            "content": "Content",
+            "id": "00000000-0000-4000-8000-000000000002",
+            "createdAt": "2026-11-03T16:00:00.000Z",
+            "authorName": "Source author",
+            "authorProfilePictureUrl": "https://images.example.org/raw-face.png",
+            "authorHasClaimedName": true
+          }
+        }
+      },
+      "events": [
+        {
+          "type": "community",
+          "subType": "community-post-added",
+          "key": "00000000-0000-4000-8000-000000000002",
+          "timestamp": 1793721600000,
+          "metadata": {
+            "postId": "00000000-0000-4000-8000-000000000002",
+            "communityId": "00000000-0000-4000-8000-000000000001",
+            "communityName": "Fixture community",
+            "thumbnailUrl": "N/A",
+            "authorAddress": "0x9222222222222222222222222222222222222222",
+            "addressesToNotify": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing",
+      "documents": [],
+      "order": [
+        "insert",
+        "profile"
+      ],
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "Profile not found: 0x9222222222222222222222222222222222222222"
+        }
+      },
+      "events": []
+    },
+    {
+      "name": "invalid",
+      "documents": [
+        {
+          "avatars": [
+            {
+              "name": "Source author",
+              "hasClaimedName": true,
+              "avatar": {
+                "snapshots": {
+                  "face256": "https://images.example.org/raw-face.png"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "order": [
+        "insert",
+        "profile"
+      ],
+      "response": {
+        "status": 500,
+        "body": {
+          "message": "Invalid profile received from registry: 0x9222222222222222222222222222222222222222"
+        }
+      },
+      "events": []
+    }
+  ]
+}

@@ -64,11 +64,11 @@ export type LandingsEvents = {
     stub: true;
   };
   jump_in_completed: {
-    launch_url?: string;
+    launch_url: string;
     place_id: string;
   };
   jump_in_failed: {
-    error?: string;
+    error: string;
     place_id: string;
   };
   jump_in_started: {
@@ -173,7 +173,6 @@ export type LandingsEvents = {
   lp_hangout_submitted: {
     approved?: boolean;
     event_id?: string;
-    stub: true;
   };
   lp_home_download_clicked: {
     placement: string;
@@ -245,7 +244,6 @@ export type LandingsEvents = {
     active?: boolean;
     editing: boolean;
     schedule_id?: string;
-    stub: true;
   };
   lp_schedule_gate_viewed: Record<string, never>;
   lp_schedule_list_viewed: {

@@ -9,11 +9,6 @@ use unicode_normalization::UnicodeNormalization;
 pub const NAME_MAX: usize = 30;
 pub const DESCRIPTION_MAX: usize = 500;
 
-fn has_forbidden_control(s: &str) -> bool {
-    s.chars()
-        .any(|c| c.is_control() && c != '\t' && c != '\n' && c != '\r')
-}
-
 /// A single lowercase code point for confusable lookup, or None when the char folds to a sequence
 /// (no such multi-char key exists in the table, so a sequence can never match one).
 fn single_lowercase(c: char) -> Option<char> {
@@ -113,30 +108,26 @@ pub fn fold_name_for_comparison(name: &str) -> String {
 
 pub fn validate_name(name: &str) -> Result<(), String> {
     if fold_name_for_comparison(name).is_empty() {
-        return Err("name is required".to_string());
+        return Err("Name must be a non-empty string".to_string());
     }
-    let len = name.chars().count();
+    let len = name.encode_utf16().count();
     if len > NAME_MAX {
-        return Err(format!("name must be at most {NAME_MAX} characters"));
-    }
-    if has_forbidden_control(name) {
-        return Err("name contains forbidden control characters".to_string());
+        return Err(format!(
+            "Name must be less or equal to {NAME_MAX} characters"
+        ));
     }
     Ok(())
 }
 
 pub fn validate_description(description: &str) -> Result<(), String> {
     if description.trim().is_empty() {
-        return Err("description is required".to_string());
+        return Err("Description must be a non-empty string".to_string());
     }
-    let len = description.chars().count();
+    let len = description.encode_utf16().count();
     if len > DESCRIPTION_MAX {
         return Err(format!(
-            "description must be at most {DESCRIPTION_MAX} characters"
+            "Description must be less or equal to {DESCRIPTION_MAX} characters"
         ));
-    }
-    if has_forbidden_control(description) {
-        return Err("description contains forbidden control characters".to_string());
     }
     Ok(())
 }
@@ -164,7 +155,7 @@ pub fn check_restricted_name(name: &str, restricted: &[String]) -> Result<(), St
     }
     let folded = fold_name_for_comparison(name);
     if restricted.contains(&folded) {
-        return Err("name is not allowed".to_string());
+        return Err("Name is not allowed".to_string());
     }
     Ok(())
 }
@@ -209,18 +200,20 @@ mod tests {
     }
 
     #[test]
-    fn length_is_unicode_scalar_count_not_bytes() {
+    fn length_is_javascript_utf16_units_not_utf8_bytes() {
         let n30 = "\u{E9}".repeat(NAME_MAX);
         assert!(validate_name(&n30).is_ok());
         let n31 = "\u{E9}".repeat(NAME_MAX + 1);
         assert!(validate_name(&n31).is_err());
+        assert!(validate_name(&"🙂".repeat(15)).is_ok());
+        assert!(validate_name(&"🙂".repeat(16)).is_err());
     }
 
     #[test]
-    fn rejects_nul_and_controls() {
-        assert!(validate_name("ab\u{0}cd").is_err());
-        assert!(validate_name("a\u{7}b").is_err());
-        assert!(validate_name("a\u{1b}[31mb").is_err());
+    fn fields_leave_control_character_handling_to_storage() {
+        assert!(validate_name("ab\u{0}cd").is_ok());
+        assert!(validate_name("a\u{7}b").is_ok());
+        assert!(validate_name("a\u{1b}[31mb").is_ok());
     }
 
     #[test]

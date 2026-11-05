@@ -10,6 +10,7 @@ use crate::{
 };
 use ambient_brightness_setting::AmbientSetting;
 use anyhow::anyhow;
+use avatar_ghosts_setting::AvatarGhostsSetting;
 use avatar_outline_setting::AvatarOutlineSetting;
 use bevy::{
     app::{Plugin, Update},
@@ -20,6 +21,7 @@ use bevy::{
     platform::collections::HashSet,
     prelude::*,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use cache_size::CacheSizeSetting;
 use cel_shading_setting::CelShadingSetting;
 use common::structs::DmPrivacy;
@@ -51,12 +53,14 @@ use volume_settings::{
 
 pub mod aa_settings;
 pub mod ambient_brightness_setting;
+pub mod avatar_ghosts_setting;
 pub mod avatar_outline_setting;
 pub mod bloom_settings;
 pub mod cache_size;
 pub mod camera_smoothing;
 pub mod cel_shading_setting;
 pub mod constrain_ui;
+mod debug_quality;
 pub mod dm_privacy;
 pub mod dof_setting;
 pub mod fog_settings;
@@ -154,7 +158,9 @@ impl Plugin for SettingBridgePlugin {
             apply_to_camera::<ShadowSetting>.in_set(SceneSets::RestrictedActions),
         );
 
-        add_enum_setting::<ImposterSetting>(app, &mut settings, &mut schedule, &config);
+        if !is_preview {
+            add_enum_setting::<ImposterSetting>(app, &mut settings, &mut schedule, &config);
+        }
         add_enum_setting::<ParcelGrassSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<FogSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<BloomSetting>(app, &mut settings, &mut schedule, &config);
@@ -165,6 +171,7 @@ impl Plugin for SettingBridgePlugin {
         add_enum_setting::<OobSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<CelShadingSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AvatarOutlineSetting>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<AvatarGhostsSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AaSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<AmbientSetting>(app, &mut settings, &mut schedule, &config);
         if is_fullscreen_available() {
@@ -213,9 +220,12 @@ impl Plugin for SettingBridgePlugin {
 
         add_int_setting::<VideoThreadsSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<MaxDownloadsSetting>(app, &mut settings, &mut schedule, &config);
+        // Only the native IPFS disk cache is trimmed against this setting.
+        #[cfg(not(target_arch = "wasm32"))]
         add_enum_setting::<CacheSizeSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<PointAtMarkerVisibility>(app, &mut settings, &mut schedule, &config);
 
+        debug_quality::register(app, &settings);
         app.insert_resource(settings);
         app.insert_resource(ApplyAppSettingsSchedule(schedule));
         app.init_resource::<ActiveCameras>();

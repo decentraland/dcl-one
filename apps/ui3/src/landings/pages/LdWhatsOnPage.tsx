@@ -28,6 +28,8 @@ type LdWhatsOnPageProps = {
     e: MouseEvent<HTMLAnchorElement>,
   ) => void;
   promoSlot?: ReactNode;
+  navigationSlot?: ReactNode;
+  statusSlot?: ReactNode;
 };
 
 export default function LdWhatsOnPage({
@@ -41,6 +43,8 @@ export default function LdWhatsOnPage({
   eventLinks = [],
   onEventLinkClick = undefined,
   promoSlot = undefined,
+  navigationSlot = undefined,
+  statusSlot = undefined,
 }: LdWhatsOnPageProps) {
   return (
     <div className="whatson-route">
@@ -50,19 +54,23 @@ export default function LdWhatsOnPage({
         allDays={allDays}
         dayLabels={dayLabels}
         filterBar={
-          <div className="whatson-route__cats" role="tablist" aria-label="Event filters">
-            {filters.map((f) => (
-              <CategoryPill
-                key={f.id || "all"}
-                label={f.label}
-                active={activeFilter === f.id}
-                onSelect={() => onFilterSelect?.(f.id)}
-              />
-            ))}
-          </div>
+          <>
+            {navigationSlot}
+            <div className="whatson-route__cats" role="tablist" aria-label="Event filters">
+              {filters.map((f) => (
+                <CategoryPill
+                  key={f.id || "all"}
+                  label={f.label}
+                  active={activeFilter === f.id}
+                  onSelect={() => onFilterSelect?.(f.id)}
+                />
+              ))}
+            </div>
+          </>
         }
       />
 
+      {statusSlot}
       {promoSlot}
 
       {eventLinks.length > 0 && (
@@ -81,7 +89,7 @@ export default function LdWhatsOnPage({
         </nav>
       )}
 
-      {eventLinks.length === 0 && (
+      {eventLinks.length === 0 && !statusSlot && (
         <p className="whatson-route__empty">
           No events right now. Check back soon.
         </p>

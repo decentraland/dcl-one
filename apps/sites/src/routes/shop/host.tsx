@@ -112,9 +112,9 @@ export function useSitesShopHost(): ShopWalletHost {
             : null,
       onSignIn: signIn,
       onConnectWallet: signIn,
+      // Signing in again leaves the page: Magic's logout gets to finish first.
       onSwitchAccount: () => {
-        disconnect();
-        signIn();
+        void disconnect().then(signIn);
       },
       resolving: !hydrated,
     };

@@ -9,12 +9,13 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = '.github/workflows/bevy-explorer-ci.yml'
+SOURCE = 'rendering/bevy-explorer/source/'
 SCENES_WORKFLOW = '.github/workflows/bevy-explorer-scenes.yml'
 PRODUCERS = {'web': 'Web engine, HUD and bridge scene', 'headless': 'Headless Smoke'}
 LANES = ('clippy', 'test', 'headless', 'web')
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
 INPUTS = ('rendering/bevy-explorer/source', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
-          'tooling/bevy-ci.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'tooling/bevy-ci.py', 'tooling/bevy-http2-test.mjs', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
           'tooling/tests/test_bevy_*.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
@@ -29,7 +30,8 @@ HARNESS_WEB_READS = ('rendering/bevy-explorer/source/deploy/web/engine/perf_stre
                      'rendering/bevy-explorer/source/react-web/src/lib/hudAutomation.ts')
 IMAGES_INPUTS = (
     'flake.*',
-    'rendering/bevy-explorer/**',
+    'rendering/bevy-explorer/source/**',
+    'rendering/bevy-explorer/upstream.lock.json',
     'apps/bevy-explorer/build-web.py',
     'apps/bevy-explorer/install-*.py',
     '.github/workflows/bevy-explorer-ci.yml',
@@ -40,6 +42,7 @@ IMAGES_INPUTS = (
     'infra/packages/**',
     'infra/containers/**',
     'services/catalyst/**',
+    'schemas/**',
     'library/**',
     '.cargo/**',
     'apps/sites/**',
@@ -74,7 +77,7 @@ APP_INPUTS = {
 
 
 def git(*args):
-    return subprocess.check_output(['git', *args], cwd=ROOT, text=True)
+    return subprocess.check_output(['git', *args], cwd=ROOT, text=True, env={**os.environ, 'GIT_GLOB_PATHSPECS': '1'})
 
 
 def api(path):
@@ -155,6 +158,24 @@ def full_selection(reason):
     return {**dict.fromkeys((*LANES, 'native-matrix', 'scenes'), True), 'reason': reason}
 
 
+def platform_input(path):
+    """A source path whose change can behave differently on Windows or macOS."""
+    path = path.removeprefix(SOURCE)
+    return (path == 'Cargo.toml' or re.fullmatch(r'build\w*\.rs', path.rsplit('/', 1)[-1]) is not None
+            or path.startswith(('.cargo/', 'rust-toolchain', 'local-harness/benchmark/', 'local-harness/web-driver/'))
+            or re.search(r'(^|/)(windows|macos)(\.rs$|/)', path) is not None)
+
+
+def locked_packages(rev):
+    """The engine's locked (name, version, source) set at rev, or None when it cannot be read."""
+    try:
+        import tomllib
+        lock = tomllib.loads(git('show', f'{rev}:{SOURCE}Cargo.lock'))
+        return {(package['name'], package['version'], package.get('source')) for package in lock['package']}
+    except (ImportError, ValueError, KeyError, TypeError, subprocess.CalledProcessError):
+        return None
+
+
 def select(base, head):
     ensure_commit(base)
     ensure_commit(head)
@@ -171,6 +192,8 @@ def select(base, head):
             affected = (*LANES, 'native-matrix')
         elif path == '.github/workflows/bevy-explorer-images.yml':
             affected = ('web', 'headless')
+        elif path == 'tooling/bevy-http2-test.mjs':
+            affected = ('test',)
         elif path == 'tooling/play-artifact.py':
             affected = ('web',)
         elif path.startswith(('tooling/tests/test_bevy_', 'tooling/tests/test_play_')):
@@ -190,8 +213,18 @@ def select(base, head):
             # Launcher/package assembly cannot affect web or graphical/native tests.
             # Keep the headless build/smoke; main also packages all four platforms.
             affected = ('headless',)
+        elif path.startswith('apps/bevy-explorer/e2e/'):
+            # The end-to-end suite drives a built client; its own workflow (bevy-explorer-e2e.yml)
+            # checks it and runs it against the web app this workflow built.
+            affected = ()
         elif path.startswith('apps/bevy-explorer/') and path.removeprefix('apps/bevy-explorer/') in APP_INPUTS:
             affected = APP_INPUTS[path.removeprefix('apps/bevy-explorer/')]
+        elif path == SOURCE + 'Cargo.lock':
+            old, new = locked_packages(base), locked_packages(head)
+            affected = (*LANES, 'scenes') if old is not None and old == new else (*LANES, 'native-matrix', 'scenes')
+        elif path.startswith('library/protocol/proto/') or (path.startswith(SOURCE) and not platform_input(path)):
+            # Linux validates platform-neutral source on PRs; main pushes and ci:macos add Windows and macOS.
+            affected = (*LANES, 'scenes')
         else:
             # Source, selector and unknown input changes validate all jobs.
             affected = (*LANES, 'native-matrix', 'scenes')
@@ -215,7 +248,7 @@ def plan(event, base, head, repo):
                 if previous not in selections:
                     selections[previous] = select(previous, head) if previous else full_selection('Missing lane baseline')
                 result[lane] = selections[previous][lane]
-            result['native-matrix'] = selections[baselines.get('test')]['native-matrix']
+            result['native-matrix'] = result['test']
             result['reason'] = 'Compared each job with its latest successful main execution'
             return result
         if event not in ('pull_request', 'local'):

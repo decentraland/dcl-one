@@ -70,6 +70,7 @@ export type IconName =
   | "smart"
   | "sound"
   | "star-rounded"
+  | "trash"
   | "utility"
   | "view-all-arrow"
   | "warning-fill";

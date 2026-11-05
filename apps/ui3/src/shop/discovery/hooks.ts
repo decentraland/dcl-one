@@ -1,16 +1,18 @@
 // from: shop@94584a5c:app/src/hooks/useUrlFilters.ts, shop@2d3bf62:app/src/components/CreatorName/CreatorName.tsx, app/src/lib/avatarColor.ts (getDisplayName), app/src/hooks/useScrollTopOnChange.ts, app/src/hooks/useSaleActive.ts,
 //       app/src/hooks/useProfile.ts, app/src/hooks/useSeo.ts, app/src/hooks/useCampaign.ts, app/src/hooks/useCampaignContracts.ts
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useSearchParams } from "react-router";
 
 import { fetchCommunityProfiles } from "../../data/hooks/useCommunityProfiles";
+import { shortAddress } from "../model/address";
 import { shopClient } from "../api/shop";
 import { readMirrorFreshness, type IndexFreshness } from "./freshness";
 import { fetchCampaign, type Campaign } from "./lib/contentful";
 import { fetchCampaignContracts } from "./lib/campaign";
 import { isSaleActive, saleTimeLeft, type SaleInfo } from "./lib/sale";
 import { useShopQuery } from "./query";
+import { cachedProfile, rememberProfiles } from "./lib/profileCache";
 
 export type FilterValue = string | string[] | boolean | null;
 
@@ -82,14 +84,41 @@ export function useSaleActive(sale: SaleInfo): boolean {
   return isSaleActive(sale, now);
 }
 
+const noSubscription = () => () => {};
+
+/**
+ * False on the server and during hydration, true after: the profile cache lives in localStorage, which the server
+ * cannot read, so reading it any earlier would render different markup on each side.
+ */
+function useAfterHydration(): boolean {
+  return useSyncExternalStore(noSubscription, () => true, () => false);
+}
+
 export type CreatorProfile = { name: string; picture: string | null; claimed: boolean | null };
 
 export function useProfiles(addresses: Array<string | null | undefined>): Record<string, CreatorProfile> {
   const wanted = useMemo(() => [...new Set(addresses.filter((a): a is string => !!a && /^0x[0-9a-fA-F]{40}$/.test(a)).map((a) => a.toLowerCase()))].sort(), [addresses]);
-  const { data } = useShopQuery(wanted.length ? ["profiles", ...wanted] : null, (signal) => fetchCommunityProfiles(wanted, { signal }), {
-    staleMs: 5 * 60_000,
-  });
-  return data ?? {};
+  const { data } = useShopQuery(
+    wanted.length ? ["profiles", ...wanted] : null,
+    async (signal) => {
+      const profiles = await fetchCommunityProfiles(wanted, { signal });
+      rememberProfiles(wanted, profiles);
+      return profiles;
+    },
+    { staleMs: 5 * 60_000 },
+  );
+  // Until this request answers, what this browser already knows: a known name paints at once on a reload.
+  const hydrated = useAfterHydration();
+  return useMemo(() => {
+    if (data) return data;
+    if (!hydrated) return {};
+    const known: Record<string, CreatorProfile> = {};
+    for (const address of wanted) {
+      const profile = cachedProfile(address);
+      if (profile) known[address] = profile;
+    }
+    return known;
+  }, [data, wanted, hydrated]);
 }
 
 export function useProfile(address: string | null | undefined): CreatorProfile | null {
@@ -112,6 +141,7 @@ function batchedProfile(address: string): Promise<CreatorProfile | null> {
       profileQueue = new Map();
       fetchCommunityProfiles([...batch.keys()]).then(
         (profiles) => {
+          rememberProfiles([...batch.keys()], profiles);
           for (const [addr, ws] of batch) for (const w of ws) w.resolve(profiles[addr] ?? null);
         },
         (error) => {
@@ -122,16 +152,27 @@ function batchedProfile(address: string): Promise<CreatorProfile | null> {
   });
 }
 
-export function useCreatorName(address: string | null | undefined): string | undefined {
-  const addr = address && /^0x[0-9a-fA-F]{40}$/.test(address) ? address.toLowerCase() : null;
+const creatorAddress = (address: string | null | undefined) => (address && /^0x[0-9a-fA-F]{40}$/.test(address) ? address.toLowerCase() : null);
+
+export function useCreatorProfile(address: string | null | undefined): { profile: CreatorProfile | null; loading: boolean } {
+  const addr = creatorAddress(address);
   const { data, isLoading } = useShopQuery(addr ? ["creator-name", addr] : null, () => batchedProfile(addr!), { staleMs: 5 * 60_000 });
+  // A profile this browser already resolved stands in while the request revalidates it: no skeleton, no
+  // address flipping to a name.
+  const hydrated = useAfterHydration();
+  const known = data === undefined && hydrated ? cachedProfile(addr) : null;
+  return { profile: data ?? known, loading: !!addr && isLoading && data === undefined && !known };
+}
+
+export function useCreatorName(address: string | null | undefined): string | undefined {
+  const { profile, loading } = useCreatorProfile(address);
+  const addr = creatorAddress(address);
   if (!address) return undefined;
   if (!addr) return address;
-  if (isLoading && data === undefined) return undefined;
-  const name = data?.name?.trim();
-  if (!name) return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-  const shown = name.charAt(0).toUpperCase() + name.slice(1);
-  return shown;
+  if (loading) return undefined;
+  const name = profile?.name?.trim();
+  if (!name) return shortAddress(addr);
+  return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 const SITE_NAME = "Decentraland Shop";
