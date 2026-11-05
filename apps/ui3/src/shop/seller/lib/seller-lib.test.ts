@@ -365,6 +365,37 @@ describe("creations and sale state", () => {
     expect(isPublishable(all[1]!)).toBe(false);
   });
 
+  it("reads the node's on-chain item rows, which carry the contract and index but name the date and image differently", async () => {
+    const signer = { address: BOOK.creator, sign: async () => ({}) };
+    const contract = BOOK.collection.toLowerCase();
+    const fetchImpl = (async (url: string) => {
+      const path = new URL(url).pathname;
+      if (path.endsWith("/collections"))
+        return Response.json({ ok: true, data: [{ id: contract, name: "Neon", contract_address: contract, is_published: true, is_approved: true }] });
+      return Response.json({
+        ok: true,
+        data: [
+          {
+            id: `${contract}-0`,
+            collection_id: contract,
+            contract_address: contract,
+            blockchain_item_id: "0",
+            name: "Jacket",
+            rarity: "common",
+            total_supply: 2,
+            is_published: true,
+            createdAt: 1_700_000_000_000,
+            image: "https://peer.test/thumbnail",
+          },
+        ],
+      });
+    }) as typeof fetch;
+    const [item, ...rest] = await fetchPublishableItems(BOOK.creator, { signer, base: "https://node.test", fetchImpl, includeSoldOut: true });
+    expect(rest).toHaveLength(0);
+    expect(item).toMatchObject({ contractAddress: contract, blockchainItemId: "0", isApproved: true, createdAt: 1_700_000_000_000, thumbnail: "https://peer.test/thumbnail" });
+    expect(isPublishable(item!)).toBe(true);
+  });
+
   it("marks USD-pegged primary listings by their exact credits and classic ones by their MANA", async () => {
     const shop = fakeShop([
       {

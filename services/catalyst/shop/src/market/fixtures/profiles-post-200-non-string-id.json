@@ -1,0 +1,27 @@
+{
+  "description": "POST /lambdas/profiles with an id that is not a string: the content server's body schema rejects the pointers and lamb2's getProfiles answers [] for the whole batch.",
+  "request": {
+    "method": "POST",
+    "path": "/lambdas/profiles",
+    "query": {},
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "ids": [
+        "0x0000000000000000000000000000000000000001",
+        5
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": []
+  },
+  "captured_from": "hand-authored from lamb2 02a37f5 src/adapters/profiles.ts::getProfiles and catalyst a416565 src/controllers/handlers/active-entities-handler.ts::activeEntitiesBodySchema",
+  "captured_at": "2026-11-04T00:00:00Z",
+  "volatile_paths": []
+}

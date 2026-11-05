@@ -190,6 +190,8 @@ export type PageToScene =
   | RevertAvatarRequest
   | PreviewAvatarRequest
   | PreviewFocusRequest
+  | PreviewStageRequest
+  | PreviewEmoteRequest
   | GetOutfitsRequest
   | SaveOutfitRequest
   | DeleteOutfitRequest
@@ -1375,6 +1377,22 @@ export type PreviewFocus = 'body' | 'head' | 'top' | 'bottom' | 'shoes'
 export interface PreviewFocusRequest {
   kind: 'previewFocus'
   focus: PreviewFocus
+}
+
+/** The Shop's stage around the preview avatar: where the page draws its stage image on screen, in CSS
+ *  pixels like engineViewport's rect. The scene draws the same image (its images/shop-stage.jpg, the HUD's
+ *  assets/shop/stage.jpg) there behind the avatar, so the avatar's window shows no seam, and drops the
+ *  Backpack's podium: the stage's floor is in the image. `null` gives the preview its own backdrop back. */
+export interface PreviewStageRequest {
+  kind: 'previewStage'
+  rect: { x: number; y: number; width: number; height: number } | null
+}
+
+/** Play an emote on the preview avatar once (the Shop trying one on); asked again, it plays again.
+ *  `null` stops it. */
+export interface PreviewEmoteRequest {
+  kind: 'previewEmote'
+  urn: string | null
 }
 
 /** RGB color, components 0..1 (matches PBAvatarBase / the deployed avatar entity). */

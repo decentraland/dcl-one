@@ -17,6 +17,8 @@ catalyst-land-authz = { path = "../land-authz" }
 catalyst-content = { path = "../content" }
 catalyst-explore = { path = "../explore" }
 catalyst-comms = { path = "../comms" }
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
 tokio.workspace = true
 axum.workspace = true
 sqlx.workspace = true

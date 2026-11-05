@@ -463,7 +463,7 @@ async fn exact_key_cas_restore_and_pages_preserve_sibling_generations_and_ttls()
 }
 
 #[tokio::test]
-async fn raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns() {
+async fn raw_start_preserves_source_metadata_and_online_audience_in_native_inbox() {
     let Some(database) = OwnedDatabase::new().await else {
         return;
     };
@@ -486,23 +486,6 @@ async fn raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns()
     for (address, role) in [(caller, "owner"), (member, "member"), (offline, "member")] {
         sqlx::query("INSERT INTO social.community_members(community_id,member_address,role) VALUES($1,$2,$3)").bind(cid).bind(address).bind(role).execute(pool).await.unwrap();
     }
-    let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
-    let app = axum::Router::new().fallback(move |headers: axum::http::HeaderMap, body: axum::body::Bytes| {
-        let sent = sent.clone();
-        async move {
-            assert!(headers["authorization"].to_str().unwrap().starts_with("AWS4-HMAC-SHA256 "));
-            let fields: std::collections::HashMap<_,_> = url::form_urlencoded::parse(&body).into_owned().collect();
-            assert_eq!(fields["Action"], "PublishBatch");
-            assert!(!fields.contains_key("PublishBatchRequestEntries.member.2.Message"));
-            let prefix = "PublishBatchRequestEntries.member.1.";
-            sent.send(serde_json::from_str::<Value>(&fields[&format!("{prefix}Message")]).unwrap()).unwrap();
-            let id = &fields[&format!("{prefix}Id")];
-            ([("content-type","text/xml")], format!("<PublishBatchResponse xmlns=\"http://sns.amazonaws.com/doc/2010-03-31/\"><PublishBatchResult><Successful><member><Id>{id}</Id><MessageId>fixture</MessageId></member></Successful><Failed></Failed></PublishBatchResult><ResponseMetadata><RequestId>fixture</RequestId></ResponseMetadata></PublishBatchResponse>"))
-        }
-    });
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let endpoint = format!("http://{}", listener.local_addr().unwrap());
-    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let directory =
         std::env::temp_dir().join(format!("raw-community-broadcast-{}", Uuid::new_v4()));
     let http = crate::http::Outbound::for_tests();
@@ -518,11 +501,6 @@ async fn raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns()
         &http,
         crate::communities::State::explore_for_tests(pool),
     ));
-    state
-        .referral
-        .set_publisher(crate::legacy_events::LegacyEvents::test_publisher(
-            &endpoint,
-        ));
     let ctx = test_ctx(
         Db::new(pool.clone()),
         Arc::new(FakeVoiceRooms::new(pool.clone())),
@@ -538,32 +516,6 @@ async fn raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns()
     ops::start_community_voice_chat(&ctx, caller, raw, false)
         .await
         .unwrap();
-    let mut actual = tokio::time::timeout(Duration::from_secs(5), received.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    let expected = &source["sns"][0];
-    assert!(
-        actual["key"]
-            .as_str()
-            .unwrap()
-            .starts_with(&format!("{raw}-"))
-    );
-    let unique = actual["key"]
-        .as_str()
-        .unwrap()
-        .strip_prefix(&format!("{raw}-"))
-        .unwrap()
-        .strip_suffix("-batch-1")
-        .unwrap();
-    assert!(unique.parse::<i64>().unwrap() > 0);
-    assert!(actual["timestamp"].as_i64().unwrap() > 0);
-    actual["key"] = expected["key"].clone();
-    actual["timestamp"] = expected["timestamp"].clone();
-    assert_eq!(
-        actual, *expected,
-        "full source SNS event with raw key, metadata and online audience"
-    );
     let rows: Vec<(String,Value)> = sqlx::query_as("SELECT address,metadata FROM social.notifications WHERE type='community_voice_chat_started'").fetch_all(pool).await.unwrap();
     assert_eq!(
         rows,
@@ -573,8 +525,8 @@ async fn raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns()
         )],
         "inbox retains raw metadata and excludes opener/offline member"
     );
-    assert!(received.try_recv().is_err());
-    server.abort();
+    let deliveries: Vec<(String,String,i32)> = sqlx::query_as("SELECT n.address,d.state,d.attempts FROM social.notifications n JOIN social.notification_deliveries d ON d.notification_id=n.id WHERE n.type='community_voice_chat_started'").fetch_all(pool).await.unwrap();
+    assert_eq!(deliveries, vec![(member.into(), "skipped".into(), 0)]);
     let _ = std::fs::remove_dir_all(directory);
     database.close().await;
 }

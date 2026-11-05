@@ -1,9 +1,9 @@
 //! `GET /world/{world_name}/limits`: the parcel and size caps a publish to
 //! the world is checked against, from the same `Policy::world_limits` the
-//! deploy validator reads. `parcels` (repeatable) is checked the way a
+//! deploy validator reads, and the size the owner's storage allowance leaves
+//! (`CoreState::max_scene_size`). `parcels` (repeatable) is checked the way a
 //! deployment's pointers are; it names the scenes a publish would replace,
-//! which no per-wallet allowance credits back yet, so it does not change
-//! the answer.
+//! whose size is credited back (without it, the whole world's).
 
 use axum::Json;
 use axum::extract::{Path, RawQuery, State};
@@ -14,6 +14,7 @@ use super::SharedState;
 use super::deploy_validate::{is_canonical_parcel_set, validate_parcel_in_bounds};
 use super::http::ApiError;
 use super::permissions::parse_world;
+use super::quota::CapError;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,8 +53,9 @@ pub async fn get_world_limits(
     RawQuery(query): RawQuery,
 ) -> Result<Json<WorldLimitsResponse>, ApiError> {
     let world = parse_world(&world_name)?;
-    if let Some(parcels) = requested_parcels(query.as_deref()) {
-        check_parcels(&parcels)?;
+    let parcels = requested_parcels(query.as_deref());
+    if let Some(parcels) = &parcels {
+        check_parcels(parcels)?;
     }
     if !state
         .names
@@ -66,14 +68,35 @@ pub async fn get_world_limits(
         )));
     }
     let limits = state.policy.world_limits(&world).await?;
-    if !limits.size_overridden && state.policy.limits_owner(&world).await?.is_none() {
-        return Err(ApiError::not_found(format!(
-            "Could not determine owner for world {}",
-            world.key()
-        )));
-    }
+    // Only an override's size needs no owner.
+    let owner = if limits.size_overridden {
+        None
+    } else {
+        let Some(owner) = state.policy.current_owner(&world).await? else {
+            return Err(ApiError::not_found(format!(
+                "Could not determine owner for world {}",
+                world.key()
+            )));
+        };
+        Some(owner)
+    };
+    let max_size = state
+        .max_scene_size(&world, &limits, owner.as_ref(), parcels.as_deref())
+        .await
+        .map_err(|e| match e {
+            CapError::OwnerNotFound => ApiError::not_found(format!(
+                "Could not determine owner for world {}",
+                world.key()
+            )),
+            CapError::Unavailable(reason) => {
+                tracing::warn!(world = %world, %reason, "world limits: allowance unavailable");
+                ApiError::service_unavailable(
+                    "The world's storage allowance could not be read right now",
+                )
+            }
+        })?;
     Ok(Json(WorldLimitsResponse {
-        max_scene_size_in_bytes: limits.max_size_bytes.to_string(),
+        max_scene_size_in_bytes: max_size.to_string(),
         max_parcels: limits.max_parcels,
     }))
 }

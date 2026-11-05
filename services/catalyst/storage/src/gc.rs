@@ -9,8 +9,9 @@
 //! blob and committing the row that names it) are checked in chunks
 //! against every [`REFERENCE_SOURCES`] column (`= ANY`, index-served on the
 //! large tables) and the JSON documents that embed keys (the world scenes'
-//! content lists, the asset-pack catalogue) plus the global scenes the
-//! configuration names, so memory holds a chunk, never the corpus. A scene
+//! and pending partial uploads' content lists, the asset-pack catalogue)
+//! plus the global scenes the configuration names, so memory holds a chunk,
+//! never the corpus. A scene
 //! whose content list cannot be read exactly aborts the run, a candidate
 //! is re-checked (references and age) right before it is unlinked, under
 //! the exclusive store lock that a world scene deploy takes shared (other
@@ -115,6 +116,8 @@ pub const REFERENCE_SOURCES: &[&str] = &[
     "worlds.federation_worlds.thumbnail_hash",
     "worlds.world_scenes.entity_id",
     "worlds.retired_world_scenes.entity_id",
+    "worlds.pending_scenes.entity_id",
+    "worlds.pending_scene_files.hash",
     "social.community_thumbnails.thumbnail_hash",
     "social.community_contents.cid",
     "social.player_report_evidence.content_hash",
@@ -179,6 +182,14 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "worlds.forward_outbox.entity_id",
         "a forwarding record: worlds.world_scenes holds the reference, and a scene gone from \
          it is superseded, never sent",
+    ),
+    (
+        "worlds.pending_scene_files.entity_id",
+        "the upload a file belongs to: worlds.pending_scenes.entity_id holds the reference",
+    ),
+    (
+        "worlds.completed_scene_uploads.entity_id",
+        "a completion receipt: worlds.world_scenes holds the reference while the scene is live",
     ),
     ("explore.place_reports.entity_id", "a place id"),
     ("explore.user_favorites.entity_id", "a place id"),
@@ -301,11 +312,12 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
 ];
 
 /// JSON documents that embed store keys, read by [`reference_set`] beside
-/// the plain sources: the world scene entities' `content[].hash` and the
-/// asset-pack catalogue's thumbnails and asset contents.
+/// the plain sources: the world scene and pending upload entities'
+/// `content[].hash` and the asset-pack catalogue's thumbnails and asset contents.
 pub const JSON_SOURCES: &[&str] = &[
     "worlds.world_scenes.entity",
     "worlds.retired_world_scenes.entity",
+    "worlds.pending_scenes.entity",
     "builder.asset_catalog.packs",
 ];
 
@@ -455,12 +467,13 @@ fn split_source(source: &str) -> (&str, &str) {
     (table, column)
 }
 
-/// Refuses a run over world scenes whose content lists cannot be read
-/// exactly (a caller deletes what the references do not name).
+/// Refuses a run over world scenes or pending uploads whose content lists
+/// cannot be read exactly (a caller deletes what the references do not name).
 async fn check_json_sources(pool: &PgPool) -> Result<(), GcError> {
     let bad: Option<String> = sqlx::query_scalar(
         "SELECT entity_id FROM (SELECT entity_id, entity FROM worlds.world_scenes \
-           UNION ALL SELECT entity_id, entity FROM worlds.retired_world_scenes) s \
+           UNION ALL SELECT entity_id, entity FROM worlds.retired_world_scenes \
+           UNION ALL SELECT entity_id, entity FROM worlds.pending_scenes) s \
          WHERE jsonb_typeof(s.entity) <> 'object' \
             OR jsonb_typeof(s.entity -> 'content') NOT IN ('array', 'null') \
             OR (jsonb_typeof(s.entity -> 'content') = 'array' AND EXISTS ( \
@@ -478,24 +491,33 @@ async fn check_json_sources(pool: &PgPool) -> Result<(), GcError> {
     }
 }
 
+/// What every reference check keeps beyond the database rows: the global
+/// scenes the configuration names, read from the store.
+#[derive(Clone, Copy)]
+pub struct Pins<'a> {
+    pub storage: &'a Storage,
+    pub global_scenes_urn: &'a [String],
+}
+
+impl<'a> Pins<'a> {
+    pub fn new(storage: &'a Storage, global_scenes_urn: &'a [String]) -> Self {
+        Self {
+            storage,
+            global_scenes_urn,
+        }
+    }
+}
+
 /// The small reference documents read whole: the asset-pack catalogue and
 /// the global scenes the configuration names (their entity file and its
 /// content list).
-async fn fixed_references(
-    pool: &PgPool,
-    storage: &Storage,
-    global_scenes_urn: &[String],
+pub async fn fixed_references(
+    conn: &mut sqlx::PgConnection,
+    pins: Pins<'_>,
 ) -> Result<HashSet<String>, GcError> {
-    let mut keys = HashSet::new();
-    let catalogue: Option<Value> =
-        sqlx::query_scalar("SELECT packs FROM builder.asset_catalog WHERE id = 1")
-            .fetch_optional(pool)
-            .await?;
-    if let Some(packs) = catalogue {
-        catalogue_hashes(&packs, &mut keys)?;
-    }
-    for entity_id in global_scene_entity_ids(global_scenes_urn) {
-        if let Some(bytes) = storage.retrieve(&entity_id).await? {
+    let mut keys = catalogue_references(conn).await?;
+    for entity_id in global_scene_entity_ids(pins.global_scenes_urn) {
+        if let Some(bytes) = pins.storage.retrieve(&entity_id).await? {
             let entity: Value = serde_json::from_slice(&bytes).map_err(|e| {
                 GcError::Unreadable(format!(
                     "global scene entity {entity_id} does not parse: {e}"
@@ -508,6 +530,21 @@ async fn fixed_references(
             )?;
         }
         keys.insert(entity_id);
+    }
+    Ok(keys)
+}
+
+/// The keys the asset-pack catalogue names (its one row).
+pub async fn catalogue_references(
+    conn: &mut sqlx::PgConnection,
+) -> Result<HashSet<String>, GcError> {
+    let mut keys = HashSet::new();
+    let catalogue: Option<Value> =
+        sqlx::query_scalar("SELECT packs FROM builder.asset_catalog WHERE id = 1")
+            .fetch_optional(&mut *conn)
+            .await?;
+    if let Some(packs) = catalogue {
+        catalogue_hashes(&packs, &mut keys)?;
     }
     Ok(keys)
 }
@@ -528,20 +565,24 @@ async fn any_reference(pool: &PgPool) -> Result<bool, GcError> {
     Ok(false)
 }
 
-/// The keys among `keys` some domain names: one `= ANY` probe per source
-/// (index-served on the large tables) and the world scenes' content lists,
-/// retired ones included until evicted.
-pub async fn referenced_among(pool: &PgPool, keys: &[String]) -> Result<HashSet<String>, GcError> {
-    let mut conn = pool.acquire().await?;
-    referenced_among_on(&mut conn, keys).await
+/// The keys among `keys` some domain names: the fixed references, one
+/// `= ANY` probe per source (index-served on the large tables) and the world
+/// scenes' and pending uploads' content lists, retired ones included until
+/// evicted. Every path that unlinks by reference runs this check.
+pub async fn referenced_among_on(
+    conn: &mut sqlx::PgConnection,
+    pins: Pins<'_>,
+    keys: &[String],
+) -> Result<HashSet<String>, GcError> {
+    references_among(conn, pins, keys, true).await
 }
 
-/// [`referenced_among`] on one connection (the unlink batch's, under its lock).
-pub async fn referenced_among_on(
+/// [`referenced_among_on`] without the fixed references, which a caller resolved beforehand.
+pub async fn referenced_rows_among_on(
     conn: &mut sqlx::PgConnection,
     keys: &[String],
 ) -> Result<HashSet<String>, GcError> {
-    references_written_within(conn, keys, i64::from(i32::MAX)).await
+    rows_among(conn, keys, true, ALL_ROWS).await
 }
 
 /// The oldest transaction a scan started now might not see: rows it misses were written at or after it.
@@ -553,27 +594,78 @@ async fn scene_fence(pool: &PgPool) -> Result<i64, GcError> {
     )
 }
 
-/// [`referenced_among_on`], reading only world scenes written at or after `fence`.
+/// [`referenced_among_on`], reading only scene and pending-upload rows written at or after `fence`.
 async fn referenced_since(
     conn: &mut sqlx::PgConnection,
+    pins: Pins<'_>,
     keys: &[String],
     fence: i64,
 ) -> Result<HashSet<String>, GcError> {
+    if keys.is_empty() {
+        return Ok(HashSet::new());
+    }
     // Assigning this transaction an id pins `age()` to it.
     let current: i64 = sqlx::query_scalar("SELECT pg_current_xact_id()::text::bigint")
         .fetch_one(&mut *conn)
         .await?;
-    references_written_within(conn, keys, (current - fence).max(0)).await
+    let fixed = fixed_references(conn, pins).await?;
+    let mut found = rows_among(conn, keys, true, (current - fence).max(0)).await?;
+    found.extend(keys.iter().filter(|k| fixed.contains(*k)).cloned());
+    Ok(found)
 }
 
-/// The keys among `keys` referenced, counting only world scene rows at most `max_age` transactions old.
-async fn references_written_within(
+/// [`referenced_among_on`] on a pooled connection.
+pub async fn referenced_among(
+    pool: &PgPool,
+    pins: Pins<'_>,
+    keys: &[String],
+) -> Result<HashSet<String>, GcError> {
+    let mut conn = pool.acquire().await?;
+    referenced_among_on(&mut conn, pins, keys).await
+}
+
+/// The keys among `keys` published content names: [`referenced_among`] without the pending
+/// partial uploads, which charge for content only they keep.
+pub async fn published_among(
+    pool: &PgPool,
+    pins: Pins<'_>,
+    keys: &[String],
+) -> Result<HashSet<String>, GcError> {
+    let mut conn = pool.acquire().await?;
+    references_among(&mut conn, pins, keys, false).await
+}
+
+async fn references_among(
+    conn: &mut sqlx::PgConnection,
+    pins: Pins<'_>,
+    keys: &[String],
+    pending: bool,
+) -> Result<HashSet<String>, GcError> {
+    if keys.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let fixed = fixed_references(conn, pins).await?;
+    let mut found = rows_among(conn, keys, pending, ALL_ROWS).await?;
+    found.extend(keys.iter().filter(|k| fixed.contains(*k)).cloned());
+    Ok(found)
+}
+
+/// The database rows' part of [`references_among`], counting only scene and
+/// pending-upload rows at most `max_age` transactions old.
+async fn rows_among(
     conn: &mut sqlx::PgConnection,
     keys: &[String],
+    pending: bool,
     max_age: i64,
 ) -> Result<HashSet<String>, GcError> {
     let mut found = HashSet::new();
+    if keys.is_empty() {
+        return Ok(found);
+    }
     for source in REFERENCE_SOURCES {
+        if !pending && PENDING_PREFIXES.iter().any(|p| source.starts_with(p)) {
+            continue;
+        }
         let (table, column) = split_source(source);
         let rows: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT DISTINCT {column} FROM {table} WHERE {column} = ANY($1)"
@@ -584,18 +676,26 @@ async fn references_written_within(
         found.extend(rows);
     }
     let rows: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT e ->> 'hash' FROM (SELECT entity FROM worlds.world_scenes WHERE age(xmin) <= $2 \
-           UNION ALL SELECT entity FROM worlds.retired_world_scenes WHERE age(xmin) <= $2) s \
+        "SELECT DISTINCT e ->> 'hash' FROM (SELECT entity FROM worlds.world_scenes WHERE age(xmin) <= $3 \
+           UNION ALL SELECT entity FROM worlds.retired_world_scenes WHERE age(xmin) <= $3 \
+           UNION ALL SELECT entity FROM worlds.pending_scenes WHERE $2 AND age(xmin) <= $3) s \
          CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(s.entity -> 'content') = 'array' THEN s.entity -> 'content' ELSE '[]'::jsonb END) e \
          WHERE e ->> 'hash' = ANY($1)",
     )
     .bind(keys)
+    .bind(pending)
     .bind(max_age)
     .fetch_all(&mut *conn)
     .await?;
     found.extend(rows);
     Ok(found)
 }
+
+/// The partial-upload staging sources, content's and worlds' ([`published_among`] leaves them out).
+const PENDING_PREFIXES: [&str; 2] = ["content.pending_", "worlds.pending_"];
+
+/// A `max_age` that counts every row.
+const ALL_ROWS: i64 = i32::MAX as i64;
 
 const CHUNK: usize = 2_000;
 
@@ -639,7 +739,11 @@ pub async fn unlink_orphans(
         return Ok(0);
     }
     check_json_sources(pool).await?;
-    let fixed = fixed_references(pool, storage, global_scenes_urn).await?;
+    let fixed = fixed_references(
+        &mut *pool.acquire().await?,
+        Pins::new(storage, global_scenes_urn),
+    )
+    .await?;
     let now = SystemTime::now();
     let mut candidates: Vec<String> = Vec::new();
     for key in keys {
@@ -649,7 +753,8 @@ pub async fn unlink_orphans(
     }
     let mut unlinked = 0;
     for batch in candidates.chunks(CHUNK) {
-        let referenced = referenced_among(pool, batch).await?;
+        // The fixed references were filtered out above.
+        let referenced = rows_among(&mut *pool.acquire().await?, batch, true, ALL_ROWS).await?;
         for key in batch.iter().filter(|k| !referenced.contains(*k)) {
             storage.delete_strict(key).await?;
             unlinked += 1;
@@ -668,7 +773,8 @@ pub async fn collect(
     options: GcOptions,
 ) -> Result<GcReport, GcError> {
     check_json_sources(pool).await?;
-    let fixed = fixed_references(pool, storage, global_scenes_urn).await?;
+    let pins = Pins::new(storage, global_scenes_urn);
+    let fixed = fixed_references(&mut *pool.acquire().await?, pins).await?;
     let refuse_empty =
         !options.allow_empty_reference_set && fixed.is_empty() && !any_reference(pool).await?;
     let now = SystemTime::now();
@@ -695,7 +801,9 @@ pub async fn collect(
         if chunk.len() >= CHUNK || (next.is_none() && !chunk.is_empty()) {
             chunk.sort();
             chunk.dedup();
-            let referenced = referenced_among(pool, &chunk).await?;
+            // The fixed references never enter a chunk.
+            let referenced =
+                rows_among(&mut *pool.acquire().await?, &chunk, true, ALL_ROWS).await?;
             report.references += referenced.len();
             orphans.extend(chunk.drain(..).filter(|id| !referenced.contains(id)));
         }
@@ -708,7 +816,7 @@ pub async fn collect(
         return Err(GcError::EmptyReferenceSet);
     }
     if !options.dry_run {
-        unlink_collected(pool, storage, &orphans, options.min_age, &mut report).await?;
+        unlink_collected(pool, storage, pins, &orphans, options.min_age, &mut report).await?;
     }
     tracing::info!(?report, "blob store collection finished");
     Ok(report)
@@ -718,6 +826,7 @@ pub async fn collect(
 async fn unlink_collected(
     pool: &PgPool,
     storage: &Storage,
+    pins: Pins<'_>,
     orphans: &[String],
     min_age: Duration,
     report: &mut GcReport,
@@ -725,7 +834,7 @@ async fn unlink_collected(
     for batch in orphans.chunks(CHUNK) {
         // The full scan runs unlocked; the lock re-checks only what was written since.
         let fence = scene_fence(pool).await?;
-        let unlocked = referenced_among(pool, batch).await?;
+        let unlocked = referenced_among(pool, pins, batch).await?;
         let survivors: Vec<String> = batch
             .iter()
             .filter(|id| !unlocked.contains(*id))
@@ -735,7 +844,7 @@ async fn unlink_collected(
             continue;
         }
         let mut lock = lock_store_exclusive(pool).await?;
-        let referenced_now = referenced_since(&mut lock, &survivors, fence).await?;
+        let referenced_now = referenced_since(&mut lock, pins, &survivors, fence).await?;
         for id in survivors.iter().filter(|id| !referenced_now.contains(*id)) {
             // A blob stored again since the walk is young again: keep it.
             let meta = match super::resolve_file_path(storage.root(), id) {
@@ -840,7 +949,10 @@ mod tests {
             unclassified.is_empty(),
             "classify these columns in storage::gc (REFERENCE_SOURCES or NOT_STORE_KEYS): {unclassified:?}"
         );
-        referenced_among(&pool, &["none".to_string()])
+        let dir =
+            std::env::temp_dir().join(format!("catalyst-gc-{}", uuid::Uuid::new_v4().simple()));
+        let storage = Storage::from_config(&dir).await.unwrap();
+        referenced_among(&pool, Pins::new(&storage, &[]), &["none".to_string()])
             .await
             .expect("every source statement runs against the schema");
     }
@@ -872,7 +984,7 @@ mod tests {
         assert!(try_lock_run(&pool).await.unwrap().is_some());
     }
 
-    /// Under the lock only scenes written since the fence are read; the full check sees all.
+    /// Under the lock only scenes and pending uploads written since the fence are read; the full check sees all.
     #[tokio::test]
     async fn the_locked_recheck_reads_only_scenes_written_since_the_fence() {
         let Some(pool) = crate::db::scratch::pool(2).await else {
@@ -880,6 +992,7 @@ mod tests {
         };
         let world = format!("gc{}.dcl.eth", uuid::Uuid::new_v4().simple());
         let (old, new) = (format!("old-{world}"), format!("new-{world}"));
+        let (old_pending, new_pending) = (format!("oldp-{world}"), format!("newp-{world}"));
         sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
             .bind(&world)
             .execute(&pool)
@@ -901,27 +1014,59 @@ mod tests {
                 .unwrap()
             }
         };
+        let insert_pending = |entity_id: String, hash: String| {
+            let (pool, world) = (pool.clone(), world.clone());
+            async move {
+                sqlx::query(
+                    "INSERT INTO worlds.pending_scenes (entity_id, world_name, parcels, entity, deployer, created_at) \
+                     VALUES ($1, $2, '{\"0,0\"}', $3, '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', timezone('UTC', now()))",
+                )
+                .bind(entity_id)
+                .bind(&world)
+                .bind(json!({ "content": [{ "file": "a", "hash": hash }] }))
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        insert_pending(format!("bafyoldp{world}"), old_pending.clone()).await;
         let written = insert_scene("bafyold", old.clone()).await;
         assert!(scene_fence(&pool).await.unwrap() > 0);
         let fence = written + 1;
         insert_scene("bafynew", new.clone()).await;
-        let keys = vec![old.clone(), new.clone()];
+        insert_pending(format!("bafynewp{world}"), new_pending.clone()).await;
+        let keys = vec![
+            old.clone(),
+            new.clone(),
+            old_pending.clone(),
+            new_pending.clone(),
+        ];
+        let dir =
+            std::env::temp_dir().join(format!("catalyst-gc-{}", uuid::Uuid::new_v4().simple()));
+        let storage = Storage::from_config(&dir).await.unwrap();
+        let pins = Pins::new(&storage, &[]);
 
         let mut lock = lock_store_exclusive(&pool).await.unwrap();
         assert_eq!(
-            referenced_since(&mut lock, &keys, fence).await.unwrap(),
-            HashSet::from([new.clone()])
+            referenced_since(&mut lock, pins, &keys, fence)
+                .await
+                .unwrap(),
+            HashSet::from([new.clone(), new_pending.clone()])
         );
         assert_eq!(
-            referenced_among_on(&mut lock, &keys).await.unwrap(),
-            HashSet::from([old, new])
+            referenced_among_on(&mut lock, pins, &keys).await.unwrap(),
+            HashSet::from([old, new, old_pending, new_pending])
         );
         lock.rollback().await.unwrap();
-        sqlx::query("DELETE FROM worlds.world_scenes WHERE world_name = $1")
+        for table in ["worlds.world_scenes", "worlds.pending_scenes"] {
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM {table} WHERE world_name = $1"
+            )))
             .bind(&world)
             .execute(&pool)
             .await
             .unwrap();
+        }
     }
 
     /// A candidate stored again after the walk is young again under the lock and stays.
@@ -951,7 +1096,8 @@ mod tests {
             )
             .unwrap();
         let mut report = GcReport::default();
-        unlink_collected(&pool, &storage, &keys, MIN_ORPHAN_AGE, &mut report)
+        let pins = Pins::new(&storage, &[]);
+        unlink_collected(&pool, &storage, pins, &keys, MIN_ORPHAN_AGE, &mut report)
             .await
             .unwrap();
         assert_eq!((report.removed, report.refreshed), (1, 1));
@@ -1102,6 +1248,17 @@ mod tests {
         ] {
             assert!(storage.exist(key).await.unwrap(), "{key} stays");
         }
+        // The key-level check other unlink paths run counts the fixed references too.
+        let pack_file = put(b"asset pack file".to_vec()).await;
+        sqlx::query("INSERT INTO builder.asset_catalog (id, packs, source, built_at) VALUES (1, $1, 'test', timezone('UTC', now()))")
+            .bind(json!([{ "assets": [{ "contents": { "a.glb": pack_file } }] }]))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let keys = vec![global.clone(), global_file.clone(), pack_file.clone()];
+        let pins = Pins::new(&storage, &globals);
+        assert_eq!(referenced_among(&pool, pins, &keys).await.unwrap().len(), 3);
+        assert_eq!(published_among(&pool, pins, &keys).await.unwrap().len(), 3);
         pool.close().await;
         let _ = sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP DATABASE \"{name}\" WITH (FORCE)"
