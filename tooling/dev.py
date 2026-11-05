@@ -380,7 +380,8 @@ def testnet_env():
         'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED': 'true',
         'MARKETPLACE_INDEX_CHAIN_ID_MATIC': '80002',
         'MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM': '11155111',
-        # The NFT index knows mainnet's contracts only: on Sepolia (ETH_RPC_URL) it would find nothing.
+        # The NFT index walks chains 1/137 only, with no chain-id check: Matic has no endpoint here, and Ethereum
+        # would read Sepolia through ETH_RPC_URL and store its logs as mainnet rows.
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         'VITE_SHOP_CHAIN_ID': '80002',
     }
