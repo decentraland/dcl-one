@@ -27,5 +27,5 @@ Server data is read today without a shared standard. Code under `apps/` and `ren
 
 - The mirrored contributor guides stay available for apps not yet migrated pending retirement; this change does not edit them.
 - The named exceptions, with their owners and exit criteria and no dates, are listed in the standards' [Exceptions and migration gates](../web-app-standards.md#exceptions-and-migration-gates).
-- Moving UI into `library/ui` is progressive and will change code and documents that live in `apps/` today; these standards set the direction for future PRs, and code that contradicts them is modified over time as each migration lands.
+- Moving UI into `library/ui` is progressive and will change code and documents that live in `apps/` today; these standards set the direction, and the affected rules and exceptions are updated as each migration lands.
 - Automatic enforcement is planned for a later stage. Until then, and during migration, compliance is checked in code review against the standards.
