@@ -13,7 +13,8 @@ const DEFAULT_RPC: Partial<Record<ChainId, string>> = {
   [CHAIN.ETHEREUM]: "https://ethereum-rpc.publicnode.com",
   [CHAIN.SEPOLIA]: "https://ethereum-sepolia-rpc.publicnode.com",
   [CHAIN.POLYGON]: "https://polygon-bor-rpc.publicnode.com",
-  [CHAIN.AMOY]: "https://rpc-amoy.polygon.technology",
+  // Polygon's own Amoy endpoint no longer resolves; Decentraland's relay serves Amoy and allows browser origins.
+  [CHAIN.AMOY]: "https://rpc.decentraland.org/amoy",
 };
 
 type RpcWindow = Window & { __SHOP_RPC__?: Partial<Record<number, string>> };

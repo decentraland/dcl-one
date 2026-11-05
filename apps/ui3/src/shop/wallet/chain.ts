@@ -15,7 +15,7 @@ export const AMOY_ADD_PARAMS = {
   chainId: "0x13882",
   chainName: "Polygon Amoy",
   nativeCurrency: { name: "POL", symbol: "POL", decimals: 18 },
-  rpcUrls: ["https://rpc-amoy.polygon.technology"],
+  rpcUrls: ["https://rpc.decentraland.org/amoy"],
   blockExplorerUrls: ["https://amoy.polygonscan.com"],
 };
 
