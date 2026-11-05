@@ -127,18 +127,6 @@ export async function completeEmailLogin(
   return check(ThirdwebAuthResultSchema, raw, "external-http/thirdweb/auth-complete");
 }
 
-export function socialLoginUrl(
-  provider: ThirdwebSocialProvider,
-  redirectUrl: string,
-): string {
-  const params = new URLSearchParams({
-    provider,
-    redirectUrl,
-    clientId: thirdwebClientId(),
-  });
-  return `${THIRDWEB_API_BASE}/v1/auth/social?${params.toString()}`;
-}
-
 export async function signMessageEnclave(
   token: string,
   from: string,
