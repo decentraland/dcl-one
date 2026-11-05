@@ -178,6 +178,10 @@ across workers:
 - Our delta over upstream, for a migration: `git fetch https://github.com/bevyengine/bevy tag v0.16.1`,
   then `git diff v0.16.1^{tree} HEAD:rendering/bevy-explorer/bevy` (the import's omissions show
   as deletions).
+- CI reuses a cached bevy build until its files change: Cargo would otherwise rebuild a path
+  dependency after every checkout, since a checkout makes every file new.
+  `tooling/bevy-mtimes.py` records the files' blob ids and times with the cache and gives
+  unchanged files their times back; every job that caches the explorer's target runs it.
 - Never share a `target/` directory with a checkout that builds a different bevy.
 - The lockfile is edited by hand, never with `cargo update`: see the dependencies section of
   [contributing](contributing.md).

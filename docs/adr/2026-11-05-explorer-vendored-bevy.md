@@ -65,6 +65,14 @@ it in place from now on. This repository is the source of truth; the fork branch
   would conflict with the next import.
 - **A `cargo vendor` directory source:** fingerprinted by version, so local edits would not
   rebuild.
+- **For the CI cache, `sccache` on every native job** (Windows has it): a cache request per
+  compiled crate, and every object in the repository's shared 10 GB cache.
+- **For the CI cache, `-Zchecksum-freshness`:** still nightly-only in Cargo 1.99.1, so the native
+  jobs cannot use it.
+- **For the CI cache, file times pinned to the last commit date:** a cache built after an older
+  commit would make a changed file look older than its stale artifact.
+- **For the CI cache, file times pinned to one date with Bevy's tree hash in the cache key:**
+  correct, but every Bevy change would lose the whole dependency cache.
 
 ## Verification
 
@@ -78,6 +86,10 @@ it in place from now on. This repository is the source of truth; the fork branch
   same home fails on a checkout that still uses the git fork.
 - `cargo clippy --locked -- -D warnings` passes: a path dependency outside the workspace is built
   by plain rustc, so Clippy's lints never run on Bevy.
+- On the full workspace, after every vendored file was set to the current time and restored by
+  `tooling/bevy-mtimes.py`, `cargo check -v` reported all 56 Bevy units fresh. In a two-crate
+  reproduction of a CI cache restore, the path dependency stayed fresh with unchanged content
+  and rebuilt with changed content. `tooling/tests/test_bevy_mtimes.py` pins the behaviour.
 - The tooling tests pin the new inputs: `test_vendored_bevy_selects_every_lane_and_the_native_matrix`,
   `test_vendored_bevy_rebuilds_the_images`, `test_vendored_bevy_edits_invalidate_the_artifact`,
   `test_vendored_bevy_is_an_engine_input_in_git_and_in_the_nix_contract`.
@@ -89,9 +101,13 @@ nearest `src` directory.
 ## Consequences
 
 - Bevy changes are reviewed and merged here, with the code that uses them.
-- Bevy now recompiles in every native CI job: Cargo checks a path dependency's freshness by file
-  times, and a fresh checkout is always newer than the cache. The web engine rebuilds exactly
-  when Bevy or the Explorer changes.
+- CI keeps a cached Bevy build. Cargo checks a path dependency's freshness by file times, and a
+  fresh checkout makes every file new, so `tooling/bevy-mtimes.py` records each vendored file's
+  blob id and time, floored to whole seconds, inside the cached target directory, and after the
+  next checkout gives every unchanged file its recorded time back. To Cargo that is a checkout
+  that never moved: only crates whose files changed rebuild. Every native job and the web target
+  cache run it; the web target cache's key also hashes Bevy, so a Bevy change refreshes it. The
+  web engine rebuilds exactly when Bevy or the Explorer changes.
 - The fork branch must stay fetchable while `bevy_dui`, `bevy_ecss` and `boimp` name it: a
   resolve without `Cargo.lock` reads it once.
 - The drift site no longer tracks Bevy against upstream; an upgrade is a planned project, and its
