@@ -514,11 +514,14 @@ no snapshot in either tree:
   - a file is missing;
   - it is more than one month old and has fewer active entities than `numberOfEntities`; or
   - it is outdated.
-- dcl-one regenerates when it is outdated or when the bytes fail the hash check. **It has no
-  "inactive entities after a month" rule**: windows that list overwritten entities are rebuilt only
-  by `POST /admin/api/content/snapshots/regenerate` (`snapshot_gen.rs:19-31`).
-- A peer that reads the extra entities still converges, because newer entities win. The cost is
-  bootstrap work.
+- dcl-one regenerates when it is outdated, when its row is more than one month (four weeks) old
+  and the window now counts fewer active entities than `numberOfEntities` (upstream's rule, with
+  the old hash in `replacedSnapshotHashes`), or when the bytes fail the hash check
+  (`snapshot_gen.rs` `pass`, `has_inactive_entities`). The count leaves out tombstoned local
+  scenes, as the file does. `POST /admin/api/content/snapshots/regenerate` rebuilds every window
+  at once. (CS-14)
+- Until a window is regenerated it lists the overwritten entities. A peer that reads them still
+  converges, because newer entities win.
 
 **When the 503 is returned**:
 
@@ -790,9 +793,9 @@ catalyst list and its `/about` is healthy.
      `content/src/tests.rs` (`history_reads_over_seeded_rows`).
    - Severity: none (closed).
 
-3. **CS-03 · `/deployments` · the `deployedBy` filter is dcl-one only.**
+3. **CS-03 · `/deployments` · the `deployedBy` filter is dcl-one only.** Status: Kept by decision.
    - Gap: upstream ignores `deployedBy`; dcl-one filters on it and echoes it in `filters` and `next`.
-   - Kept as a documented superset: the creator hub lists a wallet's deployments with it
+   - Decision: kept as a documented superset, because the creator hub lists a wallet's deployments with it
      (`apps/sites/src/data/lib/catalyst/creator-hub/discover-deployed.test.ts`). A request without the
      parameter answers as upstream; a client that passes it to upstream gets unfiltered rows.
    - Where: `services/catalyst/content/src/deployments.rs` `parse_deployment_query_options`,
@@ -867,7 +870,9 @@ catalyst list and its `/about` is healthy.
       `tests/snapshot_generation.rs`.
     - Severity: none (closed).
 
-13. **CS-13 · snapshot file bytes.**
+13. **CS-13 · snapshot file bytes.** Status: Kept by decision.
+    - Decision: the bytes are kept (option a). Changing them changes every CID this node has
+      published, so every peer would re-download every window once.
     - Gap: `authChain` keys are sorted, `entityTimestamp` is an integer, and ties are broken by
       `entity_id`. For the same data the CID differs from an upstream node's, so peers re-process
       the file.
@@ -879,37 +884,36 @@ catalyst list and its `/about` is healthy.
       upstream nodes need not agree either; equal CIDs are not reachable for windows with ties. Changing
       the bytes changes every CID this tree has published, so every peer re-downloads every window once,
       and the golden `tests/fixtures/snapshots/old-generator.json` (the old generator's output) must be
-      re-pinned. Options: (a) keep the bytes (recommended while upstream's own order is not deterministic);
-      (b) read `auth_chain::text` into an order-keeping value and write `entityTimestamp` with `js_millis`,
-      keeping the `entity_id` tie-break, and re-pin the golden.
+      re-pinned. The option not taken: read `auth_chain::text` into an order-keeping value and write
+      `entityTimestamp` with `js_millis`, keeping the `entity_id` tie-break, and re-pin the golden.
     - Where: `services/catalyst/content/src/snapshot_gen.rs` `SnapshotLine`, `WINDOW_SQL`.
-    - Severity: P2. Sync is still correct; the cost is bandwidth and bootstrap work.
+    - Severity: P2 (by decision). Sync is still correct; the cost is bandwidth and bootstrap work.
 
-14. **CS-14 · snapshots · no "inactive entities after a month" regeneration.**
-    - Gap: windows that list overwritten entities are rebuilt only on an admin request
-      (`POST /admin/api/content/snapshots/regenerate`), a choice the generator documents
-      (`snapshot_gen.rs` module comment).
-    - Expected: regenerate a window older than one month whose active count is below
-      `numberOfEntities`, and set `replacedSnapshotHashes` to the old hash
-      (`decentraland/catalyst:src/logic/snapshots/component.ts:81-87,124-125`).
-    - Not changed here: it adds, every pass, a count of the active deployments of each window generated
-      over a month ago (the year windows included), a new workload on `content.deployments` that
-      `METRICS.md` would have to measure first. Options: (a) port upstream's check as is; (b) count only
-      when a deployment in the window gained a deleter since the generation (needs the deleter's time,
-      a schema step); (c) keep the admin rebuild. Recommended: (a), after measuring the count on a
-      mainnet-sized table.
-    - Where: `services/catalyst/content/src/snapshot_gen.rs` `pass`.
-    - Severity: P2.
+14. **CS-14 · snapshots · "inactive entities after a month" regeneration.** Status: MATCH, no work.
+    - Upstream: regenerate a window whose single saved row was generated more than `MS_PER_MONTH`
+      (four weeks) ago and whose active count is below `numberOfEntities`, with the old hash in
+      `replacedSnapshotHashes` (`decentraland/catalyst:src/logic/snapshots/component.ts:81-87,124-125`,
+      `decentraland/catalyst:src/adapters/snapshots-repository/component.ts:163-177`).
+    - dcl-one: the same check in each pass (`services/catalyst/content/src/snapshot_gen.rs` `pass`,
+      `has_inactive_entities`), measured against the pass's end. The count uses the file's own
+      filter, so tombstoned local scenes are left out. The other indexes do not serve the count (a
+      large window reads the whole heap); the partial index
+      `deployments_active_entity_timestamp_idx` (`schemas/00_content.sql`; built on existing
+      databases by the object pass of `catalyst schema migrate`) makes it an index-only scan
+      (`METRICS.md`, "Snapshot inactive-entities count"). Pinned in `tests/snapshot_generation.rs`
+      (`a_month_old_window_listing_an_overwritten_entity_is_regenerated`).
+    - Severity: none (closed).
 
-15. **CS-15 · `/status` · field values.**
+15. **CS-15 · `/status` · field values.** Status: Kept by decision (the extra keys).
+    - Decision: the extra keys `syncFrontier`, `lastHeartbeat` and `up` are kept, because the
+      conformance tooling reads them (`testing/src/conformance/volatility.toml`).
     - Done: `version` is `CURRENT_VERSION` when set (upstream's variable), else this build's version
       (`content/src/lib.rs` `Settings::from_config`, `config/src/social.rs`; test
       `current_version_overrides_the_build_version`). The variable is the one the social RPC `/status`
       reads too.
     - Left, by design: unset, `version` is this build's version where upstream says `"Unknown"`; the
-      extra keys `syncFrontier`, `lastHeartbeat` and `up` (dcl-one sync health, read by the conformance
-      tooling, `testing/src/conformance/volatility.toml`); `lastSyncWithDAO` is the last sync heartbeat,
-      as this node has no DAO list. A client reading the upstream keys sees the same types.
+      extra keys (dcl-one sync health, above); `lastSyncWithDAO` is the last sync heartbeat, as this
+      node has no DAO list. A client reading the upstream keys sees the same types.
     - Matching: always 200 (a `Failed` sync state included), and the `commitHash` fallback `"Unknown"`
       (`services/catalyst/content/src/status.rs`).
     - Expected: `decentraland/catalyst:src/controllers/handlers/status-handler.ts:6-25`,

@@ -281,6 +281,14 @@ CREATE INDEX deployments_entity_pointers_index ON content.deployments USING gin 
 CREATE INDEX deployments_entity_timestamp_entity_id_idx ON content.deployments USING btree (entity_timestamp DESC, entity_id DESC);
 CREATE INDEX deployments_entity_type_index ON content.deployments USING btree (entity_type);
 CREATE INDEX deployments_full_snapshots_ix ON content.deployments USING btree (deleter_deployment DESC, local_timestamp) INCLUDE (entity_type);
+-- The snapshot generator's inactive-entities count (snapshot_gen.rs
+-- has_inactive_entities: deleter_deployment IS NULL AND entity_timestamp
+-- BETWEEN $1 AND $2, anti-joined to tombstoned local_entities on entity_id),
+-- run per pass for each window generated over a month ago: an index-only
+-- range scan of the active rows. Overwritten rows leave it. Created on an
+-- existing database by the object pass of `catalyst schema migrate`.
+-- Measured in METRICS.md ("Snapshot inactive-entities count").
+CREATE INDEX deployments_active_entity_timestamp_idx ON content.deployments USING btree (entity_timestamp) INCLUDE (entity_id) WHERE deleter_deployment IS NULL;
 CREATE INDEX deployments_local_timestamp_lower_entity_id_idx ON content.deployments USING btree (local_timestamp DESC, lower(entity_id) DESC);
 CREATE INDEX deployments_type_entity_ts_idx ON content.deployments USING btree (entity_type, entity_timestamp DESC, entity_id DESC);
 CREATE INDEX deployments_type_local_ts_idx ON content.deployments USING btree (entity_type, local_timestamp DESC, lower(entity_id) DESC);
