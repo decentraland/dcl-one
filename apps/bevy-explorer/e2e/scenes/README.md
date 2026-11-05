@@ -31,7 +31,9 @@ engine's player, UUAV on the standalone and the browser's video element on the w
 by `video/generate-fixture.sh` (ffmpeg, as the Unity fixtures are), so a presented frame is red
 whenever it is sampled and the audio path runs too. `specs/visual/video.test.ts` asserts the
 player's events and the frame's centre pixel instead of comparing a reference; the scene's label
-shows the last event for whoever reads the report's frame.
+shows the last event for whoever reads the report's frame. The frame probe is what proves a
+platform's frame path: the Linux upload in the scenes workflow, the Windows import on the e2e
+workflow's GPU runner, the web element in its browser run.
 
 `bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png`, `.jpg` and
 `.mp4` assets are in Git LFS.

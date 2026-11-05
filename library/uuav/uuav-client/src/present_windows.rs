@@ -1,16 +1,24 @@
 //! Client-side presentation (D3D11): opens the shared keyed-mutex NV12
 //! slots announced by the helper, and on the host's render event copies the
 //! latest published slot into a client-owned NV12 presentation texture on
-//! The host's device — the same stable-pointer contract (one NV12 texture the
+//! the host's device — the same stable-pointer contract (one NV12 texture the
 //! engine casts its R8/RG8 views over, retire-grace on resolution change)
-//! the in-process plugin had, so the the host poll-and-rewrap flow is untouched.
+//! the in-process plugin had, so the host poll-and-rewrap flow is untouched.
+//!
+//! A host whose probe texture carries `D3D11_RESOURCE_MISC_SHARED_NTHANDLE`
+//! gets its presentation textures created `SHARED | SHARED_NTHANDLE` as well
+//! (`UnityDevice::share_presentation`), so it can open them on another API's
+//! device through `IDXGIResource1::CreateSharedHandle`. The copy into them is
+//! still recorded on this device's immediate context; ordering it before the
+//! other device's reads is the host's business (a fence on this context).
 
 use crate::platform::UnityDevice;
 use anyhow::{Context as _, Result, anyhow, ensure};
 use std::os::raw::c_void;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11_BIND_SHADER_RESOURCE, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, ID3D11Texture2D,
+    D3D11_BIND_SHADER_RESOURCE, D3D11_RESOURCE_MISC_SHARED, D3D11_RESOURCE_MISC_SHARED_NTHANDLE,
+    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, ID3D11Texture2D,
 };
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::IDXGIKeyedMutex;
@@ -288,8 +296,14 @@ fn open_slot(unity: &UnityDevice, handle: HANDLE) -> Result<Slot> {
 }
 
 /// The client-owned NV12 texture the host samples from, same shape as the core's
-/// in-process presentation texture.
+/// in-process presentation texture; NT-handle shareable when the probe was
+/// (see the module doc).
 fn new_presentation(unity: &UnityDevice, width: u32, height: u32) -> Result<ID3D11Texture2D> {
+    let misc_flags = if unity.share_presentation {
+        (D3D11_RESOURCE_MISC_SHARED.0 | D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0) as u32
+    } else {
+        0
+    };
     let desc = D3D11_TEXTURE2D_DESC {
         Width: width,
         Height: height,
@@ -303,7 +317,7 @@ fn new_presentation(unity: &UnityDevice, width: u32, height: u32) -> Result<ID3D
         Usage: D3D11_USAGE_DEFAULT,
         BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
         CPUAccessFlags: 0,
-        MiscFlags: 0,
+        MiscFlags: misc_flags,
     };
     let mut created: Option<ID3D11Texture2D> = None;
     unsafe {

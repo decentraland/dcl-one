@@ -4,7 +4,13 @@
 //! this side never replaces the image's texture or uploads pixels through the main world).
 //! Players the main world closed are freed here, once their planes are no longer read.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use bevy::{
     prelude::*,
@@ -162,24 +168,18 @@ impl Nv12Pipeline {
         })
     }
 
-    fn bind_group(
-        &self,
-        device: &wgpu::Device,
-        planes: &(wgpu::Texture, wgpu::Texture),
-    ) -> wgpu::BindGroup {
-        let y = planes.0.create_view(&Default::default());
-        let uv = planes.1.create_view(&Default::default());
+    fn bind_group(&self, device: &wgpu::Device, planes: &PlaneTextures) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("uuav nv12"),
             layout: &self.bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&y),
+                    resource: wgpu::BindingResource::TextureView(&planes.y),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&uv),
+                    resource: wgpu::BindingResource::TextureView(&planes.uv),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -190,6 +190,52 @@ impl Nv12Pipeline {
     }
 }
 
+/// The two plane views the conversion samples (Y as `R8Unorm`, CbCr as `Rg8Unorm`) and the
+/// textures behind them: two (one per plane) or one `NV12` texture viewed per plane.
+pub(super) struct PlaneTextures {
+    pub y: wgpu::TextureView,
+    pub uv: wgpu::TextureView,
+    /// Read by the Linux upload; the views hold the textures alive everywhere.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    textures: Vec<wgpu::Texture>,
+}
+
+impl PlaneTextures {
+    /// One texture per plane.
+    #[cfg(not(windows))]
+    pub fn pair(y: wgpu::Texture, uv: wgpu::Texture) -> Self {
+        Self {
+            y: y.create_view(&Default::default()),
+            uv: uv.create_view(&Default::default()),
+            textures: vec![y, uv],
+        }
+    }
+
+    /// One `NV12` texture, each plane viewed in its own format.
+    #[cfg(windows)]
+    pub fn nv12(texture: wgpu::Texture) -> Self {
+        let plane = |aspect, format| {
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("uuav plane"),
+                format: Some(format),
+                aspect,
+                ..Default::default()
+            })
+        };
+        Self {
+            y: plane(wgpu::TextureAspect::Plane0, TextureFormat::R8Unorm),
+            uv: plane(wgpu::TextureAspect::Plane1, TextureFormat::Rg8Unorm),
+            textures: vec![texture],
+        }
+    }
+
+    /// The textures behind the views, in the order given to the constructor.
+    #[cfg(target_os = "linux")]
+    pub fn textures(&self) -> &[wgpu::Texture] {
+        &self.textures
+    }
+}
+
 /// A player's wrapped (or uploaded-into) planes, rebuilt when the client hands out new plane
 /// pointers or a new size. The pointers are kept as addresses: they are only compared.
 struct Planes {
@@ -197,12 +243,15 @@ struct Planes {
     uv: usize,
     width: u32,
     height: u32,
-    textures: (wgpu::Texture, wgpu::Texture),
+    textures: PlaneTextures,
     bind_group: wgpu::BindGroup,
     /// The client's frame count at the last upload; `None` before the first.
     frames: Option<u64>,
     /// The target texture the last conversion drew into: a new one needs the frame again.
     drawn_into: Option<TextureId>,
+    /// Whether the last conversion submitted has executed; set by the queue's completion
+    /// callback. Read before the next copy when [`platform::GATE_COPY_ON_READ`].
+    read_done: Arc<AtomicBool>,
 }
 
 impl Planes {
@@ -285,6 +334,10 @@ fn present_uuav_frames(
     let device = render_device.wgpu_device();
     let max_dimension = render_device.limits().max_texture_dimension_2d;
     let render_callback = uuav::uuav_get_render_callback();
+    if platform::GATE_COPY_ON_READ {
+        // runs the completion callbacks of the conversions that have executed since
+        device.poll(wgpu::Maintain::Poll);
+    }
 
     for (id, target) in targets {
         if target.failed.load(std::sync::atomic::Ordering::Acquire) {
@@ -293,6 +346,15 @@ fn present_uuav_frames(
         let Ok(event_id) = i32::try_from(id) else {
             continue;
         };
+        if platform::GATE_COPY_ON_READ
+            && planes
+                .0
+                .get(&id)
+                .is_some_and(|planes| !planes.read_done.load(Ordering::Acquire))
+        {
+            // the renderer may still be reading the planes the copy would overwrite
+            continue;
+        }
         // moves the helper's latest published frame into the presentation planes
         render_callback(event_id);
 
@@ -363,6 +425,7 @@ fn present_uuav_frames(
                     bind_group,
                     frames: None,
                     drawn_into: None,
+                    read_done: Arc::new(AtomicBool::new(true)),
                 },
             );
         }
@@ -376,14 +439,17 @@ fn present_uuav_frames(
             continue;
         }
         if planes.frames != Some(presented.frames) {
-            platform::upload(
+            if !platform::upload(
                 &render_queue,
-                (&planes.textures.0, &planes.textures.1),
+                &planes.textures,
                 presented.y,
                 presented.uv,
                 presented.width,
                 presented.height,
-            );
+            ) {
+                // the frame is not in the planes yet; it is tried again next poll
+                continue;
+            }
             planes.frames = Some(presented.frames);
         }
 
@@ -411,6 +477,11 @@ fn present_uuav_frames(
             pass.draw(0..3, 0..1);
         }
         render_queue.submit(std::iter::once(encoder.finish()));
+        if platform::GATE_COPY_ON_READ {
+            planes.read_done.store(false, Ordering::Release);
+            let read_done = planes.read_done.clone();
+            render_queue.on_submitted_work_done(move || read_done.store(true, Ordering::Release));
+        }
         planes.drawn_into = Some(target_texture);
         target
             .presented

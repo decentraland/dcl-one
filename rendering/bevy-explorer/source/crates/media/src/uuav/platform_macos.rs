@@ -9,8 +9,14 @@ use bevy::render::{
 };
 use metal::foreign_types::{ForeignType, ForeignTypeRef};
 
+use super::render::PlaneTextures;
+
 /// Frames are presented on this platform.
 pub const PRESENTS_FRAMES: bool = true;
+
+/// The client blits into its planes on a queue of its own and the wrappers read them as they
+/// are, as the in-process plugin did; no copy is held back for a read.
+pub const GATE_COPY_ON_READ: bool = false;
 
 /// A live `id<MTLTexture>` on the renderer's device: `uuav_init` derives the device from it and
 /// retains the device itself, so the probe only has to outlive the call.
@@ -56,8 +62,8 @@ pub fn make_planes(
     uv: *const c_void,
     width: u32,
     height: u32,
-) -> Option<(wgpu::Texture, wgpu::Texture)> {
-    Some((
+) -> Option<PlaneTextures> {
+    Some(PlaneTextures::pair(
         wrap(device, y, TextureFormat::R8Unorm, width, height)?,
         wrap(device, uv, TextureFormat::Rg8Unorm, width / 2, height / 2)?,
     ))
@@ -117,10 +123,11 @@ fn wrap(
 /// The planes are the client's textures themselves; nothing to move.
 pub fn upload(
     _queue: &RenderQueue,
-    _planes: (&wgpu::Texture, &wgpu::Texture),
+    _planes: &PlaneTextures,
     _y: *const c_void,
     _uv: *const c_void,
     _width: u32,
     _height: u32,
-) {
+) -> bool {
+    true
 }
