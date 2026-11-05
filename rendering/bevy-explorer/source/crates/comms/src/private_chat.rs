@@ -136,7 +136,7 @@ pub struct CommunityChatStats {
 struct DroppedCommunityPackets {
     /// On a community channel the local user is not in (or has closed).
     not_member: u64,
-    /// From the router without a wallet in the stamped author, or from a non-wallet identity.
+    /// From the router without a wallet in the stamped author, or not from the router at all.
     unattributed: u64,
     rate_limited: u64,
 }
@@ -861,4 +861,98 @@ fn dm_room(
         lines.push(format!("  ... and {} more", remote.len() - LISTED));
     }
     input.reply_ok(lines.join("\n"));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use livekit::id::ParticipantIdentity;
+
+    use super::*;
+
+    const ALICE: &str = "0x1111111111111111111111111111111111111111";
+    const BOB: &str = "0x2222222222222222222222222222222222222222";
+    const COMMUNITY: &str = "abc-1";
+
+    /// A world with the private chat room and `participant_payload` listening on it, the local
+    /// user listening to `COMMUNITY`.
+    fn world() -> (World, Entity) {
+        let mut world = World::new();
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest();
+        world.insert_resource(wallet);
+        world.init_resource::<Time>();
+        world.init_resource::<InboundRateLimiter>();
+        world.init_resource::<Events<PrivateChatReceived>>();
+        world.init_resource::<Events<CommunityChatReceived>>();
+        world.init_resource::<Events<ChatReactionEvent>>();
+        let mut channels = CommunityChannels::default();
+        channels.0.insert(COMMUNITY.to_owned());
+        world.insert_resource(channels);
+        let (sender, _) = tokio::sync::mpsc::channel(1);
+        let (_control, _) = tokio::sync::mpsc::channel(1);
+        let room = world
+            .spawn((
+                PrivateChatRoom { sender, _control },
+                CommunityChatStats::default(),
+            ))
+            .id();
+        world.add_observer(participant_payload);
+        (world, room)
+    }
+
+    fn community_chat(from: &str, forwarded_from: Option<&str>) -> ParticipantPayload {
+        let packet = rfc4::Packet {
+            message: Some(rfc4::packet::Message::Chat(rfc4::Chat {
+                message: "hello".to_owned(),
+                timestamp: 1.0,
+                forwarded_from: forwarded_from.map(str::to_owned),
+            })),
+            protocol_version: 100,
+        };
+        ParticipantPayload {
+            room: Entity::PLACEHOLDER,
+            identity: ParticipantIdentity(from.to_owned()),
+            payload: Arc::new(packet.encode_to_vec()),
+            topic: Some(channel_for(COMMUNITY)),
+        }
+    }
+
+    #[test]
+    fn a_community_message_is_taken_from_the_router_only() {
+        let (mut world, room) = world();
+        let router = message_router_identity();
+
+        // relayed by the router: received, attributed to the stamped author
+        world.trigger(ParticipantPayload {
+            room,
+            ..community_chat(&router, Some(ALICE))
+        });
+        let received: Vec<_> = world
+            .resource::<Events<CommunityChatReceived>>()
+            .iter_current_update_events()
+            .map(|ev| (ev.community_id.clone(), ev.from))
+            .collect();
+        assert_eq!(
+            received,
+            vec![(COMMUNITY.to_owned(), ALICE.as_h160().unwrap())]
+        );
+
+        // sent straight by a peer, with or without a stamp: dropped, not under their own name
+        world.trigger(ParticipantPayload {
+            room,
+            ..community_chat(BOB, Some(ALICE))
+        });
+        world.trigger(ParticipantPayload {
+            room,
+            ..community_chat(BOB, None)
+        });
+        let events = world.resource::<Events<CommunityChatReceived>>();
+        assert_eq!(events.iter_current_update_events().count(), 1);
+        let stats = world.get::<CommunityChatStats>(room).unwrap();
+        assert_eq!(stats.received, 1);
+        assert_eq!(stats.dropped.unattributed, 2);
+        assert_eq!(stats.dropped.not_member, 0);
+    }
 }

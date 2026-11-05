@@ -855,13 +855,23 @@ async fn run_one_connection(
         .map_err(dbgerr)?;
     debug!("[social] Subscribed to block updates");
 
-    // Subscribe to community member connectivity updates (community chat presence)
+    // Subscribe to community member connectivity updates (community chat presence). Unlike the
+    // subscriptions above, a refusal is not fatal: a server without it (unity-explorer subscribes
+    // to it on its own, apart from friends) costs community presence, not friends, DMs or blocks.
     debug!("[social] Subscribing to community member connectivity updates...");
-    let mut community_connectivity_updates = service_module
+    let community_connectivity_updates = match service_module
         .subscribe_to_community_member_connectivity_updates()
         .await
-        .map_err(dbgerr)?;
-    debug!("[social] Subscribed to community member connectivity updates");
+    {
+        Ok(updates) => {
+            debug!("[social] Subscribed to community member connectivity updates");
+            Some(updates)
+        }
+        Err(e) => {
+            warn!("[social] no community member connectivity updates until the next connection: {e:?}");
+            None
+        }
+    };
 
     // Outbound: send friendship actions + handle queries
     let response_sx_write = response_sx.clone();
@@ -1231,6 +1241,9 @@ async fn run_one_connection(
     // connection, so every subscription is made again on reconnect.
     let sx_community = response_sx.clone();
     let f_community_connectivity_read = async move {
+        let Some(mut community_connectivity_updates) = community_connectivity_updates else {
+            return std::future::pending::<Result<(), anyhow::Error>>().await;
+        };
         while let Some(update) = community_connectivity_updates.next().await {
             debug!("[social] Received community connectivity update: {update:?}");
             if let Some(closed) = &update.stream_closed {

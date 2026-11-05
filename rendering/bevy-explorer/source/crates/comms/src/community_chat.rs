@@ -4,7 +4,8 @@
 //! to the server's message router participant, which fans the packet out to the community's
 //! members and stamps the author into `Chat.forwarded_from` (a reaction carries the author in its
 //! own `address` field). A receiver trusts that stamped author only when the packet really came
-//! from the router.
+//! from the router, and drops a community packet from anyone else: the router is what checks
+//! the author's membership.
 
 use alloy_core::primitives::Address;
 use common::util::AsH160;
@@ -65,16 +66,16 @@ impl PrivateChatTarget {
     }
 }
 
-/// The author of a packet on the private chat room. A packet from the router carries its author
-/// in `claimed` (`Chat.forwarded_from`, or `ChatReaction.address`), trusted only because the
-/// router put it there; from anyone else `claimed` is ignored and the author is the sender's own
-/// LiveKit identity, which the server authenticated.
+/// The author of a community packet on the private chat room. A packet from the router carries
+/// its author in `claimed` (`Chat.forwarded_from`, or `ChatReaction.address`), trusted only
+/// because the router put it there after checking the author's membership. A community packet
+/// from anyone else is `None`: a peer sending straight to a member skips that check, so it is
+/// dropped (unity-explorer accepts it under the sender's own identity instead).
 pub fn resolve_author(identity: &str, router: &str, claimed: Option<&str>) -> Option<Address> {
-    if identity.eq_ignore_ascii_case(router) {
-        claimed.and_then(|claimed| claimed.as_h160())
-    } else {
-        identity.as_h160()
+    if !identity.eq_ignore_ascii_case(router) {
+        return None;
     }
+    claimed.and_then(|claimed| claimed.as_h160())
 }
 
 #[cfg(test)]
@@ -124,7 +125,6 @@ mod tests {
     #[test]
     fn the_router_names_the_author_and_nobody_else_can() {
         let alice = ALICE.as_h160().unwrap();
-        let bob = BOB.as_h160().unwrap();
         // from the router: the stamped author, when it is a wallet
         assert_eq!(resolve_author(ROUTER, ROUTER, Some(ALICE)), Some(alice));
         assert_eq!(
@@ -133,9 +133,10 @@ mod tests {
         );
         assert_eq!(resolve_author(ROUTER, ROUTER, Some("not a wallet")), None);
         assert_eq!(resolve_author(ROUTER, ROUTER, None), None);
-        // from a peer: their own identity, whatever they claim
-        assert_eq!(resolve_author(BOB, ROUTER, Some(ALICE)), Some(bob));
-        assert_eq!(resolve_author(BOB, ROUTER, None), Some(bob));
+        // from a peer: dropped, whatever they claim and whoever they are
+        assert_eq!(resolve_author(BOB, ROUTER, Some(ALICE)), None);
+        assert_eq!(resolve_author(BOB, ROUTER, Some(BOB)), None);
+        assert_eq!(resolve_author(BOB, ROUTER, None), None);
         assert_eq!(
             resolve_author("message-router-dev-0", ROUTER, Some(ALICE)),
             None

@@ -109,6 +109,31 @@ pub async fn dm_history_read(account: &str, partner: &str) -> Result<Vec<DmHisto
     read_records(&key, &path)
 }
 
+/// Keeps only the last `keep` records of a conversation. Records are kept as stored, so no key
+/// is needed to count them.
+pub async fn dm_history_trim(account: &str, partner: &str, keep: usize) -> Result<(), String> {
+    let key = key(account);
+    let path = account_dir(&key)?.join(hashed_name(&key, partner));
+    let _guard = LOCK.lock().map_err(|e| e.to_string())?;
+    let lines: Vec<String> = match std::fs::read_to_string(&path) {
+        Ok(contents) => contents
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.to_string()),
+    };
+    if lines.len() <= keep {
+        return Ok(());
+    }
+    let kept = lines[lines.len() - keep..].join("\n") + "\n";
+    // written whole, then renamed over the old file, so a crash leaves one or the other
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, kept).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+}
+
 pub async fn dm_history_delete(account: &str, partner: &str) -> Result<(), String> {
     let key = key(account);
     let path = account_dir(&key)?.join(hashed_name(&key, partner));

@@ -75,3 +75,13 @@ export async function dmHistoryDelete(account, partner) {
     await complete(tx)
   })
 }
+
+// keeps only the last `keep` records of a conversation (ids are arrival order)
+export async function dmHistoryTrim(account, partner, keep) {
+  await withDb(async (db) => {
+    const tx = db.transaction(MESSAGES, 'readwrite')
+    const keys = await request(tx.objectStore(MESSAGES).index(BY_CONVERSATION).getAllKeys(conversationKey(account, partner)))
+    for (const key of keys.slice(0, Math.max(0, keys.length - keep))) tx.objectStore(MESSAGES).delete(key)
+    await complete(tx)
+  })
+}

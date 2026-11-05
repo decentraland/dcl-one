@@ -48,7 +48,19 @@ enum DmStoreOp {
         account: String,
         partner: String,
     },
+    /// Keeps the last `keep` records of a conversation.
+    Trim {
+        account: String,
+        partner: String,
+        keep: usize,
+    },
 }
+
+/// The most records a community's history keeps: what the HUD shows of a conversation
+/// (`MAX_CHAT_LINES`). A busy community would otherwise grow its store without limit, each line
+/// decrypted again on every read; unity-explorer keeps community history in memory only. A DM
+/// history is not trimmed.
+const MAX_COMMUNITY_HISTORY: usize = 200;
 
 /// Pending store operations and the one in flight.
 #[derive(Resource, Default)]
@@ -86,6 +98,15 @@ impl DmStoreOp {
             DmStoreOp::Delete { account, partner } => {
                 if let Err(e) = platform::dm_history_delete(&account, &partner).await {
                     warn!("failed to delete dm history with {partner}: {e}");
+                }
+            }
+            DmStoreOp::Trim {
+                account,
+                partner,
+                keep,
+            } => {
+                if let Err(e) = platform::dm_history_trim(&account, &partner, keep).await {
+                    warn!("failed to trim history of {partner}: {e}");
                 }
             }
         }
@@ -266,12 +287,23 @@ pub fn record_dms(
         ));
     }
 
+    // a community's history is trimmed behind its appends, once per community per frame
+    let mut trimmed = Vec::<String>::new();
     for (partner, entry) in entries {
+        let community = partner.starts_with(comms::community_chat::CHANNEL_PREFIX);
         store.queue.push_back(DmStoreOp::Append {
             account: account.clone(),
-            partner,
+            partner: partner.clone(),
             entry,
         });
+        if community && !trimmed.contains(&partner) {
+            store.queue.push_back(DmStoreOp::Trim {
+                account: account.clone(),
+                partner: partner.clone(),
+                keep: MAX_COMMUNITY_HISTORY,
+            });
+            trimmed.push(partner);
+        }
     }
 }
 
