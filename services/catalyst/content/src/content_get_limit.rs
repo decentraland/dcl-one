@@ -355,7 +355,12 @@ mod tests {
     /// keeps the two in step.
     #[test]
     fn the_defaults_are_the_config_crates() {
-        let config = crate::config::Config::parse_for_tests(&["catalyst"]).unwrap();
+        let config = crate::config::Config::parse_for_tests(&[
+            "catalyst",
+            "--database-url",
+            "postgres:///catalyst",
+        ])
+        .unwrap();
         let parsed = crate::Settings::from_config(&config).content_get_limit;
         let default = Config::default();
         assert_eq!(
