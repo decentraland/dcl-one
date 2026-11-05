@@ -1,0 +1,13 @@
+# Single-threaded wasm, unlike the Explorer: no shared memory, no atomics, no workers, so the
+# page that embeds the preview needs no cross-origin isolation headers. DCL_ONE_ROOT comes from
+# the repository root's .cargo/config.toml, which Cargo merges with this one.
+[target.wasm32-unknown-unknown]
+rustflags = [
+  "--cfg=web_sys_unstable_apis",
+  "--cfg=tokio_unstable",
+  "--cfg",
+  "getrandom_backend=\"wasm_js\"",
+]
+
+[env]
+RUST_BACKTRACE = "1"

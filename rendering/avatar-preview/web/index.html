@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Avatar preview spike</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #1a1720; color: #ddd; font: 14px system-ui; }
+    #stage { position: fixed; inset: 0; }
+    canvas { width: 100%; height: 100%; display: block; }
+    #status { position: fixed; left: 12px; bottom: 12px; opacity: .8; }
+    #log { position: fixed; left: 12px; top: 12px; right: 12px; max-height: 45%; overflow: auto; margin: 0;
+           font: 12px/1.35 ui-monospace, monospace; color: #cfc; background: rgba(0,0,0,.55); padding: 8px;
+           white-space: pre-wrap; pointer-events: none; }
+    #log .e { color: #f99; } #log .w { color: #fd8; }
+  </style>
+</head>
+<body>
+  <div id="stage"><canvas id="preview-canvas"></canvas></div>
+  <div id="status">loading…</div>
+  <pre id="log"></pre>
+  <script>
+    // Mirror the console on screen: the page is checked from a machine without DevTools access.
+    const logEl = document.getElementById('log');
+    const lines = [];
+    const push = (cls, args) => {
+      lines.push(`<span class="${cls}">${String(args.map(a => a instanceof Error ? (a.stack || a.message) : typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ')).replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</span>`);
+      if (lines.length > 60) lines.shift();
+      logEl.innerHTML = lines.join('\n');
+    };
+    for (const k of ['log', 'info', 'warn', 'error', 'debug']) {
+      const orig = console[k].bind(console);
+      console[k] = (...args) => { orig(...args); push(k === 'error' ? 'e' : k === 'warn' ? 'w' : 'l', args); };
+    }
+    window.addEventListener('error', e => push('e', [`window error: ${e.message} @ ${e.filename}:${e.lineno}`]));
+    window.addEventListener('unhandledrejection', e => push('e', [`unhandled rejection: ${e.reason}`]));
+    console.info(`webgpu: ${navigator.gpu ? 'available' : 'MISSING'}; crossOriginIsolated: ${window.crossOriginIsolated}; ua: ${navigator.userAgent}`);
+  </script>
+  <script type="module">
+    const status = document.getElementById('status');
+    const params = new URLSearchParams(location.search);
+    const t0 = performance.now();
+    try {
+      const { default: init, start } = await import('./pkg/dcl_avatar_preview.js');
+      await init();
+      status.textContent = `wasm ready in ${Math.round(performance.now() - t0)} ms`;
+      start('#preview-canvas', params.get('bodyShape'), params.get('baseDomain'), params.get('flags'));
+    } catch (e) {
+      status.textContent = `failed: ${e}`;
+      console.error(e);
+    }
+  </script>
+</body>
+</html>

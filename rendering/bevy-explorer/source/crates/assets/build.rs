@@ -14,6 +14,9 @@ fn visit_dirs(writer: &mut BufWriter<File>, dir: &Path, base_dir: &Path) -> std:
             } else if path.is_file() {
                 let relative_path = path.strip_prefix(base_dir).unwrap();
                 let relative_path = relative_path.to_string_lossy().replace('\\', "/");
+                if env::var_os("CARGO_FEATURE_PREVIEW").is_some() && !preview_asset(&relative_path) {
+                    continue;
+                }
                 let full_path = path.canonicalize()?;
                 let full_path = full_path.to_string_lossy().replace('\\', "\\\\");
 
@@ -22,6 +25,13 @@ fn visit_dirs(writer: &mut BufWriter<File>, dir: &Path, base_dir: &Path) -> std:
         }
     }
     Ok(())
+}
+
+/// The embedded files an avatar-only build (feature `preview`) keeps.
+fn preview_asset(relative_path: &str) -> bool {
+    relative_path.starts_with("shaders/")
+        || relative_path.starts_with("avatars/")
+        || relative_path == "animations/idle.glb"
 }
 
 fn main() -> std::io::Result<()> {
