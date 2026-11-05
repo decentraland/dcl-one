@@ -29,6 +29,8 @@ import type {
   SceneLoadingUi,
   SetAvatarData,
   SetSinglePermission,
+  SmartWearableAuthRequest,
+  SmartWearableStateInfo,
   Vector3,
   WelcomeState,
   WorldAccessEvent
@@ -177,6 +179,13 @@ export type BevyApiInterface = {
   getPermissionUsedStream: () => Promise<AsyncIterable<PermissionUsedRaw>>
   /** The stored rules at one level: `value` is the scene hash (Scene) or realm url (Realm). */
   getPermanentPermissions: (body: { level: 'Scene' | 'Realm' | 'Global'; value?: string }) => Promise<PermanentPermissionItem[]>
+  /** Smart wearables waiting for the player's consent to run, one at a time: the engine sends the
+   *  next once the previous is answered. */
+  getSmartWearableAuthorizationStream: () => Promise<AsyncIterable<SmartWearableAuthRequest>>
+  /** Answer a smart wearable authorization request by its `id`. */
+  answerSmartWearableAuthorization: (id: number, allow: boolean) => void
+  /** Every smart wearable the engine tracks, and whether the scene the player stands in lets them run. */
+  smartWearableState: () => Promise<SmartWearableStateInfo>
   /** Live scenes, for resolving a permission request's scene name (hash → title) and the current
    *  scene to reload — `/reload` uses `parcels`/`isSuper` to target the scene the player stands in,
    *  never the bridge. */

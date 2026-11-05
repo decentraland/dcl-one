@@ -19,8 +19,10 @@ interface IconButtonProps
   badgeMax?: number
   /** Badge tone — Ruby (default) or Lavender (e.g. Hangouts). */
   badgeTone?: 'ruby' | 'lavender'
-  /** Tooltip label shown on hover. */
+  /** The button's accessible name, and the tooltip unless `tooltip` is given. */
   label: string
+  /** Tooltip text in place of `label`, for a button whose hover hint is a status (e.g. counts). */
+  tooltip?: string
   /** Single-key shortcut shown dimmed in the tooltip, e.g. 'T' → "Chat [T]". */
   shortcut?: string
   /** Green status dot (e.g. connected voice). */
@@ -41,6 +43,7 @@ export function IconButton({
   badgeMax,
   badgeTone = 'ruby',
   label,
+  tooltip,
   shortcut,
   avatar,
   art,
@@ -52,7 +55,7 @@ export function IconButton({
   ...rest
 }: IconButtonProps): React.JSX.Element {
   return (
-    <Tooltip label={label} shortcut={shortcut} side="right" variant="rail">
+    <Tooltip label={tooltip ?? label} shortcut={shortcut} side="right" variant="rail">
       <button
         type={type}
         className={`${styles.btn} ${size === 34 ? styles.large : ''} ${active ? styles.active : ''} ${className}`.trim()}

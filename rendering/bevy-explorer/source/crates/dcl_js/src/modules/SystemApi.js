@@ -212,6 +212,7 @@ module.exports.consoleCommand = async function(cmd, args) {
 //     title: string,
 //     parcels: [Vector2],
 //     isPortable: bool,
+//     isSmartWearable: bool,
 //     isBroken: bool,
 //     isBlocked: bool,
 //     isSuper: bool,
@@ -361,6 +362,32 @@ module.exports.getPermissionRequestStream = async function() {
   }
 
   return streamGenerator();
+}
+
+// stream of { id, urn, name, permissions: string[], reason: 'login' | 'equip' }: a smart
+// wearable asks to use the gated permissions its scene.json declares
+module.exports.getSmartWearableAuthorizationStream = async function() {
+  const rid = await Deno.core.ops.op_get_smart_wearable_auth_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_smart_wearable_auth_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// answer a smart wearable authorization request by its id
+module.exports.answerSmartWearableAuthorization = function(id, allow) {
+  Deno.core.ops.op_answer_smart_wearable_auth(id, allow);
+}
+
+// { entries: [{ urn, name, state, reason, sceneHash, source }], currentSceneAllows, currentSceneHidesUi }
+module.exports.smartWearableState = async function() {
+  return await Deno.core.ops.op_smart_wearable_state()
 }
 
 module.exports.getPermissionUsedStream = async function() {

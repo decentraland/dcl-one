@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { after, before, describe, test } from 'node:test'
-import { aboutDocument, buildScene, contentHash, serveRealm, type BuiltScene, type RealmServer } from '../driver/realm.ts'
+import { aboutDocument, BODY_SHAPES, buildPreviewWearable, buildScene, contentHash, EMPTY_REALM_MAP, PREVIEW_WEARABLE_URN, serveRealm, type BuiltScene, type PreviewWearable, type RealmServer } from '../driver/realm.ts'
 
 describe('realm', () => {
   let dir: string
@@ -57,9 +57,10 @@ describe('realm', () => {
     assert.equal(response.headers.get('access-control-allow-origin'), '*')
     assert.equal(response.headers.get('cross-origin-resource-policy'), 'cross-origin')
     const about = (await response.json()) as ReturnType<typeof aboutDocument>
-    const configurations = about.configurations as { scenesUrn: string[]; realmName: string }
+    const configurations = about.configurations as { scenesUrn: string[]; realmName: string; map?: unknown }
     assert.deepEqual(configurations.scenesUrn, [`urn:decentraland:entity:${scene.entity.id}?=&baseUrl=${server.realm}/content/contents/`])
     assert.equal(configurations.realmName, 'e2e-visual')
+    assert.equal(configurations.map, undefined, 'a realm with scenes is bounded by them, like a World')
     assert.deepEqual(about.content, { healthy: true, publicUrl: `${server.realm}/content` })
     assert.deepEqual(about.comms, { healthy: true, protocol: 'v3', fixedAdapter: 'offline:offline' })
   })
@@ -88,5 +89,107 @@ describe('realm', () => {
     assert.equal(preflight.status, 204)
     assert.equal(preflight.headers.get('access-control-allow-methods'), 'GET, HEAD, POST, OPTIONS')
     assert.deepEqual(await (await fetch(`${server.realm}/scenes`)).json(), { scenes: [], total: 0 })
+  })
+})
+
+describe('realm with a previewed smart wearable', () => {
+  let dir: string
+  let wearable: PreviewWearable
+  let server: RealmServer
+  let plain: RealmServer
+
+  before(async () => {
+    dir = await mkdtemp(path.join(tmpdir(), 'e2e-realm-sw-'))
+    await mkdir(path.join(dir, 'bin'), { recursive: true })
+    await mkdir(path.join(dir, 'src'), { recursive: true })
+    await writeFile(path.join(dir, 'scene.json'), JSON.stringify({ isPortableExperience: true, main: 'bin/index.js', runtimeVersion: '7', requiredPermissions: [], scene: { base: '0,0', parcels: ['0,0'] }, display: { title: 'Smart Wearable Fixture' } }))
+    await writeFile(
+      path.join(dir, 'wearable.json'),
+      JSON.stringify({
+        id: '00000000-0000-4000-8000-000000000000',
+        name: 'Smart Wearable Fixture',
+        rarity: 'mythic',
+        data: {
+          replaces: [],
+          hides: [],
+          tags: [],
+          category: 'hat',
+          representations: [{ bodyShapes: [BODY_SHAPES[0]], mainFile: 'model.glb', contents: ['model.glb'], overrideHides: [], overrideReplaces: [] }]
+        }
+      })
+    )
+    await writeFile(path.join(dir, 'bin', 'index.js'), 'export function main() {}')
+    await writeFile(path.join(dir, 'bin', 'scene.js'), 'the chunk the loader reads')
+    await writeFile(path.join(dir, 'model.glb'), Buffer.from([4, 5, 6]))
+    await writeFile(path.join(dir, 'src', 'index.ts'), 'source, not shipped')
+    wearable = await buildPreviewWearable(dir)
+    server = await serveRealm({ scenes: [], port: 0, previewWearables: [wearable] })
+    plain = await serveRealm({ scenes: [], port: 0 })
+  })
+
+  after(async () => {
+    await server.close()
+    await plain.close()
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  test('buildPreviewWearable lists the scene, the wearable, the bundle and its chunks and the model, not the sources', () => {
+    assert.equal(wearable.urn, PREVIEW_WEARABLE_URN)
+    assert.deepEqual(
+      wearable.content.map((entry) => entry.file),
+      ['scene.json', 'wearable.json', 'bin/index.js', 'bin/scene.js', 'model.glb']
+    )
+    assert.equal(wearable.content[4]!.hash, contentHash(Buffer.from([4, 5, 6])))
+  })
+
+  test('a project that is not a portable experience, or not built, is refused', async () => {
+    const other = await mkdtemp(path.join(tmpdir(), 'e2e-realm-sw-bad-'))
+    await writeFile(path.join(other, 'scene.json'), JSON.stringify({ main: 'bin/index.js' }))
+    await writeFile(path.join(other, 'wearable.json'), JSON.stringify({ data: { representations: [] } }))
+    await assert.rejects(buildPreviewWearable(other), /not a portable experience/)
+    await writeFile(path.join(other, 'scene.json'), JSON.stringify({ isPortableExperience: true, main: 'bin/index.js' }))
+    await assert.rejects(buildPreviewWearable(other), /bin\/index.js is missing; build the scene first/)
+    await rm(other, { recursive: true, force: true })
+  })
+
+  test('/preview-wearables lists every file under male/ and female/, fetchable by hash', async () => {
+    const response = await fetch(`${server.realm}/preview-wearables`)
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get('access-control-allow-origin'), '*')
+    const body = (await response.json()) as { ok: boolean; data: { id: string; name: string; data: { category: string; representations: { bodyShapes: string[]; mainFile: string; contents: { key: string; url: string; hash: string }[] }[] } }[] }
+    assert.equal(body.ok, true)
+    assert.equal(body.data.length, 1)
+    const [entry] = body.data
+    assert.equal(entry!.id, PREVIEW_WEARABLE_URN)
+    assert.equal(entry!.name, 'Smart Wearable Fixture')
+    assert.equal(entry!.data.category, 'hat')
+    assert.equal(entry!.data.representations.length, 1)
+    const representation = entry!.data.representations[0]!
+    assert.deepEqual(representation.bodyShapes, [...BODY_SHAPES])
+    assert.equal(representation.mainFile, 'male/model.glb')
+    const files = wearable.content.map((file) => file.file)
+    assert.deepEqual(
+      representation.contents.map((content) => content.key),
+      [...files.map((file) => `male/${file}`), ...files.map((file) => `female/${file}`)]
+    )
+    for (const content of representation.contents) {
+      assert.equal(content.url, `${server.realm}/content/contents/${content.hash}`)
+      assert.equal((await fetch(content.url)).status, 200)
+    }
+    const model = representation.contents.find((content) => content.key === 'female/model.glb')!
+    assert.deepEqual(Buffer.from(await (await fetch(model.url)).arrayBuffer()), Buffer.from([4, 5, 6]))
+  })
+
+  test('the previewed wearable is no scene of the realm', async () => {
+    const about = (await (await fetch(`${server.realm}/about`)).json()) as { configurations: { scenesUrn: string[]; map?: unknown } }
+    assert.deepEqual(about.configurations.scenesUrn, [])
+    // with no scene to place, the map is what lets the client resolve the spawn parcel and arrive
+    assert.deepEqual(about.configurations.map, EMPTY_REALM_MAP)
+    const active = await fetch(`${server.realm}/content/entities/active`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pointers: ['0,0'] }) })
+    assert.deepEqual(await active.json(), [])
+  })
+
+  test('a realm without preview wearables answers 404, as a production catalyst does', async () => {
+    assert.equal((await fetch(`${plain.realm}/preview-wearables`)).status, 404)
   })
 })

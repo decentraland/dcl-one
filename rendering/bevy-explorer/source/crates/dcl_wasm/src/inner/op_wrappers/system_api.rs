@@ -692,3 +692,26 @@ pub async fn op_read_block_update_stream(
 ) -> Result<JsValue, WasmError> {
     serde_result!(dcl_js::system_api::op_read_block_update_stream(state.rc(), rid).await)
 }
+
+#[wasm_bindgen]
+pub async fn op_get_smart_wearable_auth_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_smart_wearable_auth_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_smart_wearable_auth_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_smart_wearable_auth_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub fn op_answer_smart_wearable_auth(state: &WorkerContext, id: u32, allow: bool) {
+    dcl_js::system_api::op_answer_smart_wearable_auth(state.rc(), id, allow);
+}
+
+#[wasm_bindgen]
+pub async fn op_smart_wearable_state(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_smart_wearable_state(state.rc()).await)
+}

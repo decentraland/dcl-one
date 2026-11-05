@@ -227,6 +227,26 @@ from HUD-side key matching. The rules:
 - Key **labels** come from `bindingLabels` (`keyHintFor`/`labelForInput`), never hardcoded
   letters — they follow the user's rebinds and keyboard layout.
 
+## Smart wearables
+
+A smart wearable carries an SDK7 scene the engine runs while it is worn; the engine decides
+everything and the HUD shows and answers (`bridge-scene/src/domains/smartWearables.ts`).
+Expectations:
+
+- **Authorization**: the engine's request (`smartWearableAuthRequest`, one at a time) opens the
+  `Smart wearable permissions` dialog once the player is in world: the wearable's name, why it asks
+  (logged in wearing it / equipped it) and its declared scene.json permissions in the scene
+  permission dialog's wording (unknown names verbatim). Allow / Deny post `smartWearableAuthAnswer`;
+  Escape or the scrim deny.
+- **Rail**: the `Smart wearables` button shows only while one is running, blocked, killed, denied
+  or awaiting authorization; its tooltip reads `N active / M inactive`, or `Smart wearables are
+  disabled in this scene` when the scene vetoes them. Its popover lists each with `Stop <name>` /
+  `Restart <name>`, sent as the console's `/smart_wearable kill|restart <urn>`; the HUD's own
+  command replies stay out of chat.
+- **Toasts**: entering running, blocked, killed or denied is toasted, from the state the player
+  arrived with (no burst at login).
+- Mock: `?mock=1&smartwearables=1`. Tests: `src/test/smartWearables.test.tsx`.
+
 ## Analytics
 
 The page reports the screens and clicks mobile does, with mobile's names and property shapes

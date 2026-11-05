@@ -6,9 +6,8 @@
 // its level, so dismissing leaves it cleared. Closes on an outside click or Escape, like the
 // nearby-voice popover.
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button, showConfirm } from '../../design'
-import { registerCancelLayer } from '../../lib/cancelLayers'
+import { useRailPopover } from '../sidebar/useRailPopover'
 import type { PermissionRuleItem, PermissionRuleLevel } from '../../engine/protocol'
 import type { PermissionRules, PermissionSubject, TriggeredPermission, VisitAnswer } from '../session/useEngineSession'
 import { describePermission, openPermissionReview } from './PermissionDialog'
@@ -50,35 +49,9 @@ export function PermissionsPopover({
   resetDefaults: () => void
   onClose: () => void
 }): React.JSX.Element {
-  const ref = useRef<HTMLDivElement>(null)
-  const [top, setTop] = useState<number | null>(null)
-  const [left, setLeft] = useState(0)
-
-  // Centred on the button like the voice popover, then kept on screen: the list grows with the
-  // scene's answers and rules, and the panel is translateY(-50%) around `top`, so clamp its centre
-  // by the measured (already scaled) height.
-  useLayoutEffect(() => {
-    if (anchor == null || ref.current == null) return
-    const r = anchor.getBoundingClientRect()
-    const half = ref.current.getBoundingClientRect().height / 2
-    setTop(Math.max(half + 8, Math.min(r.top + r.height / 2, window.innerHeight - half - 8)))
-    setLeft(r.left + r.width / 2 + r.width)
-  }, [anchor, visit, rules, triggered])
-
-  // pointerdown so a click on the world closes it too (the canvas suppresses mousedown)
-  useEffect(() => {
-    const onDown = (e: PointerEvent): void => {
-      const t = e.target as Node
-      if (ref.current?.contains(t) || anchor?.contains(t)) return
-      onClose()
-    }
-    document.addEventListener('pointerdown', onDown, true)
-    const off = registerCancelLayer(onClose)
-    return () => {
-      document.removeEventListener('pointerdown', onDown, true)
-      off()
-    }
-  }, [anchor, onClose])
+  // Centred on the button like the voice popover, then kept on screen as the list grows with the
+  // scene's answers and rules.
+  const { ref, style } = useRailPopover(anchor, onClose)
 
   const review = (subject: PermissionSubject, initial?: PermissionRuleLevel): void => {
     onClose()
@@ -109,7 +82,7 @@ export function PermissionsPopover({
   const anyRules = rules != null && rules.rules.scene.length + rules.rules.realm.length + rules.rules.global.length > 0
 
   return (
-    <div ref={ref} className={styles.panel} role="dialog" aria-label="Scene permissions" style={{ top: top ?? -9999, left }}>
+    <div ref={ref} className={styles.panel} role="dialog" aria-label="Scene permissions" style={style}>
       <div className={styles.title}>SCENE PERMISSIONS</div>
       <div className={styles.divider} />
       {visit.length === 0 && !anyRules ? (

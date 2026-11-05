@@ -74,10 +74,83 @@ pub struct LiveSceneInfo {
     pub title: String,
     pub parcels: Vec<Vector2>,
     pub is_portable: bool,
+    /// A portable backing an equipped or previewed smart wearable.
+    pub is_smart_wearable: bool,
     pub is_broken: bool,
     pub is_blocked: bool,
     pub is_super: bool,
     pub sdk_version: String,
+}
+
+/// A smart wearable asks the player to allow the gated permissions its scene.json declares.
+#[derive(Serialize, Deserialize, Clone, Debug, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SmartWearableAuthRequest {
+    pub id: u32,
+    pub urn: String,
+    pub name: String,
+    /// declared scene.json names, e.g. ["USE_FETCH", "USE_WEB3_API"]
+    pub permissions: Vec<String>,
+    pub reason: SmartWearableAuthReason,
+}
+
+/// Why a smart wearable authorization is asked: equipped before this login, or equipped now.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, ts_rs::TS)]
+#[serde(rename_all = "lowercase")]
+#[ts(export)]
+pub enum SmartWearableAuthReason {
+    Login,
+    Equip,
+}
+
+/// The smart wearables the engine knows about and whether the current parcel lets them run.
+#[derive(Serialize, Deserialize, Clone, Debug, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SmartWearableStateInfo {
+    pub entries: Vec<SmartWearableEntryInfo>,
+    /// the parcel scene the player stands in does not set featureToggles.portableExperiences = "disabled"
+    pub current_scene_allows: bool,
+    /// it sets "hideUi"
+    pub current_scene_hides_ui: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SmartWearableEntryInfo {
+    pub urn: String,
+    pub name: String,
+    pub state: SmartWearableState,
+    pub reason: Option<String>,
+    pub scene_hash: Option<String>,
+    pub source: SmartWearableSource,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum SmartWearableState {
+    Loading,
+    AwaitingAuthorization,
+    Running,
+    Blocked,
+    Killed,
+    Denied,
+    NotSmart,
+    Failed,
+}
+
+/// Why the engine holds a smart wearable: the profile equips it, a console `run`, or the realm's
+/// `/preview-wearables`.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub enum SmartWearableSource {
+    Equipped,
+    Console,
+    Preview,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, ts_rs::TS)]

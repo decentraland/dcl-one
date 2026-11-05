@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bevy::{platform::collections::HashSet, prelude::*};
 
 use common::{
-    structs::SpawnPoint,
+    structs::{PermissionType, PortableExperiencesToggle, SpawnPoint},
     util::{dcl_assert, RingBuffer},
 };
 use dcl_component::{DclReader, DclWriter, SceneComponentId, SceneEntityId, ToDclWriter};
@@ -67,6 +67,12 @@ pub struct RendererSceneContext {
     pub scene_bounds: SceneBounds,
     pub spawn_points: Vec<SpawnPoint>,
     pub priority: f32,
+    /// A smart wearable's declared permissions: of the gated types, only these are granted and
+    /// the rest refused without asking. `None` for every other scene.
+    pub restricted_permissions: Option<HashSet<PermissionType>>,
+    /// This scene's `featureToggles.portableExperiences`, applied to portables while the
+    /// player stands in it.
+    pub portable_experiences: PortableExperiencesToggle,
 
     // entities waiting to be born in bevy
     pub nascent: HashSet<SceneEntityId>,
@@ -225,6 +231,8 @@ impl RendererSceneContext {
             bounds,
             scene_bounds,
             spawn_points,
+            restricted_permissions: None,
+            portable_experiences: PortableExperiencesToggle::default(),
             nascent: Default::default(),
             death_row: Default::default(),
             outbound_born: Default::default(),

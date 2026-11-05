@@ -150,6 +150,39 @@ cargo build --release --bin headless --no-default-features --features headless,l
 
 The launch parameters shared with the web build — realm, spawn parcel, ui scene, portables, preview, editor, content server, pulse server, imposter source, base domain, fps logging, gpu bytes per frame — are declared once, in `crates/system_api_types/src/launch_options.rs`: each field is the native `--flag`, the `engine_run` options key and the entry-url query param, and the react page's parameter table is generated from it. Which of those a link may set without a warning is the page's own policy (`react-web/src/lib/launchGate.ts`). Native-only flags (rendering, imposters, debug, the `--builtin-*` ui pieces) live on `DecentralandArguments` in `src/lib.rs`.
 
+## Smart wearables
+
+A smart wearable is a wearable whose content carries an SDK7 scene (`scene.json` with
+`"isPortableExperience": true`, packed under the body-shape prefixes `male/` and `female/`). The
+engine runs that scene as a portable experience while the wearable is equipped, and stops it when
+it is unequipped. On entering a realm it also fetches `{realm}/preview-wearables`, the creator
+preview path, and runs each wearable listed there the same way.
+
+Four permissions a scene may declare in `requiredPermissions` are gated for smart wearables:
+`USE_FETCH`, `USE_WEBSOCKET`, `USE_WEB3_API` and `OPEN_EXTERNAL_LINK`. They are authorized up front,
+before the scene starts: the HUD's `Smart wearable permissions` dialog lists them with `Allow` and
+`Deny`. Equipping a wearable that declares any of them always asks; at login, for what the profile
+already wears, only `USE_WEB3_API` asks. A denied wearable does not run until it is restarted. On
+the web build `fetch` and WebSocket are not permission-gated for any scene, smart wearables
+included.
+
+The parcel scene the player stands in decides whether they run there:
+`featureToggles.portableExperiences` set to `disabled` blocks every smart wearable while the
+player is inside it, and `hideUi` keeps them running with their UI hidden. While any smart
+wearable is running, blocked, killed or denied, the sidebar shows a `Smart wearables` button whose
+popover lists them, each with a `Stop` or `Restart` button.
+
+Console commands:
+
+- `/smart_wearables`: `current scene allows: true|false`, then `<urn> <state> [<reason>]` per
+  wearable (`loading`, `awaitingAuthorization`, `running`, `blocked`, `killed`, `denied`,
+  `notSmart`, `failed`), or `no smart wearables`.
+- `/smart_wearable run <urn>` runs a wearable's scene without equipping it (ownership is not
+  checked); `/smart_wearable kill <urn>` stops one; `/smart_wearable restart <urn>` clears a kill or
+  a denial and runs it again.
+- `/live_scenes` marks their scenes `, portable, smart wearable`; `/list_portables` prints each
+  portable's kind (`scene`, `startup` or `smart wearable`).
+
 ## Testing
 
 ```bash
@@ -198,6 +231,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/click_at <x> <y> [--button left|right|middle]`. Natively these and the HUD commands go through
   CEF and the window's own input, always real. On the web the page needs a DevTools client to make
   them real (below); without one they fall back to DOM events and say `"input": "synthetic"`.
+- Smart wearables: `/smart_wearables`, `/smart_wearable run|kill|restart <urn>` and the
+  `, smart wearable` mark in `/live_scenes` ([Smart wearables](#smart-wearables)).
 - The preview-only commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 **The loopback console.** Every native build, the headless client mode included, carries a JSON-RPC

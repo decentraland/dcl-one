@@ -1,11 +1,15 @@
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
 use common::{
-    rpc::{RpcCall, RpcCallEvent, RpcResultSender, SpawnResponse},
+    rpc::{RpcCall, RpcCallEvent, RpcResultSender},
     structs::PrimaryUser,
 };
 use console::{DoAddConsoleCommand, PendingConsoleResponses};
 use dcl_component::transform_and_parent::DclTranslation;
+use scene_runner::{
+    initialize_scene::{LiveScenes, PortableKind, PortableScenes},
+    renderer_context::RendererSceneContext,
+};
 
 pub struct AgentCommandsPlugin;
 
@@ -151,28 +155,40 @@ struct ListPortablesCommand;
 
 fn list_portables_cmd(
     mut input: ConsoleCommand<ListPortablesCommand>,
-    mut events: EventWriter<RpcCallEvent>,
-    mut pending: ResMut<PendingConsoleResponses>,
+    portables: Res<PortableScenes>,
+    live_scenes: Res<LiveScenes>,
+    contexts: Query<&RendererSceneContext>,
 ) {
     if let Some(Ok(_)) = input.take() {
-        let (response, rx) = RpcResultSender::<Vec<SpawnResponse>>::channel();
-        events.write(RpcCallEvent::engine(RpcCall::ListPortables { response }));
-        let responder = input.take_responder();
-        pending.push_receiver(
-            rx,
-            |portables| {
-                if portables.is_empty() {
-                    Ok("no portables running".to_string())
-                } else {
-                    Ok(portables
-                        .iter()
-                        .map(|p| format!("{} ({})", p.ens.as_deref().unwrap_or(&p.name), p.pid))
-                        .collect::<Vec<_>>()
-                        .join(", "))
-                }
-            },
-            responder,
-        );
+        let mut entries = portables
+            .iter()
+            .map(|(hash, source)| {
+                let (name, kind) = match &source.kind {
+                    PortableKind::SmartWearable { name, .. } => (name.clone(), "smart wearable"),
+                    kind => {
+                        let title = live_scenes
+                            .scenes
+                            .get(hash)
+                            .and_then(|ent| contexts.get(*ent).ok())
+                            .map(|ctx| ctx.title.clone())
+                            .unwrap_or_default();
+                        let name = source.ens.clone().unwrap_or(title);
+                        let kind = match kind {
+                            PortableKind::Startup => "startup",
+                            _ => "scene",
+                        };
+                        (name, kind)
+                    }
+                };
+                format!("{name} ({}, {kind})", source.pid)
+            })
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            input.reply_ok("no portables running");
+        } else {
+            entries.sort();
+            input.reply_ok(entries.join(", "));
+        }
     }
 }
 
