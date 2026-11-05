@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/lambdas/profiles/0x0000000000000000000000000000000000000001",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "51"
+    },
+    "body": {
+      "error": "Not Found",
+      "message": "Profile not found"
+    }
+  }
+}

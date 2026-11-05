@@ -10,7 +10,9 @@ Pinned revisions:
 - Upstream lambdas: `decentraland/lamb2` @ `02a37f5d88fb895339c20e84c2470be68cdf3f57` (2026-10-21). It serves no route in this area.
 - dcl-one: `dcl-one-conformance` @ `37e91aed` (origin/main, 2026-11-04), Rust workspace `services/catalyst`.
 
-Everything below is from reading the code. Nothing was built, run or captured, and no line is
+Everything below is from reading the code, except where a line cites a capture under
+[`captures/content-sync/`](captures/content-sync/), which states what the production peer answered on
+2026-11-04 ([`captures/README.md`](captures/README.md)). Nothing was built or run, and no line is
 "verified". Where an upstream behaviour depends on a package that is not in the clone
 (`@dcl/http-server`, `@dcl/schemas`, `@dcl/snapshots-fetcher`, `qs`), the entry says so.
 
@@ -707,8 +709,9 @@ Field by field:
 - **`Body Shape` traits.**
   - Upstream compares each body shape with `BodyShape[BodyShape.MALE]` (`component.ts:164-176`).
     If `BodyShape` is a string enum (which has no reverse mapping), that expression is `undefined`
-    and upstream emits **no** Body Shape traits. Whether it is a string enum is not checked here,
-    because `@dcl/schemas` is not in the clone.
+    and upstream emits **no** Body Shape traits. Captured: a wearable with a `BaseMale` and a
+    `BaseFemale` representation answers `Rarity`, `Category` and `Tag` traits and no `Body Shape`
+    trait (`captures/content-sync/CS-16-erc721-wearable.json`).
   - dcl-one emits `BaseFemale` and then `BaseMale`, sorted with a `BTreeSet`, for full URNs and
     short names (`erc721.rs:167-196`). Upstream's `Set` order is insertion order.
 - **`image` and `thumbnail`.**
@@ -892,11 +895,13 @@ catalyst list and its `/about` is healthy.
     - Severity: P2.
 
 16. **CS-16 · `/queries/erc721` · Category and Body Shape traits.**
-    - Gap: dcl-one emits sorted Body Shape traits, where upstream likely emits none (string-enum
-      reverse lookup, `decentraland/catalyst:src/logic/entities/component.ts:164-176`). The `Category`
+    - Gap: dcl-one emits sorted Body Shape traits, where upstream emits none. The `Category`
       trait matches (always listed, `{"trait_type":"Category"}` without a category).
-    - Expected: capture one wearable from a production peer to settle the Body Shape question,
-      then match it.
+    - Capture: `GET /content/queries/erc721/137/<contract>/1/5` for an epic `top_head` wearable with
+      `BaseMale` and `BaseFemale` representations answers `attributes` = `Rarity`, `Category`, then one
+      `Tag` per tag, and no `Body Shape` (`captures/content-sync/CS-16-erc721-wearable.json`). The
+      undefined-`Category` case was not captured.
+    - Expected: emit no Body Shape traits.
     - Where: `services/catalyst/content/src/validator/erc721.rs:93-121,167-196`.
     - Severity: P1.
 
@@ -950,9 +955,13 @@ catalyst list and its `/about` is healthy.
     - Severity: P2.
 
 23. **CS-23 · all routes · trailing slash and path case.**
-    - Gap: dcl-one returns a plain-text 404 for `/deployments/` and `/Deployments`. The upstream
-      behaviour depends on the `@dcl/http-server` router defaults, which were not read.
-    - Expected: capture both against a production peer before changing anything.
+    - Gap: dcl-one returns a plain-text 404 for `/Deployments`. As read, it trims a trailing slash
+      for the whole app before routing (`services/catalyst/src/serve.rs:1355`), so `/deployments/`
+      is routed.
+    - Capture: `GET /content/deployments/?limit=1` and `GET /content/Deployments?limit=1` both answer
+      `200` with the deployments page (`captures/content-sync/CS-23-trailing-slash-deployments.json`,
+      `CS-23-path-case-deployments.json`).
+    - Expected: match paths case-insensitively, as CR-16; the trailing slash already matches.
     - Where: `services/catalyst/content/src/lib.rs:695-711`.
     - Severity: P2.
 
