@@ -84,6 +84,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 
 - Never add a dependency on a sibling checkout.
 - `rendering/bevy-explorer/source` is its own workspace; integration lives in `apps/bevy-explorer`.
+- `rendering/avatar-preview` is its own workspace that links named Explorer crates by path and repeats the Explorer's patch table; it builds single-threaded wasm and never copies Explorer code ([ADR](docs/adr/2026-11-05-avatar-preview-renderer.md)).
 - Keep component licenses and pins (`upstream.lock.json`, `abgen-release.lock`, `livekit-release.lock`, `tooling/uuav/uuav-binaries.lock.json`).
 - Regenerate `.github/CODEOWNERS` from `ownership.json` with `tooling/owners.py`.
 - No machine names, private addresses, home paths, personal emails or the operator's domain; deployments supply them via gitignored config.

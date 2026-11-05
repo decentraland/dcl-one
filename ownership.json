@@ -258,6 +258,17 @@
       ]
     },
     {
+      "id": "avatar-preview",
+      "description": "Avatar preview renderer: the standalone wasm build of the Explorer's avatar look that the shop and the creator hub embed, its page, build and release workflow",
+      "owners": [
+        "@decentraland/client"
+      ],
+      "paths": [
+        "/rendering/avatar-preview/",
+        "/.github/workflows/avatar-preview*.yml"
+      ]
+    },
+    {
       "id": "quality",
       "description": "Journey evidence, conformance and checks",
       "owners": [
