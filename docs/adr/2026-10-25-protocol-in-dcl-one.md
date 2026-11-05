@@ -32,9 +32,9 @@ source in this repository.
 - The protocol's wire-compatibility check (`buf breaking`) compares against this
   repository's `main`, so every change to `proto/` is additive or explicitly reserved.
 - `tooling/proto-source-check.py` (run by `structure.yml`) fails on a `decentraland.*`
-  proto anywhere else, the Explorer included. The copies that remain are allowlisted by
-  path until the change that points their consumer at `library/protocol` removes them;
-  nothing is added to that list.
+  proto anywhere else. Every Rust consumer (`dcl_component`, `comms`, `social`,
+  `dcl-scene-authoring`, `dcl-scene-cli`) compiles from `library/protocol/proto` at build
+  time; no generated code is committed.
 - Changes to the Explorer's protos trigger the Explorer workflows (`library/protocol/proto`
   is one of their inputs, in `tooling/bevy-ci.py` and the `paths:` filters), and the Nix
   Play build's source set includes it.
@@ -72,7 +72,5 @@ places where its copy was behind `main`.
 1. Publish `@dcl/protocol` from here and stop publishing from `decentraland/protocol`.
 2. Import `js-sdk-toolchain` beside it (`library/js-sdk-toolchain`), reading
    `library/protocol` directly; then its publishing and the `auth-server` branch.
-3. Point `dcl-scene-authoring`, `dcl-scene-cli` and `social` at `library/protocol` (`comms`
-   already does; `recipients` enters `library/protocol` first) and shrink the allowlist to nothing.
-4. Decide the protocol repository's `experimental` and `protocol-squad` branches, which no
+3. Decide the protocol repository's `experimental` and `protocol-squad` branches, which no
    consumer tracks today.
