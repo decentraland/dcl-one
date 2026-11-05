@@ -67,11 +67,7 @@ See [production rules](../infra/containers/README.md#sites-explorer-build-input)
 
 ### Pull request previews
 
-`Web previews / Build` selects two independent products: changes under
-`apps/sites/` build Sites, and changes under `library/ui/` build its standalone
-UI reviewer. Other apps and API-only changes do not select previews. Changes
-to the preview pipeline select both products. `apps/ui3/` remains a Sites build
-dependency but does not trigger this workflow.
+`Web previews / Build` selects two independent products: changes under `apps/sites/` build Sites, and changes under `library/ui/` build its standalone UI reviewer. API-only changes do not select previews. Changes to the preview pipeline select both products.
 
 The reviewer requires `library/ui/package.json` with `review:build`, producing
 `library/ui/figma/review/review-dist/dcl-ui-review/index.html`. The complete
@@ -98,10 +94,7 @@ build run.
 GitHub artifacts expire after seven days; this does not delete immutable npm
 versions or CDN copies.
 
-Sites uploads its SSR build, documentation content, fixtures and dependency
-manifests as `web-preview-sites`. It does not currently deploy an SSR preview
-or implement a dev/prod service selector. Those require the SSR hosting
-integration; the PR comment explicitly reports that deployment is pending.
+Sites currently uploads its SSR build, documentation content, fixtures and dependency manifests as `web-preview-sites`. The planned preview uses a complete container image built from the pull request and runs in Kubernetes at the shared `preview.dcl.dev` address. It is manually triggered and expires after six hours. Charly owns the cluster configuration; the application deployment integration and dev/prod service selector are not implemented. The PR comment reports that the preview is pending.
 
 ### Local checks
 

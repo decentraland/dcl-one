@@ -215,7 +215,7 @@ def report(repository, run_id, reviewer_url, publication_result):
                 else f'Publication: {publication_result}'
             )
         else:
-            link = 'SSR deployment pending hosting configuration'
+            link = 'SSR preview pending: shared host deployment is not wired yet'
         rows.append(f'| {label} | {result} | {link} |')
     if not rows:
         rows.append('| Web previews | failed | See the build run |')
