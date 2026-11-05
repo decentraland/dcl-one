@@ -121,6 +121,61 @@ fn content_is_healthy(sync_state: &str) -> bool {
     sync_state == "Syncing"
 }
 
+/// lamb2's `resource-status.ts`: overloaded when the one-minute load
+/// average per CPU or the used share of memory is above 90%.
+fn above_ninety_percent(
+    load_one_minute: f64,
+    cpus: u64,
+    mem_total: u64,
+    mem_available: u64,
+) -> bool {
+    let cpu_load = load_one_minute * 100.0 / cpus.max(1) as f64;
+    let mem_load = match mem_total {
+        0 => 0.0,
+        total => total.saturating_sub(mem_available) as f64 * 100.0 / total as f64,
+    };
+    if cpu_load > 90.0 {
+        tracing::info!("CPU usage is above 90%: {cpu_load:.2}%");
+    }
+    if mem_load > 90.0 {
+        tracing::info!("Memory usage is above 90%: {mem_load:.2}%");
+    }
+    cpu_load > 90.0 || mem_load > 90.0
+}
+
+/// The host figures Node's `os` module reads: `loadavg()[0]`, the online
+/// CPUs, and `MemTotal`/`MemAvailable` from `/proc/meminfo` (`totalmem`,
+/// `freemem`). A figure that cannot be read counts as not overloaded; off
+/// Linux there is no memory figure.
+fn resources_overloaded() -> bool {
+    let mut load = [0f64; 3];
+    // SAFETY: getloadavg writes at most `nelem` doubles into `load`.
+    let load_one_minute = match unsafe { libc::getloadavg(load.as_mut_ptr(), 1) } {
+        1.. => load[0],
+        _ => 0.0,
+    };
+    // SAFETY: sysconf reads a system constant.
+    let cpus = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) }.max(1) as u64;
+    let (mem_total, mem_available) = std::fs::read_to_string("/proc/meminfo")
+        .map(|meminfo| {
+            (
+                meminfo_kb(&meminfo, "MemTotal:"),
+                meminfo_kb(&meminfo, "MemAvailable:"),
+            )
+        })
+        .unwrap_or((0, 0));
+    above_ninety_percent(load_one_minute, cpus, mem_total, mem_available)
+}
+
+fn meminfo_kb(meminfo: &str, key: &str) -> u64 {
+    meminfo
+        .lines()
+        .find_map(|line| line.strip_prefix(key))
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|kb| kb.parse().ok())
+        .unwrap_or(0)
+}
+
 /// The genesis-city parcel bounds every realm advertises.
 fn map_sizes() -> Vec<AboutMapSize> {
     vec![
@@ -178,7 +233,7 @@ pub async fn get_about(State(state): State<SharedState>) -> impl IntoResponse {
     let settings = &state.settings;
 
     let mut healthy = content_healthy;
-    let mut accepting_users = healthy;
+    let mut accepting_users = healthy && !(settings.about_resource_check && resources_overloaded());
     let comms = state.about_comms().map(|about| {
         let probe = about.probe();
         let comms = build_comms_config(probe, &about.settings, about.sfu.is_alive());
@@ -307,6 +362,20 @@ mod tests {
             node_base_url("https://peer.example/"),
             "https://peer.example"
         );
+    }
+
+    /// lamb2's thresholds: strictly above 90% load per CPU or used memory.
+    #[test]
+    fn overload_is_above_ninety_percent_of_cpu_or_memory() {
+        assert!(!above_ninety_percent(3.6, 4, 100, 10));
+        assert!(above_ninety_percent(3.7, 4, 100, 50));
+        assert!(above_ninety_percent(0.1, 4, 100, 9));
+        assert!(!above_ninety_percent(0.0, 0, 0, 0));
+        let meminfo =
+            "MemTotal:       16000000 kB\nMemFree:  100 kB\nMemAvailable:    1500000 kB\n";
+        assert_eq!(meminfo_kb(meminfo, "MemTotal:"), 16_000_000);
+        assert_eq!(meminfo_kb(meminfo, "MemAvailable:"), 1_500_000);
+        assert_eq!(meminfo_kb(meminfo, "SwapTotal:"), 0);
     }
 
     #[test]

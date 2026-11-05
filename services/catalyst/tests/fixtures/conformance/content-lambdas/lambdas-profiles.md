@@ -494,12 +494,14 @@ LP-23. **Outfits: shape details.**
 - Severity: none (closed).
 
 LP-24. **/about: health and capacity inputs.**
-- Gap: no CPU/memory overload check; an extra console toggle; an unknown `ETH_NETWORK` maps to 1.
-- Expected: `acceptingUsers = healthy && !(cpu>90% || mem>90%) && userCount < MAX_USERS`; `networkId` from `l1Contracts`, and 500 for an unknown network. `decentraland/lamb2:src/controllers/handlers/about-handler.ts:31-37,70-82`, `decentraland/lamb2:src/adapters/resource-status.ts:8-43`.
+- Status: MATCH behind `ABOUT_RESOURCE_CHECK` (CPU/memory check, opt-in by decision); the rest open.
+- Upstream: `acceptingUsers = healthy && !(cpu>90% || mem>90%) && userCount < MAX_USERS`, where cpu is `os.loadavg()[0]` per CPU and mem is `totalmem - freemem` over `totalmem`, each strictly above 90 and logged at info; `healthy` and the 200/503 status do not read it. `networkId` from `l1Contracts`, and 500 for an unknown network. `decentraland/lamb2:src/controllers/handlers/about-handler.ts:31-37,70-82`, `decentraland/lamb2:src/adapters/resource-status.ts:8-43`.
+- dcl-one: with `ABOUT_RESOURCE_CHECK=true` /about reads the same host figures (`getloadavg` over the online CPUs; `MemTotal` and `MemAvailable` from `/proc/meminfo`, which Node's `freemem` reads on Linux) and answers `acceptingUsers: false` above 90%; a figure it cannot read counts as not overloaded, and off Linux there is no memory figure `services/catalyst/content/src/about.rs`. Pinned by `overload_is_above_ninety_percent_of_cpu_or_memory` and `about_resource_check_is_off_unless_set`.
+- Kept by decision: the check is off by default under every posture. The figures are host-wide, and a dcl-one node runs content, lambdas, comms and often Postgres on one host, so sync, a build or the database's load would take it out of the realm pickers. An operator whose node has its own host turns it on.
 - Not a gap: `content.version` is always present and the sync status is never `Unknown` because the content server is in-process, so it is always reachable; upstream answers the same values when its content server answers `/status`.
-- Left open (design decision): the CPU/memory check reads host-wide figures (`os.loadavg()` per CPU, `totalmem - freemem`). A dcl-one node runs content, lambdas, comms and often Postgres on one host, so sync, a build or the database's load would take it out of the realm pickers, and the integration tests that expect `acceptingUsers: true` would fail on a loaded host. The console toggle is a dcl-one feature. The `l1Contracts` key set is not vendored (`@dcl/catalyst-contracts`).
-- Place: `services/catalyst/content/src/about.rs:108-118,175-223`.
-- Severity: P2.
+- Left open: the console accepting-users toggle is a dcl-one feature (kept). An unknown `ETH_NETWORK` maps to 1 because the `l1Contracts` key set is not vendored (`@dcl/catalyst-contracts`).
+- Place: `services/catalyst/content/src/about.rs`, `services/catalyst/config/src/node.rs`.
+- Severity: P2 (unknown network).
 
 LP-25. **Contracts: failure behaviour.**
 - Status: MATCH, no work, when nothing is cached; stale serving kept by decision.
