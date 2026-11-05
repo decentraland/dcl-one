@@ -777,14 +777,6 @@ pub async fn remove_member(
                     Audience::One(&target),
                 )
                 .await;
-        } else {
-            let event = crate::notifications::community::CommunityEvent {
-                kind: "community_member_left",
-                key: format!("{uuid}-{target}-{}", now_ms()),
-                community_id: uuid,
-                metadata: json!({}),
-            };
-            tokio::spawn(state.publish_community_event(&event, &Audience::One(&target)));
         }
     }
     StatusCode::NO_CONTENT.into_response()

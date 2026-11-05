@@ -516,49 +516,7 @@ impl State {
         };
         // Every HTTP producer starts its source broadcaster in the background.
         // Prepare owned input before borrowing caller-owned audience values ends.
-        tokio::spawn(self.publish_community_event(&event, &audience));
         crate::notifications::community::notify(&self.pool, event, audience).await;
-    }
-
-    /// The shared legacy publisher carries the raw community event before the
-    /// inbox consumer filters opt-outs. The future owns only existing resources;
-    /// HTTP producers spawn it and voice START awaits it, matching the source.
-    pub(crate) fn publish_community_event(
-        &self,
-        event: &crate::notifications::community::CommunityEvent,
-        audience: &crate::notifications::community::Audience<'_>,
-    ) -> futures::future::BoxFuture<'static, ()> {
-        use crate::notifications::community::{Audience, broadcast_legacy, legacy_event, now_ms};
-        let publisher = self.referral.publisher().cloned();
-        let pool = self.pool.clone();
-        let timestamp = if matches!(
-            event.kind,
-            "community_member_removed"
-                | "community_member_left"
-                | "community_ownership_transferred"
-        ) {
-            event
-                .key
-                .rsplit('-')
-                .next()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or_else(now_ms)
-        } else {
-            now_ms()
-        };
-        let raw = legacy_event(event, audience, timestamp);
-        let (online, excluded) = match audience {
-            Audience::OnlineMembersExcept { online, except } => (
-                Some(online.iter().cloned().collect()),
-                vec![except.to_string()],
-            ),
-            _ => (None, Vec::new()),
-        };
-        Box::pin(async move {
-            if let Some(publisher) = publisher {
-                broadcast_legacy(&pool, &publisher, raw, online, excluded).await;
-            }
-        })
     }
 
     /// The old `PLACES_API_URL` `/api/destinations` ownership check as a
@@ -748,6 +706,7 @@ pub fn router(state: SharedState) -> Router {
                 .patch(referral::update_referral_signed_up),
         )
         .route("/v1/referral-email", post(referral::add_referral_email))
+        .route("/v1/client-login", post(referral::client_login))
         .route(
             "/v1/moderation/communities",
             get(admin::get_moderation_communities),

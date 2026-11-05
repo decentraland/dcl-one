@@ -1,14 +1,14 @@
 //! Referral-only Slack effects at social-service-ea b6b2cef. The installed
 //! source SDK's payloads and failure classifications use the existing Outbound.
 //! Awaited effects have a finite budget, including admission and retries, so a
-//! Slack outage cannot hold referral HTTP requests or the SQS consumer forever.
+//! Slack outage cannot hold referral HTTP requests forever.
 use crate::http::Outbound;
 use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::time::Instant;
 
 // Operational safety bounds, not a delivery SLO. Keep each effect well below
-// the legacy queue's 60-second visibility and do not detach persisted effects.
+// a request lifetime; milestone alerts run after the grant commits.
 const EFFECT_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(2);
 const MAX_ATTEMPTS: usize = 3;
@@ -761,6 +761,13 @@ mod tests {
         .await
         .unwrap();
         assert!(granted);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while requests.lock().await.len() < 4 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
         let captured = requests.lock().await;
         assert_eq!(captured.len(), 4);
         assert!(
