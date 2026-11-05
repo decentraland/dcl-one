@@ -5,7 +5,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { act, render, renderHook, screen } from '@testing-library/react'
 import { ToastHost } from '../design'
 import userEvent from '@testing-library/user-event'
-import { editorFeatures, editorOffered, EditorOffered } from '../features/editorHost/config'
+import { editorFeatures, editorOffered, EditorOffered, PINNED_EDITOR } from '../features/editorHost/config'
 import { CreatePage } from '../features/editorHost/CreatePage'
 import EditorHost, { useEditorHost } from '../features/editorHost/EditorHost'
 import { type DclEditorHostV1, type EditorPackage } from '../features/editorHost/host/host'
@@ -125,6 +125,23 @@ describe('editor host', () => {
     vi.unstubAllGlobals()
     const registry = 'https://registry.npmjs.org/@dcl-regenesislabs/web-editor'
     expect(asked).toEqual([`${registry}/next`, `${registry}/latest`, `${registry}/latest`, `${registry}/latest`])
+  })
+
+  it('runs the pinned version on org: checked against its hash, and no tag from the url', async () => {
+    const asked: string[] = []
+    vi.stubGlobal('fetch', async (url: string) => {
+      asked.push(url)
+      return Response.json({ version: '0.3.17-1.commit-abc1234' })
+    })
+    const source = await editorSource('?editor&editor-tag=next', 'decentraland.org', PAGE_DIR, 'decentraland.org')
+    vi.unstubAllGlobals()
+    expect(asked).toEqual([])
+    expect(source).toMatchObject({
+      base: PINNED_EDITOR!.base,
+      editorJsIntegrity: expect.stringMatching(/^sha384-/),
+      editorSceneEntity: PINNED_EDITOR!.editorSceneEntity
+    })
+    expect(source!.base).toMatch(/^https:\/\/cdn\.jsdelivr\.net\/npm\/@dcl-regenesislabs\/web-editor@\d+\.\d+\.\d+\/$/)
   })
 
   it('offers Create in the rail and the menu top bar only where an editor is available; both open the Create page', async () => {

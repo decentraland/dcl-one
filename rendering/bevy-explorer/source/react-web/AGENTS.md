@@ -85,11 +85,12 @@ server holds.
 
 Create (`src/features/editorHost`) hosts the scene editor. Use its checked-in pin, host contract and gates below. Resolve external editor development guidance through authorized task context; keep the target build self-contained. Here:
 
-- The editor arrives through `RELEASED_EDITOR` in `editorHost/config.ts`: a released host follows
-  its npm dist-tag (`latest`, or `next` with `?editor-tag=next`), resolved by the registry and
-  loaded from unpkg with no `editor.js` hash (`releasedPin` in `source.ts`). A pin with a version and
-  hash (`EditorPin.editorJsIntegrity`, from the editor repo's `packages/web/scripts/pin.mjs`) is
-  checked when set.
+- The editor arrives through `editorHost/config.ts`. On `PINNED_EDITOR.hosts` (decentraland.org) it
+  is one version checked against its `editor.js` hash, with its editor scene pinned and
+  `?editor-tag` ignored; a new version is a PR with the editor repo's
+  `node packages/web/scripts/pin.mjs <version> decentraland.org`. Elsewhere a released host
+  follows `RELEASED_EDITOR`'s npm dist-tag (`latest`, or `next` with `?editor-tag=next`), loaded
+  from unpkg with no hash (`releasedPin` in `source.ts`).
 - A released host (`RELEASED_EDITOR.hosts`) offers Create only to an entry url with
   `editor-features=experimental`; `advanced` reaches the editor as `features.advanced`
   (`editorFeatures` in `editorHost/config.ts`). Loopback always offers it. A link can set them:

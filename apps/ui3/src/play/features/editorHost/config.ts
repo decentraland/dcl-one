@@ -2,7 +2,7 @@
 // entry url names) is read in the Create page's own chunk (source.ts), so it costs the HUD nothing.
 
 import { createContext } from 'react'
-import type { EditorRelease } from './source'
+import type { EditorPin, EditorRelease } from './source'
 
 /** The released package the page follows (README "Releasing the editor") and the hosts besides
  *  loopback that offer it, each only to an entry url with `editor-features=experimental`; null =
@@ -12,6 +12,16 @@ export const RELEASED_EDITOR = {
   tag: 'latest',
   hosts: ['decentraland.zone', 'decentraland.org']
 } as (EditorRelease & { hosts: string[] }) | null
+
+/** Hosts that run one reviewed version instead of the tag: `editor.js` runs in this page, with the
+ *  player's identity, so production checks it against a hash and ignores `?editor-tag`. Printed by
+ *  the editor repo's `node packages/web/scripts/pin.mjs <version> <host...>`; a new version is a PR here. */
+export const PINNED_EDITOR = {
+  base: 'https://cdn.jsdelivr.net/npm/@dcl-regenesislabs/web-editor@0.3.26/',
+  editorJsIntegrity: 'sha384-1Ke8Ka2/a4PoSe+CjJ2rnf2YAxNh3neG71MmKGX4QwwjHJm977DgD+g020y09ocb',
+  editorSceneEntity: 'bafkreiggnrw7rgpjgljpbnvnppvxysckstguvp4s7zf65nfsm34vsenit4',
+  hosts: ['decentraland.org']
+} as (EditorPin & { hosts: string[] }) | null
 
 // false folds every Create entry point out of a production build that has no release
 export const EDITOR_BUILD = import.meta.env.DEV || RELEASED_EDITOR != null
