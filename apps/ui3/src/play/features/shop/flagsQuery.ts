@@ -29,8 +29,8 @@ export const flagQueries = {
     })
 }
 
-/** One rollout flag: off until the service answers yes. */
-export function useShopFlag(flag: RemoteFlag): boolean {
-  const { data } = useQuery({ ...flagQueries.dapps(), select: (flags) => flags[`dapps-${flag}`] === true })
-  return data ?? false
+/** One rollout flag as the service answers it: undefined until it does, off when the file can't be read. */
+export function useShopFlag(flag: RemoteFlag): boolean | undefined {
+  const { data, isError } = useQuery({ ...flagQueries.dapps(), select: (flags) => flags[`dapps-${flag}`] === true })
+  return data ?? (isError ? false : undefined)
 }

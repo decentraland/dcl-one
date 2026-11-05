@@ -34,8 +34,8 @@ export interface ShopItemPanelProps {
   description?: string
   hides?: readonly ShopItemHide[]
   onClose: () => void
-  /** Offers the item on the web Shop (resales, MANA-only, not for sale). */
-  onOpenOnWeb: () => void
+  /** Offers the item on the web Shop (resales, MANA-only, not for sale); absent when it has no page there. */
+  onOpenOnWeb?: () => void
   /** Buying in-world (the next flow); without them the buttons are shown but do nothing yet. */
   onBuy?: () => void
   onAddToCart?: () => void
@@ -109,10 +109,12 @@ export function ShopItemPanel({ name, thumbnail, rarity, icon, price, stock, cre
             </button>
           </>
         ) : (
-          <button type="button" className={styles.resale} onClick={onOpenOnWeb}>
-            Buy resale
-            <MaskIcon src={externalIcon} size={18} />
-          </button>
+          onOpenOnWeb != null && (
+            <button type="button" className={styles.resale} onClick={onOpenOnWeb}>
+              Buy resale
+              <MaskIcon src={externalIcon} size={18} />
+            </button>
+          )
         )}
       </div>
     </aside>

@@ -42,10 +42,21 @@ export function ScrollThumb({
     const ro = new ResizeObserver(sync)
     ro.observe(el)
     ro.observe(tr)
+    // The scroller's own box keeps its size when its content is swapped (loading → grid → empty), so each
+    // child that comes in is watched too, and the thumb follows at once.
     for (const child of Array.from(el.children)) ro.observe(child)
+    const mo = new MutationObserver((changes) => {
+      for (const change of changes) {
+        change.removedNodes.forEach((n) => n instanceof Element && ro.unobserve(n))
+        change.addedNodes.forEach((n) => n instanceof Element && ro.observe(n))
+      }
+      sync()
+    })
+    mo.observe(el, { childList: true })
     return () => {
       el.removeEventListener('scroll', sync)
       ro.disconnect()
+      mo.disconnect()
     }
   }, [target, length])
   return (

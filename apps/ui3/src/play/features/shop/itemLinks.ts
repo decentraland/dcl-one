@@ -12,5 +12,8 @@ export function tryOnUrn(item: CatalogItem): string | null {
   return item.chainId === CHAIN.POLYGON || item.chainId === CHAIN.AMOY ? itemUrn(item) : null
 }
 
-/** The item's page on the web Shop, where a resale or a MANA-only sale is bought. */
-export const webShopUrl = (item: CatalogItem): string => withUtm(siteUrl(`/shop/item/${item.contractAddress.toLowerCase()}/${item.itemId ?? ''}`))
+/** The item's page on the web Shop, where a resale or a MANA-only sale is bought; none without an item id. */
+export function webShopUrl(item: CatalogItem): string | null {
+  if (!item.itemId) return null
+  return withUtm(siteUrl(`/shop/item/${encodeURIComponent(item.contractAddress.toLowerCase())}/${encodeURIComponent(item.itemId)}`))
+}

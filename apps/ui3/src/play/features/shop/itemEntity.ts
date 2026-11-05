@@ -10,7 +10,10 @@ export interface ItemEntity {
   hides: string[]
 }
 
-type EntityRow = { metadata?: { description?: string; data?: { hides?: string[]; replaces?: string[] } } }
+type EntityRow = { metadata?: { description?: unknown; data?: { hides?: unknown; replaces?: unknown } } }
+
+/** The strings of a metadata list, which the catalyst serves as the deployer wrote it. */
+const strings = (list: unknown): string[] => (Array.isArray(list) ? list.filter((h): h is string => typeof h === 'string') : [])
 
 export async function fetchItemEntity(urn: string, signal?: AbortSignal): Promise<ItemEntity> {
   const res = await fetch(`${serviceUrl('catalyst')}/content/entities/active`, {
@@ -19,11 +22,15 @@ export async function fetchItemEntity(urn: string, signal?: AbortSignal): Promis
     body: JSON.stringify({ pointers: [urn] }),
     signal
   })
-  if (!res.ok) throw new Error(`The catalyst returned ${res.status}`)
+  if (!res.ok) {
+    // An unread body holds the connection open.
+    await res.body?.cancel()
+    throw new Error(`The catalyst returned ${res.status}`)
+  }
   const rows = (await res.json()) as EntityRow[]
   const meta = Array.isArray(rows) ? rows[0]?.metadata : undefined
   const data = meta?.data
-  return { description: (meta?.description ?? '').trim(), hides: [...new Set([...(data?.hides ?? []), ...(data?.replaces ?? [])])] }
+  return { description: typeof meta?.description === 'string' ? meta.description.trim() : '', hides: [...new Set([...strings(data?.hides), ...strings(data?.replaces)])] }
 }
 
 export const itemEntityQuery = (urn: string) =>

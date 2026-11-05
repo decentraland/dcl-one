@@ -189,6 +189,9 @@ describe('in-world shop catalogue query', () => {
     expect(tryOnUrn({ ...item, chainId: 1 })).toBeNull()
     expect(tryOnUrn({ ...item, chainId: 1, urn: 'urn:own' })).toBe('urn:own')
     expect(webShopUrl(item)).toContain(`/shop/item/${CONTRACT}/1`)
+    // Each segment is encoded, and an item without an id has no page to offer.
+    expect(webShopUrl({ ...item, itemId: 'a/b' })).toContain(`/shop/item/${CONTRACT}/a%2Fb`)
+    expect(webShopUrl({ ...item, itemId: null } as unknown as typeof item)).toBeNull()
   })
 })
 
@@ -554,6 +557,38 @@ describe('in-world shop', () => {
     expect(screen.getByRole('complementary', { name: 'Moonwalk' })).toBeInTheDocument()
     expect(props.emote).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: 'STOP EMOTE' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the open tab as it is when it is clicked again', async () => {
+    const f = serve({ catalogue: [[catalogueRow()]] })
+    renderShop()
+    await findCard()
+    await userEvent.click(screen.getByRole('button', { name: 'Feet' }))
+    await waitFor(() => expect(calls(f, '/v3/catalog/items').at(-1)!.searchParams.get('wearableCategory')).toBe('feet'))
+    const before = calls(f, '/v3/catalog/items').length
+    await openTab('Wearables')
+    expect(screen.getByRole('button', { name: 'Feet' })).toHaveAttribute('aria-pressed', 'true')
+    expect(calls(f, '/v3/catalog/items').length).toBe(before)
+  })
+
+  it('waits for the creator-sales answer before reading the listings', async () => {
+    const f = serve({ catalogue: [[catalogueRow()]] })
+    const served = f.getMockImplementation() as (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+    let answer: () => void = () => {}
+    f.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/dapps.json')) {
+        await new Promise<void>((r) => (answer = r))
+        return Response.json({ flags: {} })
+      }
+      return served(input, init)
+    })
+    renderShop()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(calls(f, '/v3/catalog/items')).toHaveLength(0)
+    expect(screen.getByRole('status', { name: 'Loading the catalogue' })).toBeInTheDocument()
+    answer()
+    expect(await findCard()).toBeInTheDocument()
+    expect(calls(f, '/v3/catalog/items')).toHaveLength(1)
   })
 
   it('plays a tried-on emote on the avatar, and STOP EMOTE stops it', async () => {

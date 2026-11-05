@@ -20,7 +20,8 @@ describe('the Shop rollout flags', () => {
     vi.stubGlobal('fetch', f)
     const { wrapper } = host()
     const { result } = renderHook(() => useShopFlag(REMOTE_FLAG.creatorSales), { wrapper })
-    expect(result.current).toBe(false)
+    // Not known until the file answers.
+    expect(result.current).toBeUndefined()
     await waitFor(() => expect(result.current).toBe(true))
     expect(String(f.mock.calls[0][0])).toMatch(/\/dapps\.json$/)
     // The web Shop's fetchers read the same answer from their module.

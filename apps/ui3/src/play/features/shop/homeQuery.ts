@@ -54,7 +54,8 @@ export const homeQueries = {
   /** An outfit's items, to dress the avatar in it. */
   outfitItems: (outfit: OutfitSummary) =>
     queryOptions({
-      queryKey: ['shop', 'home', 'outfit-items', outfit.id] as const,
+      // The items are inputs too: an outfit republished under the same id lists others.
+      queryKey: ['shop', 'home', 'outfit-items', outfit.id, outfit.items.map((i) => `${i.contractAddress.toLowerCase()}-${i.itemId}`)] as const,
       queryFn: ({ signal }) => fetchCatalogByIds(outfit.items.map((i) => `${i.contractAddress.toLowerCase()}-${i.itemId}`), { signal }),
       staleTime: 60_000
     }),

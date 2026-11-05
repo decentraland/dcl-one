@@ -8,7 +8,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
 import { defaultWorn, wornUrns } from '../../../shop/discovery/lib/outfit'
-import type { BodyShapeUrn } from '../../../shop/detail/lib/bodyShape'
+import { BASE_FEMALE, BASE_MALE, type BodyShapeUrn } from '../../../shop/detail/lib/bodyShape'
 import { REMOTE_FLAG } from '../../../shop/discovery/lib/remoteFlags'
 import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, Spinner, Tabs, type TabItem } from '../../design'
 import type { PreviewFocus, Wearable } from '../../engine/protocol'
@@ -71,6 +71,7 @@ export interface InWorldShopProps {
 /** Asks first, then opens the item on the web Shop in the browser. */
 async function openOnWeb(item: CatalogItem): Promise<void> {
   const url = webShopUrl(item)
+  if (url == null) return
   const go = await showConfirm({
     title: 'You will be redirected to the web Shop',
     body: (
@@ -124,12 +125,16 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     if (scroller.current) scroller.current.scrollTop = 0
   }, [filters, page])
 
-  const creatorSales = useShopFlag(REMOTE_FLAG.creatorSales)
-  const grid = useShopCatalogue(filters, page, { creatorSales, enabled: shop.open && section !== 'all' })
+  // The listings wait for the creator-sales answer (or its failure): read before it, they'd come without
+  // their sale prices and be read again once it lands.
+  const creatorSalesFlag = useShopFlag(REMOTE_FLAG.creatorSales)
+  const flagsKnown = creatorSalesFlag !== undefined
+  const creatorSales = creatorSalesFlag ?? false
+  const grid = useShopCatalogue(filters, page, { creatorSales, enabled: shop.open && flagsKnown && section !== 'all' })
   const onHome = shop.open && section === 'all'
   const outfits = useShopOutfits(onHome)
-  const trending = useTrending(creatorSales, onHome)
-  const newest = useNewest(creatorSales, onHome)
+  const trending = useTrending(creatorSales, onHome && flagsKnown)
+  const newest = useNewest(creatorSales, onHome && flagsKnown)
   // Escape closes the filters first, as the HUD's other popovers (OptionMenu registers its own).
   useEffect(() => (menu === 'filters' ? registerCancelLayer(() => setMenu(null)) : undefined), [menu])
   const items = grid.data?.items ?? []
@@ -233,7 +238,8 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     // Closed, taken off or replaced by another preview meanwhile.
     if (ticket !== previewTicket.current) return
     const body = equipped.find((w) => w.category === 'body_shape')?.urn ?? null
-    const shape = body as BodyShapeUrn | null
+    // The engine's URN in whatever case it came; the outfit's fit is checked against the canonical one.
+    const shape: BodyShapeUrn | null = body == null ? null : /basefemale$/i.test(body) ? BASE_FEMALE : BASE_MALE
     setSelected(null)
     setTryingOn(`outfit:${outfit.id}`)
     previewing.current = true
@@ -251,7 +257,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     takeOff()
     stopEmote()
   }
-  const pickSection = (next: Section): void => {
+  const enterSection = (next: Section): void => {
     setSection(next)
     setSelected(null)
     takeOff()
@@ -261,10 +267,14 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     setFilters({ ...defaultFilters(next === 'all' ? 'wearable' : KIND[next]), search: draft.trim().toLowerCase() })
     setPage(0)
   }
+  // The tab already open keeps its filters, page, panel and try-on when clicked again.
+  const pickSection = (next: Section): void => {
+    if (next !== section) enterSection(next)
+  }
   // As on the web Shop, both rows lead to the catalogue: New keeps its order (on sale, newest first);
   // Trending has no order of its own there, so it opens the catalogue as it stands by default.
   const viewAll = (row: 'trending' | 'newest'): void => {
-    pickSection('wearables')
+    enterSection('wearables')
     const search = draft.trim().toLowerCase()
     setFilters(row === 'newest' ? { ...defaultFilters('wearable'), status: 'on_sale', sort: 'newest', search } : { ...defaultFilters('wearable'), search })
   }
@@ -358,8 +368,8 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
                   <ShopHome
                     outfits={outfits.data}
                     // Loading until a row has items: its first read, and a retry after it failed.
-                    trending={{ items: trending.data, pending: trending.data == null && trending.fetchStatus === 'fetching', error: trending.isError }}
-                    newest={{ items: newest.data, pending: newest.data == null && newest.fetchStatus === 'fetching', error: newest.isError }}
+                    trending={{ items: trending.data, pending: trending.data == null && (!flagsKnown || trending.fetchStatus === 'fetching'), error: trending.isError }}
+                    newest={{ items: newest.data, pending: newest.data == null && (!flagsKnown || newest.fetchStatus === 'fetching'), error: newest.isError }}
                     onRetry={(row) => void (row === 'trending' ? trending : newest).refetch()}
                     onOutfit={(o) => void wearOutfit(o)}
                     onViewAll={viewAll}

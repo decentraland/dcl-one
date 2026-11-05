@@ -15,7 +15,8 @@ export function ShopCardActions({
   tryOn?: { label: string; disabled?: boolean; title?: string; onClick: () => void }
   buyInWorld: boolean
   onBuy: () => void
-  onView: () => void
+  /** Absent when the item has no page on the web Shop to view it on. */
+  onView?: () => void
 }): React.JSX.Element {
   return (
     <>
@@ -29,10 +30,12 @@ export function ShopCardActions({
           BUY
         </Button>
       ) : (
-        <Button variant="secondary" size="card" className={styles.action} onClick={onView}>
-          VIEW
-          <MaskIcon src={externalIcon} size={20} />
-        </Button>
+        onView != null && (
+          <Button variant="secondary" size="card" className={styles.action} onClick={onView}>
+            VIEW
+            <MaskIcon src={externalIcon} size={20} />
+          </Button>
+        )
       )}
     </>
   )

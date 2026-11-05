@@ -12,7 +12,7 @@ import emotesIcon from '../../assets/backpack/icon-emotes.webp'
 import { CategoryIcon } from '../backpack/categoryIcons'
 import { useProfile } from '../session/profileStore'
 import { useItemEntity } from './itemEntity'
-import { tryOnUrn } from './itemLinks'
+import { tryOnUrn, webShopUrl } from './itemLinks'
 import { buyableInWorld, PriceTag, ShopCardActions, ShopItemCard, ShopItemPanel } from './ui'
 
 const CATEGORY_NAMES: Record<string, string> = { hands_wear: 'Handwear', body_shape: 'Body shape', upper_body: 'Upper body', lower_body: 'Lower body', top_head: 'Top head', facial_hair: 'Facial hair' }
@@ -79,7 +79,7 @@ export function ShopCard({
           }
           buyInWorld={buyableInWorld(price)}
           onBuy={onSelect}
-          onView={onOpenOnWeb}
+          onView={webShopUrl(item) != null ? onOpenOnWeb : undefined}
         />
       }
     />
@@ -104,7 +104,7 @@ export function SelectedItemPanel({ item, onClose, onOpenOnWeb }: { item: Catalo
       description={entity.data?.description}
       hides={(entity.data?.hides ?? []).map((h) => ({ key: h, label: categoryName(h), icon: <CategoryIcon category={h} size={22} /> }))}
       onClose={onClose}
-      onOpenOnWeb={onOpenOnWeb}
+      onOpenOnWeb={webShopUrl(item) != null ? onOpenOnWeb : undefined}
     />
   )
 }
