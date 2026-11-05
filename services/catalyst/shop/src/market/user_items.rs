@@ -361,7 +361,7 @@ pub async fn user_names(
     if let Err(envelope) = readers::require_marketplace(&state) {
         return envelope;
     }
-    let names = match graph::owned_names(&state.index, &address).await {
+    let names = match graph::all_owned_names(&state.index, &address).await {
         Ok(n) => n,
         Err(e) => {
             tracing::warn!(error = %e, address, "names reader failed");

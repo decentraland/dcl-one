@@ -1103,6 +1103,22 @@ async fn rights_batch_matches_the_per_leg_reading() {
     assert_eq!(p4.subject.registry, LAND);
     assert!(store.rights_batch(&[]).await.unwrap().is_empty());
 
+    let deploy = store.deploy_rights_batch(&parcels).await.unwrap();
+    for (ordered, deploy) in batch.iter().zip(&deploy) {
+        let sorted = |r: &Option<ParcelRights>| {
+            r.clone().map(|mut r| {
+                r.operators.update_managers.sort();
+                r.operators.approved_for_all.sort();
+                r
+            })
+        };
+        assert_eq!(
+            sorted(ordered),
+            sorted(deploy),
+            "the deploy batch only drops the order"
+        );
+    }
+
     assert_eq!(p1.flags_for(BOB).granting_leg(), Some(LandRightLeg::Owner));
     assert_eq!(
         p1.flags_for(DANA).granting_leg(),
@@ -1170,6 +1186,8 @@ async fn update_operator_page_answers_the_subgraph_parcel_id_in_string_order() {
         (-47, 111),
         (17, 147),
         (9, 0),
+        (0, -1),
+        (-1, -1),
     ]
     .into_iter()
     .enumerate()
@@ -1194,7 +1212,7 @@ async fn update_operator_page_answers_the_subgraph_parcel_id_in_string_order() {
         .parcels_with_update_operator_page(DANA, 100, 0)
         .await
         .unwrap();
-    assert_eq!(total, 8);
+    assert_eq!(total, 10);
     assert_eq!(
         page.iter()
             .map(|p| (p.id.as_str(), p.x, p.y))
@@ -1211,6 +1229,12 @@ async fn update_operator_page_answers_the_subgraph_parcel_id_in_string_order() {
                 "0xffffffffffffffffffffffffffffffd10000000000000000000000000000006f",
                 -47,
                 111
+            ),
+            ("0xffffffffffffffffffffffffffffffff", 0, -1),
+            (
+                "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                -1,
+                -1
             ),
         ]
     );
@@ -1239,14 +1263,25 @@ async fn update_operator_page_carries_the_total() {
         .await
         .unwrap();
 
-    let all: Vec<(i32, i32)> = store
-        .parcels_with_update_operator(DANA)
+    // (16, 0) and (0, 5) sort apart in numeric and in string order.
+    for (i, (x, y)) in [(16, 0), (0, 5)].into_iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, update_operator, updated_block, updated_log) \
+             VALUES ($1, $2::numeric, $3, $4, $5, $6, 2, $7)",
+        )
+        .bind(LAND)
+        .bind(land_token(x, y))
+        .bind(x)
+        .bind(y)
+        .bind(BOB)
+        .bind(DANA)
+        .bind(i as i32)
+        .execute(&db.pool)
         .await
-        .unwrap()
-        .iter()
-        .map(|p| (p.x, p.y))
-        .collect();
-    assert_eq!(all.len(), 3);
+        .unwrap();
+    }
+
+    let all = [(16, 0), (2, 2), (3, 3), (4, 4), (0, 5)];
     let coords = |page: Vec<resolve::OperatedParcel>| -> Vec<(i32, i32)> {
         page.iter().map(|p| (p.x, p.y)).collect()
     };
@@ -1254,19 +1289,24 @@ async fn update_operator_page_carries_the_total() {
         .parcels_with_update_operator_page(DANA, 2, 0)
         .await
         .unwrap();
-    assert_eq!((total, coords(page)), (3, all[..2].to_vec()));
+    assert_eq!((total, coords(page)), (5, all[..2].to_vec()));
     let (page, total) = store
         .parcels_with_update_operator_page(DANA, 2, 2)
         .await
         .unwrap();
-    assert_eq!((total, coords(page)), (3, all[2..].to_vec()));
+    assert_eq!((total, coords(page)), (5, all[2..4].to_vec()));
+    let (page, total) = store
+        .parcels_with_update_operator_page(DANA, 2, 4)
+        .await
+        .unwrap();
+    assert_eq!((total, coords(page)), (5, all[4..].to_vec()));
     let (page, total) = store
         .parcels_with_update_operator_page(DANA, 2, 10)
         .await
         .unwrap();
     assert_eq!(
         (page.len(), total),
-        (0, 3),
+        (0, 5),
         "past the end still reports the total"
     );
     let (page, total) = store

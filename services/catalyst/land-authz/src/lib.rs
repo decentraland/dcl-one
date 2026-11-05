@@ -418,7 +418,7 @@ pub async fn can_deploy_batch(
         let source = DecisionSource::Index {
             folded_block: cursor.folded_block.unwrap_or(cursor.last_block),
         };
-        let rights = state.store().rights_batch(parcels).await?;
+        let rights = state.store().deploy_rights_batch(parcels).await?;
         return Ok(rights
             .into_iter()
             .map(|r| match r {
