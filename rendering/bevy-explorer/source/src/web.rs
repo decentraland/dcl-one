@@ -5,7 +5,8 @@ use bevy::{
     render::{render_resource::PipelineCompilationHandler, renderer::RenderDevice},
     tasks::BoxedFuture,
     web_worker::{WebWorkerConfig, WorkerSpec},
-    winit::{UpdateMode, WinitSettings},
+    window::{WindowCreated, WindowResized},
+    winit::{UpdateMode, WinitSettings, WinitWindows},
 };
 use bevy_console::ConsoleConfiguration;
 use common::{
@@ -575,7 +576,7 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
     // The systems that call the page hooks take `JsThread` so the multi-threaded
     // executor keeps them on this thread, off the compute workers (see `JsThread`).
     app.insert_non_send_resource(());
-    app.add_systems(Update, update_winit_fps)
+    app.add_systems(Update, (update_winit_fps, size_window_to_canvas))
         .add_systems(Update, update_url_params)
         .add_systems(Update, update_text_focus)
         .add_systems(Last, engine_heartbeat_system);
@@ -790,6 +791,42 @@ pub fn update_winit_fps(
             react_to_window_events: false,
         };
         winit.unfocused_mode = winit.focused_mode;
+    }
+}
+
+/// Sizes the new window to its canvas. winit reports the canvas's fitted size as soon as the
+/// window exists, which is before bevy has registered it, so bevy skips that resize ("Skipped
+/// event Resized ... for unknown winit Window Id"); a page whose layout then stays put sends no
+/// other, and the window would keep its 1280x720 default: the engine drawing a corner of the
+/// canvas, with the page behind the rest.
+pub fn size_window_to_canvas(
+    mut created: EventReader<WindowCreated>,
+    winit_windows: NonSend<WinitWindows>,
+    mut windows: Query<&mut Window>,
+    mut resized: EventWriter<WindowResized>,
+) {
+    for event in created.read() {
+        let (Some(winit_window), Ok(mut window)) = (
+            winit_windows.get_window(event.window),
+            windows.get_mut(event.window),
+        ) else {
+            continue;
+        };
+        let size = winit_window.inner_size();
+        if size.width == 0
+            || size.height == 0
+            || window.physical_size() == UVec2::new(size.width, size.height)
+        {
+            continue;
+        }
+        window
+            .resolution
+            .set_physical_resolution(size.width, size.height);
+        resized.write(WindowResized {
+            window: event.window,
+            width: window.width(),
+            height: window.height(),
+        });
     }
 }
 
