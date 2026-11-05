@@ -25,6 +25,7 @@ async-trait.workspace = true
 uuid.workspace = true
 tokio-util.workspace = true
 dashmap.workspace = true
+ipnet.workspace = true
 hex.workspace = true
 base64.workspace = true
 alloy-primitives.workspace = true

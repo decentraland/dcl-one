@@ -357,7 +357,7 @@ Bodies are `{"errors":[...]}` unless the row says otherwise. Every row is read; 
       - dcl-one counts at admission, so requests refused by the multipart parser or form limits are charged; upstream counts after a successful parse (`deployment-quota.ts:111-129`).
       - dcl-one refunds `Unavailable` deploys; upstream does not.
       - dcl-one checks the upload budget before the quota; upstream checks the quota first (`routes.ts:63-64`).
-      - dcl-one skips the quota without a gateway-stamped address; upstream falls back to the socket address (`client-source.ts:25`).
+      - The client is the socket address, as upstream's fallback (`client-source.ts:25`), unless the socket peer is in `HTTP_TRUSTED_PROXY_CIDRS`; then its single `X-Real-IP` names the client. A forwarding header from any other peer is ignored, so a client reaching the API directly can't rotate its budget or spend another address's (`deploy_client` in `create_entity.rs`). Upstream reads the forwarding headers of any peer. Only an in-process request without a socket is still keyed by its header, or skipped without one.
     - Place: `create_entity.rs:326-375`, `upload_admission.rs:178-227`.
     - Severity: P2.
 

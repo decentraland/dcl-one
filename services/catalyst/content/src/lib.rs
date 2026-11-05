@@ -165,6 +165,9 @@ pub struct Settings {
     pub post_entities_rate_limit_window: Duration,
     /// The partial-upload limits (`PENDING_DEPLOYMENT_TTL`, ...).
     pub partial_uploads: partial_deployments::Limits,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: the only socket peers whose `X-Real-IP`
+    /// names the client of the `POST /entities` limits.
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 }
 
 /// An operator bearer whose `Debug` never prints it; empty is unset.
@@ -257,6 +260,7 @@ impl Settings {
                     .max(1),
             ),
             partial_uploads: partial_deployments::Limits::from_config(config),
+            trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
         }
     }
 
@@ -291,6 +295,7 @@ impl Settings {
             post_entities_rate_limit_max: 200,
             post_entities_rate_limit_window: Duration::from_secs(60),
             partial_uploads: partial_deployments::Limits::default(),
+            trusted_proxy_cidrs: Vec::new(),
         }
     }
 }
