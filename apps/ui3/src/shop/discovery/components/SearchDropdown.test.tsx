@@ -34,6 +34,35 @@ function box(entry = "/shop/overview", scenario: "ok" | "error" = "ok") {
   return { client, input: screen.getByTestId("search-input") as HTMLInputElement };
 }
 
+describe("the search panel as decentraland.org's Shop draws it", () => {
+  it("offers popular searches as chips, and keeps each recent search's removal out of its option", () => {
+    recordSearch("pirate");
+    const { input } = box();
+    fireEvent.focus(input);
+    const panel = screen.getByTestId("search-panel");
+    const chips = panel.querySelectorAll(".shop-search__chip");
+    expect(chips.length).toBeGreaterThan(3);
+    expect([...chips].every((c) => c.getAttribute("role") === "option")).toBe(true);
+    const recent = within(panel).getAllByRole("option")[0]!;
+    expect(recent.textContent).toBe("pirate");
+    expect(within(recent).queryByRole("button")).toBeNull();
+    expect(within(panel).getByRole("button", { name: "Remove “pirate” from recent searches" })).toBeTruthy();
+    expect(within(panel).queryByText("Explore Shop")).toBeNull();
+  });
+
+  it("names each item's and collection's creator, marks the match in bold, and draws the collection as a mosaic", async () => {
+    const { input } = box();
+    fireEvent.change(input, { target: { value: "nacho" } });
+    const panel = await screen.findByTestId("search-panel");
+    await waitFor(() => expect(within(panel).getAllByText("By Nacho").length).toBeGreaterThanOrEqual(2));
+    const item = within(panel).getAllByRole("option").find((o) => o.getAttribute("data-kind") === "item")!;
+    expect(item.querySelector("mark")?.textContent).toBe("Nacho");
+    expect(item.querySelector(".shop-search__thumb img")).toBeTruthy();
+    const collection = within(panel).getAllByRole("option").find((o) => o.getAttribute("data-kind") === "collection")!;
+    await waitFor(() => expect(collection.querySelector(".shop-search__coll [data-testid='coll-thumb-cell']")).toBeTruthy());
+  });
+});
+
 describe("the search box", () => {
   it("while empty offers recent searches first, then popular ones not already recent", () => {
     recordSearch("duck");
@@ -57,7 +86,10 @@ describe("the search box", () => {
     expect(texts.some((t) => t.includes("Nacho Hat"))).toBe(true);
     expect(texts.some((t) => t.includes("Nacho Collection"))).toBe(true);
     expect(texts.at(-1)).toBe("See all 1 results");
-    expect(new URL(client.calls.at(-1)!.url).pathname).toBe("/shop-api/v3/catalog/suggest");
+    // One suggest request answers the three sections (the collection row's mosaic then reads its own items).
+    const suggests = client.calls.map((c) => new URL(c.url)).filter((u) => u.pathname === "/shop-api/v3/catalog/suggest");
+    expect(suggests).toHaveLength(1);
+    expect(suggests[0]!.searchParams.get("search")).toBe("hat");
   });
 
   it("arrows move through one flat list and Enter activates the active row", async () => {
