@@ -512,6 +512,11 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     if let Some(about) = &about_comms {
         worlds_settings.sfu = about.sfu.clone();
     }
+    // Worlds' visitors use this node's content unless CONTENT_URL points elsewhere.
+    if Config::non_empty(&config.node.content_url).is_none() {
+        worlds_settings.content_readiness =
+            worlds::about::ContentReadiness::local(sync_status.clone());
+    }
     let worlds_mirror = worlds::MirrorSettings::from_config(&config, &local_urls)?;
     // The live world presence: ONE map the gatekeeper's LiveKit webhook
     // feeds, read by its world mints, its own routes, worlds' status and the
@@ -839,7 +844,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         worlds::policy::Policy::new(pool.clone(), personal_worlds, Some(market.index.clone()))
             .with_ban_status(ban_status.clone())
             .with_land_operators(land_operators)
-            .with_land_authz(Some(land.clone())),
+            .with_land_authz(Some(land.clone()))
+            .with_max_parcels(config.worlds.max_parcels),
     );
     // A world read-through holds each mirrored scene's signer to this policy and shares the
     // content read-through's download bound.
@@ -1304,7 +1310,12 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         ))
         .nest(
             "/worlds-content-server",
-            comms::gatekeeper::admission::world_mint::router(comms_stage.gatekeeper.clone()),
+            comms::gatekeeper::admission::world_mint::router(comms_stage.gatekeeper.clone()).merge(
+                social::writes::guard(
+                    comms::gatekeeper::webhook_router(comms_stage.gatekeeper.clone()),
+                    config.writes.social_writes_enabled,
+                ),
+            ),
         )
         .nest(
             "/comms-gatekeeper",
@@ -1639,9 +1650,20 @@ async fn worlds_states(
                     deployment_processing_timeout_ms: config
                         .worlds
                         .deployment_processing_timeout_ms,
+                    max_concurrent_uploads_per_source: config
+                        .worlds
+                        .max_concurrent_uploads_per_source,
+                    max_in_flight_upload_bytes_per_source: config
+                        .worlds
+                        .max_in_flight_upload_bytes_per_source,
                 },
             )
-            .map(|s| s.with_global_scenes_urn(config.worlds_content.global_scenes_urn.as_deref()))
+            .map(|s| {
+                s.with_global_scenes_urn(config.worlds_content.global_scenes_urn.as_deref())
+                    .with_scene_eviction_ttl_ms(config.worlds.scene_eviction_ttl_ms)
+                    .with_public_url(&worlds::Settings::from_config(config).public_url)
+                    .with_max_file_count(config.worlds.max_file_count)
+            })
             .context(
                 "MAX_IN_FLIGHT_UPLOAD_* / MAX_CONCURRENT_UPLOADS / *_TIMEOUT_MS configuration",
             )?,
@@ -1855,6 +1877,7 @@ async fn comms_states(
     })
     .context("ARCHIPELAGO_CONTROL_V4_AUDIENCE and NATS_URL configuration")?
     .with_max_users_per_world(config.worlds.max_users_per_world)
+    .with_shared_secret_max_attempts(config.worlds.shared_secret_max_attempts_per_minute)
     .with_room_authority_key(non_empty(&config.room_authority.pulse_room_authority_key).as_deref())?
     .with_room_event_sink(room_events);
     let gatekeeper = Arc::new(gatekeeper);

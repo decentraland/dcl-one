@@ -96,10 +96,19 @@ impl WorldName {
         &self.display
     }
 
-    /// The NAME label the name authority is asked about: the key without
-    /// `.dcl.eth` (a name without the suffix is its own label).
+    /// The key without `.dcl.eth` (a name without the suffix is its own
+    /// label). Display and keying only: ownership asks [`Self::owner_label`].
     pub fn label(&self) -> &str {
         self.key.strip_suffix(DCL_ETH_SUFFIX).unwrap_or(&self.key)
+    }
+
+    /// The DCL NAME whose holder owns this world: `Some` only under
+    /// `.dcl.eth`, so `foo` is never owned by the holder of `foo.dcl.eth`.
+    /// ENS (`*.eth`) worlds have no owner label (fail closed until resolved).
+    pub fn owner_label(&self) -> Option<&str> {
+        self.key
+            .strip_suffix(DCL_ETH_SUFFIX)
+            .filter(|label| !label.is_empty())
     }
 
     pub fn is_dcl_eth(&self) -> bool {
@@ -123,11 +132,10 @@ impl WorldName {
     /// The world every signed-in account may publish to without owning a
     /// NAME: `<address>.dcl.eth`. NAME labels are 2-15 alphanumerics, so a
     /// 42-character label can never be minted on chain and the owner is the
-    /// address itself. Accepts the bare label or the full `.dcl.eth` name.
+    /// address itself. A bare address (no `.dcl.eth`) has no owner.
     pub fn personal_owner(&self) -> Option<Address> {
-        Address::parse(self.label())
-            .ok()
-            .filter(|_| self.label().len() == 42)
+        let label = self.owner_label()?;
+        Address::parse(label).ok().filter(|_| label.len() == 42)
     }
 }
 
@@ -517,9 +525,23 @@ mod tests {
         assert!(a.is_dcl_eth());
         assert_eq!(a, WorldName::parse("foo.dcl.eth").unwrap());
         assert_eq!(a.to_string(), "Foo.DCL.eth");
+        assert_eq!(a.owner_label(), Some("foo"));
         let b = WorldName::parse("my-world").unwrap();
         assert_eq!(b.label(), "my-world");
         assert!(!b.is_dcl_eth());
+        for unowned in [
+            "my-world",
+            "foo.eth",
+            "foo.dcl",
+            ".dcl.eth",
+            "foo.dcl.eth.eth",
+        ] {
+            assert_eq!(
+                WorldName::parse(unowned).unwrap().owner_label(),
+                None,
+                "{unowned}"
+            );
+        }
         for bad in ["", "   ", "foo bar", "a/b", "x\ny"] {
             assert!(WorldName::parse(bad).is_err(), "{bad:?}");
         }
@@ -573,7 +595,8 @@ mod tests {
         );
         assert_eq!(
             WorldName::parse(ADDR).unwrap().personal_owner(),
-            Some(owner.clone())
+            None,
+            "a bare address is not a personal world"
         );
         assert_eq!(
             WorldName::parse(&format!("{}.DCL.ETH", ADDR.to_ascii_uppercase()))
