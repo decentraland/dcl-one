@@ -31,9 +31,11 @@ ended-event jobs. No replacement generic event bus or separate service is added.
 A login is identity completion in the owned Explorer, including restored and
 imported identities. Social RPC is lazy and therefore cannot be the only login
 producer; reconnects and room admissions are not treated as new logins.
-The client submits an authenticated login to the native Social endpoint. The
-verified signer identifies the wallet, and signed metadata binds the event ID
-and occurrence time. Retried submissions keep the same event identity. The
+The client submits `POST /social-api/v1/client-login` (or the native
+`/v1/client-login` mount) with ADR-44 V6 signed metadata containing `loginId`
+(UUID) and `occurredAt` (epoch milliseconds). The verified signer identifies
+the wallet. A successful local commit returns 204; no request body chooses
+another wallet. Retried submissions keep the same event identity. The
 server persists its receipt and local referral effects before acknowledging it.
 UTC processing dates and the existing threshold-before-append transition are
 preserved; a duplicate request cannot supply an extra qualifying transition.

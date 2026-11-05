@@ -849,8 +849,9 @@ minute worker deletes at most 1,000 expired receipts per pass using
 `referral_login_receipts_expiry_idx(expires_at, invited_user, login_id)` before
 processing rewards. Delayed cleanup does not extend accepted event age or the
 per-wallet cap. Traffic and retention limits describe implementation bounds,
-not measured production rates or throughput. Bootstrap and additive step
-`0025_social_referral_login_receipts` create the same relation and index.
+not measured production rates or throughput. The bootstrap defines this new
+relation and index. On an existing database, the production migrator creates
+missing objects from that same definition; no data-alteration step is needed.
 
 Referral attribution serializes quota decisions with a transaction-scoped
 referrer/IP advisory key; count and insertion share that transaction. The IP is
