@@ -5,7 +5,7 @@ use axum::response::IntoResponse;
 use super::SharedState;
 use super::errors::AppResult;
 use super::queries;
-use super::query_params::{parse_query_string, qs_get_number};
+use super::query_params::{parse_query_string, qs_get_js_number};
 
 const MAX_FAILED_DEPLOYMENTS_PAGE_SIZE: i64 = 1000;
 
@@ -16,8 +16,8 @@ pub async fn get_failed_deployments(
     request: Request,
 ) -> AppResult<impl IntoResponse> {
     let params = parse_query_string(request.uri().query().unwrap_or(""));
-    let offset = qs_get_number(&params, "offset");
-    let limit = qs_get_number(&params, "limit");
+    let offset = qs_get_js_number(&params, "offset");
+    let limit = qs_get_js_number(&params, "limit");
 
     let (safe_offset, safe_limit) = if offset.is_none() && limit.is_none() {
         (0, None)

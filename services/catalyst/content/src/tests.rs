@@ -1018,6 +1018,29 @@ async fn active_entities_by_pointers_dedupe_multi_pointer_entities() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(answer, json!([]));
 
+    // CR-8: upstream's POST answer has no `Cache-Control`, while the
+    // `GET /entities/:type` one does (`CR-14-active-entity-key-order.json`,
+    // `CR-16-trailing-slash-entities.json`).
+    let (status, headers, _) = send(
+        node.router(),
+        Request::post("/content/entities/active")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"pointers":["7401,7401"]}"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers.get(header::CACHE_CONTROL).is_none());
+    let (status, headers, _) = send(
+        node.router(),
+        Request::get("/content/entities/scene?pointer=7401,7401")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CACHE_CONTROL], "public, max-age=10");
+
     unseed(&pool, tag).await;
 }
 
@@ -1441,7 +1464,31 @@ async fn history_reads_over_seeded_rows() {
     assert_eq!(failed["failureTimestamp"], base);
     assert_eq!(failed["retryCount"], 0);
     assert_eq!(failed["errorDescription"], "boom");
+    assert_eq!(failed["reason"], "Deployment error");
+    assert_eq!(failed["snapshotHash"], "test-history-snapshot");
     assert!(failed["nextRetryAt"].as_i64().unwrap() > 0);
+
+    // CS-10: a failure outside a snapshot has no `snapshotHash` key, and every
+    // reason reads as upstream's only one.
+    sqlx::query(
+        "INSERT INTO content.failed_deployments
+            (entity_id, entity_type, failure_time, reason, auth_chain, error_description, snapshot_hash)
+         VALUES ($1, 'scene', to_timestamp($2 / 1000.0), 'No entity', '[]'::json, 'gone', '')",
+    )
+    .bind(format!("test-{tag}-unsnapshotted"))
+    .bind(base as f64)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (_, body) = get_json(node.router(), "/content/failed-deployments").await;
+    let failed = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["entityId"] == format!("test-{tag}-unsnapshotted"))
+        .expect("the seeded failure is listed");
+    assert_eq!(failed["reason"], "Deployment error");
+    assert!(failed.get("snapshotHash").is_none(), "{failed}");
     let (status, body) = get_json(
         node.router(),
         "/content/failed-deployments?offset=0&limit=1",
