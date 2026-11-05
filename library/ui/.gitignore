@@ -1,0 +1,4 @@
+node_modules
+figma/review/review-dist
+figma/.figma-cache
+*.log
