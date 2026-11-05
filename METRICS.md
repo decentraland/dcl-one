@@ -386,7 +386,7 @@ records with the index and 23,035,141 bytes in 42,820 records without it
 wrote 23,941,555 bytes with it and 23,893,327 without: the new row version
 leaves the partial index. `catalyst schema migrate` builds the index in its
 transaction (not concurrently), holding writes on `content.deployments` for
-the build.
+the build; DATABASE.md gives the concurrent build to run beforehand.
 
 These are single warm-cache samples on synthetic data during other load. They
 do not measure production row width, cold reads, the build time or lock wait

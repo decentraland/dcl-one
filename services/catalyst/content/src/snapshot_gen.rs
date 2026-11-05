@@ -390,12 +390,15 @@ impl SnapshotGenerator {
                             warn!(error = %e, "outdated probe failed; regenerating the window");
                             true
                         });
+                // A failed count keeps the window: rebuilding every month-old
+                // window while the database struggles is the heaviest work at
+                // the worst time, and the next pass counts again.
                 let inactive = !outdated
                     && has_inactive_entities(pool, candidate, end_ms)
                         .await
                         .unwrap_or_else(|e| {
-                            warn!(error = %e, "inactive-entities count failed; regenerating the window");
-                            true
+                            warn!(error = %e, "inactive-entities count failed; keeping the window until the next pass");
+                            false
                         });
                 if !outdated && !inactive {
                     match self.reusable(candidate).await {
@@ -535,6 +538,20 @@ struct WindowRow {
     entity_timestamp: i64,
 }
 
+/// The population of a snapshot window `[$1, $2]` over `content.deployments
+/// d`: its active deployments, tombstoned local scenes left out. Shared by
+/// [`WINDOW_SQL`] and [`has_inactive_entities`]'s count, which must agree
+/// or a month-old window regenerates at every pass (or never).
+macro_rules! window_population {
+    () => {
+        "d.deleter_deployment IS NULL
+      AND d.entity_timestamp BETWEEN $1 AND $2
+      AND NOT EXISTS (
+          SELECT 1 FROM content.local_entities le
+          WHERE le.entity_id = d.entity_id AND le.tombstoned_at IS NOT NULL)"
+    };
+}
+
 /// The window's active deployments, inclusive at both ends, in file order.
 /// The ORDER BY names the table's columns (`d.`): the bare name would bind
 /// to the millisecond output column of the same name, a sort no index can
@@ -543,20 +560,20 @@ struct WindowRow {
 /// (`entity_timestamp DESC, entity_id DESC`, this order without a sort),
 /// a year window whatever its row count makes cheapest
 /// (`METRICS.md`, "Snapshot generator").
-const WINDOW_SQL: &str = r#"
+const WINDOW_SQL: &str = concat!(
+    r#"
     SELECT d.entity_id,
            d.entity_type,
            d.entity_pointers AS pointers,
            d.auth_chain,
            (date_part('epoch', d.entity_timestamp) * 1000)::bigint AS entity_timestamp
     FROM content.deployments d
-    WHERE d.deleter_deployment IS NULL
-      AND d.entity_timestamp BETWEEN $1 AND $2
-      AND NOT EXISTS (
-          SELECT 1 FROM content.local_entities le
-          WHERE le.entity_id = d.entity_id AND le.tombstoned_at IS NOT NULL)
+    WHERE "#,
+    window_population!(),
+    r#"
     ORDER BY d.entity_timestamp, d.entity_id
-"#;
+"#
+);
 
 /// Whether an active deployment in the window landed after `generation_ms`
 /// (the old `snapshot_is_outdated`, inclusive window, strict `>`), or a
@@ -621,14 +638,10 @@ async fn has_inactive_entities(
     if row.generation_timestamp >= now_ms - time_range::MS_PER_MONTH {
         return Ok(false);
     }
-    let active: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM content.deployments d
-         WHERE d.deleter_deployment IS NULL
-           AND d.entity_timestamp BETWEEN $1 AND $2
-           AND NOT EXISTS (
-               SELECT 1 FROM content.local_entities le
-               WHERE le.entity_id = d.entity_id AND le.tombstoned_at IS NOT NULL)",
-    )
+    let active: i64 = sqlx::query_scalar(concat!(
+        "SELECT count(*) FROM content.deployments d WHERE ",
+        window_population!()
+    ))
     .persistent(false)
     .bind(naive(row.time_range.init_timestamp)?)
     .bind(naive(row.time_range.end_timestamp)?)

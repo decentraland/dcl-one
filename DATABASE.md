@@ -523,6 +523,24 @@ columns, imports confirmed `reward_paid` receipts without losing notification
 completion, and quarantines older uncertain pending rewards. The backfill touches
 only paid or pending rewards.
 
+The object pass also builds `deployments_active_entity_timestamp_idx` on
+`content.deployments` (the snapshot generator's inactive-entities count) in the
+migrate transaction, not concurrently, so writes to that table wait for the
+build: 7.8 s on 4M narrow synthetic rows (METRICS.md, "Snapshot inactive-entities
+count"), unmeasured on production. Writers are stopped for a release anyway. To
+build it outside that window, run beforehand, with the same definition as
+`schemas/00_content.sql`:
+
+```sql
+CREATE INDEX CONCURRENTLY deployments_active_entity_timestamp_idx
+    ON content.deployments USING btree (entity_timestamp) INCLUDE (entity_id)
+    WHERE deleter_deployment IS NULL;
+```
+
+The object pass creates only objects the database lacks, so it then skips the
+index. A failed concurrent build leaves an invalid index of that name: drop it
+before retrying.
+
 **Migration 0024 does not support a rolling deployment from a pre-0024 binary,
 even when both binaries require schema version 3.** A pre-0024 binary treats any
 non-null `reward_tier` as permission to POST and ignores the new claim and lock.
