@@ -204,20 +204,17 @@
 .stale {
   opacity: 0.5;
 }
-/* With the item panel open the grid narrows to four 203px columns (872px), the thumb 9px past them, and the
-   panel sits at the right, 8px in. */
+/* With the item panel open the grid takes 203px columns (four at the design's 1920, 872px), the thumb 9px
+   past them, and the panel 23px after that, 8px in from the right: a wider screen gets more columns, not a
+   wider gap between the grid and the panel. */
 .withPanel .grid {
   grid-template-columns: repeat(auto-fill, 203px);
-}
-.withPanel .scrollWrap {
-  flex: none;
-  width: 882px;
 }
 .withPanel .scroller {
   padding-right: 10px;
 }
 .withPanel > aside {
-  margin: 0 8px 0 auto;
+  margin: 0 8px 0 3px;
 }
 /* Over the home the panel starts lower, level with the carousel's top band. */
 .homeBody.withPanel > aside {
