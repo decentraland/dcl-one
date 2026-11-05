@@ -138,10 +138,17 @@ class InventoryTests(unittest.TestCase):
 
     def test_catalyst_inventory_compiles_the_runtime_selection(self):
         runtime = guard.BROAD.split(" && ")[1].split()
-        with mock.patch.object(guard, "run", side_effect=[guard.BROAD, ""]) as execute:
-            with mock.patch.object(guard.sys, "argv", ["dev-regressions.py"]):
-                with self.assertRaisesRegex(ValueError, "missing required target"):
-                    guard.main()
+        manifest = '{"catalyst": {"required": ["case"]}, "unix": {}}'
+        with (
+            mock.patch.object(guard, "run", side_effect=[guard.BROAD, ""]) as execute,
+            mock.patch.object(guard.sys, "argv", ["dev-regressions.py"]),
+            mock.patch.dict(guard.os.environ, clear=True),
+            mock.patch.object(Path, "read_text", side_effect=[manifest, ""]),
+            mock.patch.object(guard, "verify_resolution"),
+            mock.patch.object(guard, "validate_runtime_script"),
+            self.assertRaisesRegex(ValueError, "missing required target: required"),
+        ):
+            guard.main()
         self.assertEqual(execute.call_args_list, [
             mock.call(["make", "--no-print-directory", "-n", "catalyst-test"]),
             mock.call([*runtime, "--no-run", "--message-format=json-render-diagnostics"], ROOT / "services/catalyst"),
