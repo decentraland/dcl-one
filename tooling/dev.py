@@ -225,11 +225,16 @@ def pulse_env(config, certificate, key):
             'PULSE_BANS_URL': f'http://127.0.0.1:{config["port"]}/comms-gatekeeper/bans'}
 
 
+# Sign-in identifiers the browser receives (public by design, the ones decentraland.org ships): taken from the shell
+# when set, so email codes, social sign-in and WalletConnect work locally. Nothing secret belongs in this list.
+PUBLIC_SIGN_IN_IDS = ('THIRDWEB_CLIENT_ID', 'MAGIC_API_KEY', 'WALLETCONNECT_PROJECT_ID')
+
+
 def runtime_env(config):
     # Do not inherit a shell's production database, upstreams or credentials.
     env = {key: os.environ[key] for key in (
         'PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'LC_ALL', 'LOCALE_ARCHIVE',
-        'SSL_CERT_FILE', 'NIX_SSL_CERT_FILE'
+        'SSL_CERT_FILE', 'NIX_SSL_CERT_FILE', *PUBLIC_SIGN_IN_IDS
     ) if key in os.environ}
     base = config['port']
     env.update({

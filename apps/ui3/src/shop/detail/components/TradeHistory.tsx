@@ -1,7 +1,10 @@
 // from: marketplace@3bf3662f:webapp/src/components/AssetPage/{TransactionHistory/{TransactionHistory,utils}.tsx,
 // OwnersTable/{OwnersTable,utils}.tsx} (an asset's latest sales, five a page, and an item's tokens by issue number;
-// both hidden while there is nothing to list), in the Shop's resale-panel styling.
+// both hidden while there is nothing to list).
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
+// Styled after shop@3a322cf9:app/src/components/ResellersModal/ResellersModal.styles.ts (TableWrap, Table, Owner,
+// rowButton + the glass Button), My Store's pager (discovery/components/Pager) and the PDP rail's title: decentraland.org's Shop has no
+// owners or sales table, so these are its resellers table on the item page.
 
 import { useState } from "react";
 import { Link } from "react-router";
@@ -12,10 +15,11 @@ import { t } from "../../discovery/intl";
 import { tokenRoute } from "../../discovery/lib/routes";
 import { useShopQuery } from "../../discovery/query";
 import { useProfiles, type CreatorProfile } from "../../discovery/hooks";
+import Pager from "../../discovery/components/Pager";
+import { addressAvatarColor, avatarInitial } from "../../discovery/lib/avatarColor";
 import { dateText, epochMs, relativeText } from "../../land/format";
 import { fetchOwners, fetchSales } from "../../market/lib/api";
 import { shopPath } from "../../routes";
-import "./resaleoffers.css";
 import styles from "./TradeHistory.module.css";
 
 export const HISTORY_PAGE = 5;
@@ -40,10 +44,21 @@ function saleType(type: string): string {
   return type;
 }
 
-function Account({ address, profiles }: { address: string; profiles: Record<string, CreatorProfile> }) {
+/** An account as the Shop's resellers table shows one: its face (or initial) in a ringed circle, then its name. */
+function Person({ address, profiles }: { address: string; profiles: Record<string, CreatorProfile> }) {
+  const profile = profiles[address.toLowerCase()];
+  const name = profile?.name || shortAddress(address);
+  const [broken, setBroken] = useState(false);
   return (
-    <Link className={styles.account} to={shopPath("account", { address })} title={address}>
-      {profiles[address.toLowerCase()]?.name || shortAddress(address)}
+    <Link className={styles.person} to={shopPath("account", { address })} title={address}>
+      {profile?.picture && !broken ? (
+        <img className={styles.ava} src={profile.picture} alt="" loading="lazy" onError={() => setBroken(true)} />
+      ) : (
+        <span className={styles.ava} style={{ backgroundColor: addressAvatarColor(address) }} aria-hidden>
+          {avatarInitial(profile?.name, address)}
+        </span>
+      )}
+      <span className={styles.name}>{name}</span>
     </Link>
   );
 }
@@ -51,29 +66,12 @@ function Account({ address, profiles }: { address: string; profiles: Record<stri
 /** A later page that failed: says so, with a retry, instead of an empty table that reads as "no more". */
 function PageError({ onRetry }: { onRetry: () => void }) {
   return (
-    <p className="shop-resales__empty" role="alert" data-testid="history-error">
+    <p className={styles.empty} role="alert" data-testid="history-error">
       {t("history.loadError")}{" "}
       <button type="button" className={styles.retry} onClick={onRetry}>
         {t("loadMore.retry")}
       </button>
     </p>
-  );
-}
-
-function Pager({ page, pages, label, onPage }: { page: number; pages: number; label: string; onPage: (page: number) => void }) {
-  if (pages <= 1) return null;
-  return (
-    <nav className="shop-resales__pager" aria-label={label}>
-      <button type="button" onClick={() => onPage(page - 1)} disabled={page === 0}>
-        {t("overview.previous")}
-      </button>
-      <span>
-        {page + 1} / {pages}
-      </span>
-      <button type="button" onClick={() => onPage(page + 1)} disabled={page >= pages - 1}>
-        {t("overview.next")}
-      </button>
-    </nav>
   );
 }
 
@@ -92,12 +90,14 @@ export function LatestSales({ contractAddress, tokenId, itemId }: { contractAddr
   if (rows.length === 0 && page === 0) return null;
   const pages = Math.max(page + 1, Math.ceil((q.data?.total ?? 0) / HISTORY_PAGE));
   return (
-    <section className="shop-resales" data-testid="latest-sales" aria-labelledby="shop-sales-title">
-      <header className="shop-resales__head">
-        <h2 id="shop-sales-title">{t("history.latestSales")}</h2>
+    <section className={styles.section} data-testid="latest-sales" aria-labelledby="shop-sales-title">
+      <header className={styles.head}>
+        <h2 id="shop-sales-title" className={styles.title}>
+          {t("history.latestSales")}
+        </h2>
       </header>
-      <div className={styles.scroll}>
-        <table className={styles.table}>
+      <div className={styles.wrap}>
+        <table className={`${styles.table} ${styles.sales}`}>
           <thead>
             <tr>
               <th scope="col">{t("history.from")}</th>
@@ -110,15 +110,15 @@ export function LatestSales({ contractAddress, tokenId, itemId }: { contractAddr
           <tbody>
             {rows.map((s) => (
               <tr key={s.id} data-testid="sale-row">
-                <td>
-                  <Account address={s.seller} profiles={profiles} />
+                <td data-label={t("history.from")}>
+                  <Person address={s.seller} profiles={profiles} />
                 </td>
-                <td>
-                  <Account address={s.buyer} profiles={profiles} />
+                <td data-label={t("history.to")}>
+                  <Person address={s.buyer} profiles={profiles} />
                 </td>
-                <td>{saleType(s.type)}</td>
-                <td>{saleWhen(s.createdAt)}</td>
-                <td>
+                <td data-label={t("history.type")}>{saleType(s.type)}</td>
+                <td data-label={t("history.when")}>{saleWhen(s.createdAt)}</td>
+                <td data-label={t("history.price")}>
                   <ManaAmount wei={s.manaWei} network={saleNetwork(s.chainId)} />
                 </td>
               </tr>
@@ -146,25 +146,41 @@ export function ItemOwners({ contractAddress, itemId }: { contractAddress: strin
   const total = q.data?.total ?? rows.length;
   const pages = Math.max(page + 1, Math.ceil(total / HISTORY_PAGE));
   return (
-    <section className="shop-resales" data-testid="item-owners" aria-labelledby="shop-owners-title">
-      <header className="shop-resales__head">
-        <h2 id="shop-owners-title">{t("history.owners")}</h2>
-        <span>{t("history.copyCount", { count: total })}</span>
+    <section className={styles.section} data-testid="item-owners" aria-labelledby="shop-owners-title">
+      <header className={styles.head}>
+        <h2 id="shop-owners-title" className={styles.title}>
+          {t("history.owners")}
+        </h2>
+        <span className={styles.count}>{t("history.copyCount", { count: total })}</span>
       </header>
-      <ul className="shop-resales__list">
-        {rows.map((o) => (
-          <li key={o.tokenId} className="shop-resales__row" data-testid="owner-row">
-            <span className={`shop-resales__who ${styles.who}`}>
-              <strong>{t("itemDetail.resaleIssued", { issued: o.issuedId })}</strong>
-              <Account address={o.ownerId} profiles={profiles} />
-            </span>
-            <span />
-            <Link className="shop-resales__view" to={tokenRoute(contractAddress, o.tokenId)} aria-label={`${t("itemDetail.viewResale")} #${o.issuedId}`}>
-              {t("itemDetail.viewResale")}
-            </Link>
-          </li>
-        ))}
-      </ul>
+      <div className={styles.wrap}>
+        <table className={`${styles.table} ${styles.owners}`}>
+          <thead>
+            <tr>
+              <th scope="col">{t("history.item")}</th>
+              <th scope="col">{t("history.owner")}</th>
+              <th scope="col">
+                <span className={styles.sr}>{t("history.actions")}</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((o) => (
+              <tr key={o.tokenId} data-testid="owner-row">
+                <td data-label={t("history.item")}>{t("itemDetail.resaleIssued", { issued: o.issuedId })}</td>
+                <td data-label={t("history.owner")}>
+                  <Person address={o.ownerId} profiles={profiles} />
+                </td>
+                <td className={styles.actions}>
+                  <Link className={styles.view} to={tokenRoute(contractAddress, o.tokenId)} aria-label={`${t("itemDetail.viewResale")} #${o.issuedId}`}>
+                    {t("itemDetail.viewResale")}
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       {q.error && rows.length === 0 ? <PageError onRetry={q.refetch} /> : null}
       <Pager page={page} pages={pages} label={t("history.owners")} onPage={setPage} />
     </section>

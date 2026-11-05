@@ -92,6 +92,22 @@ fn a_mirror_reads_the_subgraphs_lamb2_defaults_to() {
 }
 
 #[test]
+fn a_mirror_reads_third_party_holdings_from_the_nft_worker() {
+    assert_eq!(
+        expanded(Posture::Mirror, &[])["NFT_WORKER_BASE_URL"],
+        "https://nfts.decentraland.org"
+    );
+    for posture in [Posture::Island, Posture::Journey] {
+        assert_eq!(expanded(posture, &[])["NFT_WORKER_BASE_URL"], "");
+    }
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert_eq!(
+        c.market_upstreams.nft_worker_base_url.as_deref(),
+        Some("https://nfts.decentraland.org")
+    );
+}
+
+#[test]
 fn read_through_copies_a_miss_on_a_mirror_only() {
     assert_eq!(
         expanded(Posture::Mirror, &[])["READ_THROUGH_ENABLED"],
@@ -751,6 +767,7 @@ fn island_refuses_the_secrets_that_call_a_third_party() {
     for posture in ["island", "journey"] {
         for (secret, api) in [
             ("SENDGRID_API_KEY", "SendGrid"),
+            ("SLACK_BOT_TOKEN", "Slack"),
             ("TURNSTILE_SECRET_KEY", "Turnstile"),
             ("STRIPE_SECRET_KEY", "Stripe"),
             ("CREDITS_CAPTCHA_SECRET", "hCaptcha"),

@@ -56,6 +56,7 @@ pub mod create_entity;
 pub mod denylist;
 pub mod forward;
 pub mod land_publish;
+pub mod partial_deployments;
 #[cfg(test)]
 pub(crate) mod sync_test_support;
 pub mod unpublish_scene;
@@ -155,6 +156,8 @@ pub struct Settings {
     pub max_in_memory_deployment_bytes: u64,
     /// `POST_ENTITIES_DAILY_QUOTA_MAX`; 0 is off.
     pub post_entities_daily_quota_max: u32,
+    /// The partial-upload limits (`PENDING_DEPLOYMENT_TTL`, ...).
+    pub partial_uploads: partial_deployments::Limits,
 }
 
 /// An operator bearer whose `Debug` never prints it; empty is unset.
@@ -238,6 +241,7 @@ impl Settings {
             max_upload_field_bytes: config.content.max_upload_field_size,
             max_in_memory_deployment_bytes: config.content.max_in_memory_deployment_bytes,
             post_entities_daily_quota_max: config.content.post_entities_daily_quota_max,
+            partial_uploads: partial_deployments::Limits::from_config(config),
         }
     }
 
@@ -268,6 +272,7 @@ impl Settings {
             max_upload_field_bytes: 32 * 1024,
             max_in_memory_deployment_bytes: 2 * 1024 * 1024 * 1024,
             post_entities_daily_quota_max: 300,
+            partial_uploads: partial_deployments::Limits::default(),
         }
     }
 }
