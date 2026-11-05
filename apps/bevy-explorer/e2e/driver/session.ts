@@ -8,11 +8,10 @@ import path from 'node:path'
 import { chromeArgs } from './chrome.ts'
 import type { Console } from './console.ts'
 import { Explorer, type WorldState } from './explorer.ts'
-import { buildAuthIdentity } from './identity.ts'
+import { buildAuthIdentity, newPrivateKey } from './identity.ts'
 import { NativeConsole, spawnNative } from './native.ts'
 import { serveWebApp, type StaticServer } from './serve.ts'
 import { accountKey, describeTarget, readTarget, type Target } from './target.ts'
-import { until } from './wait.ts'
 import { BootError, WebConsole } from './web.ts'
 import { REPORT_DIR } from './paths.ts'
 
@@ -116,8 +115,12 @@ export async function keepBootFailure(boot: number, error: BootError): Promise<v
   console.error(`[e2e] the page's console, the last ${tail.length} of ${error.console.length} lines (all of them in ${dir}):\n${tail.join('\n')}`)
 }
 
+/** How long the world is waited for once signed in. */
+export const WORLD_TIMEOUT_MS = 300_000
+
 /** How long a boot may take, the sum of its waits: the web transport's `ready` (300 s), the
- *  sign-in command (120 s) and `enterWorld` (300 s). A scenario's own budget starts after it. */
+ *  sign-in command (120 s) and the world (`WORLD_TIMEOUT_MS`). A scenario's own budget starts
+ *  after it. */
 export const BOOT_ALLOWANCE_MS = 720_000
 
 async function boot(options: OpenOptions, target: Target): Promise<Session> {
@@ -133,9 +136,10 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
     const page = new URL(base)
     // No `realm` or `position` on the url: a destination there makes the HUD launch the engine
     // only once a sign-in is submitted on its start page (useEngineSession's url destination),
-    // and the sign-in below goes through the engine's console. Without one the engine launches
-    // at once for a visitor with no session, holding the world; `arrive` then reaches the realm
-    // and the parcel by console.
+    // and the console the sign-in below needs comes up only with the engine (engine.js installs
+    // it once the engine worker runs). Without one the engine launches at once for a visitor
+    // with no session, holding the world; `/hud_login` then signs in through the HUD and goes to
+    // the realm and the parcel from the lobby, as a link's destination would.
     page.searchParams.set('baseDomain', target.baseDomain)
     url = page.toString()
     console_ = await WebConsole.launch({
@@ -148,7 +152,8 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
   }
   const explorer = new Explorer(console_)
   try {
-    await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin)
+    await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin, { realm, position })
+    // the HUD's travel lands there; a realm that ignores the parcel (a world) is corrected by console
     if (target.transport === 'web') await arrive(explorer, realm, position)
   } catch (error) {
     // a page that opened but never arrived: what it said and how it looks, with the error
@@ -183,14 +188,28 @@ async function nativeConsole(target: Target, realm: string, position: string): P
   return spawnNative({ bin, port, token, args: ['--realm', realm, '--position', position, ...args] })
 }
 
-/** Sign in and enter the world. With the world held by the lobby, the page's `Jump In` lands. */
-export async function signIn(explorer: Explorer, target: Target, mode: SignIn, firstLogin: { name?: string; look?: number } = {}): Promise<WorldState> {
-  if (mode === 'account') {
-    await explorer.loginIdentity(buildAuthIdentity(accountKey(target)), { name: firstLogin.name ?? 'e2etester', look: firstLogin.look ?? 1 })
+/** Sign in and wait for the world. On the web the sign-in goes through the HUD (`/hud_login`):
+ *  the engine's own `/login_identity` leaves the HUD on its start page with the world held, as
+ *  the HUD derives its phase from its own flow. The HUD then goes to `destination` from the lobby,
+ *  which releases the hold; a guest is a fresh account the engine marks as one, as the HUD's own
+ *  guest is. The standalone signs in by console and is already at its `--realm` and `--position`. */
+export async function signIn(
+  explorer: Explorer,
+  target: Target,
+  mode: SignIn,
+  firstLogin: { name?: string; look?: number } = {},
+  destination: { realm: string; position: string } = { realm: target.realm, position: target.position }
+): Promise<WorldState> {
+  const pick = { name: firstLogin.name ?? 'e2etester', look: firstLogin.look ?? 1 }
+  if (target.transport === 'web' && mode !== 'none') {
+    const identity = buildAuthIdentity(mode === 'account' ? accountKey(target) : newPrivateKey())
+    await explorer.hudLogin(identity, { ...pick, guest: mode === 'guest', ...destination })
+  } else if (mode === 'account') {
+    await explorer.loginIdentity(buildAuthIdentity(accountKey(target)), pick)
   } else if (mode === 'guest') {
     await explorer.loginGuest()
   }
-  return enterWorld(explorer)
+  return explorer.waitInWorld(WORLD_TIMEOUT_MS)
 }
 
 /** `x,y` as a parcel. */
@@ -216,23 +235,4 @@ export async function arrive(explorer: Explorer, realm: string, position: string
   const here = state.position && [Math.floor(state.position[0] / 16), Math.floor(state.position[2] / 16)]
   if (here && here[0] === x && here[1] === y) return state
   return explorer.teleport(x, y)
-}
-
-/** Wait for the world, pressing the lobby's `Jump In` when it offers one. */
-export async function enterWorld(explorer: Explorer, timeoutMs = 300_000): Promise<WorldState> {
-  let jumped = false
-  return until(
-    async () => {
-      const state = await explorer.worldState()
-      if (state.inWorld || jumped) return state
-      const jump = await explorer.hud.find({ name: 'Jump In', role: 'button', index: 0 }).catch(() => undefined)
-      if (jump?.actionable) {
-        await explorer.hud.click({ name: 'Jump In', role: 'button', index: 0 })
-        jumped = true
-      }
-      return state
-    },
-    (state) => state.inWorld,
-    { timeoutMs, intervalMs: 1000, what: 'the world after sign-in' }
-  )
 }

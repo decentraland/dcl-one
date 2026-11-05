@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole, redactLine } from '../driver/console.ts'
 import { type CommandRecord, Explorer, type WorldState } from '../driver/explorer.ts'
-import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
   return JSON.stringify({
@@ -210,26 +209,33 @@ describe('Explorer', () => {
   })
 })
 
-describe('enterWorld', () => {
-  test('presses the lobby Jump In once it is actionable, then waits for the world', async () => {
-    let jumped = false
-    let reads = 0
-    const fake = new FakeConsole({
-      world_state: () => world({ inWorld: jumped && ++reads > 1 }),
-      hud_read: () => control({ name: 'Jump In', actionable: reads >= 0 }),
-      hud_click: () => {
-        jumped = true
-        return control({ name: 'Jump In', input: 'trusted' })
-      }
-    })
-    const state = await enterWorld(new Explorer(fake), 10_000)
-    assert.equal(state.inWorld, true)
-    assert.deepEqual(fake.sent('hud_click'), ['/hud_click {"name":"Jump In","role":"button","index":0}'])
+describe('hudLogin', () => {
+  test('composes the flags, parses the reply and redacts the payload in the record', async () => {
+    const fake = new FakeConsole({ hud_login: '{"address":"0xabc","guest":true,"phase":"entering"}' })
+    const explorer = new Explorer(fake)
+    const records: CommandRecord[] = []
+    explorer.onCommand((record) => records.push(record))
+    const reply = await explorer.hudLogin('eyJhIjoxfQ==', { name: 'tester', look: 3, guest: true, realm: 'https://realm.example', position: '10,-20' })
+    assert.deepEqual(reply, { address: '0xabc', guest: true, phase: 'entering' })
+    assert.deepEqual(fake.lines, ['/hud_login eyJhIjoxfQ== --name tester --look 3 --guest --realm https://realm.example --position 10,-20'])
+    assert.equal(records[0]!.line, '/hud_login <redacted> --name tester --look 3 --guest --realm https://realm.example --position 10,-20')
   })
 
-  test('needs no Jump In when the world comes on its own', async () => {
-    const fake = new FakeConsole({ world_state: () => world(), hud_read: '{"found":false}' })
-    await enterWorld(new Explorer(fake), 1000)
-    assert.deepEqual(fake.sent('hud_click'), [])
+  test('fails with the sign-in error the HUD reports, the payload redacted', async () => {
+    const payload = 'eyJhIjoxfQ=='
+    const fake = new FakeConsole({
+      hud_login: (line) => {
+        throw new ConsoleError(line, `profile fetch failed for ${payload}: 503`)
+      }
+    })
+    const explorer = new Explorer(fake)
+    const records: CommandRecord[] = []
+    explorer.onCommand((record) => records.push(record))
+    await assert.rejects(explorer.hudLogin(payload, { defaultOnError: true }), (error: unknown) => {
+      assert.ok(error instanceof ConsoleError)
+      assert.equal(error.message, '`/hud_login <redacted> --default-on-error` failed: profile fetch failed for <redacted>: 503')
+      return true
+    })
+    assert.equal(records[0]!.error, '`/hud_login <redacted> --default-on-error` failed: profile fetch failed for <redacted>: 503')
   })
 })

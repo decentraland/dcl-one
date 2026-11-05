@@ -55,6 +55,12 @@ describe('ConsoleError', () => {
     assert.equal(error.message, '`/login_identity <redacted> --name tester` failed: the identity <redacted> is not base64 JSON')
   })
 
+  test('keeps a /hud_login payload out as well', () => {
+    const error = new ConsoleError('/hud_login eyJhIjoxfQ== --guest --realm https://realm.example', 'profile fetch failed for eyJhIjoxfQ==')
+    assert.equal(error.line, '/hud_login <redacted> --guest --realm https://realm.example')
+    assert.equal(error.output, 'profile fetch failed for <redacted>')
+  })
+
   test('leaves every other line as it is', () => {
     const error = new ConsoleError('/teleport 1 2', 'failed to set location')
     assert.equal(error.line, '/teleport 1 2')

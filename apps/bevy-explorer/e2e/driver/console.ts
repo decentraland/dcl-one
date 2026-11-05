@@ -9,10 +9,10 @@ export interface Console {
   close(): Promise<void>
 }
 
-/** The credential a line carries: `/login_identity`'s payload, an AuthIdentity (an ephemeral
- *  private key and a signed delegation that stays valid for days). */
+/** The credential a line carries: the payload of `/login_identity` or `/hud_login`, an
+ *  AuthIdentity (an ephemeral private key and a signed delegation that stays valid for days). */
 export function secretOf(line: string): string | undefined {
-  return /^\s*\/?login_identity\s+(\S+)/.exec(line)?.[1]
+  return /^\s*\/?(?:login_identity|hud_login)\s+(\S+)/.exec(line)?.[1]
 }
 
 /** `text` with the line's credential replaced wherever it appears: a reply, an error or a timeout

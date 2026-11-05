@@ -118,6 +118,15 @@ The HUD and input:
   `actionable`) and `"timeout"` in ms (10000 by default). A click needs the control visible,
   enabled and not covered, and several matches need an `index`. `/hud_fill` answers with the field
   as the typing left it. The page's side is `react-web/src/lib/hudAutomation.ts`.
+- `/hud_login <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
+  [--position <x,y>]` (web): sign in through the HUD's own flow with an AuthIdentity encoded as
+  `/login_identity` takes it. The HUD takes it as the page's stored sign-in and goes in as its Jump
+  In does, so it leaves its start page, which `/login_identity` alone never makes it do; the pick
+  names and dresses a first login's profile and answers the welcome page, and the destination is
+  picked from the lobby as a link's would be, which releases the held world. Replies `{"address",
+  "guest", "phase"}` (`lobby`, or `entering` on the way to the destination) once the sign-in has
+  landed, or fails with its error. The page's side is
+  `react-web/src/features/session/useEngineSession.ts` (`provideHudLogin`).
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
   `/click_at <x> <y> [--button left|right|middle]`.
 

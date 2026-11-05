@@ -38,13 +38,17 @@ npm run gpu-probe -- --adapter nvidia  # and once more on that adapter when the 
 The suite serves the web app on loopback (`driver/serve.ts`, with the isolation headers the app's
 own dev server sets per path: the shell plain, the app frame isolated on its own), starts Chrome
 through the web driver (`rendering/bevy-explorer/source/local-harness/web-driver`), opens
-`/?baseDomain=<domain>` (a realm or a position on the url would make the HUD launch the engine only
-once a sign-in is submitted on its start page, and the sign-in here goes through the engine's
-console; the realm and the parcel are reached by console afterwards), signs in with
-`/login_identity` and the worker's account, presses the lobby's `Jump In` if it shows one, and
-waits for `/world_state`
-`inWorld`. One client serves every spec file of a run (`--test-isolation=none`); the Visual suite
-boots a second one on its own realm.
+`/?baseDomain=<domain>` (no realm or position on the url: a destination there makes the HUD launch
+the engine only once a sign-in is submitted on its start page, and the console the sign-in needs
+comes up only with the engine; without one the engine launches at once, holding the world), signs
+in with `/hud_login` and the worker's account (the HUD's own sign-in flow: it takes the identity as
+the page's stored sign-in and goes to the realm and the parcel from the lobby as a link would;
+the engine's `/login_identity` alone leaves the HUD on its start page and the world held), waits
+for `/world_state` `inWorld`, and corrects the parcel by console if the realm ignored it. The
+Visual suite signs in the same way as a guest: a fresh account the engine marks as one. On the
+standalone the sign-in is `/login_identity`, and the client is started at the realm and the parcel.
+One client serves every spec file of a run (`--test-isolation=none`); the Visual suite boots a
+second one on its own realm.
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
@@ -63,7 +67,8 @@ boots a second one on its own realm.
 | `DCL_E2E_NATIVE_PORT`, `DCL_E2E_NATIVE_TOKEN` | A running standalone's loopback console and the token it was started with | `15702`, unset |
 
 The report goes to `report/`: `junit-<groups>.xml`, and per scenario `commands.jsonl` (every
-console command, its reply or error and its time; `/login_identity` payloads redacted) and
+console command, its reply or error and its time; `/login_identity` and `/hud_login` payloads
+redacted) and
 `final.png` (the engine's frame as the scenario left it). A failed visual scenario adds
 `frame.png`, `reference.png` and `diff.png`. A client that fails to boot, at the open, at the
 console's coming or on the way into the world, leaves `boot-failures/boot-<n>.console.txt`, what
@@ -217,7 +222,7 @@ change on the left updates what is on the right in the same change, then runs th
 | --- | --- | --- |
 | A HUD control's role, accessible name, placeholder, `aria-*` state or visibility; a page's heading or tablist (`react-web/src`) | The selector in the spec (`specs/*.test.ts`, `specs/pages.ts`, `specs/backpack.ts`); the spec header's row and the scenario map above when a test's class changed; the HUD copy in `apps/ui3/src/play` and `hud_source_sha256` in `rendering/bevy-explorer/upstream.lock.json` (`python3 tooling/play-artifact.py hud-inputs --root .`) | `npm run typecheck`; the scenarios in CI |
 | A key binding | The keys in `specs/pages.ts`; the shortcuts spec's header | the same |
-| A console command's name, arguments or reply, in the engine or in `hudAutomation.ts` | `driver/explorer.ts` and `test/explorer.test.ts`; the Explorer readme's "Agents and tests" | `npm test` |
+| A console command's name, arguments or reply, in the engine or in `hudAutomation.ts`; what `/hud_login` does with the session (`useEngineSession.ts`: the stored sign-in, the welcome page, the lobby's pick) | `driver/explorer.ts`, `driver/session.ts` and their tests; the Explorer readme's "Agents and tests" and `docs/guidelines/running.md` "Test commands" | `npm test`; the HUD's tests (`react-web`: `npm test`) |
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `npm test`; the web driver's tests |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
 | A path moved under `apps/bevy-explorer/e2e`, `tooling/bevy-e2e-*.py` or the workflow | The workflow's `paths` filters, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |

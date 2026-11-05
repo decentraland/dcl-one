@@ -4,14 +4,20 @@
 //
 // On the web the engine cannot reach this DOM, so the page answers the commands itself:
 // installHudAutomation registers /hud_list, /hud_read, /hud_wait, /hud_click, /hud_fill,
-// /press_key and /click_at with engine.js, which runs them here instead of sending them to the
-// engine. Clicks and keys are real input when a test runner drives the browser and has added
-// window.__dclTrustedInput (local-harness/web-driver, over the DevTools Protocol): the page finds
-// the control, asks the runner to click or type, and waits for its answer. Without one they are
-// DOM events, which a page can tell from a user's (isTrusted is false). Natively the engine asks
-// over window.cef (cefNativeBridge.ts, answerHudRequest, answerHudWait) and then clicks and types
-// with real input through CEF. Waiting happens here on both: the page polls, the engine just
-// relays.
+// /hud_login, /press_key and /click_at with engine.js, which runs them here instead of sending
+// them to the engine. Clicks and keys are real input when a test runner drives the browser and
+// has added window.__dclTrustedInput (local-harness/web-driver, over the DevTools Protocol): the
+// page finds the control, asks the runner to click or type, and waits for its answer. Without one
+// they are DOM events, which a page can tell from a user's (isTrusted is false). Natively the
+// engine asks over window.cef (cefNativeBridge.ts, answerHudRequest, answerHudWait) and then
+// clicks and types with real input through CEF. Waiting happens here on both: the page polls, the
+// engine just relays. /hud_login signs the HUD in through its own flow: the session provides the
+// sign-in while it is mounted (features/session/useEngineSession.ts, provideHudLogin), so the
+// HUD leaves its start page as it does for a user, which the engine's /login_identity alone never
+// makes it do.
+
+import type { NewAccountPick } from '../engine/driver'
+import type { AuthIdentity } from '../features/auth/sso'
 
 export interface Selector {
   /** the accessible name; exact (case-insensitive) unless `exact` is false */
@@ -625,6 +631,129 @@ export async function clickAt(x: number, y: number, button: MouseButtonName = 'l
   return 'synthetic'
 }
 
+// --- signing in through the HUD ---
+
+/**
+ * What `/hud_login` asks of the session: sign in with this identity as the page's stored sign-in,
+ * the way Jump In reuses one, with a first login's pick, and go where a link's destination would
+ * from the lobby. The session provides the sign-in with `provideHudLogin` while it is mounted.
+ */
+export interface HudLoginRequest {
+  identity: AuthIdentity
+  /** The identity is a guest account's: the engine reports it as a guest and refuses its transactions. */
+  guest: boolean
+  /** Continue with (and deploy) a default profile if the account's can't be fetched, as `/login_identity` does. */
+  defaultOnError: boolean
+  /** The name and curated look a first login's new profile takes; the pick also answers the welcome page. */
+  pick?: NewAccountPick
+  /** Where to go once signed in, from the lobby: a realm URL or world name, and a parcel `x,y`. */
+  destination?: { realm?: string; position?: string }
+}
+
+/** The sign-in as it landed: the account, and the phase the HUD is in, `lobby` or `entering`
+ *  (on its way to the destination). */
+export interface HudLoginReply {
+  address: string
+  guest: boolean
+  phase: string
+}
+
+export type HudLogin = (request: HudLoginRequest) => Promise<HudLoginReply>
+
+let hudLogin: HudLogin | null = null
+
+/** The session's sign-in, for `/hud_login`; null once the session unmounts. */
+export function provideHudLogin(login: HudLogin | null): void {
+  hudLogin = login
+}
+
+const HEX_ADDRESS = /^0x[0-9a-fA-F]{40}$/
+
+// The identity as `/login_identity` takes it: base64 of the AuthIdentity's JSON. An error never
+// quotes what was given, since the identity is a credential.
+function decodeIdentity(encoded: string): AuthIdentity {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(atob(encoded))
+  } catch {
+    throw new Error('the identity is not base64 JSON')
+  }
+  const identity = parsed as Partial<AuthIdentity> | null
+  const signer = identity?.authChain?.[0]?.payload
+  if (
+    identity == null ||
+    typeof identity !== 'object' ||
+    typeof identity.ephemeralIdentity?.address !== 'string' ||
+    !Array.isArray(identity.authChain) ||
+    typeof signer !== 'string' ||
+    !HEX_ADDRESS.test(signer.trim())
+  ) {
+    throw new Error('the identity is not an AuthIdentity: expected ephemeralIdentity, expiration and an authChain whose first link carries the signer address')
+  }
+  return identity as AuthIdentity
+}
+
+const LOGIN_USAGE = '/hud_login <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>] [--position <x,y>]'
+
+/** The text after `/hud_login`: the encoded identity, then its flags. */
+export function parseLoginArgs(rest: string): HudLoginRequest {
+  const words = rest.trim().split(/\s+/).filter((word) => word !== '')
+  const encoded = words.shift()
+  if (encoded == null || encoded.startsWith('--')) throw new Error(`expected ${LOGIN_USAGE}`)
+  const request: HudLoginRequest = { identity: decodeIdentity(encoded), guest: false, defaultOnError: false }
+  let name: string | undefined
+  let look: number | undefined
+  let realm: string | undefined
+  let position: string | undefined
+  while (words.length > 0) {
+    const flag = words.shift() as string
+    const value = (): string => {
+      const next = words.shift()
+      if (next == null || next.startsWith('--')) throw new Error(`${flag} takes a value: ${LOGIN_USAGE}`)
+      return next
+    }
+    switch (flag) {
+      case '--guest':
+        request.guest = true
+        break
+      case '--default-on-error':
+        request.defaultOnError = true
+        break
+      case '--name':
+        name = value()
+        if (!/^[A-Za-z0-9]{1,15}$/.test(name)) throw new Error('--name takes 1 to 15 letters and digits')
+        break
+      case '--look': {
+        const text = value()
+        look = Number(text)
+        if (!Number.isInteger(look) || look < 1) throw new Error(`--look takes a curated look's number, from 1, not \`${text}\``)
+        break
+      }
+      case '--realm':
+        realm = value()
+        break
+      case '--position':
+        position = value()
+        if (!/^-?\d+,-?\d+$/.test(position)) throw new Error(`--position takes a parcel as x,y, not \`${position}\``)
+        break
+      default:
+        throw new Error(`unknown flag \`${flag}\`: ${LOGIN_USAGE}`)
+    }
+  }
+  if (name != null || look != null) {
+    if (name == null || look == null) throw new Error("a first login's pick is --name and --look together")
+    request.pick = { name, look }
+  }
+  if (realm != null || position != null) request.destination = { realm, position }
+  return request
+}
+
+/** Sign the HUD in as `/hud_login` asks; the session answers once the sign-in has landed. */
+export function loginThroughHud(request: HudLoginRequest): Promise<HudLoginReply> {
+  if (hudLogin == null) return Promise.reject(new Error('no HUD session takes a sign-in here: the HUD is not mounted'))
+  return hudLogin(request)
+}
+
 // --- the commands ---
 
 /** The text after a `/hud_*` command: a JSON selector object, or just an accessible name, bare or
@@ -724,6 +853,11 @@ export const PAGE_COMMANDS: Record<string, PageCommand> = {
       if (typeof selector.text !== 'string') throw new Error('expected JSON {"name": ..., "text": ...}')
       return JSON.stringify(await fillControl(selector, selector.text))
     }
+  },
+  '/hud_login': {
+    args: [{ name: 'identity', kind: 'string', optional: false, help: 'base64(JSON) of an AuthIdentity, as /login_identity takes it' }],
+    help: "Sign in through the HUD's own flow with an identity (base64 JSON of an AuthIdentity, as /login_identity takes it), as a stored sign-in's Jump In: --name <name> and --look <n> pick a first login's profile and answer the welcome page, --guest marks a guest account, --default-on-error continues with a default profile when the account's can't be fetched, and --realm <realm> and --position <x,y> go there from the lobby as a link would. Replies JSON {\"address\", \"guest\", \"phase\"} once the sign-in has landed (phase lobby, or entering on the way to the destination), and fails with the sign-in's error. Web only: natively the engine signs in",
+    run: async (rest) => JSON.stringify(await loginThroughHud(parseLoginArgs(rest)))
   },
   '/press_key': {
     args: [{ name: 'code', kind: 'string', optional: false, help: "the key's code name" }],

@@ -125,8 +125,16 @@ export interface Position {
   z: number
 }
 
+/** What `/hud_login` answers once the sign-in has landed: the account, and the HUD's phase,
+ *  `lobby` or `entering` on its way to the destination. */
+export interface HudLoginReply {
+  address: string
+  guest: boolean
+  phase: string
+}
+
 export interface CommandRecord {
-  /** The line as sent, with `/login_identity`'s payload redacted. */
+  /** The line as sent, with the payload of `/login_identity` or `/hud_login` redacted. */
   line: string
   startedAt: number
   ms: number
@@ -260,6 +268,26 @@ export class Explorer {
     if (options.look !== undefined) flags.push(`--look ${options.look}`)
     if (options.profiles !== undefined) flags.push(`--profiles ${options.profiles}`)
     await this.run(['/login_identity', payload, ...flags].join(' '))
+  }
+
+  /** Sign in through the HUD's own flow (`/hud_login`, the web only): the identity becomes the
+   *  page's stored sign-in and goes in as its Jump In does, so the HUD leaves its start page;
+   *  `name` and `look` pick a first login's profile and answer the welcome page; `realm` and
+   *  `position` are picked from the lobby as a link's destination would be, which releases the
+   *  held world. Resolves once the sign-in has landed, not once the world is reached. */
+  async hudLogin(
+    identity: AuthIdentity | string,
+    options: { name?: string; look?: number; guest?: boolean; defaultOnError?: boolean; realm?: string; position?: string } = {}
+  ): Promise<HudLoginReply> {
+    const payload = typeof identity === 'string' ? identity : encodeIdentity(identity)
+    const flags: string[] = []
+    if (options.name !== undefined) flags.push(`--name ${options.name}`)
+    if (options.look !== undefined) flags.push(`--look ${options.look}`)
+    if (options.guest) flags.push('--guest')
+    if (options.defaultOnError) flags.push('--default-on-error')
+    if (options.realm !== undefined) flags.push(`--realm ${options.realm}`)
+    if (options.position !== undefined) flags.push(`--position ${options.position}`)
+    return this.json<HudLoginReply>(['/hud_login', payload, ...flags].join(' '))
   }
 
   /** A session-only guest made in the engine (no network). Takes effect the next frame; it is
