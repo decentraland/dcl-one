@@ -51,6 +51,17 @@ impl Wallet {
         ))
     }
 
+    /// Freeze the signer and auth chain for an in-flight request across account changes.
+    pub fn snapshot(&self) -> Self {
+        let read = self.0.blocking_read();
+        Self(Arc::new(AsyncRwLock::new(WalletInner {
+            inner: read.inner.clone(),
+            root_address: read.root_address,
+            delegates: read.delegates.clone(),
+            guest_account: read.guest_account,
+        })))
+    }
+
     pub fn disconnect(&mut self) {
         let mut write = self.0.try_write().unwrap();
         write.inner = None;
@@ -306,4 +317,24 @@ pub async fn sign_request(
     headers.push(("x-identity-timestamp".to_owned(), format!("{unix_time}")));
     headers.push(("x-identity-metadata".to_owned(), meta));
     Ok(headers)
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn signing_snapshot_keeps_its_account_after_switch_and_logout() {
+        let mut live = Wallet::default();
+        live.finalize_as_guest();
+        let original = live.address().unwrap();
+        let snapshot = live.snapshot();
+        live.finalize_as_guest();
+        assert_ne!(live.address(), Some(original));
+        live.disconnect();
+        let chain = async_std::task::block_on(snapshot.sign_message("login".into())).unwrap();
+        assert_eq!(chain.0[0].payload, format!("{original:#x}"));
+        assert_eq!(snapshot.address(), Some(original));
+        assert_eq!(live.address(), None);
+    }
 }

@@ -110,6 +110,29 @@ pub fn write_config_file<T: Serialize>(config: &T) {
     }
 }
 
+/// A dedicated queue avoids races with unrelated configuration saves.
+pub async fn client_logins_read() -> Result<String, String> {
+    let path = project_directories()
+        .ok_or("no config directory")?
+        .config_dir()
+        .join("client-logins.json");
+    match std::fs::read_to_string(path) {
+        Ok(json) => Ok(json),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok("[]".into()),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+pub async fn client_logins_write(json: String) -> Result<(), String> {
+    let dirs = project_directories().ok_or("no config directory")?;
+    std::fs::create_dir_all(dirs.config_dir()).map_err(|e| e.to_string())?;
+    write_atomically(
+        &dirs.config_dir().join("client-logins.json"),
+        json.as_bytes(),
+    )
+    .map_err(|e| e.to_string())
+}
+
 /// `bytes` to `path` through a temporary file beside it that is renamed over it, so a reader (or
 /// the next run after a kill) sees the old file or the new one, never a part. Nothing is synced to
 /// disk, which would stall the frame that saves the settings: a killed process loses nothing it

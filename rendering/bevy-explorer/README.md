@@ -83,3 +83,32 @@ A pull request that changes the explorer's web app is measured against main in C
 the `benchmark` runner (`source/local-harness/benchmark`, `bevy-explorer-benchmark-<os>-<arch>-<sha>`)
 from CI's artifacts and writes the report into the pull request's CI status comment. How a run
 starts, how to read the report and how to set up a laptop: [Benchmark](docs/guidelines/benchmark.md).
+
+## Authenticated login events
+
+The Explorer queues a client-login event at the common successful identity completion for new
+sign-in, previous-login restoration and browser-imported identities. It does not need an opened
+social panel or social RPC connection. Unsigned guest mode does not emit authenticated events.
+Each completion has a new UUID and epoch-millisecond occurrence time. Delivery sends an empty
+`POST` to the configured `SocialApi` base plus `/v1/client-login`, with both values in the
+ADR-44 signed metadata alongside `signer: "dcl:explorer"`. The server derives the wallet from
+the auth chain.
+
+The queue is separate from settings: `client-logins.json` in the native configuration directory,
+or the browser's `dcl-client-logins` IndexedDB database. The engine awaits the queue save before
+sending; storage failures defer delivery without delaying login. Each retry signs a fresh
+request with the original event ID and occurrence time. A signing snapshot binds the event to
+its wallet even if the current account changes. Logout cancels active delivery; pending records
+resume when that wallet logs in to the same service again.
+
+One request runs at a time, with a ten-second deadline covering signing and HTTP. Network
+failures, HTTP 408, 429 and server errors back off from one second to five minutes. HTTP 204
+acknowledges the event; other statuses stop its delivery, including 404/405 from services without
+this additive endpoint. Records expire after 24 hours. At most 32 pending records are retained;
+adding one beyond the limit discards the oldest. The debug panel's **Client login events**
+section and `/client_login_state` expose pending count, persistence, attempts, result and
+session discard count. The queue is owned by one Explorer process per local storage profile;
+concurrent processes sharing that profile are not coordinated.
+
+This producer covers the owned Bevy Explorer, including its imported web identity path.
+Website-only sign-ins and external Explorer clients do not emit this event through this code.
