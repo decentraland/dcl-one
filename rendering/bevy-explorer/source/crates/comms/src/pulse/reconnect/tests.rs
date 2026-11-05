@@ -36,7 +36,7 @@ fn a_drop_after_acceptance_waits_three_seconds() {
         PulseDisconnect::AuthTimeout,
         PulseDisconnect::AuthFailed,
     ] {
-        let mut policy = ReconnectPolicy::default();
+        let mut policy = ReconnectPolicy::exact();
 
         let next = policy.next(disconnected(reason, true), 100.0);
 
@@ -46,7 +46,7 @@ fn a_drop_after_acceptance_waits_three_seconds() {
 
 #[test]
 fn failed_attempts_back_off_from_one_second_to_sixty() {
-    let mut policy = ReconnectPolicy::default();
+    let mut policy = ReconnectPolicy::exact();
 
     let waits: Vec<Next> = (0..8)
         .map(|_| policy.next(Failure::Unreached, 0.0))
@@ -58,7 +58,7 @@ fn failed_attempts_back_off_from_one_second_to_sixty() {
 
 #[test]
 fn the_backoff_follows_a_drop_after_acceptance() {
-    let mut policy = ReconnectPolicy::default();
+    let mut policy = ReconnectPolicy::exact();
     policy.on_accepted();
 
     assert_eq!(
@@ -72,7 +72,7 @@ fn the_backoff_follows_a_drop_after_acceptance() {
 #[test]
 fn acceptance_and_reset_restart_the_backoff() {
     for (name, restart) in RESTARTS {
-        let mut policy = ReconnectPolicy::default();
+        let mut policy = ReconnectPolicy::exact();
         assert_eq!(
             policy.next(Failure::Unreached, 0.0),
             Next::RetryAt(1.0),
@@ -96,7 +96,7 @@ fn acceptance_and_reset_restart_the_backoff() {
 
 #[test]
 fn refusals_raise_the_wait_to_their_floor() {
-    let mut fresh = ReconnectPolicy::default();
+    let mut fresh = ReconnectPolicy::exact();
     assert_eq!(
         fresh.next(disconnected(PulseDisconnect::ServerFull, false), 0.0),
         Next::RetryAt(60.0)
@@ -107,7 +107,7 @@ fn refusals_raise_the_wait_to_their_floor() {
         PulseDisconnect::PreAuthBudget,
         PulseDisconnect::IpConnectionLimitExceeded,
     ] {
-        let mut policy = ReconnectPolicy::default();
+        let mut policy = ReconnectPolicy::exact();
 
         let next = policy.next(disconnected(reason, false), 0.0);
 
@@ -115,7 +115,7 @@ fn refusals_raise_the_wait_to_their_floor() {
     }
 
     // Once the attempt backoff has outgrown a floor, the longer wait is the one that holds.
-    let mut policy = ReconnectPolicy::default();
+    let mut policy = ReconnectPolicy::exact();
     for wait in [1.0, 2.0, 4.0, 8.0, 16.0, 32.0] {
         assert_eq!(policy.next(Failure::Unreached, 0.0), Next::RetryAt(wait));
     }
@@ -127,7 +127,7 @@ fn refusals_raise_the_wait_to_their_floor() {
 
 #[test]
 fn the_listener_limit_doubles_to_five_minutes() {
-    let mut policy = ReconnectPolicy::default();
+    let mut policy = ReconnectPolicy::exact();
 
     let waits: Vec<Next> = (0..7)
         .map(|_| policy.next(listener_refused(), 0.0))
@@ -139,7 +139,7 @@ fn the_listener_limit_doubles_to_five_minutes() {
 
 #[test]
 fn handshake_failures_take_the_backoff() {
-    let mut policy = ReconnectPolicy::default();
+    let mut policy = ReconnectPolicy::exact();
 
     assert_eq!(
         policy.next(Failure::HandshakeFailed, 0.0),
@@ -170,7 +170,7 @@ fn terminal_reasons_park_the_session() {
 
     for reason in terminal {
         for accepted in [false, true] {
-            let mut policy = ReconnectPolicy::default();
+            let mut policy = ReconnectPolicy::exact();
 
             let next = policy.next(disconnected(reason, accepted), 0.0);
 
@@ -203,7 +203,7 @@ fn a_drop_before_acceptance_takes_the_backoff() {
         PulseDisconnect::AuthTimeout,
         PulseDisconnect::AuthFailed,
     ] {
-        let mut policy = ReconnectPolicy::default();
+        let mut policy = ReconnectPolicy::exact();
 
         let first = policy.next(disconnected(reason, false), 0.0);
         let second = policy.next(disconnected(reason, false), 0.0);
@@ -217,7 +217,7 @@ fn a_drop_before_acceptance_takes_the_backoff() {
 fn a_refusal_takes_its_floor_and_counts_as_a_failed_attempt() {
     for (reason, floor) in REFUSALS {
         for accepted in [false, true] {
-            let mut policy = ReconnectPolicy::default();
+            let mut policy = ReconnectPolicy::exact();
             if accepted {
                 policy.on_accepted();
             }
@@ -234,7 +234,7 @@ fn a_refusal_takes_its_floor_and_counts_as_a_failed_attempt() {
 
 #[test]
 fn the_listener_limit_waits_at_least_as_long_as_the_attempt_backoff() {
-    let mut policy = ReconnectPolicy::default();
+    let mut policy = ReconnectPolicy::exact();
     for _ in 0..6 {
         policy.next(Failure::Unreached, 0.0);
     }
@@ -245,7 +245,7 @@ fn the_listener_limit_waits_at_least_as_long_as_the_attempt_backoff() {
 
 #[test]
 fn other_failures_do_not_move_the_listener_limit() {
-    let mut policy = ReconnectPolicy::default();
+    let mut policy = ReconnectPolicy::exact();
 
     assert_eq!(policy.next(listener_refused(), 0.0), Next::RetryAt(10.0));
     assert_eq!(policy.next(Failure::Unreached, 0.0), Next::RetryAt(2.0));
@@ -255,7 +255,7 @@ fn other_failures_do_not_move_the_listener_limit() {
 #[test]
 fn acceptance_and_reset_restart_the_listener_limit() {
     for (name, restart) in RESTARTS {
-        let mut policy = ReconnectPolicy::default();
+        let mut policy = ReconnectPolicy::exact();
         assert_eq!(
             policy.next(listener_refused(), 0.0),
             Next::RetryAt(10.0),
@@ -273,6 +273,91 @@ fn acceptance_and_reset_restart_the_listener_limit() {
             policy.next(listener_refused(), 0.0),
             Next::RetryAt(10.0),
             "{name}"
+        );
+    }
+}
+
+/// The shortest factor the jitter can pick.
+fn shortest() -> f64 {
+    1.0 - JITTER
+}
+
+/// The longest factor the jitter can pick.
+fn longest() -> f64 {
+    1.0 + JITTER
+}
+
+/// How long after `now` the policy said to retry.
+fn wait(next: Next, now: f64) -> f64 {
+    match next {
+        Next::RetryAt(at) => at - now,
+        Next::Dead => panic!("no retry"),
+    }
+}
+
+/// Each wait strays by up to a fifth either way: the drop after acceptance, the attempt backoff
+/// and every refusal's floor alike.
+#[test]
+fn every_wait_strays_by_up_to_a_fifth() {
+    let ends: [(fn() -> f64, f64); 2] = [(shortest, 1.0 - JITTER), (longest, 1.0 + JITTER)];
+    for (jitter, factor) in ends {
+        let mut cases = vec![
+            (
+                "a drop after acceptance",
+                disconnected(PulseDisconnect::Graceful, true),
+                DEFAULT_RETRY_DELAY,
+            ),
+            (
+                "a failed attempt",
+                Failure::Unreached,
+                ATTEMPT_BACKOFF_START,
+            ),
+        ];
+        for (reason, floor) in REFUSALS {
+            cases.push(("a refusal", disconnected(reason, false), floor));
+        }
+        for (name, failure, length) in cases {
+            let mut policy = ReconnectPolicy::with_jitter(jitter);
+
+            let got = wait(policy.next(failure, 100.0), 100.0);
+
+            assert!(
+                (got - length * factor).abs() < 1e-9,
+                "{name}: waited {got} s for {length} s at {factor}"
+            );
+        }
+    }
+}
+
+/// The random factor stays within a fifth either way, and differs from one draw to the next.
+#[test]
+fn the_random_jitter_stays_within_a_fifth_and_varies() {
+    let draws: Vec<f64> = (0..1000).map(|_| random_jitter()).collect();
+
+    assert!(
+        draws
+            .iter()
+            .all(|factor| (1.0 - JITTER..=1.0 + JITTER).contains(factor)),
+        "{draws:?}"
+    );
+    let low = draws.iter().copied().fold(f64::MAX, f64::min);
+    let high = draws.iter().copied().fold(f64::MIN, f64::max);
+    assert!(low < 0.9 && high > 1.1, "{low}..{high}");
+}
+
+/// A restart forgets the failures, not how the waits are scaled.
+#[test]
+fn a_restart_keeps_the_jitter() {
+    for (name, restart) in RESTARTS {
+        let mut policy = ReconnectPolicy::with_jitter(longest);
+        policy.next(Failure::Unreached, 0.0);
+
+        restart(&mut policy);
+
+        let got = wait(policy.next(Failure::Unreached, 0.0), 0.0);
+        assert!(
+            (got - ATTEMPT_BACKOFF_START * (1.0 + JITTER)).abs() < 1e-9,
+            "{name}: waited {got} s"
         );
     }
 }

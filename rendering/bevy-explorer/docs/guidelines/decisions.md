@@ -61,6 +61,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   older join last. The avatar then follows the dead session and leaves with it, and the live one
   shows again only once it re-enters that observer's view. dcl-one's server removes the older
   session before the newer one is visible, so it never happens there.
+- **Pulse reconnect waits are jittered.** Every wait, from the 3 s after a drop to each backoff
+  step and refusal floor, is scaled by a random factor between 0.8 and 1.2; unity-explorer's waits
+  are exact. Clients that fail together, every client of a restarting server or many behind one
+  address, would otherwise come back at the same instant. The servers hold at most 512 connections
+  waiting to authenticate, 32 per address, so the excess is refused (codes 8 and 7), and the 10 s
+  floor would send every refused client back together again. The Pulse server's documentation
+  calls jitter mandatory for those codes.
 
 ## Deliberate choices that look like mistakes
 

@@ -2,16 +2,27 @@
 //!
 //! A pure policy: told what failed and when, it answers with the time to retry at, or that no
 //! retry can help. It knows nothing of Bevy, the driver or the handshake, and its times are `f64`
-//! seconds on the caller's clock, so a test drives it without an app. The waits are exact, with no
-//! jitter.
+//! seconds on the caller's clock, so a test drives it without an app.
+//!
+//! Every wait is scaled by a random factor within a fifth either way ([`JITTER`]). Clients that
+//! fail together, every client of a restarting server or many behind one address, would otherwise
+//! come back at the same instant: the servers' pre-auth caps refuse the excess, and the refusal's
+//! floor sends every refused client back at the same instant again.
 //!
 //! It recovers two ways. A connection that was up and dropped waits a fixed time chosen by the
 //! server's reason. An attempt that never got its handshake accepted backs off, doubling. A refusal
 //! (codes 6, 7, 8, 17 and 18) sets a floor under the wait either way, and a rejected handshake is
 //! retried.
 
+use rand::Rng as _;
+
 use super::transport::PulseDisconnect;
 
+/// How far a wait strays from its length, either way, at random. The Pulse server's contract
+/// (decentraland/Pulse `docs/hardening.md`, "Client recovery") calls jitter mandatory on the
+/// pre-auth refusals (codes 7 and 8); every wait takes it, since a restart sends every client back
+/// at once whatever its reason.
+pub const JITTER: f64 = 0.2;
 /// The wait after a connection that had been accepted drops with no reason, a graceful close, an
 /// auth timeout or an auth failure.
 pub const DEFAULT_RETRY_DELAY: f64 = 3.0;
@@ -59,16 +70,44 @@ pub enum Next {
 }
 
 /// Counts the failures since the connection last worked and turns each new one into a wait.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ReconnectPolicy {
     /// Failed attempts since the last acceptance or reset: the *n* of the attempt backoff.
     attempts: u32,
     /// Scene-listener refusals (code 18) since the last acceptance or reset. They wait on a
     /// sequence of their own, which no other failure advances or restarts.
     listener_refusals: u32,
+    /// The factor each wait is scaled by, within `1 ± JITTER`: drawn at random, or pinned by a
+    /// test.
+    jitter: fn() -> f64,
+}
+
+impl Default for ReconnectPolicy {
+    fn default() -> Self {
+        Self {
+            attempts: 0,
+            listener_refusals: 0,
+            jitter: random_jitter,
+        }
+    }
 }
 
 impl ReconnectPolicy {
+    /// A policy whose every wait is scaled by what `jitter` returns.
+    #[cfg(test)]
+    pub(crate) fn with_jitter(jitter: fn() -> f64) -> Self {
+        Self {
+            jitter,
+            ..Self::default()
+        }
+    }
+
+    /// A policy whose waits are exactly their lengths.
+    #[cfg(test)]
+    pub(crate) fn exact() -> Self {
+        Self::with_jitter(|| 1.0)
+    }
+
     /// What to do about `failure`, which happened at `now`. A failure counts as an attempt unless
     /// it is terminal or a drop after acceptance, so call this once per failure.
     pub fn next(&mut self, failure: Failure, now: f64) -> Next {
@@ -96,7 +135,7 @@ impl ReconnectPolicy {
                 | PulseDisconnect::AuthFailed => {
                     // A connection that was working and dropped is not a failed attempt.
                     if accepted {
-                        return Next::RetryAt(now + DEFAULT_RETRY_DELAY);
+                        return Next::RetryAt(now + self.jittered(DEFAULT_RETRY_DELAY));
                     }
                     0.0
                 }
@@ -117,7 +156,7 @@ impl ReconnectPolicy {
 
         self.attempts = self.attempts.saturating_add(1);
         let backoff = doubled(ATTEMPT_BACKOFF_START, ATTEMPT_BACKOFF_CAP, self.attempts);
-        Next::RetryAt(now + backoff.max(floor))
+        Next::RetryAt(now + self.jittered(backoff.max(floor)))
     }
 
     /// The server accepted this connection's handshake: the failures before it no longer count.
@@ -127,8 +166,19 @@ impl ReconnectPolicy {
 
     /// Forgets every failure: the next one is attempt 1, and the listener sequence starts over.
     pub fn reset(&mut self) {
-        *self = Self::default();
+        self.attempts = 0;
+        self.listener_refusals = 0;
     }
+
+    /// `wait`, scaled by the factor the policy's jitter picks.
+    fn jittered(&self, wait: f64) -> f64 {
+        wait * (self.jitter)()
+    }
+}
+
+/// A factor drawn uniformly from `1 - JITTER` to `1 + JITTER`.
+fn random_jitter() -> f64 {
+    rand::thread_rng().gen_range(1.0 - JITTER..=1.0 + JITTER)
 }
 
 /// The `step`th wait of a sequence that starts at `start`, doubles with each step and stops at

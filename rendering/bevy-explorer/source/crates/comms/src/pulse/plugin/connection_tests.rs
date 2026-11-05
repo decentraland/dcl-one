@@ -41,7 +41,9 @@ fn session_with_link(role: PulseRole) -> (PulseSession, PulseDriverChannels) {
         last_state: None,
         local_emote: None,
         pacer: DiscreteEventPacer::default(),
-        policy: ReconnectPolicy::default(),
+        // Exact waits, so a test can name the time a reconnect is due; the policy's own tests pin
+        // the jitter.
+        policy: ReconnectPolicy::exact(),
         accepted: false,
         initial_realm: None,
         state: Connection::Connecting,
