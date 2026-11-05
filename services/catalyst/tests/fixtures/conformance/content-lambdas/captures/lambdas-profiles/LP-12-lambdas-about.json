@@ -1,0 +1,19 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/lambdas/about",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "text/html"
+    },
+    "body": "<html>\n<head><title>404 Not Found</title></head>\n<body>\n<center><h1>404 Not Found</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>\n",
+    "body_is_text": true
+  },
+  "note": "nginx page in front of lamb2 (no application trace header)."
+}
