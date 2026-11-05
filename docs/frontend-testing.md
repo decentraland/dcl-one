@@ -18,7 +18,7 @@ Normative standards for tests of UI code in every current and future app under `
 
 - **Decision:** tests run on Vitest, and components are tested with Testing Library in jsdom. Do not add Jest, Enzyme or `redux-saga-test-plan`.
 - `apps/ui3/vitest.config.ts` and `rendering/bevy-explorer/source/react-web/vitest.config.ts` set jsdom for the whole app they configure. `apps/sites` runs Vitest in node by default and opts into jsdom per test file with the `@vitest-environment jsdom` comment.
-- The runner is configured in `apps/ui3/vitest.config.ts`, with the shared setup in `apps/ui3/src/test/setup.ts`. `apps/sites` merges its own config over the Vite config (`apps/sites/vitest.config.ts`). End-to-end route tests for Sites run through `apps/sites/vitest.e2e.config.ts` (`pnpm test:e2e`).
+- Current: `apps/ui3` configures its runner in `apps/ui3/vitest.config.ts` (setup `src/test/setup.ts`, and `src/play/test/setup.ts` for `/play`); `react-web` has its own config and setup. `apps/sites` merges its own config over the Vite config (`apps/sites/vitest.config.ts`). End-to-end route tests for Sites run through `apps/sites/vitest.e2e.config.ts` (`pnpm test:e2e`).
 - Mock with `vi.fn`, `vi.spyOn` and `vi.stubGlobal`, and restore in `afterEach`.
 
 ## Layout and naming
@@ -45,7 +45,7 @@ Normative standards for tests of UI code in every current and future app under `
 
 - Stub `fetch` with `vi.spyOn(globalThis, "fetch")` or `vi.stubGlobal("fetch", ...)` when a test needs one or two responses. Build a small domain harness when many tests share the same endpoints (current example: the Shop API fixtures in `apps/ui3/src/shop/api/fixtures.ts`).
 - MSW is allowed and not required. Current use is limited to `apps/ui3/src/shop/api/client.test.ts` and its fixtures. No decision yet on making it the default.
-- A test never reaches the real network.
+- A unit or UI test never reaches the real network. Testnet journeys (`tooling/shop-trade-journey`) are local only: the journey itself does not run in CI (CI runs only its settings test), it uses test-only wallets whose keys come from a file outside the repository and hold nothing on mainnet, and it refuses to run unless the stack profile is the testnet.
 
 ## Stores
 

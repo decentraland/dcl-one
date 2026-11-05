@@ -199,7 +199,7 @@ keeps its pages, routes and data wiring and imports its UI from there. Until
 `library/ui` is implemented, app-specific UI stays where it is in the app.
 
 Until `library/ui` is implemented, Sites imports some UI source through the
-`@ui/*` alias (`apps/sites/tsconfig.json`). Verify the
+`@ui/*` alias (`apps/sites/tsconfig.json`, resolving to `apps/ui3/src`). Verify the
 actual importing surfaces of a component before assuming it has more than one
 consumer, and verify a change to it in every app that imports it.
 
