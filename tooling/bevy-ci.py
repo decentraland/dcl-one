@@ -14,10 +14,12 @@ SCENES_WORKFLOW = '.github/workflows/bevy-explorer-scenes.yml'
 PRODUCERS = {'web': 'Web engine, HUD and bridge scene', 'headless': 'Headless Smoke'}
 LANES = ('clippy', 'test', 'headless', 'web')
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
+GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
+                      'apps/ui3/src/play/engine/generated/serviceTable.ts')
 INPUTS = ('rendering/bevy-explorer/source', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
           'library/uuav/uuav-client', 'library/uuav/uuav-ipc', 'library/uuav/dist', 'tooling/uuav',
-          'apps/dcl-scene-cli',
-          'tooling/bevy-ci.py', 'tooling/bevy-http2-test.mjs', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'apps/dcl-scene-cli', 'infra/gateway', *GATEWAY_HUD_INPUTS,
+          'tooling/bevy-ci.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
           'tooling/tests/test_bevy_*.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
@@ -44,6 +46,7 @@ IMAGES_INPUTS = (
     'apps/bevy-explorer/install-*.py',
     '.github/workflows/bevy-explorer-ci.yml',
     'tooling/fetch-play.py',
+    'tooling/bevy-ci.py',
     'tooling/play-artifact.py',
     'tooling/tests/test_play_*.py',
     'rust-toolchain*',
@@ -86,6 +89,24 @@ APP_INPUTS = {
 
 def git(*args):
     return subprocess.check_output(['git', *args], cwd=ROOT, text=True, env={**os.environ, 'GIT_GLOB_PATHSPECS': '1'})
+
+
+def tested_base(merge, pr_head, fallback):
+    """GitHub tests a PR as `Merge <head> into <base tip>`; pull_request.base.sha goes stale when only main moves."""
+    try:
+        header = subprocess.run(['git', 'cat-file', 'commit', merge], cwd=ROOT, capture_output=True,
+                                check=True, timeout=60).stdout.decode(errors='replace').split('\n\n', 1)[0]
+    except (OSError, subprocess.SubprocessError):
+        return fallback
+    parents = [line.split()[1] for line in header.splitlines() if line.startswith('parent ')]
+    return parents[0] if len(parents) == 2 and parents[1] == pr_head else fallback
+
+
+def event_pr_head():
+    try:
+        return json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())['pull_request']['head']['sha']
+    except (KeyError, OSError, TypeError, ValueError):
+        return None
 
 
 def api(path):
@@ -200,13 +221,14 @@ def select(base, head):
             affected = (*LANES, 'native-matrix')
         elif path == '.github/workflows/bevy-explorer-images.yml':
             affected = ('web', 'headless')
-        elif path == 'tooling/bevy-http2-test.mjs':
-            affected = ('test',)
         elif path == 'tooling/play-artifact.py':
             affected = ('web',)
         elif path.startswith(('tooling/tests/test_bevy_', 'tooling/tests/test_play_')):
             # The always-run source job executes these tests; they aren't build inputs.
             affected = ()
+        elif path.startswith('infra/gateway/') or path in GATEWAY_HUD_INPUTS:
+            # The Linux Test Suite compares Explorer and HUD routing with the nginx map.
+            affected = ('test',)
         elif path in HARNESS_WEB_READS:
             # The web lane builds and tests these files; the Test Suite runs the harness tests,
             # which read them (the sender the benchmark runner's receiver must accept, the guest's
@@ -381,11 +403,15 @@ def main():
     if args.command != 'source':
         head = git('rev-parse', args.head).strip()
         event = os.environ.get('GITHUB_EVENT_NAME', 'local')
+        base = args.base
+        if event == 'pull_request':
+            base = tested_base(head, event_pr_head(), args.base)
+            print(f'Comparing with {base} (BASE_SHA {args.base or "unset"})')
         if args.command == 'consumer-plan':
-            write_outputs(consumer_plan(event, args.base, head, os.environ.get('GH_REPO', '')))
+            write_outputs(consumer_plan(event, base, head, os.environ.get('GH_REPO', '')))
             return
-        result = (scenes_plan(event, args.base, head) if args.command == 'scenes-plan' else
-                  plan(event, args.base, head, os.environ.get('GH_REPO', '')))
+        result = (scenes_plan(event, base, head) if args.command == 'scenes-plan' else
+                  plan(event, base, head, os.environ.get('GH_REPO', '')))
         write_outputs(result)
     else:
         repo, run_id = os.environ['GH_REPO'], os.environ['SOURCE_RUN']

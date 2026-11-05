@@ -146,6 +146,9 @@ pub struct Settings {
     /// node: /about advertises it only while the tile grid it draws from is
     /// loaded ([`ContentState::attach_parcel_grid`]).
     pub map_parcel_view_needs_grid: bool,
+    /// `ABOUT_RESOURCE_CHECK`: /about stops accepting users while the host
+    /// is above 90% CPU or memory, as lamb2 does.
+    pub about_resource_check: bool,
     pub deployments_query_timeout: Duration,
     pub request_timeout: Option<Duration>,
     /// `CATALYRST_CONTENT_ADMIN_TOKEN`: the bearer of the operator routes
@@ -237,6 +240,7 @@ impl Settings {
                     config.node.node_posture.as_deref().map(str::trim),
                     Some("island" | "journey")
                 ),
+            about_resource_check: config.node.about_resource_check,
             deployments_query_timeout: Duration::from_secs(
                 config.node.deployments_query_timeout_secs,
             ),
@@ -259,6 +263,7 @@ impl Settings {
                 ipv6_prefix_length: config.content.content_get_rate_limit_ipv6_prefix_length,
                 trusted_sync_peer_ips: config.content.trusted_sync_peer_ips.clone(),
                 trusted_client_ip_header: config.content.trusted_client_ip_header.clone(),
+                trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
             },
             partial_uploads: partial_deployments::Limits::from_config(config),
         }
@@ -284,6 +289,7 @@ impl Settings {
             map_satellite_base_url: Some("http://127.0.0.1:5162/satellite".to_string()),
             map_parcel_view_url: "http://127.0.0.1:5162/v1/minimap.png".to_string(),
             map_parcel_view_needs_grid: false,
+            about_resource_check: false,
             deployments_query_timeout: Duration::from_secs(10),
             request_timeout: None,
             admin_token: AdminToken::default(),
@@ -664,7 +670,8 @@ async fn not_found() -> impl IntoResponse {
     (StatusCode::NOT_FOUND, "Not found")
 }
 
-/// The paths here are listed again in [`routing::CONTENT_ROUTE_PATHS`].
+/// The paths here are listed again in [`routing::CONTENT_ROUTE_PATHS`] (case-insensitive)
+/// or [`routing::CASE_SENSITIVE_ROUTE_PATHS`].
 fn content_routes(state: &SharedState) -> Router<SharedState> {
     Router::new()
         .route("/challenge", get(status::get_challenge))
@@ -747,6 +754,8 @@ pub fn build_router(state: SharedState) -> Router {
     let request_timeout = state.settings.request_timeout;
     let mut app = Router::new()
         .route("/about", get(about::get_about))
+        // lamb2's own path for the same handler (`routes.ts`: `/about` under `/lambdas`).
+        .route("/lambdas/about", get(about::get_about))
         .route("/lambdas/explore/realms", get(about::get_explore_realms))
         .route("/scenes", get(empty_scenes))
         .route(

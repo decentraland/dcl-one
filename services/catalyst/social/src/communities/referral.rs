@@ -34,6 +34,27 @@ fn database_error(error: sqlx::Error) -> CommError {
     )
 }
 
+// Native ingress exposes contention as retryable service unavailability.
+fn login_database_error(error: sqlx::Error) -> CommError {
+    if matches!(
+        error
+            .as_database_error()
+            .and_then(|error| error.code())
+            .as_deref(),
+        Some("55P03" | "57014")
+    ) {
+        return CommError::MessageOnly(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Login progress is temporarily busy".into(),
+        );
+    }
+    database_error(error)
+}
+
+const LOGIN_MAX_AGE_MS: i64 = 86_400_000;
+// Match the existing signed-fetch symmetric clock tolerance.
+const LOGIN_FUTURE_SKEW_MS: i64 = 300_000;
+
 /// node-pg sends a JavaScript numeric parameter as Number.toString(). In
 /// particular fractional MAX values reach bigint parsing and are refused; they
 /// must not silently round, and Infinity must not become an unbounded quota.
@@ -104,9 +125,8 @@ pub struct Referral {
     pool: sqlx::PgPool,
     http: Outbound,
     settings: Settings,
-    slack: super::referral_slack::Adapter,
+    slack: std::sync::Arc<super::referral_slack::Adapter>,
     mailer: OnceLock<crate::notifications::email::EmailSender>,
-    publisher: OnceLock<std::sync::Arc<crate::legacy_events::LegacyEvents>>,
     /// The node's explorer denylist (mirror plus local overlay), held in memory
     /// by `explore`. Unset, no wallet is denied.
     denylist: OnceLock<std::sync::Arc<crate::explore::api::denylist::Snapshot>>,
@@ -118,15 +138,16 @@ impl Referral {
             pool,
             http,
             settings,
-            slack,
+            slack: std::sync::Arc::new(slack),
             mailer: OnceLock::new(),
-            publisher: OnceLock::new(),
             denylist: OnceLock::new(),
         }
     }
     #[cfg(test)]
     pub(crate) fn set_test_slack_endpoint(&mut self, endpoint: String) {
-        self.slack.set_test_endpoint(endpoint);
+        std::sync::Arc::get_mut(&mut self.slack)
+            .unwrap()
+            .set_test_endpoint(endpoint);
     }
     pub fn set_mailer(&self, mailer: crate::notifications::email::EmailSender) {
         let _ = self.mailer.set(mailer);
@@ -134,14 +155,6 @@ impl Referral {
 
     pub fn set_denylist(&self, denylist: std::sync::Arc<crate::explore::api::denylist::Snapshot>) {
         let _ = self.denylist.set(denylist);
-    }
-
-    pub fn set_publisher(&self, publisher: std::sync::Arc<crate::legacy_events::LegacyEvents>) {
-        let _ = self.publisher.set(publisher);
-    }
-
-    pub(crate) fn publisher(&self) -> Option<&std::sync::Arc<crate::legacy_events::LegacyEvents>> {
-        self.publisher.get()
     }
 
     pub(crate) fn denied(&self, wallet: &str) -> bool {
@@ -283,15 +296,50 @@ impl Referral {
         sqlx::query("UPDATE social.referral_progress SET status='signed_up',signed_up_at=timezone('UTC',now()),updated_at=timezone('UTC',now()) WHERE invited_user=$1").bind(invited).execute(&self.pool).await.map_err(database_error)?;
         Ok(())
     }
-    /// Existing SQS logged-in and logged-in-cached handlers call this directly.
-    pub async fn finalize_referral(&self, invited: &str) -> Result<(), CommError> {
+    /// Records an authenticated login using only local SQL. Reward delivery is
+    /// resumed by the existing leased referral worker.
+    pub async fn record_authenticated_login(
+        &self,
+        invited: &str,
+        login_id: uuid::Uuid,
+        occurred_at: i64,
+    ) -> Result<(), CommError> {
+        self.record_login_at(invited, None, Some((login_id, occurred_at)))
+            .await
+    }
+
+    #[cfg(test)]
+    pub(super) async fn finalize_referral(&self, invited: &str) -> Result<(), CommError> {
         self.finalize_at(invited, None).await
     }
+
+    #[cfg(test)]
     async fn finalize_at(
         &self,
         invited: &str,
         today: Option<chrono::NaiveDate>,
     ) -> Result<(), CommError> {
+        self.record_login_at(invited, today, None).await?;
+        let pending: Option<(String, i32)> = sqlx::query_as("SELECT referrer,reward_tier FROM social.referral_progress WHERE invited_user=lower($1) AND reward_tier IS NOT NULL")
+            .bind(invited).fetch_optional(&self.pool).await.map_err(database_error)?;
+        if let Some((referrer, tier)) = pending {
+            self.reward(&referrer, invited, tier.into()).await?;
+        }
+        Ok(())
+    }
+
+    async fn record_login_at(
+        &self,
+        invited: &str,
+        today: Option<chrono::NaiveDate>,
+        event: Option<(uuid::Uuid, i64)>,
+    ) -> Result<(), CommError> {
+        if crate::shared::writes::refusal(true).is_some() {
+            return Err(CommError::MessageOnly(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Social writes are held".into(),
+            ));
+        }
         if !crate::auth::is_eth_address(invited) {
             return Err(CommError::bad_request("Invalid invitedUser address"));
         }
@@ -303,31 +351,77 @@ impl Referral {
         .bind(&invited)
         .fetch_optional(&self.pool)
         .await
-        .map_err(database_error)?;
+        .map_err(login_database_error)?;
         let Some((referrer, ip)) = progress else {
             return Ok(());
         };
-        self.assert_not_banned(&referrer, ip.as_deref()).await?;
-        let mut tx = self.pool.begin().await.map_err(database_error)?;
+        if let Err(error) = self.assert_not_banned(&referrer, ip.as_deref()).await {
+            if event.is_some() && matches!(error, CommError::BadRequest(_)) {
+                // Native callers must not learn the referrer's stored IP or ban status.
+                return Ok(());
+            }
+            return Err(error);
+        }
+        let mut tx = self.pool.begin().await.map_err(login_database_error)?;
         sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
             .execute(&mut *tx)
             .await
-            .map_err(database_error)?;
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
-            .bind(format!("social-referral-tier:{referrer}"))
-            .execute(&mut *tx)
-            .await
-            .map_err(database_error)?;
-        let (status,granted,mut days,pending): (String,bool,Vec<chrono::NaiveDate>,Option<i32>) = sqlx::query_as("SELECT status,tier_granted,login_days,reward_tier FROM social.referral_progress WHERE invited_user=$1 FOR UPDATE")
-            .bind(&invited).fetch_one(&mut *tx).await.map_err(database_error)?;
+            .map_err(login_database_error)?;
+        if event.is_some() {
+            sqlx::raw_sql("SET LOCAL lock_timeout='1s'; SET LOCAL statement_timeout='2s'")
+                .execute(&mut *tx)
+                .await
+                .map_err(login_database_error)?;
+        }
+        let (status,granted,mut days): (String,bool,Vec<chrono::NaiveDate>) = sqlx::query_as("SELECT status,tier_granted,login_days FROM social.referral_progress WHERE invited_user=$1 FOR UPDATE")
+            .bind(&invited).fetch_one(&mut *tx).await.map_err(login_database_error)?;
         if granted || status == "tier_granted" || status == "rejected_ip_match" {
-            drop(tx);
-            // A redelivered login retries the reward a failed finalize left.
-            if let Some(tier) = pending {
-                self.reward(&referrer, invited.as_str(), tier.into())
-                    .await?;
-            }
+            tx.commit().await.map_err(login_database_error)?;
             return Ok(());
+        }
+        if let Some((login_id, occurred_at)) = event {
+            let now: chrono::NaiveDateTime =
+                sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())")
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(login_database_error)?;
+            let now_ms = now.and_utc().timestamp_millis();
+            if occurred_at < now_ms - LOGIN_MAX_AGE_MS
+                || occurred_at > now_ms + LOGIN_FUTURE_SKEW_MS
+            {
+                return Err(CommError::bad_request(
+                    "Login occurrence is outside the accepted time window",
+                ));
+            }
+            let duplicate: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.referral_login_receipts WHERE invited_user=$1 AND login_id=$2)")
+                .bind(&invited).bind(login_id).fetch_one(&mut *tx).await.map_err(login_database_error)?;
+            if duplicate {
+                return Ok(());
+            }
+            // Legacy receipts retain their old expiry after migration; their
+            // backfilled server quota window must also finish before deletion.
+            sqlx::query("DELETE FROM social.referral_login_receipts WHERE invited_user=$1 AND expires_at<$2 AND received_at <= $2::timestamp - interval '24 hours'")
+                .bind(&invited).bind(now).execute(&mut *tx).await.map_err(login_database_error)?;
+            let count: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM social.referral_login_receipts WHERE invited_user=$1 AND received_at > $2::timestamp - interval '24 hours'",
+            )
+            .bind(&invited)
+            .bind(now)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(login_database_error)?;
+            if count >= 120 {
+                return Err(CommError::MessageOnly(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "Login event limit reached".into(),
+                ));
+            }
+            let expires_at =
+                chrono::DateTime::from_timestamp_millis(now_ms.max(occurred_at) + LOGIN_MAX_AGE_MS)
+                    .ok_or_else(|| CommError::bad_request("Invalid login occurrence"))?
+                    .naive_utc();
+            sqlx::query("INSERT INTO social.referral_login_receipts(invited_user,login_id,expires_at,received_at) VALUES($1,$2,$3,$4)")
+                .bind(&invited).bind(login_id).bind(expires_at).bind(now).execute(&mut *tx).await.map_err(login_database_error)?;
         }
         if (days.len() as f64) < self.settings.min_login_days {
             let today = match today {
@@ -335,7 +429,7 @@ impl Referral {
                 None => sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())::date")
                     .fetch_one(&mut *tx)
                     .await
-                    .map_err(database_error)?,
+                    .map_err(login_database_error)?,
             };
             if !days.contains(&today) {
                 days.push(today);
@@ -345,19 +439,27 @@ impl Referral {
                 .bind(&days)
                 .execute(&mut *tx)
                 .await
-                .map_err(database_error)?;
-            tx.commit().await.map_err(database_error)?;
+                .map_err(login_database_error)?;
+            tx.commit().await.map_err(login_database_error)?;
             return Ok(());
         }
+        // Every finalizer locks its own invitee before the referrer tier key.
+        // Attribution's IP-quota key and reward's per-invitee key never acquire
+        // this tier key, so they cannot reverse this lock order.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!("social-referral-tier:{referrer}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(login_database_error)?;
         sqlx::query("UPDATE social.referral_progress SET status='tier_granted',tier_granted=true,tier_granted_at=timezone('UTC',now()),updated_at=timezone('UTC',now()),login_days='{}' WHERE invited_user=$1 AND NOT tier_granted")
-            .bind(&invited).execute(&mut *tx).await.map_err(database_error)?;
+            .bind(&invited).execute(&mut *tx).await.map_err(login_database_error)?;
         let total: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM social.referral_progress WHERE referrer=$1 AND tier_granted",
         )
         .bind(&referrer)
         .fetch_one(&mut *tx)
         .await
-        .map_err(database_error)?;
+        .map_err(login_database_error)?;
         let tier = REWARD_TIERS.contains(&total);
         if tier {
             sqlx::query("UPDATE social.referral_progress SET reward_tier=$2 WHERE invited_user=$1")
@@ -365,16 +467,15 @@ impl Referral {
                 .bind(total as i32)
                 .execute(&mut *tx)
                 .await
-                .map_err(database_error)?;
+                .map_err(login_database_error)?;
         }
-        tx.commit().await.map_err(database_error)?;
-        self.notify(&referrer, invited.as_str(), total, None)
-            .await?;
-        if tier {
-            self.reward(&referrer, invited.as_str(), total).await?;
-        }
+        let notification = self.notification(&referrer, invited.as_str(), total, None)?;
+        crate::notifications::insert_notifications(&mut *tx, &[notification])
+            .await
+            .map_err(login_database_error)?;
+        tx.commit().await.map_err(login_database_error)?;
         if total == TIERS_IRL_SWAG {
-            self.slack.send(self.slack.milestone(&referrer)).await;
+            self.slack.send_milestone(&referrer);
         }
         Ok(())
     }
@@ -383,6 +484,10 @@ impl Referral {
     pub async fn drain_pending_rewards(&self) -> Result<(), CommError> {
         if crate::shared::writes::refusal(true).is_some() {
             return Ok(());
+        }
+        if let Err(error) = sqlx::query("DELETE FROM social.referral_login_receipts WHERE (invited_user,login_id) IN (SELECT invited_user,login_id FROM social.referral_login_receipts WHERE expires_at < timezone('UTC',clock_timestamp()) AND received_at <= timezone('UTC',clock_timestamp()) - interval '24 hours' ORDER BY expires_at,invited_user,login_id LIMIT 1000 FOR UPDATE SKIP LOCKED)")
+            .execute(&self.pool).await {
+            tracing::warn!(%error, "login receipt cleanup failed; continuing reward delivery");
         }
         let rows: Vec<(String, String, i32)> = sqlx::query_as(
             "SELECT referrer,invited_user,reward_tier FROM social.referral_progress \
@@ -511,75 +616,25 @@ impl Referral {
             .map_err(database_error)?;
             reward
         };
-        let already_notified = paid.as_ref().is_some_and(|paid| paid["notified"] == true);
-        let publish = self.publish_notification(referrer, invited, total, Some(&reward));
-        let notice = async move {
-            if already_notified {
-                Ok(None)
-            } else {
-                publish.await.map(Some)
-            }
-        };
-        let image = reward["image"].as_str().map(str::to_owned);
-        let referrer = referrer.to_owned();
-        let invited = invited.to_owned();
-        let (finished, mut result) = tokio::sync::mpsc::unbounded_channel();
-        // Preserve independent source effects and early error return, but retain
-        // the per-grant guard until both finish so a retry cannot overlap them.
-        // All SQL uses that same connection; concurrent rewards cannot exhaust
-        // the pool while waiting for a second connection to persist their work.
-        tokio::spawn(async move {
-            let image = async {
-                let image = image.ok_or(CommError::Internal)?;
-                sqlx::query("INSERT INTO social.referral_reward_images(referrer,reward_image_url,tier) SELECT $1,$2,$3 WHERE NOT EXISTS (SELECT 1 FROM social.referral_reward_images WHERE referrer=$1 AND tier=$3)")
-                    .bind(referrer).bind(image).bind(total as i32).execute(&mut *guard).await.map_err(database_error)?;
-                Ok::<_, CommError>(())
-            };
-            let (notification, image_ok) = tokio::join!(
-                async {
-                    match notice.await {
-                        Ok(notification) => Some(notification),
-                        Err(error) => {
-                            let _ = finished.send(Err(error));
-                            None
-                        }
-                    }
-                },
-                async {
-                    match image.await {
-                        Ok(()) => true,
-                        Err(error) => {
-                            let _ = finished.send(Err(error));
-                            false
-                        }
-                    }
-                },
-            );
-            let Some(notification) = notification else {
-                return;
-            };
-            if let Some(notification) = notification {
-                // Persist local delivery and the remote receipt together. A
-                // later image retry must not send an already confirmed notice.
-                let saved = async {
-                    let mut tx = sqlx::Connection::begin(&mut *guard).await?;
-                    crate::notifications::insert_notifications(&mut *tx, &[notification]).await?;
-                    sqlx::query("UPDATE social.referral_progress SET reward_paid=jsonb_set(COALESCE(reward_paid,jsonb_build_object('tier',reward_tier,'reward',reward_response)), '{notified}', 'true') WHERE invited_user=$1")
-                        .bind(&invited).execute(&mut *tx).await?;
-                    tx.commit().await
-                }.await;
-                if let Err(error) = saved {
-                    let _ = finished.send(Err(database_error(error)));
-                    return;
-                }
-            }
-            if image_ok {
-                let cleared = sqlx::query("UPDATE social.referral_progress SET reward_tier=NULL,reward_paid=NULL,reward_retry_at=NULL WHERE invited_user=$1 AND reward_tier=$2")
-                    .bind(invited).bind(total as i32).execute(&mut *guard).await.map(|_| ()).map_err(database_error);
-                let _ = finished.send(cleared);
-            }
-        });
-        result.recv().await.ok_or(CommError::Internal)?
+        // The provider receipt above is durable before these local effects.
+        // Their common transaction either completes the reward or leaves its
+        // confirmed receipt available to the worker without another POST.
+        let image = reward["image"].as_str().ok_or(CommError::Internal)?;
+        let mut tx = sqlx::Connection::begin(&mut *guard)
+            .await
+            .map_err(database_error)?;
+        sqlx::query("INSERT INTO social.referral_reward_images(referrer,reward_image_url,tier) SELECT $1,$2,$3 WHERE NOT EXISTS (SELECT 1 FROM social.referral_reward_images WHERE referrer=$1 AND tier=$3)")
+            .bind(referrer).bind(image).bind(total as i32).execute(&mut *tx).await.map_err(database_error)?;
+        if !paid.as_ref().is_some_and(|paid| paid["notified"] == true) {
+            let notification = self.notification(referrer, invited, total, Some(&reward))?;
+            crate::notifications::insert_notifications(&mut *tx, &[notification])
+                .await
+                .map_err(database_error)?;
+        }
+        sqlx::query("UPDATE social.referral_progress SET reward_tier=NULL,reward_paid=NULL,reward_retry_at=NULL WHERE invited_user=$1 AND reward_tier=$2")
+            .bind(invited).bind(total as i32).execute(&mut *tx).await.map_err(database_error)?;
+        tx.commit().await.map_err(database_error)?;
+        Ok(())
     }
     #[cfg(test)]
     async fn accepted(&self, referrer: &str) -> Result<i64, CommError> {
@@ -591,30 +646,13 @@ impl Referral {
         .await
         .map_err(database_error)?)
     }
-    fn notify(
+    fn notification(
         &self,
         referrer: &str,
         invited: &str,
         total: i64,
         reward: Option<&Value>,
-    ) -> impl std::future::Future<Output = Result<(), CommError>> + Send + 'static + use<> {
-        let notification = self.publish_notification(referrer, invited, total, reward);
-        let pool = self.pool.clone();
-        async move {
-            crate::notifications::insert_notifications(&pool, &[notification.await?]).await?;
-            Ok(())
-        }
-    }
-    fn publish_notification(
-        &self,
-        referrer: &str,
-        invited: &str,
-        total: i64,
-        reward: Option<&Value>,
-    ) -> impl std::future::Future<Output = Result<crate::notifications::NewNotification, CommError>>
-    + Send
-    + 'static
-    + use<> {
+    ) -> Result<crate::notifications::NewNotification, CommError> {
         let tier = REWARD_TIERS
             .iter()
             .position(|tier| total <= *tier)
@@ -636,24 +674,10 @@ impl Referral {
             ),
         };
         let metadata = json!({"address":referrer,"title":title,"description":description,"tier":tier,"url":format!("{}/accounts/{referrer}/referral",self.settings.profile_url),"image":image,"invitedUserAddress":invited,"invitedUsers":total,"rarity":rarity});
-        let publisher = self.publisher.get().cloned();
-        let referrer = referrer.to_owned();
-        let invited = invited.to_owned();
-        async move {
-            if let Some(publisher) = publisher {
-                let subtype = kind.replace('_', "-");
-                let now = chrono::Utc::now().timestamp_millis();
-                let event = json!({"type":"referral","subType":subtype,"key":format!("{subtype}-{referrer}-{invited}-{now}"),"timestamp":now,"metadata":metadata});
-                publisher
-                    .publish(&event)
-                    .await
-                    .map_err(|_| CommError::Internal)?;
-            }
-            let address = Address::parse(&referrer).map_err(|_| CommError::Internal)?;
-            Ok(crate::notifications::NewNotification::now(
-                address, kind, metadata,
-            ))
-        }
+        let address = Address::parse(referrer).map_err(|_| CommError::Internal)?;
+        Ok(crate::notifications::NewNotification::now(
+            address, kind, metadata,
+        ))
     }
 }
 
@@ -666,16 +690,8 @@ fn client_ip(
     trusted_proxies: &[ipnet::IpNet],
 ) -> Option<String> {
     let peer = peer?.ip().to_canonical();
-    let ip = if trusted_proxies
-        .iter()
-        .any(|network| network.contains(&peer))
-    {
-        let mut values = headers.get_all("x-real-ip").iter();
-        let candidate = values.next()?.to_str().ok()?;
-        if values.next().is_some() {
-            return None;
-        }
-        candidate.parse::<std::net::IpAddr>().ok()?.to_canonical()
+    let ip = if crate::shared::client_ip::is_trusted_proxy(peer, trusted_proxies) {
+        crate::shared::client_ip::single_real_ip(headers)?
     } else {
         peer
     };
@@ -842,6 +858,49 @@ pub async fn create_referral(
     let referrer = Address::parse(raw_referrer)
         .map_err(|_| CommError::bad_request("Invalid referrer address"))?;
     state.referral.create(&referrer, &invited, &ip).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Explorer reports both fresh and restored authenticated login occurrences.
+/// Identity comes only from the verified chain; event fields are signed metadata.
+pub async fn client_login(
+    State(state): State<SharedState>,
+    headers: HeaderMap,
+    original: OriginalUri,
+) -> Result<StatusCode, CommError> {
+    let invited = state
+        .require_signer(
+            &headers,
+            "post",
+            &signed_path(&original, "/v1/client-login"),
+        )
+        .await?;
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct LoginMetadata {
+        login_id: uuid::Uuid,
+        occurred_at: i64,
+    }
+    let metadata: LoginMetadata = headers
+        .get(crate::shared::signed_fetch::AUTH_METADATA_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| serde_json::from_str(value).ok())
+        .ok_or_else(|| {
+            CommError::bad_request("Signed loginId and occurredAt metadata are required")
+        })?;
+    // Check even wallets with no referral, before the domain's no-op path.
+    let now = chrono::Utc::now().timestamp_millis();
+    if metadata.occurred_at < now - LOGIN_MAX_AGE_MS
+        || metadata.occurred_at > now + LOGIN_FUTURE_SKEW_MS
+    {
+        return Err(CommError::bad_request(
+            "Login occurrence is outside the accepted time window",
+        ));
+    }
+    state
+        .referral
+        .record_authenticated_login(invited.as_str(), metadata.login_id, metadata.occurred_at)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

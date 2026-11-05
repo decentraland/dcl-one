@@ -332,7 +332,11 @@ pub(super) async fn fetch_remote(dest: &Dest) -> (Remote, Option<String>) {
     if let Some(w) = &dest.world {
         let base = &dest.read_bases[0];
         let url = format!("{base}/world/{}/scenes", deploy::encode_segment(w));
-        return match fetch_json::<serde_json::Value>(status_client().get(&url)).await {
+        let pages = deploy::all_world_scene_pages(|offset| {
+            let page = deploy::world_scenes_page_url(&url, offset);
+            async move { fetch_json::<serde_json::Value>(status_client().get(&page)).await }
+        });
+        return match pages.await {
             Ok(body) => (world_remote(&body, &dest.pointers), Some(base.clone())),
             Err(ProbeFail::Http(404)) => (Remote::Empty, Some(base.clone())),
             Err(e) => (Remote::Unreachable(e.sentence(base)), None),

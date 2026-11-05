@@ -589,6 +589,10 @@ no snapshot in either tree:
 | `synchronizationStatus.synchronizationState` | `"Bootstrapping"` or `"Syncing"` (`sync-orchestrator/types.ts:7-10`) | `"Bootstrapping"`, `"Syncing"` (which also covers partially synced) or **`"Failed"`** (`content/src/lib.rs:373-379`); the status stays 200 for every state |
 | extra keys | none | `syncFrontier`, `lastHeartbeat` and `up` when the sync worker reports them (`wire_types.rs:106-120`) |
 
+Rollout: `/content/status` answers 200 whatever the sync state, as upstream does at this revision, so a
+monitor that alerted on a non-200 status loses the failed-sync signal; read `synchronizationState`
+(`"Failed"`) instead. Nothing in the repository probes it; the gateway checks `/_gateway/healthz`.
+
 ### Data dependency
 
 - The process configuration and the sync worker state.
@@ -604,7 +608,7 @@ no snapshot in either tree:
 
 | | upstream | dcl-one |
 |---|---|---|
-| Value | One `uuidv4()` per process, the same on every call (`logic/peer-cluster/component.ts:51,127-129`) | One UUID v4 per process in `ContentState`; the console's `challenge/refresh` replaces it |
+| Value | One `uuidv4()` per process, the same on every call (`logic/peer-cluster/component.ts:51,127-129`) | One UUID v4 per process in `ContentState`; the console's `challenge/refresh` replaces it in that process only. With several `serve` replicas behind one URL, `GET /challenge` can answer a different UUID per replica, as upstream would with several processes |
 | Format | A bare UUID, e.g. `"8c9e...-..."` | the same |
 | Purpose | "a peer that fetches `/challenge` from every DAO server and finds a matching value has located its own process" (`logic/peer-cluster/types.ts:8-13`) | — |
 

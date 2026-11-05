@@ -112,7 +112,11 @@ pub fn store_from_entity(owner: &str, entity: &Value, content_public_url: &str) 
     };
     store.exists = true;
     store.entity_id = entity.get("id").and_then(Value::as_str).map(str::to_string);
-    store.updated_at = entity.get("timestamp").and_then(Value::as_i64);
+    // A synced entity's timestamp can be fractional; it keeps whole milliseconds.
+    store.updated_at = entity
+        .get("timestamp")
+        .and_then(Value::as_f64)
+        .map(|t| t as i64);
     let cover_file = metadata
         .get("images")
         .and_then(Value::as_array)
@@ -407,6 +411,14 @@ mod tests {
                 "version": 1
             }
         })
+    }
+
+    #[test]
+    fn a_fractional_timestamp_keeps_its_whole_milliseconds() {
+        let mut e = entity();
+        e["timestamp"] = json!(1_700_000_000_000.5);
+        let s = store_from_entity(OWNER, &e, "https://peer.example/content/");
+        assert_eq!(s.updated_at, Some(1_700_000_000_000));
     }
 
     #[test]
