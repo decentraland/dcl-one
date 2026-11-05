@@ -18,7 +18,9 @@ class CiLocalTest(unittest.TestCase):
         self.addCleanup(tree.stop)
 
     def test_reads_pull_request_path_filters(self):
-        self.assertIn('services/catalyst/**', ci.workflow_paths('development.yml'))
+        # Development runs on every pull request (its CI gate always reports); what it tests is its push.paths.
+        self.assertIsNone(ci.workflow_paths('development.yml'))
+        self.assertIn('services/catalyst/**', ci.workflow_paths('development.yml', event='push'))
         self.assertIn('tooling/image-*', ci.workflow_paths('apis-sites-images.yml'))
         self.assertIsNone(ci.workflow_paths('structure.yml'))
 
@@ -29,8 +31,8 @@ class CiLocalTest(unittest.TestCase):
         self.assertFalse(ci.glob_regex('flake.*').match('apps/flake.nix'))
 
     def test_selects_triggered_workflows(self):
-        self.assertTrue(ci.triggered('development.yml', {'schemas/001.sql'}))
-        self.assertFalse(ci.triggered('development.yml', {'docs/README.md'}))
+        self.assertTrue(ci.triggered('development.yml', {'schemas/001.sql'}, event='push'))
+        self.assertFalse(ci.triggered('development.yml', {'docs/README.md'}, event='push'))
         self.assertTrue(ci.triggered('apis-sites-images.yml', {'tooling/image-smoke.py'}))
         self.assertTrue(ci.triggered('structure.yml', {'docs/README.md'}))
         names = [s.name for s in ci.pre_push_steps({'docs/README.md'})]
@@ -40,7 +42,7 @@ class CiLocalTest(unittest.TestCase):
         changed = {'rendering/bevy-explorer/source/src/lib.rs'}
         self.assertTrue(ci.triggered('bevy-explorer-ci.yml', changed))
         self.assertTrue(ci.triggered('apis-sites-images.yml', changed))
-        self.assertFalse(ci.triggered('development.yml', changed))
+        self.assertFalse(ci.triggered('development.yml', changed, event='push'))
 
     def test_root_cargo_and_toolchain_edits_select_sites_and_its_web_producer(self):
         for path in ('.cargo/config.toml', 'rust-toolchain', 'rust-toolchain.toml'):
@@ -75,12 +77,14 @@ class CiLocalTest(unittest.TestCase):
                      'apps/bevy-explorer/Dockerfile.web'):
             self.assertFalse(ci.triggered('bevy-explorer-headless.yml', {name}, event='push'), name)
 
-    def test_gateway_edits_do_not_rebuild_the_applications(self):
+    def test_gateway_edits_select_explorer_contract_but_not_application_images(self):
         changed = {'infra/gateway/gateway.py'}
         self.assertTrue(ci.triggered('gateway-images.yml', changed))
         self.assertFalse(ci.triggered('apis-sites-images.yml', changed))
-        self.assertFalse(ci.triggered('development.yml', changed))
-        self.assertFalse(ci.triggered('bevy-explorer-ci.yml', changed))
+        self.assertFalse(ci.triggered('development.yml', changed, event='push'))
+        for event in ('push', 'pull_request'):
+            with self.subTest(event=event):
+                self.assertTrue(ci.triggered('bevy-explorer-ci.yml', changed, event=event))
         self.assertIn('gateway configuration', [step.name for step in ci.pre_commit_steps(changed)])
 
 

@@ -8,10 +8,11 @@ use sqlx::{
 };
 const STEP: &str = "0020_social_voice_notifications";
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 3] = [
+const PREPARED_PENDING_STEPS: [&str; 4] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
+    "0024_social_referral_reward_receipt",
 ];
 const PREPARED_V2: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),
@@ -88,10 +89,18 @@ impl Database {
             hex::encode(Sha256::digest(PREPARED_V2.as_bytes())),
             "3242308447fdc6294c7c100d1265eaba911f56dfaf1c03a463dcfc542c6328c6"
         );
-        sqlx::raw_sql(sqlx::AssertSqlSafe(schema.to_owned()))
-            .execute(&pool)
-            .await
-            .unwrap();
+        // One capture import at a time per process, like `apply_schema`: each
+        // runs as one implicit transaction holding about 3,000 object locks
+        // until commit, so overlapping imports exhaust a default cluster's
+        // shared lock table ("out of shared memory").
+        {
+            static IMPORTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+            let _one_at_a_time = IMPORTING.lock().await;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(schema.to_owned()))
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
         Some(Self { pool, admin, name })
     }
     async fn close(self) {

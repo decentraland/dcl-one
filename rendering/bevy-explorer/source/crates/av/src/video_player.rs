@@ -256,14 +256,20 @@ fn update_av_volume<T: AVPlayer>(
 
     for (scene, config, mut sinks) in av_players.iter_mut() {
         let AVSinks {
-            #[cfg(feature = "ffmpeg")]
+            #[cfg(feature = "uuav")]
                 audio: _,
             video: _,
             command_sender,
+            rejected_commands,
             rate: _,
             sent_volume,
             _phantom,
         } = sinks.as_mut();
+
+        // a rejected source's commands go nowhere; the queue is emptied here so it stays small
+        if let Some(rejected) = rejected_commands {
+            while rejected.try_recv().is_ok() {}
+        }
 
         let volume = if containing_scenes.contains(&scene.root) {
             config.volume() * audio_settings.scene()
@@ -358,10 +364,11 @@ fn play_videos(
 
     for (mut video_player_sinks, container, mut output) in q.iter_mut() {
         let AVSinks {
-            #[cfg(feature = "ffmpeg")]
+            #[cfg(feature = "uuav")]
                 audio: _,
             video: Some(video),
             command_sender: _,
+            rejected_commands: _,
             rate: sink_rate,
             sent_volume: _,
             _phantom,
@@ -412,16 +419,7 @@ fn play_videos(
             // no pixels: the render world copied the frame into the gpu image itself
             if let Some(pixels) = frame.data() {
                 let image = images.get_mut(&video.image).unwrap();
-
-                match &mut image.data {
-                    Some(data) => {
-                        data.copy_from_slice(pixels);
-                        image.transfer_priority = RenderAssetTransferPriority::Priority(-2);
-                    }
-                    None => {
-                        image.data = Some(pixels.to_owned());
-                    }
-                }
+                image.data = Some(pixels.to_owned());
             }
             if video.resized {
                 video.resized = false;
@@ -513,7 +511,7 @@ mod snapshot_tests {
         let (commands, _commands_rx) = tokio::sync::mpsc::unbounded_channel();
         app.world_mut().spawn((
             AVSinks::<VideoPlayer> {
-                #[cfg(feature = "ffmpeg")]
+                #[cfg(feature = "uuav")]
                 audio: None,
                 video: Some(crate::video_stream::VideoSink {
                     source: "fixture.mp4".to_owned(),
@@ -526,6 +524,7 @@ mod snapshot_tests {
                     resized: false,
                 }),
                 command_sender: commands,
+                rejected_commands: None,
                 rate: None,
                 sent_volume: None,
                 _phantom: Default::default(),
