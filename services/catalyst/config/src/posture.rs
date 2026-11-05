@@ -299,6 +299,16 @@ const ROWS: &[Row] = &[
         Is("true"),
         Is("true"),
     ),
+    // lamb2's `/collections/wearables` takes `collectionId`, `wearableId`
+    // and `textSearch` only: a mirror answers the same; island and journey
+    // also take this node's extended filters.
+    row(
+        "lambdas",
+        "LAMBDAS_CATALOG_EXTENSIONS_ENABLED",
+        Is("false"),
+        Is("true"),
+        Is("true"),
+    ),
     // lamb2's LAND subgraph: parcel operators and permissions until the
     // land-authz index is published.
     upstream(

@@ -63,6 +63,12 @@ pub struct MarketUpstreamsConfig {
     /// only, so the mirror posture turns it off.
     #[arg(long, env = "EXPLORER_ESCROW_GRANTS_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
     pub explorer_escrow_grants_enabled: bool,
+
+    /// Take this node's extended filters on `/lambdas/collections/wearables`
+    /// (`collectionType`, `category`, `rarity`, `name`, `orderBy`,
+    /// `direction`). lamb2 ignores them, so the mirror posture turns it off.
+    #[arg(long, env = "LAMBDAS_CATALOG_EXTENSIONS_ENABLED", default_value_t = true, action = clap::ArgAction::Set)]
+    pub lambdas_catalog_extensions_enabled: bool,
 }
 
 /// The marketplace: the collections and items mirrors, the trade ownership RPCs, the

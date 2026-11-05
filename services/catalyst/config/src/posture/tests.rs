@@ -131,6 +131,24 @@ fn a_mirror_explorer_lists_chain_owned_items_only() {
 }
 
 #[test]
+fn a_mirror_catalog_takes_the_upstream_filters_only() {
+    assert_eq!(
+        expanded(Posture::Mirror, &[])["LAMBDAS_CATALOG_EXTENSIONS_ENABLED"],
+        "false"
+    );
+    for posture in [Posture::Island, Posture::Journey] {
+        assert_eq!(
+            expanded(posture, &[])["LAMBDAS_CATALOG_EXTENSIONS_ENABLED"],
+            "true"
+        );
+    }
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, "mirror")]);
+    assert!(!c.market_upstreams.lambdas_catalog_extensions_enabled);
+    let c = parsed(&[("DATABASE_URL", "postgres:///catalyst")]);
+    assert!(c.market_upstreams.lambdas_catalog_extensions_enabled);
+}
+
+#[test]
 fn read_through_copies_a_miss_on_a_mirror_only() {
     assert_eq!(
         expanded(Posture::Mirror, &[])["READ_THROUGH_ENABLED"],
@@ -161,6 +179,7 @@ fn island_sets_every_upstream_empty_and_every_follower_switch_off() {
                 "SERVE_UNSYNCED",
                 "PHASED_SYNC",
                 "EXPLORER_ESCROW_GRANTS_ENABLED",
+                "LAMBDAS_CATALOG_EXTENSIONS_ENABLED",
             ];
             assert!(
                 value == "false" || allowed.contains(key),
