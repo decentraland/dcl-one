@@ -126,6 +126,8 @@ jobs:
           sudo apt-get update
           sudo apt install -y xvfb libegl1-mesa libgl1-mesa-dri libxcb-xfixes0-dev mesa-vulkan-drivers
       - name: Build the graphical test engine and scene runtime sidecar
+        # Cargo unifies the engine and sidecar features here, including dcl_deno/inspect.
+        # Desktop and Headless packaging build their sidecars in separate invocations.
         run: cargo build --release --locked --timings -p decentra-bevy -p dcl_deno_ipc --bin decentra-bevy --bin dcl_deno_ipc
       - name: Stage the UUAV runtime set
         id: engine
