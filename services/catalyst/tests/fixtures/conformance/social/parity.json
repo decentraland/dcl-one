@@ -213,19 +213,14 @@
           "scope": "Bounded fake HTTP provider, Referer audience, valid snapshot persistence, last-good state after malformed/failing response and process reload."
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
-          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "real_mutations_write_native_inbox_and_delivery_rows",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
-          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
-        },
-        {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
-          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
@@ -271,19 +266,14 @@
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
-          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "real_mutations_write_native_inbox_and_delivery_rows",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
-          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
-        },
-        {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
-          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
@@ -537,8 +527,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
-          "test": "raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns",
-          "scope": "Compares actual source broadcast/SNS keys and raw communityId with candidate SQL inbox and local official-SDK publisher."
+          "test": "raw_start_preserves_source_metadata_and_online_audience_in_native_inbox",
+          "scope": "Community voice START retains source-facing inbox metadata and online recipients through local persistence."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
@@ -1514,14 +1504,9 @@
           "scope": "13 actual upstream AJV middleware response cases, including required/type/format/extra fields."
         },
         {
-          "path": "services/catalyst/social/src/legacy_events.rs",
-          "test": "raw_queue_processing_matches_source_acknowledgements_even_on_handler_failure",
-          "scope": "8 actual queue-consumer/logged-in-handler source cases compared with local raw-event processing and delete-finally acknowledgements; source ranking event kinds are awaiting writer integration."
-        },
-        {
-          "path": "services/catalyst/social/src/legacy_events.rs",
-          "test": "official_sdk_keeps_source_queue_parameters_and_sns_attributes",
-          "scope": "Official SDKs send SigV4 requests only to a local stub; validates batch10,visibility60,longpoll20 and SNS JSON+type/subType attributes. No live AWS delivery claimed."
+          "path": "services/catalyst/social/src/communities/tests/referral_lifecycle.rs",
+          "test": "authenticated_native_logins_preserve_days_threshold_identity_and_duplicate_receipts",
+          "scope": "Authenticated native login requests exercise signer identity, distinct processing days, threshold transition and duplicate receipts without AWS. Internal queue acknowledgements are outside the client compatibility contract."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
@@ -1540,8 +1525,8 @@
         },
         {
           "path": "services/catalyst/social/src/communities/referral_review_tests.rs",
-          "test": "confirmed_reward_survives_notification_failure_restart_and_concurrent_drain",
-          "scope": "Candidate regression covers retained provider response, restart and concurrent drainers after notification failure; asserts one provider POST and one image while downstream delivery resumes without another login."
+          "test": "native_reward_sql_failures_resume_atomically_without_aws_or_duplicate_payment",
+          "scope": "Native image, inbox and email-outbox SQL failures roll back local completion. A new Referral instance and eight concurrent drainers resume the confirmed response with one provider POST, one image, one notice and one delivery row."
         },
         {
           "path": "services/catalyst/social/src/communities/referral_review_tests.rs",
@@ -2159,19 +2144,14 @@
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
-          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "real_mutations_write_native_inbox_and_delivery_rows",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
-          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
-        },
-        {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
-          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
@@ -2221,19 +2201,14 @@
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
-          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "real_mutations_write_native_inbox_and_delivery_rows",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
-          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
-        },
-        {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
-          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
@@ -2302,7 +2277,7 @@
       "id": "api_http:PATCH:/v1/friendship-requests/:address",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Accepted/rejected/cancelled intentions invoke same state machine and mapped refusals. Shared SQL counters reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Configured legacy SNS publication emits source social-service friendship events, keyed by action UUID; its detached three-attempt retry refreshes event time with 300ms pauses and does not roll back the action on failure.",
+      "result": "Accepted/rejected/cancelled intentions invoke same state machine and mapped refusals. Shared SQL counters reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Friendship actions write native inbox/email delivery records keyed by action UUID. Best-effort delivery does not roll back the committed friendship action; AWS transport mechanics are outside the compatibility contract.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/http.rs",
@@ -2330,8 +2305,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/notification_source_cases.rs",
-          "test": "friendship_sns_events_and_retries_match_executed_source",
-          "scope": "Four actual source notification creator/retrier captures are compared with real SQL mutations and the official SNS SDK against a local stub, including request/accept payloads, success after two failures and exhausted failures. Dynamic action UUID/time are asserted against committed state/clock bounds then normalized for comparison; no real topic or deployed consumer was contacted."
+          "test": "friendship_native_inbox_metadata_and_delivery_failures_preserve_committed_actions",
+          "scope": "Friendship notifications persist native inbox/email delivery rows with source-facing metadata; injected delivery failures retain the committed friendship action."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
@@ -2403,14 +2378,9 @@
           "scope": "13 actual upstream AJV middleware response cases, including required/type/format/extra fields."
         },
         {
-          "path": "services/catalyst/social/src/legacy_events.rs",
-          "test": "raw_queue_processing_matches_source_acknowledgements_even_on_handler_failure",
-          "scope": "8 actual queue-consumer/logged-in-handler source cases compared with local raw-event processing and delete-finally acknowledgements; source ranking event kinds are awaiting writer integration."
-        },
-        {
-          "path": "services/catalyst/social/src/legacy_events.rs",
-          "test": "official_sdk_keeps_source_queue_parameters_and_sns_attributes",
-          "scope": "Official SDKs send SigV4 requests only to a local stub; validates batch10,visibility60,longpoll20 and SNS JSON+type/subType attributes. No live AWS delivery claimed."
+          "path": "services/catalyst/social/src/communities/tests/referral_lifecycle.rs",
+          "test": "authenticated_native_logins_preserve_days_threshold_identity_and_duplicate_receipts",
+          "scope": "Authenticated native login requests exercise signer identity, distinct processing days, threshold transition and duplicate receipts without AWS. Internal queue acknowledgements are outside the client compatibility contract."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
@@ -2689,19 +2659,14 @@
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
-          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "real_mutations_write_native_inbox_and_delivery_rows",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
-          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
-        },
-        {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
-          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
@@ -2800,24 +2765,14 @@
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
-          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "real_mutations_write_native_inbox_and_delivery_rows",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
-          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
-        },
-        {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
-          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
-        },
-        {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "create_post_resolves_strict_author_after_insert_and_before_broadcast",
-          "scope": "Four actual source handler/component/registry cases: regular, historical alias, missing and invalid profile. Candidate status/DTO, persisted row and absence of events on failure are compared."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
@@ -2836,7 +2791,7 @@
         }
       ],
       "gaps": [],
-      "remaining_verification": "Four actual upstream post/registry/handler cases replay through the candidate with persisted-row and absent-event assertions on lookup failure. Deployed SNS delivery, provider timing and concurrent membership mutation remain unverified."
+      "remaining_verification": "Four actual upstream post/registry/handler cases replay through the candidate with persisted-row and absent-event assertions on lookup failure. Deployed native inbox/email delivery, provider timing and concurrent membership mutation remain unverified."
     },
     {
       "id": "api_http:POST:/v1/communities/:id/posts/:postId/like",
@@ -2910,19 +2865,14 @@
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
-          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "real_mutations_write_native_inbox_and_delivery_rows",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
-          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
-        },
-        {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
-          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
@@ -2974,19 +2924,14 @@
           "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
-          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "real_mutations_write_native_inbox_and_delivery_rows",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
-          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
-        },
-        {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
-          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
@@ -3019,8 +2964,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
-          "test": "raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns",
-          "scope": "Compares actual source broadcast/SNS keys and raw communityId with candidate SQL inbox and local official-SDK publisher."
+          "test": "raw_start_preserves_source_metadata_and_online_audience_in_native_inbox",
+          "scope": "Community voice START retains source-facing inbox metadata and online recipients through local persistence."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
@@ -3108,7 +3053,7 @@
       "id": "api_http:POST:/v1/friendship-requests",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Schema/signed-fetch gates, request/state/rate/block checks; response identifies friendship, event identifies action. Shared SQL counters reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Configured legacy SNS publication emits source social-service friendship events, keyed by action UUID; its detached three-attempt retry refreshes event time with 300ms pauses and does not roll back the action on failure.",
+      "result": "Schema/signed-fetch gates, request/state/rate/block checks; response identifies friendship, event identifies action. Shared SQL counters reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Friendship actions write native inbox/email delivery records keyed by action UUID. Best-effort delivery does not roll back the committed friendship action; AWS transport mechanics are outside the compatibility contract.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/http.rs",
@@ -3136,8 +3081,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/notification_source_cases.rs",
-          "test": "friendship_sns_events_and_retries_match_executed_source",
-          "scope": "Four actual source notification creator/retrier captures are compared with real SQL mutations and the official SNS SDK against a local stub, including request/accept payloads, success after two failures and exhausted failures. Dynamic action UUID/time are asserted against committed state/clock bounds then normalized for comparison; no real topic or deployed consumer was contacted."
+          "test": "friendship_native_inbox_metadata_and_delivery_failures_preserve_committed_actions",
+          "scope": "Friendship notifications persist native inbox/email delivery rows with source-facing metadata; injected delivery failures retain the committed friendship action."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
@@ -3290,14 +3235,9 @@
           "scope": "13 actual upstream AJV middleware response cases, including required/type/format/extra fields."
         },
         {
-          "path": "services/catalyst/social/src/legacy_events.rs",
-          "test": "raw_queue_processing_matches_source_acknowledgements_even_on_handler_failure",
-          "scope": "8 actual queue-consumer/logged-in-handler source cases compared with local raw-event processing and delete-finally acknowledgements; source ranking event kinds are awaiting writer integration."
-        },
-        {
-          "path": "services/catalyst/social/src/legacy_events.rs",
-          "test": "official_sdk_keeps_source_queue_parameters_and_sns_attributes",
-          "scope": "Official SDKs send SigV4 requests only to a local stub; validates batch10,visibility60,longpoll20 and SNS JSON+type/subType attributes. No live AWS delivery claimed."
+          "path": "services/catalyst/social/src/communities/tests/referral_lifecycle.rs",
+          "test": "authenticated_native_logins_preserve_days_threshold_identity_and_duplicate_receipts",
+          "scope": "Authenticated native login requests exercise signer identity, distinct processing days, threshold transition and duplicate receipts without AWS. Internal queue acknowledgements are outside the client compatibility contract."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
@@ -3335,14 +3275,9 @@
           "scope": "13 actual upstream AJV middleware response cases, including required/type/format/extra fields."
         },
         {
-          "path": "services/catalyst/social/src/legacy_events.rs",
-          "test": "raw_queue_processing_matches_source_acknowledgements_even_on_handler_failure",
-          "scope": "8 actual queue-consumer/logged-in-handler source cases compared with local raw-event processing and delete-finally acknowledgements; source ranking event kinds are awaiting writer integration."
-        },
-        {
-          "path": "services/catalyst/social/src/legacy_events.rs",
-          "test": "official_sdk_keeps_source_queue_parameters_and_sns_attributes",
-          "scope": "Official SDKs send SigV4 requests only to a local stub; validates batch10,visibility60,longpoll20 and SNS JSON+type/subType attributes. No live AWS delivery claimed."
+          "path": "services/catalyst/social/src/communities/tests/referral_lifecycle.rs",
+          "test": "authenticated_native_logins_preserve_days_threshold_identity_and_duplicate_receipts",
+          "scope": "Authenticated native login requests exercise signer identity, distinct processing days, threshold transition and duplicate receipts without AWS. Internal queue acknowledgements are outside the client compatibility contract."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
@@ -3405,11 +3340,6 @@
           "scope": "The same absolute budget covers shared permit and shared pause waits, including a stalled response."
         },
         {
-          "path": "services/catalyst/social/src/legacy_events.rs",
-          "test": "queue_acknowledges_committed_milestone_and_processes_next_login_after_slack_stalls",
-          "scope": "Actual SQS process_message path preserves committed milestone, ordered delete-finally acknowledgement and progress to the next event after a bounded Slack stall. No whole-batch visibility deadline is inferred."
-        },
-        {
           "path": "services/catalyst/explore/src/api/tests.rs",
           "test": "denylist_refresh_reaches_every_replica_without_mirrors_or_fleet_jobs",
           "scope": "Candidate regression covers two independent snapshots and retained referral readers over shared PostgreSQL: mirror and local-overlay additions/removals propagate through unleased periodic refresh with mirrors and fleet jobs disabled. Checks both HTTP views and absence of upstream fetches; no immediate cross-process invalidation or source freshness equivalence is claimed."
@@ -3466,19 +3396,14 @@
           "scope": "Real handler rejects noncompliance before writes and avoids validation for source-equivalent unchanged text."
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
-          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "real_mutations_write_native_inbox_and_delivery_rows",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
-          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
-        },
-        {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
-          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
@@ -3724,8 +3649,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
-          "test": "raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns",
-          "scope": "Compares actual source broadcast/SNS keys and raw communityId with candidate SQL inbox and local official-SDK publisher."
+          "test": "raw_start_preserves_source_metadata_and_online_audience_in_native_inbox",
+          "scope": "Community voice START retains source-facing inbox metadata and online recipients through local persistence."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
@@ -4053,8 +3978,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
-          "test": "raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns",
-          "scope": "Compares actual source broadcast/SNS keys and raw communityId with candidate SQL inbox and local official-SDK publisher."
+          "test": "raw_start_preserves_source_metadata_and_online_audience_in_native_inbox",
+          "scope": "Community voice START retains source-facing inbox metadata and online recipients through local persistence."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
@@ -4468,8 +4393,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
-          "test": "raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns",
-          "scope": "Compares actual source broadcast/SNS keys and raw communityId with candidate SQL inbox and local official-SDK publisher."
+          "test": "raw_start_preserves_source_metadata_and_online_audience_in_native_inbox",
+          "scope": "Community voice START retains source-facing inbox metadata and online recipients through local persistence."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
@@ -5343,19 +5268,14 @@
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
-          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "real_mutations_write_native_inbox_and_delivery_rows",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
-          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
-        },
-        {
-          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
-          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
-          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+          "path": "services/catalyst/social/src/communities/tests/native_notifications.rs",
+          "test": "native_audiences_filter_opt_outs_and_replays_preserve_delivery_intent",
+          "scope": "Native mutation effects persist inbox/email delivery records with community recipient and metadata semantics; no AWS transport is required."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
@@ -5393,8 +5313,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
-          "test": "raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns",
-          "scope": "Compares actual source broadcast/SNS keys and raw communityId with candidate SQL inbox and local official-SDK publisher."
+          "test": "raw_start_preserves_source_metadata_and_online_audience_in_native_inbox",
+          "scope": "Community voice START retains source-facing inbox metadata and online recipients through local persistence."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
@@ -5546,7 +5466,7 @@
       "id": "rpc_unary:RPC:upsertFriendship",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Validates action/address/self/message/rate/state; atomically writes action, keeps friendship creation time, uses action UUID for updates, and can return a profile error after commit. Request stream omits unresolved sender profiles. Shared SQL counters reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Configured legacy SNS publication emits source social-service friendship events, keyed by action UUID; its detached three-attempt retry refreshes event time with 300ms pauses and does not roll back the action on failure.",
+      "result": "Validates action/address/self/message/rate/state; atomically writes action, keeps friendship creation time, uses action UUID for updates, and can return a profile error after commit. Request stream omits unresolved sender profiles. Shared SQL counters reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Friendship actions write native inbox/email delivery records keyed by action UUID. Best-effort delivery does not roll back the committed friendship action; AWS transport mechanics are outside the compatibility contract.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/friends.rs",
@@ -5574,8 +5494,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/notification_source_cases.rs",
-          "test": "friendship_sns_events_and_retries_match_executed_source",
-          "scope": "Four actual source notification creator/retrier captures are compared with real SQL mutations and the official SNS SDK against a local stub, including request/accept payloads, success after two failures and exhausted failures. Dynamic action UUID/time are asserted against committed state/clock bounds then normalized for comparison; no real topic or deployed consumer was contacted."
+          "test": "friendship_native_inbox_metadata_and_delivery_failures_preserve_committed_actions",
+          "scope": "Friendship notifications persist native inbox/email delivery rows with source-facing metadata; injected delivery failures retain the committed friendship action."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
@@ -7921,7 +7841,7 @@
       }
     ]
   },
-  "review_policy": "reviewed means the stated source/behaviour scope was compared; it never means exhaustive equivalence. known_gap names a remaining observed difference. not_reviewed requires an explicit comparison, even if a matching route or local test exists.",
+  "review_policy": "reviewed means the stated source/behaviour scope was compared; it never means exhaustive equivalence. known_gap names a remaining observed difference. not_reviewed requires an explicit comparison, even if a matching route or local test exists. Compatibility concerns external client HTTP/RPC, authorization and user-visible behavior. Internal SQS/SNS transport, SDK retries and envelope scheduling are intentionally replaced by native transactions/workers under the accepted native-social-events ADR; frozen upstream captures do not require those internals.",
   "cross_cutting_gaps": [
     {
       "id": "external-notification-consumers",
@@ -7931,7 +7851,7 @@
         "api_http:PATCH:/v1/friendship-requests/:address"
       ],
       "status": "unverified",
-      "description": "Configured friendship and all twelve community SNS producers preserve source raw fields, keys and recipient policies through the existing official SDK publisher. Source/local stub tests cover 100-recipient pages/messages, ten-message requests, failure isolation, opt-out independence and HTTP background versus voice-awaited execution. Existing deployed topic subscriptions, downstream consumers, retry timing and migration/cutover delivery remain unverified. Candidate SNS scheduling permits at most eight in-flight ten-entry requests per publish_batch invocation; source dispatches chunks without that concurrency bound. Result order, complete awaiting and failed-chunk isolation have real SDK/HTTP regressions."
+      "description": "Social writes notification inbox and email delivery records locally; SNS topics and external notification-worker subscriptions are outside the native stack under the accepted native-social-events ADR. Local audience, opt-out and metadata regressions cover the replacement. Real email-provider delivery and deployed client consumption remain unverified."
     },
     {
       "id": "cross-replica-social-events",
@@ -7972,7 +7892,7 @@
     {
       "id": "referral-lifecycle",
       "status": "unverified",
-      "description": "Attribution/IP rejection, signup, UTC login days, guarded grants, artwork, email, handler-specific SQL errors and configured Slack effects have source-paired/local regressions. Slack keeps source payloads and empty-token serialization but deliberately bounds each effect to ten seconds, three attempts and a two-second Retry-After cap. Referral identity uses the TCP peer or explicitly trusted backend proxy X-Real-IP, and canonical historical inet aliases share a quota; these are intentional source differences. Sixteen executed numeric configurations cover source parser values, bigint rejection/overflow and login-day comparisons. Live providers, concurrent rate-limit ordering and stateful deployed cutover remain unverified. Referrer/IP quotas and milestone counts are serialized in SQL; tier-image and tier-notification work retain independent fail-fast completion. Actual source partial-failure receipts and local concurrent PostgreSQL cases are compared; simultaneous decision ordering is strengthened beyond source. A reward-tier grant retains reward_tier until its downstream notification and image complete. A committed pre-POST claim prevents concurrent or restarted workers from reissuing the non-idempotent provider request; a confirmed response is persisted before downstream work. With social writes enabled, a fleet-leased drain selects at most 64 due rewards per pass every 60 seconds, and failed attempts defer eligibility by one minute. The reward_paid receipt retains the tier, provider result and confirmed notification marker; an image retry skips a notification already recorded as delivered. Missing campaign configuration remains retryable before claiming. A claimed request without a confirmed response, including migrated historical pending rewards without a paid receipt, requires provider reconciliation and is not automatically retried; confirmed responses resume downstream delivery without another login. Notification publication can still be repeated after an ambiguous downstream failure, so exactly-once external delivery is not claimed. This recovery differs from the source, which commits the grant and does not retry a failed reward. Referral deny checks read the shared in-process explorer snapshot instead of fetching the list on each write. Every serving process refreshes the merged database mirror/local overlay every 30 seconds with a five-second pass timeout, even when mirrors or fleet jobs are disabled; failed refreshes retain the last snapshot. Reloads are serialized within each process. This is eventual propagation, not immediate revocation or identical source freshness. The receipt migration imports existing paid tiers and responses while preserving their notification completion marker. Migration 0024 is not safe alongside pre-0024 binaries even on schema v3: stop all old binaries, SQS consumers and writers before migrating, then resume only compatible code. Object-valued historical paid responses remain confirmed even with incomplete image metadata; repair that metadata without another provider POST. Quarantined login retries are acknowledged without repeating the original provider error.",
+      "description": "Attribution/IP rejection, signup, UTC login days, guarded grants, artwork, email, handler-specific SQL errors and configured Slack effects have source-paired/local regressions. Slack keeps source payloads and empty-token serialization but deliberately bounds each effect to ten seconds, three attempts and a two-second Retry-After cap. Referral identity uses the TCP peer or explicitly trusted backend proxy X-Real-IP, and canonical historical inet aliases share a quota; these are intentional source differences. Sixteen executed numeric configurations cover source parser values, bigint rejection/overflow and login-day comparisons. Live providers, concurrent rate-limit ordering and stateful deployed cutover remain unverified. Referrer/IP quotas and milestone counts are serialized in SQL; reward image, inbox/email delivery and pending-state completion share a local transaction after the provider response is persisted. Actual source partial-failure receipts and local concurrent PostgreSQL cases are compared; simultaneous decision ordering is strengthened beyond source. A reward-tier grant retains reward_tier until its downstream notification and image complete. A committed pre-POST claim prevents concurrent or restarted workers from reissuing the non-idempotent provider request; a confirmed response is persisted before downstream work. With social writes enabled, a fleet-leased drain selects at most 64 due rewards per pass every 60 seconds, and failed attempts defer eligibility by one minute. The reward_paid receipt retains the tier, provider result and confirmed notification marker; an image retry skips a notification already recorded as delivered. Missing campaign configuration remains retryable before claiming. A claimed request without a confirmed response, including migrated historical pending rewards without a paid receipt, requires provider reconciliation and is not automatically retried; confirmed responses resume downstream delivery without another login. Local reward completion rolls back together on SQL failure. Exactly-once external reward issuance is not claimed. This recovery differs from the source, which commits the grant and does not retry a failed reward. Referral deny checks read the shared in-process explorer snapshot instead of fetching the list on each write. Every serving process refreshes the merged database mirror/local overlay every 30 seconds with a five-second pass timeout, even when mirrors or fleet jobs are disabled; failed refreshes retain the last snapshot. Reloads are serialized within each process. This is eventual propagation, not immediate revocation or identical source freshness. The receipt migration imports existing paid tiers and responses while preserving their notification completion marker. Migration 0024 is not safe alongside pre-0024 binaries even on schema v3: stop all old binaries, login consumers and writers before migrating, then resume only compatible code. Object-valued historical paid responses remain confirmed even with incomplete image metadata; repair that metadata without another provider POST. Native login recording commits independently of provider work; quarantined rewards remain pending for reconciliation without reissuing a POST.",
       "operations": [
         "api_http:GET:/v1/referral-progress",
         "api_http:PATCH:/v1/referral-progress",
@@ -8017,7 +7937,7 @@
         "api_http:POST:/v1/referral-email"
       ],
       "status": "unverified",
-      "description": "Configured official SQS/SNS transports preserve legacy raw events and attributes locally; ranking dispatch, friendship and community publication are wired. Deployed queue policies, topic subscriptions and credential access have not been exercised. Populated candidate additive upgrades pass synthetic tests; existing upstream progress/login-days/reward/email import and live cutover remain outstanding. Existing pending rewards without a paid receipt are quarantined by the additive receipt migration because their provider outcome cannot be inferred; reconcile them with the provider before clearing a claim or supplying a confirmed response. Live reconciliation and downstream duplicate-notification handling remain deployment gates."
+      "description": "Native signed client-login ingress replaces the AWS queue, with per-event receipts and local transactional progress. The owned Explorer reports identity completion; unchanged third-party clients require an explicit compatible login producer. Existing upstream progress/login-days/reward/email import and live client cutover remain unverified. Uncertain historical reward claims still require provider reconciliation; removing AWS does not prove previous issuance outcomes."
     },
     {
       "id": "api-body-size-boundary",
@@ -8415,7 +8335,7 @@
       "id": "community-recipient-pagination-and-exclusions",
       "status": "unverified",
       "operations": [],
-      "description": "SNS recipient pagination orders role,joined_at,member_address, giving tied rows a deterministic final order beyond source. The generic helper excludes every address with ALL; the pinned source ANY predicate differs for2+ distinct exclusions. Current production post/voice strategies each provide one exclusion, so no current public operation with that multi-exclusion difference is asserted. A real PostgreSQL230-member tied-page case verifies complete unique delivery; concurrent membership changes across pages remain unverified."
+      "description": "Native community notifications select recipients from local membership with subscription opt-outs and author/opener exclusions. AWS recipient paging and request batching are retired internal mechanics. Local audience regressions cover the native effect; sustained large-community delivery and concurrent membership-change behavior remain unmeasured."
     }
   ]
 }
