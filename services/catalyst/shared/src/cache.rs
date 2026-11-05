@@ -118,6 +118,21 @@ where
         (entry.at.elapsed() < self.ttl).then(|| entry.value.clone())
     }
 
+    /// The last value stored under `key`, however old: a failed refresh
+    /// keeps it, so a caller can serve it stale.
+    pub fn get_stale(&self, key: &K) -> Option<V> {
+        let slot = self.map.get(key)?;
+        slot.cached.as_ref().map(|entry| entry.value.clone())
+    }
+
+    pub fn insert(&self, key: K, value: V) {
+        let mut slot = self.map.entry(key).or_insert_with(Slot::empty);
+        slot.cached = Some(Entry {
+            at: Instant::now(),
+            value,
+        });
+    }
+
     /// The cached value, expired or not, while it is younger than `max_age`:
     /// a stale-on-error read for a caller that may answer an old value when
     /// its fetch fails. A failed fetch leaves the expired entry in place.
@@ -138,14 +153,6 @@ where
                 .checked_sub(by)
                 .expect("a backdate within the clock");
         }
-    }
-
-    pub fn insert(&self, key: K, value: V) {
-        let mut slot = self.map.entry(key).or_insert_with(Slot::empty);
-        slot.cached = Some(Entry {
-            at: Instant::now(),
-            value,
-        });
     }
 
     pub async fn get_or_fetch<F, Fut, E>(&self, key: K, fetch: F) -> Result<V, E>

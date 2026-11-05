@@ -829,7 +829,7 @@ pub async fn owned_lands_or_stale(
         state
             .graph
             .lands
-            .get_within(&owner.to_lowercase(), Duration::MAX)
+            .get_stale(&owner.to_lowercase())
             .ok_or(err)
     })
 }
