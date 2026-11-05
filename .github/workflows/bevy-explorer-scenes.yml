@@ -73,8 +73,19 @@ jobs:
         with:
           ref: ${{ needs.changes.outputs.sha }}
           lfs: false
-      - name: Fetch the UUAV runtime set
-        run: git lfs pull --include 'library/uuav/dist/**'
+      - name: Restore this runner's UUAV runtime set
+        # The set is the lock's bytes for one target (library/uuav/dist/<target>, Git LFS, 30 to
+        # 105 MiB); the other targets are never read here. LFS traffic from Actions counts against
+        # the organisation's bandwidth, so a miss pulls only this target and the hit skips LFS.
+        # stage-dist.py checks every staged file against the lock, whichever way it arrived.
+        id: uuav-dist
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: library/uuav/dist/linux-x86_64
+          key: uuav-dist-linux-x86_64-${{ hashFiles('tooling/uuav/uuav-binaries.lock.json') }}
+      - name: Fetch this runner's UUAV runtime set
+        if: steps.uuav-dist.outputs.cache-hit != 'true'
+        run: git lfs pull --include 'library/uuav/dist/linux-x86_64/**'
       - name: Reserve disk space on the hosted Linux runner
         if: runner.os == 'Linux'
         working-directory: .
