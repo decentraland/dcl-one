@@ -4,7 +4,7 @@
 import { createContext } from 'react'
 import type { EditorPin, EditorRelease } from './source'
 
-/** The released package the page follows (README "Releasing the editor") and the hosts besides
+/** The released package the page follows (react-web/AGENTS.md, "The scene editor host") and the hosts besides
  *  loopback that offer it, each only to an entry url with `editor-features=experimental`; null =
  *  none, so a production build carries no editor at all. */
 export const RELEASED_EDITOR = {

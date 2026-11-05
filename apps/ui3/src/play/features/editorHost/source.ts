@@ -1,5 +1,5 @@
-// Where the editor package comes from and which services it talks to (README "Releasing the
-// editor"). Read by the Create page's chunk only; config.ts holds what the HUD itself needs.
+// Where the editor package comes from and which services it talks to (react-web/AGENTS.md, "The
+// scene editor host"). Read by the Create page's chunk only; config.ts holds what the HUD itself needs.
 
 import { isLoopback, PINNED_EDITOR, RELEASED_EDITOR } from './config'
 

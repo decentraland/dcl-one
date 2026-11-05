@@ -1,4 +1,4 @@
-// The page's side of the editor host contract (v1.2): the object the editor package finds at
+// The page's side of the editor host contract (v1.5): the object the editor package finds at
 // window.__dclEditorHost, the element it mounts into, and the script tag that loads it.
 
 import type { AuthChainLink, AuthIdentity } from '../../auth/sso'
