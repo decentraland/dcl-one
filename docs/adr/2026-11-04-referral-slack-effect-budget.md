@@ -24,8 +24,9 @@ and is logged at the boundary the source uses; it is not retried later.
 
 ## Consequences
 
-- A Slack outage cannot hold a referral request or the consumer beyond ten
-  seconds, well inside the queue's visibility window.
+- A Slack outage cannot hold one effect beyond ten seconds. This bounds the
+  Slack contribution to request/consumer latency, not a complete handler or
+  queue batch; other work can still exceed the queue's visibility window.
 - A message the source would have delivered after a long outage or a long
   `Retry-After` is dropped here. Slack delivery is a notification, not durable
   state.

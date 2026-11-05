@@ -158,3 +158,65 @@ async fn stalled_port_and_module_replies_do_not_block_other_clients() {
 
     healthy_client_is_served(&events).await;
 }
+
+/// Connected callbacks follow attach order even when an older ServerReady
+/// stalls. Social's per-wallet admission is handled before transport attach.
+#[tokio::test]
+async fn connected_callbacks_follow_arrival_before_server_ready() {
+    let mut server = server();
+    let (connected, mut connections) = unbounded_channel();
+    server.set_on_transport_connected_handler(move |_, id| {
+        connected.send(id).unwrap();
+    });
+    let events = server.get_server_events_sender();
+    let task = tokio::spawn(async move { server.run().await });
+    let (slow, _client, stalled_sends) = stalled(0);
+    events.send_attach_transport(slow).unwrap();
+    wait_for(&stalled_sends, 1).await;
+    healthy_client_is_served(&events).await;
+    assert_eq!(connections.try_recv().unwrap(), 1);
+    assert_eq!(connections.try_recv().unwrap(), 2);
+    task.abort();
+}
+
+struct FailedReadyTransport;
+
+#[async_trait]
+impl Transport for FailedReadyTransport {
+    async fn receive(&self) -> Result<TransportMessage, TransportError> {
+        panic!("a failed handshake must never start reading");
+    }
+
+    async fn send(&self, _: TransportMessage) -> Result<(), TransportError> {
+        Err(TransportError::Closed)
+    }
+
+    async fn close(&self) {}
+}
+
+#[tokio::test]
+async fn a_failed_server_ready_releases_its_registered_transport() {
+    let mut server = server();
+    let (events, mut observed) = unbounded_channel();
+    let connected = events.clone();
+    server.set_on_transport_connected_handler(move |_, id| {
+        connected.send(("connected", id)).unwrap();
+    });
+    server.set_on_transport_closes_handler(move |_, id| {
+        events.send(("closed", id)).unwrap();
+    });
+    let sender = server.get_server_events_sender();
+    let task = tokio::spawn(async move { server.run().await });
+    sender
+        .send_attach_transport(Arc::new(FailedReadyTransport))
+        .unwrap();
+    for expected in [("connected", 1), ("closed", 1)] {
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), observed.recv())
+                .await
+                .unwrap(),
+            Some(expected)
+        );
+    }
+    task.abort();
+}

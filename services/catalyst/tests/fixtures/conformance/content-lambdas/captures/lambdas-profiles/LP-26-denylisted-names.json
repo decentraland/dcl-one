@@ -1,0 +1,18 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/lambdas/contracts/denylisted-names",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": "<elided: JSON array of 11 strings>"
+  },
+  "note": "Body elided. Of the 11 strings, 7 contain upper-case letters, none has leading or trailing whitespace, none is empty: the list is served as stored, not lower-cased or trimmed."
+}
