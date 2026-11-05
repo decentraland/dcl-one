@@ -81,6 +81,9 @@ describe('serveWebApp', () => {
     const head = await fetch(server.url + BRIDGE_ABOUT_PATH.slice(1), { method: 'HEAD' })
     assert.equal(head.headers.get('content-length'), String(Buffer.byteLength(JSON.stringify(about))))
     assert.equal(await head.text(), '')
+    // a query string changes nothing
+    const queried = (await (await fetch(`${server.url}${BRIDGE_ABOUT_PATH.slice(1)}?x=1`)).json()) as typeof BRIDGE_ABOUT
+    assert.deepEqual(queried, about)
   })
 
   test('HEAD carries the length and no body', async () => {
@@ -105,7 +108,7 @@ describe('bridgeAbout', () => {
     assert.throws(() => bridgeAbout(unknown, 'http://127.0.0.1:1'), /root-relative content url this server does not know how to serve: urn:decentraland:entity:bafkreiexample\?=&baseUrl=\/elsewhere\//)
   })
 
-  test('the server answers such a document with 503 and says so', async () => {
+  test('the server answers such a document, or one that is not JSON, with 503 and says so', async () => {
     const dir = await mkdtemp(path.join(tmpdir(), 'e2e-serve-bridge-'))
     const server = await serveWebApp(dir, 0)
     const original = console.error
@@ -113,10 +116,14 @@ describe('bridgeAbout', () => {
     console.error = (line: unknown) => said.push(String(line))
     try {
       await mkdir(path.join(dir, 'bridge-scene', 'static', 'BevyExplorerUI'), { recursive: true })
-      await writeFile(path.join(dir, ...BRIDGE_ABOUT_PATH.split('/').filter(Boolean)), JSON.stringify({ configurations: { scenesUrn: ['urn:decentraland:entity:bafkreiother?=&baseUrl=/elsewhere/'] } }))
+      const file = path.join(dir, ...BRIDGE_ABOUT_PATH.split('/').filter(Boolean))
+      await writeFile(file, JSON.stringify({ configurations: { scenesUrn: ['urn:decentraland:entity:bafkreiother?=&baseUrl=/elsewhere/'] } }))
       const response = await fetch(server.url + BRIDGE_ABOUT_PATH.slice(1))
       assert.equal(response.status, 503)
       assert.equal(said.filter((line) => line.includes(BRIDGE_ABOUT_PATH) && line.includes('/elsewhere/')).length, 1)
+      await writeFile(file, 'not json')
+      assert.equal((await fetch(server.url + BRIDGE_ABOUT_PATH.slice(1))).status, 503)
+      assert.equal(said.length, 2)
     } finally {
       console.error = original
       await server.close()

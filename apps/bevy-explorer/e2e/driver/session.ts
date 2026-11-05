@@ -6,7 +6,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { chromeArgs } from './chrome.ts'
-import type { Console } from './console.ts'
+import { type Console, ConsoleError } from './console.ts'
 import { Explorer, type WorldState } from './explorer.ts'
 import { buildAuthIdentity, newPrivateKey } from './identity.ts'
 import { NativeConsole, spawnNative } from './native.ts'
@@ -206,7 +206,16 @@ export async function signIn(
   const pick = { name: firstLogin.name ?? 'e2etester', look: firstLogin.look ?? 1 }
   if (target.transport === 'web' && mode !== 'none') {
     const identity = buildAuthIdentity(mode === 'account' ? accountKey(target) : newPrivateKey())
-    await explorer.hudLogin(identity, { ...pick, guest: mode === 'guest', ...destination })
+    try {
+      await explorer.hudLogin(identity, { ...pick, guest: mode === 'guest', ...destination })
+    } catch (error) {
+      // a web app whose HUD predates the command: the page has none to run, so the engine
+      // answers. No falling back to /login_identity, which leaves the HUD on its start page.
+      if (error instanceof ConsoleError && error.output.includes('Command not recognized')) {
+        throw new Error('the web app under test has no /hud_login, so its HUD predates the sign-in through it: serve a build that has it (DCL_E2E_WEB_APP or DCL_E2E_WEB_URL)', { cause: error })
+      }
+      throw error
+    }
     return explorer.waitInWorld(WORLD_TIMEOUT_MS)
   }
   if (mode === 'account') {

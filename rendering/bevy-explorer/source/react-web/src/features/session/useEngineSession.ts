@@ -2316,10 +2316,15 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       } else if (dest.kind === 'world') launched = launchEngine(driver, dest.realm, dest.position, holdForTerms(driver, dest))
       else launched = launchEngine(driver, DEFAULT_REALM, `${dest.x},${dest.y}`, holdForTerms(driver, dest))
       if (launched) runPendingLogin(driver)
+      else {
+        // a /hud_login's sign-in never ran: answered with that, its stored sign-in put back
+        hudLoginPending.current?.restore()
+        settleHudLogin(new Error('the engine failed to launch'))
+      }
     }
     requestAnimationFrame(() => requestAnimationFrame(run))
     setTimeout(run, 60)
-  }, [launchEngine, runPendingLogin, travelFromLobby, travelInPlace])
+  }, [launchEngine, runPendingLogin, travelFromLobby, travelInPlace, settleHudLogin])
   // Boot-mode flags (?hud=0 / ?guest=1 / ?systemScene= — see lib/bootMode.ts), captured once
   // per session mount so tests can vary location.search between mounts.
   const boot = useRef(bootMode())
@@ -2710,6 +2715,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           const home = driver.homeScene?.()
           if (!launchEngine(driver, home?.realm ?? DEFAULT_REALM, home?.parcel ?? '0,0', { holdWorld: true })) {
             setWelcomePending(false) // no sign-in to answer it
+            // a /hud_login's sign-in never ran: answered with that, its stored sign-in put back
+            hudLoginPending.current?.restore()
+            settleHudLogin(new Error('the engine failed to launch'))
             return
           }
         }
@@ -2720,7 +2728,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       setTimeout(run, 60)
       return true
     },
-    [busy, engineReady, launchEngine, runPendingLogin]
+    [busy, engineReady, launchEngine, runPendingLogin, settleHudLogin]
   )
 
   // A test runner's sign-in (/hud_login, lib/hudAutomation.ts): the identity becomes this page's

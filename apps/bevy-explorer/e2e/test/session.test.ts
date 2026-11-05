@@ -134,6 +134,12 @@ describe('signIn', () => {
     assert.deepEqual(fake.sent('world_state'), [])
   })
 
+  test('a web app whose HUD has no /hud_login fails the boot saying so, with no fall back to the engine', async () => {
+    const fake = new FakeConsole({ login_identity: 'logged in with identity', world_state: () => world() })
+    await assert.rejects(signIn(new Explorer(fake), web, 'account'), /the web app under test has no \/hud_login/)
+    assert.deepEqual(fake.sent('login_identity'), [])
+  })
+
   test('on the standalone the engine signs in, already at its realm', async () => {
     const fake = new FakeConsole({ login_identity: 'logged in with identity', login_guest: '', world_state: () => world() })
     await signIn(new Explorer(fake), { ...target, accounts: [account] }, 'account')

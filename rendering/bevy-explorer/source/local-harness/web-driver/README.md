@@ -59,7 +59,9 @@ own mouse and keyboard) can install the hook and give the HUD commands real inpu
 one implementation of it.
 
 The page calls `window.__dclTrustedInput(json)`, a binding the runner installs in every frame
-with `Runtime.addBinding`. The JSON is `{"id", "op", ...}`:
+with `Runtime.addBinding`, before the page's scripts run: the page registers `/hud_login` only if
+the binding is there when it installs its commands (`react-web/src/lib/hudAutomation.ts`). The
+JSON is `{"id", "op", ...}`:
 
 | `op` | fields |
 | --- | --- |

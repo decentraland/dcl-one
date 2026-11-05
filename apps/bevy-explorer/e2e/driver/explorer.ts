@@ -209,7 +209,7 @@ export class Explorer {
     try {
       return JSON.parse(reply) as T
     } catch {
-      throw new Error(`\`${redactLine(line)}\` did not reply JSON: ${reply.slice(0, 200)}`)
+      throw new Error(`\`${redactLine(line)}\` did not reply JSON: ${redact(line, reply.slice(0, 200))}`)
     }
   }
 

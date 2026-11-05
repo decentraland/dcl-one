@@ -63,7 +63,7 @@ second one on its own realm.
 | `DCL_E2E_WORKER` | Which account this run takes | `0` |
 | `DCL_E2E_BASE_DOMAIN`, `DCL_E2E_REALM`, `DCL_E2E_POSITION` | The backend, the realm (URL or world name) and the spawn parcel | `decentraland.zone`, `https://peer.decentraland.zone`, `100,100` |
 | `DCL_E2E_WEB_APP` | The web app folder to serve | `apps/bevy-explorer/dist/web` |
-| `DCL_E2E_WEB_URL` | An already served web app to open instead (zone's `/play` for a smoke) | unset |
+| `DCL_E2E_WEB_URL` | An already served web app to open instead (zone's `/play` for a smoke); its HUD must carry `/hud_login`, or the boot fails saying so | unset |
 | `DCL_E2E_WEB_PORT`, `DCL_E2E_REALM_PORT` | The loopback ports of the app and of the visual realm | `18743`, `18744` |
 | `CHROME_PATH`, `CHROME_EXTRA_ARGS` | The browser, and more flags | the installed Chrome |
 | `DCL_E2E_HEADLESS` | `1` runs Chrome headless (the engine then has no GPU: for the driver's tests only) | headed |

@@ -222,6 +222,16 @@ describe('hudLogin', () => {
     assert.equal(records[0]!.line, '/hud_login <redacted> --name tester --look 3 --guest --realm https://realm.example --position 10,-20')
   })
 
+  test('a reply that is not JSON fails the command, the payload redacted', async () => {
+    const payload = 'eyJhIjoxfQ=='
+    const fake = new FakeConsole({ hud_login: `signed in with ${payload}` })
+    await assert.rejects(new Explorer(fake).hudLogin(payload), (error: unknown) => {
+      assert.ok(error instanceof Error)
+      assert.equal(error.message, '`/hud_login <redacted>` did not reply JSON: signed in with <redacted>')
+      return true
+    })
+  })
+
   test('fails with the sign-in error the HUD reports, the payload redacted', async () => {
     const payload = 'eyJhIjoxfQ=='
     const fake = new FakeConsole({

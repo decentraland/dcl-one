@@ -52,6 +52,13 @@ class EngineNotReadyDriver extends IdentityDriver {
   }
 }
 
+/** An engine whose launch panics at once (the generic wasm trap), so `launchEngine` fails. */
+class LaunchFailingDriver extends IdentityDriver {
+  launch(): void {
+    throw new Error('unreachable')
+  }
+}
+
 interface Reply {
   address: string
   guest: boolean
@@ -289,6 +296,15 @@ describe('/hud_login through the session', () => {
     } finally {
       leave()
     }
+  })
+
+  it('is answered when the engine fails to launch, the stored sign-in put back', async () => {
+    const driver = new LaunchFailingDriver()
+    const h = await ready(driver)
+    await expect(login(ENCODED)).rejects.toThrow('the engine failed to launch')
+    expect(driver.identityLogins).toEqual([])
+    expect(h.session().fatalError).not.toBeNull()
+    await waitFor(() => expect(h.session().login.account).toBeNull())
   })
 
   it('is refused before the engine can take a sign-in', async () => {
