@@ -112,6 +112,8 @@ export interface Harness {
   result: RenderHookResult<EngineSession, unknown>['result']
   /** The current session value (re-read after acts). */
   session: () => EngineSession
+  /** Take the session down, as leaving the page does. */
+  unmount: () => void
 }
 
 /** Render the real session hook wired to a FakeDriver (pass a subclass to simulate boot panics). */
@@ -120,8 +122,8 @@ export function renderSession(
   driver: FakeDriver = new FakeDriver()
 ): Harness {
   if (previousLogin) driver.previousLogin = previousLogin
-  const { result } = renderHook(() => useEngineSession(() => driver))
-  return { driver, result, session: () => result.current }
+  const { result, unmount } = renderHook(() => useEngineSession(() => driver))
+  return { driver, result, session: () => result.current, unmount }
 }
 
 /**

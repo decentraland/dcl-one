@@ -1,8 +1,9 @@
 // `/hud_login` (lib/hudAutomation.ts): a test runner's sign-in through the HUD's own flow. The
 // session takes the identity as this page's stored sign-in and goes in as Jump In does; the
-// command answers once the sign-in has landed, in the lobby or on the way to its destination.
+// command answers once the sign-in has landed and the welcome page is done, in the lobby or on
+// the way to its destination, or with what ended it.
 import { afterEach, describe, expect, it } from 'vitest'
-import { waitFor } from '@testing-library/react'
+import { act, waitFor } from '@testing-library/react'
 import type { NewAccountPick } from '../engine/driver'
 import type { PageToScene } from '../engine/protocol'
 import type { AuthIdentity } from '../features/auth/sso'
@@ -21,13 +22,19 @@ const IDENTITY: AuthIdentity = {
 const ENCODED = btoa(JSON.stringify(IDENTITY))
 const REALM = 'https://realm.example.test'
 
-/** A driver whose welcome page's accept is answered, and whose sign-in can fail the way the
- *  engine driver's does: with a raw string. */
+/** A driver whose welcome page's accept is answered, whose sign-in can be held until `release`,
+ *  and can fail the way the engine driver's does: with a raw string. */
 class IdentityDriver extends FakeDriver {
   failWith: string | null = null
   accept: { ok: true } | { ok: false; error: string } = { ok: true }
+  hold = false
+  private readonly held: (() => void)[] = []
+  release(): void {
+    for (const go of this.held.splice(0)) go()
+  }
   async loginWithIdentity(identity: AuthIdentity, defaultOnError?: boolean, guest?: boolean, pick?: NewAccountPick): Promise<void> {
     await super.loginWithIdentity(identity, defaultOnError, guest, pick)
+    if (this.hold) await new Promise<void>((go) => this.held.push(go))
     if (this.failWith != null) throw this.failWith
   }
   send(msg: PageToScene): void {
@@ -42,8 +49,14 @@ class EngineNotReadyDriver extends IdentityDriver {
   }
 }
 
-async function login(rest: string): Promise<{ address: string; guest: boolean; phase: string }> {
-  return JSON.parse(await PAGE_COMMANDS['/hud_login'].run(rest)) as { address: string; guest: boolean; phase: string }
+interface Reply {
+  address: string
+  guest: boolean
+  phase: string
+}
+
+async function login(rest: string): Promise<Reply> {
+  return JSON.parse(await PAGE_COMMANDS['/hud_login'].run(rest)) as Reply
 }
 
 async function ready(driver: IdentityDriver): Promise<ReturnType<typeof renderSession>> {
@@ -96,9 +109,9 @@ describe('/hud_login arguments', () => {
 })
 
 describe('/hud_login through the session', () => {
-  it('signs in as a stored login, answers the welcome page with the pick and goes to the destination from the lobby', async () => {
+  it('signs in as a stored login, accepts the terms for an existing account without renaming it, and goes to the destination from the lobby', async () => {
     const driver = new IdentityDriver()
-    // a fresh install: the terms wait on the welcome page, which the pick answers
+    // a fresh install: the terms wait on the welcome page; the account has its profile
     driver.welcome = { terms: true, newProfile: false }
     const h = await ready(driver)
 
@@ -106,39 +119,52 @@ describe('/hud_login through the session', () => {
     expect(reply).toEqual({ address: ADDRESS.toLowerCase(), guest: false, phase: 'entering' })
     expect(driver.identityLogins).toEqual([{ identity: IDENTITY, defaultOnError: false, guest: false, pick: { name: 'tester', look: 2 } }])
     expect(driver.calls).not.toContain('jumpIn')
-    expect(driver.sentOf('acceptWelcome')).toEqual([{ kind: 'acceptWelcome', name: 'tester' }])
+    // the terms are accepted; the existing profile keeps its name (no name, no deploy)
+    expect(driver.sentOf('acceptWelcome')).toEqual([{ kind: 'acceptWelcome' }])
     expect(driver.last('teleport')).toMatchObject({ realm: REALM, x: 10, y: 20 })
     expect(h.session().phase).toBe('entering')
     expect(h.session().login.error).toBeNull()
+    // the identity is the page's stored sign-in now
+    expect(h.session().login.account).toBe(ADDRESS)
 
     // signed in: a second sign-in is refused
     await expect(login(ENCODED)).rejects.toThrow('already signed in')
   })
 
-  it('without a destination it stays in the lobby, and a guest is reported as one', async () => {
+  it("a new profile takes the pick's name; without a destination the sign-in lands in the lobby, a guest reported as one", async () => {
     const driver = new IdentityDriver()
     driver.welcome = { terms: true, newProfile: true }
     const h = await ready(driver)
-    const reply = await login(`${ENCODED} --guest`)
+    const reply = await login(`${ENCODED} --guest --name tester --look 1`)
     expect(reply).toEqual({ address: ADDRESS.toLowerCase(), guest: true, phase: 'lobby' })
-    expect(driver.identityLogins[0]).toMatchObject({ guest: true })
-    // the sign-in stands for the terms; without a pick the name is left to the engine
-    expect(driver.sentOf('acceptWelcome')).toEqual([{ kind: 'acceptWelcome' }])
+    expect(driver.identityLogins[0]).toMatchObject({ guest: true, pick: { name: 'tester', look: 1 } })
+    expect(driver.sentOf('acceptWelcome')).toEqual([{ kind: 'acceptWelcome', name: 'tester' }])
     expect(driver.sentOf('teleport')).toEqual([])
     expect(h.session().phase).toBe('lobby')
   })
 
-  it("reports the sign-in's failure, and the HUD is back on the start page with it", async () => {
+  it('stands for the terms without a pick', async () => {
+    const driver = new IdentityDriver()
+    driver.welcome = { terms: true, newProfile: false }
+    const h = await ready(driver)
+    await expect(login(ENCODED)).resolves.toMatchObject({ phase: 'lobby' })
+    expect(driver.sentOf('acceptWelcome')).toEqual([{ kind: 'acceptWelcome' }])
+    expect(h.session().phase).toBe('lobby')
+  })
+
+  it("reports the sign-in's failure, puts the stored sign-in back, and leaves the HUD on its start page with the error", async () => {
     const driver = new IdentityDriver()
     driver.failWith = 'profile fetch failed: 503'
     const h = await ready(driver)
     await expect(login(`${ENCODED} --realm ${REALM}`)).rejects.toThrow('profile fetch failed: 503')
     await waitFor(() => expect(h.session().phase).toBe('login'))
     expect(h.session().login.error).toBe('profile fetch failed: 503')
+    expect(h.session().login.account).toBeNull()
     expect(driver.sentOf('teleport')).toEqual([])
     // the failed one is over: another can be tried
     driver.failWith = null
     await expect(login(ENCODED)).resolves.toMatchObject({ phase: 'lobby' })
+    expect(h.session().login.account).toBe(ADDRESS)
   })
 
   it('reports a welcome page whose accept failed', async () => {
@@ -149,6 +175,61 @@ describe('/hud_login through the session', () => {
     await expect(login(`${ENCODED} --name tester --look 1`)).rejects.toThrow('accepting the welcome page failed: deploy refused')
     expect(h.session().phase).toBe('welcome')
     expect(h.session().welcome.error).toBe('deploy refused')
+  })
+
+  it('refuses a second sign-in while one is under way', async () => {
+    const driver = new IdentityDriver()
+    driver.hold = true
+    await ready(driver)
+    const first = login(ENCODED)
+    await expect(login(ENCODED)).rejects.toThrow('a /hud_login is already under way')
+    await waitFor(() => expect(driver.identityLogins).toHaveLength(1))
+    driver.release()
+    await expect(first).resolves.toMatchObject({ phase: 'lobby' })
+  })
+
+  it('answers a pending sign-in that a sign-out ended', async () => {
+    const driver = new IdentityDriver()
+    driver.hold = true
+    const h = await ready(driver)
+    const first = login(ENCODED)
+    await waitFor(() => expect(driver.identityLogins).toHaveLength(1))
+    act(() => h.session().logout())
+    await expect(first).rejects.toThrow('signed out')
+    expect(h.session().login.account).toBeNull()
+    driver.release()
+  })
+
+  it('answers a pending sign-in the HUD went away under', async () => {
+    const driver = new IdentityDriver()
+    driver.hold = true
+    const h = await ready(driver)
+    const first = login(ENCODED)
+    await waitFor(() => expect(driver.identityLogins).toHaveLength(1))
+    h.unmount()
+    await expect(first).rejects.toThrow('the HUD unmounted')
+    driver.release()
+  })
+
+  it("on a page with a link's destination the reply waits for the sign-in, and a failure is reported", async () => {
+    const url = new URL(location.href)
+    history.replaceState(null, '', '/?position=1,2')
+    try {
+      const driver = new IdentityDriver()
+      driver.failWith = 'profile fetch failed: 503'
+      const h = await ready(driver)
+      await expect(login(ENCODED)).rejects.toThrow('profile fetch failed: 503')
+      expect(driver.identityLogins).toHaveLength(1)
+      await waitFor(() => expect(h.session().phase).toBe('login'))
+      driver.failWith = null
+      // the link's destination wins over the command's own
+      const reply = await login(`${ENCODED} --realm ${REALM} --position 10,20`)
+      expect(reply).toMatchObject({ address: ADDRESS.toLowerCase(), phase: 'entering' })
+      expect(driver.identityLogins).toHaveLength(2)
+      expect(h.session().phase).toBe('entering')
+    } finally {
+      history.replaceState(null, '', url.pathname + url.search)
+    }
   })
 
   it('is refused before the engine can take a sign-in', async () => {

@@ -125,12 +125,13 @@ export interface Position {
   z: number
 }
 
-/** What `/hud_login` answers once the sign-in has landed: the account, and the HUD's phase,
- *  `lobby` or `entering` on its way to the destination. */
+/** What `/hud_login` answers once the sign-in has landed and the welcome page is done: the
+ *  account, and the HUD's phase: `lobby`, `entering` (on its way to the destination), `picking`
+ *  or `world`. */
 export interface HudLoginReply {
   address: string
   guest: boolean
-  phase: string
+  phase: 'lobby' | 'picking' | 'entering' | 'world'
 }
 
 export interface CommandRecord {
@@ -271,10 +272,11 @@ export class Explorer {
   }
 
   /** Sign in through the HUD's own flow (`/hud_login`, the web only): the identity becomes the
-   *  page's stored sign-in and goes in as its Jump In does, so the HUD leaves its start page;
-   *  `name` and `look` pick a first login's profile and answer the welcome page; `realm` and
-   *  `position` are picked from the lobby as a link's destination would be, which releases the
-   *  held world. Resolves once the sign-in has landed, not once the world is reached. */
+   *  page's stored sign-in and goes in as its Jump In does, so the HUD leaves its start page and
+   *  accepts the terms its welcome page asks for; `name` and `look` pick a first login's profile
+   *  (an existing one keeps its own); `realm` and `position` are picked from the lobby as a link's
+   *  destination would be, which releases the held world. Resolves once the sign-in has landed
+   *  and the page is done, not once the world is reached. */
   async hudLogin(
     identity: AuthIdentity | string,
     options: { name?: string; look?: number; guest?: boolean; defaultOnError?: boolean; realm?: string; position?: string } = {}

@@ -145,11 +145,12 @@ The HUD and input:
 - `/hud_login <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
   [--position <x,y>]` (web): sign in through the HUD's own flow with an AuthIdentity encoded as
   `/login_identity` takes it. The HUD takes it as the page's stored sign-in and goes in as its Jump
-  In does, so it leaves its start page, which `/login_identity` alone never makes it do; the pick
-  names and dresses a first login's profile and answers the welcome page, and the destination is
-  picked from the lobby as a link's would be, which releases the held world. Replies `{"address",
-  "guest", "phase"}` (`lobby`, or `entering` on the way to the destination) once the sign-in has
-  landed, or fails with its error. The page's side is
+  In does, so it leaves its start page, which `/login_identity` alone never makes it do; the
+  sign-in accepts the terms the welcome page asks for, the pick names and dresses a first login's
+  profile (an existing one keeps its own), and the destination is picked from the lobby as a link's
+  would be, which releases the held world. Replies `{"address", "guest", "phase"}` (`lobby`,
+  `entering` on the way to the destination, `picking` or `world`) once the sign-in has landed and
+  the page is done, or fails with its error. The page's side is
   `react-web/src/features/session/useEngineSession.ts` (`provideHudLogin`).
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
   `/click_at <x> <y> [--button left|right|middle]`.

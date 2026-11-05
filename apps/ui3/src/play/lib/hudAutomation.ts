@@ -636,7 +636,8 @@ export async function clickAt(x: number, y: number, button: MouseButtonName = 'l
 /**
  * What `/hud_login` asks of the session: sign in with this identity as the page's stored sign-in,
  * the way Jump In reuses one, with a first login's pick, and go where a link's destination would
- * from the lobby. The session provides the sign-in with `provideHudLogin` while it is mounted.
+ * from the lobby. The sign-in stands for the terms the welcome page asks for, as ACCEPT AND PLAY
+ * does. The session provides the sign-in with `provideHudLogin` while it is mounted.
  */
 export interface HudLoginRequest {
   identity: AuthIdentity
@@ -644,18 +645,19 @@ export interface HudLoginRequest {
   guest: boolean
   /** Continue with (and deploy) a default profile if the account's can't be fetched, as `/login_identity` does. */
   defaultOnError: boolean
-  /** The name and curated look a first login's new profile takes; the pick also answers the welcome page. */
+  /** The name and curated look a first login's new profile takes; an existing profile keeps its own. */
   pick?: NewAccountPick
   /** Where to go once signed in, from the lobby: a realm URL or world name, and a parcel `x,y`. */
   destination?: { realm?: string; position?: string }
 }
 
-/** The sign-in as it landed: the account, and the phase the HUD is in, `lobby` or `entering`
- *  (on its way to the destination). */
+/** The sign-in as it landed: the account, and the phase the HUD is in: `lobby` (no destination),
+ *  `entering` (on its way to the destination, or to a link's), `picking` (the places picker, with
+ *  no lobby to pick from) or `world` (already in). */
 export interface HudLoginReply {
   address: string
   guest: boolean
-  phase: string
+  phase: 'lobby' | 'picking' | 'entering' | 'world'
 }
 
 export type HudLogin = (request: HudLoginRequest) => Promise<HudLoginReply>
@@ -688,7 +690,7 @@ function decodeIdentity(encoded: string): AuthIdentity {
     typeof signer !== 'string' ||
     !HEX_ADDRESS.test(signer.trim())
   ) {
-    throw new Error('the identity is not an AuthIdentity: expected ephemeralIdentity, expiration and an authChain whose first link carries the signer address')
+    throw new Error('the identity is not an AuthIdentity: expected ephemeralIdentity and an authChain whose first link carries the signer address')
   }
   return identity as AuthIdentity
 }
@@ -856,7 +858,7 @@ export const PAGE_COMMANDS: Record<string, PageCommand> = {
   },
   '/hud_login': {
     args: [{ name: 'identity', kind: 'string', optional: false, help: 'base64(JSON) of an AuthIdentity, as /login_identity takes it' }],
-    help: "Sign in through the HUD's own flow with an identity (base64 JSON of an AuthIdentity, as /login_identity takes it), as a stored sign-in's Jump In: --name <name> and --look <n> pick a first login's profile and answer the welcome page, --guest marks a guest account, --default-on-error continues with a default profile when the account's can't be fetched, and --realm <realm> and --position <x,y> go there from the lobby as a link would. Replies JSON {\"address\", \"guest\", \"phase\"} once the sign-in has landed (phase lobby, or entering on the way to the destination), and fails with the sign-in's error. Web only: natively the engine signs in",
+    help: "Sign in through the HUD's own flow with an identity (base64 JSON of an AuthIdentity, as /login_identity takes it), as a stored sign-in's Jump In. The sign-in accepts the terms the welcome page asks for; --name <name> and --look <n> pick a first login's profile (an existing one keeps its own), --guest marks a guest account, --default-on-error continues with a default profile when the account's can't be fetched, and --realm <realm> and --position <x,y> go there from the lobby as a link would. Replies JSON {\"address\", \"guest\", \"phase\"} once the sign-in has landed and the page is done (phase lobby, entering on the way to the destination, picking or world), and fails with the sign-in's error. Web only: natively the engine signs in",
     run: async (rest) => JSON.stringify(await loginThroughHud(parseLoginArgs(rest)))
   },
   '/press_key': {

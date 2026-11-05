@@ -47,8 +47,12 @@ in with `/hud_login` and the worker's account (the HUD's own sign-in flow: it ta
 the page's stored sign-in and goes to the realm and the parcel from the lobby as a link would;
 the engine's `/login_identity` alone leaves the HUD on its start page and the world held), waits
 for `/world_state` `inWorld`, and corrects the parcel by console if the realm ignored it. The
-Visual suite signs in the same way as a guest: a fresh account the engine marks as one. On the
-standalone the sign-in is `/login_identity`, and the client is started at the realm and the parcel.
+sign-in accepts the terms the welcome page asks for; the name and look it carries are a first
+login's, and an account that has its profile keeps it. The Visual suite signs in the same way as
+a guest: a fresh key each run, marked as a guest for the engine, whose first login deploys a new
+profile on the target's catalyst (the engine's own `/login_guest` stays local but leaves the HUD
+on its start page). On the standalone the sign-in is `/login_identity`, and the client is started
+at the realm and the parcel.
 One client serves every spec file of a run (`--test-isolation=none`); the Visual suite boots a
 second one on its own realm.
 

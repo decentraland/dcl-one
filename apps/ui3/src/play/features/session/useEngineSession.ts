@@ -846,18 +846,22 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // ?position/?realm destination).
   const pendingLogin = useRef<((driver: LoginDriver) => Promise<unknown>) | null>(null)
   // The sign-in `/hud_login` runs (lib/hudAutomation.ts, a test runner's), answered once it has
-  // landed or failed, and the destination it then goes to from the lobby, as a link's would.
-  const hudLoginPending = useRef<{ resolve: (reply: HudLoginReply) => void; reject: (error: Error) => void } | null>(null)
+  // landed (`landed`: the engine took it) and the welcome page is done, or failed; `restore` puts
+  // the page's stored sign-in back as it was when the sign-in never took. The destination it then
+  // goes to from the lobby, as a link's would.
+  const hudLoginPending = useRef<{ resolve: (reply: HudLoginReply) => void; reject: (error: Error) => void; landed: boolean; restore: () => void } | null>(null)
   const hudDestination = useRef<Destination>(null)
+  // ticks when the pending sign-in lands, so the effect that answers it runs again
+  const [hudLoginLanded, setHudLoginLanded] = useState(0)
   // Answers the pending /hud_login, if any: with where it landed, or the error that ended it.
-  const settleHudLogin = (outcome: HudLoginReply | Error): void => {
+  const settleHudLogin = useCallback((outcome: HudLoginReply | Error): void => {
     const pending = hudLoginPending.current
     hudLoginPending.current = null
     hudDestination.current = null
     if (pending == null) return
     if (outcome instanceof Error) pending.reject(outcome)
     else pending.resolve(outcome)
-  }
+  }, [])
   // Native fresh sign-in (driver.loginNew) in flight: non-null shows the verification-code panel;
   // `code` fills in when the engine's 'loginCode' message lands. The attempt counter invalidates
   // a cancelled attempt's eventual resolution (the promise settles after loginCancel).
@@ -1423,7 +1427,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           if (chosen != null) {
             setWelcomeSaving(true)
             setWelcomeError(null)
-            driver.send({ kind: 'acceptWelcome', name: chosen.name })
+            // the name is a new profile's (the page's own accept passes one only then): an
+            // existing account's profile keeps its name and is not deployed again
+            driver.send({ kind: 'acceptWelcome', name: msg.newProfile ? chosen.name : undefined })
             break
           }
           screenViewed(msg.newProfile ? 'AVATAR_NAMING' : 'WELCOME')
@@ -2103,11 +2109,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         }
         welcomeLink.current = urlDestination.current
         urlDestination.current = null
+        if (hudLoginPending.current != null) {
+          hudLoginPending.current.landed = true
+          setHudLoginLanded((n) => n + 1)
+        }
         setBusy(false)
         if (welcomeShown()) driver.send({ kind: 'getWelcome' })
       })
       .catch((e: unknown) => {
         console.error('[login] post-launch login failed:', e)
+        hudLoginPending.current?.restore()
         // The engine driver rejects with a RAW STRING (wasm-bindgen JsValue), not an Error —
         // e.message would be undefined and the login screen would show no error at all.
         const msg = e instanceof Error ? e.message : String(e)
@@ -2682,9 +2693,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
 
   // A test runner's sign-in (/hud_login, lib/hudAutomation.ts): the identity becomes this page's
   // stored sign-in, as the auth site's return leaves one, and goes in the way Jump In takes a stored
-  // one, so the HUD leaves its start page for the lobby. The pick names and dresses a first login's
-  // profile and answers the welcome page; the destination is picked from the lobby once it takes
-  // picks (the effect after the phase). Answered once the sign-in has landed or failed.
+  // one, so the HUD leaves its start page for the lobby. The sign-in stands for the terms the
+  // welcome page asks for, and the pick names and dresses a first login's profile; the destination
+  // is picked from the lobby once it takes picks (the effect after the phase). Answered once the
+  // sign-in has landed and the page is done, or failed, when the stored sign-in goes back to what
+  // it was.
   const hudLogin = useCallback(
     (request: HudLoginRequest): Promise<HudLoginReply> =>
       new Promise((resolve, reject) => {
@@ -2692,25 +2705,35 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         if (!engineReady) return reject(new Error('the engine is not ready to take a sign-in yet'))
         if (hudLoginPending.current != null) return reject(new Error('a /hud_login is already under way'))
         const { identity, guest, defaultOnError, pick, destination } = request
+        const previous = storedRef.current
         const login: StoredLogin = { address: rootAddress(identity).toLowerCase(), identity, guest }
         setStored(login)
         storedRef.current = login
         guestPick.current = pick ?? null
         hudDestination.current = hudDestinationOf(destination)
-        hudLoginPending.current = { resolve, reject }
+        hudLoginPending.current = {
+          resolve,
+          reject,
+          landed: false,
+          restore: () => {
+            setStored(previous)
+            storedRef.current = previous
+          }
+        }
         if (!submitLogin((d) => d.loginWithIdentity(identity, defaultOnError, guest, pick), 'stored')) {
           guestPick.current = null
+          hudLoginPending.current.restore()
           settleHudLogin(new Error('the sign-in could not start: another is under way'))
         }
       }),
-    // settleHudLogin only touches refs
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [submitted, engineReady, submitLogin]
+    [submitted, engineReady, submitLogin, settleHudLogin]
   )
   useEffect(() => {
     provideHudLogin(hudLogin)
     return () => provideHudLogin(null)
   }, [hudLogin])
+  // a sign-in the HUD went away under is answered with that, not left to the runner's timeout
+  useEffect(() => () => settleHudLogin(new Error('the HUD unmounted')), [settleHudLogin])
 
   // the curated default look on the stage, so RANDOMIZE never repeats it
   const shownLook = useRef(0)
@@ -2958,20 +2981,21 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         ? 'entering'
         : 'world'
 
-  // A /hud_login has landed once the HUD is past signing in and the welcome page: in the lobby,
-  // where its destination is picked as a card's would be (or from the picker), or already entering
-  // a link's destination, which wins over its own.
+  // A /hud_login is answered once the engine took the sign-in and the HUD is past the welcome page
+  // (shown, or its accept still saving): in the lobby, where its destination is picked as a card's
+  // would be (or from the picker), or already entering a link's destination, which wins over its
+  // own. On a link the phase is `entering` from the submit on, so the sign-in's landing is waited
+  // for apart (`landed`).
   useEffect(() => {
-    if (hudLoginPending.current == null || phase === 'login' || phase === 'welcome') return
+    const pending = hudLoginPending.current
+    if (pending == null || !pending.landed || phase === 'login' || phase === 'welcome' || welcomeSaving) return
     if (phase === 'lobby' && busy) return
     const destination = hudDestination.current
     const picking = destination != null && (phase === 'lobby' || phase === 'picking')
     if (picking) pickDestination(destination)
     const stored = storedRef.current
     settleHudLogin({ address: stored?.address ?? '', guest: stored?.guest === true, phase: picking ? 'entering' : phase })
-    // settleHudLogin only touches refs
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, busy, pickDestination])
+  }, [phase, busy, welcomeSaving, hudLoginLanded, pickDestination, settleHudLogin])
 
   // The screens a phase shows (the loading screen's own are the engine's: LOADING_START / END /
   // TIMEOUT come from `crates/analytics/src/loading.rs`).
