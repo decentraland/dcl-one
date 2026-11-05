@@ -136,6 +136,26 @@ class InventoryTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             guard.validate_invocation(guard.BROAD, {"MAKEFLAGS": "NODE_CRATES=-p catalyst-comms"})
 
+    def test_catalyst_inventory_compiles_the_runtime_selection(self):
+        runtime = guard.BROAD.split(" && ")[1].split()
+        with mock.patch.object(guard, "run", side_effect=[guard.BROAD, ""]) as execute:
+            with mock.patch.object(guard.sys, "argv", ["dev-regressions.py"]):
+                with self.assertRaisesRegex(ValueError, "missing required target"):
+                    guard.main()
+        self.assertEqual(execute.call_args_list, [
+            mock.call(["make", "--no-print-directory", "-n", "catalyst-test"]),
+            mock.call([*runtime, "--no-run", "--message-format=json-render-diagnostics"], ROOT / "services/catalyst"),
+        ])
+
+    def test_inventory_distinguishes_same_named_targets_by_kind(self):
+        import json
+        unit = {"reason": "compiler-artifact", "executable": "unit-test", "profile": {"test": True},
+                "target": {"name": "required", "kind": ["lib"]}}
+        integration = {**unit, "executable": "integration-test", "target": {"name": "required", "kind": ["test"]}}
+        output = "\n".join(map(json.dumps, [unit, integration]))
+        self.assertEqual(guard.artifact_targets(output, {"required"}, kind="test"), {"required": "integration-test"})
+        self.assertEqual(guard.artifact_targets(json.dumps(unit), {"required"}, kind="test"), {})
+
     def test_existing_bevy_artifact_inventory_requires_native_comms_target(self):
         import json
         artifact = {"reason": "compiler-artifact", "executable": "comms-test", "profile": {"test": True}, "target": {"name": "comms"}}
