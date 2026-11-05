@@ -117,6 +117,13 @@ pub async fn update_world_settings(
         }
         _ => {}
     }
+    let _source = upload_limits::admit_source(
+        &headers,
+        limits,
+        "world-settings",
+        MAX_SETTINGS_UPLOAD_BYTES as u64,
+    )
+    .map_err(|_| ApiError::too_many(upload_limits::SOURCE_LIMIT_MESSAGE, 5))?;
     let _slot =
         upload_limits::try_acquire_upload_slot(limits.max_concurrent_uploads).ok_or_else(|| {
             tracing::warn!(

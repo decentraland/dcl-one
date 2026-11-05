@@ -21,7 +21,7 @@ use crate::shared::identity::{Address, PermissionDecision};
 use crate::shared::signed_fetch::SignedPath;
 
 use super::auth::{PERMISSIONS_METADATA_KEYS, map_auth_error_api, require_verified};
-use super::http::ApiError;
+use super::http::{ApiError, QueryPairs, js_parse_int, pagination, query_param};
 use super::store::{
     self, AccessSetting, AllowListEdit, AllowListEditOutcome, MAX_ACCESS_COMMUNITIES,
     MAX_ACCESS_WALLETS,
@@ -83,14 +83,8 @@ pub async fn get_permissions(
         .as_ref()
         .map(|w| w.access.clone())
         .unwrap_or_default();
-    // The old GET resolved an unknown owner by NAME through squid (memoized
-    // 5 min); v2 has no by-name reader, so the field is the row's owner or
-    // the personal rule (policy.rs, "known_owner").
-    let owner = state
-        .policy
-        .personal_worlds()
-        .owner_of(&world)
-        .or_else(|| record.as_ref().and_then(|w| w.owner.clone()));
+    // The live holder; 503 while the authority cannot answer, as other owner reads.
+    let owner = state.policy.current_owner(&world).await?;
 
     let mut deployment_wallets = Vec::new();
     let mut streaming_wallets = Vec::new();
@@ -139,7 +133,7 @@ struct OwnerCheck {
 }
 
 fn not_owner(world: &WorldName) -> ApiError {
-    ApiError::forbidden(format!(
+    ApiError::unauthorized(format!(
         "Your wallet does not own \"{}\", you can not set access control lists for it.",
         world.display()
     ))
@@ -181,6 +175,41 @@ fn parse_permission(raw: &str) -> Option<Permission> {
     Permission::parse(raw)
 }
 
+/// The most addresses one permission edit notifies per direction.
+pub const MAX_NOTICES_PER_EDIT: usize = 50;
+
+/// Notifies the addresses the edit in `tx` actually `added` or `removed`
+/// (the old permission events, at most [`MAX_NOTICES_PER_EDIT`] each) in the
+/// same transaction, then commits.
+async fn commit_with_notices(
+    state: &SharedState,
+    mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
+    world: &WorldName,
+    permission: Permission,
+    added: &[String],
+    removed: &[String],
+) -> Result<(), ApiError> {
+    let now = chrono::Utc::now().naive_utc();
+    let capped = |a: &'_ [String]| a.len().min(MAX_NOTICES_PER_EDIT);
+    let mut notices = state.notices.permission_changed(
+        false,
+        world,
+        permission,
+        &removed[..capped(removed)],
+        now,
+    );
+    notices.extend(state.notices.permission_changed(
+        true,
+        world,
+        permission,
+        &added[..capped(added)],
+        now,
+    ));
+    state.notices.send(&mut tx, &notices).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// POST /world/{world_name}/permissions/{permission_name}
 pub async fn post_permissions(
     State(state): State<SharedState>,
@@ -211,14 +240,17 @@ pub async fn post_permissions(
                 ));
             }
             let wallets = metadata_wallets(meta)?;
-            store::replace_world_wide_permission(
-                &state.pool,
+            let mut tx = state.pool.begin().await?;
+            let (added, removed) = store::replace_world_wide_permission(
+                &mut *tx,
                 &world,
                 &auth.signer,
                 Permission::Deployment,
                 &wallets,
             )
             .await?;
+            commit_with_notices(&state, tx, &world, Permission::Deployment, &added, &removed)
+                .await?;
         }
         "streaming" => {
             let ty = meta.get("type").and_then(|v| v.as_str()).unwrap_or("");
@@ -232,14 +264,17 @@ pub async fn post_permissions(
             } else {
                 metadata_wallets(meta)?
             };
-            store::replace_world_wide_permission(
-                &state.pool,
+            let mut tx = state.pool.begin().await?;
+            let (added, removed) = store::replace_world_wide_permission(
+                &mut *tx,
                 &world,
                 &auth.signer,
                 Permission::Streaming,
                 &wallets,
             )
             .await?;
+            commit_with_notices(&state, tx, &world, Permission::Streaming, &added, &removed)
+                .await?;
         }
         "access" => {
             let access = access_from_metadata(meta)?;
@@ -404,14 +439,16 @@ pub async fn put_permissions_address(
     let ensure_owner = (!owner.world_found).then_some(&owner.signer);
 
     if is_allow_list_permission(permission) {
-        store::grant_addresses_world_wide_permission(
-            &state.pool,
+        let mut tx = state.pool.begin().await?;
+        let added = store::grant_addresses_world_wide_permission(
+            &mut *tx,
             &world,
             permission,
             std::slice::from_ref(&address),
             ensure_owner,
         )
         .await?;
+        commit_with_notices(&state, tx, &world, permission, &added, &[]).await?;
     } else {
         if let Some(signer) = ensure_owner {
             store::ensure_world(&state.pool, &world, signer).await?;
@@ -447,7 +484,7 @@ pub async fn delete_permissions_address(
         &world,
     )
     .await?;
-    if !store::world_is_valid(&state.pool, &world).await? {
+    if !store::world_is_valid(&state.pool, &state.policy, &world).await? {
         return Err(ApiError::not_found(format!(
             "World \"{}\" not found.",
             world.display()
@@ -455,13 +492,15 @@ pub async fn delete_permissions_address(
     }
 
     if is_allow_list_permission(permission) {
-        store::remove_addresses_permission(
-            &state.pool,
+        let mut tx = state.pool.begin().await?;
+        let removed = store::remove_addresses_permission(
+            &mut *tx,
             &world,
             permission,
             std::slice::from_ref(&address),
         )
         .await?;
+        commit_with_notices(&state, tx, &world, permission, &[], &removed).await?;
     } else {
         apply_allow_list_edit(
             &state,
@@ -547,7 +586,15 @@ pub async fn post_permission_parcels(
         &world,
     )
     .await?;
-    store::add_parcels_to_permission(&state.pool, &world, permission, &address, &parcels).await?;
+    let mut tx = state.pool.begin().await?;
+    let created =
+        store::add_parcels_to_permission(&mut *tx, &world, permission, &address, &parcels).await?;
+    let added: &[String] = if created {
+        &[address.as_str().to_string()]
+    } else {
+        &[]
+    };
+    commit_with_notices(&state, tx, &world, permission, added, &[]).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -571,56 +618,25 @@ pub async fn delete_permission_parcels(
         &world,
     )
     .await?;
-    let found =
-        store::remove_parcels_from_permission(&state.pool, &world, permission, &address, &parcels)
+    let mut tx = state.pool.begin().await?;
+    let removal =
+        store::remove_parcels_from_permission(&mut *tx, &world, permission, &address, &parcels)
             .await?;
-    if !found {
+    let Some(dropped) = removal else {
         return Err(ApiError::bad_request(format!(
             "Permission not found. Address {} does not have {permission_name} permission for world {}.",
             address.as_str(),
             world.display()
         )));
-    }
-    Ok(StatusCode::NO_CONTENT)
-}
-
-type QueryPairs = Vec<(String, String)>;
-
-fn query_param<'a>(q: &'a QueryPairs, key: &str) -> Option<&'a str> {
-    q.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
-}
-
-/// JS `parseInt(s, 10)`: leading whitespace, an optional sign, then the
-/// leading digits (saturating); `None` where JS gives `NaN`.
-fn js_parse_int(s: &str) -> Option<i64> {
-    let t = s.trim_start();
-    let (negative, rest) = match t.as_bytes().first() {
-        Some(b'-') => (true, &t[1..]),
-        Some(b'+') => (false, &t[1..]),
-        _ => (false, t),
     };
-    let digits = &rest[..rest.bytes().take_while(u8::is_ascii_digit).count()];
-    if digits.is_empty() {
-        return None;
-    }
-    let n = digits.parse::<i64>().unwrap_or(i64::MAX);
-    Some(if negative { -n } else { n })
-}
-
-const MAX_PAGE_LIMIT: i64 = 100;
-
-/// `getPaginationParams` of @dcl/http-commons: an absent, invalid or
-/// out-of-range limit is 100; an invalid or negative offset is 0.
-fn pagination(q: &QueryPairs) -> (i64, i64) {
-    let limit = query_param(q, "limit")
-        .and_then(js_parse_int)
-        .filter(|l| (1..=MAX_PAGE_LIMIT).contains(l))
-        .unwrap_or(MAX_PAGE_LIMIT);
-    let offset = query_param(q, "offset")
-        .and_then(js_parse_int)
-        .filter(|o| *o >= 0)
-        .unwrap_or(0);
-    (limit, offset)
+    // Removing the last parcel drops the grant, so the address hears it was revoked.
+    let removed: &[String] = if dropped {
+        &[address.as_str().to_string()]
+    } else {
+        &[]
+    };
+    commit_with_notices(&state, tx, &world, permission, &[], removed).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 fn bounding_box(q: &QueryPairs) -> Result<Option<(i32, i32, i32, i32)>, ApiError> {
@@ -774,7 +790,7 @@ async fn apply_allow_list_edit(
     match store::modify_allow_list_access(&state.pool, world, edit).await? {
         AllowListEditOutcome::Applied => Ok(()),
         AllowListEditOutcome::NotAllowList => Err(ApiError::bad_request(format!(
-            "World \"{}\" does not have allow-list access type.",
+            "World \"{}\" does not have allow-list access type. Cannot add or remove wallets.",
             world.display()
         ))),
         AllowListEditOutcome::CapExceeded => Err(cap_error()),
@@ -873,37 +889,6 @@ mod tests {
         raw.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
-    }
-
-    #[test]
-    fn pagination_falls_back_like_http_commons() {
-        assert_eq!(pagination(&pairs(&[])), (100, 0));
-        assert_eq!(
-            pagination(&pairs(&[("limit", "5"), ("offset", "7")])),
-            (5, 7)
-        );
-        assert_eq!(pagination(&pairs(&[("limit", "1000")])), (100, 0));
-        assert_eq!(pagination(&pairs(&[("limit", "0")])), (100, 0));
-        assert_eq!(
-            pagination(&pairs(&[("limit", "-1"), ("offset", "-3")])),
-            (100, 0)
-        );
-        assert_eq!(
-            pagination(&pairs(&[("limit", "abc"), ("offset", "x")])),
-            (100, 0)
-        );
-        assert_eq!(
-            pagination(&pairs(&[("limit", ""), ("offset", "")])),
-            (100, 0)
-        );
-        assert_eq!(
-            pagination(&pairs(&[("limit", "7.9"), ("offset", "3px")])),
-            (7, 3)
-        );
-        assert_eq!(
-            pagination(&pairs(&[("limit", "2"), ("limit", "50")])),
-            (2, 0)
-        );
     }
 
     #[test]

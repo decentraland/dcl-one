@@ -26,7 +26,7 @@ mod denylist;
 mod file_ids;
 pub mod gc;
 
-pub use content::{FileInfo, OpenedContent, Storage};
+pub use content::{FileInfo, OpenedContent, Storage, store_file_copy_fallbacks};
 pub use denylist::Denylist;
 pub use file_ids::FileIds;
 

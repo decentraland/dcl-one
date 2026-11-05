@@ -7,9 +7,18 @@
 //! so a request it rejects does not drain the quotas. A client is its IPv4
 //! address or its IPv6 network of `CONTENT_GET_RATE_LIMIT_IPV6_PREFIX_LENGTH`
 //! bits (a host routed a /64 cannot rotate addresses for a fresh budget).
-//! Peers listed in `TRUSTED_SYNC_PEER_IPS` skip all three, so a peer
-//! bootstrapping from this node is never throttled; the gateway exempts the
-//! same addresses from its own limits (`GATEWAY_TRUSTED_SYNC_PEER_IPS`).
+//! Peers listed in `TRUSTED_SYNC_PEER_IPS` (addresses or networks) skip all
+//! three, so a peer bootstrapping from this node is never throttled; the
+//! gateway exempts the same peers from its own `/contents` limit
+//! (`GATEWAY_TRUSTED_SYNC_PEER_IPS`).
+//!
+//! The client is the socket peer. Only a peer inside
+//! `HTTP_TRUSTED_PROXY_CIDRS` (the gateway) may name another one, through its
+//! overwritten `X-Real-IP` or `TRUSTED_CLIENT_IP_HEADER`: the routes are
+//! reachable directly too, and a header from any other peer would let a
+//! client pick its bucket, skip the limit as a sync peer or spend someone
+//! else's quota. Upstream reads its headers from any peer, behind a proxy it
+//! assumes.
 //!
 //! Over a budget the answer is upstream's 429 `{"error":"Too many requests"}`
 //! with `Retry-After` (seconds until the rejecting window ends) and the
@@ -23,7 +32,7 @@
 //! resets them. Each bucket tracks at most [`MAX_SOURCES`] clients; a new
 //! client past that evicts the oldest window.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
@@ -33,8 +42,11 @@ use axum::middleware::Next;
 use axum::response::Response;
 use parking_lot::Mutex;
 
+use ipnet::IpNet;
+
 use super::SharedState;
 use super::errors::json_error;
+use crate::shared::client_ip::{is_trusted_proxy, single_real_ip};
 
 /// Clients each bucket tracks at once.
 const MAX_SOURCES: usize = 100_000;
@@ -49,12 +61,15 @@ pub struct Config {
     pub ipv6_prefix_length: u8,
     /// `TRUSTED_SYNC_PEER_IPS`, the raw comma list.
     pub trusted_sync_peer_ips: String,
-    /// `TRUSTED_CLIENT_IP_HEADER`.
+    /// `TRUSTED_CLIENT_IP_HEADER`, read from trusted proxies only.
     pub trusted_client_ip_header: Option<String>,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: the peers whose forwarding headers count.
+    pub trusted_proxy_cidrs: Vec<IpNet>,
 }
 
 impl Default for Config {
-    /// Upstream's defaults (`src/Environment.ts:106-125`).
+    /// Upstream's defaults (`src/Environment.ts:106-125`), the clap defaults
+    /// too (`the_defaults_are_the_config_crates`).
     fn default() -> Self {
         Self {
             burst_max: 1000,
@@ -64,6 +79,7 @@ impl Default for Config {
             ipv6_prefix_length: 64,
             trusted_sync_peer_ips: String::new(),
             trusted_client_ip_header: None,
+            trusted_proxy_cidrs: Vec::new(),
         }
     }
 }
@@ -152,7 +168,8 @@ impl Bucket {
 pub struct ContentGetLimit {
     buckets: [Bucket; 3],
     ipv6_prefix_length: u8,
-    trusted_sync_peers: HashSet<IpAddr>,
+    trusted_sync_peers: Vec<IpNet>,
+    trusted_proxies: Vec<IpNet>,
     client_ip_header: Option<HeaderName>,
 }
 
@@ -181,30 +198,35 @@ impl ContentGetLimit {
             ],
             ipv6_prefix_length: config.ipv6_prefix_length.clamp(1, 128),
             trusted_sync_peers: parse_trusted_sync_peers(&config.trusted_sync_peer_ips),
+            trusted_proxies: config.trusted_proxy_cidrs.clone(),
             client_ip_header,
         }
     }
 
-    /// The client a request is counted as: the rightmost entry of
-    /// `TRUSTED_CLIENT_IP_HEADER` when set (one trusted proxy), else the
-    /// gateway-stamped address, else the socket; canonical (an IPv4-mapped
-    /// IPv6 address is its IPv4 address). `None` when none parses.
+    /// The client a request is counted as, canonical (an IPv4-mapped IPv6
+    /// address is its IPv4 address): the socket peer, or, when that peer is a
+    /// trusted proxy, the rightmost entry of `TRUSTED_CLIENT_IP_HEADER` if set,
+    /// else its one `X-Real-IP`, else the proxy itself. `None` without a socket.
     fn client(&self, headers: &HeaderMap, socket: Option<IpAddr>) -> Option<IpAddr> {
-        let from_header = match &self.client_ip_header {
+        let socket = socket?.to_canonical();
+        if !is_trusted_proxy(socket, &self.trusted_proxies) {
+            return Some(socket);
+        }
+        let forwarded = match &self.client_ip_header {
             Some(name) => headers
                 .get(name)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.rsplit(',').next())
                 .and_then(parse_ip),
-            None => parse_ip(&crate::shared::client_ip::client_ip(headers)),
+            None => single_real_ip(headers),
         };
-        from_header.or(socket.map(|ip| ip.to_canonical()))
+        Some(forwarded.unwrap_or(socket))
     }
 
     /// Runs the three buckets in order for `client`: the first rejection, or
     /// the burst bucket's verdict when all pass. `None` for an exempt peer.
     fn check(&self, client: IpAddr, now: Instant) -> Option<Verdict> {
-        if self.trusted_sync_peers.contains(&client) {
+        if self.trusted_sync_peers.iter().any(|n| n.contains(&client)) {
             return None;
         }
         let key = client_key(client, self.ipv6_prefix_length);
@@ -226,18 +248,28 @@ fn parse_ip(raw: &str) -> Option<IpAddr> {
     raw.parse::<IpAddr>().ok().map(|ip| ip.to_canonical())
 }
 
-/// The canonical addresses of `TRUSTED_SYNC_PEER_IPS`; an entry that is not
-/// an IP address is dropped with a warning (a typo must not stop the node).
-fn parse_trusted_sync_peers(raw: &str) -> HashSet<IpAddr> {
-    let mut peers = HashSet::new();
+/// The networks of `TRUSTED_SYNC_PEER_IPS`: an address (canonical, as its
+/// own /32 or /128) or a CIDR, as the gateway's list takes them; an entry
+/// that is neither is dropped with a warning (a typo must not stop the node).
+fn parse_trusted_sync_peers(raw: &str) -> Vec<IpNet> {
+    let mut peers = Vec::new();
     for entry in raw.split(',').map(str::trim).filter(|e| !e.is_empty()) {
-        match parse_ip(entry) {
-            Some(ip) => {
-                peers.insert(ip);
-            }
+        let parsed = match entry.parse::<IpNet>() {
+            Ok(net) => Some(match net.addr().to_canonical() {
+                IpAddr::V4(v4) if net.addr().is_ipv6() => {
+                    IpNet::new(IpAddr::V4(v4), net.prefix_len().saturating_sub(96)).ok()
+                }
+                _ => Some(net.trunc()),
+            })
+            .flatten(),
+            Err(_) => parse_ip(entry).map(IpNet::from),
+        };
+        match parsed {
+            Some(net) if !peers.contains(&net) => peers.push(net),
+            Some(_) => {}
             None => tracing::warn!(
                 entry,
-                "Ignoring invalid entry in TRUSTED_SYNC_PEER_IPS: not an IP address"
+                "Ignoring invalid entry in TRUSTED_SYNC_PEER_IPS: not an IP address or network"
             ),
         }
     }
@@ -319,6 +351,42 @@ mod tests {
             .collect()
     }
 
+    /// `Config::default()` repeats the config crate's clap defaults; this
+    /// keeps the two in step.
+    #[test]
+    fn the_defaults_are_the_config_crates() {
+        let config = crate::config::Config::parse_for_tests(&[
+            "catalyst",
+            "--database-url",
+            "postgres:///catalyst",
+        ])
+        .unwrap();
+        let parsed = crate::Settings::from_config(&config).content_get_limit;
+        let default = Config::default();
+        assert_eq!(
+            (
+                parsed.burst_max,
+                parsed.burst_window,
+                parsed.hourly_max,
+                parsed.daily_max,
+                parsed.ipv6_prefix_length,
+                parsed.trusted_sync_peer_ips,
+                parsed.trusted_client_ip_header,
+                parsed.trusted_proxy_cidrs
+            ),
+            (
+                default.burst_max,
+                default.burst_window,
+                default.hourly_max,
+                default.daily_max,
+                default.ipv6_prefix_length,
+                default.trusted_sync_peer_ips,
+                default.trusted_client_ip_header,
+                default.trusted_proxy_cidrs
+            )
+        );
+    }
+
     /// Upstream `content-get-rate-limit.spec.ts:427-466`.
     #[test]
     fn ipv6_clients_are_keyed_by_network() {
@@ -395,7 +463,12 @@ mod tests {
 
     #[test]
     fn listed_sync_peers_are_never_limited_and_bad_entries_are_dropped() {
-        let l = limiter(1, 1, 1, "203.0.113.50, not-an-ip, ::ffff:203.0.113.51");
+        let l = limiter(
+            1,
+            1,
+            1,
+            "203.0.113.50, not-an-ip, ::ffff:203.0.113.51, 198.51.100.0/30, 2001:db8:5::/48, 10.0.0.1/33",
+        );
         let now = Instant::now();
         let peer = "203.0.113.50";
         assert_eq!(statuses(&l, &[peer; 5], now), [true; 5]);
@@ -404,29 +477,100 @@ mod tests {
             [true; 3],
             "canonical form"
         );
+        assert_eq!(
+            statuses(&l, &["198.51.100.3"; 3], now),
+            [true; 3],
+            "a network, as the gateway's list takes it"
+        );
+        assert_eq!(statuses(&l, &["2001:db8:5:1::9"; 3], now), [true; 3]);
         assert_eq!(statuses(&l, &["198.51.100.9"; 2], now), [true, false]);
-        assert_eq!(l.trusted_sync_peers.len(), 2);
+        assert_eq!(l.trusted_sync_peers.len(), 4);
     }
 
+    /// Only a peer in `HTTP_TRUSTED_PROXY_CIDRS` may name the client; a direct
+    /// socket's headers are its own and never count.
     #[test]
-    fn the_client_comes_from_the_trusted_header_then_the_gateway_then_the_socket() {
-        let socket = Some("192.0.2.1".parse().unwrap());
+    fn forwarding_headers_count_only_from_a_trusted_proxy() {
+        let gateway = Some("192.0.2.1".parse().unwrap());
+        let direct = Some("198.51.100.66".parse().unwrap());
         let mut headers = HeaderMap::new();
         headers.insert("x-real-ip", "198.51.100.2".parse().unwrap());
+        headers.insert("x-forwarded-for", "6.6.6.6, 198.51.100.4".parse().unwrap());
         headers.insert("cf-connecting-ip", "6.6.6.6, 198.51.100.3".parse().unwrap());
-        let gateway = limiter(1, 1, 1, "");
-        assert_eq!(gateway.client(&headers, socket), parse_ip("198.51.100.2"));
-        assert_eq!(gateway.client(&HeaderMap::new(), socket), socket);
-        let trusted = ContentGetLimit::new(&Config {
-            trusted_client_ip_header: Some("CF-Connecting-IP".into()),
+        let proxies = vec!["192.0.2.0/24".parse().unwrap()];
+        let behind = ContentGetLimit::new(&Config {
+            trusted_proxy_cidrs: proxies.clone(),
             ..Config::default()
         });
-        assert_eq!(trusted.client(&headers, socket), parse_ip("198.51.100.3"));
-        assert_eq!(trusted.client(&HeaderMap::new(), None), None);
+        assert_eq!(behind.client(&headers, gateway), parse_ip("198.51.100.2"));
+        assert_eq!(behind.client(&headers, direct), direct, "spoofed headers");
+        assert_eq!(
+            behind.client(&HeaderMap::new(), gateway),
+            gateway,
+            "a proxy that names no client is counted itself"
+        );
+        assert_eq!(behind.client(&headers, None), None);
+        let untrusted = limiter(1, 1, 1, "");
+        assert_eq!(untrusted.client(&headers, gateway), gateway);
+
+        let custom = ContentGetLimit::new(&Config {
+            trusted_client_ip_header: Some("CF-Connecting-IP".into()),
+            trusted_proxy_cidrs: proxies,
+            ..Config::default()
+        });
+        assert_eq!(custom.client(&headers, gateway), parse_ip("198.51.100.3"));
+        assert_eq!(custom.client(&headers, direct), direct);
+    }
+
+    /// A direct client that names a sync peer, or rotates the address it
+    /// names, is still counted as itself.
+    #[test]
+    fn a_direct_client_cannot_borrow_a_sync_peer_or_a_fresh_budget() {
+        let l = ContentGetLimit::new(&Config {
+            burst_max: 1,
+            trusted_sync_peer_ips: "203.0.113.50".into(),
+            trusted_proxy_cidrs: vec!["192.0.2.0/24".parse().unwrap()],
+            ..Config::default()
+        });
+        let direct = parse_ip("198.51.100.66");
+        let now = Instant::now();
+        let verdicts: Vec<bool> = ["203.0.113.50", "198.51.100.1", "198.51.100.2"]
+            .iter()
+            .map(|spoofed| {
+                let mut headers = HeaderMap::new();
+                headers.insert("x-real-ip", spoofed.parse().unwrap());
+                let client = l.client(&headers, direct).unwrap();
+                l.check(client, now).is_none_or(|v| v.allowed)
+            })
+            .collect();
+        assert_eq!(verdicts, [true, false, false]);
+    }
+
+    /// Past [`MAX_SOURCES`] clients a new one evicts the oldest window, which
+    /// then starts over; the others keep theirs.
+    #[test]
+    fn a_new_client_past_the_cap_evicts_the_oldest_window() {
+        let bucket = Bucket::new(1, Duration::from_secs(60));
+        let now = Instant::now();
+        assert!(bucket.consume("oldest", now).allowed);
+        assert!(!bucket.consume("oldest", now).allowed);
+        for i in 1..MAX_SOURCES {
+            assert!(bucket.consume(&format!("k{i}"), now).allowed);
+        }
+        assert_eq!(bucket.state.lock().by_key.len(), MAX_SOURCES);
+        assert!(bucket.consume("newest", now).allowed);
+        assert_eq!(bucket.state.lock().by_key.len(), MAX_SOURCES);
+        assert!(!bucket.state.lock().by_key.contains_key("oldest"));
+        assert!(!bucket.consume("k1", now).allowed, "k1 keeps its window");
+        assert!(
+            bucket.consume("oldest", now).allowed,
+            "the evicted client starts over"
+        );
     }
 
     /// Through the router: the burst 429 body and headers, the exempt peer,
-    /// and the triplet on a request that passes; both mounts share a budget.
+    /// and the triplet on a request that passes; both mounts share a budget;
+    /// a direct socket's spoofed header changes nothing.
     #[tokio::test]
     async fn the_router_answers_upstreams_429() {
         use crate::tests::support::{TEST_CID, TestNode};
@@ -437,15 +581,18 @@ mod tests {
         settings.content_get_limit = Config {
             burst_max: 2,
             trusted_sync_peer_ips: "203.0.113.50".into(),
+            trusted_proxy_cidrs: vec!["127.0.0.1/32".parse().unwrap()],
             ..Config::default()
         };
         let node = TestNode::without_db_settings("content-limit", settings).await;
         node.store(TEST_CID, bytes::Bytes::from_static(b"x")).await;
+        // Through the gateway: a trusted proxy socket that names the client.
         let send = |method: &str, path: String, ip: &str| {
             let request = axum::http::Request::builder()
                 .method(method)
                 .uri(path)
                 .header("x-real-ip", ip)
+                .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 40000))))
                 .body(Body::empty())
                 .unwrap();
             node.router().oneshot(request)
@@ -484,6 +631,29 @@ mod tests {
             assert_eq!(peer.status(), StatusCode::OK);
             assert!(peer.headers().get("ratelimit-limit").is_none());
         }
+        // A direct socket naming the sync peer is counted as itself.
+        let direct = |ip: &str| {
+            let request = axum::http::Request::builder()
+                .uri(format!("/contents/{TEST_CID}"))
+                .header("x-real-ip", ip)
+                .extension(ConnectInfo(SocketAddr::from(([198, 51, 100, 66], 40000))))
+                .body(Body::empty())
+                .unwrap();
+            node.router().oneshot(request)
+        };
+        let statuses = [
+            direct("203.0.113.50").await.unwrap().status(),
+            direct("203.0.113.50").await.unwrap().status(),
+            direct("198.51.100.1").await.unwrap().status(),
+        ];
+        assert_eq!(
+            statuses,
+            [
+                StatusCode::OK,
+                StatusCode::OK,
+                StatusCode::TOO_MANY_REQUESTS
+            ]
+        );
         let other = send(
             "GET",
             format!("/contents/{TEST_CID}/active-entities"),
