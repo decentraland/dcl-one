@@ -15,7 +15,8 @@ permissions:
   contents: read
 concurrency:
   group: sdk-ci-${{ github.ref }}
-  cancel-in-progress: true
+  # a newer push supersedes a PR run; main runs finish
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 env:
   # the SDK's make install downloads protoc 3.20.1 for the runner's arch; nothing publishes
   CI: true
@@ -33,9 +34,8 @@ jobs:
         with:
           node-version: 24.16.0
           cache: npm
-          cache-dependency-path: |
-            library/js-sdk-toolchain/package-lock.json
-            library/protocol/package-lock.json
+          # library/protocol keeps no lockfile (it ignores package-lock.json)
+          cache-dependency-path: library/js-sdk-toolchain/package-lock.json
       - name: Install (builds library/protocol's out-ts first)
         run: make install
       - name: Lint
@@ -55,9 +55,8 @@ jobs:
         with:
           node-version: 24.16.0
           cache: npm
-          cache-dependency-path: |
-            library/js-sdk-toolchain/package-lock.json
-            library/protocol/package-lock.json
+          # library/protocol keeps no lockfile (it ignores package-lock.json)
+          cache-dependency-path: library/js-sdk-toolchain/package-lock.json
       - name: Install (builds library/protocol's out-ts first)
         run: make install
       - name: Build

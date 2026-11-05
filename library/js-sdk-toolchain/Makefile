@@ -19,11 +19,22 @@ ifeq ($(shell uname),Darwin)
 SED_OPTION=-i ""
 endif
 
-# Set PROTOC to generate with an installed protoc (the Nix shell's `protoc`, or brew's on a Mac
-# without Rosetta); CI leaves it unset and install-protobuf downloads 3.20.1, so generated code
-# in a PR comes from that version.
+# Set SDK_PROTOC to generate with an installed protoc: a name on PATH (the Nix shell's `protoc`,
+# or brew's on a Mac without Rosetta) or a path; it is resolved to an absolute path and exported
+# for the TS generators. Not PROTOC, which prost reads for the Rust crates. CI leaves it unset
+# and install-protobuf downloads 3.20.1, so generated code in a PR comes from that version.
 PROTOC_DOWNLOADED = node_modules/.bin/protobuf/bin/protoc
-PROTOC ?= $(PROTOC_DOWNLOADED)
+ifdef SDK_PROTOC
+SDK_PROTOC_RESOLVED := $(shell command -v "$(SDK_PROTOC)")
+ifeq ($(SDK_PROTOC_RESOLVED),)
+$(error SDK_PROTOC=$(SDK_PROTOC) is not an executable on PATH or a path to one)
+endif
+override SDK_PROTOC := $(abspath $(SDK_PROTOC_RESOLVED))
+export SDK_PROTOC
+SDK_PROTOC_BIN = $(SDK_PROTOC)
+else
+SDK_PROTOC_BIN = $(PROTOC_DOWNLOADED)
+endif
 SCENE_PROTO_FILES := $(wildcard node_modules/@dcl/protocol/proto/decentraland/kernel/apis/*.proto)
 PBS_TS = $(SCENE_PROTO_FILES:node_modules/@dcl/protocol/proto/decentraland/kernel/apis/%.proto=scripts/rpc-api-generation/src/proto/%.gen.ts)
 TSC = node_modules/.bin/tsc
@@ -39,10 +50,8 @@ install:
 	$(MAKE) -C ../protocol install
 	npm --prefix ../protocol run build
 	npm i --silent
-ifeq ($(PROTOC),$(PROTOC_DOWNLOADED))
-	test -x "$(PROTOC)" || $(MAKE) install-protobuf
-else
-	@test -x "$(PROTOC)" || { echo "PROTOC=$(PROTOC) is not an executable" >&2; exit 1; }
+ifndef SDK_PROTOC
+	test -x "$(PROTOC_DOWNLOADED)" || $(MAKE) install-protobuf
 endif
 
 lint:
@@ -98,8 +107,8 @@ build:
 prepare:
 	node_modules/.bin/jest --detectOpenHandles --colors --runInBand --runTestsByPath scripts/prepare.spec.ts
 
-scripts/rpc-api-generation/src/proto/%.gen.ts: node_modules/@dcl/protocol/proto/decentraland/kernel/apis/%.proto $(PROTOC)
-	@${PROTOC}  \
+scripts/rpc-api-generation/src/proto/%.gen.ts: node_modules/@dcl/protocol/proto/decentraland/kernel/apis/%.proto $(SDK_PROTOC_BIN)
+	@$(SDK_PROTOC_BIN)  \
 			--plugin=./node_modules/.bin/protoc-gen-dcl_ts_proto \
 			--dcl_ts_proto_opt=esModuleInterop=true,returnObservable=false,outputServices=generic-definitions \
 			--dcl_ts_proto_opt=fileSuffix=.gen \

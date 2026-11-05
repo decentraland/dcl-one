@@ -1,4 +1,4 @@
-import { componentDefinitionByName } from '../components'
+import { AvatarEquippedData, AvatarShape, componentDefinitionByName } from '../components'
 import { componentNumberFromName } from '../components/component-number'
 import { TransformType } from '../components/manual/Transform'
 import { Entity } from '../engine/entity'
@@ -66,6 +66,15 @@ export function getComponentValue<T = unknown>(
   }
 }
 
+// The generated getters, except where an extended component patches the schema: whichever definition
+// registers a name first wins, so a composite must register the extended one (AvatarShape and
+// AvatarEquippedData serialize an omitted `forceRender` as `[]`; the generated schema throws on it).
+const coreComponentDefinitionByName = {
+  ...componentDefinitionByName,
+  'core::AvatarShape': AvatarShape,
+  'core::AvatarEquippedData': AvatarEquippedData
+}
+
 /**
  * Return the component definition from composite info
  * @internal
@@ -78,8 +87,8 @@ export function getComponentDefinition(
 
   if (!existingComponentDefinition) {
     if (component.name.startsWith('core::')) {
-      if (component.name in componentDefinitionByName) {
-        return (componentDefinitionByName as any)[component.name](
+      if (component.name in coreComponentDefinitionByName) {
+        return (coreComponentDefinitionByName as any)[component.name](
           engine
         ) as LastWriteWinElementSetComponentDefinition<unknown>
       } else {

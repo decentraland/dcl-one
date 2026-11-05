@@ -1,5 +1,6 @@
 const fs = require('fs')
 const path = require('path')
+const npa = require('npm-package-arg')
 
 // Function to recursively find all package.json files
 function findPackageJsonFiles(dir, fileList = []) {
@@ -19,10 +20,36 @@ function findPackageJsonFiles(dir, fileList = []) {
   return fileList
 }
 
-const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']
+const DEPENDENCY_FIELDS = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies', 'overrides']
 
-// Anything that is not a version or a range: a path, a link, a workspace, a URL or a git source.
-const UNPUBLISHED_PREFIXES = ['file:', 'link:', 'workspace:', 'http:', 'https:', 'git:', 'git+', 'github:', 'ssh:']
+// Only what the registry resolves: a version, a range or a dist-tag. Anything else (a path, a tarball,
+// a link, a workspace, a URL, a git or `user/repo` source, an `npm:` alias) names something unpublished
+// or not under its own name.
+const PUBLISHED_TYPES = ['version', 'range', 'tag']
+
+function unpublishedReason(name, spec) {
+  if (typeof spec !== 'string') return `is not a version string: ${JSON.stringify(spec)}`
+  // an override's `$name` reuses that direct dependency's spec, which is checked on its own
+  if (spec.startsWith('$')) return null
+  try {
+    const { type } = npa.resolve(name, spec)
+    return PUBLISHED_TYPES.includes(type) ? null : `is a ${type} dependency, not a published version: ${spec}`
+  } catch (error) {
+    return `is not a valid dependency spec (${error.message}): ${spec}`
+  }
+}
+
+// `overrides` nests: a key maps to a spec or to an object of further overrides ("." is the key's own spec)
+function* dependencyEntries(field, deps, prefix = '') {
+  for (const [key, value] of Object.entries(deps)) {
+    if (field === 'overrides' && value && typeof value === 'object') {
+      yield* dependencyEntries(field, value, `${prefix}${key} > `)
+    } else {
+      const name = key === '.' ? prefix.slice(0, -3) : key
+      yield [`${prefix}${key}`, name.replace(/@[^@/]+$/, ''), value]
+    }
+  }
+}
 
 // Check for local package dependencies
 function checkNoLocalPackages(packageJsonPath) {
@@ -34,11 +61,16 @@ function checkNoLocalPackages(packageJsonPath) {
       const deps = packageJson[field]
       if (!deps) continue
 
-      for (const [key, value] of Object.entries(deps)) {
-        if (UNPUBLISHED_PREFIXES.some((prefix) => value.startsWith(prefix))) {
-          errors.push(`${field}: ${key} is not pointing to a published version: ${value}`)
-        }
+      for (const [label, name, spec] of dependencyEntries(field, deps)) {
+        const reason = unpublishedReason(name, spec)
+        if (reason) errors.push(`${field}: ${label} ${reason}`)
       }
+    }
+
+    // bundled packages ship inside the tarball instead of coming from the registry
+    const bundled = packageJson.bundleDependencies || packageJson.bundledDependencies
+    if (bundled === true || (Array.isArray(bundled) && bundled.length)) {
+      errors.push(`bundleDependencies: ships packages inside the tarball: ${JSON.stringify(bundled)}`)
     }
 
     if (errors.length) {

@@ -1,4 +1,6 @@
 import { IEngine, LastWriteWinElementSetComponentDefinition } from '../../engine'
+import { DeepReadonly } from '../../engine/readonly'
+import { ByteBuffer } from '../../serialization/ByteBuffer'
 import { AvatarShapeSchema } from '../generated/AvatarShape.gen'
 import { PBAvatarShape } from '../generated/pb/decentraland/sdk/components/avatar_shape.gen'
 
@@ -21,8 +23,9 @@ export function defineAvatarShapeComponent(
 ): AvatarShapeComponentDefinitionExtended {
   const patchedSchema = { ...AvatarShapeSchema }
   const origSerialize = patchedSchema.serialize
-  patchedSchema.serialize = (value: any, builder: any) => {
-    origSerialize(value.forceRender === undefined ? { ...value, forceRender: [] } : value, builder)
+  // `??` also covers a `null` written through getMutable
+  patchedSchema.serialize = (value: DeepReadonly<AvatarShapeType>, builder: ByteBuffer) => {
+    origSerialize({ ...value, forceRender: value.forceRender ?? [] }, builder)
   }
 
   const theComponent = engine.defineComponentFromSchema('core::AvatarShape', patchedSchema)

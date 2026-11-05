@@ -185,6 +185,27 @@ describe('composite instantiation system', () => {
     }).toThrow()
   })
 
+  it('should serialize a composite AvatarShape/AvatarEquippedData without forceRender on a fresh engine', () => {
+    const json = (value: unknown) => ({ '512': { $case: 'json', json: value } })
+    const composite = Composite.fromJson({
+      version: 1,
+      components: [
+        { name: 'core::AvatarShape', data: json({ id: 'npc', wearables: [], emotes: [] }) },
+        { name: 'core::AvatarEquippedData', data: json({ wearableUrns: [], emoteUrns: [] }) }
+      ]
+    })
+    const engine = Engine()
+    Composite.instance(engine, { src: 'avatar-npc.composite', composite }, compositeProvider)
+
+    for (const name of ['core::AvatarShape', 'core::AvatarEquippedData']) {
+      const component = engine.getComponent(name) as LastWriteWinElementSetComponentDefinition<unknown>
+      const [[, value]] = Array.from(component.iterator())
+      const buf = new ReadWriteByteBuffer()
+      expect(() => component.schema.serialize(value as any, buf)).not.toThrow()
+      expect((component.schema.deserialize(buf) as any).forceRender).toEqual([])
+    }
+  })
+
   it('should return the root entity from Composite.instance()', () => {
     const composite = validComposites.find((c) => c.src === nonBinaryCompositeJsonPath)!
     const engine = Engine()

@@ -31,11 +31,17 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
   (`scripts/check-no-local-packages.cjs`, run by `sdk.yml`).
 - `AvatarShape` and `AvatarEquippedData` keep `forceRender` optional for scenes: the protocol's
   `repeated` field would otherwise make the generated type require it, so the two extended
-  components from the SDK's `experimental-bevy` branch serialize an omitted value as `[]`. The
-  public API is unchanged for scenes that never set it.
-- `protoc` comes from `PROTOC` when set (the Nix shell's, or brew's on a Mac without Rosetta);
-  CI leaves it unset and uses the SDK's download of 3.20.1, so generated code in a PR comes from
-  that version.
+  components from the SDK's `experimental-bevy` branch serialize an omitted value as `[]`, and a
+  composite that names them registers the extended definitions. No export is removed, but the
+  generated types follow `library/protocol`, so some narrow: `PBAvatarShape.forceRender` and
+  `PBAvatarEquippedData.forceRender` are required, `PBEngineInfo.totalRuntimeF64` and five arrays
+  on `PBGltfContainerLoadingState` are new required fields, and `PBMaterial`, `PBMeshCollider` and
+  `PBMeshRenderer` gain a `$case: 'gltf'` variant (an exhaustive `switch` stops compiling). The
+  first release from here lists these.
+- `protoc` comes from `SDK_PROTOC` when set: a name on `PATH` (`SDK_PROTOC=protoc` in the Nix
+  shell, or brew's on a Mac without Rosetta) or a path, resolved to an absolute path. It is not
+  `PROTOC`, which prost reads for the Rust crates. CI leaves it unset and uses the SDK's download
+  of 3.20.1, so generated code in a PR comes from that version.
 - `.github/workflows/sdk.yml` runs lint, build, test, the CLI smoke test and `prepare` on changes
   under `library/js-sdk-toolchain` or `library/protocol`. It publishes nothing.
 - Snapshots (`test/snapshots/**`, `playground-assets.api.md`) are regenerated locally
@@ -57,6 +63,7 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
 1. Publish the SDK packages from here (oddish, trusted publishing re-pointed, `next` on `main`,
    `sdk/<version>` releases) and stop publishing from `decentraland/js-sdk-toolchain`; the PR-build
    tooling (S3 tarballs, the "Test this pull request" comment, the e2e realm, the playground).
+   The first release notes carry the narrowed types above.
 2. The `auth-server` branch as a dcl-one branch published through a manual `publish-tag` run.
 3. Fold the rest of the SDK's `experimental-bevy` layer (react-ecs scroll and render-to-texture,
    drag events, `setGltfMesh`, …) into `main` here.
