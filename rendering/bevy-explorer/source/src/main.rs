@@ -523,9 +523,8 @@ mod tests {
             ),
         ])
         .unwrap();
-        let bases: std::collections::HashMap<_, _> = base_domain::hud_services()
-            .into_iter()
-            .collect();
+        let bases: std::collections::HashMap<_, _> =
+            base_domain::hud_services().into_iter().collect();
         assert_eq!(bases["socialApi"], "https://custom.example/override");
         assert_eq!(bases["events"], format!("{gateway}/events"));
         assert_eq!(
