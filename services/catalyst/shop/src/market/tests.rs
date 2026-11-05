@@ -391,18 +391,6 @@ async fn profiles_reject_too_many_ids_and_malformed_json() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
-#[tokio::test]
-async fn default_profiles_are_synthesized_without_a_database() {
-    let state = state_without_db();
-    let (status, body) = get_json(router(state.clone()), "/lambdas/profiles/default7").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["avatars"][0]["userId"], "default7");
-    assert_eq!(body["avatars"][0]["hasClaimedName"], false);
-    let (status, body) = get_json(router(state), "/lambdas/profile/DEFAULT").await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["avatars"][0]["ethAddress"], "DEFAULT");
-}
-
 /// The old lambdas answered 400 before touching a reader; a configured
 /// subgraph must not see the string.
 #[tokio::test]
@@ -732,8 +720,9 @@ async fn a_synced_profile_is_served_shaped_and_cached() {
         &state.pool,
         &address,
         &entity_id,
-        json!({ "avatars": [{
+        json!({ "timestamp": 5, "extra": true, "avatars": [{
             "name": "tester",
+            "hasClaimedName": true,
             "links": [{ "title": "ok", "url": "https://decentraland.org/" }, { "title": "bad", "url": "javascript:x" }],
             "avatar": {
                 "wearables": ["urn:decentraland:off-chain:base-avatars:eyebrows_00", "urn:decentraland:matic:collections-v2:0xabc:1"],
@@ -752,7 +741,18 @@ async fn a_synced_profile_is_served_shaped_and_cached() {
     let avatar = &body["avatars"][0];
     assert_eq!(avatar["userId"], address);
     assert_eq!(avatar["ethAddress"], address);
-    assert_eq!(body["timestamp"], 1_700_000_000_000_i64);
+    let mut keys: Vec<_> = body.as_object().unwrap().keys().collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        ["avatars", "timestamp"],
+        "lamb2 answers {{ timestamp, avatars }} only: {body}"
+    );
+    assert_eq!(
+        body["timestamp"], 1_700_000_000_000_i64,
+        "the entity's timestamp, not the deployed one"
+    );
+    assert_eq!(avatar["avatar"]["emotes"], json!([]));
     assert_eq!(avatar["links"].as_array().unwrap().len(), 1);
     assert_eq!(
         avatar["avatar"]["snapshots"]["face256"],
@@ -763,9 +763,9 @@ async fn a_synced_profile_is_served_shaped_and_cached() {
         2,
         "without a configured reader the inventory is served unfiltered, as the old squid-less path did"
     );
-    assert!(
-        avatar.get("hasClaimedName").is_none(),
-        "no names reader: the flag is not synthesized"
+    assert_eq!(
+        avatar["hasClaimedName"], false,
+        "no name is proven owned without a names reader"
     );
 
     let (status, batch) = post_json(
@@ -776,6 +776,39 @@ async fn a_synced_profile_is_served_shaped_and_cached() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(batch.as_array().unwrap().len(), 1, "duplicate ids collapse");
+
+    // If-Modified-Since: ISO 8601 as lamb2's `Date.parse` reads it, the
+    // entity time rounded down to the second; an unknown id alone is 304.
+    for (ims, ids, expected) in [
+        (
+            "2023-11-14T22:13:20.000Z",
+            json!([address]),
+            StatusCode::NOT_MODIFIED,
+        ),
+        (
+            "Tue, 14 Nov 2023 22:13:20 GMT",
+            json!([address]),
+            StatusCode::NOT_MODIFIED,
+        ),
+        ("2023-11-14T22:13:19.000Z", json!([address]), StatusCode::OK),
+        (
+            "2000-01-01T00:00:00.000Z",
+            json!(["0x00000000000000000000000000000000000000ff"]),
+            StatusCode::NOT_MODIFIED,
+        ),
+    ] {
+        let resp = router(state.clone())
+            .oneshot(
+                Request::post("/lambdas/profiles")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::IF_MODIFIED_SINCE, ims)
+                    .body(Body::from(json!({ "ids": ids }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), expected, "{ims} {ids}");
+    }
 
     // The 10 s cache answers after the row is gone.
     unseed_profile(&state.pool, &address, &entity_id).await;
@@ -794,6 +827,58 @@ async fn a_synced_profile_is_served_shaped_and_cached() {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["message"], "Profile not found");
     let (status, body) = get_json(router(state), &format!("/lambdas/profile/{address}")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "avatars": [], "timestamp": 0 }));
+}
+
+/// A `default*` pointer is served from its deployed entity (lamb2 has no
+/// built-in default): nothing is owned, so only base items stay, no name is
+/// claimed and the deployed identity is kept. Undeployed, it is 404 (the
+/// stub on the alias).
+#[tokio::test]
+async fn default_profiles_are_the_deployed_entities_owning_nothing() {
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let pointer = format!("default{}", u64::from_str_radix(&tag()[..12], 16).unwrap());
+    let entity_id = format!("bafydefault{}", tag());
+    seed_profile(
+        &state.pool,
+        &pointer,
+        &entity_id,
+        json!({ "avatars": [{
+            "name": "Default",
+            "userId": "deployed",
+            "hasClaimedName": true,
+            "avatar": {
+                "wearables": ["urn:decentraland:off-chain:base-avatars:eyebrows_00", "urn:decentraland:matic:collections-v2:0xabc:1"],
+                "emotes": [{ "slot": 0, "urn": "wave" }, { "slot": 1, "urn": "urn:decentraland:matic:collections-v2:0xabc:2" }]
+            }
+        }] }),
+    )
+    .await;
+    let (status, body) = get_json(
+        router(state.clone()),
+        &format!("/lambdas/profiles/{pointer}"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let avatar = &body["avatars"][0];
+    assert_eq!(avatar["userId"], "deployed");
+    assert_eq!(avatar["hasClaimedName"], false);
+    assert_eq!(
+        avatar["avatar"]["wearables"],
+        json!(["urn:decentraland:off-chain:base-avatars:eyebrows_00"])
+    );
+    assert_eq!(
+        avatar["avatar"]["emotes"],
+        json!([{ "slot": 0, "urn": "wave" }])
+    );
+    unseed_profile(&state.pool, &pointer, &entity_id).await;
+    state.profile_cache.clear();
+    let (status, _) = get_json(router(state.clone()), "/lambdas/profiles/default99999999").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, body) = get_json(router(state), "/lambdas/profile/default99999999").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({ "avatars": [], "timestamp": 0 }));
 }

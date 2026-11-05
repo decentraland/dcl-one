@@ -387,14 +387,14 @@ fn alias(i: usize) -> String {
 }
 
 /// One aliased document per network and chunk of owners: `oN: nfts(where:
-/// {owner, urn_in}) { urn }`. Owners are validated hex addresses and the
-/// URNs are JSON-encoded, so the inlined literals cannot break the document.
+/// {owner, urn_in}) { urn tokenId }`. Owners are validated hex addresses and
+/// the URNs are JSON-encoded, so the inlined literals cannot break the document.
 fn ownership_document(chunk: &[(&str, &[String])]) -> String {
     let mut doc = String::from("query {");
     for (i, (owner, urns)) in chunk.iter().enumerate() {
         let urns = serde_json::to_string(urns).unwrap_or_else(|_| "[]".to_string());
         doc.push_str(&format!(
-            " {}: nfts(first: 1000, where: {{ owner: \"{}\", urn_in: {} }}) {{ urn }}",
+            " {}: nfts(first: 1000, where: {{ owner: \"{}\", urn_in: {} }}) {{ urn tokenId }}",
             alias(i),
             owner,
             urns
@@ -412,6 +412,19 @@ pub async fn owned_urns(
     state: &ChainIndex,
     requested: &HashSet<(String, String)>,
 ) -> Result<HashMap<String, HashSet<String>>, String> {
+    Ok(owned_tokens(state, requested)
+        .await?
+        .into_iter()
+        .map(|(owner, urns)| (owner, urns.into_keys().collect()))
+        .collect())
+}
+
+/// [`owned_urns`] with the token ids held of each URN, in subgraph order
+/// (by NFT id, as the reference lambdas' subgraph fallback lists them).
+pub async fn owned_tokens(
+    state: &ChainIndex,
+    requested: &HashSet<(String, String)>,
+) -> Result<HashMap<String, HashMap<String, Vec<String>>>, String> {
     let mut by_network: HashMap<Network, HashMap<String, Vec<String>>> = HashMap::new();
     for (owner, urn) in requested {
         if !is_valid_eth_address(owner) {
@@ -427,7 +440,7 @@ pub async fn owned_urns(
             .or_default()
             .push(normalize_urn(urn));
     }
-    let mut owned: HashMap<String, HashSet<String>> = HashMap::new();
+    let mut owned: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
     for (network, owners) in by_network {
         let Some(url) = network.url(state) else {
             continue;
@@ -440,14 +453,21 @@ pub async fn owned_urns(
         for chunk in owners.chunks(OWNERS_PER_QUERY) {
             let data = graph_query(state, url, &ownership_document(chunk), json!({})).await?;
             for (i, (owner, _)) in chunk.iter().enumerate() {
-                let urns = data
+                let held = owned.entry((*owner).to_string()).or_default();
+                for nft in data
                     .get(alias(i))
                     .and_then(Value::as_array)
                     .into_iter()
                     .flatten()
-                    .filter_map(|n| n.get("urn").and_then(Value::as_str))
-                    .map(normalize_urn);
-                owned.entry((*owner).to_string()).or_default().extend(urns);
+                {
+                    let Some(urn) = nft.get("urn").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let tokens = held.entry(normalize_urn(urn)).or_default();
+                    if let Some(token) = nft.get("tokenId").and_then(Value::as_str) {
+                        tokens.push(token.to_string());
+                    }
+                }
             }
         }
     }
@@ -1034,8 +1054,8 @@ mod tests {
         let a = vec!["urn:decentraland:matic:collections-v2:0xa:1".to_string()];
         let b = vec!["urn:x\"y".to_string(), "urn:z".to_string()];
         let doc = ownership_document(&[("0xaaaa", &a), ("0xbbbb", &b)]);
-        assert!(doc.starts_with("query { o0: nfts(first: 1000, where: { owner: \"0xaaaa\", urn_in: [\"urn:decentraland:matic:collections-v2:0xa:1\"] }) { urn }"), "{doc}");
-        assert!(doc.contains(" o1: nfts(first: 1000, where: { owner: \"0xbbbb\", urn_in: [\"urn:x\\\"y\",\"urn:z\"] }) { urn }"), "{doc}");
+        assert!(doc.starts_with("query { o0: nfts(first: 1000, where: { owner: \"0xaaaa\", urn_in: [\"urn:decentraland:matic:collections-v2:0xa:1\"] }) { urn tokenId }"), "{doc}");
+        assert!(doc.contains(" o1: nfts(first: 1000, where: { owner: \"0xbbbb\", urn_in: [\"urn:x\\\"y\",\"urn:z\"] }) { urn tokenId }"), "{doc}");
         assert!(doc.ends_with(" }"));
     }
 
