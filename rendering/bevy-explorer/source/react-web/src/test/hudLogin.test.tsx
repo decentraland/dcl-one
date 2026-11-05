@@ -2,7 +2,7 @@
 // session takes the identity as this page's stored sign-in and goes in as Jump In does; the
 // command answers once the sign-in has landed and the welcome page is done, in the lobby or on
 // the way to its destination, or with what ended it.
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
 import type { NewAccountPick } from '../engine/driver'
 import type { PageToScene } from '../engine/protocol'
@@ -50,6 +50,12 @@ class EngineNotReadyDriver extends IdentityDriver {
   engineReady(): boolean {
     return false
   }
+}
+
+/** An engine the page launches itself (the web), as the link flow needs: without `launch` the
+ *  hook takes the standalone's branch, where the engine is already at its realm. */
+class LaunchingDriver extends IdentityDriver {
+  launch(): void {}
 }
 
 /** An engine whose launch panics at once (the generic wasm trap), so `launchEngine` fails. */
@@ -294,6 +300,22 @@ describe('/hud_login through the session', () => {
       await ready(driver)
       await expect(login(ENCODED)).rejects.toThrow('accepting the welcome page failed: deploy refused')
     } finally {
+      leave()
+    }
+  })
+
+  it("on a page with a link's realm that is not reachable, the sign-in is answered with that and never runs", async () => {
+    const leave = onPage('/?realm=http://127.0.0.1:9999')
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'))
+    try {
+      const driver = new LaunchingDriver()
+      const h = await ready(driver)
+      await expect(login(ENCODED)).rejects.toThrow('The world "http://127.0.0.1:9999" isn\'t reachable right now.')
+      expect(driver.identityLogins).toEqual([])
+      await waitFor(() => expect(h.session().fatalError).toMatchObject({ source: 'realm' }))
+      await waitFor(() => expect(h.session().login.account).toBeNull())
+    } finally {
+      fetchSpy.mockRestore()
       leave()
     }
   })

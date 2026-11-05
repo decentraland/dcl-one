@@ -222,6 +222,12 @@ describe('hudLogin', () => {
     assert.equal(records[0]!.line, '/hud_login <redacted> --name tester --look 3 --guest --realm https://realm.example --position 10,-20')
   })
 
+  test('a flag value with whitespace is refused before the line is sent', async () => {
+    const fake = new FakeConsole({ hud_login: '{}' })
+    await assert.rejects(new Explorer(fake).hudLogin('eyJhIjoxfQ==', { name: 'two words', look: 1 }), /a \/hud_login --name takes no whitespace: "two words"/)
+    assert.deepEqual(fake.lines, [])
+  })
+
   test('a reply that is not JSON fails the command, the payload redacted', async () => {
     const payload = 'eyJhIjoxfQ=='
     const fake = new FakeConsole({ hud_login: `signed in with ${payload}` })

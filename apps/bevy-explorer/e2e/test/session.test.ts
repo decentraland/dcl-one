@@ -134,6 +134,12 @@ describe('signIn', () => {
     assert.deepEqual(fake.sent('world_state'), [])
   })
 
+  test('a destination the HUD did not take fails the boot at once, not after the world\'s wait', async () => {
+    const fake = new FakeConsole({ hud_login: '{"address":"0xabc","guest":false,"phase":"lobby"}', world_state: () => world() })
+    await assert.rejects(signIn(new Explorer(fake), web, 'account'), /the HUD did not take the destination https:\/\/realm\.example\.test at 0,0: it answered the sign-in in phase lobby/)
+    assert.deepEqual(fake.sent('world_state'), [])
+  })
+
   test('a web app whose HUD has no /hud_login fails the boot saying so, with no fall back to the engine', async () => {
     const fake = new FakeConsole({ login_identity: 'logged in with identity', world_state: () => world() })
     await assert.rejects(signIn(new Explorer(fake), web, 'account'), /the web app under test has no \/hud_login/)

@@ -172,10 +172,11 @@ async function serveFile(root: string, origin: () => string, request: IncomingMe
 /** Serve `root` on `http://127.0.0.1:<port>/` (port 0 picks a free one). */
 export function serveWebApp(root: string, port: number): Promise<StaticServer> {
   const absoluteRoot = path.resolve(root)
-  // the bound port is known once the server listens; an unbound server has no origin to give
+  // the bound port: a request only comes once the server listens
   const origin = (): string => {
     const address = server.address()
-    return `http://127.0.0.1:${typeof address === 'object' && address ? address.port : port}`
+    if (typeof address !== 'object' || address == null) throw new Error('the server is not listening')
+    return `http://127.0.0.1:${address.port}`
   }
   const server: Server = createServer((request, response) => {
     serveFile(absoluteRoot, origin, request, response).catch(() => {

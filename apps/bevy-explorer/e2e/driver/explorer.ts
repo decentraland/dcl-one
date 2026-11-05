@@ -283,12 +283,18 @@ export class Explorer {
   ): Promise<HudLoginReply> {
     const payload = typeof identity === 'string' ? identity : encodeIdentity(identity)
     const flags: string[] = []
-    if (options.name !== undefined) flags.push(`--name ${options.name}`)
-    if (options.look !== undefined) flags.push(`--look ${options.look}`)
+    // the line splits on whitespace: a value with any would read as stray words
+    const flag = (name: string, value: string | number | undefined): void => {
+      if (value === undefined) return
+      if (!/^\S+$/.test(String(value))) throw new Error(`a /hud_login ${name} takes no whitespace: ${JSON.stringify(String(value))}`)
+      flags.push(`${name} ${value}`)
+    }
+    flag('--name', options.name)
+    flag('--look', options.look)
     if (options.guest) flags.push('--guest')
     if (options.defaultOnError) flags.push('--default-on-error')
-    if (options.realm !== undefined) flags.push(`--realm ${options.realm}`)
-    if (options.position !== undefined) flags.push(`--position ${options.position}`)
+    flag('--realm', options.realm)
+    flag('--position', options.position)
     return this.json<HudLoginReply>(['/hud_login', payload, ...flags].join(' '))
   }
 

@@ -849,7 +849,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // landed (`landed`: the engine took it) and the welcome page is done, or failed; `restore` puts
   // the page's stored sign-in back as it was when the sign-in never took. The destination it then
   // goes to from the lobby, as a link's would.
-  const hudLoginPending = useRef<{ resolve: (reply: HudLoginReply) => void; reject: (error: Error) => void; landed: boolean; welcomeAwaited: boolean; restore: () => void } | null>(null)
+  const hudLoginPending = useRef<{ resolve: (reply: HudLoginReply) => void; reject: (error: Error) => void; login: StoredLogin; landed: boolean; welcomeAwaited: boolean; restore: () => void } | null>(null)
   const hudDestination = useRef<Destination>(null)
   // ticks as the pending sign-in moves on (landed, the welcome page in), so the effect that
   // answers it runs again where no state of its own changes (a link's page sets none)
@@ -2395,6 +2395,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           else {
             urlDestination.current = null
             setFatalError({ message: realmCheckMessage(dest.realm, result), source: 'realm' })
+            // a /hud_login's sign-in never ran: answered with that, its stored sign-in put back
+            hudLoginPending.current?.restore()
+            settleHudLogin(new Error(realmCheckMessage(dest.realm, result)))
           }
         })
         .finally(() => {
@@ -2403,7 +2406,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       return
     }
     pickDestination(dest)
-  }, [submitted, destinationPicked, pickDestination])
+  }, [submitted, destinationPicked, pickDestination, settleHudLogin])
   // Optimistically reflect a new equipped set so the button flips to "Unequip" immediately AND the
   // equipped set stays authoritative for the next equip — the engine deploy + wearables re-emit lags,
   // and a failed deploy never re-emits at all. `urns` is the full next set (see BackpackPage), so
@@ -2754,6 +2757,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         hudLoginPending.current = {
           resolve,
           reject,
+          login,
           landed: false,
           welcomeAwaited: false,
           restore: () => {
@@ -3041,8 +3045,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     const destination = hudDestination.current
     const picking = destination != null && (phase === 'lobby' || phase === 'picking')
     if (picking) pickDestination(destination)
-    const stored = storedRef.current
-    settleHudLogin({ address: stored?.address ?? '', guest: stored?.guest === true, phase: picking ? 'entering' : phase })
+    // the identity the command sent, not the page's stored sign-in as it may have moved on
+    settleHudLogin({ address: pending.login.address, guest: pending.login.guest === true, phase: picking ? 'entering' : phase })
   }, [phase, busy, welcomeSaving, hudLoginTick, pickDestination, settleHudLogin])
 
   // The screens a phase shows (the loading screen's own are the engine's: LOADING_START / END /

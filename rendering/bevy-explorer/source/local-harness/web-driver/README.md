@@ -23,8 +23,10 @@ node local-harness/web-driver/driver.mjs --url http://localhost:5173/ '/hud_clic
 node driver.mjs --url <url> [--chrome <path>] [--headed] [--arg <flag>]... [command ...]
 ```
 
-One JSON line per command, `{"command", "ok", "output"}` or `{"command", "ok": false, "error"}`;
-without commands it reads them from stdin, one per line. Exit code 1 if a command failed, 2 for
+One JSON line per command, `{"command", "ok", "output"}` or `{"command", "ok": false, "error"}`,
+with the credential of a `/login_identity` or `/hud_login` line (its first argument, an identity
+valid for days) replaced by `<redacted>` wherever it appears; without commands it reads them from
+stdin, one per line. Exit code 1 if a command failed, 2 for
 a bad command line. On Git Bash for Windows, pass commands on stdin: it rewrites an argument that
 starts with `/`.
 
