@@ -151,7 +151,6 @@ const DB_FIXTURES: &[&str] = &[
 const READER_FIXTURES: &[&str] = &[
     "users-wearables-200-unknown-address",
     "users-emotes-200-unknown-address",
-    "users-names-200-pagesize-cap-1000",
     "collections-wearables-by-owner-200-unknown",
 ];
 
@@ -457,12 +456,17 @@ async fn a_configured_but_unreachable_reader_fails_closed() {
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert_eq!(body["error"], "Service Unavailable");
-    let (status, _) = get_json(
+    // Names answer lamb2's 502 `FetcherError`, still never an empty page.
+    let (status, body) = get_json(
         router(state.clone()),
         "/lambdas/users/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef/names",
     )
     .await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert_eq!(
+        body["message"],
+        "Cannot fetch elements for 0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+    );
     let (status, _) = get_json(
         router(state),
         "/lambdas/collections/emotes-by-owner/0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",

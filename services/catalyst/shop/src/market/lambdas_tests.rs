@@ -88,6 +88,16 @@ async fn serve(app: Router) -> String {
     format!("http://{addr}/")
 }
 
+/// A subgraph that answers every document with a GraphQL error.
+async fn serve_failing_graph() -> String {
+    use axum::routing::post;
+    serve(Router::new().route(
+        "/",
+        post(|| async { axum::Json(json!({ "errors": [{ "message": "indexer down" }] })) }),
+    ))
+    .await
+}
+
 /// One GraphQL fake per role, answering by the document it receives.
 async fn serve_graph(answer: fn(&str) -> Value) -> String {
     use axum::routing::post;
@@ -170,7 +180,8 @@ fn marketplace_reader(query: &str, vars: &Value) -> Value {
         }
         json!({ "nfts": [
             { "id": "parcel-1", "name": "Plot", "contractAddress": LAND_REGISTRY_MAINNET, "tokenId": "1", "category": "parcel", "searchParcelX": "1", "searchParcelY": "2",
-              "transferredAt": "5", "parcel": { "data": { "description": "desc" } }, "estate": null, "activeOrder": { "price": "1000" } },
+              "transferredAt": "5", "parcel": { "data": { "description": "desc" } }, "estate": null, "activeOrder": { "price": "1000" },
+              "image": "https://maps.example/v1/parcels/1/2/map.png" },
             { "id": "estate-5", "name": null, "contractAddress": ESTATE_REGISTRY_MAINNET, "tokenId": "5", "category": "estate", "searchParcelX": null, "searchParcelY": null,
               "transferredAt": "8", "parcel": null, "estate": { "data": null }, "activeOrder": null }
         ] })
@@ -1009,6 +1020,39 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         &json!({ "contractAddress": LAND_REGISTRY_MAINNET, "tokenId": "1", "category": "parcel", "name": "Plot", "x": "1", "y": "2",
                  "description": "desc", "price": "1000", "image": "https://api.decentraland.org/v1/parcels/1/2/map.png" })
     );
+    // The marketplace subgraph keeps an expired order, and one a previous
+    // owner placed (status `transferred`), as the `activeOrder`; lamb2
+    // answers its price (captures/lambdas-land/LL-13-*.json). A sold or
+    // cancelled order is no active order.
+    sqlx::query(
+        "INSERT INTO shop.nft_order (network, contract_address, token_id, order_id, marketplace_address, status, seller, price, expires_at, created_at, updated_at, updated_block, updated_log) \
+         VALUES ('ethereum', $1, 5, '0x02', '0x8e5660b4ab70168b5a6feea0e0315cb49c8cd539', 'open', '0xcccc000000000000000000000000000000000003', 2287, 1694476800000, 1, 1, 4, 0)",
+    )
+    .bind(ESTATE_REGISTRY_MAINNET)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (_, body) = get(&state, &format!("/lambdas/users/{OWNER}/lands")).await;
+    assert_eq!(
+        (
+            body["elements"][0]["tokenId"].as_str(),
+            body["elements"][0]["price"].as_str()
+        ),
+        (Some("5"), Some("2287")),
+        "an expired order by a previous owner keeps its price: {body}"
+    );
+    for status in ["sold", "cancelled"] {
+        sqlx::query("UPDATE shop.nft_order SET status = $1 WHERE token_id = 5")
+            .bind(status)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let (_, body) = get(&state, &format!("/lambdas/users/{OWNER}/lands")).await;
+        assert!(
+            body["elements"][0].get("price").is_none(),
+            "a {status} order has no price: {body}"
+        );
+    }
     let (_, body) = get(
         &state,
         &format!("/lambdas/users/{OWNER}/lands?pageNum=3&pageSize=1"),
@@ -1147,7 +1191,23 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
     assert_eq!(
         body["elements"][0],
         json!({ "contractAddress": LAND_REGISTRY_MAINNET, "tokenId": "1", "category": "parcel", "name": "Plot", "x": "1", "y": "2",
-                "description": "desc", "price": "1000", "image": "https://api.decentraland.org/v1/parcels/1/2/map.png" })
+                "description": "desc", "price": "1000", "image": "https://maps.example/v1/parcels/1/2/map.png" }),
+        "the subgraph's own image, as lamb2 answers it"
+    );
+    // `/lands` has no pageSize maximum (lamb2's `Number.MAX_VALUE`).
+    let (status, body) = get(
+        &state,
+        &format!("/lambdas/users/{OWNER}/lands?pageSize=5000"),
+    )
+    .await;
+    assert_eq!(
+        (
+            status,
+            body["pageSize"].as_i64(),
+            body["elements"].as_array().map(Vec::len)
+        ),
+        (StatusCode::OK, Some(5000), Some(2)),
+        "{body}"
     );
     let (_, body) = get(
         &state,
@@ -1187,6 +1247,19 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
     assert_eq!(
         body["elements"],
         json!([{ "id": "2", "x": "3", "y": "4", "owner": OWNER, "updateOperator": UPDATE_OP }])
+    );
+    let (_, body) = get_via(
+        land.clone(),
+        &format!("/lambdas/users/{UPDATE_OP}/lands-permissions?pageSize=5000"),
+    )
+    .await;
+    assert_eq!(
+        (
+            body["pageSize"].as_i64(),
+            body["elements"].as_array().map(Vec::len)
+        ),
+        (Some(5000), Some(2)),
+        "no pageSize maximum: {body}"
     );
     let (_, body) = get_via(
         land.clone(),
@@ -1277,4 +1350,86 @@ async fn the_lambdas_read_the_subgraphs_before_their_indexes_and_mirrors() {
     );
 
     db.drop().await;
+}
+
+/// A configured subgraph that fails: the element routes answer lamb2's 502
+/// `FetcherError` naming the key as requested, `/operators` and
+/// `/permissions` lamb2's bare 500 (`errorHandler.ts`). No database: the
+/// index cursors read as not ready, so every route takes its subgraph leg.
+#[tokio::test]
+async fn a_failing_subgraph_answers_lamb2s_status() {
+    let pool = PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap();
+    pool.close().await;
+    let failing = serve_failing_graph().await;
+    let state = Arc::new(MarketplaceState::new(
+        pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings {
+            marketplace_subgraph_url: Some(failing.clone()),
+            land_subgraph_url: Some(failing),
+            ..Settings::for_tests()
+        },
+    ));
+    state
+        .test_allow_loopback
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let mixed = "0xAaaa000000000000000000000000000000000001";
+    let fetcher = |key: &str| {
+        json!({
+            "error": "The requested items cannot be fetched right now",
+            "message": format!("Cannot fetch elements for {key}"),
+        })
+    };
+    for (uri, key) in [
+        (format!("/lambdas/users/{mixed}/names"), mixed),
+        (format!("/lambdas/users/{mixed}/lands"), mixed),
+        ("/lambdas/names/%20Alice.dcl.eth/owner".to_string(), "alice"),
+    ] {
+        let (status, body) = get(&state, &uri).await;
+        assert_eq!(
+            (status, body),
+            (StatusCode::BAD_GATEWAY, fetcher(key)),
+            "{uri}"
+        );
+    }
+    // A names pageSize over 1000 is lamb2's 400, before any source is read.
+    let (status, body) = get(
+        &state,
+        &format!("/lambdas/users/{OWNER}/names?pageSize=1001"),
+    )
+    .await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({ "error": "Bad request", "message": "max allowed pageSize is 1000" })
+        )
+    );
+
+    let land = crate::land_authz::router(Arc::new(crate::land_authz::LandAuthzState::new(
+        pool,
+        crate::http::Outbound::for_tests(),
+        crate::land_authz::Settings::for_tests(),
+        Some(state.index.clone()),
+    )));
+    let (status, body) = get_via(
+        land.clone(),
+        &format!("/lambdas/users/{mixed}/lands-permissions"),
+    )
+    .await;
+    assert_eq!((status, body), (StatusCode::BAD_GATEWAY, fetcher(mixed)));
+    for uri in [
+        "/lambdas/parcels/0/0/operators".to_string(),
+        format!("/lambdas/users/{OWNER}/parcels/0/0/permissions"),
+    ] {
+        let (status, body) = get_via(land.clone(), &uri).await;
+        assert_eq!(
+            (status, body),
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({ "error": "Internal Server Error" })
+            ),
+            "{uri}"
+        );
+    }
 }
