@@ -1,0 +1,353 @@
+{
+  "snapshotDir": "figma-snapshot",
+  "outDir": "generated",
+  "pages": {
+    "1:5238": {
+      "id": "1:5238",
+      "name": "Colors",
+      "kind": "tokens"
+    },
+    "1:5237": {
+      "id": "1:5237",
+      "name": "Typography",
+      "kind": "tokens"
+    },
+    "legacy:Theme": {
+      "id": null,
+      "name": "Theme",
+      "kind": "tokens"
+    },
+    "1:5239": {
+      "id": "1:5239",
+      "name": "Icons",
+      "kind": "icons",
+      "category": "Icons"
+    },
+    "8706:13096": {
+      "id": "8706:13096",
+      "name": "Buttons",
+      "kind": "components",
+      "category": "Inputs"
+    },
+    "8711:14231": {
+      "id": "8711:14231",
+      "name": "Controllers",
+      "kind": "components",
+      "category": "Inputs"
+    },
+    "8706:13413": {
+      "id": "8706:13413",
+      "name": "Cursor",
+      "kind": "components",
+      "category": "Inputs"
+    },
+    "8711:15075": {
+      "id": "8711:15075",
+      "name": "Drop-downs",
+      "kind": "components",
+      "category": "Inputs"
+    },
+    "8711:14600": {
+      "id": "8711:14600",
+      "name": "Text Input",
+      "kind": "components",
+      "category": "Inputs"
+    },
+    "legacy:Bars: Nav bar - Tabs bar - Footer": {
+      "id": null,
+      "name": "Bars: Nav bar - Tabs bar - Footer",
+      "kind": "components",
+      "category": "Components"
+    },
+    "8711:15708": {
+      "id": "8711:15708",
+      "name": "Chat & Voice Chat",
+      "kind": "components",
+      "category": "Components"
+    },
+    "8711:16580": {
+      "id": "8711:16580",
+      "name": "Friends",
+      "kind": "components",
+      "category": "Components"
+    },
+    "8711:18209": {
+      "id": "8711:18209",
+      "name": "Map & Mini Map",
+      "kind": "components",
+      "category": "Components"
+    },
+    "8711:17659": {
+      "id": "8711:17659",
+      "name": "Menus",
+      "kind": "components",
+      "category": "Components"
+    },
+    "8698:2193": {
+      "id": "8698:2193",
+      "name": "Modals",
+      "kind": "components",
+      "category": "Components"
+    },
+    "8711:19124": {
+      "id": "8711:19124",
+      "name": "Names",
+      "kind": "components",
+      "category": "Components"
+    },
+    "8701:2529": {
+      "id": "8701:2529",
+      "name": "NFT Items & Badges",
+      "kind": "components",
+      "category": "Components"
+    },
+    "8711:16075": {
+      "id": "8711:16075",
+      "name": "Notifications",
+      "kind": "components",
+      "category": "Components"
+    },
+    "8711:18573": {
+      "id": "8711:18573",
+      "name": "Profile Picture",
+      "kind": "components",
+      "category": "Components"
+    },
+    "8711:19160": {
+      "id": "8711:19160",
+      "name": "Progress Bar",
+      "kind": "components",
+      "category": "Components"
+    },
+    "9799:4691": {
+      "id": "9799:4691",
+      "name": "Photos",
+      "kind": "components",
+      "category": "Components"
+    },
+    "14175:341": {
+      "id": "14175:341",
+      "name": "Scrollbar",
+      "kind": "components",
+      "category": "Components"
+    },
+    "8711:14972": {
+      "id": "8711:14972",
+      "name": "Search Bar",
+      "kind": "components",
+      "category": "Inputs"
+    },
+    "8711:15178": {
+      "id": "8711:15178",
+      "name": "Spinner & Skeleton Animation",
+      "kind": "components",
+      "category": "Components"
+    },
+    "legacy:Tags": {
+      "id": null,
+      "name": "Tags",
+      "kind": "components",
+      "category": "Components"
+    },
+    "8711:15254": {
+      "id": "8711:15254",
+      "name": "Toasts & Tooltips",
+      "kind": "components",
+      "category": "Components"
+    },
+    "9373:1396": {
+      "id": "9373:1396",
+      "name": "Communities",
+      "kind": "components",
+      "category": "Cards"
+    },
+    "9944:2964": {
+      "id": "9944:2964",
+      "name": "Community Streaming",
+      "kind": "components",
+      "category": "Cards"
+    },
+    "9373:2154": {
+      "id": "9373:2154",
+      "name": "Events",
+      "kind": "components",
+      "category": "Cards"
+    },
+    "9373:1395": {
+      "id": "9373:1395",
+      "name": "Places",
+      "kind": "components",
+      "category": "Cards"
+    },
+    "legacy:External": {
+      "id": null,
+      "name": "External",
+      "kind": "components",
+      "category": "Shared"
+    },
+    "15521:20146": {
+      "id": "15521:20146",
+      "name": "Layout & Spacing",
+      "kind": "components",
+      "category": "Foundations"
+    },
+    "8711:15316": {
+      "id": "8711:15316",
+      "name": "Nav bar",
+      "kind": "components",
+      "category": "Components"
+    },
+    "15841:54898": {
+      "id": "15841:54898",
+      "name": "Tabs bar",
+      "kind": "components",
+      "category": "Components"
+    },
+    "15841:54899": {
+      "id": "15841:54899",
+      "name": "Footer",
+      "kind": "components",
+      "category": "Components"
+    }
+  },
+  "variantAliases": {
+    "Terciary": "tertiary",
+    "Hidding": "hiding"
+  },
+  "componentNames": {
+    "Button-Contained-Text": "Button",
+    "Button-Contained-Text-Icon": "ButtonWithIcon",
+    "Button-Multiple-Options": "SplitButton",
+    "Pill / Icn / Txt": "PillIconText",
+    "Pill / Txt": "PillText",
+    "button-pill-icon-text": "PillIconKeyText",
+    "Component 1": "PageDot",
+    "Index": "PageIndicator",
+    "Txt / Btn": "SortByButton",
+    "Btn Icn / Txt / Arrow": "FilterButton",
+    "Entry": "DropdownEntry",
+    "Input": "TextInput",
+    "Flags": "Flag"
+  },
+  "textStyleAliases": {
+    "H6 Semi Caps": "label/md-caps",
+    "H6 Regular": "body/md"
+  },
+  "components": {
+    "FriendCTA": {
+      "stateWords": [
+        "hover",
+        "pressed",
+        "loading"
+      ],
+      "optionAliases": {
+        "AddFriendHover": "AddHover",
+        "AddFriendLoading": "AddLoading",
+        "RejectHoverPress": "RejectPressed",
+        "BlockedPres": "BlockedPressed"
+      }
+    },
+    "Switch": {
+      "propNames": {
+        "Switch": "checked"
+      }
+    },
+    "SwitchTitle": {
+      "propNames": {
+        "Property 1": "checked"
+      }
+    },
+    "Button-Multiple-Options": {
+      "skipOptions": [
+        "HoverRight"
+      ],
+      "optionAliases": {
+        "HoverLeft": "Hover"
+      }
+    },
+    "Notify": {
+      "propNames": {
+        "Property 1": "active"
+      }
+    },
+    "NavBar": {
+      "semantics": {
+        "@root": {
+          "role": "navigation",
+          "label": "Main"
+        },
+        "DCL Logo": {
+          "role": "action",
+          "label": "Decentraland",
+          "href": "logoHref",
+          "fallback": "none"
+        },
+        "decentraland-mana-logo 1": {
+          "role": "action",
+          "label": "Decentraland",
+          "href": "logoHref",
+          "fallback": "none"
+        },
+        "Tabs": {
+          "role": "list"
+        },
+        "NavMenuTab": {
+          "role": "action",
+          "href": "{slot}Href",
+          "listItem": true
+        },
+        "NavNotificationsButton": {
+          "role": "action",
+          "label": "Notifications",
+          "onActivate": "onNotifications"
+        },
+        "NavProfileButton": {
+          "role": "action",
+          "label": "Profile",
+          "onActivate": "onProfile"
+        },
+        "Sign In / Profile": {
+          "role": "action",
+          "onActivate": "onSignIn"
+        },
+        "NavMenuTabMobile": {
+          "role": "action",
+          "label": "Menu",
+          "onActivate": "onMenu"
+        }
+      }
+    }
+  },
+  "iconAliases": {
+    "Icn/DownArrow": "general/down-arrow",
+    "Icn/Filter": "general/filters",
+    "Icn/JumpIn": "general/jump-in",
+    "Icn/WarningError": "general/warning-error",
+    "Icn/Lock": "general/lock",
+    "Icn/StarOutline": "general/star",
+    "Icn/StarSolid": "general/star-filled",
+    "plus": "general/add",
+    "settings": "menus/settings",
+    "ContextualMenuIcons#Stat=Info": "menus/info",
+    "ContextualMenuIcons#Stat=X": "menus/x",
+    "ContextualMenuIcons#Stat=Report": "menus/report"
+  },
+  "contract": {
+    "mappingRoot": "library/components"
+  },
+  "selection": {
+    "readyOnly": true,
+    "exceptions": [
+      {
+        "pageId": "8698:2193",
+        "componentId": "15906:10331",
+        "reason": "Owner-authorized web-modal background review"
+      }
+    ]
+  },
+  "promotion": {
+    "include": [
+      "NavBar"
+    ]
+  }
+}
