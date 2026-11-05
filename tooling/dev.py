@@ -390,8 +390,7 @@ def testnet_env():
         'CREDITS_MANAGER_CONTRACT': '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3',
         'CREDITS_USAGE_INDEX_ENABLED': 'true',
         # Free test credits. With the signer key below they are spent through Amoy's shared CreditsManager, which
-        # pays testnet MANA only; the stack listens on 127.0.0.1, and the server refuses the mock card on any
-        # other chain.
+        # pays testnet MANA only. This profile sets the mock card on Amoy alone, and the stack listens on 127.0.0.1.
         'CREDITS_MOCK_CARD': 'true',
         **credits_signer_env(),
     }

@@ -272,7 +272,8 @@ async function checkout(page: Page): Promise<void> {
   // once the cart moves on, so each pass waits for an enabled button, the receipt or the step's error.
   const ready = page.locator('[data-testid="authorize-step-action"]:not([disabled])');
   const busy = page.locator('[data-testid="authorize-step-action"][disabled]');
-  const failed = page.getByTestId("authorize-step").getByRole("alert");
+  // Errors show in the approval modal or, for a refused authorization, a revert or a declined approval, in the group.
+  const failed = page.getByTestId("authorize-step").getByRole("alert").or(page.locator(".shop-group__status[role=alert]"));
   const done = page.getByTestId("success-done");
   for (let n = 0; n < 6; n++) {
     await ready.or(done).or(failed).first().waitFor({ timeout: RELAYED });
@@ -299,15 +300,27 @@ async function unitsGrow(i: { contract: string }, who: Hex, before: bigint): Pro
   }
 }
 
+/**
+ * Picks `method` on the item page and waits until the price shown is that method's. E2E_ITEM is listed for
+ * both, so a missing choice is an error: with one method the panel renders no choice, and credits (the
+ * default for a primary item) would otherwise be bought or read as MANA.
+ */
+async function selectMethod(page: Page, method: "mana" | "credits"): Promise<void> {
+  const choice = page.getByTestId(`pay-${method}`);
+  if (!(await choice.waitFor({ timeout: 30_000 }).then(() => true, () => false))) {
+    throw new Error(`the item page offers no ${method} choice: E2E_ITEM must be listed in the Shop for both credits and MANA`);
+  }
+  await choice.click();
+  await page.locator(`.shop-pay__pricecol[data-method="${method}"]`).waitFor({ timeout: 30_000 });
+}
+
 /** Buys one unit from the item page, paying with `method`, through the cart. */
 async function buyItem(a: Actor, i: { contract: string; itemId: string }, method: "mana" | "credits"): Promise<void> {
   // Not networkidle: a signed-in page keeps the credits balance stream open. The panel first, then the
   // method: credits is the default for a primary item, and a buyer short of credits sees a top-up, not Buy.
   await a.page.goto(itemPath(i));
   await a.page.getByTestId("payment-panel").waitFor({ timeout: 60_000 });
-  const choice = a.page.getByTestId(`pay-${method}`);
-  if (await choice.isVisible().catch(() => false)) await choice.click();
-  else if (method === "credits") throw new Error("the item page offers no credits payment: is the item listed in the Shop for credits?");
+  await selectMethod(a.page, method);
   const buy = a.page.getByTestId("cta-buy");
   const topUp = a.page.getByTestId("cta-top-up");
   await buy.or(topUp).first().waitFor({ timeout: 60_000 });
@@ -333,8 +346,7 @@ async function manaMoves(who: Hex, before: bigint): Promise<bigint> {
 
 /** The MANA amount the item page quotes once MANA is selected, or null when it cannot be read. */
 async function quotedMana(page: Page): Promise<bigint | null> {
-  const mana = page.getByTestId("pay-mana");
-  if (await mana.isVisible().catch(() => false)) await mana.click();
+  await selectMethod(page, "mana");
   const text = await page.getByTestId("item-price").innerText({ timeout: 10_000 }).catch(() => "");
   const n = text.replace(/,/g, "").match(/\d+(?:\.\d+)?/)?.[0];
   try {
@@ -358,23 +370,33 @@ async function discountsLoaded(page: Page): Promise<void> {
 /** The "Discount <name>" button for the collection, or an error naming the buttons My Store does show. */
 async function discountButton(page: Page, collectionName: string) {
   const button = page.getByRole("button", { name: `Discount ${collectionName}`, exact: true });
-  if (await button.isVisible().catch(() => false)) return button;
+  // The buttons come from the catalogue and sale-state queries, which load after the discounts list.
+  if (await button.waitFor({ timeout: 60_000 }).then(() => true, () => false)) return button;
   const shown = (await page.getByRole("button", { name: /^Discount / }).allInnerTexts()).map((t) => t.trim());
   throw new Error(`My Store has no “Discount ${collectionName}” button (the collection's on-chain name)${shown.length ? `; it shows: ${shown.join(", ")}` : ", and no collection to discount"}`);
 }
 
-function liveSales(page: Page, collectionName: string) {
-  return page.getByTestId("shop-creator-sale").filter({ hasText: collectionName }).filter({ has: page.getByRole("button", { name: "End now" }) });
+/** The seller's live discounts covering the collection, by its address (the row's label may still be the address). */
+function liveSales(page: Page, collection: string) {
+  return page.locator(`[data-testid="shop-creator-sale"][data-collections*="${collection.toLowerCase()}"]:is([data-status="active"], [data-status="scheduled"])`);
 }
 
-async function endDiscount(seller: Actor, collectionName: string, pct: number): Promise<void> {
+/**
+ * Ends this run's discount: the collection's live one at `pct` (the preflight refuses a collection with one
+ * live already). `onClicked` hears the moment the transaction is requested, so a retry never sends a second.
+ */
+async function endDiscount(seller: Actor, collection: string, pct: number, onClicked: () => void): Promise<void> {
   await seller.page.goto(`${sites}/shop/my-store`);
-  // This run's discount: its collection and its percentage. The preflight refuses a collection with one live.
   await discountsLoaded(seller.page);
-  const row = liveSales(seller.page, collectionName).filter({ hasText: offText(pct) });
+  const row = liveSales(seller.page, collection).filter({ hasText: offText(pct) });
   await row.first().getByRole("button", { name: "End now" }).click({ timeout: 60_000 });
-  // The row re-renders as ended once the list refreshes, so the confirmation is read from the page.
-  await seller.page.getByText("Ended.").first().waitFor({ timeout: RELAYED });
+  onClicked();
+  // The row re-renders as ended once the list refreshes, so the outcome is read from the page: the
+  // confirmation, or the error its status shows.
+  const done = seller.page.getByText("Ended.").first();
+  const failed = seller.page.getByTestId("shop-creator-sale").getByRole("alert").first();
+  await done.or(failed).waitFor({ timeout: RELAYED });
+  if (await failed.isVisible()) throw new Error(`ending the discount failed: ${(await failed.innerText()).trim()}`);
 }
 
 /** The primary loop over E2E_ITEM: the seller's discount, then a MANA and a credits purchase at the lower price. */
@@ -397,14 +419,17 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
       // The panel, not Buy: credits is the default method, and a buyer without credits sees a top-up.
       await buyer.page.goto(itemPath(item));
       await buyer.page.getByTestId("payment-panel").waitFor({ timeout: 60_000 });
+      // Listed for both methods, and its MANA price readable: the funding and discount checks rest on it.
+      await selectMethod(buyer.page, "credits");
       price = await quotedMana(buyer.page);
-      return price === null ? "its MANA price could not be read" : `${formatEther(price)} MANA before the discount`;
+      if (price === null) throw new Error("the item page's MANA price could not be read");
+      return `${formatEther(price)} MANA before the discount`;
     });
     await step("no discount of the seller's is live on the collection", seller, async () => {
       await seller.page.goto(`${sites}/shop/my-store`);
       // Counted only once the list has answered: while it loads it shows no row, live or not.
       await discountsLoaded(seller.page);
-      const live = await liveSales(seller.page, collectionName).count();
+      const live = await liveSales(seller.page, item.contract).count();
       if (live) throw new Error(`${live} discount(s) on “${collectionName}” are still live, from an earlier run: end them in My Store first`);
       await discountButton(seller.page, collectionName);
     });
@@ -442,7 +467,11 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
   }
   if (short.length) throw new Error(`not funded: ${short.join("; ")}`);
 
-  let ended = false;
+  // `started`: the discount may be published (its signature was asked for). `endRequested`: the end
+  // transaction was asked for. The cleanup runs only between the two, so it never ends a discount that was
+  // not published, nor pays for a second end transaction.
+  let started = false;
+  let endRequested = false;
   try {
     // Inside the try: a start that times out may still have published the discount, and the preflight
     // made sure no other discount is live on the collection, so whatever the cleanup finds is this run's.
@@ -453,6 +482,7 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
       await seller.page.getByLabel("Discount percentage").fill(String(pct));
       await seller.page.getByRole("button", { name: "Review discount" }).click();
       await seller.page.getByRole("button", { name: "Start discount" }).click();
+      started = true;
       await seller.page.getByTestId("shop-sale-started").waitFor({ timeout: RELAYED });
     });
     await step("the item shows the discounted price", buyer, async () => {
@@ -461,7 +491,8 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
       for (;;) {
         await buyer.page.goto(itemPath(item));
         await buyer.page.getByTestId("payment-panel").waitFor({ timeout: 60_000 }).catch(() => {});
-        if (await buyer.page.getByTestId("detail-price-was").isVisible().catch(() => false)) return (await buyer.page.getByTestId("item-price").innerText().catch(() => "")).replace(/\s+/g, " ");
+        // The server render has no __SHOP_FLAGS__, so the crossed-out price arrives with the client's refetch.
+        if (await buyer.page.getByTestId("detail-price-was").waitFor({ timeout: 15_000 }).then(() => true, () => false)) return (await buyer.page.getByTestId("item-price").innerText().catch(() => "")).replace(/\s+/g, " ");
         if (Date.now() > until) throw new Error("no crossed-out regular price after 3 minutes: the discount does not reach the item page");
         await new Promise((r) => setTimeout(r, 15_000));
       }
@@ -490,15 +521,12 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
       const after = await manaMoves(buyer.wallet.address, before);
       if (after !== before) throw new Error(`the buyer's MANA went from ${formatEther(before)} to ${formatEther(after)}: the purchase was not paid in credits`);
     });
-    await step("seller ends the discount", seller, async () => {
-      await endDiscount(seller, collectionName, pct);
-      ended = true;
-    });
+    await step("seller ends the discount", seller, () => endDiscount(seller, item.contract, pct, () => (endRequested = true)));
   } finally {
     // A run that failed after starting the discount still ends it, so the collection is not left on sale.
-    if (!ended) {
+    if (started && !endRequested) {
       console.log("  ending the discount this run started …");
-      await endDiscount(seller, collectionName, pct).then(
+      await endDiscount(seller, item.contract, pct, () => (endRequested = true)).then(
         () => console.log("  ended"),
         (e: Error) => console.log(`  could not end it (${e.message.split("\n")[0]}): end it in My Store`),
       );

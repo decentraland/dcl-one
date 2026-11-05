@@ -193,7 +193,7 @@ function SaleRow({ sale, names }: { sale: CreatorSale; names: Record<string, str
   const status = liveSaleStatus(sale);
   const live = status === "active" || status === "scheduled";
   return (
-    <li className="mk-row" data-testid="shop-creator-sale">
+    <li className="mk-row" data-testid="shop-creator-sale" data-collections={sale.collections.map((c) => c.toLowerCase()).join(",")} data-status={status}>
       <div className="mk-row__main">
         <span>
           {sale.discount / 10_000}% off · {sale.collections.map((c) => names[c.toLowerCase()] ?? c).join(", ")}

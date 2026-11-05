@@ -121,6 +121,10 @@ The signer is the address of `.cache/dev/credits-signer.key` (or of `E2E_CREDITS
 `E2E_CREDITS_SIGNER`. The script simulates the call first, refuses a wallet without the admin role, waits for
 the receipt and reads the role back. It prints addresses, never keys.
 
+Amoy's CreditsManager is shared with Decentraland's testnet, and a stack holding a granted key signs credits that
+the mock card hands out for free. Keep the stack on loopback, as `foundation-dev` runs it, and have the signer's
+role revoked when you no longer run the primary loop, so grants on the shared contract do not pile up.
+
 The profile also runs the CreditsManager usage index on Amoy, and the stack signs only once it has caught
 up. `GET /credits/usage-index/status` reports both, and the primary preflight reads it. Without the key,
 the preflight says so and the full loop stops before the discount.
