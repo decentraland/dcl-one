@@ -157,10 +157,10 @@ jobs:
           set -o pipefail
           xvfb-run -s "-screen 0 320x240x24" target/release/decentra-bevy --realm https://decentraland.github.io/scene-explorer-tests/scene-explorer-tests --test_scenes "$SCENE_PARCELS" --no_fog --distance 1 --scene_log_to_console 2>&1 | tee scene-tests.log
           grep -Eq 'all tests passed!|all failures were allowed' scene-tests.log
-      # Scene video through the UUAV player: the end-to-end suite's `video` scene, played by the
-      # standalone just built and driven through its console under xvfb
-      # (apps/bevy-explorer/e2e/specs/visual/video.test.ts), in software decode (the hosted runner
-      # has no VA driver).
+      # Scene media through the engine: the end-to-end suite's `video` and `audio` scenes, played
+      # by the standalone just built and driven through its console under xvfb
+      # (apps/bevy-explorer/e2e/specs/visual/video.test.ts and audio.test.ts), in software decode
+      # (the hosted runner has no VA driver).
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         if: ${{ !cancelled() && steps.engine.outcome == 'success' && inputs.suite != 'snapshots' }}
         with:
@@ -202,7 +202,7 @@ jobs:
           DCL_E2E_TRANSPORT: native
           DCL_E2E_NATIVE_BIN: ${{ github.workspace }}/rendering/bevy-explorer/source/target/release/decentra-bevy
           UUAV_FORCE_SW_DECODE: '1'
-        run: xvfb-run -s "-screen 0 960x540x24" npm run e2e -- --visual --filter 'video plays'
+        run: xvfb-run -s "-screen 0 960x540x24" npm run e2e -- --visual --filter 'video plays|audio events'
       - name: Record graphical scene result
         if: always() && steps.scenes.outcome != '' && steps.scenes.outcome != 'skipped'
         env:
@@ -215,7 +215,7 @@ jobs:
         env:
           VIDEO_OUTCOME: ${{ steps.video.outcome }}
         run: |
-          printf 'Video playback through the UUAV player (the end-to-end `video` scene, software decode): **%s**. See the end-to-end report artifact.\n' "$VIDEO_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Media playback through the engine (the end-to-end `video` and `audio` scenes, software decode): **%s**. See the end-to-end report artifact.\n' "$VIDEO_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

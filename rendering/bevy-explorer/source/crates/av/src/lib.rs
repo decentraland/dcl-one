@@ -8,6 +8,7 @@ pub mod audio_sink;
 pub mod video_stream;
 
 // audio source (non-streaming audio)
+pub mod audio_events;
 #[cfg(feature = "html")]
 pub mod audio_host_wasm;
 pub mod audio_loader;
@@ -877,12 +878,13 @@ fn set_state<T: AVPlayer>(
             },
         );
     } else {
+        // the scene's tick, as unity-explorer stamps its audio events
         context.update_crdt(
             SceneComponentId::AUDIO_EVENT,
             CrdtType::GO_ANY,
             container_entity.container_id,
             &PbAudioEvent {
-                timestamp: frame.0,
+                timestamp: tick_number,
                 state: *state as i32,
             },
         );

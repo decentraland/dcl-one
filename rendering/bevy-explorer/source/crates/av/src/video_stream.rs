@@ -40,7 +40,8 @@ impl VideoSink {
 }
 
 /// Opens `source` on the platform's av backend, rendering video into `image`. The audio and
-/// video sinks share one command channel.
+/// video sinks share one command channel. An audio-only player keeps a `VideoSink` too: the
+/// backend reports its states on it.
 pub fn av_sinks<T: AVPlayer>(
     ipfs: IpfsResource,
     source: String,
@@ -60,7 +61,8 @@ pub fn av_sinks<T: AVPlayer>(
             Ok(url) => {
                 media::spawn_av(
                     command_receiver,
-                    T::has_video().then_some(video_sender),
+                    video_sender,
+                    T::has_video(),
                     url,
                     &image,
                     audio_sender,
@@ -70,11 +72,9 @@ pub fn av_sinks<T: AVPlayer>(
             }
             Err(e) => {
                 warn!("av source `{source}`: {e}");
-                if T::has_video() {
-                    video_sender
-                        .try_send(VideoData::State(VideoState::VsError))
-                        .report();
-                }
+                video_sender
+                    .try_send(VideoData::State(VideoState::VsError))
+                    .report();
                 Some(command_receiver)
             }
         };
@@ -107,7 +107,7 @@ pub fn av_sinks<T: AVPlayer>(
     AVSinks {
         #[cfg(feature = "uuav")]
         audio,
-        video: T::has_video().then_some(VideoSink::new(source, video_receiver, image)),
+        video: Some(VideoSink::new(source, video_receiver, image)),
         command_sender,
         rejected_commands,
         rate: None,

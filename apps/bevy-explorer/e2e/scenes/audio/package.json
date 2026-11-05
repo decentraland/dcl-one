@@ -1,0 +1,9 @@
+{
+  "name": "bevy-explorer-e2e-scene-audio",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Audio playback scene: audio",
+  "scripts": {
+    "build": "dcl-scene-cli build --built-in"
+  }
+}
