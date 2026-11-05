@@ -8,6 +8,7 @@
 //! ([`render`]), so decoded pixels never cross the main world.
 
 mod audio;
+mod capture;
 mod ffi;
 #[cfg_attr(target_os = "macos", path = "platform_macos.rs")]
 #[cfg_attr(target_os = "linux", path = "platform_linux.rs")]
@@ -39,7 +40,8 @@ use dcl_component::proto_components::sdk::components::VideoState;
 use kira::{sound::streaming::StreamingSoundData, tween::Tween};
 use tokio::sync::{mpsc, oneshot};
 
-pub use audio::AudioHandle;
+pub use audio::{AudioHandle, SAMPLE_RATE};
+pub use capture::{AudioCapture, CAPTURE_CHANNELS, CAPTURE_FRAMES};
 pub use source::resolve_source;
 
 use crate::{AVCommand, VideoData, VideoFrame, VideoInfo};
@@ -168,6 +170,8 @@ struct NewSource {
     image: AssetId<Image>,
     audio: mpsc::Sender<StreamingSoundData<AudioDecoderError>>,
     audio_handle: oneshot::Receiver<AudioHandle>,
+    /// Where the decoded audio goes for analysis while that is enabled.
+    capture: Arc<AudioCapture>,
 }
 
 static NEW_SOURCES: Mutex<Vec<NewSource>> = Mutex::new(Vec::new());
@@ -175,7 +179,8 @@ static NEW_SOURCES: Mutex<Vec<NewSource>> = Mutex::new(Vec::new());
 /// Plays `url` on a uuav player, rendering its frames into `image`, driven by `commands` and
 /// reporting on `video` (`None` for an audio stream). The player's sound goes out on `audio`
 /// for the audio sink to play; the sink hands the playing sound's handle back on
-/// `audio_handle`, which is where the volume commands land.
+/// `audio_handle`, which is where the volume commands land. The decoded audio is also written
+/// to `capture` while that is enabled.
 pub fn spawn_av(
     commands: mpsc::UnboundedReceiver<AVCommand>,
     video: Option<mpsc::Sender<VideoData>>,
@@ -183,6 +188,7 @@ pub fn spawn_av(
     image: &Handle<Image>,
     audio: mpsc::Sender<StreamingSoundData<AudioDecoderError>>,
     audio_handle: oneshot::Receiver<AudioHandle>,
+    capture: Arc<AudioCapture>,
 ) {
     lock(&NEW_SOURCES).push(NewSource {
         commands,
@@ -191,6 +197,7 @@ pub fn spawn_av(
         image: image.id(),
         audio,
         audio_handle,
+        capture,
     });
 }
 
@@ -418,7 +425,11 @@ impl UuavRuntime {
         }
 
         let alive = Arc::new(AtomicBool::new(true));
-        let sound = StreamingSoundData::from_decoder(UuavKiraDecoder::new(id, alive.clone()));
+        let sound = StreamingSoundData::from_decoder(UuavKiraDecoder::new(
+            id,
+            alive.clone(),
+            source.capture,
+        ));
         if source.audio.try_send(sound).is_err() {
             debug!("uuav player {id}: audio sink gone before the sound started");
         }

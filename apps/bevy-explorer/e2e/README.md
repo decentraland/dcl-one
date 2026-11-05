@@ -117,6 +117,7 @@ test is in the spec file's header. Port 40, Partial 32, Gap 15, Drop 2.
 | ViewSignalSmoke (2) | `view-signal` | | | | 2 | A Unity harness self-test |
 | Visual (17) | `visual/visual` | 17 | | | | The scenes at their own parcels; references recorded anew |
 | UUAV PlayMode (unity-explorer's player tests) | `visual/video` | 2 | 1 | 4 | | One scenario on the `video` scene: the state reaches Playing, the clock runs, the frame is red; seek, audio capture and helper recovery stay in the UUAV workspace's tests |
+| AudioAnalysis (unity-explorer's playground and buffer tests) | `visual/audio` | 2 | 1 | 1 | | One scenario on the `audio` scene, standalone only: a clip in log and raw mode, a stream and a video's audio report amplitude and bands, the window moves, a paused clip holds its values; the single-slot buffer is an engine unit test |
 
 What the HUD would need for more Ports, found while porting: roles or labels on the minimap's
 name and coordinates, the chat message text, the communities titles and counts, the passport
@@ -140,6 +141,11 @@ player's `VideoEvent`s (`/inspect_component`) reach Playing without an error and
 clock, and the frame's pixel at the screen (`/entity_screen_position`) is the fixture's red. On
 the web the player is the browser's video element; on the standalone it is UUAV, which the
 scenes workflow runs (below).
+
+`specs/visual/audio.test.ts` plays the `audio` scene the same way, on the standalone only (the
+web build writes no analysis): four sources with an `AudioAnalysis`, a looping clip in log and raw
+mode, a stream and a video, and asserts the amplitude and bands the engine writes back, that they
+move while the audio plays and hold once the scene pauses its clip.
 
 Build the scenes first with `apps/dcl-scene-cli`:
 
@@ -243,6 +249,7 @@ change on the left updates what is on the right in the same change, then runs th
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `npm test`; the web driver's tests |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
 | The `video` scene, its fixture (`scenes/video/generate-fixture.sh`), the engine's `VideoEvent` reporting or the video player's source resolution (`crates/media/src/uuav`, `crates/av`) | `specs/visual/video.test.ts` (the states, the clock mark, the colour probe); `scenes/README.md`; the scenes workflow's video steps | `npm run typecheck`; the video scenario on the web (this workflow) and on the standalone (the scenes workflow) |
+| The `audio` scene, its fixture (`scenes/audio/generate-fixture.sh`), the engine's `AudioAnalysis` maths or windowing (`crates/av/src/audio_analysis`, `crates/media/src/uuav/capture.rs`) | `specs/visual/audio.test.ts` (the modes, the moving window, the pause hold); `scenes/README.md`; the scenes workflow's media step | `npm run typecheck`; the audio scenario on the standalone (the scenes workflow); it skips on the web |
 | A path moved under `apps/bevy-explorer/e2e`, `tooling/bevy-e2e-*.py` or the workflow | The workflow's `paths` filters, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
 | The CI workflow's name, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests; the e2e workflow's `workflow_run` | the tooling tests |
 | A scenario the HUD can no longer run, or a Gap whose feature landed | A `todo` with the reason, or the todo back into a scenario; its header row and the scenario map | the scenarios in CI |

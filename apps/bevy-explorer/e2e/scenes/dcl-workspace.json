@@ -53,6 +53,9 @@
     },
     {
       "path": "video"
+    },
+    {
+      "path": "audio"
     }
   ]
 }

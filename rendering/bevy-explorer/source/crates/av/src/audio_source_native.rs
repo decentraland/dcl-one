@@ -31,6 +31,10 @@ impl Plugin for AudioSourcePluginImpl {
 #[derive(Component)]
 pub struct Playing;
 
+/// The emitter's kira instance, for whoever needs its position.
+#[derive(Component, Deref)]
+pub struct ClipInstance(pub Handle<AudioInstance>);
+
 #[derive(Component)]
 pub struct RetryEmitter;
 
@@ -76,7 +80,7 @@ fn manage_audio_sources(
                 }
             }
 
-            commands.entity(ent).try_remove::<Playing>();
+            commands.entity(ent).try_remove::<(Playing, ClipInstance)>();
             continue;
         }
 
@@ -111,7 +115,7 @@ fn manage_audio_sources(
         };
 
         if existing.is_none() && !emitter.is_changed() && maybe_retry.is_none() {
-            commands.entity(ent).try_remove::<Playing>();
+            commands.entity(ent).try_remove::<(Playing, ClipInstance)>();
             continue;
         }
 
@@ -135,7 +139,6 @@ fn manage_audio_sources(
 
         match existing {
             None => {
-                commands.entity(ent).try_insert(Playing);
                 let mut new_instance = audio.play(emitter.handle.clone());
 
                 new_instance
@@ -151,7 +154,11 @@ fn manage_audio_sources(
                     new_instance.start_from(time as f64);
                 }
 
-                instances.insert(ent, (emitter.handle.id(), new_instance.handle()));
+                let h_instance = new_instance.handle();
+                commands
+                    .entity(ent)
+                    .try_insert((Playing, ClipInstance(h_instance.clone())));
+                instances.insert(ent, (emitter.handle.id(), h_instance));
             }
             Some(instance) => {
                 if emitter.is_changed() {

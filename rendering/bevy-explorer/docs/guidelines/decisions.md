@@ -29,6 +29,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
+- **AudioAnalysis reads a clip's decoded frames at the instance's position**, not the mixed
+  output: pitch and volume are not applied and a clip is analysed at its own sample rate, where
+  unity-explorer taps `OnAudioFilterRead`. The window stays Unity's: 1024 frames of interleaved
+  stereo at the nominal rate, so a stereo tone reads an octave down with an image near Nyquist,
+  as scenes authored against unity-explorer expect. No frame-time budget, and no results on the
+  web (Unity has none on WebGL either). See the
+  [ADR](../../../../docs/adr/2026-11-05-explorer-audio-analysis.md).
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.
