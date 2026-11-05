@@ -326,27 +326,28 @@ Bodies are `{"errors":[...]}` unless the row says otherwise. Every row is read; 
 
 13. **CW-13: check order and dcl-one-only refusals.** Status: MATCH, no work. The deployer checks in upstream's order: entity file, parse, signature at the entity's timestamp, pointers, the in-flight claim, newer entity, rate limit, TTL back, TTL forward, then the validator, which checks the signature again as upstream's validator does (`write_deployer.rs:945-1035`). The entity file's `id` field is ignored, the id is the request's (`write_deployer.rs:959-961`). Kept on purpose: the operator denylist refuses a listed entity id, content hash or pointer (`denylist.rs:87-117`), after the parse; upstream filters only reads. It is a dcl-one moderation tool (section 7), not a client contract.
 
-14. **CW-14: daily quota counting.**
+14. **CW-14: daily quota counting.** Status: Kept by decision.
     - Fixed: the spent-quota 429 is answered before the upload budget, and the quota counts a request once its form is read, so forms the parser or its limits refuse are not charged (`create_entity.rs:440-447,626-631`).
-    - Kept on purpose, both open for a decision:
-      - dcl-one gives back a deploy its deployer answered 503 for this node's own state (a source down, the store unreadable); upstream keeps it counted. The refund follows from CW-17: the client was told to retry, so the retry should not spend its quota. Options: keep the refund (recommended while CW-17 keeps the 503), or drop it to count as upstream.
-      - dcl-one skips the per-client limits without a gateway-stamped address; upstream falls back to the socket address (`client-source.ts:25`). Behind dcl-one's gateway every request is stamped; a node reached without it would key every client on the proxy's address. Options: keep skipping and warn once (recommended), or fall back to the socket address.
+    - Decision: both differences below are kept.
+      - dcl-one gives back a deploy its deployer answered 503 for this node's own state (a source down, the store unreadable); upstream keeps it counted. Kept because of CW-17: the client was told to retry, so the retry should not spend its quota. The option not taken: count it as upstream.
+      - dcl-one skips the per-client limits without a gateway-stamped address; upstream falls back to the socket address (`client-source.ts:25`). Kept because every request is stamped behind dcl-one's gateway, and a node reached without it would key every client on the proxy's address. The option not taken: fall back to the socket address.
     - Place: `create_entity.rs:632-643`, `upload_admission.rs:277-285`.
-    - Severity: P2.
+    - Severity: P2 (by decision).
 
-15. **CW-15: per-pointer rate-limit configuration.**
+15. **CW-15: per-pointer rate-limit configuration.** Status: Kept by decision.
     - Fixed: `REQUEST_TTL_BACKWARDS` (default 20 min), `DEPLOYMENTS_DEFAULT_RATE_LIMIT_TTL`/`_MAX` and `DEPLOYMENT_RATE_LIMIT_TTL_<TYPE>`/`DEPLOYMENT_RATE_LIMIT_MAX_<TYPE>` are read under upstream's names, durations as the `ms` package writes them (`services/catalyst/config/src/content.rs:246-285,296-319`, `write_deployer.rs:317-394`).
-    - Gap left for a decision: unset, dcl-one keeps its built-in windows (profile 3 s/500, scene 20 s/1000, wearable 20 s/1000, store 3 s/300, emote 20 s/1000, outfits 3 s/2000); upstream's code default is 60 s / 300 keys for every type (`component.ts:109-121`). The production values are deployment configuration, not in the pinned tree. Options: keep the built-in windows (recommended until the production values are known: a 60 s profile window refuses a second avatar change within a minute), or switch to upstream's code default.
+    - Gap: unset, dcl-one keeps its built-in windows (profile 3 s/500, scene 20 s/1000, wearable 20 s/1000, store 3 s/300, emote 20 s/1000, outfits 3 s/2000); upstream's code default is 60 s / 300 keys for every type (`component.ts:109-121`). The production values are deployment configuration, not in the pinned tree.
+    - Decision: the built-in windows are kept until production's values are known; upstream's env names are already read, so a deployment can set them. A 60 s profile window would refuse a second avatar change within a minute. The option not taken: switch to upstream's code default.
     - Place: `write_deployer.rs:317-326`.
-    - Severity: P2.
+    - Severity: P2 (by decision).
 
 16. **CW-16: upload timeout body.** Status: MATCH, no work. A repeated form name answers upstream's 400 `{"error":"Duplicate form field '<name>'"}`. A form still arriving `MULTIPART_UPLOAD_TIMEOUT_MS` (300 s, the setting worlds reads too) after admission answers 408 `{"error":"The upload did not finish within 300 s: received <r> of <d> bytes (<k> KiB/s). Retry on a faster connection or send smaller batches."}`, the bytes counted off the wire (`create_entity.rs:493-543,604-611`). The whole-request `REQUEST_TIMEOUT_SECS` no longer applies to `POST /entities` (`lib.rs:777-794`). The gateway's `client_body_timeout 300s` still answers an idle body with nginx's 408.
 
-17. **CW-17: undecidable deploys answer 503.**
+17. **CW-17: undecidable deploys answer 503.** Status: Kept by decision.
     - Gap: an EIP-1654 signature that cannot be checked, or an access-checker failure, answers 503 `{"errors"}` with `Retry-After: 30`. Upstream answers 400 `{"errors"}` with the validator text.
-    - Kept on purpose: dcl-one tells the client the node could not decide (a chain RPC down or unset) instead of rejecting a deploy that may be valid. Options: keep the 503 (recommended: a 400 makes a client drop a valid deploy on a node-side outage), or answer 400 as upstream. Clients that do not retry 503 on POST report a transient failure where upstream reports a rejection.
+    - Decision: the 503 is kept. dcl-one tells the client the node could not decide (a chain RPC down or unset) instead of rejecting a deploy that may be valid; a 400 would make clients drop valid deploys during an RPC outage. The option not taken: answer 400 as upstream. Clients that do not retry 503 on POST report a transient failure where upstream reports a rejection.
     - Place: `validator/mod.rs:358-370`, `create_entity.rs:359-376`.
-    - Severity: P2.
+    - Severity: P2 (by decision).
 
 18. **CW-18: CORS preflight on `/entities`.**
     - Gap: dcl-one reflects the Origin with credentials, allows a wider method list, and caches the preflight for 86400 s.
