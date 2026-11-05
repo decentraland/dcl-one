@@ -184,6 +184,83 @@ pub fn parse_pagination(params: &QueryParams, max_page_size: i64) -> Result<Pagi
     )
 }
 
+/// JavaScript `parseInt(s, 10)`: leading whitespace and one sign skipped,
+/// then the leading decimal digits, so `"10abc"` is 10 and `"1.5"` is 1;
+/// `None` is `NaN` (no digit). A value past `i64` saturates.
+pub fn parse_int_js(s: &str) -> Option<i64> {
+    let t = s.trim_start();
+    let (negative, digits) = match t.as_bytes().first() {
+        Some(b'-') => (true, &t[1..]),
+        Some(b'+') => (false, &t[1..]),
+        _ => (false, t),
+    };
+    let end = digits
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(digits.len());
+    if end == 0 {
+        return None;
+    }
+    let magnitude = digits[..end].bytes().fold(0i64, |n, d| {
+        n.saturating_mul(10).saturating_add(i64::from(d - b'0'))
+    });
+    Some(if negative { -magnitude } else { magnitude })
+}
+
+/// lamb2's `paginationObject` (decentraland/lamb2:src/logic/pagination.ts:4-19):
+/// `parseInt` of each value when the key is present, defaults 100 and 1,
+/// one check (`pageSize > max`). `None` is a `NaN`, which serializes as
+/// `null` and pages nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JsPagination {
+    pub page_size: Option<i64>,
+    pub page_num: Option<i64>,
+}
+
+impl JsPagination {
+    /// `(offset, limit)` for a JavaScript `slice`, `None` when either is `NaN`.
+    pub fn offset_limit(&self) -> Option<(i64, i64)> {
+        let (size, num) = (self.page_size?, self.page_num?);
+        Some((num.saturating_sub(1).saturating_mul(size), size))
+    }
+
+    /// The `[start, end)` of `elements.slice(offset, offset + limit)` over
+    /// `len` elements: a negative index counts from the end, a `NaN` is 0.
+    pub fn slice_range(&self, len: usize) -> (usize, usize) {
+        let Some((offset, limit)) = self.offset_limit() else {
+            return (0, 0);
+        };
+        let len = len as i64;
+        let js_index = |i: i64| if i < 0 { (len + i).max(0) } else { i.min(len) };
+        let (start, end) = (js_index(offset), js_index(offset.saturating_add(limit)));
+        if start < end {
+            (start as usize, end as usize)
+        } else {
+            (0, 0)
+        }
+    }
+}
+
+pub fn parse_pagination_js(
+    params: &QueryParams,
+    max_page_size: i64,
+) -> Result<JsPagination, String> {
+    let get = |key: &str, default: i64| match qs_get_string(params, key) {
+        Some(raw) => parse_int_js(&raw),
+        None => Some(default),
+    };
+    let pagination = JsPagination {
+        page_size: get("pageSize", 100),
+        page_num: get("pageNum", 1),
+    };
+    if pagination
+        .page_size
+        .is_some_and(|size| size > max_page_size)
+    {
+        return Err(format!("max allowed pageSize is {max_page_size}"));
+    }
+    Ok(pagination)
+}
+
 fn urlencoding_decode(s: &str) -> String {
     let mut bytes: Vec<u8> = Vec::with_capacity(s.len());
     let mut buf = [0u8; 4];
@@ -416,6 +493,60 @@ mod tests {
         assert_eq!(
             to_query_string(&filters),
             "entityType=scene&lastId=a%20b&to=5"
+        );
+    }
+
+    #[test]
+    fn parse_int_js_reads_the_leading_digits() {
+        assert_eq!(parse_int_js("10abc"), Some(10));
+        assert_eq!(parse_int_js("1.5"), Some(1));
+        assert_eq!(parse_int_js(" -7x"), Some(-7));
+        assert_eq!(parse_int_js("+3"), Some(3));
+        assert_eq!(parse_int_js("abc"), None);
+        assert_eq!(parse_int_js(""), None);
+        assert_eq!(parse_int_js("-"), None);
+        assert_eq!(parse_int_js("99999999999999999999"), Some(i64::MAX));
+    }
+
+    #[test]
+    fn js_pagination_keeps_nan_and_slices_like_javascript() {
+        let p = |qs: &str| parse_pagination_js(&parse_query_string(qs), 1000);
+        assert_eq!(
+            p("").unwrap(),
+            JsPagination {
+                page_size: Some(100),
+                page_num: Some(1)
+            }
+        );
+        assert_eq!(
+            p("pageSize=10abc&pageNum=2.9").unwrap(),
+            JsPagination {
+                page_size: Some(10),
+                page_num: Some(2)
+            }
+        );
+        let nan = p("pageSize=abc").unwrap();
+        assert_eq!(nan.page_size, None);
+        assert_eq!(nan.slice_range(50), (0, 0), "a NaN pages nothing");
+        assert_eq!(
+            p("pageSize=").unwrap().page_size,
+            None,
+            "present but empty is NaN"
+        );
+        assert_eq!(
+            p("pageSize=1001").unwrap_err(),
+            "max allowed pageSize is 1000"
+        );
+        // pageNum=0: slice(-10, 0) is empty; pageNum=-1 with 25 elements:
+        // slice(-20, -10) is [5, 15).
+        assert_eq!(p("pageSize=10&pageNum=0").unwrap().slice_range(25), (0, 0));
+        assert_eq!(
+            p("pageSize=10&pageNum=-1").unwrap().slice_range(25),
+            (5, 15)
+        );
+        assert_eq!(
+            p("pageSize=10&pageNum=3").unwrap().slice_range(25),
+            (20, 25)
         );
     }
 }
