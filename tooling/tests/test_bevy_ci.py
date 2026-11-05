@@ -329,6 +329,16 @@ class SelectionTest(unittest.TestCase):
             result = ci.select(before, self.commit())
             self.assertTrue(all(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
 
+    def test_vendored_bevy_selects_every_lane_and_the_native_matrix(self):
+        # The Explorer builds Bevy from rendering/bevy-explorer/bevy, platform code included.
+        self.write('rendering/bevy-explorer/bevy/crates/bevy_scene/src/scene_spawner.rs', 'changed')
+        result = ci.select(self.base, self.commit())
+        self.assertTrue(all(result[lane] for lane in (*ci.LANES, 'native-matrix', 'scenes')))
+
+    def test_vendored_bevy_rebuilds_the_images(self):
+        self.write('rendering/bevy-explorer/bevy/crates/bevy_scene/src/scene_spawner.rs', 'changed')
+        self.assertTrue(ci.consumer_changed(self.base, self.commit(), 'images'))
+
     def test_newer_web_pass_cannot_hide_an_unvalidated_native_change_on_main(self):
         self.write('rendering/bevy-explorer/source/src/lib.rs', 'native change')
         later_web = self.commit()
