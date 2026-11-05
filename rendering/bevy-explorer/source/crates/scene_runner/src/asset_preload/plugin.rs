@@ -227,6 +227,9 @@ fn verify_preload_state(
                     container_entity.container_id,
                     &event,
                 );
+                // Holding is only safe for glbs: every glb consumer shares one set of loader
+                // settings (`scene_gltf_loader_settings`). Other types don't (a material sets its
+                // own sampler on each texture), so a held image would pin the default settings.
                 if is_gltf {
                     commands.entity(entity).remove::<LoadingPreloadedAsset>();
                 } else {
