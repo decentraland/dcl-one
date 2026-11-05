@@ -1012,6 +1012,39 @@ async fn the_g1_lambdas_answer_from_the_mirrors_indexes_and_readers() {
         &json!({ "contractAddress": LAND_REGISTRY_MAINNET, "tokenId": "1", "category": "parcel", "name": "Plot", "x": "1", "y": "2",
                  "description": "desc", "price": "1000", "image": "https://api.decentraland.org/v1/parcels/1/2/map.png" })
     );
+    // The marketplace subgraph keeps an expired order, and one a previous
+    // owner placed (status `transferred`), as the `activeOrder`; lamb2
+    // answers its price (captures/lambdas-land/LL-13-*.json). A sold or
+    // cancelled order is no active order.
+    sqlx::query(
+        "INSERT INTO shop.nft_order (network, contract_address, token_id, order_id, marketplace_address, status, seller, price, expires_at, created_at, updated_at, updated_block, updated_log) \
+         VALUES ('ethereum', $1, 5, '0x02', '0x8e5660b4ab70168b5a6feea0e0315cb49c8cd539', 'open', '0xcccc000000000000000000000000000000000003', 2287, 1694476800000, 1, 1, 4, 0)",
+    )
+    .bind(ESTATE_REGISTRY_MAINNET)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (_, body) = get(&state, &format!("/lambdas/users/{OWNER}/lands")).await;
+    assert_eq!(
+        (
+            body["elements"][0]["tokenId"].as_str(),
+            body["elements"][0]["price"].as_str()
+        ),
+        (Some("5"), Some("2287")),
+        "an expired order by a previous owner keeps its price: {body}"
+    );
+    for status in ["sold", "cancelled"] {
+        sqlx::query("UPDATE shop.nft_order SET status = $1 WHERE token_id = 5")
+            .bind(status)
+            .execute(&db.pool)
+            .await
+            .unwrap();
+        let (_, body) = get(&state, &format!("/lambdas/users/{OWNER}/lands")).await;
+        assert!(
+            body["elements"][0].get("price").is_none(),
+            "a {status} order has no price: {body}"
+        );
+    }
     let (_, body) = get(
         &state,
         &format!("/lambdas/users/{OWNER}/lands?pageNum=3&pageSize=1"),
