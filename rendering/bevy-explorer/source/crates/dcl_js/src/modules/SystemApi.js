@@ -681,8 +681,9 @@ module.exports.social = {
     return stream;
   },
 
-  // local DM history. Which conversations are shown is the HUD's own state.
-  // type DmHistoryEntryData = { from: string, message: string, timestamp: number, receivedAt: number }
+  // local DM history (a community channel, `community:<id>`, is stored the same way). Which
+  // conversations are shown is the HUD's own state.
+  // type DmHistoryEntryData = { from: string, message: string, receivedAt: number, messageId: string, reactions: DmReactionData[] }
   getDmHistory: async function(address) {
     return await Deno.core.ops.op_get_dm_history(address);
   },
@@ -711,11 +712,6 @@ module.exports.social = {
   setCommunityChannels: function(ids) {
     Deno.core.ops.op_set_community_channels(ids);
   }
-}
-
-// play one of the engine's embedded UI sounds (`sounds/ui/<name>`)
-module.exports.playUiSound = function(name) {
-  Deno.core.ops.op_play_ui_sound(name);
 }
 
 // get scene loading UI state as a stream

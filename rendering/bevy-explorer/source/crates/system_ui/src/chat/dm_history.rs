@@ -48,17 +48,22 @@ enum DmStoreOp {
         account: String,
         partner: String,
     },
-    /// Keeps the last `keep` messages of a conversation, and the reactions to them.
+    /// Keeps the last `keep` messages of a conversation and the reactions to them, within the
+    /// last `keep_records` records.
     Trim {
         account: String,
         partner: String,
         keep: usize,
+        keep_records: usize,
     },
 }
 
 /// The most messages a community's history keeps, with the reactions to them: what the HUD shows
 /// of a conversation (`MAX_CHAT_LINES`). A DM history is not trimmed.
 const MAX_COMMUNITY_HISTORY: usize = 200;
+/// The most records (messages and reactions) a community's history keeps: reactions alone would
+/// otherwise grow it without a new message ever moving the message cut.
+const MAX_COMMUNITY_RECORDS: usize = 1000;
 
 /// Pending store operations and the one in flight.
 #[derive(Resource, Default)]
@@ -102,8 +107,11 @@ impl DmStoreOp {
                 account,
                 partner,
                 keep,
+                keep_records,
             } => {
-                if let Err(e) = platform::dm_history_trim(&account, &partner, keep).await {
+                if let Err(e) =
+                    platform::dm_history_trim(&account, &partner, keep, keep_records).await
+                {
                     warn!("failed to trim history of {partner}: {e}");
                 }
             }
@@ -304,6 +312,7 @@ pub fn record_dms(
             account: account.clone(),
             partner,
             keep: MAX_COMMUNITY_HISTORY,
+            keep_records: MAX_COMMUNITY_RECORDS,
         });
     }
 }

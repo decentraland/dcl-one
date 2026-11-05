@@ -419,7 +419,8 @@ pub struct DmUserStateData {
     pub address: String,
     /// "notConnected" (the local user is not in the private chat room), "connected",
     /// "blockedByOwnUser", "privateMessagesBlockedByOwnUser", "privateMessagesBlocked",
-    /// "disconnected" or "otherClient"
+    /// "disconnected" or "otherClient"; for a community channel (`community:<id>`),
+    /// "notConnected", "noRouter" (no message router in the room) or "connected"
     pub state: String,
     /// In the private chat room and not blocked by the local user.
     pub online: bool,

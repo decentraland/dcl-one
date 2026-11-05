@@ -1,5 +1,4 @@
-//! Community text chat on the wire (unity-explorer's `LiveKitChatMessagesBus.cs` and
-//! `MultiplayerReactionMessageBus.cs`): a community channel is `community:<id>`, which is also the
+//! Community text chat on the wire: a community channel is `community:<id>`, which is also the
 //! data-packet topic on the private chat room. A client never addresses members itself; it sends
 //! to the server's message router participant, which fans the packet out to the community's
 //! members and stamps the author into `Chat.forwarded_from` (a reaction carries the author in its

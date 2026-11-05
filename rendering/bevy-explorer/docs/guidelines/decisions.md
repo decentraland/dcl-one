@@ -29,6 +29,18 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
+- **Community chat (#223).** A community packet is taken only from the server's message
+  router, which checks membership and stamps the author; unity-explorer also accepts one
+  straight from a peer under the peer's own identity. Community history is stored like a DM's
+  and trimmed to 200 messages and 1000 records per community; unity-explorer keeps it in memory
+  and persists DMs only. A community tab's input is blocked while the private chat room is not
+  joined or the router is not in it, as a DM's is for an unreachable partner. Leaving a
+  community (or being removed) deletes its stored history and settings, and the communities an
+  account had chats for are remembered per account so a leave while logged out does the same.
+  The notification ping has a default in the Chat settings tab and a per-conversation override
+  with a "Default" choice; a flood of lines on one conversation is one sound (400 ms). The
+  member-of list is read up to 10 pages of 100 (unity-explorer reads one), and one pair of clips
+  serves focused and unfocused channels alike, played by the bridge scene from its own content.
 
 ## Deliberate choices that look like mistakes
 

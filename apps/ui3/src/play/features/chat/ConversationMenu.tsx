@@ -1,11 +1,11 @@
 // The conversation options menu on a chat title bar: the caller's entries, then the
-// "Notification Ping" submenu every conversation has (All Messages / Mentions Only / None, as in
-// unity-explorer's chat titlebar menu), which only decides whether a line landing there sounds.
+// "Notification Ping" submenu every conversation has (Default / All Messages / Mentions Only /
+// None), which only decides whether a line landing there sounds.
 
 import { useEffect, useRef, useState } from 'react'
 import { ContextMenu, ControlButton, Kebab, type ContextMenuItem } from '../../design'
 import { registerCancelLayer } from '../../lib/cancelLayers'
-import { PING_MODES, pingMode, setPingMode, usePingPrefs } from './ping'
+import { PING_MODES, clearPingMode, setPingMode, usePingPrefs } from './ping'
 import styles from './Chat.module.css'
 
 export const PING_LABEL = 'Notification Ping'
@@ -22,7 +22,8 @@ export function ConversationMenu({ channel, entries = [] }: { channel: string; e
   const [page, setPage] = useState<'root' | 'ping'>('root')
   const menuRef = useRef<HTMLDivElement>(null)
   const prefs = usePingPrefs()
-  const mode = pingMode(prefs, channel)
+  // the conversation's own setting; none means the default from the Chat settings tab applies
+  const override = prefs.channels[channel]
   const close = (): void => {
     setMenu(false)
     setPage('root')
@@ -47,7 +48,8 @@ export function ConversationMenu({ channel, entries = [] }: { channel: string; e
         ]
       : [
           { kind: 'title', label: PING_LABEL },
-          ...PING_MODES.map((m): ContextMenuItem => ({ kind: 'option', label: m.label, checked: mode === m.mode, onClick: () => { setPingMode(channel, m.mode); close() } })),
+          { kind: 'option', label: 'Default', checked: override == null, onClick: () => { clearPingMode(channel); close() } },
+          ...PING_MODES.map((m): ContextMenuItem => ({ kind: 'option', label: m.label, checked: override === m.mode, onClick: () => { setPingMode(channel, m.mode); close() } })),
           { kind: 'separator' },
           { label: 'Back', onClick: () => setPage('root') }
         ]

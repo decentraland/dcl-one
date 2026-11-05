@@ -117,7 +117,6 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_get_community_connectivity_stream(),
             op_read_community_connectivity_stream(),
             op_set_community_channels(),
-            op_play_ui_sound(),
         ]
     } else {
         Vec::default()
@@ -796,11 +795,6 @@ pub async fn op_read_community_connectivity_stream(
 #[op2]
 pub fn op_set_community_channels(state: Rc<RefCell<OpState>>, #[serde] ids: Vec<String>) {
     dcl_js::system_api::op_set_community_channels(state, ids)
-}
-
-#[op2(fast)]
-pub fn op_play_ui_sound(state: Rc<RefCell<OpState>>, #[string] name: String) {
-    dcl_js::system_api::op_play_ui_sound(state, name)
 }
 
 #[op2(async)]

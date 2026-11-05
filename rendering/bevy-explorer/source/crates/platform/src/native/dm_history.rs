@@ -109,10 +109,16 @@ pub async fn dm_history_read(account: &str, partner: &str) -> Result<Vec<DmHisto
     read_records(&key, &path)
 }
 
-/// The lines from the `keep`-th last message on, so its reactions stay with it; `None` when
+/// The lines from the `keep`-th last message on, so its reactions stay with it, and never more
+/// than the last `keep_records` lines (reactions alone can grow a conversation); `None` when
 /// nothing has to go. A line that does not decrypt to a record counts as a message, so a damaged
 /// line never drops its neighbours.
-fn trimmed_lines(key: &[u8; 32], lines: &[String], keep: usize) -> Option<Vec<String>> {
+fn trimmed_lines(
+    key: &[u8; 32],
+    lines: &[String],
+    keep: usize,
+    keep_records: usize,
+) -> Option<Vec<String>> {
     let is_message = |line: &String| {
         decrypt_record(key, line)
             .and_then(|plain| serde_json::from_slice::<DmHistoryEntry>(&plain).ok())
@@ -122,18 +128,27 @@ fn trimmed_lines(key: &[u8; 32], lines: &[String], keep: usize) -> Option<Vec<St
         return (!lines.is_empty()).then(Vec::new);
     }
     let mut seen = 0;
-    let first_kept = lines.iter().rposition(|line| {
+    let by_messages = lines.iter().rposition(|line| {
         if !is_message(line) {
             return false;
         }
         seen += 1;
         seen == keep
-    })?;
+    });
+    let first_kept = by_messages
+        .unwrap_or(0)
+        .max(lines.len().saturating_sub(keep_records));
     (first_kept > 0).then(|| lines[first_kept..].to_vec())
 }
 
-/// Keeps only the last `keep` messages of a conversation, and the reactions to them.
-pub async fn dm_history_trim(account: &str, partner: &str, keep: usize) -> Result<(), String> {
+/// Keeps only the last `keep` messages of a conversation and the reactions to them, within the
+/// last `keep_records` records.
+pub async fn dm_history_trim(
+    account: &str,
+    partner: &str,
+    keep: usize,
+    keep_records: usize,
+) -> Result<(), String> {
     let key = key(account);
     let path = account_dir(&key)?.join(hashed_name(&key, partner));
     let _guard = LOCK.lock().map_err(|e| e.to_string())?;
@@ -146,7 +161,7 @@ pub async fn dm_history_trim(account: &str, partner: &str, keep: usize) -> Resul
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(e.to_string()),
     };
-    let Some(kept) = trimmed_lines(&key, &lines, keep) else {
+    let Some(kept) = trimmed_lines(&key, &lines, keep, keep_records) else {
         return Ok(());
     };
     // written whole, then renamed over the old file, so a crash leaves one or the other
@@ -211,15 +226,29 @@ mod tests {
             reaction(&key, 3),
             message(&key, 4),
         ];
-        assert_eq!(trimmed_lines(&key, &lines, 2), Some(lines[5..].to_vec()));
-        assert_eq!(trimmed_lines(&key, &lines, 4), None);
-        assert_eq!(trimmed_lines(&key, &lines, 0), Some(Vec::new()));
+        assert_eq!(trimmed_lines(&key, &lines, 2, 100), Some(lines[5..].to_vec()));
+        assert_eq!(trimmed_lines(&key, &lines, 4, 100), None);
+        assert_eq!(trimmed_lines(&key, &lines, 0, 100), Some(Vec::new()));
         // a line that is not a record counts as a message
         let mut with_junk = lines.clone();
         with_junk.push("not base64!".to_owned());
         assert_eq!(
-            trimmed_lines(&key, &with_junk, 1),
+            trimmed_lines(&key, &with_junk, 1, 100),
             Some(vec!["not base64!".to_owned()])
         );
+    }
+
+    #[test]
+    fn the_record_cap_bounds_a_conversation_that_only_gains_reactions() {
+        let key = key("0xaccount");
+        // m1 m2 then six reactions to m2: the two messages fit, the records do not
+        let mut lines = vec![message(&key, 1), message(&key, 2)];
+        lines.extend((0..6).map(|_| reaction(&key, 2)));
+        assert_eq!(trimmed_lines(&key, &lines, 2, 8), None);
+        assert_eq!(trimmed_lines(&key, &lines, 2, 5), Some(lines[3..].to_vec()));
+        // the record cap can cut below the message count
+        assert_eq!(trimmed_lines(&key, &lines, 2, 1), Some(lines[7..].to_vec()));
+        // the message cut wins when it is the tighter one
+        assert_eq!(trimmed_lines(&key, &lines, 1, 100), Some(lines[1..].to_vec()));
     }
 }

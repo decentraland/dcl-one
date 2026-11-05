@@ -55,7 +55,7 @@ use crate::{
     NetworkMessageRecipient,
 };
 
-/// Unity rejects reaction message ids longer than this (`MultiplayerReactionMessageBus`).
+/// The router rejects reaction message ids longer than this.
 const MAX_REACTION_MESSAGE_ID_LEN: usize = 96;
 
 pub struct PrivateChatPlugin;
@@ -64,6 +64,7 @@ impl Plugin for PrivateChatPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<PrivateChatReceived>();
         app.add_event::<PrivateChatPresenceChanged>();
+        app.add_event::<PrivateChatRouterChanged>();
         app.add_event::<CommunityChatReceived>();
         app.init_resource::<CommunityChannels>();
         app.add_systems(
@@ -163,6 +164,16 @@ pub struct PrivateChatPrivacy(pub Option<DmPrivacy>);
 #[derive(Event, Debug)]
 pub struct PrivateChatPresenceChanged {
     pub address: Address,
+}
+
+/// The server's message router joined or left the private chat room: community chat can or
+/// cannot go anywhere.
+#[derive(Event, Debug)]
+pub struct PrivateChatRouterChanged;
+
+/// Whether the server's message router is in the private chat room whose participants `index` lists.
+pub fn router_in_room(index: &ParticipantIndex) -> bool {
+    index.contains_key(&ParticipantIndex::key(&message_router_identity()))
 }
 
 /// A DM addressed to the local user, after the topic and rate checks.
@@ -323,6 +334,7 @@ fn participant_added(
     participants: Query<(&LivekitParticipant, &HostedBy)>,
     rooms: Query<(), With<PrivateChatRoom>>,
     mut presence: EventWriter<PrivateChatPresenceChanged>,
+    mut router: EventWriter<PrivateChatRouterChanged>,
 ) {
     let Ok((participant, hosted_by)) = participants.get(trigger.target()) else {
         return;
@@ -337,6 +349,8 @@ fn participant_added(
         .try_insert(PrivateChatPrivacy(privacy));
     if let Some(address) = participant.identity().as_str().as_h160() {
         presence.write(PrivateChatPresenceChanged { address });
+    } else if participant.identity().as_str() == message_router_identity() {
+        router.write(PrivateChatRouterChanged);
     }
 }
 
@@ -344,12 +358,15 @@ fn participant_removed(
     trigger: Trigger<OnRemove, PrivateChatPrivacy>,
     participants: Query<&LivekitParticipant>,
     mut presence: EventWriter<PrivateChatPresenceChanged>,
+    mut router: EventWriter<PrivateChatRouterChanged>,
 ) {
     let Ok(participant) = participants.get(trigger.target()) else {
         return;
     };
     if let Some(address) = participant.identity().as_str().as_h160() {
         presence.write(PrivateChatPresenceChanged { address });
+    } else if participant.identity().as_str() == message_router_identity() {
+        router.write(PrivateChatRouterChanged);
     }
 }
 
@@ -790,8 +807,7 @@ fn community_state(
     }
     let router = message_router_identity();
     let room = rooms.single().ok();
-    let router_in_room =
-        room.is_some_and(|(index, _)| index.contains_key(&ParticipantIndex::key(&router)));
+    let router_in_room = room.is_some_and(|(index, _)| router_in_room(index));
     let mut listed: Vec<_> = channels.0.iter().cloned().collect();
     listed.sort();
     let mut state = json!({

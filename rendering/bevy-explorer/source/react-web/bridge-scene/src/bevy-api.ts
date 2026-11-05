@@ -208,8 +208,6 @@ export type BevyApiInterface = {
   loginCancel: () => void
   logout: () => void
   social: SocialApi
-  /** Play one of the engine's embedded UI sounds (`sounds/ui/<name>`). */
-  playUiSound: (name: string) => void
 }
 
 const globalRequire = (globalThis as { require?: (module: string) => unknown }).require

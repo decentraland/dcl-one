@@ -104,9 +104,8 @@ async function channel(c: CommunityRaw): Promise<CommunityChannel> {
   return { id: c.id, name: c.name, thumbnail: await thumbnail(c.id), role: c.role }
 }
 
-// The communities the user is a member of, paged as unity-explorer pages them (100 a call; it
-// reads one page). The page count is capped so a server that ignores `offset` cannot keep this
-// going.
+// The communities the user is a member of, 100 a call. The page count is capped so a server that
+// ignores `offset` cannot keep this going.
 const MEMBER_OF_PAGE = 100
 const MEMBER_OF_PAGES = 10
 async function memberOf(): Promise<CommunityChannel[]> {
@@ -239,16 +238,22 @@ export function registerCommunities(ctx: Ctx): void {
   ctx.on('setCommunityChannels', (msg) => {
     BevyApi.social.setCommunityChannels(msg.ids)
   })
+  // The community whose members the page last asked for: the one shown, whose list its presence
+  // updates keep current.
+  let shown: string | null = null
   ctx.on('getCommunityOnlineMembers', async (msg) => {
+    shown = msg.id
     const members = await onlineMembers(msg.id).catch((e: unknown) => {
       console.error('[communities] online members failed', e)
       return []
     })
     ctx.send({ kind: 'communityOnlineMembers', id: msg.id, members })
   })
-  // Presence: another member's update goes to the page as is; the local user's own ONLINE for a
-  // community they were not listed in means they joined (or were added), OFFLINE that they left
-  // or were removed. The stream never carries `away`.
+  // Presence: the stream carries every community the user is in. The local user's own ONLINE for
+  // a community means they joined (or were added), OFFLINE that they left or were removed: the
+  // page adds or drops the tab. Another member's update only matters for the community shown
+  // (the page keeps no other list), so the rest are dropped before their identity is resolved.
+  // The stream never carries `away`.
   relay('communityPresence', async () => await BevyApi.social.getCommunityConnectivityStream(), (u) => {
     const me = getPlayer()?.userId?.toLowerCase()
     const address = u.address.toLowerCase()
@@ -265,6 +270,7 @@ export function registerCommunities(ctx: Ctx): void {
       }
       return
     }
+    if (u.communityId !== shown) return
     // the update names the member only; the page keeps the role it listed for them, if any
     void fetchIdentities([address])
       .then((identity) => {
@@ -292,7 +298,18 @@ export function registerCommunities(ctx: Ctx): void {
       console.error(`[communities] ${action} failed`, e)
       ctx.send({ kind: 'communityActionFailed', id, action, message: e instanceof Error ? e.message : String(e) })
     })
-    ctx.send({ kind: 'communities', communities: await list() })
+    const listed = await list()
+    ctx.send({ kind: 'communities', communities: listed })
+    // a card for a community past the list's first page shows the community fetched by id, so
+    // that copy is refreshed too (its role and buttons follow the write)
+    if (!listed.some((c) => c.id === id)) {
+      const raw = await rawOne(id).catch((e: unknown) => {
+        console.error('[communities] community fetch failed', e)
+        return undefined
+      })
+      const [community] = raw != null ? await communities([raw]) : []
+      if (community != null) ctx.send({ kind: 'community', community })
+    }
     // joining or leaving changes the chat channels too
     await sendChannels()
   }

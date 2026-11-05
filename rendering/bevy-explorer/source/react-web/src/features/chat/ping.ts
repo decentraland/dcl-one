@@ -1,7 +1,8 @@
-// The notification ping: whether a chat line landing in a conversation makes a sound, as
-// unity-explorer's per-channel "Notification Ping" (All Messages / Mentions Only / None). It only
-// gates the sound: unread counts and mention markers are not affected. Stored per conversation
-// ('Nearby', a lowercase wallet, or `community:<id>`), with a default for the rest.
+// The notification ping: whether a chat line landing in a conversation makes a sound, the
+// per-conversation "Notification Ping" (All Messages / Mentions Only / None). It only gates the
+// sound: unread counts and mention markers are not affected. A default (the Chat settings tab)
+// applies to every conversation not set by hand ('Nearby', a lowercase wallet, or
+// `community:<id>`); closing a tab leaves its setting alone.
 
 import { useSyncExternalStore } from 'react'
 import { PREF, getPref, setPref } from '../../lib/prefs'
@@ -80,9 +81,10 @@ export function setPingMode(channel: string, mode: PingMode): void {
   updatePrefs({ ...getPrefs(), channels })
 }
 
-/** Back to the default for a conversation (its history deleted, its tab closed). */
-export function clearPingMode(channel: string): void {
-  const channels = Object.fromEntries(Object.entries(getPrefs().channels).filter(([c]) => c !== channel))
+/** Back to the default for a conversation (chosen in its menu, its history deleted, the user no
+ *  longer in it), or for every conversation (the settings tab reset). */
+export function clearPingMode(channel?: string): void {
+  const channels = channel == null ? {} : Object.fromEntries(Object.entries(getPrefs().channels).filter(([c]) => c !== channel))
   setPref(PREF.chatPingChannels, JSON.stringify(channels))
   updatePrefs({ ...getPrefs(), channels })
 }

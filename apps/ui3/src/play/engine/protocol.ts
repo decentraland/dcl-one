@@ -444,7 +444,9 @@ export interface FriendActionFailedMessage {
   error: string
 }
 
-/** Whether the local user can DM someone, and why not. Mirrors the engine's DmUserStateData. */
+/** Whether the local user can DM someone, and why not. Mirrors the engine's DmUserStateData. For
+ *  a community channel (`community:<id>`): whether a community message can go anywhere
+ *  (`notConnected`: not in the private chat room; `noRouter`: no message router in it). */
 export type DmUserState =
   | 'notConnected'
   | 'connected'
@@ -453,9 +455,11 @@ export type DmUserState =
   | 'privateMessagesBlocked'
   | 'disconnected'
   | 'otherClient'
+  | 'noRouter'
 
-/** Start or stop following a partner's DM state (page → scene). The scene holds one engine
- *  stream per watched address; the page watches each open DM tab. */
+/** Start or stop following a partner's DM state, or community chat's for a community channel
+ *  (page → scene). The scene holds one engine stream per watched address; the page watches each
+ *  open DM tab and the shown community tab. */
 export interface DmWatchRequest {
   kind: 'dmWatch'
   address: string

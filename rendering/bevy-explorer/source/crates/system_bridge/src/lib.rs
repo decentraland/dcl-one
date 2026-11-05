@@ -214,8 +214,6 @@ pub enum SystemApi {
     /// The community channels the local user listens to (member of, chat not closed), as
     /// community ids; replaces the previous set.
     SetCommunityChannels(Vec<String>),
-    /// Plays one of the engine's embedded UI sounds by file name (`sounds/ui/<name>`).
-    PlayUiSound(String),
 }
 
 #[derive(Resource)]

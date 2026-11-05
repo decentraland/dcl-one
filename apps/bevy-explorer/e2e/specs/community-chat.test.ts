@@ -1,4 +1,4 @@
-// Community text chat, beyond explorer-automation (Unity's suite has no community chat tests):
+// Community text chat, beyond explorer-automation:
 // a community the player is a member of opens its chat from the community card, the chat shows
 // the community's tab and title bar, and a message typed there goes to the engine as a community
 // message (`/community_state` counts it; the router's fan-out to other members is not observable

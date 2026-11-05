@@ -16,6 +16,7 @@ export const PREF = {
   chatPingDefault: 'chat.ping.default',
   chatPingChannels: 'chat.ping.channels',
   chatClosedCommunities: 'chat.communities.closed',
+  chatKnownCommunities: 'chat.communities.known',
   lobbyRecents: 'lobby.recentPlaces',
   minimapPlaces: 'dcl-minimap-places',
   minimapStyle: 'dcl-minimap-style',

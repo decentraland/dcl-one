@@ -1,8 +1,9 @@
 import { beforeEach, describe, it, expect } from 'vitest'
 import { act } from '@testing-library/react'
 import { renderSession, enterAsGuest, type Harness } from './harness'
-import { PREF, setPref } from '../lib/prefs'
-import { resetPingPrefs, setPingMode } from '../features/chat/ping'
+import { PREF, getPref, setPref } from '../lib/prefs'
+import { pingModeFor, resetPingPrefs, setPingMode } from '../features/chat/ping'
+import { setAutoTranslate } from '../features/chat/translation'
 import type { CommunityChannel, CommunityMember } from '../engine/protocol'
 
 // DOMAIN: community chat — the user's communities as chat tabs (fed at world entry, kept by
@@ -204,20 +205,139 @@ describe('community chat domain', () => {
     expect(chat().channel).toBe('community:c1')
   })
 
-  it('a community card opened from the chat fetches that community into the list, and says when that fails', async () => {
+  it('a community card opened from the chat fetches that community for the card, and says when that fails', async () => {
     const h = renderSession()
     await enterWithCommunities(h)
     act(() => h.session().communities.fetch('c1'))
     expect(h.driver.last('getCommunity')).toEqual({ kind: 'getCommunity', id: 'c1' })
     act(() => h.driver.emit({ kind: 'communityActionFailed', id: 'c1', action: 'fetch', message: 'HTTP 502' }))
     expect(h.session().communities.error).toEqual({ id: 'c1', message: 'There was an error loading the community. Please try again.' })
-    expect(h.session().communities.list).toEqual([])
+    expect(h.session().communities.cards).toEqual({})
+    // asking again clears the failure, so a success after it is not shown with the old message
+    act(() => h.session().communities.fetch('c1'))
+    expect(h.session().communities.error).toBeNull()
     const community = { id: 'c1', name: 'Decentraland Foundation', description: 'The official one', membersCount: 1242, role: 'member', ownerName: 'DCLOfficial', privacy: 'public' }
     act(() => h.driver.emit({ kind: 'community', community }))
-    expect(h.session().communities.list).toEqual([community])
-    // a later browse list does not duplicate it, and a re-fetch replaces it
+    expect(h.session().communities.cards).toEqual({ c1: community })
+    // the browse list is the Communities page's: the card's community does not join it
+    expect(h.session().communities.list).toEqual([])
+    // a re-fetch replaces it
     act(() => h.driver.emit({ kind: 'community', community: { ...community, membersCount: 1243 } }))
-    expect(h.session().communities.list.map((c) => c.membersCount)).toEqual([1243])
+    expect(h.session().communities.cards.c1.membersCount).toBe(1243)
+  })
+
+  it('a re-read of a store the engine trimmed keeps the ids of the lines shown and numbers only new ones', async () => {
+    const h = renderSession()
+    await enterWithCommunities(h)
+    act(() => h.session().chat.select('community:c1'))
+    const chat = () => h.session().chat
+    const entry = (n: number) => ({ from: MOJITO, message: `m${n}`, receivedAt: n * 1000, messageId: `${MOJITO}:${n}`, reactions: [] })
+    const read = (from: number, to: number) => h.driver.emit({ kind: 'dmHistory', address: 'community:c1', entries: Array.from({ length: to - from + 1 }, (_, i) => entry(from + i)) })
+    act(() => read(1, 200))
+    expect(chat().messages.map((m) => m.id)).toEqual(Array.from({ length: 200 }, (_, i) => i))
+    // the store at its cap: a new message pushed the oldest out, and every row moved down
+    act(() => read(2, 201))
+    expect(chat().messages[0]).toMatchObject({ message: 'm2', id: 1 })
+    expect(chat().messages[199]).toMatchObject({ message: 'm201', id: 200 })
+    // a line appended to the shown tab, then read back from the store: the same id
+    act(() => h.driver.emit({ kind: 'chat', chat: { sender: MOJITO, message: 'm202', channel: 'community:c1', messageId: `${MOJITO}:202` } }))
+    expect(chat().messages[199]).toMatchObject({ message: 'm202', id: 201 })
+    act(() => read(3, 202))
+    expect(chat().messages[0]).toMatchObject({ message: 'm3', id: 2 })
+    expect(chat().messages[199]).toMatchObject({ message: 'm202', id: 201 })
+    // a deleted history starts over with fresh ids above the old ones
+    act(() => chat().deleteHistory('community:c1'))
+    act(() => read(300, 300))
+    expect(chat().messages.map((m) => [m.message, m.id])).toEqual([['m300', 202]])
+  })
+
+  it('a reaction on a community line is applied to the line shown, without reading the store back', async () => {
+    const h = renderSession()
+    await enterWithCommunities(h)
+    act(() => h.session().chat.select('community:c1'))
+    act(() => h.driver.emit({ kind: 'dmHistory', address: 'community:c1', entries: [{ from: MOJITO, message: 'hi', receivedAt: 1000, messageId: `${MOJITO}:6`, reactions: [] }] }))
+    const chat = () => h.session().chat
+    const reads = h.driver.sentOf('dmHistory').length
+    const thumbs = '\u{1f44d}'
+    act(() => h.driver.emit({ kind: 'chatReaction', reaction: { channel: 'community:c1', messageId: `${MOJITO}:6`, emoji: thumbs, from: BOB, remove: false } }))
+    expect(chat().messages[0].reactions).toEqual([{ emoji: thumbs, from: [BOB] }])
+    act(() => h.driver.emit({ kind: 'chatReaction', reaction: { channel: 'community:c1', messageId: `${MOJITO}:6`, emoji: thumbs, from: ME, remove: false } }))
+    expect(chat().messages[0].reactions).toEqual([{ emoji: thumbs, from: [BOB, ME] }])
+    act(() => h.driver.emit({ kind: 'chatReaction', reaction: { channel: 'community:c1', messageId: `${MOJITO}:6`, emoji: thumbs, from: BOB, remove: true } }))
+    expect(chat().messages[0].reactions).toEqual([{ emoji: thumbs, from: [ME] }])
+    // a reaction to a line not shown changes nothing
+    const before = chat().messages
+    act(() => h.driver.emit({ kind: 'chatReaction', reaction: { channel: 'community:c1', messageId: `${MOJITO}:999`, emoji: thumbs, from: BOB, remove: false } }))
+    expect(chat().messages).toBe(before)
+    expect(h.driver.sentOf('dmHistory').length).toBe(reads)
+  })
+
+  it('the shown community tab follows community chat\'s state, which blocks the input without a router', async () => {
+    const h = renderSession()
+    await enterWithCommunities(h)
+    expect(h.driver.last('dmWatch')).toBeUndefined()
+    act(() => h.session().chat.select('community:c1'))
+    expect(h.driver.last('dmWatch')).toEqual({ kind: 'dmWatch', address: 'community:c1', on: true })
+    const chat = () => h.session().chat
+    act(() => h.driver.emit({ kind: 'dmUserState', address: 'community:c1', state: 'noRouter', online: false }))
+    expect(chat().communities.find((c) => c.id === 'c1')?.state).toBe('noRouter')
+    expect(chat().conversations).toEqual([])
+    act(() => h.driver.emit({ kind: 'dmUserState', address: 'community:c1', state: 'connected', online: true }))
+    expect(chat().communities.find((c) => c.id === 'c1')?.state).toBe('connected')
+    // another tab shown: the watch moves with it
+    act(() => chat().select('Nearby'))
+    expect(h.driver.last('dmWatch')).toEqual({ kind: 'dmWatch', address: 'community:c1', on: false })
+    act(() => chat().select('community:c8'))
+    expect(h.driver.last('dmWatch')).toEqual({ kind: 'dmWatch', address: 'community:c8', on: true })
+    act(() => chat().toggle())
+    expect(h.driver.last('dmWatch')).toEqual({ kind: 'dmWatch', address: 'community:c8', on: false })
+  })
+
+  it('showing a community asks who is online each time; presence for another community changes nothing', async () => {
+    const h = renderSession()
+    await enterWithCommunities(h)
+    const chat = () => h.session().chat
+    act(() => chat().select('community:c1'))
+    act(() => h.driver.emit({ kind: 'communityOnlineMembers', id: 'c1', members: [member(MOJITO, 'Mojito')] }))
+    act(() => chat().select('Nearby'))
+    act(() => chat().select('community:c1'))
+    expect(h.driver.sentOf('getCommunityOnlineMembers').map((m) => m.id)).toEqual(['c1', 'c1'])
+    const before = chat().communities
+    act(() => h.driver.emit({ kind: 'communityPresence', communityId: 'c8', member: member(BOB, 'Bob'), online: true }))
+    expect(chat().communities).toBe(before)
+  })
+
+  it('a community the user is no longer in loses its stored history, its settings and its closed entry', async () => {
+    const h = renderSession()
+    await enterWithCommunities(h)
+    expect(JSON.parse(getPref(PREF.chatKnownCommunities) ?? '{}')).toEqual({ [ME.toLowerCase()]: ['c1', 'c8'] })
+    setPingMode('community:c8', 'none')
+    setAutoTranslate('community:c8', true)
+    act(() => h.session().chat.closeCommunity('c8'))
+    act(() => h.driver.emit({ kind: 'communityChannelRemoved', id: 'c8' }))
+    expect(h.driver.last('dmDelete')).toEqual({ kind: 'dmDelete', address: 'community:c8' })
+    expect(pingModeFor('community:c8')).toBe('all')
+    expect(JSON.parse(getPref(PREF.chatPingChannels) ?? '{}')).toEqual({})
+    expect(JSON.parse(getPref(PREF.chatAutoTranslateChannels) ?? '{}')).toEqual({})
+    expect(JSON.parse(getPref(PREF.chatClosedCommunities) ?? '{}')).toEqual({ [ME.toLowerCase()]: [] })
+    expect(JSON.parse(getPref(PREF.chatKnownCommunities) ?? '{}')).toEqual({ [ME.toLowerCase()]: ['c1'] })
+    // closing a tab, on the other hand, leaves its settings alone
+    setPingMode('community:c1', 'mentions')
+    act(() => h.session().chat.closeCommunity('c1'))
+    expect(pingModeFor('community:c1')).toBe('mentions')
+  })
+
+  it('a community left while logged out is forgotten when the first list lacks it', async () => {
+    setPref(PREF.chatKnownCommunities, JSON.stringify({ [ME.toLowerCase()]: ['c1', 'c9'] }))
+    setPingMode('community:c9', 'none')
+    const h = renderSession()
+    await enterWithCommunities(h, [FOUNDATION])
+    expect(h.driver.sentOf('dmDelete')).toEqual([{ kind: 'dmDelete', address: 'community:c9' }])
+    expect(pingModeFor('community:c9')).toBe('all')
+    expect(JSON.parse(getPref(PREF.chatKnownCommunities) ?? '{}')).toEqual({ [ME.toLowerCase()]: ['c1'] })
+    // a join (the user's own online update) is remembered too
+    act(() => h.driver.emit({ kind: 'communityChannelAdded', community: BUILDERS }))
+    expect(JSON.parse(getPref(PREF.chatKnownCommunities) ?? '{}')).toEqual({ [ME.toLowerCase()]: ['c1', 'c8'] })
   })
 
   it('logging out forgets the tabs', async () => {

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { PREF, setPref } from '../../lib/prefs'
+import { PREF, getPref, setPref } from '../../lib/prefs'
 import { clearPingMode, pingModeFor, resetPingPrefs, setPingDefault, setPingMode, shouldPing } from './ping'
 
 // DOMAIN: the chat notification ping — per-conversation All / Mentions Only / None, a default for
@@ -20,6 +20,13 @@ describe('chat ping prefs', () => {
     expect(pingModeFor('community:c1')).toBe('mentions')
     clearPingMode('community:c1')
     expect(pingModeFor('community:c1')).toBe('none')
+    // the settings tab's reset: every conversation back to the default
+    setPingMode('Nearby', 'all')
+    setPingMode('0xbob', 'mentions')
+    clearPingMode()
+    expect(pingModeFor('Nearby')).toBe('none')
+    expect(pingModeFor('0xbob')).toBe('none')
+    expect(JSON.parse(getPref(PREF.chatPingChannels) ?? '{}')).toEqual({})
   })
 
   it('reads what an earlier session stored and ignores junk', () => {

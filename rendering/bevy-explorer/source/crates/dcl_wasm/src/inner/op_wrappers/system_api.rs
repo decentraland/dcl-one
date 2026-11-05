@@ -694,11 +694,6 @@ pub fn op_set_community_channels(state: &WorkerContext, ids: Vec<String>) {
 }
 
 #[wasm_bindgen]
-pub fn op_play_ui_sound(state: &WorkerContext, name: String) {
-    dcl_js::system_api::op_play_ui_sound(state.rc(), name)
-}
-
-#[wasm_bindgen]
 pub async fn op_get_block_update_stream(state: &WorkerContext) -> u32 {
     dcl_js::system_api::op_get_block_update_stream(state.rc()).await
 }

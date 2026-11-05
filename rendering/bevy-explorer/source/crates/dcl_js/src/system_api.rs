@@ -1332,14 +1332,6 @@ pub fn op_set_community_channels(state: Rc<RefCell<impl State>>, ids: Vec<String
         .unwrap();
 }
 
-pub fn op_play_ui_sound(state: Rc<RefCell<impl State>>, name: String) {
-    state
-        .borrow_mut()
-        .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::PlayUiSound(name))
-        .unwrap();
-}
-
 pub async fn op_get_block_update_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);

@@ -113,9 +113,9 @@ const MSG_GAP = 2
 const MSG_TRUNCATE = 100
 const MENTION_BORDER = Color4.create(1, 45 / 255, 85 / 255, 1) // brand #ff2d55
 const TRANSLATED_ICON = 26 // beside a message the HUD translated
-// A community message's bubble names the community on a row ABOVE the name (unity-explorer's
-// `.nametag__community-name`: 12px to the name's 16px, white at 70%, upper-left, one line cut
-// with an ellipsis). The SDK's text has no ellipsis, so the name is cut by length.
+// A community message's bubble names the community on a row ABOVE the name: 12px to the name's
+// 16px, white at 70%, upper-left, one line. The SDK's text has no ellipsis, so the name is cut
+// by length.
 const COMMUNITY_FONT = Math.round((FONT * 12) / 16)
 const COMMUNITY_COLOR = Color4.create(1, 1, 1, 0.7)
 const COMMUNITY_TRUNCATE = 28

@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Chat } from '../features/chat/Chat'
 import type { ChatState, CommunityConversation } from '../features/session/useEngineSession'
-import { pingModeFor, resetPingPrefs } from '../features/chat/ping'
+import { pingModeFor, resetPingPrefs, setPingDefault, setPingMode } from '../features/chat/ping'
 import { fakeSession } from './harness'
 
 vi.mock('../features/communities/CommunityModal', () => ({ openCommunityModal: vi.fn(() => () => undefined) }))
@@ -23,6 +23,7 @@ const community = (over: Partial<CommunityConversation> = {}): CommunityConversa
   mention: false,
   members: null,
   online: 0,
+  state: null,
   ...over
 })
 const chatWith = (over: Partial<ChatState>): ChatState => ({ ...fakeSession().chat, open: true, ...over })
@@ -75,16 +76,45 @@ describe('community chat panel', () => {
     await userEvent.click(options())
     await userEvent.click(screen.getByText('Notification Ping'))
     const mentions = screen.getByRole('menuitemradio', { name: 'Mentions Only' })
-    expect(screen.getByRole('menuitemradio', { name: 'All Messages' })).toHaveAttribute('aria-checked', 'true')
+    // nothing set by hand: the default applies
+    expect(screen.getByRole('menuitemradio', { name: 'Default' })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('menuitemradio', { name: 'All Messages' })).toHaveAttribute('aria-checked', 'false')
     await userEvent.click(mentions)
     expect(pingModeFor('community:c1')).toBe('mentions')
     expect(screen.queryByRole('menu')).toBeNull()
+    // back to the default from the menu, whatever the default is
+    setPingDefault('none')
+    await userEvent.click(options())
+    await userEvent.click(screen.getByText('Notification Ping'))
+    expect(screen.getByRole('menuitemradio', { name: 'Mentions Only' })).toHaveAttribute('aria-checked', 'true')
+    await userEvent.click(screen.getByRole('menuitemradio', { name: 'Default' }))
+    expect(pingModeFor('community:c1')).toBe('none')
     await userEvent.click(options())
     await userEvent.click(screen.getByText('Delete chat history'))
     expect(vi.mocked(chat.deleteHistory)).toHaveBeenCalledWith('community:c1')
     await userEvent.click(options())
     await userEvent.click(screen.getByText('Close conversation'))
     expect(vi.mocked(chat.closeCommunity)).toHaveBeenCalledWith('c1')
+  })
+
+  it('the input gives way to the reason while a community message cannot go anywhere', () => {
+    const { rerender } = render(<Chat chat={chatWith({ channel: 'community:c1', communities: [community({ state: 'noRouter' })] })} />)
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.getByRole('status')).toHaveTextContent('Community chat is not available right now.')
+    rerender(<Chat chat={chatWith({ channel: 'community:c1', communities: [community({ state: 'notConnected' })] })} />)
+    expect(screen.getByRole('status')).toHaveTextContent('You are not connected to chat.')
+    rerender(<Chat chat={chatWith({ channel: 'community:c1', communities: [community({ state: 'connected' })] })} />)
+    expect(screen.getByRole('textbox')).toBeInTheDocument()
+  })
+
+  it('closing a community from its title bar leaves its ping setting alone', async () => {
+    setPingMode('community:c1', 'none')
+    const chat = chatWith({ channel: 'community:c1', communities: [community()], closeCommunity: vi.fn() })
+    render(<Chat chat={chat} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Conversation options' }))
+    await userEvent.click(screen.getByText('Close conversation'))
+    expect(vi.mocked(chat.closeCommunity)).toHaveBeenCalledWith('c1')
+    expect(pingModeFor('community:c1')).toBe('none')
   })
 
   it('a community line can be reacted to', async () => {

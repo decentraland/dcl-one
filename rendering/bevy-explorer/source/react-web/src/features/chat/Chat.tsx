@@ -558,7 +558,8 @@ const BLOCKED_COPY: Record<Exclude<DmUserState, 'connected'>, string> = {
   privateMessagesBlocked: 'The user you are trying to message only accepts DMs from friends.',
   blockedByOwnUser: 'To message this user you must first unblock them.',
   privateMessagesBlockedByOwnUser: 'Add this user as a friend to chat, or update your DM settings to connect with everyone.',
-  otherClient: 'User is not connected to chat. They may be using a client without DM support.'
+  otherClient: 'User is not connected to chat. They may be using a client without DM support.',
+  noRouter: 'Community chat is not available right now.'
 }
 
 /** The words in the own-privacy copy that become the settings link. */
@@ -688,7 +689,10 @@ export function Chat({
     (): MemberEntry[] => (communityMembers ?? []).map((m) => ({ address: m.address, name: m.name, picture: m.picture, claimed: m.hasClaimedName, role: m.role })),
     [communityMembers]
   )
-  const blockedState = conversation?.state != null && conversation.state !== 'connected' ? conversation.state : null
+  // A DM tab is blocked by its partner's state, a community tab by community chat's (the room
+  // not joined, no message router in it): the input gives way to the reason.
+  const state = conversation?.state ?? community?.state ?? null
+  const blockedState = state != null && state !== 'connected' ? state : null
 
   // Lines already in the log when the list mounts are history; only later ones fade in.
   const lastId = chat.messages.length > 0 ? chat.messages[chat.messages.length - 1].id : -Infinity
@@ -941,12 +945,12 @@ export function Chat({
     setReacting(null)
     setReactPicker(false)
   }
-  const pickReaction = (emoji: string): void => {
-    if (reacting != null) toggleReaction(reacting.line, emoji)
-    closeReactions()
-  }
   // The bar follows its line's reactions as they change while it is open.
   const reactingLine = reacting != null ? (chat.messages.find((l) => l.id === reacting.line.id) ?? reacting.line) : null
+  const pickReaction = (emoji: string): void => {
+    if (reactingLine != null) toggleReaction(reactingLine, emoji)
+    closeReactions()
+  }
   // A press outside the bar (or its picker) closes it; so does switching channel.
   useEffect(() => {
     if (reacting == null) return
@@ -1110,10 +1114,7 @@ export function Chat({
             clearAutoTranslate(community.key)
             clearPingMode(community.key)
           }}
-          onClose={() => {
-            clearPingMode(community.key)
-            chat.closeCommunity(community.id)
-          }}
+          onClose={() => chat.closeCommunity(community.id)}
         />
       )}
       {open && conversation == null && community == null && (

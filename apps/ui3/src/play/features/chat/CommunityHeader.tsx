@@ -1,6 +1,6 @@
 // A community chat's title bar: the community (its thumbnail and name), how many of its members
-// are online (opens the members list), auto-translation, and the conversation menu with
-// unity-explorer's entries: View Community, Notification Ping, Delete chat history, Close.
+// are online (opens the members list), auto-translation, and the conversation menu: View
+// Community, Notification Ping, Delete chat history, Close.
 
 import type { CommunityConversation } from '../session/useEngineSession'
 import { Avatar, ControlButton, MaskIcon } from '../../design'
