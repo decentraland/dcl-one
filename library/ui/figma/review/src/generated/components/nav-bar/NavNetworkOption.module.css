@@ -1,0 +1,92 @@
+.v0nroot {
+display: flex;
+box-sizing: border-box;
+flex-direction: row;
+justify-content: flex-start;
+align-items: center;
+gap: var(--dcl-space-4);
+padding: var(--dcl-space-4) var(--dcl-space-16) var(--dcl-space-4) var(--dcl-space-16);
+width: 122px;
+height: 24px;
+border-radius: 4px;
+opacity: 1;
+&:hover:not(:disabled):not([data-interaction-mode='controlled']), &[data-force-state='hover'] {
+  background: var(--dcl-transparencies-white-20);
+}
+&:hover:not(:disabled):not([data-interaction-mode='controlled']) [data-n='0'], &[data-force-state='hover'] [data-n='0'] {
+  background: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E %3Crect width='16' height='16' rx='8' fill='url(%23paint0_linear_15599_32342)'/%3E %3Cpath d='M7.58334 2L4 8.02002L7.58334 10.17L11.1667 8.02002L7.58334 2ZM4 8.73669L7.58334 13.7534L11.1667 8.73669L7.58334 10.8867L4 8.73669Z' fill='%23FCFCFC'/%3E %3Cdefs%3E %3ClinearGradient id='paint0_linear_15599_32342' x1='8' y1='0' x2='8' y2='16' gradientUnits='userSpaceOnUse'%3E %3Cstop stop-color='%230E0E0E'/%3E %3Cstop offset='1' stop-color='%23787878'/%3E %3C/linearGradient%3E %3C/defs%3E %3C/svg%3E") center / contain no-repeat;
+}
+}
+
+.v0n0 {
+box-sizing: border-box;
+width: 16px;
+flex-shrink: 0;
+height: 16px;
+background: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E %3Crect width='16' height='16' rx='8' fill='url(%23paint0_linear_15599_32336)'/%3E %3Cpath d='M7.58334 2L4 8.02002L7.58334 10.17L11.1667 8.02002L7.58334 2ZM4 8.73669L7.58334 13.7534L11.1667 8.73669L7.58334 10.8867L4 8.73669Z' fill='%23FCFCFC'/%3E %3Cdefs%3E %3ClinearGradient id='paint0_linear_15599_32336' x1='8' y1='0' x2='8' y2='16' gradientUnits='userSpaceOnUse'%3E %3Cstop stop-color='%230E0E0E'/%3E %3Cstop offset='1' stop-color='%23787878'/%3E %3C/linearGradient%3E %3C/defs%3E %3C/svg%3E") center / contain no-repeat;
+}
+
+.v0n1 {
+composes: text6c6162656c2f78732d63617073 from '../../tokens/text-styles.module.css';
+display: block;
+min-height: 15px;
+width: 70px;
+color: var(--dcl-neutrals-white);
+white-space: nowrap;
+text-transform: uppercase;
+letter-spacing: 0.5px;
+text-align: left;
+line-height: 15px;
+opacity: 1;
+}
+
+.v1nroot {
+display: flex;
+box-sizing: border-box;
+flex-direction: row;
+justify-content: flex-start;
+align-items: center;
+gap: var(--dcl-space-4);
+padding: var(--dcl-space-4) var(--dcl-space-16) var(--dcl-space-4) var(--dcl-space-16);
+position: relative;
+width: 122px;
+height: 24px;
+border-radius: 4px;
+background: var(--dcl-transparencies-white-20);
+opacity: 1;
+}
+
+.v1n0 {
+box-sizing: border-box;
+width: 16px;
+flex-shrink: 0;
+height: 16px;
+position: relative;
+background: url("data:image/svg+xml,%3Csvg width='16' height='16' viewBox='0 0 16 16' fill='none' xmlns='http://www.w3.org/2000/svg'%3E %3Crect width='16' height='16' rx='8' fill='url(%23paint0_linear_15599_32348)'/%3E %3Cpath d='M7.58334 2L4 8.02002L7.58334 10.17L11.1667 8.02002L7.58334 2ZM4 8.73669L7.58334 13.7534L11.1667 8.73669L7.58334 10.8867L4 8.73669Z' fill='%23FCFCFC'/%3E %3Cdefs%3E %3ClinearGradient id='paint0_linear_15599_32348' x1='8' y1='0' x2='8' y2='16' gradientUnits='userSpaceOnUse'%3E %3Cstop stop-color='%230E0E0E'/%3E %3Cstop offset='1' stop-color='%23787878'/%3E %3C/linearGradient%3E %3C/defs%3E %3C/svg%3E") center / contain no-repeat;
+}
+
+.v1n1 {
+composes: text6c6162656c2f78732d63617073 from '../../tokens/text-styles.module.css';
+display: block;
+min-height: 15px;
+width: 70px;
+color: var(--dcl-neutrals-white);
+white-space: nowrap;
+text-transform: uppercase;
+letter-spacing: 0.5px;
+text-align: left;
+line-height: 15px;
+position: relative;
+opacity: 1;
+}
+
+.v1n2 {
+box-sizing: border-box;
+width: 8px;
+flex-shrink: 0;
+height: 8px;
+position: absolute;
+left: 4px;
+top: 9px;
+background: url("data:image/svg+xml,%3Csvg width='8' height='8' viewBox='0 0 8 8' fill='none' xmlns='http://www.w3.org/2000/svg'%3E %3Ccircle cx='4' cy='4' r='4' fill='%2300B453'/%3E %3C/svg%3E") center / contain no-repeat;
+}
