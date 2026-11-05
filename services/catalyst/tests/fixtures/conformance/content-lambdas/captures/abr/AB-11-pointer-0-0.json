@@ -1,0 +1,60 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.org",
+  "request": {
+    "method": "POST",
+    "path": "/entities/versions",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "pointers": [
+        "0,0"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": [
+      {
+        "pointers": [
+          "-1,-4",
+          "0,-4",
+          "<68 more>"
+        ],
+        "versions": {
+          "assets": {
+            "mac": {
+              "version": "v49",
+              "buildDate": "2026-10-05T16:08:08.914Z"
+            },
+            "windows": {
+              "version": "v49",
+              "buildDate": "2026-10-05T16:09:47.358Z"
+            },
+            "webgl": {
+              "version": "",
+              "buildDate": ""
+            }
+          }
+        },
+        "bundles": {
+          "assets": {
+            "mac": "complete",
+            "windows": "complete",
+            "webgl": "pending"
+          },
+          "lods": {
+            "mac": "pending",
+            "windows": "pending",
+            "webgl": "pending"
+          }
+        },
+        "status": "fallback"
+      }
+    ]
+  }
+}

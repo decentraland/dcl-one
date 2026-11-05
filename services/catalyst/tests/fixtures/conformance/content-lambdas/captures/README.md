@@ -12,6 +12,9 @@ the behaviour lives in npm packages missing from the pinned upstream trees, or i
 | `https://subgraph.decentraland.org/land-manager` | lamb2's default LAND subgraph (`src/ports/the-graph.ts`) | n/a |
 | `https://subgraph.decentraland.org/marketplace` | lamb2's default names and LAND subgraph | n/a |
 | `https://marketplace-api.decentraland.org` | lamb2's `MARKETPLACE_API_URL` default (`.env.default`) | n/a |
+| `https://peer.decentraland.zone` (`abr/` only) | the zone content server and lamb2 | `/content/status`: `version` 8.3.2, `commitHash` `a416565db1e705cff9523540a2578af642598a29` |
+| `https://asset-bundle-registry.decentraland.org` (`abr/` only) | the asset-bundle registry | `/status`: `version` 2.5.3, `commitHash` `f9578d4ab1ab9fdff4576ba6d052b966bd0fd5e9` |
+| `https://asset-bundle-registry.decentraland.zone` (`abr/` only) | the zone asset-bundle registry | `/status`: `version` `Unknown`, `commitHash` `d932a02eaa90345f846b068f5c8c2b9ab388deaa` |
 
 Both commit hashes are the upstream revisions the backlog files pin, so these captures describe the same
 code the rows were read against.
@@ -54,6 +57,12 @@ JSON bodies are re-serialized with the key order and value types of the wire byt
   contract addresses inside URNs and NFT ids. The zero address is kept. The fakes
   `0x0000000000000000000000000000000000000001` and `0x0000000000000000000000000000000000000002` were the
   values sent in the requests.
+- `abr/` was captured on 2026-11-05 with the same method and rules, except: its addresses map to fakes
+  from `0x0000000000000000000000000000000000000b00` upward (consistent within `abr/`, not with the other
+  directories); profile names become `profile-name-N`; the entity ids of the two captured profiles become
+  `<profile-entity-N>` inside `thumbnailUrl` and snapshot URLs; denylist reasons become `<reason>`. Its
+  requests are `GET`, `OPTIONS`, a refused `PUT`, and `POST` to the read routes `/profiles`,
+  `/profiles/metadata`, `/entities/active` and `/entities/versions`; no denylist, registry or cache write.
 - 64-hex-digit order ids (`orders.id`, `activeOrder.id`) and the Catalyst list ids in `/contracts/servers` are
   replaced by fakes from `0x…0100` upward. Parcel token ids that encode to 64 hex digits (negative x) are kept.
 - Names (`LL-7-*`) are replaced by `name-NN`, numbered by alphabetical order of the real names. Their

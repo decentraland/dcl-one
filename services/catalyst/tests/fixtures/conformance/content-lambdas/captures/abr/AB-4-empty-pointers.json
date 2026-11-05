@@ -1,0 +1,25 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.org",
+  "request": {
+    "method": "POST",
+    "path": "/entities/active",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "pointers": []
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "45"
+    },
+    "body": {
+      "ok": false,
+      "message": "No pointers provided"
+    }
+  }
+}
