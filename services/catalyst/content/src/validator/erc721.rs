@@ -110,13 +110,10 @@ pub fn format_erc721_entity(
         });
     }
 
-    let body_shapes = extract_body_shapes(metadata);
-    for shape in body_shapes {
-        attributes.push(Erc721Trait {
-            trait_type: "Body Shape".to_string(),
-            value: Some(shape),
-        });
-    }
+    // No `Body Shape` traits: upstream looks each shape up with
+    // `BodyShape[BodyShape.MALE]` on a string enum, which is `undefined`, so
+    // none ever matches; the production peer lists none for a wearable with
+    // both representations (`captures/content-sync/CS-16-erc721-wearable.json`).
 
     Erc721Metadata {
         id: urn.to_string(),
@@ -161,37 +158,6 @@ fn extract_item_tags(metadata: Option<&serde_json::Value>) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-fn extract_body_shapes(metadata: Option<&serde_json::Value>) -> Vec<String> {
-    let data = metadata.and_then(|m| m.get("data").or_else(|| m.get("emoteDataADR74")));
-
-    let representations = data
-        .and_then(|d| d.get("representations"))
-        .and_then(|r| r.as_array());
-
-    let mut shapes = std::collections::BTreeSet::new();
-    if let Some(reps) = representations {
-        for rep in reps {
-            if let Some(body_shapes) = rep.get("bodyShapes").and_then(|b| b.as_array()) {
-                for shape in body_shapes {
-                    if let Some(s) = shape.as_str() {
-                        match s {
-                            "urn:decentraland:off-chain:base-avatars:BaseMale" | "BaseMale" => {
-                                shapes.insert("BaseMale".to_string());
-                            }
-                            "urn:decentraland:off-chain:base-avatars:BaseFemale" | "BaseFemale" => {
-                                shapes.insert("BaseFemale".to_string());
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    shapes.into_iter().collect()
 }
 
 fn get_urn_protocol(chain_id: u64) -> Option<&'static str> {

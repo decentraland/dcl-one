@@ -78,8 +78,9 @@ pub(crate) mod support {
             }
         }
 
+        /// The router as `serve` mounts it, with upstream's routing under `/content/`.
         pub fn router(&self) -> axum::Router {
-            build_router(self.state.clone())
+            crate::routing::upstream_routing(build_router(self.state.clone()))
         }
 
         pub async fn store(&self, hash: &str, data: Bytes) {
@@ -584,6 +585,190 @@ async fn unknown_routes_and_write_routes() {
         StatusCode::SERVICE_UNAVAILABLE,
         "a node without CONTENT_WRITES_ENABLED refuses the deploy (write_path_tests has the rest)"
     );
+}
+
+async fn send(router: Router, request: Request<Body>) -> (StatusCode, header::HeaderMap, Vec<u8>) {
+    let resp = router.oneshot(request).await.unwrap();
+    let (parts, body) = resp.into_parts();
+    let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+    (parts.status, parts.headers, bytes.to_vec())
+}
+
+/// `conformance/content-lambdas/captures/content-reads/CR-12-*.json`: the
+/// production peer's answers to a method its router does not serve on a path.
+#[tokio::test]
+async fn wrong_methods_answer_like_the_captured_router() {
+    let node = TestNode::without_db("methods").await;
+    let (status, headers, body) = send(
+        node.router(),
+        Request::get("/content/entities/active")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(headers[header::CONTENT_TYPE], "application/json");
+    assert_eq!(body, br#"{"error":"Unrecognized type: active"}"#);
+
+    for (method, path, allow) in [
+        ("PUT", "/content/status", "HEAD, GET"),
+        ("PATCH", "/content/status", "HEAD, GET"),
+        ("DELETE", "/content/entities/active", "HEAD, GET, POST"),
+        ("POST", "/content/contents/bafkreiabc", "HEAD, GET"),
+    ] {
+        let (status, headers, body) = send(
+            node.router(),
+            Request::builder()
+                .method(method)
+                .uri(path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{method} {path}");
+        assert_eq!(headers[header::ALLOW], allow, "{method} {path}");
+        assert!(body.is_empty(), "{method} {path}");
+    }
+}
+
+/// `CR-16-path-case-*.json`, `CS-23-path-case-deployments.json`: the static
+/// segments under `/content/` match whatever their case.
+#[tokio::test]
+async fn content_paths_match_case_insensitively() {
+    let node = TestNode::without_db("path-case").await;
+    node.store(support::TEST_CID, bytes::Bytes::from_static(b"hello"))
+        .await;
+    let (status, headers, _) = send(
+        node.router(),
+        Request::head(format!("/content/Contents/{}", support::TEST_CID))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(headers[header::CONTENT_LENGTH], "5");
+
+    let (status, body) = get_json(node.router(), "/content/Status").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["synchronizationStatus"].is_object(), "{body}");
+
+    // The history read reaches its handler (the absent database's 500), not
+    // the 404 fallback.
+    let (status, _) = get_json(node.router(), "/content/Deployments?limit=1").await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+
+    // A GET keeps `/entities/{type}` and echoes the type as sent, as
+    // upstream's `/entities/:type` does.
+    let (status, _, body) = send(
+        node.router(),
+        Request::get("/content/Entities/Active")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body, br#"{"error":"Unrecognized type: Active"}"#);
+
+    // The write routes keep their case: the gateway's deploy location and
+    // its limits match these spellings.
+    let (status, _, _) = send(
+        node.router(),
+        Request::post("/content/Entities")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // The root mounts stay case-sensitive: upstream production has none.
+    let (status, _, _) = send(
+        node.router(),
+        Request::get("/Status").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// The case rewrite's route lists name only routed paths: a `PATCH` (served
+/// on none) is each one's 405, not the 404 fallback.
+#[tokio::test]
+async fn every_listed_content_route_is_routed() {
+    let node = TestNode::without_db("route-list").await;
+    for route in crate::routing::CONTENT_ROUTE_PATHS
+        .iter()
+        .chain(crate::routing::CASE_SENSITIVE_ROUTE_PATHS)
+    {
+        let path: Vec<&str> = route
+            .split('/')
+            .map(|s| if s.starts_with('{') { "x" } else { s })
+            .collect();
+        let path = format!("/content{}", path.join("/"));
+        let (status, _, _) = send(
+            node.router(),
+            Request::patch(&path).body(Body::empty()).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{path}");
+    }
+}
+
+/// The other direction: every path `content_routes` registers is in exactly
+/// one of the two lists, so a new route cannot silently stay out of the
+/// case rewrite.
+#[test]
+fn every_content_route_is_listed_once() {
+    let source = include_str!("lib.rs");
+    let body = source
+        .split("fn content_routes(")
+        .nth(1)
+        .and_then(|rest| rest.split("\n}\n").next())
+        .expect("content_routes in lib.rs");
+    let mut registered: Vec<&str> = body
+        .split(".route(")
+        .skip(1)
+        .filter_map(|call| call.split('"').nth(1))
+        .collect();
+    registered.sort_unstable();
+    let mut listed: Vec<&str> = crate::routing::CONTENT_ROUTE_PATHS
+        .iter()
+        .chain(crate::routing::CASE_SENSITIVE_ROUTE_PATHS)
+        .copied()
+        .collect();
+    listed.sort_unstable();
+    assert_eq!(registered, listed);
+}
+
+/// `CR-17-body-over-10mib.json`: upstream caps the `POST /entities/active`
+/// body at `MAX_ACTIVE_ENTITIES_BODY_SIZE` (10 MiB) with a plain-text 413.
+#[tokio::test]
+async fn active_entities_body_cap_is_ten_mib() {
+    let node = TestNode::without_db("body-cap").await;
+    let body_of = |len: usize| {
+        let mut body = br#"{"pointers":[""#.to_vec();
+        body.resize(len - 3, b'a');
+        body.extend_from_slice(br#""]}"#);
+        body
+    };
+    let post = |body: Vec<u8>| {
+        Request::post("/content/entities/active")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .unwrap()
+    };
+    let (status, headers, body) = send(
+        node.router(),
+        post(body_of(
+            crate::routing::MAX_ACTIVE_ENTITIES_BODY_BYTES + 512,
+        )),
+    )
+    .await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(headers[header::CONTENT_TYPE], "text/plain; charset=utf-8");
+    assert_eq!(body, b"Payload Too Large");
+
+    // Under the cap the body reaches the lookup (the absent database's 500).
+    let (status, _, _) = send(node.router(), post(body_of(1024 * 1024))).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
 }
 
 #[tokio::test]

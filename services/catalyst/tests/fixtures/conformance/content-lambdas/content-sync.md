@@ -75,9 +75,13 @@ Common notes:
 - **Unknown paths.** dcl-one's fallback is 404 with the `text/plain` body `Not found`
   (`services/catalyst/content/src/lib.rs:623-625`). The upstream 404 body comes from
   `@dcl/http-server`, which is not in the clone.
-- **Trailing slash and path case.** dcl-one (axum) matches paths exactly, so `/deployments/` and
-  `/Deployments` both return the fallback 404. Upstream's router is the `@dcl/http-server`
-  koa-router derivative, and its `strict`/`sensitive` defaults were not read; see backlog CS-23.
+- **Trailing slash and path case.** Upstream's router (the `@dcl/http-server` koa-router
+  derivative) routes `/content/deployments/` and `/content/Deployments` as `/content/deployments`
+  (captured, CS-23). dcl-one trims a trailing slash for the whole app
+  (`services/catalyst/src/serve.rs`, `NormalizePath`) and spells the static segments of a content
+  route under `/content/` in the route's case before routing
+  (`services/catalyst/content/src/routing.rs` `upstream_routing`). The root mounts stay
+  case-sensitive; upstream production serves none.
 - **Rate limits.** Upstream rate-limits only `GET`/`HEAD /contents/:hashId` and `POST /entities`
   (`decentraland/catalyst:src/controllers/routes.ts:101-114`), so no endpoint in this area has a
   rate limit upstream. dcl-one's app has none either, but this tree's gateway limits every path by
@@ -716,8 +720,7 @@ Field by field:
     and upstream emits **no** Body Shape traits. Captured: a wearable with a `BaseMale` and a
     `BaseFemale` representation answers `Rarity`, `Category` and `Tag` traits and no `Body Shape`
     trait (`captures/content-sync/CS-16-erc721-wearable.json`).
-  - dcl-one emits `BaseFemale` and then `BaseMale`, sorted with a `BTreeSet`, for full URNs and
-    short names (`erc721.rs:167-196`). Upstream's `Set` order is insertion order.
+  - dcl-one emits none either (`erc721.rs` `format_erc721_entity`). MATCH.
 - **`image` and `thumbnail`.**
   - Upstream: `new URL('contents/<hash>', CONTENT_SERVER_ADDRESS)`. Without a trailing slash, the
     last segment of the address is replaced.
@@ -898,16 +901,15 @@ catalyst list and its `/about` is healthy.
     - Where: `services/catalyst/content/src/status.rs`, `services/catalyst/content/src/wire_types.rs:106-120`.
     - Severity: P2.
 
-16. **CS-16 · `/queries/erc721` · Category and Body Shape traits.**
-    - Gap: dcl-one emits sorted Body Shape traits, where upstream emits none. The `Category`
-      trait matches (always listed, `{"trait_type":"Category"}` without a category).
-    - Capture: `GET /content/queries/erc721/137/<contract>/1/5` for an epic `top_head` wearable with
-      `BaseMale` and `BaseFemale` representations answers `attributes` = `Rarity`, `Category`, then one
-      `Tag` per tag, and no `Body Shape` (`captures/content-sync/CS-16-erc721-wearable.json`). The
-      undefined-`Category` case was not captured.
-    - Expected: emit no Body Shape traits.
-    - Where: `services/catalyst/content/src/validator/erc721.rs:93-121,167-196`.
-    - Severity: P1.
+16. **CS-16 · `/queries/erc721` · Category and Body Shape traits.** Status: MATCH, no work.
+    - Upstream: `Rarity`, `Category` (always, `{"trait_type":"Category"}` without a category), one `Tag`
+      per tag, and no `Body Shape`. Capture: `GET /content/queries/erc721/137/<contract>/1/5` for an epic
+      `top_head` wearable with `BaseMale` and `BaseFemale` representations
+      (`captures/content-sync/CS-16-erc721-wearable.json`). The undefined-`Category` case was not captured.
+    - dcl-one: the same traits; it emits no Body Shape trait
+      (`services/catalyst/content/src/validator/erc721.rs` `format_erc721_entity`; test
+      `validator::tests` `the_erc721_route_formats_the_active_wearable`).
+    - Severity: none (closed).
 
 17. **CS-17 · `/queries/erc721` · edge values.**
     - Gap:
@@ -958,16 +960,15 @@ catalyst list and its `/about` is healthy.
     - Where: `services/catalyst/content/src/queries.rs:108-110`, or skip `Value::Null` in projection.
     - Severity: P2.
 
-23. **CS-23 · all routes · trailing slash and path case.**
-    - Gap: dcl-one returns a plain-text 404 for `/Deployments`. As read, it trims a trailing slash
-      for the whole app before routing (`services/catalyst/src/serve.rs:1355`), so `/deployments/`
-      is routed.
+23. **CS-23 · all routes · trailing slash and path case.** Status: MATCH, no work.
     - Capture: `GET /content/deployments/?limit=1` and `GET /content/Deployments?limit=1` both answer
       `200` with the deployments page (`captures/content-sync/CS-23-trailing-slash-deployments.json`,
       `CS-23-path-case-deployments.json`).
-    - Expected: match paths case-insensitively, as CR-16; the trailing slash already matches.
-    - Where: `services/catalyst/content/src/lib.rs:695-711`.
-    - Severity: P2.
+    - dcl-one: the trailing slash is trimmed for the whole app (`services/catalyst/src/serve.rs`,
+      `NormalizePath`); `/content/Deployments` is routed as `/content/deployments` by
+      `services/catalyst/content/src/routing.rs` `upstream_routing`, as CR-16 (test
+      `content_paths_match_case_insensitively`). Only paths under `/content/` are rewritten.
+    - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not
 

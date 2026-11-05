@@ -89,11 +89,12 @@ class ConfigurationTest(unittest.TestCase):
         table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
                  "deploy": ["/entities", "/content/entities"]}
         text = gateway.render(table, cfg, "/mime.types")
-        deploy = re.search(r'location ~ "([^"]+)" \{\n[^}]*client_max_body_size 200m;', text)[1]
-        for path in ["/entities", "/content/entities"]:
+        deploy = re.search(r'location ~\* "([^"]+)" \{\n[^}]*client_max_body_size 200m;', text)[1]
+        for path in ["/entities", "/content/entities", "/content/Entities", "/ENTITIES/"]:
             with self.subTest(path=path):
-                self.assertTrue(re.search(deploy, path))
-        self.assertIsNone(re.search(deploy, "/worlds-content-server/entities"))
+                # ~* matches ignoring case, as the content server's rewrite does.
+                self.assertTrue(re.search(deploy, path, re.IGNORECASE))
+        self.assertIsNone(re.search(deploy, "/worlds-content-server/entities", re.IGNORECASE))
         worlds = re.search(r'location ~ "([^"]+)" \{\n[^}]*client_max_body_size 360m; '
                            r'client_body_timeout 300s; limit_req zone=deploy', text)[1]
         for path in ["/worlds-content-server/entities", "/worlds-content-server/entities/"]:
@@ -102,6 +103,19 @@ class ConfigurationTest(unittest.TestCase):
         for path in ["/worlds-content-server/entities/active", "/entities"]:
             with self.subTest(path=path):
                 self.assertIsNone(re.search(worlds, path))
+
+    def test_active_entities_take_upstreams_ten_mib_body_cap(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
+                 "deploy": ["/entities", "/content/entities"]}
+        text = gateway.render(table, cfg, "/mime.types")
+        active = re.search(r'location ~\* "([^"]+)" \{\n[^}]*client_max_body_size 10m;', text)[1]
+        for path in ["/content/entities/active", "/content/Entities/Active", "/entities/active/"]:
+            with self.subTest(path=path):
+                self.assertTrue(re.search(active, path, re.IGNORECASE))
+        for path in ["/content/entities/active/collections/urn", "/content/entities/scene"]:
+            with self.subTest(path=path):
+                self.assertIsNone(re.search(active, path, re.IGNORECASE))
 
     def test_worlds_caps_match_the_service_wire_limits(self):
         worlds = Path(__file__).parents[3] / "services/catalyst/worlds/src/core"

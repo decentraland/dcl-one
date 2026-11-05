@@ -4,11 +4,10 @@ use axum::http::StatusCode;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
-use serde_json::Value;
 
 use super::SharedState;
 use super::errors::{AppError, AppResult};
-use super::formatters::{EntityField, mask_entity};
+use super::formatters::{EntityField, MaskedEntity, mask_entity};
 use super::queries::{self, EntityDoc, MaskedColumns, retain_non_denylisted};
 use super::query_params::{
     QueryParams, parse_entity_type, parse_pagination, parse_query_string, qs_get_filter_array,
@@ -74,7 +73,7 @@ async fn lookup_masked(
     use_ids: bool,
     values: &[String],
     fields: &[EntityField],
-) -> AppResult<Vec<Value>> {
+) -> AppResult<Vec<MaskedEntity>> {
     let columns = MaskedColumns {
         content: fields.contains(&EntityField::Content),
         metadata: fields.contains(&EntityField::Metadata),
@@ -110,10 +109,9 @@ pub async fn get_active_entities(
     let values = values.as_slice();
 
     let response = match requested_fields(&parse_query_string(query.as_deref().unwrap_or(""))) {
-        Some(fields) => Json(Value::Array(
-            lookup_masked(&state, use_ids, values, &fields).await?,
-        ))
-        .into_response(),
+        Some(fields) => {
+            Json(lookup_masked(&state, use_ids, values, &fields).await?).into_response()
+        }
         None => json_docs_response(&lookup(&state, use_ids, values).await?),
     };
     Ok(with_cache_control(&state, response))
@@ -125,9 +123,27 @@ pub async fn get_entities(
     Path(entity_type): Path<String>,
     request: Request,
 ) -> AppResult<Response> {
-    let params = parse_query_string(request.uri().query().unwrap_or(""));
+    entities_of_type(&state, &entity_type, request.uri().query()).await
+}
 
-    if parse_entity_type(&entity_type).is_none() {
+/// GET /entities/active: upstream's `/entities/:type` matches it too (the
+/// static route is POST only), so it is that handler with the type `active`,
+/// which it refuses as an unrecognized type.
+pub async fn get_entities_active(
+    State(state): State<SharedState>,
+    request: Request,
+) -> AppResult<Response> {
+    entities_of_type(&state, "active", request.uri().query()).await
+}
+
+async fn entities_of_type(
+    state: &SharedState,
+    entity_type: &str,
+    query: Option<&str>,
+) -> AppResult<Response> {
+    let params = parse_query_string(query.unwrap_or(""));
+
+    if parse_entity_type(entity_type).is_none() {
         return Err(AppError::invalid(format!(
             "Unrecognized type: {entity_type}"
         )));
@@ -148,20 +164,16 @@ pub async fn get_entities(
 
     let fields = requested_fields(&params);
 
-    let entities = lookup(&state, use_ids, if use_ids { &ids } else { &pointers }).await?;
+    let entities = lookup(state, use_ids, if use_ids { &ids } else { &pointers }).await?;
 
-    let response = match fields {
-        Some(fields) => {
-            let masked: Vec<Value> = entities
-                .iter()
-                .filter_map(EntityDoc::to_value)
-                .map(|e| mask_entity(&e, Some(&fields)))
-                .collect();
-            Json(Value::Array(masked)).into_response()
-        }
-        None => json_docs_response(&entities),
-    };
-    Ok(with_cache_control(&state, response))
+    // Upstream masks every entity here, `fields` or not, so the key order is
+    // its `maskEntity` one (`version,id,type,timestamp,...`), not the stored one.
+    let masked: Vec<MaskedEntity> = entities
+        .iter()
+        .filter_map(EntityDoc::to_value)
+        .map(|e| mask_entity(&e, fields.as_deref()))
+        .collect();
+    Ok(with_cache_control(state, Json(masked).into_response()))
 }
 
 /// GET /contents/{hash}/active-entities: the ids of the active entities that
