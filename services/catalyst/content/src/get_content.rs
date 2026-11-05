@@ -647,11 +647,15 @@ mod tests {
             header(&resp, "content-type").unwrap(),
             "application/octet-stream"
         );
-        let resp = get(&node, Method::HEAD, Some(""), None).await.unwrap();
+        // The root sniffs only on `includeMimeType`, for HEAD as for GET
+        // (upstream's `get-content-handler.ts:54`).
+        let resp = get(&node, Method::HEAD, None, None).await.unwrap();
         assert_eq!(
             header(&resp, "content-type").unwrap(),
             "application/octet-stream"
         );
+        let resp = get(&node, Method::HEAD, Some(""), None).await.unwrap();
+        assert_eq!(header(&resp, "content-type").unwrap(), "image/png");
     }
 
     #[tokio::test]
