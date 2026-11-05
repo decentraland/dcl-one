@@ -11,7 +11,7 @@
 use serde::{Deserialize, Serialize};
 use strum_macros::EnumIter;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, EnumIter, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, EnumIter)]
 pub enum Service {
     /// The realm provider: its `/main` is the realm to boot into when none is given or persisted
     RealmProvider,

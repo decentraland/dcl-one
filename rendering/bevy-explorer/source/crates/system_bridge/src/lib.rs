@@ -140,8 +140,8 @@ pub enum SystemApi {
     LiveSceneInfo(RpcResultSender<Vec<LiveSceneInfo>>),
     GetHomeScene(RpcResultSender<HomeScene>),
     SetHomeScene(HomeScene),
-    /// Credential-free resolved endpoints and the native operator's gateway policy.
-    GetServiceUrls(RpcResultSender<common::base_domain::HudServices>),
+    /// Credential-free resolved service endpoints.
+    GetServiceUrls(RpcResultSender<Vec<(String, String)>>),
     GetWelcome(RpcResultSender<WelcomeState>),
     AcceptTerms(RpcResultSender<()>),
     GetSatelliteView(RpcResultSender<Option<SatelliteView>>),

@@ -45,11 +45,10 @@ pub enum FetchError<E> {
 /// A grant issued by the scheduler that admitted this individual attempt.
 pub trait HttpAttemptPermit {}
 
-/// Trace one transport attempt while its scheduler grant is held.
+/// Buffer an already-admitted attempt and count each chunk while the permit is held.
 pub async fn fetch_with_permit<P, E, F>(
     _permit: P,
-    request: reqwest::Request,
-    send: impl FnOnce(reqwest::Request) -> F,
+    send: impl FnOnce() -> F,
     headers_timeout: Duration,
     idle_timeout: Duration,
     on_chunk: impl FnMut(usize),
@@ -58,68 +57,28 @@ where
     P: HttpAttemptPermit,
     F: Future<Output = Result<reqwest::Response, E>>,
 {
-    fetch_traced(request, send, headers_timeout, idle_timeout, on_chunk).await
+    fetch_observed(send(), headers_timeout, idle_timeout, on_chunk).await
 }
 
-/// Fetch a request with separate timeouts for headers and inactivity between body chunks.
-pub async fn fetch(
-    builder: reqwest::RequestBuilder,
+/// Fetch with separate timeouts for headers and inactivity between body chunks.
+pub async fn fetch<E>(
+    send: impl Future<Output = Result<reqwest::Response, E>>,
     headers_timeout: Duration,
     idle_timeout: Duration,
-) -> Result<FetchedResponse, FetchError<reqwest::Error>> {
-    let (client, request) = builder.build_split();
-    fetch_traced(
-        request.map_err(FetchError::Send)?,
-        |request| client.execute(request),
-        headers_timeout,
-        idle_timeout,
-        |_| {},
-    )
-    .await
-}
-
-/// Trace one dispatch and its body read.
-async fn fetch_traced<E, F: Future<Output = Result<reqwest::Response, E>>>(
-    request: reqwest::Request,
-    send: impl FnOnce(reqwest::Request) -> F,
-    headers_timeout: Duration,
-    idle_timeout: Duration,
-    on_chunk: impl FnMut(usize),
 ) -> Result<FetchedResponse, FetchError<E>> {
-    #[cfg(not(target_arch = "wasm32"))]
-    let mut trace = crate::devtools::Trace::start(&request);
-    let result = async {
-        let response = match with_timeout(headers_timeout, send(request)).await {
-            Ok(Ok(response)) => response,
-            Ok(Err(e)) => return Err(FetchError::Send(e)),
-            Err(Elapsed) => return Err(FetchError::Headers),
-        };
-
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(trace) = trace.as_ref() {
-            trace.response(&response);
-        }
-
-        read_response(response, idle_timeout, on_chunk).await
-    }
-    .await;
-    #[cfg(not(target_arch = "wasm32"))]
-    if let Some(trace) = trace.as_mut() {
-        match &result {
-            Ok(response) => trace.finish(response.body.len() as u64),
-            Err(FetchError::Status(..)) => trace.finish(0), // headers arrived, body discarded by policy
-            Err(FetchError::Headers | FetchError::Stalled) => trace.fail("Request timed out"),
-            Err(FetchError::Send(_) | FetchError::Body(_)) => trace.fail("Network error"),
-        }
-    }
-    result
+    fetch_observed(send, headers_timeout, idle_timeout, |_| {}).await
 }
 
-async fn read_response<E>(
-    response: reqwest::Response,
+async fn fetch_observed<E>(
+    send: impl Future<Output = Result<reqwest::Response, E>>,
+    headers_timeout: Duration,
     idle_timeout: Duration,
     mut on_chunk: impl FnMut(usize),
 ) -> Result<FetchedResponse, FetchError<E>> {
+    let response = match with_timeout(headers_timeout, send).await {
+        Ok(result) => result.map_err(FetchError::Send)?,
+        Err(Elapsed) => return Err(FetchError::Headers),
+    };
     if !response.status().is_success() {
         return Err(FetchError::Status(
             response.status(),
@@ -139,64 +98,6 @@ async fn read_response<E>(
             Ok(None) => return Ok(FetchedResponse { headers, body }),
             Err(Elapsed) => return Err(FetchError::Stalled),
         }
-    }
-}
-
-/// A JSON response whose Network trace includes the body transfer.
-pub struct TracedJsonResponse {
-    response: reqwest::Response,
-    #[cfg(not(target_arch = "wasm32"))]
-    trace: Option<crate::devtools::Trace>,
-}
-
-impl TracedJsonResponse {
-    pub async fn send(builder: reqwest::RequestBuilder) -> Result<Self, reqwest::Error> {
-        let (client, request) = builder.build_split();
-        let request = request?;
-        #[cfg(not(target_arch = "wasm32"))]
-        let mut trace = crate::devtools::Trace::start(&request);
-        let response = client.execute(request).await;
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(trace) = &mut trace {
-            match &response {
-                Ok(response) => trace.response(response),
-                Err(_) => trace.fail("Network error"),
-            }
-        }
-        Ok(Self {
-            response: response?,
-            #[cfg(not(target_arch = "wasm32"))]
-            trace,
-        })
-    }
-
-    pub fn url(&self) -> &reqwest::Url {
-        self.response.url()
-    }
-
-    pub fn status(&self) -> reqwest::StatusCode {
-        self.response.status()
-    }
-
-    /// The caller deliberately stops at the HTTP status, without consuming the body.
-    pub fn discard(self) -> reqwest::StatusCode {
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(mut trace) = self.trace {
-            trace.finish(0);
-        }
-        self.response.status()
-    }
-
-    pub async fn json<T: serde::de::DeserializeOwned>(self) -> anyhow::Result<T> {
-        let bytes = self.response.bytes().await;
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(mut trace) = self.trace {
-            match &bytes {
-                Ok(body) => trace.finish(body.len() as u64),
-                Err(_) => trace.fail("Response body error"),
-            }
-        }
-        Ok(serde_json::from_slice(&bytes?)?)
     }
 }
 
@@ -236,10 +137,6 @@ mod admission_tests {
         }
     }
 
-    fn unsent_request() -> reqwest::Request {
-        reqwest::Request::new(reqwest::Method::GET, "http://localhost".parse().unwrap())
-    }
-
     fn paused_body(status: &str) -> (reqwest::RequestBuilder, mpsc::Sender<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let request =
@@ -265,12 +162,10 @@ mod admission_tests {
             for cancel in [false, true] {
                 let released = Cell::new(false);
                 let (request, finish) = paused_body("200 OK");
-                let (client, request) = request.build_split();
                 let (chunks, first_chunk) = async_std::channel::bounded(1);
                 let mut fetch = Box::pin(fetch_with_permit(
                     Grant(&released),
-                    request.unwrap(),
-                    |req| client.execute(req),
+                    || request.send(),
                     limit,
                     limit,
                     |_| {
@@ -298,8 +193,7 @@ mod admission_tests {
             let limit = Duration::from_secs(5);
             let mut waiting = Box::pin(fetch_with_permit(
                 Grant(&released),
-                unsent_request(),
-                |_| std::future::pending::<Result<reqwest::Response, ()>>(),
+                || std::future::pending::<Result<reqwest::Response, ()>>(),
                 limit,
                 limit,
                 |_| {},
@@ -317,8 +211,7 @@ mod admission_tests {
             let limit = Duration::from_secs(5);
             let error = fetch_with_permit(
                 Grant(&released),
-                unsent_request(),
-                |_| async { Err::<reqwest::Response, _>(()) },
+                || async { Err::<reqwest::Response, _>(()) },
                 limit,
                 limit,
                 |_| {},
@@ -332,8 +225,7 @@ mod admission_tests {
             released.set(false);
             let result = fetch_with_permit(
                 Grant(&released),
-                unsent_request(),
-                |_| std::future::pending::<Result<reqwest::Response, ()>>(),
+                || std::future::pending::<Result<reqwest::Response, ()>>(),
                 idle,
                 idle,
                 |_| {},
@@ -344,27 +236,17 @@ mod admission_tests {
 
             released.set(false);
             let (request, _finish) = paused_body("200 OK");
-            let (client, request) = request.build_split();
-            let result = fetch_with_permit(
-                Grant(&released),
-                request.unwrap(),
-                |req| client.execute(req),
-                headers,
-                idle,
-                |_| {},
-            )
-            .await;
+            let result =
+                fetch_with_permit(Grant(&released), || request.send(), headers, idle, |_| {}).await;
             assert!(matches!(result, Err(FetchError::Stalled)));
             assert!(released.get());
 
             released.set(false);
             let (request, finish) = paused_body("200 OK");
             drop(finish);
-            let (client, request) = request.build_split();
             let result = fetch_with_permit(
                 Grant(&released),
-                request.unwrap(),
-                |req| client.execute(req),
+                || request.send(),
                 headers,
                 headers,
                 |_| {},
@@ -386,12 +268,13 @@ mod admission_tests {
             let _ = stream.read(&mut request).unwrap();
             stream.write_all(b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 5\r\nContent-Length: 0\r\n\r\n").unwrap();
         });
-        let client = reqwest::Client::new();
-        let request = client.get(format!("http://{address}")).build().unwrap();
         let error = async_std::task::block_on(async_compat::Compat::new(fetch_with_permit(
             Grant(&Cell::new(false)),
-            request,
-            |req| client.execute(req),
+            || {
+                reqwest::Client::new()
+                    .get(format!("http://{address}"))
+                    .send()
+            },
             Duration::from_secs(5),
             Duration::from_secs(5),
             |_| {},

@@ -2411,11 +2411,7 @@ fn handle_sign_request(
             response,
         } = ev
         {
-            let Ok(uri) = Uri::try_from(uri) else {
-                response.send(Err(format!("failed to parse uri: {uri}")));
-                continue;
-            };
-
+            let uri = uri.clone();
             let method = method.clone();
             let meta = meta.to_owned().unwrap_or_default();
             let wallet = wallet.clone();

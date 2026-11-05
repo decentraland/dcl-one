@@ -506,6 +506,37 @@ pub struct ServerScene {
     entity_id: String,
 }
 
+/// `GET {world}/manifest`: the world's occupied parcels and the parcel it spawns players on, the
+/// document unity-explorer lands on (the asset-bundle-registry serves the same one). Only the
+/// spawn is read; the worlds content server sends its coordinates as strings, the registry as
+/// numbers.
+#[derive(Debug, Deserialize)]
+struct WorldManifest {
+    spawn_coordinate: Option<ManifestCoordinate>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManifestCoordinate {
+    x: ManifestNumber,
+    y: ManifestNumber,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum ManifestNumber {
+    Number(i32),
+    Text(String),
+}
+
+impl ManifestNumber {
+    fn value(&self) -> Option<i32> {
+        match self {
+            Self::Number(value) => Some(*value),
+            Self::Text(text) => text.trim().parse().ok(),
+        }
+    }
+}
+
 pub struct IpfsIoPlugin {
     pub preview: bool,
     pub assets_root: Option<String>,
@@ -743,6 +774,7 @@ pub fn change_realm(
                     about,
                     connected,
                     secret,
+                    spawn_parcel,
                 }) = &*realm_change.borrow_and_update()
                 {
                     let mut config = about.configurations.clone().unwrap_or_default();
@@ -765,6 +797,7 @@ pub fn change_realm(
                             .as_ref()
                             .map(|c| c.public_url.clone())
                             .unwrap_or_default(),
+                        spawn_parcel: *spawn_parcel,
                     };
                     // with the realm, before the comms login it starts
                     world_secret.0 = secret.clone();
@@ -928,6 +961,8 @@ pub struct RealmConfig {
     pub connected: bool,
     /// The password the realm (a world) was entered with, for its signed comms login
     pub secret: Option<String>,
+    /// The parcel the realm (a world) spawns players on, from its manifest
+    pub spawn_parcel: Option<IVec2>,
 }
 
 fn server_retry_delay(
@@ -1175,6 +1210,7 @@ impl IpfsIo {
                         about: Default::default(),
                         connected: false,
                         secret: None,
+                        spawn_parcel: None,
                     }))
                     .expect("channel closed");
             }
@@ -1193,6 +1229,7 @@ impl IpfsIo {
                 about,
                 connected: true,
                 secret: None,
+                spawn_parcel: None,
             }))
             .expect("channel closed");
     }
@@ -1219,16 +1256,21 @@ impl IpfsIo {
         let mut about;
         let mut final_url;
         loop {
-            let about_raw =
-                platform::TracedJsonResponse::send(self.client.get(format!("{new_realm}/about")))
-                    .await
-                    .map_err(|e| anyhow!(e))?;
+            let about_raw = self
+                .client
+                .get(format!("{new_realm}/about"))
+                .send()
+                .await
+                .map_err(|e| anyhow!(e))?;
             if about_raw.status() != StatusCode::OK {
-                return Err(anyhow!("status: {}", about_raw.discard()));
+                return Err(anyhow!("status: {}", about_raw.status()));
             }
             final_url = about_raw.url().to_string();
 
-            about = about_raw.json::<ServerAbout>().await?;
+            about = about_raw
+                .json::<ServerAbout>()
+                .await
+                .map_err(|e| anyhow!(e))?;
             if about.configurations.as_ref().is_some_and(|config| {
                 config
                     .scenes_urn
@@ -1259,6 +1301,13 @@ impl IpfsIo {
         if let Err(e) = self.update_scene_urns(&mut about, &new_realm).await {
             error!("failed to update scene urns: {e}");
         }
+        let spawn_parcel = match self.world_spawn_parcel(&about, &new_realm).await {
+            Ok(spawn_parcel) => spawn_parcel,
+            Err(e) => {
+                warn!("failed to fetch the world manifest: {e}");
+                None
+            }
+        };
 
         let mut write = self.context.write().await;
         if let (Some(cs), Some(content)) = (&content_server_override, about.content.as_mut()) {
@@ -1278,6 +1327,7 @@ impl IpfsIo {
                 about,
                 connected: true,
                 secret,
+                spawn_parcel,
             }))
             .expect("channel closed");
         Ok(())
@@ -1402,7 +1452,8 @@ impl IpfsIo {
                         client
                             .post(active_url)
                             .header("content-type", "application/json")
-                            .body(body),
+                            .body(body)
+                            .send(),
                         Duration::from_secs(30),
                         Duration::from_secs(10),
                     )
@@ -1714,17 +1765,21 @@ impl IpfsIo {
         about: &mut ServerAbout,
         new_realm: &str,
     ) -> Result<(), anyhow::Error> {
-        let scenes_raw =
-            platform::TracedJsonResponse::send(self.client.get(format!("{new_realm}/scenes")))
-                .await
-                .map_err(|e| anyhow!(e))?;
+        let scenes_raw = self
+            .client
+            .get(format!("{new_realm}/scenes"))
+            .send()
+            .await
+            .map_err(|e| anyhow!(e))?;
         if scenes_raw.status() == StatusCode::NOT_FOUND {
-            scenes_raw.discard();
             return Ok(());
         } else if scenes_raw.status() != StatusCode::OK {
-            return Err(anyhow!("status: {}", scenes_raw.discard()));
+            return Err(anyhow!("status: {}", scenes_raw.status()));
         }
-        let scenes = scenes_raw.json::<ServerScenes>().await?;
+        let scenes = scenes_raw
+            .json::<ServerScenes>()
+            .await
+            .map_err(|e| anyhow!(e))?;
 
         if scenes.total > 0 {
             if let Some(scenes_urn) = about.configurations.as_mut().and_then(|config| {
@@ -1755,6 +1810,44 @@ impl IpfsIo {
             }
         }
         Ok(())
+    }
+
+    /// The parcel a world spawns players on, from `GET {realm}/manifest`. A world's `about` lists
+    /// its scenes but not where to land; the manifest's `spawn_coordinate` is the world setting
+    /// unity-explorer lands on (the base of the first scene unless the owner set one). A realm
+    /// without scene urns (a city) has no manifest to ask for.
+    async fn world_spawn_parcel(
+        &self,
+        about: &ServerAbout,
+        new_realm: &str,
+    ) -> Result<Option<IVec2>, anyhow::Error> {
+        let has_scene_urns = about.configurations.as_ref().is_some_and(|config| {
+            config
+                .scenes_urn
+                .as_ref()
+                .is_some_and(|urns| !urns.is_empty())
+        });
+        if !has_scene_urns {
+            return Ok(None);
+        }
+        let manifest_raw = self
+            .client
+            .get(format!("{new_realm}/manifest"))
+            .send()
+            .await
+            .map_err(|e| anyhow!(e))?;
+        if manifest_raw.status() == StatusCode::NOT_FOUND {
+            return Ok(None);
+        } else if manifest_raw.status() != StatusCode::OK {
+            return Err(anyhow!("status: {}", manifest_raw.status()));
+        }
+        let manifest = manifest_raw
+            .json::<WorldManifest>()
+            .await
+            .map_err(|e| anyhow!(e))?;
+        Ok(manifest
+            .spawn_coordinate
+            .and_then(|spawn| Some(IVec2::new(spawn.x.value()?, spawn.y.value()?))))
     }
 }
 

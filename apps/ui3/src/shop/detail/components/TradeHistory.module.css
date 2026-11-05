@@ -1,50 +1,315 @@
-/* Latest sales and owners: the resale panel's frame (resaleoffers.css) around a sales table. */
-.scroll {
-  overflow-x: auto;
+/* Owners and latest sales as decentraland.org's Shop lays out a table of accounts: its resellers table
+   (ResellersModal.styles.ts: TableWrap, Table, Owner, rowButton on the glass Button, Pager) under the item
+   page's rail title. Tokens: dark.hairline rgba(255,255,255,.12), dark.raised rgba(255,255,255,.06),
+   dark.focusEdge rgba(255,255,255,.4), glassFaint .1, glass .2, glassText .7, softWhite #fcfcfc, text2 #242129. */
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  color: #fcfcfc;
 }
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* The PDP rail's title ("You might also like"). */
+.title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: normal;
+  color: #fcfcfc;
+}
+
+.count {
+  font-size: 14px;
+  line-height: 1.43;
+  color: rgba(255, 255, 255, 0.7);
+  white-space: nowrap;
+}
+
+/* overlayLight, the veil the Shop's cart panels sit on, so the table reads as a surface rather than lines on the field. */
+.wrap {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.2);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* Fixed columns: a page of longer names or dates must not reflow the table, or paging shifts every column. */
 .table {
   width: 100%;
-  border-collapse: separate;
-  border-spacing: 0 6px;
-  font-size: 13px;
+  min-width: 640px;
+  table-layout: fixed;
+  border-collapse: collapse;
 }
+
 .table th {
-  padding: 0 12px;
+  height: 48px;
+  padding: 8px 8px 8px 16px;
   text-align: left;
-  font-weight: 500;
-  color: var(--ui-muted);
+  vertical-align: middle;
+  background: rgba(255, 255, 255, 0.06);
+  border-right: 0.5px solid rgba(255, 255, 255, 0.12);
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #fcfcfc;
   white-space: nowrap;
 }
+
 .table td {
-  padding: 10px 12px;
-  background: var(--fill-1, rgba(255, 255, 255, 0.04));
+  height: 56px;
+  padding: 8px 8px 8px 16px;
+  vertical-align: middle;
+  border-right: 0.5px solid rgba(255, 255, 255, 0.12);
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.12);
+  font-size: 14px;
+  line-height: 1.43;
+  color: #fcfcfc;
   white-space: nowrap;
 }
-.table td:first-child {
-  border-radius: 10px 0 0 10px;
+
+.table th:last-of-type,
+.table td:last-of-type {
+  border-right: 0;
 }
-.table td:last-child {
-  border-radius: 0 10px 10px 0;
+
+.table tbody tr:last-of-type td {
+  border-bottom: 0;
 }
-.account {
-  color: var(--ui-text);
-  text-decoration: none;
+
+.table tbody tr:hover,
+.table tbody tr:focus-within {
+  background: rgba(255, 255, 255, 0.1);
 }
-.account:hover,
-.account:focus-visible {
-  color: var(--ui-accent);
-  text-decoration: underline;
+
+/* Owners: the item number and the action keep to their content; the owner takes the rest. */
+.owners th:first-of-type,
+.owners td:first-of-type {
+  width: 120px;
 }
-.who .account {
+
+.owners th:last-of-type,
+.owners td:last-of-type {
+  width: 120px;
+  padding-right: 16px;
+}
+
+/* Sales: the two accounts share most of the row; type, date and price take what their longest value needs. */
+.sales th:nth-of-type(1),
+.sales th:nth-of-type(2) {
+  width: 26%;
+}
+.sales th:nth-of-type(3) {
+  width: 14%;
+}
+.sales th:nth-of-type(4) {
+  width: 18%;
+}
+.sales th:nth-of-type(5) {
+  width: 16%;
+}
+
+.table td {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Inline boxes in a cell (the account, the MANA amount) centred on the row like its plain text. */
+.table td > * {
+  vertical-align: middle;
+}
+
+.person {
+  display: inline-flex;
+  align-items: center;
+  /* An inline-flex box sits on the text baseline; centred instead, so the name lines up with the row's other cells. */
+  vertical-align: middle;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+  color: #fcfcfc;
+  text-decoration: none;
+}
+
+.person:hover .name {
+  text-decoration: underline;
+}
+
+.person:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.4);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.ava {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  box-sizing: border-box;
+  border: 2.286px solid rgba(255, 255, 255, 0.5);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  object-fit: cover;
+  overflow: hidden;
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The row action: rowButton on the glass Button, shown on the row it belongs to (always on touch). */
+.actions {
+  text-align: right;
+}
+
+.view {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.2);
+  color: #fcfcfc;
+  font-weight: 600;
+  font-size: 13px;
+  line-height: 24px;
+  letter-spacing: 0.46px;
+  text-transform: uppercase;
+  text-decoration: none;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.table tr:hover .view,
+.table tr:focus-within .view {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .view {
+    opacity: 1;
+  }
+}
+
+@media (hover: hover) {
+  .view:hover {
+    background: #fcfcfc;
+    color: #242129;
+  }
+}
+
+.view:active {
+  background: #fcfcfc;
+  color: #242129;
+  transform: translateY(1px);
+}
+
+.view:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.4);
+  outline-offset: 2px;
+}
+
+.empty {
+  margin: 0;
+  padding: 32px 0;
+  font-size: 14px;
+  line-height: 1.43;
+  color: rgba(255, 255, 255, 0.7);
+  text-align: center;
+}
+
 .retry {
   border: 0;
   padding: 0;
   background: none;
-  color: var(--ui-accent);
+  color: #fcfcfc;
   font: inherit;
   font-weight: 600;
+  text-decoration: underline;
   cursor: pointer;
+}
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Phone widths: every row stacks into a card, each cell under its column's name (data-label), as upstream. */
+@media (max-width: 768px) {
+  .table {
+    min-width: 0;
+  }
+
+  .table thead {
+    display: none;
+  }
+
+  .table tr {
+    display: block;
+    border-bottom: 0.5px solid rgba(255, 255, 255, 0.12);
+  }
+
+  .table tbody tr:last-of-type {
+    border-bottom: 0;
+  }
+
+  .table td {
+    display: block;
+    height: auto;
+    padding: 8px 16px;
+    border-right: 0;
+    border-bottom: 0;
+  }
+
+  .table td:first-of-type {
+    padding-top: 12px;
+  }
+
+  .table td:last-of-type {
+    padding-bottom: 12px;
+  }
+
+  .table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    font-size: 12px;
+    line-height: 1.43;
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .table {
+    table-layout: auto;
+  }
+
+  .owners td:first-of-type,
+  .owners td:last-of-type {
+    width: auto;
+  }
+
+  .actions {
+    text-align: left;
+  }
 }

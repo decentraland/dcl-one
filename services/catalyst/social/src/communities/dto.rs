@@ -67,20 +67,20 @@ pub struct CommunityListItem {
     #[serde(rename = "membersCount")]
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub members_count: i64,
-    #[serde(rename = "isLive")]
+    #[serde(skip)]
     pub is_live: bool,
     #[serde(rename = "voiceChatStatus")]
-    pub voice_chat_status: VoiceChatStatus,
+    pub voice_chat_status: Option<VoiceChatStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub visibility: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub role: Option<String>,
-    #[serde(rename = "isBanned", skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub is_banned: Option<bool>,
-    #[serde(rename = "thumbnailUrl", skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub thumbnail_url: Option<String>,
     #[serde(rename = "ownerName", skip_serializing_if = "Option::is_none")]
@@ -112,20 +112,20 @@ pub struct CommunityDetail {
     #[serde(rename = "membersCount")]
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub members_count: i64,
-    #[serde(rename = "isLive")]
+    #[serde(skip)]
     pub is_live: bool,
     #[serde(rename = "voiceChatStatus")]
-    pub voice_chat_status: VoiceChatStatus,
+    pub voice_chat_status: Option<VoiceChatStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub visibility: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub role: Option<String>,
-    #[serde(rename = "isBanned", skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub is_banned: Option<bool>,
-    #[serde(rename = "thumbnailUrl", skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub thumbnail_url: Option<String>,
     #[serde(rename = "ownerName", skip_serializing_if = "Option::is_none")]
@@ -198,6 +198,15 @@ pub struct CommunityMemberWire {
     pub name_color: Option<NameColor>,
     #[serde(rename = "friendshipStatus")]
     pub friendship_status: i32,
+    #[serde(
+        rename = "lastFriendshipAction",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "ts", ts(optional, type = "string | null"))]
+    pub last_friendship_action: Option<Option<String>>,
+    #[serde(rename = "actingUser", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional, type = "string | null"))]
+    pub acting_user: Option<Option<String>>,
 }
 
 /// The v2 row: address only, the client resolves profiles itself.
@@ -224,9 +233,9 @@ pub struct CommunityRequest {
     pub status: String,
     #[serde(rename = "type")]
     pub kind: String,
-    #[serde(rename = "createdAt")]
+    #[serde(skip)]
     pub created_at: NaiveDateTime,
-    #[serde(rename = "updatedAt")]
+    #[serde(skip)]
     pub updated_at: NaiveDateTime,
 }
 
@@ -249,9 +258,9 @@ pub struct CommunityPost {
 #[derive(Debug, Serialize)]
 pub struct CommunityPlace {
     pub id: String,
-    #[serde(rename = "addedBy")]
+    #[serde(skip)]
     pub added_by: String,
-    #[serde(rename = "addedAt")]
+    #[serde(skip)]
     pub added_at: NaiveDateTime,
 }
 
@@ -261,10 +270,11 @@ pub struct CommunityBan {
     pub community_id: Uuid,
     #[serde(rename = "memberAddress")]
     pub banned_address: String,
-    #[serde(rename = "bannedBy")]
+    #[serde(skip)]
     pub banned_by: String,
     #[serde(rename = "bannedAt", with = "iso_ms")]
     pub banned_at: NaiveDateTime,
+    #[serde(skip)]
     pub reason: Option<String>,
 }
 
@@ -304,7 +314,7 @@ pub struct ActiveCommunityVoiceChat {
     pub community_id: Uuid,
     #[serde(rename = "communityName")]
     pub community_name: String,
-    #[serde(rename = "communityImage")]
+    #[serde(rename = "communityImage", skip_serializing_if = "Option::is_none")]
     pub community_image: Option<String>,
     #[serde(rename = "isMember")]
     pub is_member: bool,
@@ -431,6 +441,8 @@ mod tests {
             has_claimed_name: true,
             name_color: Some(nc),
             friendship_status: 3,
+            last_friendship_action: None,
+            acting_user: None,
         })
         .unwrap();
         assert_eq!(legacy, wire);
@@ -443,6 +455,8 @@ mod tests {
             has_claimed_name: false,
             name_color: None,
             friendship_status: 7,
+            last_friendship_action: None,
+            acting_user: None,
         })
         .unwrap();
         assert_eq!(legacy, wire);

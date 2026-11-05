@@ -28,35 +28,17 @@ fn endpoint_override(service: Service) -> Option<String> {
         .or_else(|| GATEWAY.get()?.service(service))
 }
 
-/// Engine reply to the super-user scene. Only the native Rust transport consumes the gateway bit.
-#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
-pub struct HudServices {
-    pub bases: Vec<(Service, String)>,
-    pub gateway_enabled: bool,
-}
-
-impl HudServices {
-    pub fn into_web_params(self) -> Vec<(String, String)> {
-        self.bases
-            .into_iter()
-            .map(|(s, url)| (s.param(), url))
-            .collect()
-    }
-}
-
-pub fn hud_services() -> HudServices {
-    HudServices {
-        bases: Service::all()
-            .filter(|s| s.has_web_param())
-            .map(|s| {
-                (
-                    s,
-                    public_endpoint_override(s).unwrap_or_else(|| composed_service(s)),
-                )
-            })
-            .collect(),
-        gateway_enabled: GATEWAY.get().is_some(),
-    }
+/// The engine's credential-free service URL reply to the system scene.
+pub fn hud_services() -> Vec<(String, String)> {
+    Service::all()
+        .filter(|s| s.has_web_param())
+        .map(|s| {
+            (
+                s.param(),
+                public_endpoint_override(s).unwrap_or_else(|| composed_service(s)),
+            )
+        })
+        .collect()
 }
 
 /// The resolved override, with credentials removed before publishing or matching a public URL.

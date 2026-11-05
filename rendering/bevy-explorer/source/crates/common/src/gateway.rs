@@ -162,6 +162,68 @@ fn has_proxy_dot_segment(path: &str) -> bool {
 mod gateway_tests {
     use super::*;
 
+    // Runs the actual HUD resolver and rendered infrastructure maps; no npm install is needed.
+    // cargo test -p common gateway_routes_match_deployment -- --ignored
+    #[test]
+    #[ignore = "cross-language integration requires Python 3 and Node.js 24+"]
+    fn gateway_routes_match_deployment() {
+        use std::{
+            io::Write,
+            process::{Command, Stdio},
+        };
+
+        let direct = Gateway::parse("https://example.test").unwrap();
+        let vhost = Gateway::parse("https://gateway.example.test").unwrap();
+        let mut rows = Vec::new();
+        for service in Service::all() {
+            let (scheme, sub, path) = service.composition();
+            let virtual_base = vhost.service(service);
+            let mut signing = Vec::new();
+            if let Some(base) = &virtual_base {
+                for suffix in ["", "/", "/child?query=x/y"] {
+                    let target = format!("{base}{suffix}");
+                    let service_bases = Service::all().filter_map(|s| vhost.service(s));
+                    let signed = vhost.original_path(&target, service_bases).unwrap();
+                    signing.push(serde_json::json!({
+                        "target": target,
+                        "signed": signed,
+                    }));
+                }
+            }
+            rows.push(serde_json::json!({
+                "name": service.param(), "value": service.value(), "scheme": scheme,
+                "sub": sub, "path": path, "web": service.has_web_param(),
+                "direct": direct.service(service), "vhost": virtual_base,
+                "fallback": crate::base_domain::service(service), "signing": signing,
+            }));
+        }
+        let script = std::path::Path::new(env!("DCL_ONE_ROOT"))
+            .join("infra/gateway/tests/explorer_routes.py");
+        let python = std::env::var("PYTHON")
+            .unwrap_or_else(|_| if cfg!(windows) { "python" } else { "python3" }.into());
+        let mut child = Command::new(python)
+            .arg(script)
+            .arg(env!("DCL_ONE_ROOT"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("Python 3 is required for the gateway contract test");
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&serde_json::to_vec(&rows).unwrap())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
     #[test]
     fn signing_matches_explicit_bases_at_path_boundaries() {
         let gateway = Gateway::parse("https://gateway.example.test/mount").unwrap();

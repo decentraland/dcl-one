@@ -220,15 +220,17 @@ globalThis.BroadcastChannel = class BroadcastChannel {
         this._closed = false;
         const self = this;
         if (denoRef.core.ops.op_get_bridge_stream) {
-            denoRef.core.ops.op_get_bridge_stream().then(async function (rid) {
-                while (!self._closed) {
-                    const s = await denoRef.core.ops.op_read_bridge_stream(rid);
-                    if (!s) break; // "" => stream closed
-                    try {
-                        if (self.onmessage) self.onmessage({ data: JSON.parse(s) });
-                    } catch (e) {}
-                }
-            }).catch(() => {});
+            denoRef.core.ops.op_get_bridge_stream().then(function (rid) {
+                (async function () {
+                    while (!self._closed) {
+                        const s = await denoRef.core.ops.op_read_bridge_stream(rid);
+                        if (!s) break; // "" => stream closed
+                        if (self.onmessage) {
+                            try { self.onmessage({ data: JSON.parse(s) }); } catch (e) {}
+                        }
+                    }
+                })();
+            });
         }
     }
     postMessage(msg) {

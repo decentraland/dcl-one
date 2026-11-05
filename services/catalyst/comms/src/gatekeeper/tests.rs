@@ -722,6 +722,31 @@ async fn private_voice_credentials_are_refused_when_a_participant_is_platform_ba
             .unwrap()
             .is_some()
     );
+    let same_pair = voice::get_private_voice_chat_room_credentials(
+        &state,
+        &call_id.to_string(),
+        &[s.moderator.clone(), s.clean.clone()],
+    )
+    .await
+    .expect("the room's own pair, in either order, gets credentials again");
+    assert_eq!(same_pair.len(), 2);
+    let other = Address::parse(&format!("0x{}00000000", Uuid::new_v4().simple())).unwrap();
+    let err = voice::get_private_voice_chat_room_credentials(
+        &state,
+        &call_id.to_string(),
+        &[s.clean.clone(), other.clone()],
+    )
+    .await
+    .expect_err("another party pair cannot take the room");
+    assert_eq!(err.code, 409);
+    let parties: Vec<String> = sqlx::query_scalar(
+        "SELECT address FROM social.private_voice_chat_participants WHERE call_id = $1",
+    )
+    .bind(call_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(!parties.contains(&other.as_str().to_string()));
     let err = voice::get_private_voice_chat_room_credentials(
         &state,
         "not-a-uuid",
@@ -1807,7 +1832,7 @@ async fn the_scene_adapter_records_the_connection_only_while_social_writes_go_th
 }
 
 #[tokio::test]
-async fn a_private_call_is_exclusive_per_wallet_and_follows_the_webhook_lifecycle() {
+async fn private_media_is_retained_until_join_and_follows_the_webhook_lifecycle() {
     let Some(pool) = scratch().await else { return };
     let (settings, media) = webhook_voice_settings().await;
     let state = state_with(pool.clone(), settings);
@@ -1849,14 +1874,11 @@ async fn a_private_call_is_exclusive_per_wallet_and_follows_the_webhook_lifecycl
         .unwrap();
     assert_eq!(
         displaced,
-        vec![call],
-        "a wallet is in at most one call: the old one is torn down"
+        Vec::<Uuid>::new(),
+        "issuing a grant preserves existing media until the new room is actually joined"
     );
-    assert_eq!(
-        state.voice_db.active_call_of(&a).await.unwrap(),
-        Some(second)
-    );
-    assert_eq!(state.voice_db.active_call_of(&b).await.unwrap(), None);
+    assert_eq!(state.voice_db.active_call_of(&a).await.unwrap(), Some(call));
+    assert_eq!(state.voice_db.active_call_of(&b).await.unwrap(), Some(call));
     voice::handle_private_participant_joined(&state, a.as_str(), second)
         .await
         .unwrap();

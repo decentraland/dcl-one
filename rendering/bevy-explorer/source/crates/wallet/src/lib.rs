@@ -292,9 +292,11 @@ mod gateway_signing_tests {
     #[test]
     fn engine_and_scene_sign_their_respective_paths() {
         base_domain::set_gateway("https://gateway.example.test").unwrap();
-        let uri: Uri = base_domain::url(Service::CommsGatekeeper, "/Adapter/Mixed?token=private")
-            .parse()
-            .unwrap();
+        let raw = base_domain::url(
+            Service::CommsGatekeeper,
+            "/Adapter/Mixed?case=Kept&search=two words",
+        );
+        let uri: Uri = reqwest::Url::parse(&raw).unwrap().as_str().parse().unwrap();
         assert_eq!(uri.host(), Some("gateway.example.test"));
         let mut wallet = Wallet::default();
         wallet.finalize_as_guest_with_seed([42; 32]);
@@ -306,9 +308,7 @@ mod gateway_signing_tests {
                 "/social-api/v2/communities/id%5c..%5c..%5c..%5c..%5cauth-api/x",
                 "/outside/../social-api/x",
             ] {
-                let attack: Uri = format!("https://gateway.example.test{path}")
-                    .parse()
-                    .unwrap();
+                let attack = format!("https://gateway.example.test{path}");
                 assert!(
                     sign_service_request("GET", &attack, &wallet, "{}".into())
                         .await
@@ -319,10 +319,21 @@ mod gateway_signing_tests {
 
             for (headers, path) in [
                 (
-                    sign_service_request("POST", &uri, &wallet, "{}".into())
+                    sign_service_request("POST", &raw, &wallet, "{}".into())
                         .await
                         .unwrap(),
                     "/adapter/mixed",
+                ),
+                (
+                    sign_service_request(
+                        "POST",
+                        "https://notifications.example.test/old/../Mixed Name?search=two words",
+                        &wallet,
+                        "{}".into(),
+                    )
+                    .await
+                    .unwrap(),
+                    "/mixed%20name",
                 ),
                 (
                     sign_request("POST", &uri, &wallet, "{}".into())
@@ -355,14 +366,16 @@ pub async fn sign_request(
 /// Trusted engine/HUD request. Scene signing always uses exactly the path it supplied.
 pub async fn sign_service_request(
     method: &str,
-    uri: &Uri,
+    raw: &str,
     wallet: &Wallet,
     meta: String,
 ) -> Result<Vec<(String, String)>, anyhow::Error> {
-    let original = common::base_domain::gateway_signed_path(&uri.to_string())?;
+    // Gateway routing rejects ambiguous raw paths before URL normalization can erase them.
+    let original = common::base_domain::gateway_signed_path(raw)?;
+    let url = reqwest::Url::parse(raw)?;
     sign_path(
         method,
-        original.as_deref().unwrap_or_else(|| uri.path()),
+        original.as_deref().unwrap_or_else(|| url.path()),
         wallet,
         meta,
     )

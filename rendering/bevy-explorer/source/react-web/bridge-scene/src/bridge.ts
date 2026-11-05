@@ -41,7 +41,7 @@ export type Ctx = {
 type AnyHandler = (msg: PageToScene) => void | Promise<void>
 
 export function startBridge(register: (ctx: Ctx) => void): void {
-  let channel: InstanceType<typeof BroadcastChannel>
+  let channel: { postMessage: (m: unknown) => void; onmessage: ((e: { data: unknown }) => void) | null }
   try {
     channel = new BroadcastChannel(CHANNEL)
   } catch (e) {

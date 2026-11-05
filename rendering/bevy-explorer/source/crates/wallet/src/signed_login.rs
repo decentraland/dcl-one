@@ -17,8 +17,13 @@ pub async fn signed_login(
     wallet: Wallet,
     meta: SignedLoginMeta,
 ) -> Result<SignedLoginResponse, anyhow::Error> {
-    let auth_chain =
-        sign_service_request("post", &uri, &wallet, serde_json::to_string(&meta)?).await?;
+    let auth_chain = sign_service_request(
+        "post",
+        &uri.to_string(),
+        &wallet,
+        serde_json::to_string(&meta)?,
+    )
+    .await?;
 
     let mut request = reqwest_client()
         .post(uri.to_string())
@@ -28,12 +33,12 @@ pub async fn signed_login(
         request = request.header(key, value)
     }
 
-    let res = platform::TracedJsonResponse::send(request).await?;
+    let res = request.send().await?;
 
     if res.status() != StatusCode::OK {
-        warn!("signed fetch failed: {}", res.status());
-        return Err(anyhow::anyhow!("status: {}", res.discard()));
+        warn!("signed fetch failed: {res:#?}");
+        return Err(anyhow::anyhow!("status: {}", res.status()));
     }
 
-    res.json().await
+    res.json().await.map_err(|e| anyhow::anyhow!(e))
 }

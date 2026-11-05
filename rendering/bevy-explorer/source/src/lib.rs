@@ -202,7 +202,14 @@ pub struct DecentralandArguments {
     pub launch: LaunchOptions,
     #[command(flatten)]
     pub client: ClientOptions,
-    /// Route supported first-party services via this deployment's HTTP(S) gateway.
+    /// Route first-party HTTP APIs through this gateway; other services keep their configured destinations.
+    ///
+    /// A hostname beginning with `gateway.` selects service aliases and gateway signing paths;
+    /// any other hostname uses direct Catalyst paths. Explicit service flags take precedence.
+    /// Pulse, social/Ethereum WebSockets, storage delegations and auth/reels pages are not remapped:
+    /// use --pulse-server HOST[:PORT], --social-rpc WS(S)://..., --ethereum-rpc WS(S)://...,
+    /// --storage HTTPS://..., --auth-page or --reels as needed. Otherwise they use --base-domain
+    /// (decentraland.org by default); Pulse also honors PULSE_SERVER before the domain fallback.
     #[cfg(not(target_arch = "wasm32"))]
     #[arg(long, value_name = "url", help_heading = system_api_types::launch_options::help_heading::SERVICES)]
     pub gateway: Option<String>,
@@ -283,10 +290,6 @@ pub struct DecentralandArguments {
     /// harness's spelling `-logFile` is accepted too
     #[arg(long, value_name = "path", help_heading = DEBUG)]
     pub log_file: Option<std::path::PathBuf>,
-    /// Serve the read-only engine Network inspector on this loopback port.
-    #[cfg(not(target_arch = "wasm32"))]
-    #[arg(long, value_name = "port", help_heading = DEBUG)]
-    pub network_devtools: Option<u16>,
     // `--automation-token` and `--automation-port`: the loopback console server
     #[cfg(not(target_arch = "wasm32"))]
     #[command(flatten)]

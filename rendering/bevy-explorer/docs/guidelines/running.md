@@ -30,7 +30,9 @@ to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` 
 For a deployment serving the APIs on one origin, run `just native-debug --gateway https://example.org`.
 The native client and HUD use that origin's service prefixes, including `/comms-gatekeeper` and
 `/camera-reel-service`. The peer's `/content` and `/lambdas` are at the root. To use the gateway
-virtual host, pass `--gateway https://gateway.example.org`. The client uses its service aliases
+virtual host, pass `--gateway https://gateway.example.org`. A hostname beginning with
+`gateway.` selects this layout. Every other hostname selects the apex layout.
+The client uses the virtual host's service aliases
 (for example `/peer/content`). For a service base under a gateway alias, the signature covers
 the path after the alias. For example, `/social-api/v1/communities` signs `/v1/communities`.
 A bare `/social-api` signs `/social-api`, while `/social-api/` signs `/`. A service base at the
@@ -46,26 +48,26 @@ selects that backend for both the Events panel and community events. `--camera-r
 the photo API. `--reels` selects the public share page where a photo link opens. On the
 integrated web client, Sites supplies its origin's service URLs at boot.
 
-For a private deployment, pass `--gateway` to enable the native HUD's signed requests on
-supported API routes outside local preview. A private service override on its own still goes
-through the ordinary scene network policy. Each private HUD grant covers one method and URL
-with engine-issued identity headers. The transport rejects redirects, supports caller
-cancellation and bounds request and response bodies.
+The bundled bridge and a system scene selected with `--system-scene` can reach loopback
+and LAN services outside preview. This also applies to individual overrides such as
+`--social-api https://social.lan`. The native scene client continues to reject link-local
+and metadata addresses. Ordinary scenes and authoritative hosted scenes retain their
+existing address policies.
 
-### Native Network inspector
+The gateway flag leaves Pulse, social RPC, Ethereum RPC and storage on their explicit
+overrides or base-domain defaults. The default base domain is `decentraland.org`.
+Pulse also accepts the `PULSE_SERVER` environment variable. Configure a private deployment with
+`--pulse-server <host[:port]>`, `--social-rpc wss://example.org/social-rpc`,
+`--ethereum-rpc wss://example.org/rpc` and `--storage https://storage.example.org`
+as appropriate for that deployment. Storage delegates authorize an origin, so select
+the intended storage origin explicitly. The authentication page and public Reels links
+also keep their configured destinations, set with `--auth-page https://example.org/auth`
+and `--reels https://example.org/reels` when needed.
 
-Run `just native-debug --network-devtools 9223` or pass the same option to the desktop executable.
-Open `http://127.0.0.1:9223/json/list` and copy the target's `devtoolsFrontendUrl` into Chrome.
-The Network panel shows new engine requests while the inspector is attached. An external CDP client
-can connect to `webSocketDebuggerUrl` and send `Network.enable`. Restart without the flag to turn
-the listener off. The web build uses the browser's own Network panel.
-
-The target reports realm discovery, profile registry and signed comms requests, active entities,
-font metadata and downloads through the content request budget. It displays methods, origins,
-recognized route labels, statuses, timing and transfer lengths when available. Dynamic path
-components, queries, fragments, credentials, headers and bodies are excluded. No history is
-retained for future connections. A slow inspector can disconnect when its event buffer fills.
-The native scene runtime and the HUD's browser traffic are separate transports.
+With Python 3 and Node.js 24 installed, run
+`cargo test -p common gateway_routes_match_deployment -- --ignored` from the Explorer
+workspace to compare its resolved routes with Sites and the rendered nginx maps.
+This also checks signature paths and the intentionally separate RPC and storage defaults.
 
 To package, follow the [desktop workflow](../../../../.github/workflows/bevy-explorer-desktop.yml):
 pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With those installed:

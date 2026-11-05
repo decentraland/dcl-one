@@ -1,5 +1,5 @@
 use super::{context, create_runtime};
-use common::base_domain::{self, HudServices, Service};
+use common::base_domain::{self, Service};
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::TcpListener,
@@ -9,7 +9,12 @@ use std::{
 
 // Use the real system module, fetch ops, inbox and scene permission grant.
 // Only the renderer replies are supplied by the fixture.
-fn run_scene(super_user: bool, services: HudServices, script: String) -> String {
+fn run_scene(
+    super_user: bool,
+    is_server: bool,
+    services: Vec<(String, String)>,
+    script: String,
+) -> String {
     let (mut runtime, _) = create_runtime(
         false,
         super_user,
@@ -21,7 +26,7 @@ fn run_scene(super_user: bool, services: HudServices, script: String) -> String 
     let (host, mut inbox) = tokio::sync::mpsc::unbounded_channel();
     {
         let mut state = state.borrow_mut();
-        state.put(context(false));
+        state.put(context(is_server));
         state.put(dcl_types::SceneResourceCounters::default());
         state.put(dcl_types::RpcCalls::default());
         state.put(Vec::<dcl_types::SceneLogMessage>::default());
@@ -37,7 +42,7 @@ fn run_scene(super_user: bool, services: HudServices, script: String) -> String 
                     response.send(services.clone());
                 }
                 system_bridge::SystemApi::SignRequest { uri, response, .. }
-                    if uri.parse::<http::Uri>().is_err() =>
+                    if reqwest::Url::parse(&uri).is_err() =>
                 {
                     response.send(Err("invalid signing URI".into()))
                 }
@@ -79,23 +84,16 @@ fn run_scene(super_user: bool, services: HudServices, script: String) -> String 
 }
 
 #[test]
-fn signed_hud_gateway_fetch_is_scoped_to_engine_routes() {
+fn operator_system_scene_fetches_private_services_without_gateway() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
-    let base = format!("{origin}/mount/notifications");
+    let base = format!(
+        "http://localhost:{}/notifications",
+        listener.local_addr().unwrap().port()
+    );
     let credentialed = base.replacen("http://", "http://operator:password@", 1);
-    let marketplace = format!("{origin}/market");
-    let share = format!("{origin}/share");
-    base_domain::set_services([
-        (Service::Notifications, credentialed.as_str()),
-        (Service::MarketplaceApi, marketplace.as_str()),
-        (Service::Reels, share.as_str()),
-    ])
-    .unwrap();
-    let without_gateway = base_domain::hud_services();
-    base_domain::set_gateway(&format!("{origin}/mount")).unwrap();
+    base_domain::set_services([(Service::Notifications, credentialed.as_str())]).unwrap();
     let services = base_domain::hud_services();
-    let target = format!("{base}/notifications/read?case=Kept&search=two words");
     let (seen, requests) = mpsc::channel();
     listener.set_nonblocking(true).unwrap();
     let (stop, stopped) = mpsc::channel::<()>();
@@ -122,10 +120,8 @@ fn signed_hud_gateway_fetch_is_scoped_to_engine_routes() {
             let mut body = vec![0; size];
             reader.read_exact(&mut body).unwrap();
             request.push_str(&String::from_utf8(body).unwrap());
-            let redirect =
-                request.starts_with("GET /mount/camera-reel-service/api/images/redirect/metadata");
-            let stalled =
-                request.starts_with("GET /mount/camera-reel-service/api/images/stall/metadata");
+            let redirect = request.starts_with("GET /redirect ");
+            let stalled = request.starts_with("GET /stall ");
             seen.send(request).unwrap();
             if stalled {
                 reader
@@ -134,7 +130,6 @@ fn signed_hud_gateway_fetch_is_scoped_to_engine_routes() {
                         b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\ns",
                     )
                     .unwrap();
-                // Hold the body open until the fetch cancels and closes its socket.
                 reader
                     .get_mut()
                     .set_read_timeout(Some(Duration::from_secs(4)))
@@ -143,86 +138,67 @@ fn signed_hud_gateway_fetch_is_scoped_to_engine_routes() {
                 continue;
             }
             let reply = if redirect {
-                "HTTP/1.1 302 Found\r\nLocation: /untargeted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                "HTTP/1.1 302 Found\r\nLocation: http://[fd00:ec2::254]/latest/meta-data/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             } else {
                 "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
             };
             reader.get_mut().write_all(reply.as_bytes()).unwrap();
         }
     });
-    let script = format!("const target={target:?}, base={base:?};")
+    let script = format!("const origin={origin:?}, base={base:?};")
         + r#"
+        // Native privilege applies before service discovery and to ordinary fetch too.
+        if (await (await fetch(origin + "/plain")).text() !== "ok") throw Error("plain fetch failed");
         const api = require("~system/BevyExplorerApi");
         const services = await api.getServiceUrls();
-        if (services.notifications !== base) throw Error("unexpected notifications base");
-        const signed = (url, init = {}) => api.kernelFetch({url, init, meta: "{}"});
-        async function denied(label, operation) {
-            try { await operation(); } catch (error) { return error; }
-            throw Error("unexpectedly admitted " + label);
-        }
-        const response = await signed(target, {
-            method: "PUT", body: "Exact Bytes", headers: {"Content-Type": "text/plain"}
+        if (services.notifications !== base) throw Error("service URL exposed credentials");
+        const response = await api.kernelFetch({
+            url: services.notifications + "/custom?case=Kept&search=two words", meta: "{}",
+            init: {method: "PUT", body: "Exact Bytes", headers: {"Content-Type": "text/plain", "X-Feature": "custom"}}
         });
-        const identity = {
-            "x-identity-auth-chain-0": "engine-signed", "x-identity-timestamp": "123", "x-identity-metadata": "{}"
-        };
-        await denied("replay", () => fetch(target, {method: "PUT", headers: identity}));
-        await denied("arbitrary route", () => signed(base + "/admin"));
-        for (const headers of [
-            {"x-forwarded-host": "attacker.invalid"}, {"Host": "attacker.invalid"}, {"X-Identity-Timestamp": "forged"}
-        ]) {
-            await denied("forged header", () => signed(target, {method: "PUT", headers}));
+        async function denied(url, init) {
+            try { await fetch(url, init); } catch (error) { return error; }
+            throw Error("unexpectedly admitted " + url);
         }
-        await denied("encoded slash", () => signed(base + "/%2e%2e%2fadmin"));
-        await denied("dot segments", () => signed(base + "/anything/../notifications/read", {method: "PUT"}));
-        const item = services.marketplaceApi + "/v1/items?id=legacy";
-        const headers = await Deno.core.ops.op_kernel_fetch_headers(item, "GET", "{}");
-        await api.getServiceUrls();
-        await (await fetch(item, {headers: Object.fromEntries(headers)})).text();
-        await denied("marketplace writes", () => signed(services.marketplaceApi + "/v1/items", {method: "POST"}));
-        await denied("share page", () => signed(services.reels + "/api/images/private/metadata"));
-        await denied("redirect", () => signed(services.cameraReel + "/api/images/redirect/metadata"));
+        for (const url of ["http://169.254.169.254/latest/meta-data/", "http://[fd00:ec2::254]/latest/meta-data/", "http://[fe80::1]/", origin + "/redirect"]) {
+            await denied(url);
+        }
         const controller = new AbortController();
         setTimeout(() => controller.abort(), 200);
-        const error = await denied("aborted request", () =>
-            signed(services.cameraReel + "/api/images/stall/metadata", {signal: controller.signal}));
-        return [response.status, response.body, error.name].join(":");"#;
-    let privileged = run_scene(true, services.clone(), script);
-    let private_override = run_scene(true, without_gateway, r#"
-        const api = require("~system/BevyExplorerApi");
-        const services = await api.getServiceUrls();
-        try {
-            await api.kernelFetch({url: services.notifications + "/notifications", init: {method: "GET"}, meta: "{}"});
-            return "accepted";
-        } catch { return "denied"; }
-    "#.into());
-    let ordinary = run_scene(
-        false,
-        services,
-        format!(
-            r#"try {{await fetch("{target}", {{method:"PUT"}}); return "accepted"}} catch {{return "denied"}}"#
-        ),
+        const error = await denied(origin + "/stall", {signal: controller.signal});
+        return [response.status, response.body, error.name].join(":");
+    "#;
+    let privileged = run_scene(true, false, services.clone(), script);
+    let denied = format!(
+        r#"
+        for (const url of [{origin:?}, {base:?}]) {{
+            try {{ await fetch(url); return "accepted"; }} catch (error) {{
+                if (!String(error).includes("non-public")) return String(error);
+            }}
+        }}
+        return "denied";
+    "#
     );
+    let ordinary = run_scene(false, false, services.clone(), denied.clone());
+    let hosted = run_scene(true, true, services, denied);
     stop.send(()).unwrap();
     server.join().unwrap();
     assert_eq!(privileged, "200:ok:AbortError");
-    assert_eq!(private_override, "denied");
     assert_eq!(ordinary, "denied");
+    assert_eq!(hosted, "denied");
     let requests: Vec<_> = requests.try_iter().collect();
     assert!((3..=4).contains(&requests.len()), "{requests:?}");
-    assert!(requests[1].starts_with("GET /market/v1/items?id=legacy "));
-    assert!(requests[2].starts_with("GET /mount/camera-reel-service/api/images/redirect/metadata "));
-    if requests.len() == 4 {
-        assert!(
-            requests[3].starts_with("GET /mount/camera-reel-service/api/images/stall/metadata ")
-        );
-    }
-    let raw = &requests[0];
-    assert!(raw.starts_with(
-        "PUT /mount/notifications/notifications/read?case=Kept&search=two%20words HTTP/1.1\r\n"
-    ));
+    assert!(requests[0].starts_with("GET /plain HTTP/1.1\r\n"));
+    let raw = &requests[1];
+    assert!(raw.starts_with("PUT /notifications/custom?case=Kept&search=two%20words HTTP/1.1\r\n"));
     assert!(raw.ends_with("Exact Bytes"));
     let headers = raw.to_ascii_lowercase();
     assert!(headers.contains("x-identity-auth-chain-0: engine-signed"));
-    assert!(headers.contains("content-type: text/plain") && headers.contains("host: 127.0.0.1:"));
+    assert!(headers.contains("content-type: text/plain"));
+    assert!(headers.contains("x-feature: custom"));
+    assert!(!headers.contains("authorization:"));
+    assert!(requests[2].starts_with("GET /redirect "));
+    if requests.len() == 4 {
+        assert!(requests[3].starts_with("GET /stall "));
+    }
 }

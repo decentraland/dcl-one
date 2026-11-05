@@ -544,7 +544,7 @@ pub(crate) async fn mint_gatekeeper_adapter(
     wallet: &Wallet,
     meta: String,
 ) -> Result<String, anyhow::Error> {
-    let headers = sign_service_request(method, &uri, wallet, meta).await?;
+    let headers = sign_service_request(method, &uri.to_string(), wallet, meta).await?;
 
     let mut request = client
         .request(method.parse()?, uri.to_string())
@@ -553,10 +553,10 @@ pub(crate) async fn mint_gatekeeper_adapter(
     for (k, v) in headers {
         request = request.header(k, v);
     }
-    let response = platform::TracedJsonResponse::send(request).await?;
+    let response = request.send().await?;
 
     if response.status() != StatusCode::OK {
-        return Err(anyhow::anyhow!("status: {}", response.discard()));
+        return Err(anyhow::anyhow!("status: {}", response.status()));
     }
 
     Ok(response.json::<GatekeeperResponse>().await?.adapter)

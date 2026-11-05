@@ -176,6 +176,7 @@
 }
 
 .shop-cart__panelhead {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -183,6 +184,15 @@
   margin: -24px -24px 24px;
   padding: 12px 12px 12px 24px;
   min-height: 64px;
+}
+/* The rule is inset to the card's padding, spanning exactly the lines below it, as under the summary's title. */
+.shop-cart__panelhead::after {
+  content: "";
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 0;
+  border-bottom: 1px solid rgba(160, 155, 168, 0.25);
 }
 
 .shop-cart__panelback {

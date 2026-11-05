@@ -176,9 +176,7 @@ pub async fn op_get_home_scene(state: &WorkerContext) -> Result<JsValue, WasmErr
 
 #[wasm_bindgen]
 pub async fn op_get_service_urls(state: &WorkerContext) -> Result<JsValue, WasmError> {
-    serde_result!(dcl_js::system_api::op_get_service_urls(state.rc())
-        .await
-        .map(|services| services.into_web_params()))
+    serde_result!(dcl_js::system_api::op_get_service_urls(state.rc()).await)
 }
 
 #[wasm_bindgen]

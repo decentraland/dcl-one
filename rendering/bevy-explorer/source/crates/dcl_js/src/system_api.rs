@@ -370,7 +370,7 @@ pub async fn op_get_home_scene(state: Rc<RefCell<impl State>>) -> Result<HomeSce
 
 pub async fn op_get_service_urls(
     state: Rc<RefCell<impl State>>,
-) -> Result<common::base_domain::HudServices, anyhow::Error> {
+) -> Result<Vec<(String, String)>, anyhow::Error> {
     let (sx, rx) = RpcResultSender::channel();
 
     state

@@ -410,7 +410,7 @@ async fn fetch_fontsource_family(
 ) -> Result<FontsourceFamily, anyhow::Error> {
     let url = format!("https://api.fontsource.org/v1/fonts/{id}");
     let response = platform::fetch(
-        client.get(url),
+        client.get(url).send(),
         Duration::from_secs(30),
         Duration::from_secs(10),
     )

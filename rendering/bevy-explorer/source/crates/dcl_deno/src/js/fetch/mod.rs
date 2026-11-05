@@ -3,7 +3,6 @@ use std::{cell::RefCell, rc::Rc, time::Duration};
 #[cfg(test)]
 mod cancel_tests;
 mod fetch_response_body_resource;
-pub(crate) mod hud_transport;
 mod request_budget;
 
 use bevy::{asset::AsyncReadExt, prelude::debug};
@@ -102,8 +101,6 @@ struct FetchRequestResource {
     /// URL host is the world-storage service (`storage.decentraland.*`).
     is_storage: bool,
     range_request: bool,
-    // Set only when the native super-user consumed its signed method/URL grant.
-    trusted_hud: bool,
 }
 impl deno_core::Resource for FetchRequestResource {}
 
@@ -167,29 +164,16 @@ where
     // host can't bypass the per-request SSRF check or leak signed headers. The desktop/web
     // client still follows them, but under the public-only redirect policy (see
     // `build_scene_client` / `public_only_redirect`).
-    let (is_server, preview) = {
-        let ctx = state.borrow::<CrdtContext>();
-        (ctx.is_server, ctx.preview)
-    };
-
-    let hud_client = if !is_server && client_rid.is_none() {
-        hud_transport::take_client(state, &method, &url, &headers)?
-    } else {
-        None
-    };
-    let trusted_hud = hud_client.is_some();
-    let client = if let Some(client) = hud_client {
-        client
-    } else if let Some(rid) = client_rid {
+    let is_server = state.borrow::<CrdtContext>().is_server;
+    let allow_private = allow_private_network(state);
+    let client = if let Some(rid) = client_rid {
         let r = state.resource_table.get::<ClientResource>(rid)?;
         r.0.clone()
     } else {
-        // One guarded default client for both modes: public-only DNS (unless preview), so a
-        // scene can never reach loopback / private / metadata from a plain `fetch()`.
         match state.try_borrow::<SceneHttpClient>() {
             Some(client) => client.0.clone(),
             None => {
-                let client = build_scene_client(preview, is_server);
+                let client = build_scene_client(allow_private, is_server);
                 state.put(SceneHttpClient(client.clone()));
                 client
             }
@@ -204,13 +188,6 @@ where
     let method = Method::from_bytes(method.as_bytes())?;
     let mut request = client.request(method.clone(), &url);
 
-    if trusted_hud
-        && body_bytes
-            .as_ref()
-            .is_some_and(|body| body.len() as u64 > SERVER_MAX_BODY_BYTES)
-    {
-        anyhow::bail!("HUD request body exceeds limit");
-    }
     if let Some(body) = &request_body {
         let (size, upper) = body.0.size_hint();
         if size > 0 && upper == Some(size) {
@@ -245,7 +222,6 @@ where
     let cancel_handle_rid = state.resource_table.add(FetchCancelHandle(cancel.clone()));
     let request_rid = state.resource_table.add(FetchRequestResource {
         cancel,
-        trusted_hud,
         body_bytes,
         request_body,
         request,
@@ -346,17 +322,17 @@ async fn send_with_permission(
     state: Rc<RefCell<OpState>>,
     request: FetchRequestResource,
 ) -> Result<FetchResponse, AnyError> {
-    let (budget, is_server, preview) = {
+    let (budget, is_server, allow_private) = {
         let mut op_state = state.borrow_mut();
-        let ctx = op_state.borrow::<CrdtContext>();
-        let (is_server, preview) = (ctx.is_server, ctx.preview);
+        let is_server = op_state.borrow::<CrdtContext>().is_server;
+        let allow_private = allow_private_network(&op_state);
         if op_state.try_borrow::<Rc<SceneRequestBudget>>().is_none() {
             op_state.put(Rc::new(SceneRequestBudget::for_scene(is_server)));
         }
         (
             op_state.borrow::<Rc<SceneRequestBudget>>().clone(),
             is_server,
-            preview,
+            allow_private,
         )
     };
     let _call = budget.track_call();
@@ -376,7 +352,7 @@ async fn send_with_permission(
     }
 
     budget
-        .run(send_request(state, request, is_server, preview))
+        .run(send_request(state, request, is_server, allow_private))
         .await
         .map_err(|_| type_error("fetch request timed out"))?
 }
@@ -385,7 +361,7 @@ async fn send_request(
     state: Rc<RefCell<OpState>>,
     resource: FetchRequestResource,
     is_server: bool,
-    preview: bool,
+    allow_private: bool,
 ) -> Result<FetchResponse, AnyError> {
     let FetchRequestResource {
         request,
@@ -393,31 +369,17 @@ async fn send_request(
         request_body,
         url,
         range_request,
-        trusted_hud,
         ..
     } = resource;
 
-    // SSRF guard — every scene, every mode. No deployed scene may reach cloud metadata /
-    // loopback / private ranges, on the shared server OR the desktop client (a scene is
-    // untrusted code with the user's network position — the web build is already held to
-    // this by the browser's Private Network Access rules). `preview` widens the allowance
-    // to the local network for local development, but never to link-local / metadata.
-    common::util::assert_public_url(&url, preview || trusted_hud).await?;
+    // Check both here and in the connect-time resolver so DNS rebinding cannot widen
+    // the scene's allowance. Link-local and metadata remain forbidden in every mode.
+    common::util::assert_public_url(&url, allow_private).await?;
 
     let request = if let Some(body) = request_body {
         let mut buf = Vec::new();
         let mut reader = body.into_async_read();
-        if trusted_hud {
-            reader
-                .take(SERVER_MAX_BODY_BYTES + 1)
-                .read_to_end(&mut buf)
-                .await?;
-            if buf.len() as u64 > SERVER_MAX_BODY_BYTES {
-                anyhow::bail!("HUD request body exceeds limit");
-            }
-        } else {
-            reader.read_to_end(&mut buf).await?;
-        }
+        reader.read_to_end(&mut buf).await?;
         request.body(buf)
     } else if let Some(body) = body_bytes {
         request.body(body)
@@ -430,9 +392,6 @@ async fn send_request(
         .map_err(|err| type_error(err.to_string()))?;
 
     let status = res.status();
-    if trusted_hud && status.is_redirection() {
-        anyhow::bail!("native HUD service redirects are not followed");
-    }
     let mut headers = Vec::new();
     for (key, val) in res.headers().iter() {
         headers.push((key.as_str().into(), val.as_bytes().into()));
@@ -440,7 +399,7 @@ async fn send_request(
 
     let content_length = res.content_length();
 
-    let body_cap = if is_server || trusted_hud {
+    let body_cap = if is_server {
         Some(if range_request {
             SERVER_MAX_ASSET_BYTES
         } else {
@@ -534,9 +493,16 @@ pub struct ClientResource(reqwest::Client);
 impl deno_core::Resource for ClientResource {}
 
 /// Cached default client for a scene's own requests, in both server and client mode. Its
-/// connections are public-only (see [`PublicOnlyResolver`]) unless `preview` widened them to
-/// the local network; on the server, redirects are disabled too.
+/// connections follow the scene's private-network allowance (see [`PublicOnlyResolver`]);
+/// on the server, redirects are disabled too.
 struct SceneHttpClient(reqwest::Client);
+
+fn allow_private_network(state: &OpState) -> bool {
+    let context = state.borrow::<CrdtContext>();
+    // The renderer gives this sender only to its bundled HUD or an operator-selected
+    // system scene. Hosted scenes never inherit that native privilege.
+    context.preview || (!context.is_server && state.has::<dcl_js::SuperUserScene>())
+}
 
 /// DNS resolver that only ever hands back public addresses.
 ///
@@ -568,8 +534,8 @@ impl reqwest::dns::Resolve for PublicOnlyResolver {
 
 /// Shared base for every scene http client: connect timeout, native TLS, UA, and the
 /// resolver that refuses any non-public address at connect time, so the address that was
-/// checked is the address that is dialled. `allow_private` (preview) widens this to the
-/// local network but never to link-local / metadata.
+/// checked is the address that is dialled. `allow_private` (preview or a native system
+/// scene) widens this to the local network but never to link-local / metadata.
 fn scene_client_builder(allow_private: bool) -> reqwest::ClientBuilder {
     platform::http_client_builder()
         .connect_timeout(Duration::from_secs(5))
@@ -609,7 +575,7 @@ fn host_ip_literal(host: &str) -> Option<std::net::IpAddr> {
 /// a hop onto a non-public IP *literal* is refused: reqwest dials an IP literal with no DNS
 /// lookup, so [`PublicOnlyResolver`] — which vets every hostname hop at connect — never sees
 /// it. This is the redirect-time twin of [`reject_non_public_proxy`]. `allow_private`
-/// (preview) permits the local network but never link-local / metadata.
+/// (preview or a native system scene) permits the local network but never link-local / metadata.
 fn public_only_redirect(allow_private: bool) -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(move |attempt| {
         // Policy::custom replaces reqwest's built-in hop cap, so re-impose the default of 10.
@@ -633,8 +599,8 @@ fn public_only_redirect(allow_private: bool) -> reqwest::redirect::Policy {
 /// routes a *hostname* endpoint through [`PublicOnlyResolver`] at connect — so a hostname
 /// proxy is already egress-checked there and a literal is the one case that skips it. (A
 /// `socks*://` proxy needs no handling: the `socks` feature is off, so `reqwest::Proxy::http`
-/// rejects it before we get here.) `allow_private` (preview) permits the local network but
-/// never link-local / metadata.
+/// rejects it before we get here.) `allow_private` (preview or a native system scene)
+/// permits the local network but never link-local / metadata.
 fn reject_non_public_proxy(proxy_url: &str, allow_private: bool) -> Result<(), AnyError> {
     let url = deno_core::url::Url::parse(proxy_url)?;
     if let Some(ip) = url.host_str().and_then(host_ip_literal) {
@@ -666,10 +632,8 @@ pub fn op_fetch_custom_client(
     //
     // Refused rather than ignored so a scene that tries gets an error it can see.
     // Everything else (the plain `createHttpClient()` case) still works.
-    let (is_server, preview) = {
-        let ctx = state.borrow::<CrdtContext>();
-        (ctx.is_server, ctx.preview)
-    };
+    let is_server = state.borrow::<CrdtContext>().is_server;
+    let allow_private = allow_private_network(state);
     if is_server {
         if args.proxy.is_some() {
             anyhow::bail!("custom fetch clients may not set a proxy on the authoritative server");
@@ -687,17 +651,18 @@ pub fn op_fetch_custom_client(
         // same transport rules as the default server client: no redirects, public-only DNS
         return Ok(state
             .resource_table
-            .add(ClientResource(build_scene_client(preview, true))));
+            .add(ClientResource(build_scene_client(allow_private, true))));
     }
 
     // Client mode: the scene may still tune TLS trust/identity for its own machine, but its
-    // connections stay public-only via the resolver (unless preview), and redirects are held
+    // connections use the scene's private-network allowance, and redirects are held
     // to the same egress policy as the default client (see `public_only_redirect`). A proxy
     // endpoint given as an IP literal skips that resolver, so it is vetted synchronously by
     // `reject_non_public_proxy` (a hostname endpoint is resolved through the resolver).
-    let mut builder = scene_client_builder(preview).redirect(public_only_redirect(preview));
+    let mut builder =
+        scene_client_builder(allow_private).redirect(public_only_redirect(allow_private));
     if let Some(proxy_def) = args.proxy {
-        reject_non_public_proxy(&proxy_def.url, preview)?;
+        reject_non_public_proxy(&proxy_def.url, allow_private)?;
         let mut proxy = reqwest::Proxy::http(proxy_def.url)?;
         if let Some(creds) = proxy_def.basic_auth {
             proxy = proxy.basic_auth(&creds.username, &creds.password);

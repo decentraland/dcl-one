@@ -211,7 +211,8 @@ fn community_membership_uri(base: &str, community: &str) -> anyhow::Result<Uri> 
 async fn is_community_member(community: &str, wallet: &Wallet, client: &reqwest::Client) -> bool {
     let result: Result<Community, anyhow::Error> = async {
         let uri = community_membership_uri(&base_domain::service(Service::SocialApi), community)?;
-        let headers = sign_service_request("get", &uri, wallet, "{}".to_owned()).await?;
+        let headers =
+            sign_service_request("get", &uri.to_string(), wallet, "{}".to_owned()).await?;
         let mut request = client.get(uri.to_string()).timeout(Duration::from_secs(10));
         for (key, value) in headers {
             request = request.header(key, value);
@@ -244,7 +245,7 @@ async fn validate_password(
     let meta =
         SignedLoginMeta::new(wallet.is_guest(), origin).with_secret(Some(password.to_owned()));
     let meta = serde_json::to_string(&meta).map_err(|e| e.to_string())?;
-    let headers = sign_service_request("post", &uri, wallet, meta)
+    let headers = sign_service_request("post", &uri.to_string(), wallet, meta)
         .await
         .map_err(|e| e.to_string())?;
 

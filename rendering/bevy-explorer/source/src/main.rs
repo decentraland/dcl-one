@@ -284,13 +284,6 @@ fn decentraland_app_arguments() -> Result<DecentralandArguments, UserError> {
         args.launch.base_domain = args.launch.base_domain.take().or(place.base_domain);
     }
 
-    if let Some(port) = args.network_devtools {
-        let address = platform::devtools::start(port).map_err(|e| {
-            error!("Could not start Network inspector: {e}");
-            UserError(USAGE_ERROR)
-        })?;
-        info!("Explorer Network inspector http://{address}/json/list");
-    }
     if let Some(gateway) = &args.gateway {
         common::base_domain::set_gateway(gateway).map_err(|e| {
             error!("{e}");
@@ -488,21 +481,19 @@ mod tests {
     }
 
     #[test]
-    fn gateway_and_network_inspector_require_native_flags() {
+    fn gateway_requires_a_native_flag() {
         let link = DecentralandArguments::try_parse_from([
             "explorer",
-            "decentraland://?position=1,2&gateway=https://other.test&networkDevtools=9223",
+            "decentraland://?position=1,2&gateway=https://other.test",
         ])
         .unwrap();
-        assert!(link.gateway.is_none() && link.network_devtools.is_none());
+        assert!(link.gateway.is_none());
         let args = DecentralandArguments::try_parse_from([
             "explorer",
             "--gateway",
             "https://gateway.example.test",
             "--places",
             "https://custom.test/base",
-            "--network-devtools",
-            "9223",
         ])
         .unwrap();
         assert_eq!(
@@ -513,7 +504,6 @@ mod tests {
             args.launch.services.places.as_deref(),
             Some("https://custom.test/base")
         );
-        assert_eq!(args.network_devtools, Some(9223));
     }
 
     #[test]
@@ -534,7 +524,6 @@ mod tests {
         ])
         .unwrap();
         let bases: std::collections::HashMap<_, _> = base_domain::hud_services()
-            .into_web_params()
             .into_iter()
             .collect();
         assert_eq!(bases["socialApi"], "https://custom.example/override");
