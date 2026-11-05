@@ -229,14 +229,20 @@ fn check_ktx2_header(bytes: &[u8]) -> Result<(), ImageProcessError> {
     let valid = || -> Option<bool> {
         let (format, width, height) = (u32_at(12)?, u32_at(20)?, u32_at(24)?);
         let (depth, layers, faces, scheme) = (u32_at(28)?, u32_at(32)?, u32_at(36)?, u32_at(44)?);
+        // Check the DFD before Transcoder::new can initialize another codec's codebooks.
+        let dfd = usize::try_from(u32_at(48)?).ok()?;
+        let dfd_len = usize::try_from(u32_at(52)?).ok()?;
+        let descriptor = bytes.get(dfd..dfd.checked_add(dfd_len)?)?;
         Some(
             bytes.starts_with(KTX2_MAGIC)
+                && matches!(dfd_len, 44 | 60)
+                && descriptor.get(12) == Some(&166) // KHR_DF_MODEL_UASTC
                 && format == 0
                 && matches!(scheme, 0 | 2)
                 && (1..=KTX2_MAX_SIZE).contains(&width)
                 && (1..=KTX2_MAX_SIZE).contains(&height)
                 // one 2d image: the loader and the gltf repair take a single texture
-                && depth <= 1
+                && depth == 0
                 && layers <= 1
                 && faces == 1,
         )
@@ -781,6 +787,24 @@ mod tests {
         // BasisLZ (ETC1S), and a declared GPU format such as BC7
         assert!(transcode_ktx2(&patched(44, &1u32.to_le_bytes())).is_err());
         assert!(transcode_ktx2(&patched(12, &145u32.to_le_bytes())).is_err());
+    }
+
+    #[test]
+    fn ktx2_rejects_other_codecs_before_transcoder_initialization() {
+        let mut bytes = UASTC_8.to_vec();
+        let dfd = u32::from_le_bytes(bytes[48..52].try_into().unwrap()) as usize;
+        assert!(check_ktx2_header(&bytes).is_ok());
+        for model in [163, 167, 168, 169] {
+            for scheme in [0u32, 2] {
+                bytes[dfd + 12] = model;
+                bytes[44..48].copy_from_slice(&scheme.to_le_bytes());
+                assert!(check_ktx2_header(&bytes).is_err());
+            }
+        }
+        bytes[dfd + 12] = 166;
+        bytes[48..52].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert!(check_ktx2_header(&bytes).is_err());
+        assert!(check_ktx2_header(&UASTC_8[..dfd + 32]).is_err());
     }
 
     #[test]

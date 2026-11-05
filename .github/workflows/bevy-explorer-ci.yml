@@ -93,8 +93,10 @@ jobs:
       - name: Check the CI status comment scripts
         run: |
           for test in .github/actions/bevy-explorer-ci-status/test-*.sh; do bash "$test"; done
-      - name: Verify the vendored basisu bytes and patch replay
-        run: python3 rendering/bevy-explorer/source/vendor/basisu/verify.py
+      - name: Verify the vendored texture decoder bytes and patch replay
+        run: |
+          python3 rendering/bevy-explorer/source/vendor/basisu/verify.py
+          python3 rendering/bevy-explorer/source/vendor/ruzstd/verify.py
   changes:
     name: Changes
     runs-on: ubuntu-24.04
@@ -238,6 +240,8 @@ jobs:
           # Reports belong to this run, including when an older target was restored.
           rm -rf target/cargo-timings
           cargo build --package dcl_deno_ipc --release --locked --timings
+      - name: Test the texture decoder boundaries
+        run: cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib
       - name: Run the native test suite
         env:
           RUSTC_WRAPPER: ${{ runner.os == 'Windows' && 'sccache' || '' }}

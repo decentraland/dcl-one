@@ -62,6 +62,7 @@ version = "0.2"
 optional = true
 
 [dependencies.ruzstd]
+path = "../ruzstd"
 version = "0.7"
 optional = true
 default-features = false

@@ -2,6 +2,7 @@
 rendering/bevy-explorer/source/** -text
 library/vendor/rusty_enet/** -text -whitespace
 rendering/bevy-explorer/source/vendor/basisu/** -text -whitespace
+rendering/bevy-explorer/source/vendor/ruzstd/** -text -whitespace
 
 # The vendored docs.decentraland.org media (apps/sites/content/docs, apps/sites/scripts/gen-docs-content.mts)
 # lives in Git LFS; its Markdown, JSON manifests and search index stay plain git.

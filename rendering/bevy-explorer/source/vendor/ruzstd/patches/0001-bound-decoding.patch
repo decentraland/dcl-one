@@ -1,0 +1,167 @@
+--- a/src/decoding/block_decoder.rs
++++ b/src/decoding/block_decoder.rs
+@@ -1,3 +1,4 @@
++// Modified in dcl-one: bound decoder window, block expansion and output budget.
+ use super::super::blocks::block::BlockHeader;
+ use super::super::blocks::block::BlockType;
+ use super::super::blocks::literals_section::LiteralsSection;
+@@ -292,6 +293,9 @@
+         let block_type = header.block_type;
+         match block_type {
+             BlockType::RLE => {
++                workspace
++                    .claim_output(header.decompressed_size as usize)
++                    .map_err(DecompressBlockError::from)?;
+                 const BATCH_SIZE: usize = 512;
+                 let mut buf = [0u8; BATCH_SIZE];
+                 let full_reads = header.decompressed_size / BATCH_SIZE as u32;
+@@ -318,6 +322,9 @@
+                 Ok(1)
+             }
+             BlockType::Raw => {
++                workspace
++                    .claim_output(header.decompressed_size as usize)
++                    .map_err(DecompressBlockError::from)?;
+                 const BATCH_SIZE: usize = 128 * 1024;
+                 let mut buf = [0u8; BATCH_SIZE];
+                 let full_reads = header.decompressed_size / BATCH_SIZE as u32;
+@@ -374,6 +381,11 @@
+ 
+         let mut section = LiteralsSection::new();
+         let bytes_in_literals_header = section.parse_from_header(raw)?;
++        if section.regenerated_size > 128 * 1024
++            || section.regenerated_size as usize > workspace.output_remaining
++        {
++            return Err(ExecuteSequencesError::OutputTooLarge.into());
++        }
+         let raw = &raw[bytes_in_literals_header as usize..];
+         vprintln!(
+             "Found {} literalssection with regenerated size: {}, and compressed size: {:?}",
+@@ -447,6 +459,7 @@
+             vprintln!("Executing sequences");
+             execute_sequences(workspace)?;
+         } else {
++            workspace.claim_output(workspace.literals_buffer.len())?;
+             workspace.buffer.push(&workspace.literals_buffer);
+             workspace.sequences.clear();
+         }
+--- a/src/decoding/scratch.rs
++++ b/src/decoding/scratch.rs
+@@ -1,3 +1,4 @@
++// Modified in dcl-one: bound decoder window, block expansion and output budget.
+ //! Structures that wrap around various decoders to make decoding easier.
+ 
+ use super::super::blocks::sequence_section::Sequence;
+@@ -19,6 +20,7 @@
+     pub fse: FSEScratch,
+ 
+     pub buffer: DecodeBuffer,
++    pub(crate) output_remaining: usize,
+     pub offset_hist: [u32; 3],
+ 
+     pub literals_buffer: Vec<u8>,
+@@ -41,6 +43,7 @@
+                 ml_rle: None,
+             },
+             buffer: DecodeBuffer::new(window_size),
++            output_remaining: usize::MAX,
+             offset_hist: [1, 4, 8],
+ 
+             block_content_buffer: Vec::new(),
+@@ -49,7 +52,20 @@
+         }
+     }
+ 
++    /// Reserve a block's output before expanding literals or matches.
++    pub(crate) fn claim_output(
++        &mut self,
++        size: usize,
++    ) -> Result<(), super::sequence_execution::ExecuteSequencesError> {
++        if size > 128 * 1024 || size > self.output_remaining {
++            return Err(super::sequence_execution::ExecuteSequencesError::OutputTooLarge);
++        }
++        self.output_remaining -= size;
++        Ok(())
++    }
++
+     pub fn reset(&mut self, window_size: usize) {
++        self.output_remaining = usize::MAX;
+         self.offset_hist = [1, 4, 8];
+         self.literals_buffer.clear();
+         self.sequences.clear();
+--- a/src/decoding/sequence_execution.rs
++++ b/src/decoding/sequence_execution.rs
+@@ -1,3 +1,4 @@
++// Modified in dcl-one: bound decoder window, block expansion and output budget.
+ use super::{decodebuffer::DecodeBufferError, scratch::DecoderScratch};
+ 
+ #[derive(Debug)]
+@@ -6,6 +7,7 @@
+     DecodebufferError(DecodeBufferError),
+     NotEnoughBytesForSequence { wanted: usize, have: usize },
+     ZeroOffset,
++    OutputTooLarge,
+ }
+ 
+ impl core::fmt::Display for ExecuteSequencesError {
+@@ -21,6 +23,7 @@
+                     wanted, have
+                 )
+             }
++            ExecuteSequencesError::OutputTooLarge => write!(f, "Decoded output exceeds its limit"),
+             ExecuteSequencesError::ZeroOffset => {
+                 write!(f, "Illegal offset: 0 found")
+             }
+@@ -46,6 +49,15 @@
+ 
+ /// Take the provided decoder and execute the sequences stored within
+ pub fn execute_sequences(scratch: &mut DecoderScratch) -> Result<(), ExecuteSequencesError> {
++    // Literals occur once; match lengths add to them. Check the entire block before writes.
++    let size = scratch
++        .sequences
++        .iter()
++        .try_fold(scratch.literals_buffer.len(), |size, seq| {
++            size.checked_add(seq.ml as usize)
++                .ok_or(ExecuteSequencesError::OutputTooLarge)
++        })?;
++    scratch.claim_output(size)?;
+     let mut literals_copy_counter = 0;
+     let old_buffer_size = scratch.buffer.len();
+     let mut seq_sum = 0;
+--- a/src/frame_decoder.rs
++++ b/src/frame_decoder.rs
+@@ -1,3 +1,4 @@
++// Modified in dcl-one: bound decoder window, block expansion and output budget.
+ //! Framedecoder is the man struct users interact with to decode zstd frames
+ //!
+ //! Zstandard compressed data is made of one or more [Frame]s. Each frame is independent and can be
+@@ -211,6 +212,11 @@
+     pub fn new(source: impl Read) -> Result<FrameDecoderState, FrameDecoderError> {
+         let (frame, header_size) = frame::read_frame_header(source)?;
+         let window_size = frame.header.window_size()?;
++        if window_size > MAX_WINDOW_SIZE {
++            return Err(FrameDecoderError::WindowSizeTooBig {
++                requested: window_size,
++            });
++        }
+         Ok(FrameDecoderState {
+             frame,
+             frame_finished: false,
+@@ -296,6 +302,17 @@
+             state.decoder_scratch.init_from_dict(dict);
+             state.using_dict = Some(dict_id);
+         }
++        Ok(())
++    }
++
++    /// Set the remaining decoded-byte budget after init and before decoding blocks.
++    /// Reset/init clears the budget. Every block is checked before output expansion.
++    pub fn set_output_limit(&mut self, size: usize) -> Result<(), FrameDecoderError> {
++        let state = self
++            .state
++            .as_mut()
++            .ok_or(FrameDecoderError::NotYetInitialized)?;
++        state.decoder_scratch.output_remaining = size;
+         Ok(())
+     }
+ 

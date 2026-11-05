@@ -82,7 +82,7 @@ members = [
   "local-harness/benchmark",
   "local-harness/presence/harness-util",
 ]
-exclude = ["../../../library/vendor/rusty_enet", "vendor/basisu"]
+exclude = ["../../../library/vendor/rusty_enet", "vendor/basisu", "vendor/ruzstd"]
 
 [workspace.dependencies]
 analytics = { path = "crates/analytics" }

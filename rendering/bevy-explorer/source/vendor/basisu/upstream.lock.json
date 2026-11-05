@@ -14,7 +14,7 @@
   "normalization": "Exact bytes of the published crates.io package (the .crate whose SHA256 is crate_sha256, as Cargo.lock recorded it), with the listed patches applied. Repository .gitattributes disables newline conversion for this subtree. SHA256 manifests are UTF-8 with LF lines and lexicographically sorted package-relative paths. No Cargo cache marker is imported.",
   "manifests": {
     "upstream-files.sha256": "b0cc1f6baf8c6a380ab0782354f23dd1f9c0600091b708ad7d8c33af561f352a",
-    "checksums.sha256": "39a2b4c2ed5bcb8bf7d386b09fe5fbceb12da744e63a82d430b237cac5622424"
+    "checksums.sha256": "1b7dbca67c11ea12eddfc794dce63eaf801ee6def79ad87a1f931a87f414dcac"
   },
   "patches": [
     {
@@ -27,6 +27,14 @@
         "Checked output sizes, and fallible allocation of output and inflate buffers: an oversized file is an error, not a process abort",
         "Keep the key/value scan within its range when entry alignment steps past the end",
         "Notice of modification at the top of each changed file, as Apache-2.0 section 4(b) requires"
+      ]
+    },
+    {
+      "path": "patches/0002-bound-zstd-decoding.patch",
+      "sha256": "636634399153a433aafe27705ddecdd573ca4ef324f109c7f5fc96c768c34738",
+      "changes": [
+        "Use the pinned local ruzstd decoder and enforce the level output budget before expansion.",
+        "Add deterministic compressed-stream boundary tests."
       ]
     }
   ],
