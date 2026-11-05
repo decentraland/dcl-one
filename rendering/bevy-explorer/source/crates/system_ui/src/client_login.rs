@@ -279,19 +279,10 @@ async fn send(wallet: &Wallet, event: &PendingClientLogin) -> AttemptResult {
         request = request.header(name, value);
     }
     match request.send().await {
-        Ok(mut response) => {
+        Ok(response) => {
             let status = response.status().as_u16();
-            // Bound error bodies and wall time; small responses return connections to the pool.
-            let _ = async_std::future::timeout(Duration::from_secs(1), async {
-                let mut bytes = 0;
-                while let Ok(Some(chunk)) = response.chunk().await {
-                    bytes += chunk.len();
-                    if bytes >= 16 * 1024 {
-                        break;
-                    }
-                }
-            })
-            .await;
+            #[cfg(not(target_arch = "wasm32"))]
+            drain(response).await;
             if status == 204 {
                 AttemptResult::Accepted
             } else if matches!(status, 404 | 405) {
@@ -309,6 +300,22 @@ async fn send(wallet: &Wallet, event: &PendingClientLogin) -> AttemptResult {
         }
         Err(_) => AttemptResult::Retry,
     }
+}
+
+// Native reqwest needs body consumption for reuse; browser fetch manages its connections.
+#[cfg(not(target_arch = "wasm32"))]
+async fn drain(mut response: reqwest::Response) {
+    // Bound error bodies and wall time; small responses return connections to the pool.
+    let _ = async_std::future::timeout(Duration::from_secs(1), async {
+        let mut bytes = 0;
+        while let Ok(Some(chunk)) = response.chunk().await {
+            bytes += chunk.len();
+            if bytes >= 16 * 1024 {
+                break;
+            }
+        }
+    })
+    .await;
 }
 
 async fn storage_timeout<T>(
