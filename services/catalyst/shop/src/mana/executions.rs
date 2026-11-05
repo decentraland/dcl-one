@@ -341,6 +341,7 @@ async fn expectation(
                         trade,
                         venue,
                         hashed_signature,
+                        coupon,
                         ..
                     },
                     "accept_trade",
@@ -370,10 +371,19 @@ async fn expectation(
                         contract: Some(contract),
                         token_id,
                         reference: Some(hashed_signature.clone()),
+                        // A coupon lowers what the buyer pays as the contract does:
+                        // the price less floor(price * ppm / 1e6).
                         price: if usd_pegged {
                             None
                         } else {
-                            leg.map(|(_, a)| a)
+                            match coupon {
+                                Some(c) => leg.and_then(|(_, a)| {
+                                    crate::types::ManaWei::new(a)
+                                        .discounted(c.discount_ppm)
+                                        .map(|w| w.get())
+                                }),
+                                None => leg.map(|(_, a)| a),
+                            }
                         },
                         mana_token: Some(chain.mana),
                         seller: Some(if is_bid { actor } else { signer }),

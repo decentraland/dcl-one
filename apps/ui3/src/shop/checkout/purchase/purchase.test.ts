@@ -28,6 +28,8 @@ import {
   resaleTrade,
   type FakeHandlers,
 } from "../fakes";
+import { getCouponManagerForTrade } from "../lib/marketplace";
+import type { ListingCoupon } from "./encoding";
 import { reviewCart, resolveLine, partitionReservations, couponForTrade, classifyTrade, classifyStoreMint, isLineBuyable, type ResolvedLine, type SettlementResolvers } from "./cart";
 import { resumeCheckout, runGroup, watchGroup, type CheckoutDeps } from "./executor";
 import { computePaymentOptions, distributeCreditsAcrossUnits, findOption, hasPayableOption } from "./payment-options";
@@ -152,6 +154,44 @@ describe("resolving a line for settlement against the offer the buyer confirmed"
     const repriced = resolvers({ store: async () => ({ priceWei: "1", available: 10 }) });
     mint.method = "mana";
     expect((await resolveLine(mint, storeMint(session), session, BOOK.buyer, repriced)).status).toBe("stale");
+  });
+
+  it("a coupon line settles with the coupon the offer was priced with, or goes stale", async () => {
+    const COUPON = "0xc914507fe297b2dddd1232ac3a8903f1c125e794";
+    const priced = { ...creatorOrder(session, "wearable", 100_000), coupon: { id: "sale-1", couponAddress: COUPON, discountPpm: 100_000 } };
+    const { lines } = cartWith([{ offer: priced, tradeId: "trade-creator-1", name: "Order" }]);
+    const line = { ...lines[0]!, method: "mana" as const };
+    const now = Date.now();
+    const live = (over: Partial<ListingCoupon> = {}): ListingCoupon =>
+      ({
+        id: "sale-1",
+        signer: BOOK.creator,
+        couponManager: getCouponManagerForTrade(creatorTrade())!,
+        couponAddress: COUPON,
+        checks: { uses: 10, expiration: now + 86_400_000, effective: now - 1_000, salt: "0x00", contractSignatureIndex: 0, signerSignatureIndex: 0, allowedRoot: "0x", externalChecks: [] },
+        discountType: 1,
+        discount: 100_000,
+        root: `0x${"00".repeat(32)}`,
+        signature: `0x${"bb".repeat(65)}`,
+        proof: [],
+        ...over,
+      }) as ListingCoupon;
+    const withCoupon = (coupon: ListingCoupon | undefined) => resolvers({ coupon: async () => coupon });
+    const settled = await resolveLine(line, priced, session, BOOK.buyer, withCoupon(live()), now);
+    expect(settled).toMatchObject({ status: "buyable", resolved: { coupon: { id: "sale-1" } } });
+    // The USD-priced line paid in MANA is not re-checked by price: only the coupon's identity stops a worse sale.
+    for (const changed of [live({ discount: 50_000 }), live({ id: "sale-2" }), live({ couponAddress: "0x0000000000000000000000000000000000000001" }), undefined]) {
+      expect((await resolveLine(line, priced, session, BOOK.buyer, withCoupon(changed), now)).status).toBe("stale");
+    }
+    const unpriced = { ...priced, coupon: null };
+    expect((await resolveLine(line, unpriced, session, BOOK.buyer, withCoupon(live()), now)).status).toBe("stale");
+    // An offer settled by plain accept never picks a coupon up on its own.
+    const plain = creatorOrder(session);
+    const { lines: plainLines } = cartWith([{ offer: plain, tradeId: "trade-creator-1", name: "Order" }]);
+    const accepted = await resolveLine({ ...plainLines[0]!, method: "mana" }, plain, session, BOOK.buyer, withCoupon(live()), now);
+    expect(accepted.status).toBe("buyable");
+    expect(accepted.status === "buyable" && "coupon" in accepted.resolved ? accepted.resolved.coupon : undefined).toBeUndefined();
+    expect(accepted.status === "buyable" && accepted.resolved.acquisition).toBe("trade");
   });
 
   it("reviewCart sorts every line and never aborts on one bad row", async () => {

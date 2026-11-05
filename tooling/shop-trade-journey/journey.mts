@@ -21,6 +21,7 @@ import type { Browser, BrowserContext, Page } from "playwright-core";
 import { launch } from "./lib/browser.mts";
 import { journeyEnv, parseDiscount, parseItem, parseToken, parseTopup } from "./lib/env.mts";
 import { signedPost } from "./lib/signed.mts";
+import { chargedMana, collectionInRoot, couponData, couponProofs, settledCall } from "./lib/settlement.mts";
 import { answer, DEFAULT_RPC, keyFrom, PAGE_PROVIDER, testnetWallet, type TestnetWallet } from "./lib/wallet.mts";
 
 const AMOY_MANA = "0x7ad72b9f944ea9793cf4055d88f81138cc2c63a0" as const;
@@ -356,6 +357,53 @@ async function quotedMana(page: Page): Promise<bigint | null> {
   }
 }
 
+const MANA_TRANSFER = keccak256(toHex("Transfer(address,address,uint256)"));
+const FEED = parseAbi([
+  "function manaUsdAggregator() view returns (address)",
+  "function latestRoundData() view returns (uint80, int256, uint256, uint256, uint80)",
+  "function decimals() view returns (uint8)",
+]);
+
+/**
+ * The buyer's unit was minted by a transaction that settled through acceptWithCoupon with the seller's rate
+ * coupon for `pct`, covering the collection, applied by Amoy's coupon manager, and charging the MANA the contract
+ * charges: the coupon on each signed amount, then a USD price converted at the feed round of that block.
+ */
+async function couponPurchase(item: { contract: string; itemId: string }, buyer: Hex, seller: Hex, pct: number, fromBlock: bigint): Promise<string> {
+  const minted = await amoy.getLogs({ address: item.contract as Hex, event: parseAbi(["event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)"])[0], args: { to: buyer }, fromBlock });
+  const hash = minted.at(-1)?.transactionHash;
+  if (!hash) throw new Error("no unit was minted to the buyer since the purchase started");
+  const [tx, receipt] = await Promise.all([amoy.getTransaction({ hash }), amoy.getTransactionReceipt({ hash })]);
+  if (receipt.status !== "success") throw new Error(`${hash} reverted`);
+  const settled = settledCall(tx.input);
+  if (settled.call !== "acceptWithCoupon") throw new Error(`${hash} settled through ${settled.call}: the discount was not applied on chain`);
+  const trade = settled.trades[0]!;
+  const coupon = settled.coupons[0]!;
+  if (trade.signer.toLowerCase() !== seller.toLowerCase()) throw new Error(`${hash} accepted a trade signed by ${trade.signer}, not the seller`);
+  if (trade.sent[0]?.contractAddress.toLowerCase() !== item.contract.toLowerCase()) throw new Error(`${hash} sold another collection`);
+  const data = couponData(coupon.data);
+  if (data.discountType !== 1n || data.discount !== BigInt(pct) * 10_000n) throw new Error(`${hash} carried a coupon of type ${data.discountType} and ${data.discount} ppm, not the ${pct}% rate`);
+  if (!collectionInRoot(item.contract as Hex, couponProofs(coupon.callerData)[0] ?? [], data.root)) throw new Error(`${hash} carried a coupon whose root does not cover the collection`);
+  if (!receipt.logs.some((l) => l.address.toLowerCase() === AMOY_COUPON_MANAGER)) throw new Error(`${hash} has no event of Amoy's coupon manager: the coupon was not applied`);
+  let round: { answer: bigint; decimals: number } | null = null;
+  if (trade.received.some((a) => a.assetType === 2n)) {
+    const at = { blockNumber: receipt.blockNumber };
+    const aggregator = await amoy.readContract({ address: tx.to!, abi: FEED, functionName: "manaUsdAggregator", ...at });
+    const [[, answer], decimals] = await Promise.all([
+      amoy.readContract({ address: aggregator, abi: FEED, functionName: "latestRoundData", ...at }),
+      amoy.readContract({ address: aggregator, abi: FEED, functionName: "decimals", ...at }),
+    ]);
+    round = { answer, decimals };
+  }
+  const expected = chargedMana(trade.received, data.discount, round);
+  const paid = receipt.logs
+    // Transfer events only: the same MANA log stream carries the buyer's Approval, whose value is an allowance.
+    .filter((l) => l.address.toLowerCase() === AMOY_MANA && l.topics[0] === MANA_TRANSFER && l.topics[1] && BigInt(l.topics[1]) === BigInt(buyer))
+    .reduce((sum, l) => sum + BigInt(l.data), 0n);
+  if (paid !== expected) throw new Error(`${hash} took ${formatEther(paid)} MANA from the buyer; the contract charges ${formatEther(expected)} for this coupon`);
+  return `acceptWithCoupon at ${pct}% in ${hash}: ${formatEther(paid)} MANA, as the contract charges`;
+}
+
 /** The seller's live discounts on this collection in My Store: rows that still offer "End now". */
 /** "<pct>% off" at the start of a row: "5% off" must not match "15% off". */
 const offText = (pct: number) => new RegExp(`^\\s*${pct}% off`);
@@ -499,14 +547,13 @@ async function primary(seller: Actor, buyer: Actor, buyerKey: Hex, s: Funds, b: 
     });
     await step("buyer buys one with MANA at the discount", buyer, async () => {
       const units = await unitsOf(item, buyer.wallet.address);
-      const before = await manaOf(buyer.wallet.address);
+      const fromBlock = await amoy.getBlockNumber();
       await buyItem(buyer, item, "mana");
       await unitsGrow(item, buyer.wallet.address, units);
-      const paid = before - (await manaMoves(buyer.wallet.address, before));
-      if (paid <= 0n) throw new Error("the unit arrived but the buyer's MANA did not go down");
-      // The page's regular price, read before the discount: the purchase has to cost less.
-      if (price !== null && paid >= price) throw new Error(`paid ${formatEther(paid)} MANA, not less than the regular ${formatEther(price)}: the discount did not apply`);
-      return `paid ${formatEther(paid)} MANA${price !== null ? ` of a regular ${formatEther(price)}` : ""}`;
+      // Not "paid less than the page's price": the page quotes at the node's spot rate and Amoy settles at its own
+      // feed, so a lower amount proves nothing. The transaction itself must carry the coupon and charge what the
+      // contract charges for it.
+      return couponPurchase(item, buyer.wallet.address, seller.wallet.address, pct, fromBlock);
     });
     await step(`buyer tops up ${topup} test credits with the mock card`, buyer, async () => {
       const out = await signedPost<{ available?: string }>(buyerKey, `${sites}/credits/topup/mock-card`, { credits: topup });

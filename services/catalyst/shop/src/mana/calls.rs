@@ -46,6 +46,8 @@ pub enum CallError {
     NoLegacyMarketplace,
     #[error("the chain has no NAME controller")]
     NoNameController,
+    #[error("coupon {0}")]
+    Coupon(String),
 }
 
 fn bytes_of(label: &str, raw: Option<&str>) -> Result<Vec<u8>, CallError> {
@@ -142,6 +144,24 @@ fn external_checks(
 /// `checks`, the `sent` assets delivered to `caller` (the signature does not
 /// cover a sent beneficiary; the caller names itself), the `received` ones
 /// as signed (the signer, or the beneficiary it named).
+/// The on-chain `Checks` of a signed trade or coupon, under its own allowed root.
+fn on_chain_checks(
+    c: &crate::checkout::trade::TradeChecksIn,
+    allowed_root: B256,
+) -> Result<offchain::Checks, CallError> {
+    Ok(offchain::Checks {
+        uses: U256::from(c.uses),
+        expiration: secs(c.expiration),
+        effective: secs(c.effective),
+        salt: word("checks.salt", Some(&c.salt))?,
+        contractSignatureIndex: U256::from(c.contract_signature_index),
+        signerSignatureIndex: U256::from(c.signer_signature_index),
+        allowedRoot: allowed_root,
+        allowedProof: Vec::new(),
+        externalChecks: external_checks(&c.external_checks)?,
+    })
+}
+
 pub fn on_chain_trade(trade: &TradeIn, caller: Address) -> Result<offchain::Trade, CallError> {
     let c = &trade.checks;
     let allowed_root = word("checks.allowedRoot", c.allowed_root.as_deref())?;
@@ -172,17 +192,7 @@ pub fn on_chain_trade(trade: &TradeIn, caller: Address) -> Result<offchain::Trad
     Ok(offchain::Trade {
         signer,
         signature: signature.into(),
-        checks: offchain::Checks {
-            uses: U256::from(c.uses),
-            expiration: secs(c.expiration),
-            effective: secs(c.effective),
-            salt: word("checks.salt", Some(&c.salt))?,
-            contractSignatureIndex: U256::from(c.contract_signature_index),
-            signerSignatureIndex: U256::from(c.signer_signature_index),
-            allowedRoot: allowed_root,
-            allowedProof: Vec::new(),
-            externalChecks: external_checks(&c.external_checks)?,
-        },
+        checks: on_chain_checks(c, allowed_root)?,
         sent: trade
             .sent
             .iter()
@@ -261,6 +271,70 @@ pub fn accept(
         .into(),
         allowance: allowance.map(|amount| (chain.mana, venue, amount)),
         approval,
+    })
+}
+
+/// A creator's stored coupon (`shop.coupons`), as `acceptWithCoupon` takes it.
+#[derive(Debug, Clone)]
+pub struct CouponIn {
+    pub id: String,
+    pub coupon_address: Address,
+    pub discount_type: u64,
+    pub discount_ppm: u32,
+    pub root: String,
+    pub collections: Vec<String>,
+    pub signature: String,
+    pub checks: crate::checkout::trade::TradeChecksIn,
+}
+
+/// `acceptWithCoupon([trade], [coupon])` on the venue the trade was signed
+/// for, encoded as the Shop's UI encodes it (upstream `getOnChainCoupon`):
+/// `data` is `(discountType, discount, root)`, and `callerData` wraps one
+/// collection proof per sent asset, since the coupon indexes them per asset.
+pub fn accept_with_coupon(
+    chain: &Chain,
+    venue: Address,
+    trade: &TradeIn,
+    coupon: &CouponIn,
+    caller: Address,
+    allowance: Option<U256>,
+) -> Result<Call, CallError> {
+    let accept = accept(chain, venue, trade, caller, allowance)?;
+    let on_chain = on_chain_trade(trade, caller)?;
+    let collection = trade
+        .sent
+        .first()
+        .map(|a| a.contract_address.trim().to_ascii_lowercase())
+        .ok_or_else(|| CallError::Trade("no sent asset".into()))?;
+    let proof: Vec<B256> =
+        crate::coupons::merkle::collection_proof(&coupon.collections, &collection)
+            .map_err(|e| CallError::Coupon(e.to_string()))?
+            .into_iter()
+            .map(B256::from)
+            .collect();
+    let proofs: Vec<Vec<B256>> = vec![proof; on_chain.sent.len().max(1)];
+    let signature = bytes_of("coupon.signature", Some(&coupon.signature))?;
+    let coupon = offchain::Coupon {
+        signature: signature.into(),
+        checks: on_chain_checks(&coupon.checks, B256::ZERO)?,
+        couponAddress: coupon.coupon_address,
+        data: (
+            U256::from(coupon.discount_type),
+            U256::from(coupon.discount_ppm),
+            word("coupon.root", Some(&coupon.root))?,
+        )
+            .abi_encode()
+            .into(),
+        callerData: (proofs,).abi_encode().into(),
+    };
+    Ok(Call {
+        data: offchain::acceptWithCouponCall {
+            _trades: vec![on_chain],
+            _coupons: vec![coupon],
+        }
+        .abi_encode()
+        .into(),
+        ..accept
     })
 }
 
