@@ -184,12 +184,17 @@ fn asset_load_on_replace(
     );
 }
 
-/// Reports each asset's load state once. The asset stays held until its `AssetLoad` goes, so a
-/// preload is still in memory when the scene uses it.
+/// Reports each asset's load state once. A loaded glb stays held until its `AssetLoad` goes, so
+/// avatar animation can play it; other assets are dropped once loaded, as is a failed one.
 fn verify_preload_state(
     mut commands: Commands,
     preloaded_assets: Populated<
-        (Entity, &PreloadedAsset, &PreloadedAssetOf),
+        (
+            Entity,
+            &PreloadedAsset,
+            &PreloadedAssetOf,
+            Has<PreloadedGltf>,
+        ),
         With<LoadingPreloadedAsset>,
     >,
     asset_loads: Query<&ContainerEntity, With<AssetLoad>>,
@@ -197,7 +202,7 @@ fn verify_preload_state(
     asset_server: Res<AssetServer>,
     timestamp: Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
 ) {
-    for (entity, preloaded_asset, preloaded_asset_of) in preloaded_assets.into_inner() {
+    for (entity, preloaded_asset, preloaded_asset_of, is_gltf) in preloaded_assets.into_inner() {
         let Ok(container_entity) = asset_loads.get(preloaded_asset_of.get()) else {
             debug_panic!("Could not get the AssetLoad of a PreloadedAsset.");
         };
@@ -222,7 +227,11 @@ fn verify_preload_state(
                     container_entity.container_id,
                     &event,
                 );
-                commands.entity(entity).remove::<LoadingPreloadedAsset>();
+                if is_gltf {
+                    commands.entity(entity).remove::<LoadingPreloadedAsset>();
+                } else {
+                    commands.entity(entity).despawn();
+                }
             }
             Some(RecursiveDependencyLoadState::Failed(err)) => {
                 let loading_state = match err.as_ref() {
@@ -250,7 +259,7 @@ fn verify_preload_state(
                     container_entity.container_id,
                     &event,
                 );
-                commands.entity(entity).remove::<LoadingPreloadedAsset>();
+                commands.entity(entity).despawn();
             }
             None => {
                 debug_panic!("Preload asset handle not found in asset server.");

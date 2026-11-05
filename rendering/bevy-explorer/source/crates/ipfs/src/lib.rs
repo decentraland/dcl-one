@@ -39,7 +39,7 @@ use bevy::{
             ErasedAssetReader, Reader, VecReader,
         },
         meta::Settings,
-        Asset, AssetLoader, LoadState, UntypedAssetId,
+        Asset, AssetLoader, AssetPath, LoadState, UntypedAssetId,
     },
     diagnostic::{
         Diagnostic, DiagnosticMeasurement, DiagnosticPath, DiagnosticsStore, RegisterDiagnostic,
@@ -406,9 +406,19 @@ impl IpfsAssetServer<'_, '_> {
         scene_hash: &str,
         content_hash: &str,
     ) -> Handle<T> {
+        self.server
+            .load(Self::scene_content_hash_path::<T>(scene_hash, content_hash))
+    }
+
+    /// The asset path [`Self::load_scene_content_hash`] loads.
+    pub fn scene_content_hash_path<T: IpfsAsset>(
+        scene_hash: &str,
+        content_hash: &str,
+    ) -> AssetPath<'static> {
         let ext = T::ext();
-        let path = format!("$ipfs/$scene_content/{scene_hash}/{content_hash}.{ext}");
-        self.server.load(path)
+        AssetPath::from(format!(
+            "$ipfs/$scene_content/{scene_hash}/{content_hash}.{ext}"
+        ))
     }
 
     pub fn active_endpoint(&self) -> Option<String> {

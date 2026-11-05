@@ -8,7 +8,6 @@ use bevy::{
         graph::{AnimationMask, AnimationNodeType},
         RepeatAnimation,
     },
-    asset::RenderAssetUsages,
     ecs::system::SystemParam,
     gltf::Gltf,
     math::Vec3Swizzles,
@@ -38,11 +37,10 @@ use comms::{
 use console::DoAddConsoleCommand;
 use ipfs::IpfsAssetServer;
 use scene_runner::{
-    asset_preload::plugin::PreloadedGltf, permissions::Permission,
-    update_world::animation::Clips,
+    asset_preload::plugin::PreloadedGltf, permissions::Permission, update_world::animation::Clips,
 };
 
-use crate::{process_avatar, AvatarDefinition};
+use crate::{process_avatar, upload_cpu_mesh, AvatarDefinition};
 
 #[derive(Component)]
 pub struct AvatarAnimPlayer(pub Entity);
@@ -1028,11 +1026,19 @@ fn resolve_playback<'a>(
             // play the scene's preloaded copy (`AssetLoad`) if it has one. Otherwise load the
             // gltf through the scene's modifier context so b64 hashes (local preview /
             // portable) resolve to the scene's origin rather than the realm content URL.
-            let handle = preloaded_gltfs
+            // A by-hash load started before the preload showed up is dropped.
+            let preloaded = preloaded_gltfs
                 .iter()
-                .find(|p| p.scene_hash == scene_hash && p.content_hash == hash)
-                .map(|p| p.handle.clone())
-                .unwrap_or_else(|| ipfas.load_scene_content_hash::<Gltf>(&scene_hash, &hash));
+                .find(|p| p.scene_hash == scene_hash && p.content_hash == hash);
+            let handle = match preloaded {
+                Some(preloaded) => {
+                    let by_hash =
+                        IpfsAssetServer::scene_content_hash_path::<Gltf>(&scene_hash, &hash);
+                    cached_gltf_handles.retain(|h| h.path() != Some(&by_hash));
+                    preloaded.handle.clone()
+                }
+                None => ipfas.load_scene_content_hash::<Gltf>(&scene_hash, &hash),
+            };
             let gltf = match gltfs.get_mut(handle.id()) {
                 Some(gltf) => {
                     cached_gltf_handles.remove(&handle);
@@ -1161,16 +1167,7 @@ fn ensure_prop(
         for spawned_ent in params.scene_spawner.iter_instance_entities(instance) {
             // a scene's preloaded glb keeps its meshes cpu-side for GltfContainer to upload
             if let Ok(mesh) = params.prop_meshes.get(spawned_ent) {
-                let cpu_only = params
-                    .meshes
-                    .get(mesh.id())
-                    .is_some_and(|m| m.asset_usage == RenderAssetUsages::MAIN_WORLD);
-                if cpu_only {
-                    if let Some(mesh) = params.meshes.get_mut(mesh.id()) {
-                        mesh.normalize_joint_weights();
-                        mesh.asset_usage |= RenderAssetUsages::RENDER_WORLD;
-                    }
-                }
+                upload_cpu_mesh(&mut params.meshes, mesh);
             }
             if let Ok((maybe_name, transform, parent)) = params.prop_details.get(spawned_ent) {
                 // hide stuff like unity
@@ -1817,6 +1814,10 @@ fn play_current_emote(
                 Err(Hold::Failed) => {
                     if let Some(fb) = active_emote.fallback.take() {
                         *active_emote = *fb;
+                        // last frame's stand-in is this fallback: it keeps its extras
+                        if let Some(extras) = stand_in_extras.take() {
+                            spawned_extras.insert(entity, extras);
+                        }
                         continue;
                     }
                     active_emote.finished = true;
@@ -1839,7 +1840,7 @@ fn play_current_emote(
             && active_emote.fallback.is_some()
             && !spawned_extras.contains_key(&entity);
         if let Some(extras) = stand_in_extras {
-            if stand_in || extras.urn == active_emote.urn {
+            if stand_in {
                 spawned_extras.insert(entity, extras);
             } else {
                 retire_extras(
