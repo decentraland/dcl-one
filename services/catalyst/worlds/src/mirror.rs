@@ -117,10 +117,7 @@ impl MirrorSettings {
     /// the read-through alone when `READ_THROUGH_ENABLED` and a `WORLDS_CONTENT_MIRROR_SOURCE`
     /// are set (worlds are mirrored one at a time as they are read, none crawled); `None`
     /// otherwise.
-    pub fn from_config(
-        config: &crate::config::Config,
-        own_urls: &[String],
-    ) -> Result<Option<Self>> {
+    pub fn from_config(config: &crate::config::Config, own_urls: &[String]) -> Result<Option<Self>> {
         let worlds = &config.worlds_content;
         let scheduled = worlds.worlds_content_mirror_enabled;
         if !scheduled

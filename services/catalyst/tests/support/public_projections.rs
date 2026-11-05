@@ -20,8 +20,7 @@ struct Projection {
 
 impl Projection {
     async fn new() -> Self {
-        let binary =
-            gate::require_env("ARCHIPELAGO_NATS_SERVER_BIN").expect("mandatory real NATS fixture");
+        let binary = gate::require_env("ARCHIPELAGO_NATS_SERVER_BIN").expect("mandatory real NATS fixture");
         let broker = Broker::start(&binary, None);
         gate::required_database_in_ci();
         let db = db::scratch_database()
