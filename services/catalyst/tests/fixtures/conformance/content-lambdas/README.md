@@ -42,7 +42,7 @@ A backlog item whose behaviour matches in this tree keeps its id and reads "Stat
 | **total** | | **51** | **3** | **2** | **45** | **1** | **149** (10 with no work, 139 open) |
 | [asset-bundle-registry.md](asset-bundle-registry.md) (not in the total) | ABR content routes: `/profiles`, `/profiles/metadata`, `/entities/{active,versions,status}`, `/worlds/:n/manifest`, `/denylist`; admin routes listed | 14 | 1 | 3 | 1 | 9 | AB-1..16 |
 
-The asset-bundle-registry area counts on its own: 14 endpoints (MATCH 1, GAP 3, DIVERGENT 1, MISSING 9, 5 of the MISSING outside catalyst parity), 16 backlog items (3 with no work, 13 open), one P0 (AB-10: Decentraland's moderation denylist is not applied).
+The asset-bundle-registry area counts on its own: 14 endpoints (MATCH 1, GAP 3, DIVERGENT 1, MISSING 9, 5 of the MISSING outside catalyst parity), 16 backlog items (4 with no work, 12 open), no P0 (AB-10, Decentraland's moderation denylist, is closed by `DENYLIST_URLS`).
 
 Every upstream route has a route at the same path in this tree, except `GET /lambdas/about`: only the root
 `/about` exists here.

@@ -306,7 +306,7 @@ type `src/types/types.ts:35-41`): from `avatars[0]`:
 No `Content-Type` is set by the handler; the captured answer is `application/json`.
 
 **Data dependency:** the node's `content.denylist`. Decentraland's moderation list itself is in ABR's
-database; dcl-one does not read it (AB-10).
+database; dcl-one reads it through `DENYLIST_URLS` (AB-10).
 
 ## 12. Admin and build-queue routes (outside catalyst parity)
 
@@ -392,19 +392,17 @@ In dcl-one the operator console reaches the external abgen runtime for these
    newest first. Change: `registry.rs:80-88` over `services/catalyst/content/src/denylist.rs`; the
    gateway's root `/denylist` alias already points at `/asset-bundle-registry/denylist`
    (`infra/gateway/root-aliases.nix:497-504`). Severity: P1.
-10. **AB-10** the content server does not apply Decentraland's moderation denylist. Upstream reads
-    `https://asset-bundle-registry.decentraland.org/denylist` by default every 120 s and hides each
-    `entity_id` from `/contents`, the active-entity reads, `/deployments` and the thumbnails
-    (`decentraland/catalyst:src/Environment.ts:13`, `src/adapters/denylist/component.ts:59-86`,
-    `src/components.ts:134-137`); production applies it
-    ([`AB-10-peer-denylisted-hash.json`](captures/abr/AB-10-peer-denylisted-hash.json) against
-    [`AB-10-peer-valid-hash.json`](captures/abr/AB-10-peer-valid-hash.json),
-    [`AB-10-peer-active-by-denylisted-id.json`](captures/abr/AB-10-peer-active-by-denylisted-id.json)).
-    dcl-one's list is the operator's `content.denylist` only (`services/catalyst/content/src/denylist.rs:1-21`),
-    so a mirror serves content production hides. Expected: a configurable list of denylist URLs
-    (default Decentraland's under `NODE_POSTURE=mirror`) merged into the projection on the reload job.
-    Change: `services/catalyst/content/src/denylist.rs`, `services/catalyst/config/src/posture.rs`.
-    Severity: P0.
+10. **AB-10** Status: MATCH, no work. `DENYLIST_URLS` (upstream's name) is fetched through the outbound
+    guard at boot and every 120 s (`services/catalyst/content/src/denylist.rs` `reload_remote`,
+    `services/catalyst/src/serve.rs`). `NODE_POSTURE=mirror` defaults it to
+    `https://asset-bundle-registry.decentraland.org/denylist`; island and journey leave it empty
+    (`services/catalyst/config/src/posture.rs`). The ids feed the same projection as `content.denylist`
+    (`services/catalyst/storage/src/denylist.rs`), so `/contents`, the active-entity reads, `/deployments`,
+    `/pointer-changes`, `/available-content`, erc721 and the thumbnails and images hide them; audit stays
+    unfiltered and snapshots do not filter, as upstream. A failed or garbage fetch keeps the URL's last
+    good list and never the operator's. Differences from upstream: an id removed from the remote list is
+    lifted on the next good fetch (upstream: at restart), a non-2xx answer counts as a failure, and a local
+    deploy naming a listed entity id or content hash is refused (upstream stores it hidden).
 11. **AB-11** `POST /entities/versions` error bodies and selector: `{"ok":false,"message":"No pointers provided"}`,
     `pointers` only, no cap (`get-entity-versions.ts:10-21`). Change: `registry.rs:303-336`. Severity: P2.
 12. **AB-12** CORS on the ABR host: expected the captured preflight (`allow-origin: *`, `allow-methods:
