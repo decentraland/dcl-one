@@ -15,6 +15,10 @@ vi.mock("../../../wearable-preview/WearablePreview", () => ({
   },
 }));
 
+vi.mock("./animated-background/AnimatedBackground", () => ({
+  default: (props: { patternTiling?: number }) => <div data-testid="backdrop" data-tiling={props.patternTiling} />,
+}));
+
 import LivePromo from "./LivePromo";
 
 type Observed = { cb: IntersectionObserverCallback; el?: Element };
@@ -107,10 +111,27 @@ describe("LivePromo", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
     expect(previewProps?.requireWearables).toBe(true);
+    // Upstream's PreviewEmote.FASHION, overridden by an emote item among the urns.
+    expect(previewProps?.emote).toBe("fashion");
     if (emitStatus) act(() => emitStatus!("empty"));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2000);
     });
     expect(fallback().hasAttribute("data-hidden")).toBe(false);
+  });
+
+  it("draws the fitting room's drifting backdrop under the avatar while on screen, at tiling 1", async () => {
+    tile();
+    expect(screen.queryByTestId("backdrop")).toBeNull();
+    intersect(true);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(50);
+    });
+    expect(screen.getByTestId("backdrop").getAttribute("data-tiling")).toBe("1");
+    intersect(false);
+    expect(screen.queryByTestId("backdrop")).toBeNull();
   });
 });

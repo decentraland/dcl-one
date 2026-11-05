@@ -1,0 +1,360 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/lambdas/users/0x0000000000000000000000000000000000000027/wearables?pageSize=100&pageNum=1",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "elements": [
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000028:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000028:0:4",
+              "tokenId": "4",
+              "transferredAt": "1747947182",
+              "price": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+            }
+          ],
+          "name": "\"Dress to Impress\" Data Dress",
+          "category": "upper_body",
+          "rarity": "mythic"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000029:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000029:0:39",
+              "tokenId": "39",
+              "transferredAt": "1726675455",
+              "price": "75000000000000000000"
+            }
+          ],
+          "name": "Technosuit",
+          "category": "upper_body",
+          "rarity": "exotic"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000002a:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000002a:0:23",
+              "tokenId": "23",
+              "transferredAt": "1747498874",
+              "price": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+            }
+          ],
+          "name": "Doki 2025 Prom Dress",
+          "category": "upper_body",
+          "rarity": "exotic"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000002b:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000002b:0:33",
+              "tokenId": "33",
+              "transferredAt": "1731580867",
+              "price": "6660000000000000000"
+            }
+          ],
+          "name": "Galactic Dark Commander Neck pc",
+          "category": "earring",
+          "rarity": "exotic"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000002c:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000002c:0:17",
+              "tokenId": "17",
+              "transferredAt": "1726675319",
+              "price": "25000000000000000000"
+            }
+          ],
+          "name": "Cosmic Intruder",
+          "category": "helmet",
+          "rarity": "exotic"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000002d:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000002d:0:33",
+              "tokenId": "33",
+              "transferredAt": "1726675033",
+              "price": "30000000000000000000"
+            }
+          ],
+          "name": "GALAX-E Sunglasses + Wings",
+          "category": "eyewear",
+          "rarity": "exotic"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000002e:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000002e:0:17",
+              "tokenId": "17",
+              "transferredAt": "1739024287",
+              "price": "15000000000000000000"
+            }
+          ],
+          "name": "Ghostly Glam",
+          "category": "helmet",
+          "rarity": "exotic"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000002f:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000002f:0:37",
+              "tokenId": "37",
+              "transferredAt": "1732319334",
+              "price": "25000000000000000000"
+            }
+          ],
+          "name": "METATIGER X Old Guy BBQ",
+          "category": "upper_body",
+          "rarity": "exotic"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000030:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000030:0:9",
+              "tokenId": "9",
+              "transferredAt": "1742734501",
+              "price": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+            }
+          ],
+          "name": "Kebaya",
+          "category": "upper_body",
+          "rarity": "exotic"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000031:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000031:0:10",
+              "tokenId": "10",
+              "transferredAt": "1726675117",
+              "price": "10000000000000000000"
+            }
+          ],
+          "name": "Galactic Boots ",
+          "category": "feet",
+          "rarity": "exotic"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000032:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000032:0:42",
+              "tokenId": "42",
+              "transferredAt": "1726675645",
+              "price": "35000000000000000000"
+            }
+          ],
+          "name": "Galactic Companion",
+          "category": "earring",
+          "rarity": "exotic"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000033:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000033:0:15",
+              "tokenId": "15",
+              "transferredAt": "1676411226",
+              "price": "25000000000000000000"
+            }
+          ],
+          "name": "Blade Warrior by DigiFun",
+          "category": "upper_body",
+          "rarity": "legendary"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000034:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000034:0:14",
+              "tokenId": "14",
+              "transferredAt": "1698755255",
+              "price": "500000000000000000000"
+            }
+          ],
+          "name": "Wendig O' Lantern",
+          "category": "helmet",
+          "rarity": "legendary"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000035:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000035:0:13",
+              "tokenId": "13",
+              "transferredAt": "1723435775",
+              "price": "10000000000000000000000"
+            }
+          ],
+          "name": "Celestial Top",
+          "category": "upper_body",
+          "rarity": "legendary"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000036:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000036:0:13",
+              "tokenId": "13",
+              "transferredAt": "1718568273",
+              "price": "30000000000000000000"
+            }
+          ],
+          "name": "Celestial Updo",
+          "category": "hair",
+          "rarity": "legendary"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000037:2",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000037:2:210624583337114373395836055367340864637790190801098222508621955081",
+              "tokenId": "210624583337114373395836055367340864637790190801098222508621955081",
+              "transferredAt": "1679746708",
+              "price": "25000000000000000000"
+            }
+          ],
+          "name": "EDO Dango Slouchy Boots  MVFW23",
+          "category": "feet",
+          "rarity": "legendary"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000038:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000038:0:18",
+              "tokenId": "18",
+              "transferredAt": "1773265327",
+              "price": "115792089237316195423570985008687907853269984665640564039457584007913129639935"
+            }
+          ],
+          "name": "Mardi Gras Boots and Skirt",
+          "category": "lower_body",
+          "rarity": "legendary"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000039:0",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x0000000000000000000000000000000000000039:0:23",
+              "tokenId": "23",
+              "transferredAt": "1714081096",
+              "price": "0"
+            }
+          ],
+          "name": "Old GUY BBQ Two year party",
+          "category": "top_head",
+          "rarity": "legendary"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000003a:1",
+          "amount": 7,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000003a:1:105312291668557186697918027683670432318895095400549111254310977634",
+              "tokenId": "105312291668557186697918027683670432318895095400549111254310977634",
+              "transferredAt": "1713718569",
+              "price": "5000000000000000000"
+            },
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000003a:1:105312291668557186697918027683670432318895095400549111254310977636",
+              "tokenId": "105312291668557186697918027683670432318895095400549111254310977636",
+              "transferredAt": "1713718569",
+              "price": "5000000000000000000"
+            },
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000003a:1:105312291668557186697918027683670432318895095400549111254310977635",
+              "tokenId": "105312291668557186697918027683670432318895095400549111254310977635",
+              "transferredAt": "1713718569",
+              "price": "5000000000000000000"
+            },
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000003a:1:105312291668557186697918027683670432318895095400549111254310977540",
+              "tokenId": "105312291668557186697918027683670432318895095400549111254310977540",
+              "transferredAt": "1711037461",
+              "price": "5000000000000000000"
+            },
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000003a:1:105312291668557186697918027683670432318895095400549111254310977537",
+              "tokenId": "105312291668557186697918027683670432318895095400549111254310977537",
+              "transferredAt": "1711037461",
+              "price": "5000000000000000000"
+            },
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000003a:1:105312291668557186697918027683670432318895095400549111254310977538",
+              "tokenId": "105312291668557186697918027683670432318895095400549111254310977538",
+              "transferredAt": "1711037461",
+              "price": "5000000000000000000"
+            },
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000003a:1:105312291668557186697918027683670432318895095400549111254310977541",
+              "tokenId": "105312291668557186697918027683670432318895095400549111254310977541",
+              "transferredAt": "1711037461",
+              "price": "5000000000000000000"
+            }
+          ],
+          "name": "MESHfair 2024 Purple Halo",
+          "category": "top_head",
+          "rarity": "legendary"
+        },
+        {
+          "urn": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000003b:2",
+          "amount": 1,
+          "individualData": [
+            {
+              "id": "urn:decentraland:matic:collections-v2:0x000000000000000000000000000000000000003b:2:210624583337114373395836055367340864637790190801098222508621955077",
+              "tokenId": "210624583337114373395836055367340864637790190801098222508621955077",
+              "transferredAt": "1680250303",
+              "price": "30000000000000000000"
+            }
+          ],
+          "name": "Bubble Babes Space Nails ",
+          "category": "earring",
+          "rarity": "legendary"
+        }
+      ],
+      "totalAmount": 275,
+      "pageNum": 1,
+      "pageSize": 100
+    }
+  },
+  "note": "elements cut to the first 20 of 100. The group order and every individualData order of all 100 elements equal the marketplace API capture taken in the same session."
+}

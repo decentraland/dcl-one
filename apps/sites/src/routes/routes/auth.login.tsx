@@ -14,10 +14,12 @@ export async function loader({ request }: Route.LoaderArgs) {
   return {
     redirectTo: url.searchParams.get("redirectTo"),
     layoutVariant: await signInLayoutVariant(),
+    // Magic's publishable key: public by design, but deployment configuration, so it comes from the environment.
+    magicApiKey: process.env.MAGIC_API_KEY || null,
   };
 }
 
 export default function AuthLoginRoute() {
-  const { redirectTo, layoutVariant } = useLoaderData<typeof loader>();
-  return <LoginPage redirectTo={redirectTo} layoutVariant={layoutVariant} />;
+  const { redirectTo, layoutVariant, magicApiKey } = useLoaderData<typeof loader>();
+  return <LoginPage redirectTo={redirectTo} layoutVariant={layoutVariant} magicApiKey={magicApiKey} />;
 }

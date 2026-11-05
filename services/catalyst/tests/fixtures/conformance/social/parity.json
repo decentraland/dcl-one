@@ -1537,6 +1537,21 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/referral_review_tests.rs",
+          "test": "confirmed_reward_survives_notification_failure_restart_and_concurrent_drain",
+          "scope": "Candidate regression covers retained provider response, restart and concurrent drainers after notification failure; asserts one provider POST and one image while downstream delivery resumes without another login."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/referral_review_tests.rs",
+          "test": "ambiguous_reward_responses_are_not_reissued_after_restart_or_login",
+          "scope": "Candidate regression covers unsuccessful and malformed provider responses, restart, drain and login retry; the persisted claim prevents another non-idempotent provider POST."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/referral_review_tests.rs",
+          "test": "cancelled_inflight_reward_preserves_its_claim_for_reconciliation",
+          "scope": "Candidate regression cancels an in-flight provider call and checks its claim remains quarantined on restart, drain and login retry. This does not prove the provider outcome or exactly-once delivery."
         }
       ],
       "gaps": [],
@@ -2411,6 +2426,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/explore/src/api/tests.rs",
+          "test": "denylist_refresh_reaches_every_replica_without_mirrors_or_fleet_jobs",
+          "scope": "Candidate regression covers two independent snapshots and retained referral readers over shared PostgreSQL: mirror and local-overlay additions/removals propagate through unleased periodic refresh with mirrors and fleet jobs disabled. Checks both HTTP views and absence of upstream fetches; no immediate cross-process invalidation or source freshness equivalence is claimed."
         }
       ],
       "gaps": [],
@@ -3388,6 +3408,11 @@
           "path": "services/catalyst/social/src/legacy_events.rs",
           "test": "queue_acknowledges_committed_milestone_and_processes_next_login_after_slack_stalls",
           "scope": "Actual SQS process_message path preserves committed milestone, ordered delete-finally acknowledgement and progress to the next event after a bounded Slack stall. No whole-batch visibility deadline is inferred."
+        },
+        {
+          "path": "services/catalyst/explore/src/api/tests.rs",
+          "test": "denylist_refresh_reaches_every_replica_without_mirrors_or_fleet_jobs",
+          "scope": "Candidate regression covers two independent snapshots and retained referral readers over shared PostgreSQL: mirror and local-overlay additions/removals propagate through unleased periodic refresh with mirrors and fleet jobs disabled. Checks both HTTP views and absence of upstream fetches; no immediate cross-process invalidation or source freshness equivalence is claimed."
         }
       ],
       "gaps": [
@@ -7947,7 +7972,7 @@
     {
       "id": "referral-lifecycle",
       "status": "unverified",
-      "description": "Attribution/IP rejection, signup, UTC login days, guarded grants, artwork, email, handler-specific SQL errors and configured Slack effects have source-paired/local regressions. Slack keeps source payloads and empty-token serialization but deliberately bounds each effect to ten seconds, three attempts and a two-second Retry-After cap. Referral identity uses the TCP peer or explicitly trusted backend proxy X-Real-IP, and canonical historical inet aliases share a quota; these are intentional source differences. Sixteen executed numeric configurations cover source parser values, bigint rejection/overflow and login-day comparisons. Live providers, concurrent rate-limit ordering and stateful deployed cutover remain unverified. Referrer/IP quotas and milestone counts are serialized in SQL; tier-image and tier-notification work retain independent fail-fast completion. Actual source partial-failure receipts and local concurrent PostgreSQL cases are compared; simultaneous decision ordering is strengthened beyond source. A grant that reaches a reward tier records the owed rewards request in referral_progress.reward_tier; its success moves the grant to reward_paid, so the next finalize of the same invited user (a redelivered login) resumes only what failed: the owed request, or the paid reward's notification and image, never a second request after a successful one. The source's rewards API takes no idempotency key. An unset tier campaign key leaves the request owed instead of posting an empty campaign_key. The source commits the grant, never retries a failed reward and requires every key at boot; this retry is an intentional difference with no client-visible change. Referral deny checks read the node's in-memory explorer denylist (mirror plus local overlay), which every replica reloads from the shared tables every 30 seconds, instead of fetching the list on each write.",
+      "description": "Attribution/IP rejection, signup, UTC login days, guarded grants, artwork, email, handler-specific SQL errors and configured Slack effects have source-paired/local regressions. Slack keeps source payloads and empty-token serialization but deliberately bounds each effect to ten seconds, three attempts and a two-second Retry-After cap. Referral identity uses the TCP peer or explicitly trusted backend proxy X-Real-IP, and canonical historical inet aliases share a quota; these are intentional source differences. Sixteen executed numeric configurations cover source parser values, bigint rejection/overflow and login-day comparisons. Live providers, concurrent rate-limit ordering and stateful deployed cutover remain unverified. Referrer/IP quotas and milestone counts are serialized in SQL; tier-image and tier-notification work retain independent fail-fast completion. Actual source partial-failure receipts and local concurrent PostgreSQL cases are compared; simultaneous decision ordering is strengthened beyond source. A reward-tier grant retains reward_tier until its downstream notification and image complete. A committed pre-POST claim prevents concurrent or restarted workers from reissuing the non-idempotent provider request; a confirmed response is persisted before downstream work. With social writes enabled, a fleet-leased drain selects at most 64 due rewards per pass every 60 seconds, and failed attempts defer eligibility by one minute. The reward_paid receipt retains the tier, provider result and confirmed notification marker; an image retry skips a notification already recorded as delivered. Missing campaign configuration remains retryable before claiming. A claimed request without a confirmed response, including migrated historical pending rewards without a paid receipt, requires provider reconciliation and is not automatically retried; confirmed responses resume downstream delivery without another login. Notification publication can still be repeated after an ambiguous downstream failure, so exactly-once external delivery is not claimed. This recovery differs from the source, which commits the grant and does not retry a failed reward. Referral deny checks read the shared in-process explorer snapshot instead of fetching the list on each write. Every serving process refreshes the merged database mirror/local overlay every 30 seconds with a five-second pass timeout, even when mirrors or fleet jobs are disabled; failed refreshes retain the last snapshot. Reloads are serialized within each process. This is eventual propagation, not immediate revocation or identical source freshness. The receipt migration imports existing paid tiers and responses while preserving their notification completion marker. Migration 0024 is not safe alongside pre-0024 binaries even on schema v3: stop all old binaries, SQS consumers and writers before migrating, then resume only compatible code. Object-valued historical paid responses remain confirmed even with incomplete image metadata; repair that metadata without another provider POST. Quarantined login retries are acknowledged without repeating the original provider error.",
       "operations": [
         "api_http:GET:/v1/referral-progress",
         "api_http:PATCH:/v1/referral-progress",
@@ -7992,7 +8017,7 @@
         "api_http:POST:/v1/referral-email"
       ],
       "status": "unverified",
-      "description": "Configured official SQS/SNS transports preserve legacy raw events and attributes locally; ranking dispatch, friendship and community publication are wired. Deployed queue policies, topic subscriptions and credential access have not been exercised. Populated candidate additive upgrades pass synthetic tests; existing upstream progress/login-days/reward/email import and live cutover remain outstanding."
+      "description": "Configured official SQS/SNS transports preserve legacy raw events and attributes locally; ranking dispatch, friendship and community publication are wired. Deployed queue policies, topic subscriptions and credential access have not been exercised. Populated candidate additive upgrades pass synthetic tests; existing upstream progress/login-days/reward/email import and live cutover remain outstanding. Existing pending rewards without a paid receipt are quarantined by the additive receipt migration because their provider outcome cannot be inferred; reconcile them with the provider before clearing a claim or supplying a confirmed response. Live reconciliation and downstream duplicate-notification handling remain deployment gates."
     },
     {
       "id": "api-body-size-boundary",
@@ -8322,7 +8347,7 @@
         "api_http:POST:/v1/communities/:id/requests",
         "api_http:PATCH:/v1/communities/:id/requests/:requestId"
       ],
-      "description": "All 16 source analytics event kinds are connected at the 17 voice/community producer sites through the shared concrete adapter. Source captures cover 35 voice scenarios and 19 community scenarios; candidate regressions pair all 35 voice and 17 normal/no-op community scenarios, with nine separately paired PostgreSQL trigger cases for partial-write boundaries. Source SDK configuration, response cancellation, cross-host redirects and whole-chain deadlines are independently recaptured. Analytics retains its own provider profile; actual native-source probes pair10s connect,300s per-hop headers and the configured SDK deadline across redirects. Operator-configured provider destinations and x-token forwarding follow source behavior. Delayed DNS and combined clock phases remain unverified. The generic unconfigured monolith intentionally remains usable; each configured provider validates its own source required strings before serving (analytics its context, URL, token and ENV; AI compliance its OpenAI key; referral Slack ENV); ENV alone configures no provider, so a node with only ENV boots without analytics. Without OPEN_AI_API_KEY the node runs without the compliance provider and skips classification, where the source refuses to start. Deployed routing/provider behavior and transient-event cutover remain unverified. The six entry-wrapper cases preserve raw RPC recipient and HTTP private-call identifier spellings independently from normalized SQL/authorization/recipient keys."
+      "description": "All 16 source analytics event kinds are connected at the 17 voice/community producer sites through the shared concrete adapter. Source captures cover 35 voice scenarios and 19 community scenarios; candidate regressions pair all 35 voice and 17 normal/no-op community scenarios, with nine separately paired PostgreSQL trigger cases for partial-write boundaries. Source SDK configuration, response cancellation, cross-host redirects and whole-chain deadlines are independently recaptured. Analytics retains its own provider profile; actual native-source probes pair10s connect,300s per-hop headers and the configured SDK deadline across redirects. Operator-configured provider destinations and x-token forwarding follow source behavior. Delayed DNS and combined clock phases remain unverified. The generic unconfigured monolith intentionally remains usable; each configured provider validates its own source required strings before serving (analytics its context, URL, token and ENV; AI compliance its OpenAI key; referral Slack ENV); ENV alone configures no provider, including at the actual Analytics::new constructor; an empty posture-injected analytics URL stays inactive. The candidate constructor regression shared_environment_alone_does_not_activate_analytics_but_partial_settings_fail covers empty/prd/dev ENV and rejects incomplete analytics-specific settings. Without OPEN_AI_API_KEY the node runs without the compliance provider and skips classification, where the source refuses to start. Deployed routing/provider behavior and transient-event cutover remain unverified. The six entry-wrapper cases preserve raw RPC recipient and HTTP private-call identifier spellings independently from normalized SQL/authorization/recipient keys."
     },
     {
       "id": "private-call-pending-expiry-start-order",

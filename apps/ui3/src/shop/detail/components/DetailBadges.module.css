@@ -95,3 +95,39 @@
 .root[data-size="sm"] .display {
   color: inherit;
 }
+
+/* Upstream's SkBadge / SkAva / SkName on its skeletonFill shimmer (index.css --skeleton-lo / --skeleton-hi). */
+.sk {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.skAva,
+.skName {
+  display: block;
+  background: linear-gradient(100deg, rgba(255, 255, 255, 0.07) 30%, rgba(255, 255, 255, 0.16) 50%, rgba(255, 255, 255, 0.07) 70%);
+  background-size: 200% 100%;
+  animation: skShimmer 1.4s infinite linear;
+}
+.skAva {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+}
+.skName {
+  width: 96px;
+  height: 16px;
+  border-radius: 6px;
+}
+@keyframes skShimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skAva,
+  .skName {
+    animation: none;
+  }
+}
