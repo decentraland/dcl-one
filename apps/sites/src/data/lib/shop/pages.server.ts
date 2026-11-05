@@ -15,9 +15,11 @@ import { readUrlFilters } from "@ui/shop/discovery/hooks";
 import { fetchLandNfts } from "@ui/shop/land/api";
 import { landsFiltersFromParams, landsListingFilters, landsListingKey, landsListKey } from "@ui/shop/land/LandsPage";
 import { shopFlags } from "@ui/shop/discovery/flags";
+import { primeRemoteFlags } from "@ui/shop/discovery/lib/remoteFlags";
 import type { ShopPageId } from "@ui/shop/routes";
 
 import { catalystUrl, processEnv, publicCatalystUrl, type BaseEnv } from "../catalyst/bases";
+import { dappsFlags, type DappsFlags } from "../feature-flags.server";
 import { serverShopApiMode } from "./mode";
 import { defaultShopSeo, type PrimedQuery, type ShopPageData, type ShopSeo } from "./pages";
 
@@ -42,6 +44,8 @@ export type ShopLoadInput = {
   client?: ShopClient;
   now?: () => number;
   env?: BaseEnv;
+  /** decentraland.org's rollout flags; read from the service when absent, none for an injected (test) client. */
+  flags?: DappsFlags;
 };
 
 export type ShopPageLoad = { data: ShopPageData; status: number };
@@ -198,6 +202,10 @@ async function landsPage(ctx: ReadCtx, client: ShopClient, env: BaseEnv): Promis
 export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Promise<ShopPageLoad> {
   const env = input.env ?? processEnv();
   const client = input.client ?? serverShopClient(env);
+  // The page's flags decide what it reads (the Best Deals rail): primed here before any read, and sent with the page
+  // so the browser primes the same answer before it hydrates.
+  const featureFlags = input.flags ?? (input.client ? {} : await dappsFlags());
+  primeRemoteFlags(featureFlags);
   const now = input.now ?? Date.now;
   const { request, params } = input;
   const pathname = new URL(request.url).pathname;
@@ -227,5 +235,5 @@ export async function loadShopPage(page: ShopPageId, input: ShopLoadInput): Prom
     default:
       collected = { queries: [], seo: defaultShopSeo(page, canonicalFor(request, pathname, env)), status: 200 };
   }
-  return { data: { page, seo: collected.seo, queries: collected.queries }, status: collected.status };
+  return { data: { page, seo: collected.seo, queries: collected.queries, featureFlags }, status: collected.status };
 }

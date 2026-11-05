@@ -403,7 +403,8 @@ function WorldsStorageView({ data: d }: { data: LoaderData }) {
             namespace: d.namespace,
           };
           if (!identity) {
-            openSignIn();
+            // The dialog holds the key and value just typed: sign in without leaving it.
+            openSignIn({ inPlace: true });
             track(
               "ch_worlds_storage_value_saved",
               { ...label, stub: true, reason: "not_connected" },

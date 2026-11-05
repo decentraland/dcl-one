@@ -332,18 +332,11 @@ async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
     assert_eq!(scalar_i64(&pool, roles, ids[0]).await, 0, "no local role");
 
     // 2. The read routes: the upstream count and thumbnail.
-    let (status, body) = call(&app, "GET", &format!("/v1/communities/{}", ids[0])).await;
+    let (status, body) = call(&app, "GET", &format!("/v2/communities/{}", ids[0])).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["data"]["membersCount"], 1000);
     assert_eq!(body["data"]["ownerAddress"], format!("0x{:040x}", 1));
-    assert_eq!(
-        body["data"]["thumbnailUrl"],
-        format!(
-            "{}/social/communities/{}/raw-thumbnail.png",
-            cfg.source.base(),
-            ids[0]
-        )
-    );
+    assert!(body["data"].get("thumbnailUrl").is_none());
     let (_, body) = call(&app, "GET", &format!("/v1/communities/{}", ids[1])).await;
     assert!(body["data"].get("thumbnailUrl").is_none(), "{body}");
     let (status, body) = call(
@@ -357,12 +350,7 @@ async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
     assert_eq!(results.len(), 10, "{body}");
     assert_eq!(results[0]["name"], format!("{tag} 000"));
     assert_eq!(results[0]["membersCount"], 1000);
-    assert!(
-        results[0]["thumbnailUrl"]
-            .as_str()
-            .unwrap()
-            .starts_with("http://127.0.0.1")
-    );
+    assert!(results[0].get("thumbnailUrl").is_none());
 
     // 3. A community-scoped write on a mirrored row answers 409 naming the
     // upstream before any handler, under both mounts; a local community's is
@@ -395,7 +383,7 @@ async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
         1,
         "a local member row"
     );
-    let (_, body) = call(&app, "GET", &format!("/v1/communities/{}", ids[0])).await;
+    let (_, body) = call(&app, "GET", &format!("/v2/communities/{}", ids[0])).await;
     assert_eq!(
         body["data"]["membersCount"], 1001,
         "upstream + local: {body}"
@@ -404,7 +392,7 @@ async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
         signed_call(&app, "DELETE", &format!("{members}/{me}")).await,
         StatusCode::NO_CONTENT
     );
-    let (_, body) = call(&app, "GET", &format!("/v1/communities/{}", ids[0])).await;
+    let (_, body) = call(&app, "GET", &format!("/v2/communities/{}", ids[0])).await;
     assert_eq!(body["data"]["membersCount"], 1000);
     let leaver = format!("/v1/communities/{}/members", ids[145]);
     assert_eq!(
@@ -492,14 +480,14 @@ async fn a_pass_copies_the_listing_read_only_and_resumes_sweeps_and_fuses() {
         active(&pool, local).await,
         "a local community is never swept"
     );
-    let (status, _) = call(&app, "GET", &format!("/v1/communities/{}", ids[145])).await;
+    let (status, _) = call(&app, "GET", &format!("/v2/communities/{}", ids[145])).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     shared.lock().unwrap().rows.splice(140..140, dropped);
     run_pass(&client, &pool, &cfg, Duration::ZERO, &cancel)
         .await
         .unwrap();
     assert!(active(&pool, ids[145]).await);
-    let (_, body) = call(&app, "GET", &format!("/v1/communities/{}", ids[145])).await;
+    let (_, body) = call(&app, "GET", &format!("/v2/communities/{}", ids[145])).await;
     assert_eq!(
         body["data"]["membersCount"], 1146,
         "the upstream's 1145 and the kept local member"

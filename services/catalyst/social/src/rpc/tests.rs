@@ -34,20 +34,27 @@ use super::{Settings, State};
 use crate::comms::gatekeeper::voice::db::{PendingPrivateCall, VoiceDb};
 use crate::jobs::Jobs;
 
+mod auxiliary_source_cases;
 mod community_voice;
 mod connectivity;
 mod failures;
+pub(crate) mod fanout;
 mod friends;
 mod http;
+mod notification_source_cases;
 mod private_voice;
+mod profile_source_cases;
 mod settings;
 mod social_api;
 mod socket;
+mod source_cases;
+mod startup;
 mod stream;
 mod subscription_lifecycle;
 mod upstream_reads;
 mod voice_bugs;
 mod voice_runtime;
+mod voice_source_cases;
 
 const EXPIRATION_MS: i64 = 60_000;
 
@@ -84,13 +91,14 @@ async fn cleanup_pair(db: &Db, a: &str, b: &str) {
 }
 
 fn test_ctx(db: Db, voice: Arc<dyn crate::comms::gatekeeper::voice::rooms::VoiceRooms>) -> Context {
+    let profiles = Profiles::new(Some(db.pool().clone()));
     Context::new(
         VoiceSettings {
             private_voice_chat_expiration_ms: EXPIRATION_MS,
             private_voice_chat_expiration_batch_size: 20,
         },
         db,
-        Profiles::new(None, Default::default()),
+        profiles,
         voice,
     )
 }
@@ -105,14 +113,7 @@ fn profiled_ctx(
     Context::new(
         VoiceSettings::default(),
         db.clone(),
-        Profiles::new(
-            Some(db.pool().clone()),
-            crate::communities::profiles::FaceUrls::new(
-                None,
-                "https://peer.test/profile-images/",
-                false,
-            ),
-        ),
+        Profiles::new(Some(db.pool().clone())),
         voice,
     )
 }
@@ -120,7 +121,7 @@ fn profiled_ctx(
 /// Deploys `address`'s profile named `name` with a face; returns its entity id.
 async fn deploy_profile(pool: &PgPool, address: &str, name: &str) -> String {
     let entity_id = format!("bafkreiprofile{}", Uuid::new_v4().simple());
-    let metadata = serde_json::json!({"v": {"avatars": [{"name": name, "hasClaimedName": true,
+    let metadata = serde_json::json!({"v": {"avatars": [{"userId": address, "name": name, "hasClaimedName": true,
         "avatar": {"snapshots": {"face256": "bafkreiface"}}}]}});
     sqlx::query(
         "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, \
@@ -153,6 +154,37 @@ async fn drop_profile(pool: &PgPool, address: &str, entity_id: &str) {
         .bind(entity_id)
         .execute(pool)
         .await;
+}
+
+/// A valid upstream-style profile for contract tests that exercise enriched RPCs.
+async fn seed_profile(pool: &PgPool, address: &str, name: &str) -> String {
+    let existing: Option<String> =
+        sqlx::query_scalar("SELECT entity_id FROM content.active_pointers WHERE pointer=$1")
+            .bind(address)
+            .fetch_optional(pool)
+            .await
+            .unwrap();
+    if let Some(entity) = existing {
+        return entity;
+    }
+    let entity = format!("bafkreifriendship{}", Uuid::new_v4().simple());
+    let metadata = serde_json::json!({"v":{"avatars":[{
+        "userId": address, "name": name, "hasClaimedName":true,
+        "avatar":{"snapshots":{"face256":format!("https://example.test/{entity}.png")}}
+    }]}});
+    sqlx::query("INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,entity_metadata,entity_timestamp,entity_pointers,local_timestamp,auth_chain) VALUES($1,'v3','profile',$2,$3,now(),ARRAY[$1],now(),'[]'::json)")
+        .bind(address).bind(&entity).bind(metadata).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO content.active_pointers(pointer,entity_id,entity_type) VALUES($1,$2,'profile')")
+        .bind(address).bind(&entity).execute(pool).await.unwrap();
+    entity
+}
+
+async fn seed_profiles(ctx: &Context, addresses: &[&str]) {
+    for address in addresses {
+        if crate::auth::is_eth_address(address) {
+            seed_profile(ctx.db().pool(), &address.to_lowercase(), "Contract profile").await;
+        }
+    }
 }
 
 fn procedure_ctx(ctx: &Context, me: &str, transport_id: u32) -> ProcedureContext<Context> {
@@ -401,7 +433,7 @@ async fn pending_requests_list_the_latest_request_with_its_message() {
     };
     let db = Db::new(pool);
     let (a, b, c) = (addr("fb0f"), addr("fb10"), addr("fb11"));
-    let (id_ab, _, _) = db
+    let (_, _, action_ab) = db
         .apply_friendship_action(&a, &b, "request", false, None, Some("hello b"))
         .await
         .unwrap();
@@ -417,7 +449,7 @@ async fn pending_requests_list_the_latest_request_with_its_message() {
         .expect("a's request");
     assert_eq!(
         (from_a.id, from_a.message.as_deref()),
-        (id_ab, Some("hello b"))
+        (action_ab, Some("hello b"))
     );
     let (sent, total) = db.get_friendship_requests(&a, false, 10, 0).await.unwrap();
     assert_eq!((sent.len(), total), (1, 1));
@@ -665,45 +697,60 @@ async fn call_exists(db: &Db, id: Uuid) -> bool {
 }
 
 #[tokio::test]
-async fn expired_prior_call_does_not_block_new_one() {
+async fn expired_pending_call_stays_busy_until_the_sweep() {
     let Some(pool) = scratch_pool().await else {
         return;
     };
     let _turn = VOICE_TABLE.lock().await;
     let db = Db::new(pool);
     let (caller, callee) = (addr("pv01"), addr("pv02"));
-    let stale_id = VoiceDb::new(db.pool().clone(), Default::default())
+    let voice = VoiceDb::new(db.pool().clone(), Default::default());
+    let stale_id = voice
         .seed_pending_private_call(&caller, &callee)
         .await
         .unwrap();
     backdate(&db, stale_id, EXPIRATION_MS + 3_600_000).await;
     assert!(
-        call_exists(&db, stale_id).await,
-        "stale row is present (not yet swept)"
-    );
-    assert!(
-        !db.are_users_being_called_or_calling_someone(
+        db.are_users_being_called_or_calling_someone(
             &[caller.clone(), callee.clone()],
             EXPIRATION_MS
         )
         .await
-        .unwrap(),
-        "an expired prior call must not block a new one"
+        .unwrap()
     );
-    // The locked start reclaims the stale row (the UNIQUEs would otherwise
-    // refuse the insert) and reports it expired.
-    let outcome = VoiceDb::new(db.pool().clone(), Default::default())
-        .create_pending_private_call(&caller, &callee, EXPIRATION_MS)
+    let preflight = db
+        .private_voice_preflight(&caller, &callee, EXPIRATION_MS, Default::default())
         .await
         .unwrap();
-    assert!(outcome.started.is_some());
-    assert_eq!(
-        outcome.expired.iter().map(|c| c.id).collect::<Vec<_>>(),
-        vec![stale_id]
+    assert!(
+        preflight.busy,
+        "the source busy check includes expired pending calls"
     );
-    assert!(!call_exists(&db, stale_id).await);
-    VoiceDb::new(db.pool().clone(), Default::default())
-        .finish_pending_private_call(PendingPrivateCall::Id(outcome.started.unwrap()))
+    assert!(
+        voice
+            .create_pending_private_call(&caller, &callee, EXPIRATION_MS)
+            .await
+            .unwrap()
+            .started
+            .is_none()
+    );
+    assert!(
+        call_exists(&db, stale_id).await,
+        "start must not reclaim or expire the old call"
+    );
+    let expired = voice
+        .expire_pending_private_calls(EXPIRATION_MS, 20)
+        .await
+        .unwrap();
+    assert!(expired.iter().any(|chat| chat.id == stale_id));
+    let new = voice
+        .create_pending_private_call(&caller, &callee, EXPIRATION_MS)
+        .await
+        .unwrap()
+        .started
+        .expect("free after sweep");
+    voice
+        .finish_pending_private_call(PendingPrivateCall::Id(new))
         .await
         .unwrap();
 }
@@ -737,10 +784,7 @@ async fn live_call_still_blocks_symmetrically() {
         .create_pending_private_call(&other, &callee, EXPIRATION_MS)
         .await
         .unwrap();
-    assert!(
-        outcome.started.is_none() && outcome.expired.is_empty(),
-        "the callee is busy"
-    );
+    assert!(outcome.started.is_none(), "the callee is busy");
     VoiceDb::new(db.pool().clone(), Default::default())
         .finish_pending_private_call(PendingPrivateCall::Id(live_id))
         .await
@@ -748,7 +792,7 @@ async fn live_call_still_blocks_symmetrically() {
 }
 
 #[tokio::test]
-async fn sweep_reclaims_the_same_rows_the_busy_check_skips() {
+async fn sweep_releases_expired_pending_calls() {
     let Some(pool) = scratch_pool().await else {
         return;
     };
@@ -925,7 +969,7 @@ async fn blocked_pair_cannot_start_call_and_friends_can() {
     // Without settings rows both read `all`; a stranger the callee limited to
     // friends is refused, and friends pass.
     let pre = db
-        .private_voice_preflight(&caller, &callee, 60_000)
+        .private_voice_preflight(&caller, &callee, 60_000, Default::default())
         .await
         .unwrap();
     assert_eq!(
@@ -1009,7 +1053,7 @@ async fn blocked_pair_cannot_start_call_and_friends_can() {
         matches!(&*event, super::pubsub::SocialEvent::PrivateVoice(u) if u.status == PrivateVoiceChatStatus::VoiceChatAccepted as i32 && u.credentials.is_some())
     );
 
-    // Ending tears the room down through the runtime and tells both parties.
+    // Ending tears the room down through the runtime and tells the other party.
     let response = SocialServiceImpl
         .end_private_voice_chat(
             EndPrivateVoiceChatPayload {
@@ -1095,14 +1139,9 @@ async fn reject_and_disconnect_delete_through_voice_owner_before_signalling() {
         callee_rx.try_recv().is_err(),
         "the dropped party is not told"
     );
-    // The runtime is asked about the address's accepted call first; a pending
-    // call has none, so it is deleted as pending.
     assert!(
-        voice
-            .calls
-            .lock()
-            .iter()
-            .any(|c| c == &format!("end-private latest {callee}"))
+        voice.calls.lock().is_empty(),
+        "a pending disconnect does not ask the media runtime to end an accepted call"
     );
 }
 
@@ -1596,7 +1635,15 @@ async fn ws_handshake_timeout_closes_connection() {
 
 /// The client half of the socket: binary frames are the transport, text,
 /// ping and pong are skipped, a close ends it.
+#[derive(Default)]
+struct SocketReadGate {
+    pause_after_response: std::sync::atomic::AtomicBool,
+    paused: std::sync::atomic::AtomicBool,
+    closed: std::sync::atomic::AtomicBool,
+    resume: tokio::sync::Notify,
+}
 struct TungsteniteTransport {
+    gate: Option<Arc<SocketReadGate>>,
     read: Mutex<futures::stream::SplitStream<WsStream>>,
     write: Mutex<futures::stream::SplitSink<WsStream, WsMessage>>,
 }
@@ -1605,6 +1652,7 @@ impl TungsteniteTransport {
     fn new(socket: WsStream) -> Self {
         let (write, read) = socket.split();
         Self {
+            gate: None,
             read: Mutex::new(read),
             write: Mutex::new(write),
         }
@@ -1615,14 +1663,42 @@ impl TungsteniteTransport {
 impl Transport for TungsteniteTransport {
     async fn receive(&self) -> Result<TransportMessage, TransportError> {
         loop {
+            if let Some(gate) = &self.gate {
+                while gate.paused.load(std::sync::atomic::Ordering::SeqCst) {
+                    gate.resume.notified().await;
+                }
+            }
             match self.read.lock().await.next().await {
-                Some(Ok(WsMessage::Binary(b))) => return Ok(b.to_vec()),
+                Some(Ok(WsMessage::Binary(b))) => {
+                    if let Some(gate) = &self.gate {
+                        if matches!(
+                            crate::rpc::drpc::rpc_protocol::parse::parse_header(&b),
+                            Some((crate::rpc::drpc::rpc_protocol::RpcMessageTypes::Response, _))
+                        ) && gate
+                            .pause_after_response
+                            .swap(false, std::sync::atomic::Ordering::SeqCst)
+                        {
+                            gate.paused.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                    }
+                    return Ok(b.to_vec());
+                }
                 Some(Ok(WsMessage::Ping(_)))
                 | Some(Ok(WsMessage::Pong(_)))
                 | Some(Ok(WsMessage::Text(_))) => continue,
-                Some(Ok(WsMessage::Close(_))) | None => return Err(TransportError::Closed),
+                Some(Ok(WsMessage::Close(_))) | None => {
+                    if let Some(gate) = &self.gate {
+                        gate.closed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    return Err(TransportError::Closed);
+                }
                 Some(Ok(WsMessage::Frame(_))) => continue,
-                Some(Err(e)) => return Err(TransportError::Internal(Box::new(e))),
+                Some(Err(e)) => {
+                    if let Some(gate) = &self.gate {
+                        gate.closed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    return Err(TransportError::Internal(Box::new(e)));
+                }
             }
         }
     }
@@ -1716,9 +1792,9 @@ async fn explorer_as(
     server: &Server,
     root: &PrivateKeySigner,
 ) -> (String, RpcClient<TungsteniteTransport>, SocialClient) {
+    seed_profiles(&server.state.ctx, &[&format!("{:#x}", root.address())]).await;
     let ts = chrono::Utc::now().timestamp_millis();
-    let payload =
-        crate::shared::signed_fetch::build_payload_v6("get", "/social-rpc", &ts.to_string(), "{}");
+    let payload = crate::shared::signed_fetch::build_payload_v6("get", "/", &ts.to_string(), "{}");
     let (signer, frame) = frame_signed(
         root,
         &PrivateKeySigner::random(),
@@ -1852,7 +1928,10 @@ async fn two_explorers_exchange_a_friend_request_over_the_socket() {
     };
     assert_eq!(request.friend.as_ref().unwrap().address, alice);
     assert_eq!(request.message.as_deref(), Some("hi bob"));
-    assert_eq!(request.id, accepted.id);
+    assert_ne!(
+        request.id, accepted.id,
+        "stream events identify the action; the mutation response identifies the friendship"
+    );
 
     // Both sides read the pending state; Bob accepts; Alice's stream carries the acceptance.
     let status = bob_social.get_friendship_status(&alice).await;

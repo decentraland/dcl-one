@@ -7,19 +7,23 @@ directory. Anything that runs the client - the explorer, the headless
 examples, a test binary - therefore needs `library/uuav/dist/<target>/`
 copied next to it. This script does that copy and refuses to stage an
 unfetched Git LFS pointer, which would otherwise fail at spawn time with an
-opaque loader error.
+opaque loader error, or a set whose files are not the bytes
+`tooling/uuav/uuav-binaries.lock.json` pins for the target.
 
 Usage: stage-dist.py <target> <directory> [--repo ROOT]
   target     a lock target (macos-universal, windows-x86_64, linux-x86_64)
              or `host` for the running machine's target
   directory  created if missing; existing files of the same names are
              replaced
-Exit status: 0 staged, 1 a file is missing or is an LFS pointer, 2 usage.
+Exit status: 0 staged, 1 a file is missing, is an LFS pointer or differs from
+the lock, 2 usage.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import os
 import platform
 import shutil
@@ -28,6 +32,7 @@ import sys
 
 LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
 DIST = os.path.join("library", "uuav", "dist")
+LOCK = os.path.join("tooling", "uuav", "uuav-binaries.lock.json")
 TARGETS = ("macos-universal", "windows-x86_64", "linux-x86_64")
 
 
@@ -48,8 +53,36 @@ def is_lfs_pointer(path: str) -> bool:
         return handle.read(len(LFS_POINTER_PREFIX)) == LFS_POINTER_PREFIX
 
 
+def sha256(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def hashes_of(path: str) -> list[str]:
+    """The file's sha256, plus, for a text file, the sha256 of its bytes with CRLF line ends
+    turned back into LF: a checkout with core.autocrlf=true rewrites the license texts and
+    the lock holds the LF bytes."""
+    hashes = [sha256(path)]
+    if path.endswith(".txt"):
+        with open(path, "rb") as handle:
+            hashes.append(hashlib.sha256(handle.read().replace(b"\r\n", b"\n")).hexdigest())
+    return hashes
+
+
+def locked_hashes(repo: str, target: str) -> dict[str, str]:
+    """The lock's sha256 of every file of the target's runtime set, by file name."""
+    with open(os.path.join(repo, LOCK), encoding="utf-8") as handle:
+        lock = json.load(handle)
+    return {os.path.basename(artifact["path"]): artifact["sha256"]
+            for artifact in lock["targets"][target]["artifacts"]}
+
+
 def stage(repo: str, target: str, directory: str) -> list[str]:
-    """Copies every file of the target's dist directory; returns problems."""
+    """Copies every file of the target's dist directory once each matches the lock; returns
+    problems."""
     source = os.path.join(repo, DIST, target)
     if not os.path.isdir(source):
         return [f"no runtime set at {os.path.relpath(source, repo)}; build it with "
@@ -61,6 +94,23 @@ def stage(repo: str, target: str, directory: str) -> list[str]:
     problems = [f"{name} is an unfetched Git LFS pointer; run "
                 f"`git lfs pull --include 'library/uuav/dist/**'`"
                 for name in names if is_lfs_pointer(os.path.join(source, name))]
+    if problems:
+        return problems
+    try:
+        locked = locked_hashes(repo, target)
+    except (OSError, KeyError, TypeError, ValueError) as error:
+        return [f"cannot read {LOCK} for {target}: {error}"]
+    for name in names:
+        expected = locked.get(name)
+        if expected is None:
+            problems.append(f"{name} is not in the lock; relock the target or remove the file")
+            continue
+        actual = hashes_of(os.path.join(source, name))
+        if expected not in actual:
+            problems.append(f"{name} differs from the lock (sha256 {actual[0][:12]}, locked "
+                            f"{expected[:12]}); the runtime set changed without a relock")
+    problems += [f"{name} is in the lock but missing from {os.path.relpath(source, repo)}"
+                 for name in sorted(set(locked) - set(names))]
     if problems:
         return problems
     os.makedirs(directory, exist_ok=True)

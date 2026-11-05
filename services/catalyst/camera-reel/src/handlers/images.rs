@@ -1,4 +1,7 @@
 use std::io::Cursor;
+use std::time::Duration;
+
+use tokio::time::Instant;
 
 use axum::Json;
 use axum::body::Body;
@@ -221,6 +224,12 @@ async fn finalize_upload(
         return Err(err);
     }
 
+    // PhotoTaken's counter handler is best-effort upstream. Retain the false
+    // publication marker on failure so the repair pass can retry after restart.
+    if let Err(error) = state.db.publish_ranking(new_image.id).await {
+        tracing::error!(%error, image_id=%new_image.id, "photo ranking publication deferred");
+    }
+
     let response = UploadResponse {
         image,
         user_data: UserDataResponse {
@@ -229,6 +238,219 @@ async fn finalize_upload(
         },
     };
     Ok((StatusCode::OK, Json(response)).into_response())
+}
+
+// Candidate retry policy: recent uploads get the existing minute cadence; old
+// incomplete uploads are probed again an hour after a complete cold sweep.
+const RANKING_RECENT_AGE: chrono::TimeDelta = chrono::TimeDelta::minutes(10);
+const RANKING_TICK: Duration = Duration::from_secs(60);
+const RANKING_COLD_RETRY: Duration = Duration::from_secs(60 * 60);
+const RANKING_PASS_BUDGET: Duration = Duration::from_secs(3);
+// Candidate slow-row isolation budget; the pass deadline still takes priority.
+const RANKING_ROW_BUDGET: Duration = Duration::from_secs(1);
+const RANKING_MAX_PAGES: usize = 32;
+
+pub(crate) struct RankingSweep {
+    pub(crate) after: Uuid,
+    pub(crate) cutoff: Option<chrono::NaiveDateTime>,
+    pub(crate) next_due: Instant,
+}
+
+impl RankingSweep {
+    pub(crate) fn new(now: Instant) -> Self {
+        Self {
+            after: Uuid::nil(),
+            cutoff: None,
+            next_due: now,
+        }
+    }
+}
+
+pub(crate) struct RankingSchedule {
+    // Fixed slots: recent first, cold second. Only these two sweep records persist.
+    pub(crate) sweeps: [RankingSweep; 2],
+    next: usize,
+}
+
+impl RankingSchedule {
+    pub(crate) fn new(now: Instant) -> Self {
+        Self {
+            sweeps: [RankingSweep::new(now), RankingSweep::new(now)],
+            next: 0,
+        }
+    }
+
+    pub(crate) fn due(&mut self, now: Instant) -> Option<usize> {
+        for offset in 0..2 {
+            let index = (self.next + offset) % 2;
+            if self.sweeps[index].next_due <= now {
+                self.next = (index + 1) % 2;
+                return Some(index);
+            }
+        }
+        None
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct RankingRepairProgress {
+    pub(crate) pages: usize,
+    pub(crate) fetched: usize,
+    pub(crate) inspected: usize,
+    pub(crate) deferred: usize,
+    pub(crate) probes: usize,
+    pub(crate) published: usize,
+    pub(crate) errors: usize,
+    pub(crate) timed_out: bool,
+}
+
+impl crate::State {
+    pub(crate) async fn repair_ranking_publications(
+        &self,
+        sweep: &mut RankingSweep,
+        cold: bool,
+        deadline: Instant,
+    ) -> anyhow::Result<RankingRepairProgress> {
+        let cutoff = *sweep
+            .cutoff
+            .get_or_insert_with(|| chrono::Utc::now().naive_utc() - RANKING_RECENT_AGE);
+        let mut progress = RankingRepairProgress::default();
+        let page = async {
+            let rows = self.db.pending_rankings(sweep.after).await?;
+            progress.fetched = rows.len();
+            if rows.is_empty() {
+                sweep.after = Uuid::nil();
+                sweep.cutoff = None;
+                sweep.next_due = Instant::now()
+                    + if cold {
+                        RANKING_COLD_RETRY
+                    } else {
+                        RANKING_TICK
+                    };
+            }
+            for (id, image, thumbnail, created_at) in rows {
+                if Instant::now() >= deadline {
+                    progress.timed_out = true;
+                    break;
+                }
+                if (created_at < cutoff) != cold {
+                    progress.deferred += 1;
+                } else {
+                    // No database transaction or row lock is held during storage I/O.
+                    let row_deadline = Instant::now() + RANKING_ROW_BUDGET;
+                    let publication = async {
+                        progress.probes += 1;
+                        if !self.storage.exist(&image).await? {
+                            return Ok(false);
+                        }
+                        progress.probes += 1;
+                        if !self.storage.exist(&thumbnail).await? {
+                            return Ok(false);
+                        }
+                        self.db
+                            .publish_ranking_before(id, Some(row_deadline))
+                            .await?;
+                        Ok::<_, anyhow::Error>(true)
+                    };
+                    let publication = match tokio::time::timeout_at(row_deadline, publication).await
+                    {
+                        Ok(result) => result,
+                        Err(error) => Err(error.into()),
+                    };
+                    // A row budget is a completed retryable failure. A global
+                    // deadline retains this row even when both timers fire together.
+                    if Instant::now() >= deadline {
+                        progress.timed_out = true;
+                        break;
+                    }
+                    match publication {
+                        Ok(true) => progress.published += 1,
+                        Ok(false) => {}
+                        Err(error) => {
+                            progress.errors += 1;
+                            tracing::error!(%id, %error, "photo ranking row repair failed");
+                        }
+                    }
+                    progress.inspected += 1;
+                }
+                // Only completed/deferred rows advance. Dropping this future on
+                // deadline or cancellation retains the in-flight row and unvisited tail.
+                sweep.after = id;
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        match tokio::time::timeout_at(deadline, page).await {
+            Ok(result) => result?,
+            Err(_) => progress.timed_out = true,
+        }
+        Ok(progress)
+    }
+
+    pub(crate) async fn repair_ranking_pass(
+        &self,
+        schedule: &mut RankingSchedule,
+        deadline: Instant,
+    ) -> anyhow::Result<RankingRepairProgress> {
+        let mut progress = RankingRepairProgress::default();
+        for _ in 0..RANKING_MAX_PAGES {
+            if Instant::now() >= deadline {
+                progress.timed_out = true;
+                break;
+            }
+            let Some(index) = schedule.due(Instant::now()) else {
+                break;
+            };
+            let page = self
+                .repair_ranking_publications(&mut schedule.sweeps[index], index == 1, deadline)
+                .await?;
+            progress.pages += 1;
+            progress.fetched += page.fetched;
+            progress.inspected += page.inspected;
+            progress.deferred += page.deferred;
+            progress.probes += page.probes;
+            progress.published += page.published;
+            progress.errors += page.errors;
+            if page.timed_out {
+                progress.timed_out = true;
+                break;
+            }
+        }
+        Ok(progress)
+    }
+
+    pub fn spawn_ranking_job(self: &std::sync::Arc<Self>, jobs: &crate::jobs::Jobs) {
+        let state = self.clone();
+        jobs.spawn_leased("camera-photo-ranking", move |ctx| {
+            let state = state.clone();
+            async move {
+                let mut schedule = RankingSchedule::new(Instant::now());
+                loop {
+                    let result = tokio::select! {
+                        _ = ctx.cancel.cancelled() => return Ok(()),
+                        result = state.repair_ranking_pass(
+                            &mut schedule, Instant::now() + RANKING_PASS_BUDGET,
+                        ) => result,
+                    };
+                    match result {
+                        Ok(progress) => ctx.progress(format!(
+                            "{} photo ranking publications repaired; {} pages, {} inspected, {} deferred, {} row errors; pass timed out: {}",
+                            progress.published, progress.pages, progress.inspected,
+                            progress.deferred, progress.errors, progress.timed_out,
+                        )),
+                        Err(error) => {
+                            ctx.error(error.to_string());
+                            tracing::error!(%error, "photo ranking repair pass failed");
+                        }
+                    }
+                    ctx.pass_done();
+                    tokio::select! {
+                        _ = ctx.cancel.cancelled() => return Ok(()),
+                        _ = tokio::time::sleep(RANKING_TICK) => {},
+                    }
+                }
+            }
+        });
+    }
 }
 
 pub async fn delete_image(

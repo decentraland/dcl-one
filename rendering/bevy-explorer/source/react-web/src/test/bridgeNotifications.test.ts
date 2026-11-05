@@ -5,7 +5,7 @@ import type { PageToScene, SceneToPage } from '../engine/protocol'
 let player: { userId: string; isGuest: boolean } | null = null
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player }))
 const { signed } = vi.hoisted(() => ({ signed: vi.fn() }))
-vi.mock('../../bridge-scene/src/http', () => ({ isZone: async () => false, signed }))
+vi.mock('../../bridge-scene/src/http', () => ({ serviceBase: async () => 'https://notifications.decentraland.org', signed }))
 
 const { registerNotifications, POLL_INTERVAL_S, POLL_BACKOFF_MAX_S } = await import('../../bridge-scene/src/domains/notifications')
 const { identity } = await import('../../bridge-scene/src/identity')

@@ -1,5 +1,5 @@
 //! Exercise the dormant v3 release against genuine v2 layouts and receipts.
-//! Production apply/migrate/bootstrap remain version 2 in this package.
+//! Current v3 apply/migrate/bootstrap execution is checked in social_voice_upgrade.
 use std::{
     fs,
     io::Write,
@@ -7,7 +7,6 @@ use std::{
     process::{Command, Output, Stdio},
 };
 
-use catalyst_db::{MIGRATIONS_SQL, SCHEMA_SQL, schema_migrate};
 use sha2::{Digest, Sha256};
 use sqlx::{
     PgPool,
@@ -142,16 +141,25 @@ impl Database {
             "869841157fcb18ddb32fd030f6920127c41142656f91046ae426be0dd1ab3925",
         );
         let db = Self::empty().await?;
-        sqlx::raw_sql(sqlx::AssertSqlSafe(source.schema().to_owned()))
-            .execute(&db.pool)
-            .await
-            .unwrap();
-        if matches!(source, Source::Prepared) {
-            for rows in [UPGRADE_ROWS, ORIGIN_ROWS] {
-                sqlx::raw_sql(sqlx::AssertSqlSafe(rows.to_owned()))
-                    .execute(&db.pool)
-                    .await
-                    .unwrap();
+        // One capture import at a time per process, like `apply_schema`: each
+        // runs as one implicit transaction holding about 3,000 object locks
+        // until commit, so overlapping imports exhaust a default cluster's
+        // shared lock table ("out of shared memory"). The releases under test
+        // take about 70 and still run in parallel.
+        {
+            static IMPORTING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+            let _one_at_a_time = IMPORTING.lock().await;
+            sqlx::raw_sql(sqlx::AssertSqlSafe(source.schema().to_owned()))
+                .execute(&db.pool)
+                .await
+                .unwrap();
+            if matches!(source, Source::Prepared) {
+                for rows in [UPGRADE_ROWS, ORIGIN_ROWS] {
+                    sqlx::raw_sql(sqlx::AssertSqlSafe(rows.to_owned()))
+                        .execute(&db.pool)
+                        .await
+                        .unwrap();
+                }
             }
         }
         let receipts: Vec<Receipt> = sqlx::query_as(LEDGER).fetch_all(&db.pool).await.unwrap();
@@ -246,56 +254,6 @@ async fn notification_facts(pool: &PgPool, source: Source) -> String {
     }
     sqlx::query_scalar("SELECT coalesce(jsonb_agg(jsonb_build_array(id::text,id,voice_notification_scope,voice_notification_generation,voice_notification_expires_at) ORDER BY id),'[]'::jsonb)::text FROM social.communities WHERE voice_notification_generation IS NOT NULL").fetch_one(pool).await.unwrap()
 }
-async fn assert_old_binary_refuses_v3(pool: &PgPool) {
-    assert_eq!(catalyst_db::SCHEMA_VERSION, 2);
-    assert!(matches!(
-        catalyst_db::bootstrap(pool).await,
-        Err(catalyst_db::BootstrapError::Mismatch { version: 3, .. })
-    ));
-    assert!(matches!(
-        schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL).await,
-        Err(schema_migrate::MigrateError::Incompatible { version: 3, .. })
-    ));
-}
-
-#[tokio::test]
-async fn dormant_release_leaves_fresh_v2_bootstrap_and_migration_enrollment_unchanged() {
-    assert_eq!(catalyst_db::SCHEMA_VERSION, 2);
-    assert!(!SCHEMA_SQL.contains("CREATE TABLE social.community_voice_notifications"));
-    assert!(!SCHEMA_SQL.contains("CREATE INDEX private_voice_chats_caller_idx"));
-    assert!(
-        !schema_migrate::parse_steps(MIGRATIONS_SQL)
-            .iter()
-            .any(|step| step.name == STEP)
-    );
-    let Some(db) = Database::empty().await else {
-        return;
-    };
-    catalyst_db::apply_schema(&db.pool).await.unwrap();
-    assert_eq!(
-        sqlx::query_scalar::<_, i32>("SELECT version FROM meta.schema WHERE id=1")
-            .fetch_one(&db.pool)
-            .await
-            .unwrap(),
-        2
-    );
-    catalyst_db::bootstrap(&db.pool).await.unwrap();
-    assert!(
-        schema_migrate::migrate(&db.pool, SCHEMA_SQL, MIGRATIONS_SQL)
-            .await
-            .unwrap()
-            .is_empty()
-    );
-    let target: bool = sqlx::query_scalar(
-        "SELECT to_regclass('social.community_voice_notifications') IS NOT NULL",
-    )
-    .fetch_one(&db.pool)
-    .await
-    .unwrap();
-    assert!(!target);
-    db.close().await;
-}
-
 #[tokio::test]
 async fn both_genuine_v2_routes_roll_back_at_every_boundary_then_preserve_rows_and_real_ledger() {
     let release = release_v3();
@@ -373,7 +331,6 @@ async fn both_genuine_v2_routes_roll_back_at_every_boundary_then_preserve_rows_a
                 release_result(pool, &release).await,
                 "schema release v3 requires catalyst version 2",
             );
-            assert_old_binary_refuses_v3(pool).await;
             assert_eq!(preserved_facts(pool).await, facts);
             assert_eq!(
                 sqlx::query_as::<_, Receipt>(LEDGER)
@@ -748,7 +705,6 @@ async fn psql_runs_both_genuine_origins_and_excludes_accepted_calls_from_pending
         );
         let remaining: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_index WHERE indrelid='social.private_voice_chats'::regclass AND indisunique AND NOT indisprimary").fetch_one(&db.pool).await.unwrap();
         assert_eq!(remaining, 0);
-        assert_old_binary_refuses_v3(&db.pool).await;
         db.close().await;
     }
 }

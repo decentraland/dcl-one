@@ -1,7 +1,10 @@
 // One client per process and realm: the first scenario boots it (serves the web app, starts
-// Chrome through the web driver or attaches to the standalone's loopback console), signs in and
-// waits for the world; every later scenario shares it, as explorer-automation keeps one client
-// for a whole run. `--test-isolation=none` keeps the spec files in one process.
+// Chrome through the web driver or attaches to the standalone's loopback console), signs in,
+// waits for the world and reaches the realm and the parcel; every later scenario shares it, as
+// explorer-automation keeps one client for a whole run. `--test-isolation=none` keeps the spec
+// files in one process.
+import { mkdir, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import { chromeArgs } from './chrome.ts'
 import type { Console } from './console.ts'
 import { Explorer, type WorldState } from './explorer.ts'
@@ -10,7 +13,8 @@ import { NativeConsole, spawnNative } from './native.ts'
 import { serveWebApp, type StaticServer } from './serve.ts'
 import { accountKey, describeTarget, readTarget, type Target } from './target.ts'
 import { until } from './wait.ts'
-import { WebConsole } from './web.ts'
+import { BootError, WebConsole } from './web.ts'
+import { REPORT_DIR } from './paths.ts'
 
 export type SignIn = 'account' | 'guest' | 'none'
 
@@ -33,7 +37,15 @@ export interface Session {
 }
 
 const sessions = new Map<string, Promise<Session>>()
+/** The boots of a session that failed, by its key. */
+const bootFailures = new Map<string, { count: number; error: unknown }>()
+/** How many times a client is booted for one session: past it, its scenarios fail at once. */
+export const MAX_BOOTS = 2
 let webServer: Promise<StaticServer> | undefined
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
 
 function key(target: Target, options: OpenOptions): string {
   const size = options.windowSize ?? target.windowSize
@@ -47,8 +59,17 @@ export function openSession(options: OpenOptions = {}, target: Target = readTarg
   const id = key(target, options)
   let session = sessions.get(id)
   if (!session) {
-    session = boot(options, target).catch((error) => {
+    const failed = bootFailures.get(id)
+    if (failed && failed.count >= MAX_BOOTS) {
+      return Promise.reject(new Error(`the client failed to boot ${failed.count} times; not booting it again in this run: ${message(failed.error)}`))
+    }
+    session = boot(options, target).catch(async (error: unknown) => {
       sessions.delete(id)
+      const count = (bootFailures.get(id)?.count ?? 0) + 1
+      bootFailures.set(id, { count, error })
+      // Said at once: the run's own failure summary comes at its end, which a step timeout cuts off.
+      console.error(`[e2e] boot ${count} of ${MAX_BOOTS} failed: ${message(error)}`)
+      if (error instanceof BootError) await keepBootFailure(count, error).catch((problem: unknown) => console.error(`[e2e] could not keep the boot's evidence: ${message(problem)}`))
       throw error
     })
     sessions.set(id, session)
@@ -64,6 +85,7 @@ export async function openExplorer(options: OpenOptions = {}): Promise<Explorer>
 export async function closeSessions(): Promise<void> {
   const open = [...sessions.values()]
   sessions.clear()
+  bootFailures.clear()
   for (const session of open) {
     try {
       await (await session).close()
@@ -82,6 +104,18 @@ export async function closeSessions(): Promise<void> {
   }
 }
 
+/** A failed boot's evidence in the report: what the page said (`boot-<n>.console.txt`) and how it
+ *  looked (`boot-<n>.jpg`), under `report/boot-failures/`; the console's last lines go to the log
+ *  as well, where a step timeout can still cut the run off before the report is uploaded. */
+export async function keepBootFailure(boot: number, error: BootError): Promise<void> {
+  const dir = path.join(REPORT_DIR, 'boot-failures')
+  await mkdir(dir, { recursive: true })
+  await writeFile(path.join(dir, `boot-${boot}.console.txt`), `${error.message}\n\n${error.console.join('\n')}\n`)
+  if (error.screenshot) await writeFile(path.join(dir, `boot-${boot}.jpg`), error.screenshot)
+  const tail = error.console.slice(-20)
+  console.error(`[e2e] the page's console, the last ${tail.length} of ${error.console.length} lines (all of them in ${dir}):\n${tail.join('\n')}`)
+}
+
 /** How long a boot may take, the sum of its waits: the web transport's `ready` (300 s), the
  *  sign-in command (120 s) and `enterWorld` (300 s). A scenario's own budget starts after it. */
 export const BOOT_ALLOWANCE_MS = 720_000
@@ -97,8 +131,11 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
   } else {
     const base = target.webUrl ?? (await serveApp(target)).url
     const page = new URL(base)
-    page.searchParams.set('realm', realm)
-    page.searchParams.set('position', position)
+    // No `realm` or `position` on the url: a destination there makes the HUD launch the engine
+    // only once a sign-in is submitted on its start page (useEngineSession's url destination),
+    // and the sign-in below goes through the engine's console. Without one the engine launches
+    // at once for a visitor with no session, holding the world; `arrive` then reaches the realm
+    // and the parcel by console.
     page.searchParams.set('baseDomain', target.baseDomain)
     url = page.toString()
     console_ = await WebConsole.launch({
@@ -111,9 +148,13 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
   }
   const explorer = new Explorer(console_)
   try {
-    await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin)
+    await signIn(explorer, target, options.signIn ?? 'account', options.firstLogin, target.transport === 'native' ? realm : undefined)
+    if (target.transport === 'web') await arrive(explorer, realm, position)
   } catch (error) {
+    // a page that opened but never arrived: what it said and how it looks, with the error
+    const evidence = console_ instanceof WebConsole ? await console_.evidence().catch(() => undefined) : undefined
     await explorer.close()
+    if (evidence) throw new BootError(message(error), evidence.console, evidence.screenshot)
     throw error
   }
   return {
@@ -142,27 +183,71 @@ async function nativeConsole(target: Target, realm: string, position: string): P
   return spawnNative({ bin, port, token, args: ['--realm', realm, '--position', position, ...args] })
 }
 
-/** Sign in and enter the world. With the world held by the lobby, the page's `Jump In` lands. */
-export async function signIn(explorer: Explorer, target: Target, mode: SignIn, firstLogin: { name?: string; look?: number } = {}): Promise<WorldState> {
+/** Sign in, then wait for the world as `enterWorld` does: `Jump In` when the HUD offers it, or
+ *  `heldRealm` asked for through the console when the world is held and no `Jump In` exists. */
+export async function signIn(explorer: Explorer, target: Target, mode: SignIn, firstLogin: { name?: string; look?: number } = {}, heldRealm?: string): Promise<WorldState> {
   if (mode === 'account') {
     await explorer.loginIdentity(buildAuthIdentity(accountKey(target)), { name: firstLogin.name ?? 'e2etester', look: firstLogin.look ?? 1 })
   } else if (mode === 'guest') {
     await explorer.loginGuest()
   }
-  return enterWorld(explorer)
+  return enterWorld(explorer, undefined, heldRealm)
 }
 
-/** Wait for the world, pressing the lobby's `Jump In` when it offers one. */
-export async function enterWorld(explorer: Explorer, timeoutMs = 300_000): Promise<WorldState> {
+/** `x,y` as a parcel. */
+export function parsePosition(position: string): [number, number] {
+  const match = /^\s*(-?\d+)\s*,\s*(-?\d+)\s*$/.exec(position)
+  if (!match) throw new Error(`a position is "x,y", not "${position}"`)
+  return [Number(match[1]), Number(match[2])]
+}
+
+/** Whether two realm names mean the same realm: a url's trailing slash and case aside. */
+export function sameRealm(a: string, b: string): boolean {
+  const norm = (realm: string) => realm.trim().toLowerCase().replace(/\/+$/, '')
+  return norm(a) === norm(b)
+}
+
+/** Reach the realm and the parcel through the console, after the lobby let the player in
+ *  wherever it did: a realm change when the player is in another, then the teleport, unless the
+ *  player already stands in the parcel (a teleport there brings no arrival to wait for). */
+export async function arrive(explorer: Explorer, realm: string, position: string): Promise<WorldState> {
+  const [x, y] = parsePosition(position)
+  let state = await explorer.worldState()
+  if (!sameRealm(state.realm, realm)) state = await explorer.changeRealm(realm)
+  const here = state.position && [Math.floor(state.position[0] / 16), Math.floor(state.position[2] / 16)]
+  if (here && here[0] === x && here[1] === y) return state
+  return explorer.teleport(x, y)
+}
+
+/** How long a held, realm-connected world is left to its HUD before the console is asked for the
+ *  realm: a `Jump In` that mounts within it wins. */
+export const HELD_GRACE_MS = 5000
+
+/** Wait for the world. Until it comes, one action at most: `Jump In` is pressed once the HUD
+ *  offers it as actionable; otherwise, with `heldRealm`, `/changerealm <heldRealm>` is sent once
+ *  the state has been signed in, held and realm-connected for `heldGraceMs` with no `Jump In`.
+ *  The path taken is logged. */
+export async function enterWorld(explorer: Explorer, timeoutMs = 300_000, heldRealm?: string, heldGraceMs = HELD_GRACE_MS): Promise<WorldState> {
   let jumped = false
+  let heldSince: number | undefined
   return until(
     async () => {
       const state = await explorer.worldState()
       if (state.inWorld || jumped) return state
       const jump = await explorer.hud.find({ name: 'Jump In', role: 'button', index: 0 }).catch(() => undefined)
       if (jump?.actionable) {
+        console.error('[e2e] entering the world through the HUD Jump In')
         await explorer.hud.click({ name: 'Jump In', role: 'button', index: 0 })
         jumped = true
+      } else if (heldRealm && state.signedIn && state.worldHeld && state.realmConnected) {
+        heldSince ??= Date.now()
+        if (Date.now() - heldSince >= heldGraceMs) {
+          console.error(`[e2e] no Jump In after ${heldGraceMs} ms of a held world: asking the console for ${heldRealm}`)
+          await explorer.run(`/changerealm ${heldRealm}`)
+          jumped = true
+        }
+      } else {
+        heldSince = undefined
       }
       return state
     },

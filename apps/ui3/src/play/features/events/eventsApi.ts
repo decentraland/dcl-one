@@ -1,9 +1,9 @@
-// Client for the public Decentraland events API (events.<base domain>/api/events).
+// Client for the public Decentraland events API (<events service>/api/events).
 
 import { useEffect, useState } from 'react'
-import { hostUrl, serviceUrl } from '../../lib/baseDomain'
+import { serviceUrl } from '../../lib/baseDomain'
 
-export const EVENTS_API = hostUrl('events', '/api/events')
+export const EVENTS_API = `${serviceUrl('events')}/api/events`
 // Unity refreshes the sidebar's live counter every 3 minutes (SidebarController.FillLiveEventsAsync).
 export const LIVE_COUNT_REFRESH_MS = 3 * 60 * 1000
 

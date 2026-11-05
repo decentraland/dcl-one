@@ -3,14 +3,11 @@
 //   The service has no push channel, so like unity-explorer this scene polls every 5 s for unread
 //   notifications newer than the newest it has seen, and pushes them as `notificationsNew`.
 import { getPlayer } from '@dcl/sdk/players'
-import { isZone, signed } from '../http'
+import { serviceBase, signed } from '../http'
 import { identity } from '../identity'
 import type { Ctx } from '../bridge'
 import type { AppNotification } from '../../../src/engine/protocol'
 import { notificationTimeMs } from '../../../src/lib/notificationTime'
-
-const ORG = 'https://notifications.decentraland.org/notifications'
-const ZONE = 'https://notifications.decentraland.zone/notifications'
 
 /** unity-explorer's NotificationsRequestController polls at the same rate. */
 export const POLL_INTERVAL_S = 5
@@ -26,7 +23,7 @@ type NotificationRaw = {
 }
 
 async function base(): Promise<string> {
-  return (await isZone()) ? ZONE : ORG
+  return `${await serviceBase('notifications')}/notifications`
 }
 
 function toApp(n: NotificationRaw): AppNotification {

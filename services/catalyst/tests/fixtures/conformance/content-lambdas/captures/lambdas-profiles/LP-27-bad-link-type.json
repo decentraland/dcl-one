@@ -1,0 +1,49 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "POST",
+    "path": "/lambdas/crypto/validate-signature",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "authChain": [
+        {
+          "type": "NOPE",
+          "payload": "0x0000000000000000000000000000000000000001",
+          "signature": ""
+        }
+      ],
+      "timestamp": "1"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "361"
+    },
+    "body": {
+      "ok": false,
+      "message": "Invalid JSON body",
+      "data": [
+        {
+          "instancePath": "/authChain/0/type",
+          "schemaPath": "#/properties/authChain/items/properties/type/enum",
+          "keyword": "enum",
+          "params": {
+            "allowedValues": [
+              "SIGNER",
+              "ECDSA_EPHEMERAL",
+              "ECDSA_SIGNED_ENTITY",
+              "ECDSA_EIP_1654_EPHEMERAL",
+              "ECDSA_EIP_1654_SIGNED_ENTITY"
+            ]
+          },
+          "message": "must be equal to one of the allowed values"
+        }
+      ]
+    }
+  }
+}
