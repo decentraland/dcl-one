@@ -72,7 +72,11 @@ async fn nft_index_ready(pool: &sqlx::PgPool) -> bool {
 /// The owner's parcels and estates, newest transfer first (the old
 /// `transferred_at DESC`): each with its LAND data (name, description) and
 /// its open legacy order's price, the image the squid stored (the map
-/// service's parcel or estate PNG, under `LAND_IMAGE_BASE_URL`).
+/// service's parcel or estate PNG, under `LAND_IMAGE_BASE_URL`). The price
+/// is the marketplace subgraph's `activeOrder.price`: the latest legacy
+/// order while it is neither sold nor cancelled, also once it expired or
+/// its seller sold the LAND elsewhere (the subgraph's `transferred` status;
+/// captured 2026-11-04).
 const USER_LANDS_SQL: &str = "\
 SELECT ld.name, tr.token_address AS contract_address, tr.token_id::text AS token_id, \
        CASE WHEN tr.token_address = $4 THEN 'parcel' ELSE 'estate' END AS category, \
@@ -81,7 +85,7 @@ SELECT ld.name, tr.token_address AS contract_address, tr.token_id::text AS token
 FROM land_authz.token_right tr \
 LEFT JOIN shop.land_data ld ON ld.token_address = tr.token_address AND ld.token_id = tr.token_id \
 LEFT JOIN shop.nft_order o ON o.network = 'ethereum' AND o.contract_address = tr.token_address AND o.token_id = tr.token_id \
-      AND o.status = 'open' AND o.expires_at > $6 AND o.seller = tr.owner \
+      AND o.status = 'open' \
 LEFT JOIN LATERAL (SELECT e.block_number, e.log_index FROM land_authz.authz_event e \
                    WHERE e.token_address = tr.token_address AND e.token_id = tr.token_id AND e.kind = 'transfer' \
                    ORDER BY e.block_number DESC, e.log_index DESC LIMIT 1) moved ON true \
@@ -202,7 +206,6 @@ pub async fn user_lands(
         .bind(page_offset(page_num, page_size))
         .bind(LAND_REGISTRY_MAINNET)
         .bind(ESTATE_REGISTRY_MAINNET)
-        .bind(Utc::now().timestamp_millis())
         .fetch_all(&state.pool)
         .await
     {
