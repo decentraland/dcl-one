@@ -12,11 +12,11 @@
 //! as `serve` builds it) that is the old `ContentValidator` in full: the
 //! auth chain (the shared EIP-1654 validator for contract wallets), the
 //! per-type rules and size caps, content existence, and the access step per
-//! type, whose LAND leg is `land_authz::can_deploy_batch` (the index once its
-//! fold is published, the marketplace subgraph's owner leg before that,
-//! undecidable when neither can answer). Without it (a deployer built for a
-//! test) the partial checks below run: the chain, the LAND leg of a local
-//! scene and content existence. Peer sync does not use this deployer: it
+//! type, whose LAND leg is the Checker contract's `checkLAND` at the
+//! deploy's block (undecidable when the chain cannot answer). Without it (a
+//! deployer built for a test) the partial checks below run: the chain, the
+//! LAND leg of a local scene over `land_authz::can_deploy_batch` and content
+//! existence. Peer sync does not use this deployer: it
 //! batches through [`super::sync_deployer::LiveSyncDeployer`], which shares
 //! [`lock_deployment_pointers`].
 
@@ -45,12 +45,17 @@ pub enum DeployFailure {
     /// This node could not decide, so the deposit is neither accepted nor at fault; answer 503 so
     /// the caller retries instead of being told their content does not exist.
     Unavailable(Vec<String>),
+    /// A contract-wallet signature this node could not check: 503 like
+    /// `Unavailable`, but it follows from the caller's auth chain.
+    Unverifiable(Vec<String>),
 }
 
 impl DeployFailure {
     pub fn errors(&self) -> &[String] {
         match self {
-            DeployFailure::Rejected(errors) | DeployFailure::Unavailable(errors) => errors,
+            DeployFailure::Rejected(errors)
+            | DeployFailure::Unavailable(errors)
+            | DeployFailure::Unverifiable(errors) => errors,
         }
     }
 }
@@ -67,9 +72,10 @@ struct HashedUpload {
     bytes: Bytes,
 }
 
-static UPLOAD_HASH_JOBS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(4)));
+pub(crate) static UPLOAD_HASH_JOBS: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(4)));
 
-async fn bounded_upload_hash<T: Send + 'static>(
+pub(crate) async fn bounded_upload_hash<T: Send + 'static>(
     limit: Arc<Semaphore>,
     hash: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, String> {
@@ -199,10 +205,80 @@ impl TtlBucket {
         ttl_hit || size_hit
     }
 
+    /// Until the pointers clear: the latest of their windows, or a whole
+    /// TTL when the bucket is over its size; `None` when not limited.
+    fn retry_after(&mut self, pointers: &[String]) -> Option<Duration> {
+        if !self.is_limited(pointers) {
+            return None;
+        }
+        let now = tokio::time::Instant::now();
+        let window = pointers
+            .iter()
+            .filter_map(|p| self.entries.get(p))
+            .map(|t| self.ttl.saturating_sub(now.duration_since(*t)))
+            .max();
+        Some(window.unwrap_or(self.ttl))
+    }
+
+    #[cfg(test)]
     fn record(&mut self, pointers: &[String]) {
         let now = tokio::time::Instant::now();
         for p in pointers {
             self.entries.insert(p.clone(), now);
+        }
+    }
+
+    /// The check and the record in one step: `None` when limited.
+    fn try_reserve(&mut self, pointers: &[String]) -> Option<Held> {
+        if self.is_limited(pointers) {
+            return None;
+        }
+        let at = tokio::time::Instant::now();
+        let mut prev = HashMap::with_capacity(pointers.len());
+        for p in pointers {
+            let old = self.entries.insert(p.clone(), at);
+            prev.entry(p.clone()).or_insert(old);
+        }
+        Some(Held { at, prev })
+    }
+
+    /// Restores each pointer's earlier entry, unless something re-recorded it since.
+    fn release(&mut self, held: Held) {
+        for (p, old) in held.prev {
+            if self.entries.get(&p) != Some(&held.at) {
+                continue;
+            }
+            match old {
+                Some(t) => self.entries.insert(p, t),
+                None => self.entries.remove(&p),
+            };
+        }
+    }
+}
+
+struct Held {
+    at: tokio::time::Instant,
+    prev: HashMap<String, Option<tokio::time::Instant>>,
+}
+
+/// Pointers held from a passed check; [`Reservation::release`] frees them when the deploy is
+/// known not to have been stored. Dropping it keeps them, since a cancelled write may have committed.
+struct Reservation<'a> {
+    limiter: &'a DeployRateLimiter,
+    etype: String,
+    held: Option<Held>,
+    unchanged: Option<Held>,
+}
+
+impl Reservation<'_> {
+    fn release(self) {
+        if let Some(held) = self.held
+            && let Some(bk) = self.limiter.buckets.lock().get_mut(self.etype.as_str())
+        {
+            bk.release(held);
+        }
+        if let Some(held) = self.unchanged {
+            self.limiter.unchanged_profile.lock().release(held);
         }
     }
 }
@@ -234,10 +310,46 @@ impl DeployRateLimiter {
             .unwrap_or(false)
     }
 
+    #[cfg(test)]
     fn record(&self, etype: &str, pointers: &[String]) {
         if let Some(bk) = self.buckets.lock().get_mut(etype) {
             bk.record(pointers);
         }
+    }
+
+    /// Checks and records the pointers atomically (and in the unchanged-profile bucket when
+    /// `unchanged`); `None` when either bucket is limited.
+    fn reserve(
+        &self,
+        etype: &str,
+        pointers: &[String],
+        unchanged: bool,
+    ) -> Option<Reservation<'_>> {
+        let held = match self.buckets.lock().get_mut(etype) {
+            Some(bk) => Some(bk.try_reserve(pointers)?),
+            None => None,
+        };
+        let mut reservation = Reservation {
+            limiter: self,
+            etype: etype.to_string(),
+            held,
+            unchanged: None,
+        };
+        if unchanged {
+            let held = self.unchanged_profile.lock().try_reserve(pointers);
+            match held {
+                Some(held) => reservation.unchanged = Some(held),
+                None => {
+                    reservation.release();
+                    return None;
+                }
+            }
+        }
+        Some(reservation)
+    }
+
+    fn retry_after(&self, etype: &str, pointers: &[String]) -> Option<Duration> {
+        self.buckets.lock().get_mut(etype)?.retry_after(pointers)
     }
 
     fn is_unchanged_limited(&self, pointers: &[String]) -> bool {
@@ -251,10 +363,6 @@ impl DeployRateLimiter {
         }
         self.unchanged_profile.lock().entries.clear();
     }
-
-    fn record_unchanged(&self, pointers: &[String]) {
-        self.unchanged_profile.lock().record(pointers);
-    }
 }
 
 pub struct WriteDeployer {
@@ -263,11 +371,9 @@ pub struct WriteDeployer {
     /// The shared EIP-1654 validator (`crate::auth::cached_rpc_validator`);
     /// `None` without `ETH_RPC_URL`: a contract-wallet link is undecidable.
     eip1654: Option<Arc<dyn Eip1654Validator>>,
-    /// The LAND rights source of a local scene deploy (`land_authz::can_deploy_batch`:
-    /// the index once its fold is published, the marketplace subgraph's owner
-    /// leg before that; the old `LandOperatorResolver` over the squid index).
-    /// The partial checks' LAND leg (`None` runs none) and the unpublish
-    /// route's parcel check.
+    /// The LAND rights index (`land_authz::can_deploy_batch`): the partial
+    /// checks' LAND leg (`None` runs none) and the unpublish route's parcel
+    /// check.
     land_authz: Option<Arc<LandAuthzState>>,
     /// The full content validator (`super::validator`); when attached it
     /// replaces the partial checks in `validate`.
@@ -341,11 +447,111 @@ impl WriteDeployer {
         self.eip1654.as_deref()
     }
 
+    pub(crate) fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
+    pub(crate) fn storage(&self) -> &Arc<Storage> {
+        &self.storage
+    }
+
+    /// The stored `local_timestamp` (ms) of a deployed entity.
+    pub(crate) async fn deployed_timestamp(&self, entity_id: &str) -> sqlx::Result<Option<i64>> {
+        sqlx::query_scalar(
+            "SELECT (EXTRACT(EPOCH FROM local_timestamp) * 1000)::bigint
+             FROM content.deployments WHERE entity_id = $1",
+        )
+        .bind(entity_id)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    /// The deploy statement's newer-entity test, ahead of it: a deployment
+    /// of the same type on any of the pointers that happened after `entity`.
+    pub(crate) async fn has_newer_deployment(&self, entity: &Entity) -> sqlx::Result<bool> {
+        sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM content.deployments
+                WHERE entity_type = $1 AND entity_pointers && $2
+                  AND (entity_timestamp > to_timestamp($3 / 1000.0)
+                       OR (entity_timestamp = to_timestamp($3 / 1000.0)
+                           AND lower(entity_id) > lower($4))))",
+        )
+        .bind(entity.entity_type.as_str())
+        .bind(&entity.pointers)
+        .bind(entity.timestamp as f64)
+        .bind(&entity.id)
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    /// Seconds until the per-pointer deploy limit lets `pointers` through
+    /// (at least 1); `None` when it does now.
+    pub(crate) fn rate_limit_retry_after(&self, etype: &str, pointers: &[String]) -> Option<u64> {
+        self.rate_limiter
+            .retry_after(etype, pointers)
+            .map(|d| d.as_secs_f64().ceil().max(1.0) as u64)
+    }
+
+    /// The chain checked against `entity_id` at `at_ms`, as the deploy
+    /// validator checks it: `Unverifiable` for a contract wallet this node
+    /// cannot ask about, `Rejected` with upstream's text otherwise.
+    pub(crate) async fn check_signature(
+        &self,
+        entity_id: &str,
+        auth_chain: &AuthChain,
+        at_ms: i64,
+    ) -> Result<(), DeployFailure> {
+        match self.validate_signature(entity_id, auth_chain, at_ms).await {
+            Ok(()) => Ok(()),
+            Err(e @ (AuthError::Eip1654ValidationFailed(_) | AuthError::Eip1654NotImplemented)) => {
+                Err(DeployFailure::Unverifiable(vec![format!(
+                    "The signature is invalid. {e}"
+                )]))
+            }
+            Err(e) => Err(DeployFailure::Rejected(vec![format!(
+                "The signature is invalid. {e}"
+            )])),
+        }
+    }
+
+    /// The validation of one partial-upload batch: the content validator's
+    /// staging subset when attached, else the LAND leg (the signature is
+    /// checked before). The access step is skipped when `include_access` is off.
+    pub(crate) async fn validate_staging(
+        &self,
+        entity: &Entity,
+        files: &HashMap<String, Bytes>,
+        auth_chain: &AuthChain,
+        include_access: bool,
+    ) -> Result<(), DeployFailure> {
+        if let Some(sources) = &self.validator {
+            let ctx = super::validator::Context {
+                sources,
+                auth_chain,
+            };
+            return super::validator::validate_staging(entity, files, &ctx, include_access)
+                .await
+                .map_err(super::validator::into_deploy_failure);
+        }
+        if include_access
+            && let Some(signer) = auth_chain.first().map(|link| link.payload.to_lowercase())
+        {
+            self.validate_land_rights(entity, &signer).await?;
+        }
+        Ok(())
+    }
+
     /// Forgets every per-pointer TTL: a route test deploys to one pointer
     /// more than once inside the 3-20 s windows.
     #[cfg(test)]
     pub(crate) fn clear_rate_limits(&self) {
         self.rate_limiter.clear();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_rate_limited(&self, etype: &str, pointer: &str) -> bool {
+        self.rate_limiter
+            .is_rate_limited(etype, &[pointer.to_lowercase()])
     }
 
     /// The old validator's LAND leg for a local scene: every pointer must be
@@ -428,7 +634,7 @@ impl WriteDeployer {
     async fn validate(
         &self,
         entity: &Entity,
-        files: &HashMap<String, Vec<u8>>,
+        files: &HashMap<String, Bytes>,
         auth_chain: &AuthChain,
         context: &str,
     ) -> Result<(), DeployFailure> {
@@ -448,7 +654,7 @@ impl WriteDeployer {
             let message = format!("The auth chain is invalid: {e}");
             return Err(match e {
                 AuthError::Eip1654ValidationFailed(_) | AuthError::Eip1654NotImplemented => {
-                    DeployFailure::Unavailable(vec![message])
+                    DeployFailure::Unverifiable(vec![message])
                 }
                 _ => DeployFailure::Rejected(vec![message]),
             });
@@ -522,6 +728,21 @@ impl WriteDeployer {
         auth_chain: Value,
         context: &str,
     ) -> Result<i64, DeployFailure> {
+        self.deploy_entity_anchored(files, entity_id, auth_chain, context, None)
+            .await
+    }
+
+    /// [`Self::deploy_entity`] with the request TTLs measured from
+    /// `ttl_anchor_ms` instead of now: a partial upload's publication
+    /// measures them from the upload's first batch.
+    pub(crate) async fn deploy_entity_anchored(
+        &self,
+        files: Vec<Bytes>,
+        entity_id: &str,
+        auth_chain: Value,
+        context: &str,
+        ttl_anchor_ms: Option<i64>,
+    ) -> Result<i64, DeployFailure> {
         let started = Instant::now();
         let uploads = hash_uploads(files)
             .await
@@ -537,6 +758,9 @@ impl WriteDeployer {
 
         let mut entity: Entity = serde_json::from_slice(&entity_bytes)
             .map_err(|e| vec![format!("There was a problem parsing the entity: {e}")])?;
+        for pointer in &mut entity.pointers {
+            *pointer = pointer.to_lowercase();
+        }
 
         if entity.id.is_empty() {
             entity.id = entity_id.to_string();
@@ -556,7 +780,7 @@ impl WriteDeployer {
         }
 
         let now_ms = chrono::Utc::now().timestamp_millis();
-        if now_ms - entity.timestamp > REQUEST_TTL_BACKWARDS_MS {
+        if ttl_anchor_ms.unwrap_or(now_ms) - entity.timestamp > REQUEST_TTL_BACKWARDS_MS {
             return Err(vec![
                 "The request is not recent enough, please submit it again with a new timestamp."
                     .to_string(),
@@ -567,7 +791,7 @@ impl WriteDeployer {
             return Err(vec!["The request timestamp is too far in the future.".to_string()].into());
         }
 
-        let pointers_lc: Vec<String> = entity.pointers.iter().map(|p| p.to_lowercase()).collect();
+        let pointers_lc = &entity.pointers;
         let rate_limited_msg = || {
             vec![format!(
                 "Entity rate limited (entityId={} pointers={}).",
@@ -575,22 +799,17 @@ impl WriteDeployer {
                 entity.pointers.join(",")
             )]
         };
+        // An early refusal; the reservation after validation is the binding check.
         if self
             .rate_limiter
-            .is_rate_limited(entity.entity_type.as_str(), &pointers_lc)
+            .is_rate_limited(entity.entity_type.as_str(), pointers_lc)
         {
             return Err(rate_limited_msg().into());
         }
         let content_unchanged =
             entity.entity_type == EntityType::Profile && self.is_content_unchanged(&entity).await;
-        if content_unchanged && self.rate_limiter.is_unchanged_limited(&pointers_lc) {
+        if content_unchanged && self.rate_limiter.is_unchanged_limited(pointers_lc) {
             return Err(rate_limited_msg().into());
-        }
-
-        self.rate_limiter
-            .record(entity.entity_type.as_str(), &pointers_lc);
-        if content_unchanged {
-            self.rate_limiter.record_unchanged(&pointers_lc);
         }
 
         let declared: HashSet<&str> = entity
@@ -599,7 +818,7 @@ impl WriteDeployer {
             .map(|c| c.hash.as_str())
             .chain(std::iter::once(entity.id.as_str()))
             .collect();
-        let mut vfiles: HashMap<String, Vec<u8>> = HashMap::new();
+        let mut vfiles: HashMap<String, Bytes> = HashMap::new();
         for upload in &uploads {
             let key = if declared.contains(upload.v1.as_str()) {
                 &upload.v1
@@ -609,7 +828,7 @@ impl WriteDeployer {
                 &upload.v1
             };
 
-            if let Some(prev) = vfiles.insert(key.clone(), upload.bytes.to_vec())
+            if let Some(prev) = vfiles.insert(key.clone(), upload.bytes.clone())
                 && prev != upload.bytes
             {
                 return Err(vec![format!(
@@ -637,24 +856,55 @@ impl WriteDeployer {
                 );
                 return Err(DeployFailure::Unavailable(errors));
             }
+            Err(DeployFailure::Unverifiable(errors)) => {
+                warn!(
+                    entity_id,
+                    ?errors,
+                    "deployment signature could not be checked"
+                );
+                return Err(DeployFailure::Unverifiable(errors));
+            }
         }
 
         let validation_us = validation_started.elapsed().as_micros() as u64;
         let persist_started = Instant::now();
-        let creation_ts = self
+        // Released on a failed or no-op write, so only an accepted deploy holds its pointers.
+        let Some(reservation) =
+            self.rate_limiter
+                .reserve(entity.entity_type.as_str(), pointers_lc, content_unchanged)
+        else {
+            return Err(rate_limited_msg().into());
+        };
+        let persisted = match self
             .persist(&entity, &entity_bytes, &uploads, &auth_chain, context)
-            .await?;
+            .await
+        {
+            Ok(persisted) => persisted,
+            Err(e) => {
+                reservation.release();
+                return Err(e);
+            }
+        };
+        if !persisted.inserted {
+            reservation.release();
+        }
 
         let persist_us = persist_started.elapsed().as_micros() as u64;
         let cleanup_started = Instant::now();
         drop(vfiles);
         drop(uploads);
         tracing::debug!(target: "catalyst_perf", phase="deploy", entity_id, hash_us, validation_us, persist_us, cleanup_us=cleanup_started.elapsed().as_micros() as u64, elapsed_us=started.elapsed().as_micros() as u64);
-        Ok(creation_ts)
+        Ok(persisted.creation_ts)
     }
 }
 
-const NEWER_ENTITY_MESSAGE: &str =
+struct Persisted {
+    creation_ts: i64,
+    /// `false` when the entity was already deployed.
+    inserted: bool,
+}
+
+pub(crate) const NEWER_ENTITY_MESSAGE: &str =
     "There is a newer entity pointed by one or more of the pointers you provided.";
 
 #[derive(sqlx::FromRow)]
@@ -832,7 +1082,7 @@ impl WriteDeployer {
         uploads: &[HashedUpload],
         auth_chain: &AuthChain,
         context: &str,
-    ) -> Result<i64, DeployFailure> {
+    ) -> Result<Persisted, DeployFailure> {
         let unavailable = |e: String| DeployFailure::Unavailable(vec![e]);
         let started = Instant::now();
         store_deployment_files(
@@ -917,7 +1167,10 @@ impl WriteDeployer {
         }
         let Some(dep_id) = outcome.dep_id else {
             info!(entity_id = %entity.id, "entity already deployed; treating as success");
-            return Ok(now_ms);
+            return Ok(Persisted {
+                creation_ts: now_ms,
+                inserted: false,
+            });
         };
         info!(
             entity_id = %entity.id,
@@ -930,7 +1183,10 @@ impl WriteDeployer {
         if let Some(forwarder) = forward {
             forwarder.kick();
         }
-        Ok(now_ms)
+        Ok(Persisted {
+            creation_ts: now_ms,
+            inserted: true,
+        })
     }
 }
 

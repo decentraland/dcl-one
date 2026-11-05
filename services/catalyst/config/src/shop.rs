@@ -20,8 +20,9 @@ pub struct MarketUpstreamsConfig {
     #[arg(long, env = "MARKETPLACE_SUBGRAPH_URL")]
     pub marketplace_subgraph_url: Option<String>,
 
-    /// Land-manager subgraph: parcel operators and update-operator lookups
-    /// before the land-authz index is published; unset answers the envelope.
+    /// Land-manager subgraph: parcel operators, permissions and
+    /// update-operator lookups before the land-authz index is published;
+    /// unset answers the envelope (lamb2's 500 on the permissions route).
     #[arg(long, env = "LAND_SUBGRAPH_URL")]
     pub land_subgraph_url: Option<String>,
 
@@ -50,6 +51,12 @@ pub struct MarketUpstreamsConfig {
     /// set; unset they point at this node's `contents/<hash>`.
     #[arg(long, env = "PROFILE_CDN_BASE_URL")]
     pub profile_cdn_base_url: Option<String>,
+
+    /// NFT ownership indexer (`POST <base>/wallets/<owner>/networks/<network>/nfts`)
+    /// for an owner's third-party holdings; unset, they are read over each
+    /// network's JSON-RPC (`TRADE_RPC_URLS`, `ETH_RPC_URL`, `RPC_ENDPOINT_POLYGON`).
+    #[arg(long, env = "NFT_WORKER_BASE_URL")]
+    pub nft_worker_base_url: Option<String>,
 }
 
 /// The marketplace: the collections and items mirrors, the trade ownership RPCs, the
@@ -197,7 +204,10 @@ pub struct EconomyConfig {
     pub collections_fetch_interval_ms: u64,
 
     /// The collections chain's JSON-RPC (the old RPC_URL; public https, or
-    /// RPC_ENDPOINT_POLYGON_FILE since gateway keys sit in the path).
+    /// RPC_ENDPOINT_POLYGON_FILE since gateway keys sit in the path); the
+    /// content validator's L2 deploy access checks read it too (https only).
+    /// Unset or empty: https://rpc.decentraland.org/<polygon|amoy>?project=catalyst-content
+    /// by ETH_NETWORK, except under NODE_POSTURE island and journey.
     #[arg(long, env = "RPC_ENDPOINT_POLYGON", hide_env_values = true)]
     pub rpc_endpoint_polygon: Option<String>,
 

@@ -54,7 +54,9 @@ pub fn parse_entity_from_bytes(buffer: &[u8], id: &str) -> Result<Entity, Valida
     let timestamp = validate_timestamp(&raw)?;
     let content = validate_content(&raw)?;
 
-    let version = raw.version.unwrap_or_else(|| "v3".to_string());
+    let version = raw
+        .version
+        .unwrap_or_else(|| crate::entity::DEFAULT_ENTITY_VERSION.to_string());
     let normalised_pointers: Vec<String> = pointers.iter().map(|p| p.to_lowercase()).collect();
 
     Ok(Entity {

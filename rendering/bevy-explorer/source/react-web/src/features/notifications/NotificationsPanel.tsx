@@ -6,6 +6,7 @@
 import { ControlButton } from '../../design'
 import type { AppNotification } from '../../engine/protocol'
 import type { FriendsState, NotificationsState } from '../session/useEngineSession'
+import { nativeProfileImage } from '../../lib/baseDomain'
 import { relationshipOf } from '../../lib/relationship'
 import { openPassport } from '../profile/Passport'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
@@ -44,7 +45,8 @@ function ago(ts: string): string {
 }
 
 function pickImage(m: Record<string, unknown>): string | undefined {
-  return str(m, 'image', 'thumbnail', 'thumbnailUrl', 'tokenImage', 'profileImageUrl') ?? nested(m, 'sender', 'profileImageUrl', 'image')
+  const image = str(m, 'image', 'thumbnail', 'thumbnailUrl', 'tokenImage', 'profileImageUrl') ?? nested(m, 'sender', 'profileImageUrl', 'image')
+  return nativeProfileImage(image)
 }
 
 // Friendship notifications carry the OTHER user under metadata.sender (name/avatar) and have no

@@ -1,6 +1,8 @@
 // Session: login RPC, scene-loading stream, player-ready, sidebar nav.
 //   from: BevyApi (login + getSceneLoadingUIStream), @dcl/sdk getPlayer (player-ready).
 import { getPlayer } from '@dcl/sdk/players'
+import { openExternalUrl } from '~system/RestrictedActions'
+import { bugReportUrl } from '../../../src/lib/bugReport'
 import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
 import { identity } from '../identity'
@@ -68,13 +70,14 @@ export function registerSession(ctx: Ctx): void {
     }
   })
 
-  // Sidebar nav: every panel is rendered by React now; only the engine-side mic toggle
-  // is handled here (the rest are no-ops).
-  ctx.on('navAction', (msg) => {
+  // Panels are rendered by React. The engine owns the microphone and native system browser.
+  ctx.on('navAction', async (msg) => {
     if (msg.action === 'mic') {
       void BevyApi.getMicState().then((m) => {
         BevyApi.setMicEnabled(!m.enabled)
       })
+    } else if (msg.action === 'support') {
+      await openExternalUrl({ url: bugReportUrl() })
     }
   })
 

@@ -1,0 +1,814 @@
+{
+  "version": 1,
+  "nodeMajor": 26,
+  "sources": {
+    "social": {
+      "repository": "decentraland/social-service-ea",
+      "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+    },
+    "gatekeeper": {
+      "repository": "decentraland/comms-gatekeeper",
+      "revision": "be6a4b97a2189157884503485892ff46d0ac68da"
+    }
+  },
+  "captures": [
+    {
+      "id": "community-analytics",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-analytics.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-analytics.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "f367e5354864cc7b90d9264d511a11bdd10d4a50133d489b48f142d77cfac0e2"
+    },
+    {
+      "id": "community-body-limit",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-body-limit.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-body-limit.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "a7cea68a3bc5737113afd1a075a72b99a0d7cb2269d0dc965e891c0a113eaecb"
+    },
+    {
+      "id": "community-broadcast",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-broadcast.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-broadcast.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "2d5316b7418d9838ca75842ae8a42a6c5874cea2e6de4f9eaf19cea4fd059df1"
+    },
+    {
+      "id": "community-compliance",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-compliance.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-ai-compliance.json",
+      "args": [
+        "social",
+        "fixture-directory"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "Current CLI writes a fixed basename inside its second directory argument.",
+      "sha256": "645b6cca7f4e05c46cafc09ab81780e22529df1cc9a3180a36f7ac76b6b4eaec"
+    },
+    {
+      "id": "community-cors",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-cors.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-cors.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "aa3e028cd67f23818f54f1f948eef49720fb1bd55a32f73b978d903077196ffa"
+    },
+    {
+      "id": "community-errors",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-errors.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-errors.json",
+      "args": [
+        "social",
+        "fixture",
+        "postgres-url"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "61b3d773007433ba03b16c398cc3cc9fc9650ed4f721de4785242d58858e7b17"
+    },
+    {
+      "id": "community-federation-boundary",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-federation-boundary.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-federation-boundary.json",
+      "args": [
+        "social",
+        "fixture",
+        "postgres-url"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "386dbe703a037706fdcd4ca329ed0149bfc82af35ecee1d3a1ef40c17cbd3e7a"
+    },
+    {
+      "id": "community-friendship-errors",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-friendship-errors.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-friendship-errors.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "60013335cc549117750a92203c2bfa2919e18ea8ab5fb72e2fbc433b57b91ee0"
+    },
+    {
+      "id": "community-owners",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-owners.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-owners.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "6f8e70b1726949f6c88c8d7fd70a9df234fc6f5433863bac4243f547e61cc296"
+    },
+    {
+      "id": "community-post-profile",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-post-profile.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-post-profile.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "3a4c96a21760985e9baa7ab8797d856b6adc05a2ce51e8841837db7b156bb271"
+    },
+    {
+      "id": "community-producers",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-producers.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-producers.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "903cde9d95e753dbd1d0d9ec7ec3c043518722e9eacd5caf76c2d2020861ae97"
+    },
+    {
+      "id": "community-ranking",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-ranking.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-ranking.json",
+      "args": [
+        "social",
+        "fixture-directory"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "Current CLI writes a fixed basename inside its second directory argument.",
+      "sha256": "eda9741f7c302eba97ec7269080a56b4400d769cc1225db2a42debac25029b68"
+    },
+    {
+      "id": "community-registry-errors",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-registry-errors.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-registry-errors.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "00d12cc13faab6eafcb7cd07c432b4224c8e356308086d3b90d84e62810a4b1d"
+    },
+    {
+      "id": "community-routing",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-routing.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-routing.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "8095bcf7c35bc88d6f3472da9c46a0d6e3a82e0556e37c3523a6fda928ba9e45"
+    },
+    {
+      "id": "community-voice-errors",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-voice-errors.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-voice-errors.json",
+      "args": [
+        "social",
+        "gatekeeper",
+        "fixture"
+      ],
+      "sources": [
+        "social",
+        "gatekeeper"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "b81ddc774ba34f6bb037ee121005a1a129b5adf98a3d21cb7f46c8df23115f02"
+    },
+    {
+      "id": "community-voice",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-voice.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-voice.json",
+      "args": [
+        "social",
+        "gatekeeper",
+        "fixture"
+      ],
+      "sources": [
+        "social",
+        "gatekeeper"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "b29986d1fee9d001149daccf2b463d0194db9557590010127a31c9aff4384f83"
+    },
+    {
+      "id": "community-write-failures",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-community-write-failures.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/community-write-failures.json",
+      "args": [
+        "social",
+        "fixture",
+        "postgres-url"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "c45abd616661efe7c6fddbebd8a09d2d959735a1d4d23fc8a76a3919a84ba30b"
+    },
+    {
+      "id": "member-friendship-fields",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-member-friendship-fields.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/member-friendship-fields.json",
+      "args": [
+        "social",
+        "fixture",
+        "postgres-url"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "26f0ccd7d9912c77819b8c70bdb033f7124687a03b27c9766cb3f30b5362e987"
+    },
+    {
+      "id": "member-request-pages",
+      "script": "services/catalyst/tests/fixtures/conformance/social/source-contracts/capture-member-request-pages.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/member-request-pages.json",
+      "args": [
+        "social",
+        "fixture",
+        "postgres-url"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "672d839f1ae91865ca5868d2bc7dee53b8096764d5cf044884033e58d26d3321"
+    },
+    {
+      "id": "application-metrics-source-cases",
+      "script": "tooling/social-application-metrics-source-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "f998bc4313db9d57e9506eabcbf9cbe5c0374960798af187e821d703a1f88122"
+    },
+    {
+      "id": "analytics-cases",
+      "script": "tooling/social-service-analytics-cases.cjs",
+      "fixture": "library/dcl-http/tests/fixtures/social-analytics-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "13159a4884fb099df72d4aa3c396ebcd18d53dae7001d986acc9d0a6d94c3a10"
+    },
+    {
+      "id": "auxiliary-cases",
+      "script": "tooling/social-service-auxiliary-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/auxiliary-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "ea4e6e86ddefc45961e30b77445221ffe32dfe323cb5072b918e233ac28ee1f0"
+    },
+    {
+      "id": "community-raw-lifecycle-cases",
+      "script": "tooling/social-service-community-raw-lifecycle-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/community-raw-lifecycle-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "c2367ad4d2198d943150fae183d544fcb4f2d0de58b62dafe642258149a4f4df"
+    },
+    {
+      "id": "domain-boundary-cases",
+      "script": "tooling/social-service-domain-boundary-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/domain-boundary-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [
+        "CATALYST_TEST_DATABASE_URL"
+      ],
+      "commands": [],
+      "notes": "",
+      "sha256": "f094c1ff24a3068f4a11aa46772dc7abb31c57c790ff618a3b9477a16fdd8a11"
+    },
+    {
+      "id": "handler-errors",
+      "script": "tooling/social-service-handler-errors.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/referral-privacy-errors.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [
+        "CATALYST_TEST_DATABASE_URL"
+      ],
+      "commands": [],
+      "notes": "",
+      "sha256": "182c07f37b3327af51f0630ca6b994b3da29682812cafe09a2831a471929fdbb"
+    },
+    {
+      "id": "limiter-cases",
+      "script": "tooling/social-service-limiter-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/limiter-cases.json",
+      "args": [
+        "social",
+        "fixture",
+        "redis-server?"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [
+        "redis-server"
+      ],
+      "notes": "",
+      "sha256": "52c5bba801fdc053f475ba35571a0d3701ff8440c6578ad9e8b69a74b9a0b7a5"
+    },
+    {
+      "id": "notification-cases",
+      "script": "tooling/social-service-notification-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/notification-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "e9e8b94bbe55c004bcd4151b65ae7fa1eaed67c36a4ab7067a8289aaa4c6c4ab"
+    },
+    {
+      "id": "private-grant-cases",
+      "script": "tooling/social-service-private-grant-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/private-grant-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [
+        "CATALYST_TEST_DATABASE_URL"
+      ],
+      "commands": [],
+      "notes": "",
+      "sha256": "3997dd20da739e05849d6c9ddc02356b679d1550962c4c7336191a0a5dbad9f3"
+    },
+    {
+      "id": "private-id-cases",
+      "script": "tooling/social-service-private-id-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/private-id-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [
+        "CATALYST_TEST_DATABASE_URL"
+      ],
+      "commands": [],
+      "notes": "",
+      "sha256": "77c01c72a8cc096a5c021eeeb40f16afc23e721d54cc9410ed412a382ac3a962"
+    },
+    {
+      "id": "private-lifecycle-cases",
+      "script": "tooling/social-service-private-lifecycle-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/private-lifecycle-source-cases.json",
+      "args": [
+        "social",
+        "fixture",
+        "gatekeeper"
+      ],
+      "sources": [
+        "social",
+        "gatekeeper"
+      ],
+      "environment": [
+        "CATALYST_TEST_DATABASE_URL"
+      ],
+      "commands": [],
+      "notes": "",
+      "sha256": "eda63db93bd568bca5f81b2bbb964d83bf095ca41813590c0b384855efc90337"
+    },
+    {
+      "id": "profile-cases",
+      "script": "tooling/social-service-profile-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/profile-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "44a4a668639d2d1342c5f8d229b8ce17294e2a65fe096b5019015c018349c217"
+    },
+    {
+      "id": "profile-key-cases",
+      "script": "tooling/social-service-profile-key-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/profile-keys.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "180d21977c2ed2c5c4b68108250d4be368296afcea86f67a1779e1bb2c1b068e"
+    },
+    {
+      "id": "provider-boundary-cases",
+      "script": "tooling/social-service-provider-boundary-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/provider-boundary-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "Top-level capture only; native/native-analytics are internal child modes, not separate catalog entries.",
+      "sha256": "0a9dee4ea29db31e74e881597e54ac58948d5d9d2451194af8a15e1e31364771"
+    },
+    {
+      "id": "referral-cases",
+      "script": "tooling/social-service-referral-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/referral-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [
+        "CATALYST_TEST_DATABASE_URL"
+      ],
+      "commands": [],
+      "notes": "",
+      "sha256": "f3645bd2de7d6ceb2cd04e9583f83a9c372d114a088c2345499f814bfab10222"
+    },
+    {
+      "id": "referral-number-cases",
+      "script": "tooling/social-service-referral-number-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/referral-numbers.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [
+        "CATALYST_TEST_DATABASE_URL"
+      ],
+      "commands": [],
+      "notes": "",
+      "sha256": "44d829b9059d57ce4091fc247ac54137ea224e7d8e6a2227d8ac21f5f6715fae"
+    },
+    {
+      "id": "slack-cases",
+      "script": "tooling/social-service-slack-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/referral-slack.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "02118f3c441b4bf9b50a0b3529cd90a8b6e681b16050fa5601739b4df636c0cc"
+    },
+    {
+      "id": "source-cases",
+      "script": "tooling/social-service-source-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "4e7aea8f72c87fb60de40dfb01aacdb88ec14fc86d893e498fb227997dd84e0f"
+    },
+    {
+      "id": "startup-cases",
+      "script": "tooling/social-service-startup-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/startup-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "7ce3dfe3fb326c5056ce7405da3eeab6a8314a48fa0ab7044f08ebfb0dc0a044"
+    },
+    {
+      "id": "voice-analytics-cases",
+      "script": "tooling/social-service-voice-analytics-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/voice-analytics-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [
+        "CATALYST_TEST_DATABASE_URL"
+      ],
+      "commands": [],
+      "notes": "",
+      "sha256": "dc4683a8ecea1fa8d3e24f47a58c9ad0d62d6da1ce58402640b0ee6eb815cc76"
+    },
+    {
+      "id": "voice-http-source-cases",
+      "script": "tooling/social-service-voice-http-source-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/voice-http-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "e7f63b832980cebd1bbdd65af031d1853e12c255ee7a8c5206a1c2e2a91f1b71"
+    },
+    {
+      "id": "voice-membership-cases",
+      "script": "tooling/social-service-voice-membership-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/source-contracts/voice-membership.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "4cbd67f77de8b0535ecb60414a86dfc0d82fc757112ad729c8c1361395bdbe50"
+    },
+    {
+      "id": "voice-source-cases",
+      "script": "tooling/social-service-voice-source-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "ca1528dee4817e6a64f24d586ad661f16fbd3bf54741f76efaabef6da891ffcb"
+    },
+    {
+      "id": "ws-backpressure-cases",
+      "script": "tooling/social-service-ws-backpressure-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/ws-backpressure-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "aa5319d698ed661f54550de51c262a36a90e2451085847336f5dd1476a30d76d"
+    },
+    {
+      "id": "ws-frame-cases",
+      "script": "tooling/social-service-ws-frame-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/ws-frames-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "ab7001ca883d8a0617cd6f27ed8d28644e464a56775cf9132cda786e27984d7e"
+    },
+    {
+      "id": "ws-metrics-cases",
+      "script": "tooling/social-service-ws-metrics-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/ws-metrics-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "6d2e69f7b87d0f2ef207288418bcfbcff489bc9ff8cd2dc1c012d65b0819199e"
+    },
+    {
+      "id": "ws-number-cases",
+      "script": "tooling/social-service-ws-number-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/ws-numbers-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "09c2e3214e47ff0b33c19c080ebe203a7626b5efa00df3da7ed971c48d60a751"
+    },
+    {
+      "id": "ws-path-cases",
+      "script": "tooling/social-service-ws-path-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/ws-paths-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "4dfb84ad10296f4762f134b96ff0e26ebd88eab83058bfd5d415a135359b5ff5"
+    },
+    {
+      "id": "ws-transport-cases",
+      "script": "tooling/social-service-ws-transport-cases.cjs",
+      "fixture": "services/catalyst/tests/fixtures/conformance/social/ws-transport-source-cases.json",
+      "args": [
+        "social",
+        "fixture"
+      ],
+      "sources": [
+        "social"
+      ],
+      "environment": [],
+      "commands": [],
+      "notes": "",
+      "sha256": "6f5b148fc31206aa3d448ffda7adc7bbce93736947e38e3cfdd96212247c2856"
+    }
+  ]
+}

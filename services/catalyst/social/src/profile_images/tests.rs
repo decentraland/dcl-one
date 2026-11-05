@@ -462,6 +462,7 @@ async fn an_entity_not_held_is_filled_only_when_the_origin_has_no_image() {
         vec![format!("http://{peer}/content")],
         None,
         crate::content::read_through::Fills::new(4, std::time::Duration::from_secs(10)),
+        crate::content::sync_deployer::SyncValidation::AuthChainOnly,
     ));
     let settings = Settings {
         origin_url: Some(format!("http://{origin}")),
@@ -963,6 +964,7 @@ fn slow_read_through(
         vec![format!("http://{peer}/content")],
         None,
         crate::content::read_through::Fills::new(4, std::time::Duration::from_secs(1)),
+        crate::content::sync_deployer::SyncValidation::AuthChainOnly,
     ))
 }
 

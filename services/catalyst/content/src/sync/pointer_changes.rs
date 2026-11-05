@@ -724,7 +724,11 @@ mod tests {
             reqwest::Client::new(),
             storage,
             pool.clone(),
-            Arc::new(LiveSyncDeployer::new(pool.clone(), 2)),
+            Arc::new(LiveSyncDeployer::new(
+                pool.clone(),
+                2,
+                crate::sync_deployer::SyncValidation::AuthChainOnly,
+            )),
             Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
             BloomFilter::with_capacity(100),
         );

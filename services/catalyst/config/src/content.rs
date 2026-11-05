@@ -27,10 +27,14 @@ pub struct ContentConfig {
     #[arg(long, env = "PHASED_SYNC", default_value_t = true, action = clap::ArgAction::Set)]
     pub phased_sync: bool,
 
-    /// https JSON-RPC endpoint the EIP-1654 (contract wallet) signature check
-    /// of local deployments calls; peer sync does not use it. Plaintext
-    /// http:// is refused at startup.
-    #[arg(long, env = "ETH_RPC_URL")]
+    /// https L1 JSON-RPC endpoint: the EIP-1654 (contract wallet) signature
+    /// check and the L1 deploy access checks (LAND, names, v1 items) of local
+    /// deployments; the L2 checks use RPC_ENDPOINT_POLYGON. Plaintext http://
+    /// is refused at startup. Unset or empty:
+    /// https://rpc.decentraland.org/<mainnet|sepolia>?project=catalyst-content
+    /// by ETH_NETWORK, except under NODE_POSTURE island and journey. May come
+    /// from ETH_RPC_URL_FILE; an empty file fails startup.
+    #[arg(long, env = "ETH_RPC_URL", hide_env_values = true)]
     pub eth_rpc_url: Option<String>,
 
     /// Content files downloaded at once across every peer.
@@ -106,8 +110,7 @@ pub struct ContentConfig {
     // drops the deployments no pointer is served by any more (superseded or
     // unpublished), their content_files and the blobs nothing else names.
     // Off by default, and never beside CONTENT_WRITES_ENABLED: an
-    // authoritative node keeps its history (an unpublish there restores the
-    // scene a local deployment superseded).
+    // authoritative node keeps its history.
     #[arg(long, env = "CONTENT_HISTORY_PRUNE_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub content_history_prune_enabled: bool,
 
@@ -135,10 +138,73 @@ pub struct ContentConfig {
     /// (`content::read_through`). Off: a miss answers what it always did.
     #[arg(long, env = "READ_THROUGH_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub read_through_enabled: bool,
+
+    /// Non-file fields a `POST /entities` form may carry: `entityId` and the
+    /// `type`/`payload`/`signature` of up to ten auth-chain links, and one spare.
+    #[arg(long, env = "MAX_UPLOAD_FIELD_COUNT", default_value_t = 2 + 3 * 10)]
+    pub max_upload_field_count: usize,
+
+    /// Bytes one non-file `POST /entities` field may hold.
+    #[arg(long, env = "MAX_UPLOAD_FIELD_SIZE", default_value_t = 32 * 1024)]
+    pub max_upload_field_size: usize,
+
+    /// Bytes of `POST /entities` bodies held in memory at once across every
+    /// request, each holding at least 16 MiB; never below one maximum-size
+    /// deployment. A request that does not fit answers 503 unread.
+    #[arg(
+        long,
+        env = "MAX_IN_MEMORY_DEPLOYMENT_BYTES",
+        default_value_t = 2 * 1024 * 1024 * 1024
+    )]
+    pub max_in_memory_deployment_bytes: u64,
+
+    /// `POST /entities` requests one client address (IPv6 by /64) may make per
+    /// 24 hours, counted on admission and given back when the deployer answers 503
+    /// for this node's own state (not for an unchecked contract-wallet signature);
+    /// 0 turns the quota off. Kept per process: N upstreams admit N times it,
+    /// and a restart resets it.
+    #[arg(long, env = "POST_ENTITIES_DAILY_QUOTA_MAX", default_value_t = 300)]
+    pub post_entities_daily_quota_max: u32,
+
+    /// Milliseconds a partial (multi-request) upload lives from its first
+    /// batch; batches do not extend it.
+    #[arg(long, env = "PENDING_DEPLOYMENT_TTL", default_value_t = 60 * 60 * 1000)]
+    pub pending_deployment_ttl_ms: u64,
+
+    /// Milliseconds between two runs of the expired partial-upload cleanup.
+    #[arg(long, env = "PENDING_DEPLOYMENTS_CLEANUP_INTERVAL", default_value_t = 5 * 60 * 1000)]
+    pub pending_deployments_cleanup_interval_ms: u64,
+
+    /// Partial uploads one account may hold, expired ones awaiting cleanup included.
+    #[arg(
+        long,
+        env = "MAX_PENDING_DEPLOYMENTS_PER_DEPLOYER",
+        default_value_t = 10
+    )]
+    pub max_pending_deployments_per_deployer: u32,
+
+    /// Live partial uploads holding any one parcel across accounts; one
+    /// account gets all but one of them (at least 1).
+    #[arg(long, env = "MAX_PENDING_UPLOADS_PER_POINTER", default_value_t = 4)]
+    pub max_pending_uploads_per_pointer: u32,
+
+    /// Bytes partial uploads hold per account (all but content a published
+    /// deployment already keeps), expired uploads included until cleanup.
+    #[arg(long, env = "MAX_PENDING_BYTES_PER_DEPLOYER", default_value_t = 1024 * 1024 * 1024)]
+    pub max_pending_bytes_per_deployer: u64,
+
+    /// Bytes partial uploads hold on this server.
+    #[arg(long, env = "MAX_PENDING_BYTES", default_value_t = 50 * 1024 * 1024 * 1024)]
+    pub max_pending_bytes: u64,
+
+    /// Partial-upload batch bytes one account may send per minute.
+    #[arg(long, env = "MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE", default_value_t = 512 * 1024 * 1024)]
+    pub max_partial_upload_bytes_per_minute: u64,
 }
 
 impl ContentConfig {
-    /// `ETH_RPC_URL` trimmed, `None` when unset or blank. A plaintext endpoint is refused:
+    /// `ETH_RPC_URL` trimmed, `None` when unset or blank (after
+    /// `Config::default_rpc_urls`, only under island and journey). A plaintext endpoint is refused:
     /// the contract's answer decides who may deploy, so it must come over TLS. The error names
     /// the host only; the URL commonly carries an API key.
     pub fn eth_rpc_url(&self) -> anyhow::Result<Option<String>> {
@@ -164,23 +230,19 @@ impl ContentConfig {
     }
 }
 
-/// The content validator: the L2 subgraphs and the access policy of local deploys.
+/// The content validator: the access policy of local deploys.
 #[derive(Args, Clone, Debug)]
 pub struct ValidatorConfig {
-    // content validator (src/content/validator): the L2 subgraphs a
-    // third-party wearable or emote deploy is proven against, and the access
-    // policy of local deploys (the old catalyrst-server names).
-    /// Third Party Registry subgraph on L2 (approved merkle roots); public https, set with BLOCKS_L2_SUBGRAPH_URL.
+    // content validator (src/content/validator): the access policy of local
+    // deploys (the old catalyrst-server names); its chain checks read
+    // ETH_RPC_URL and RPC_ENDPOINT_POLYGON.
+    /// Third Party Registry subgraph on L2 (the approved providers the shop lists); public https.
     #[arg(
         long,
         env = "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
         hide_env_values = true
     )]
     pub third_party_registry_l2_subgraph_url: Option<String>,
-
-    /// L2 blocks subgraph (the block a deploy's timestamp falls in); public https.
-    #[arg(long, env = "BLOCKS_L2_SUBGRAPH_URL", hide_env_values = true)]
-    pub blocks_l2_subgraph_url: Option<String>,
 
     /// Skip the chain-derived access checks of local deploys (LAND, names, items, collections, third party); the pointer-ownership rule still runs.
     #[arg(long, env = "IGNORE_BLOCKCHAIN_ACCESS_CHECKS", default_value_t = false, action = clap::ArgAction::Set)]
@@ -304,6 +366,15 @@ mod tests {
         assert_eq!(c.content.bloom_filter_expected_elements, 10_000_000);
         assert_eq!(c.content.sync_profile_max_age_days, 365);
         assert!(!c.content.read_through_enabled);
+        assert_eq!(
+            (
+                c.content.max_upload_field_count,
+                c.content.max_upload_field_size,
+                c.content.max_in_memory_deployment_bytes,
+                c.content.post_entities_daily_quota_max
+            ),
+            (32, 32 * 1024, 2 * 1024 * 1024 * 1024, 300)
+        );
         assert!(c.content.retry_failed_enabled);
         assert_eq!(c.content.max_failed_deployment_retries, 10);
         assert_eq!(c.content.sync_retry_concurrency, 10);
@@ -342,10 +413,7 @@ mod tests {
     fn data_plane_defaults_are_the_old_binaries_values_and_writes_are_off() {
         let cli = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
         let c = cli;
-        assert!(
-            c.validator.third_party_registry_l2_subgraph_url.is_none()
-                && c.validator.blocks_l2_subgraph_url.is_none()
-        );
+        assert!(c.validator.third_party_registry_l2_subgraph_url.is_none());
         assert!(
             !c.validator.ignore_blockchain_access_checks
                 && c.validator.additional_decentraland_address.is_none(),

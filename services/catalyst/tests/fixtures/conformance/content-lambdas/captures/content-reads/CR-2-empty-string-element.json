@@ -1,0 +1,56 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://peer.decentraland.org",
+  "request": {
+    "method": "POST",
+    "path": "/content/entities/active",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "pointers": [
+        ""
+      ]
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "537"
+    },
+    "body": {
+      "ok": false,
+      "message": "Invalid JSON body",
+      "data": [
+        {
+          "instancePath": "",
+          "schemaPath": "#/oneOf/0/required",
+          "keyword": "required",
+          "params": {
+            "missingProperty": "ids"
+          },
+          "message": "must have required property 'ids'"
+        },
+        {
+          "instancePath": "/pointers/0",
+          "schemaPath": "#/oneOf/1/properties/pointers/items/minLength",
+          "keyword": "minLength",
+          "params": {
+            "limit": 1
+          },
+          "message": "must NOT have fewer than 1 characters"
+        },
+        {
+          "instancePath": "",
+          "schemaPath": "#/oneOf",
+          "keyword": "oneOf",
+          "params": {
+            "passingSchemas": null
+          },
+          "message": "must match exactly one schema in oneOf"
+        }
+      ]
+    }
+  }
+}

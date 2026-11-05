@@ -1073,6 +1073,12 @@ pub enum AudioDecoderError {
     Other(String),
 }
 
+/// Hold native video textures while a requested snapshot waits for render readiness and GPU
+/// readback. The resource exists only when the scene test harness is enabled; it is extracted
+/// to the render world, where the video backend presents frames.
+#[derive(Resource, Clone, Default, bevy::render::extract_resource::ExtractResource)]
+pub struct SnapshotInProgress(pub bool);
+
 #[derive(Resource)]
 pub struct SceneLoadDistance {
     pub load: f32,
@@ -1810,6 +1816,8 @@ pub struct CurrentRealm {
     pub config: ServerConfiguration,
     pub comms: Option<CommsConfig>,
     pub public_url: String,
+    /// The parcel the realm (a world) spawns players on, from its manifest; none for a city
+    pub spawn_parcel: Option<IVec2>,
 }
 
 impl CurrentRealm {

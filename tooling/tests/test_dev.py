@@ -406,6 +406,19 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['CONTENT_FORWARD_UPSTREAM_URL'], '')
         self.assertEqual(env['SYNC_ENABLED'], 'false')
 
+    def test_runtime_takes_only_the_public_sign_in_ids_from_the_shell(self):
+        with patch.dict(os.environ, {'THIRDWEB_CLIENT_ID': 'example-client-id', 'MAGIC_API_KEY': 'pk_example123',
+                                    'WALLETCONNECT_PROJECT_ID': 'example-project', 'THIRDWEB_SECRET_KEY': 'not-a-real-key'}):
+            env = dev.runtime_env(self.config)
+        self.assertEqual(env['THIRDWEB_CLIENT_ID'], 'example-client-id')
+        self.assertEqual(env['MAGIC_API_KEY'], 'pk_example123')
+        self.assertEqual(env['WALLETCONNECT_PROJECT_ID'], 'example-project')
+        self.assertNotIn('THIRDWEB_SECRET_KEY', env)
+        with patch.dict(os.environ, {}, clear=False):
+            for key in dev.PUBLIC_SIGN_IN_IDS:
+                os.environ.pop(key, None)
+            self.assertFalse(set(dev.PUBLIC_SIGN_IN_IDS) & set(dev.runtime_env(self.config)))
+
     def test_mirror_fetches_catalogues_and_requested_content_only(self):
         env = dev.runtime_env({**self.config, 'profile': 'mirror'})
         self.assertNotIn('NODE_POSTURE', env)
@@ -446,6 +459,55 @@ class DevTest(unittest.TestCase):
         for key in ('STORAGE_ROOT_FOLDER', 'AB_CDN_CACHE_DIR', 'PROFILE_IMAGES_CACHE_DIR', 'BVIMPOSTERS_STORE_ROOT'):
             self.assertTrue(Path(env[key]).is_relative_to(self.state))
 
+    def test_the_testnet_profile_trades_and_relays_on_amoy(self):
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        mirror = dev.runtime_env({**self.config, 'profile': 'mirror'})
+        self.assertEqual(env['VITE_SHOP_CHAIN_ID'], '80002')
+        self.assertEqual(env['COLLECTIONS_CHAIN_ID'], '80002')
+        self.assertEqual(env['CONTRACT_ADDRESSES_CHAIN_KEY'], 'amoy')
+        self.assertTrue(env['CONTRACT_ADDRESSES_URL'].startswith('https://'))
+        # On-chain cancels and executions close local trades: the trade-events index walks the testnets.
+        self.assertEqual(env['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'true')
+        self.assertEqual((env['MARKETPLACE_INDEX_CHAIN_ID_MATIC'], env['MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM']), ('80002', '11155111'))
+        self.assertEqual(mirror['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'false')
+        self.assertNotIn('MARKETPLACE_INDEX_CHAIN_ID_MATIC', mirror)
+        # The NFT index knows mainnet's contracts only, so it does not walk the testnets.
+        self.assertEqual(env['MARKETPLACE_NFT_INDEX_ENABLED'], 'false')
+        self.assertEqual(mirror['MARKETPLACE_NFT_INDEX_ENABLED'], 'true')
+        self.assertIn('decentraland.zone', env['TRADES_SYNC_UPSTREAM_URL'])
+        self.assertIn('decentraland.zone', env['TRANSACTIONS_UPSTREAM_URL'])
+        self.assertTrue(env['RPC_ENDPOINT_POLYGON'].endswith('/amoy'))
+        for key in ('VITE_SHOP_CHAIN_ID', 'COLLECTIONS_CHAIN_ID', 'CONTRACT_ADDRESSES_CHAIN_KEY', 'CONTRACT_ADDRESSES_URL'):
+            self.assertNotIn(key, mirror, key)
+        # Otherwise the mirror profile's catalogue passes, against the testnet subgraphs.
+        self.assertEqual(env['MARKETPLACE_MIRRORS_ENABLED'], 'true')
+        self.assertIn('index', dev.project({**self.config, 'profile': 'testnet'})['processes'])
+
+    def test_testnet_data_never_shares_a_database_with_another_profile(self):
+        (self.state / 'postgres').mkdir()
+        (self.state / 'postgres' / 'PG_VERSION').write_text('18')
+        def run(*argv):
+            with patch.object(dev.sys, 'argv', ['foundation-dev', *argv]), \
+                    patch.object(dev, 'supervisor_running', return_value=False):
+                return dev.main()
+        with self.assertRaisesRegex(RuntimeError, 'offline profile'):
+            run('profile', 'testnet')
+        self.assertEqual(dev.settings()['profile'], 'offline')
+        run('profile', 'mirror')  # neither is testnet: allowed over existing data
+        self.assertEqual(dev.settings()['profile'], 'mirror')
+        dev.save_json(dev.SETTINGS, {**dev.settings(), 'profile': 'testnet'})
+        with self.assertRaisesRegex(RuntimeError, 'testnet profile'):
+            run('profile', 'mirror')
+        with self.assertRaisesRegex(RuntimeError, 'not a snapshot'), patch.object(dev, 'export_trades_snapshot') as export:
+            run('trades-snapshot', str(self.state / 'out.sql.gz'))
+        export.assert_not_called()
+
+    def test_a_different_profile_in_the_environment_keeps_the_saved_one_and_says_so(self):
+        warning = io.StringIO()
+        with patch.dict(os.environ, {'FOUNDATION_DEV_PROFILE': 'testnet'}), contextlib.redirect_stderr(warning):
+            self.assertEqual(dev.settings(create=True)['profile'], 'offline')
+        self.assertIn('Using saved profile offline', warning.getvalue())
+
     def test_env_names_the_running_stack_for_shell_evaluation(self):
         out = io.StringIO()
         with patch.object(dev.sys, 'argv', ['foundation-dev', 'env']), contextlib.redirect_stdout(out):
@@ -453,6 +515,7 @@ class DevTest(unittest.TestCase):
         values = dict(line.split('=', 1) for line in out.getvalue().splitlines())
         self.assertEqual(values['FOUNDATION_DEV_API_URL'], f"http://127.0.0.1:{self.config['port']}")
         self.assertEqual(values['FOUNDATION_DEV_DATABASE_URL'], dev.database_url(self.config))
+        self.assertEqual(values['FOUNDATION_DEV_STACK_PROFILE'], 'offline')
         result = subprocess.run(['bash', '-c', 'eval "$1"; echo "$FOUNDATION_DEV_SITES_URL"', '-', out.getvalue()],
                                 capture_output=True, text=True, check=True)
         self.assertEqual(result.stdout.strip(), f"http://127.0.0.1:{self.config['port'] + 2}")

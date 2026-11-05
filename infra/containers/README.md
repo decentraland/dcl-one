@@ -42,9 +42,27 @@ python3 tooling/image-smoke.py
 
 ## Build and transfer reuse
 
-- All refs restore caches; only `main` saves. Tags restore from `main`, the default branch.
-- `images-deps-node-all-<arch>-` holds complete Node sets; cold ARM64 runners may compile Node (METRICS.md).
-- Delete obsolete `refs/pull/*` entries (`gh cache list`, `gh cache delete <id>`) once main has the replacement.
+- Image caches separate Catalyst dependencies, Sites dependencies/toolchain and
+  the compiled API runtime closure, keyed by exact Nix derivation identities and
+  architecture. Container revision labels are still rebuilt for each commit.
+- Successful main builds save trusted caches. PR builds save only their explicit
+  PR namespace and merge-ref scope after image smoke tests; they may restore an
+  exact trusted-main match. Main and tag builds never select PR namespaces.
+- The legacy `images-deps-node-all-<arch>-` cache is a read-only migration fallback
+  when a split dependency cache is missing. Sites caches retain complete Node
+  outputs; cold ARM64 runners may otherwise compile Node (METRICS.md).
+- Cache quota and idle eviction apply; dependency keys remain stable across
+  source-only changes. Runtime caches exclude Cargo target trees. Hosted image
+  jobs remove all listed unused SDKs before the LFS checkout, retaining maximum
+  cold-build headroom. Cleanup duration and free space are logged.
+- Closing a PR removes caches for its merge ref through a workflow that never
+  checks out PR code. An hourly trusted sweep also removes uploads that finish
+  after closure and retains only the newest Development Rust snapshot per
+  platform, purpose and ref; image and Explorer caches are not pruned by that rule.
+- Multi-GB Rust PR snapshots require the `ci:cache` label and a same-repository
+  Linux test job. Add the label before pushing the commit to cache; adding it
+  alone does not start a new run. Main continues to refresh test and smoke snapshots. Cache
+  pressure is logged by the sweep; quota and idle eviction still apply between sweeps.
 - Imports use `--no-check-sigs`: only trusted workflows may write caches a publishing branch consumes.
 
 ## Publication and runtime
@@ -53,4 +71,5 @@ python3 tooling/image-smoke.py
 - PRs only build; `main` and `v*` publish; manual runs use the `publish` checkbox.
 - Publication is not atomic: deploy APIs and Sites from one verified SHA or recorded digests.
 - APIs listen on 5210, Sites on 5212, as `1000:1000`. APIs need `DATABASE_URL`, posture, public URL, encryption key and integration secrets; Sites needs `CATALYST_URL`, `CATALYST_DATABASE_URL` and a session secret.
+- Sites' sign-in (`/auth/login`) offers each option only when its public identifier is set, the same ones decentraland.org ships: `THIRDWEB_CLIENT_ID` (email codes), `MAGIC_API_KEY` (Magic's publishable key: Google, Apple, Discord, X) and `WALLETCONNECT_PROJECT_ID`. A different identifier signs the same account into a different wallet. Magic must allow the site's origin and `<origin>/auth/callback`. `FEATURE_FLAGS_ORIGIN` names the site whose `dapps-sign-in-primary-option` rollout lays it out (decentraland.org when unset). Locally, `tooling/dev.py` takes the three identifiers, and nothing else of the shell's, from the environment it is started in.
 - Run `schema apply` (empty) or `schema migrate` as a job before the new API. Never reset an existing database.

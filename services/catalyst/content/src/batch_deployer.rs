@@ -18,7 +18,7 @@ use super::sync_deployer::{
     LiveFailedDeploymentsStore, LiveSyncDeployer, deployed_entity_ids, is_entity_deployed,
 };
 use super::sync_types::{
-    DeploymentContext, FailedDeployment, FailureReason, SyncDeployment, SyncError, Timestamp,
+    DeploymentContext, FailedDeployment, SyncDeployment, SyncError, Timestamp,
 };
 use super::wire_types::TimeRange;
 use crate::storage::Storage;
@@ -374,7 +374,7 @@ impl BatchDeployer {
                         .report_failure(FailedDeployment {
                             entity_type: entity.entity_type.clone(),
                             entity_id: entity.entity_id.clone(),
-                            reason: FailureReason::DeploymentError,
+                            reason: e.failure_reason(),
                             auth_chain: entity.auth_chain.clone(),
                             error_description: e.to_string(),
                             failure_timestamp: chrono::Utc::now().timestamp_millis(),
@@ -445,7 +445,8 @@ mod tests {
     use super::*;
     use crate::auth::hash_bytes_v1;
     use crate::sync_test_support::{
-        signed_chain, spawn_content_server, temp_storage, test_pool, unique,
+        signed_chain, signed_chain_behind_contract, spawn_content_server, temp_storage, test_pool,
+        unique,
     };
 
     #[test]
@@ -519,7 +520,11 @@ mod tests {
         let entity_id = hash_bytes_v1(&body);
         let (base, server) = spawn_content_server(body, None).await;
         let (storage, tmp) = temp_storage("batch").await;
-        let deployer = Arc::new(LiveSyncDeployer::new(pool.clone(), 2));
+        let deployer = Arc::new(LiveSyncDeployer::new(
+            pool.clone(),
+            2,
+            crate::sync_deployer::SyncValidation::AuthChainOnly,
+        ));
         let batch = BatchDeployer::new(
             BatchDeployerConfig {
                 ignored_types: HashSet::from(["outfits".to_string()]),
@@ -579,7 +584,7 @@ mod tests {
         };
         let failed = recorded().await;
         assert_eq!(failed.len(), 1);
-        assert_eq!(failed[0].0, "Deployment error");
+        assert_eq!(failed[0].0, "Deployment rejected");
         assert!(
             failed[0].1.contains("auth chain verification failed"),
             "{}",
@@ -638,5 +643,489 @@ mod tests {
         cleanup(&pool, &prefix).await;
         let _ = tokio::fs::remove_dir_all(&tmp).await;
         pool.close().await;
+    }
+
+    /// The address of the sync tests' signing key.
+    const TEST_SIGNER: &str = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+    const CONTRACT_SIGNER: &str = "0x0000000000000000000000000000000000000002";
+
+    enum Chain {
+        Signed,
+        BehindContract,
+    }
+
+    struct SyncOutcome {
+        deployed: bool,
+        active: Option<String>,
+        failure: Option<(i32, String)>,
+        /// The retry worker would pick the failure up now.
+        due: bool,
+    }
+
+    /// A contract wallet that refuses today; at a past block it accepts, or cannot answer.
+    struct WalletAtBlock {
+        answers_at_block: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::auth::Eip1654Validator for WalletAtBlock {
+        async fn validate_signature(
+            &self,
+            _contract_address: &str,
+            _hash: &[u8],
+            _signature: &[u8],
+        ) -> Result<bool, crate::auth::AuthError> {
+            Ok(false)
+        }
+
+        async fn validate_signature_at_block(
+            &self,
+            _contract_address: &str,
+            _hash: &[u8],
+            _signature: &[u8],
+            block: u64,
+        ) -> Result<bool, crate::auth::AuthError> {
+            use crate::validator::fake_chain::{GENESIS, INTERVAL};
+            assert_eq!(block, ((1_700_000_000 - GENESIS) / INTERVAL) as u64);
+            if self.answers_at_block {
+                Ok(true)
+            } else {
+                Err(crate::auth::AuthError::Eip1654ValidationFailed(
+                    "missing trie node".to_string(),
+                ))
+            }
+        }
+    }
+
+    /// Syncs one outfits entity on `owner`'s pointer, signed as `chain` says, through a
+    /// deployer with the content validator attached and `eip1654` as its contract-wallet
+    /// validator. The chain answers block lookups only.
+    async fn sync_outfits(
+        owner: &str,
+        chain: Chain,
+        eip1654: Option<Arc<dyn crate::auth::Eip1654Validator>>,
+    ) -> Option<SyncOutcome> {
+        let blocks =
+            crate::validator::fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
+        let entity = serde_json::json!({
+            "version": "v3", "type": "outfits", "pointers": [format!("{owner}:outfits")],
+            "timestamp": 1_700_000_000_000i64, "content": [],
+            "metadata": {"outfits": [], "namesForExtraSlots": [], "tag": unique()}
+        });
+        sync_one(entity, chain, eip1654, over(&blocks)).await
+    }
+
+    /// The one content file an entity of these tests may name, already in the store.
+    const MODEL: &[u8] = b"glTF";
+
+    /// Syncs `entity` (its first pointer the one checked), signed as `chain` says, through a
+    /// deployer with the content validator over `settings` attached. The peer serves only
+    /// the entity file; [`MODEL`] is already stored.
+    async fn sync_one(
+        entity: serde_json::Value,
+        chain: Chain,
+        eip1654: Option<Arc<dyn crate::auth::Eip1654Validator>>,
+        settings: crate::validator::Settings,
+    ) -> Option<SyncOutcome> {
+        let pool = test_pool(3).await?;
+        let pointer = entity["pointers"][0].as_str().unwrap().to_string();
+        let entity_type = entity["type"].as_str().unwrap().to_string();
+        let timestamp = entity["timestamp"].as_i64().unwrap();
+        let body = serde_json::to_vec(&entity).unwrap();
+        let entity_id = hash_bytes_v1(&body);
+        let auth_chain = match chain {
+            Chain::Signed => signed_chain(&entity_id).await,
+            Chain::BehindContract => {
+                signed_chain_behind_contract(&entity_id, "2099-01-01T00:00:00.000Z").await
+            }
+        };
+        sqlx::query("DELETE FROM content.active_pointers WHERE pointer = $1")
+            .bind(&pointer)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (base, server) = spawn_content_server(body, None).await;
+        let (storage, tmp) = temp_storage("validated").await;
+        storage
+            .store(&hash_bytes_v1(MODEL), MODEL.into())
+            .await
+            .unwrap();
+        let deployer = Arc::new(LiveSyncDeployer::new(
+            pool.clone(),
+            2,
+            crate::sync_deployer::SyncValidation::Content(Arc::new(
+                crate::validator::Sources::new(
+                    pool.clone(),
+                    storage.clone(),
+                    crate::http::Outbound::for_tests(),
+                    eip1654,
+                    settings,
+                ),
+            )),
+        ));
+        let batch = BatchDeployer::new(
+            BatchDeployerConfig::default(),
+            reqwest::Client::new(),
+            storage,
+            pool.clone(),
+            deployer,
+            Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
+            BloomFilter::with_capacity(100),
+        );
+        batch
+            .schedule_entity_deployment(
+                SyncDeployment {
+                    entity_id: entity_id.clone(),
+                    entity_type,
+                    pointers: vec![],
+                    auth_chain,
+                    entity_timestamp: timestamp,
+                    local_timestamp: None,
+                },
+                std::slice::from_ref(&base),
+                None,
+            )
+            .await
+            .unwrap();
+        batch.on_idle().await.unwrap();
+
+        let outcome = SyncOutcome {
+            deployed: is_entity_deployed(&pool, &entity_id, 0).await.unwrap(),
+            active: sqlx::query_scalar(
+                "SELECT entity_id FROM content.active_pointers WHERE pointer = $1",
+            )
+            .bind(&pointer)
+            .fetch_optional(&pool)
+            .await
+            .unwrap(),
+            failure: sqlx::query_as(
+                "SELECT retry_count, error_description FROM content.failed_deployments \
+                 WHERE entity_id = $1",
+            )
+            .bind(&entity_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap(),
+            due: LiveFailedDeploymentsStore::new(pool.clone())
+                .select_due(chrono::Utc::now().timestamp_millis(), 10, None, 10_000)
+                .await
+                .unwrap()
+                .failures
+                .iter()
+                .any(|f| f.entity_id == entity_id),
+        };
+        let active_is_this = outcome.active.as_deref() == Some(entity_id.as_str());
+
+        server.abort();
+        for sql in [
+            "DELETE FROM content.active_pointers WHERE entity_id = $1",
+            "DELETE FROM content.deployments WHERE entity_id = $1",
+            "DELETE FROM content.failed_deployments WHERE entity_id = $1",
+        ] {
+            sqlx::query(sql)
+                .bind(&entity_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        pool.close().await;
+        Some(SyncOutcome {
+            active: active_is_this.then_some(entity_id),
+            ..outcome
+        })
+    }
+
+    #[tokio::test]
+    async fn a_synced_entity_refused_by_its_access_rule_is_a_failed_deployment_never_active() {
+        let other = format!("0x{}", "ab".repeat(20));
+        let Some(outcome) = sync_outfits(&other, Chain::Signed, None).await else {
+            return;
+        };
+        assert!(!outcome.deployed);
+        assert_eq!(outcome.active, None);
+        assert!(!outcome.due, "a refusal is never retried");
+        let (retry_count, description) = outcome.failure.expect("recorded as failed");
+        assert_eq!(retry_count, 0);
+        assert!(
+            description.starts_with("Deployment rejected:")
+                && description.contains("You can only alter your own outfits"),
+            "{description}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_valid_synced_entity_is_deployed_and_active() {
+        let Some(outcome) = sync_outfits(TEST_SIGNER, Chain::Signed, None).await else {
+            return;
+        };
+        assert!(outcome.deployed);
+        assert!(outcome.active.is_some());
+        assert!(outcome.failure.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_contract_wallet_link_without_an_eip1654_validator_is_retried_not_accepted() {
+        let Some(outcome) = sync_outfits(CONTRACT_SIGNER, Chain::BehindContract, None).await else {
+            return;
+        };
+        assert!(!outcome.deployed);
+        assert_eq!(outcome.active, None);
+        let (retry_count, description) = outcome.failure.expect("queued for a retry");
+        assert_eq!(retry_count, 0);
+        assert!(
+            description.starts_with("Validation undecided:"),
+            "{description}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_contract_wallet_valid_at_the_entity_block_is_accepted_though_it_refuses_today() {
+        let wallet = Arc::new(WalletAtBlock {
+            answers_at_block: true,
+        });
+        let Some(outcome) =
+            sync_outfits(CONTRACT_SIGNER, Chain::BehindContract, Some(wallet)).await
+        else {
+            return;
+        };
+        assert!(outcome.deployed);
+        assert!(outcome.active.is_some());
+        assert!(outcome.failure.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_contract_wallet_the_rpc_cannot_judge_at_the_entity_block_is_retried() {
+        let wallet = Arc::new(WalletAtBlock {
+            answers_at_block: false,
+        });
+        let Some(outcome) =
+            sync_outfits(CONTRACT_SIGNER, Chain::BehindContract, Some(wallet)).await
+        else {
+            return;
+        };
+        assert!(!outcome.deployed);
+        let (_, description) = outcome.failure.expect("queued for a retry");
+        assert!(
+            description.starts_with("Validation undecided:"),
+            "{description}"
+        );
+    }
+
+    /// Mainnet contracts over `chain` on both layers.
+    fn over(chain: &crate::validator::fake_chain::FakeChain) -> crate::validator::Settings {
+        crate::validator::Settings {
+            eth_network: "mainnet".into(),
+            l1_rpc_url: Some(chain.url.clone()),
+            l2_rpc_url: Some(chain.url.clone()),
+            ..Default::default()
+        }
+    }
+
+    /// A day ago: well inside the fake chain, well before its head.
+    fn a_day_ago() -> i64 {
+        chrono::Utc::now().timestamp_millis() - 86_400_000
+    }
+
+    /// A scene on one parcel no other test uses.
+    fn scene_at(timestamp: i64) -> (serde_json::Value, (i64, i64)) {
+        let n = u64::from_str_radix(&unique()[..8], 16).unwrap();
+        let parcel = (100 + (n % 50) as i64, -100 - ((n >> 8) % 50) as i64);
+        let pointer = format!("{},{}", parcel.0, parcel.1);
+        let entity = serde_json::json!({
+            "version": "v3", "type": "scene", "pointers": [pointer], "timestamp": timestamp,
+            "content": [],
+            "metadata": {"main": "bin/index.js", "scene": {"base": pointer, "parcels": [pointer]}, "tag": unique()}
+        });
+        (entity, parcel)
+    }
+
+    /// The LAND the test signer held up to `held_until` (a block), nothing after.
+    fn land_held_until(
+        parcel: (i64, i64),
+        held_until: Option<u64>,
+    ) -> impl Fn(&crate::validator::fake_chain::Query, u64) -> crate::validator::fake_chain::Reply
+    + Send
+    + Sync
+    + 'static {
+        use crate::validator::fake_chain::{Query, Reply};
+        move |q, block| match q {
+            Query::Land { sender, x, y, .. } => Reply::Yes(
+                sender.to_string().to_lowercase() == TEST_SIGNER
+                    && (*x, *y) == parcel
+                    && held_until.is_some_and(|b| block <= b),
+            ),
+            other => panic!("unexpected question {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_synced_scene_is_judged_by_the_land_its_signer_held_at_the_entity_block() {
+        use crate::validator::fake_chain::{self, at_deployment};
+        let timestamp = a_day_ago();
+
+        let (entity, parcel) = scene_at(timestamp);
+        let chain =
+            fake_chain::serve(land_held_until(parcel, Some(at_deployment(timestamp)))).await;
+        let Some(sold_since) = sync_one(entity, Chain::Signed, None, over(&chain)).await else {
+            return;
+        };
+        assert!(sold_since.deployed, "held then, sold since");
+        assert!(sold_since.active.is_some());
+        assert!(sold_since.failure.is_none());
+        assert!(
+            chain
+                .calls()
+                .iter()
+                .filter_map(|c| c.strip_prefix("eth_call@"))
+                .all(|b| b.parse::<u64>().unwrap() <= at_deployment(timestamp)),
+            "never asked about today: {:?}",
+            chain.calls()
+        );
+
+        let (entity, parcel) = scene_at(timestamp);
+        let chain = fake_chain::serve(land_held_until(parcel, None)).await;
+        let never = sync_one(entity, Chain::Signed, None, over(&chain))
+            .await
+            .unwrap();
+        assert!(!never.deployed);
+        assert_eq!(never.active, None);
+        let (_, description) = never.failure.expect("recorded as failed");
+        assert!(
+            description.starts_with("Deployment rejected:")
+                && description.contains("does not have access to the following parcel"),
+            "{description}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_check_after_the_download_reuses_the_access_the_check_before_it_passed() {
+        use crate::validator::fake_chain::{self, at_deployment};
+        let Some(pool) = test_pool(1).await else {
+            return;
+        };
+        let timestamp = a_day_ago();
+        let (entity, parcel) = scene_at(timestamp);
+        let chain =
+            fake_chain::serve(land_held_until(parcel, Some(at_deployment(timestamp)))).await;
+        let (storage, tmp) = temp_storage("access-passed").await;
+        let deployer = LiveSyncDeployer::new(
+            pool.clone(),
+            1,
+            crate::sync_deployer::SyncValidation::Content(Arc::new(
+                crate::validator::Sources::new(
+                    pool.clone(),
+                    storage,
+                    crate::http::Outbound::for_tests(),
+                    None,
+                    over(&chain),
+                ),
+            )),
+        );
+        let body = serde_json::to_vec(&entity).unwrap();
+        let id = hash_bytes_v1(&body);
+        let auth = signed_chain(&id).await;
+        let eth_calls = || {
+            chain
+                .calls()
+                .iter()
+                .filter(|c| c.starts_with("eth_call"))
+                .count()
+        };
+        let verify = |content| deployer.verify_entity(&body, &id, &auth, content);
+
+        verify(crate::validator::SyncedContent::Pending)
+            .await
+            .unwrap();
+        let asked = eth_calls();
+        assert!(asked > 0);
+        verify(crate::validator::SyncedContent::Fetched)
+            .await
+            .unwrap();
+        assert_eq!(eth_calls(), asked, "the access already passed");
+        verify(crate::validator::SyncedContent::Fetched)
+            .await
+            .unwrap();
+        assert!(eth_calls() > asked, "taken once: a later check asks again");
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn a_synced_collection_item_is_judged_by_the_collection_at_the_entity_block() {
+        use crate::validator::fake_chain::{self, Query, Reply, at_deployment};
+        let timestamp = a_day_ago();
+        let item = |collection: &str| {
+            let pointer = format!("urn:decentraland:matic:collections-v2:{collection}:3");
+            serde_json::json!({
+                "version": "v3", "type": "wearable", "pointers": [pointer], "timestamp": timestamp,
+                "content": [{"file": "male/hat.glb", "hash": hash_bytes_v1(MODEL)}],
+                "metadata": {
+                    "id": pointer, "name": "hat", "description": "",
+                    "i18n": [{"code": "en", "text": "Hat"}],
+                    "thumbnail": "thumbnail.png", "image": "image.png",
+                    "collectionAddress": collection, "rarity": "epic",
+                    "data": {
+                        "replaces": [], "hides": [], "tags": ["hat"], "category": "hat",
+                        "representations": [{
+                            "bodyShapes": ["urn:decentraland:off-chain:base-avatars:BaseMale"],
+                            "mainFile": "male/hat.glb", "contents": ["male/hat.glb"],
+                            "overrideHides": [], "overrideReplaces": []
+                        }]
+                    },
+                    "tag": unique()
+                }
+            })
+        };
+        let editor_until = |until: Option<u64>| {
+            move |q: &Query, block: u64| match q {
+                Query::Wearable { sender, .. } => Reply::Yes(
+                    sender.to_string().to_lowercase() == TEST_SIGNER
+                        && until.is_some_and(|b| block <= b),
+                ),
+                other => panic!("unexpected question {other:?}"),
+            }
+        };
+
+        let collection = format!("0x{}", &unique().repeat(2)[..40]);
+        let chain = fake_chain::serve(editor_until(Some(at_deployment(timestamp)))).await;
+        let Some(then) = sync_one(item(&collection), Chain::Signed, None, over(&chain)).await
+        else {
+            return;
+        };
+        assert!(then.deployed, "an editor then, approved since");
+        assert!(then.failure.is_none());
+
+        let collection = format!("0x{}", &unique().repeat(2)[..40]);
+        let chain = fake_chain::serve(editor_until(None)).await;
+        let never = sync_one(item(&collection), Chain::Signed, None, over(&chain))
+            .await
+            .unwrap();
+        assert!(!never.deployed);
+        let (_, description) = never.failure.expect("recorded as failed");
+        assert!(
+            description.starts_with("Deployment rejected:")
+                && description.contains("does not have access to the following item"),
+            "{description}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_synced_entity_a_pruned_rpc_cannot_judge_is_undecided_and_retried() {
+        use crate::validator::fake_chain::{self, Reply};
+        let (entity, _) = scene_at(a_day_ago());
+        let pruned = fake_chain::serve(|_, _| Reply::Fail).await;
+        let Some(outcome) = sync_one(entity, Chain::Signed, None, over(&pruned)).await else {
+            return;
+        };
+        assert!(!outcome.deployed);
+        let (retry_count, description) = outcome.failure.expect("queued for a retry");
+        assert_eq!(retry_count, 0);
+        assert!(
+            description.starts_with("Validation undecided:")
+                && description.contains("missing trie node"),
+            "{description}"
+        );
+        assert!(outcome.due, "the retry worker picks it up");
     }
 }

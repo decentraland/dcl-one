@@ -27,6 +27,9 @@ ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / 'services/catalyst'
 STATE = ROOT / '.cache/dev'
 SETTINGS = STATE / 'settings.json'
+# mirror: mainnet catalogues; testnet: the same mirrors over Decentraland's testnet (.zone, Amoy and
+# Sepolia), for trading with testnet wallets; offline: empty, for local deployments.
+PROFILES = ('mirror', 'testnet', 'offline')
 DARWIN = platform.system() == 'Darwin'
 
 
@@ -85,6 +88,10 @@ def settings(create=False):
         if create and requested is not None and requested != str(config['port']):
             print(f"Using saved port {config['port']}; FOUNDATION_DEV_PORT={requested} applies only on first startup. "
                   'Stop services before editing .cache/dev/settings.json.', file=sys.stderr)
+        profile = os.environ.get('FOUNDATION_DEV_PROFILE')
+        if create and profile is not None and profile != config['profile']:
+            print(f"Using saved profile {config['profile']}; FOUNDATION_DEV_PROFILE={profile} applies only on first "
+                  'startup. Change it with foundation-dev profile.', file=sys.stderr)
         if missing_secrets(config):
             # A stack from before a generated secret, on whichever command reads it first; the lock
             # keeps tasks that start together on one value.
@@ -111,8 +118,8 @@ def settings(create=False):
     if base > 65000 or not ports_free(base):
         raise RuntimeError('Development ports are occupied; choose FOUNDATION_DEV_PORT.')
     profile = os.environ.get('FOUNDATION_DEV_PROFILE', 'mirror')
-    if profile not in ('mirror', 'offline'):
-        raise ValueError('FOUNDATION_DEV_PROFILE must be mirror or offline')
+    if profile not in PROFILES:
+        raise ValueError('FOUNDATION_DEV_PROFILE must be mirror, testnet or offline')
     config = {'port': base, 'profile': profile, 'password': secrets.token_hex(24),
               'ENCRYPTION_KEY': secrets.token_hex(32), 'SESSION_SECRET': secrets.token_hex(32),
               **missing_secrets({})}
@@ -225,11 +232,16 @@ def pulse_env(config, certificate, key):
             'PULSE_BANS_URL': f'http://127.0.0.1:{config["port"]}/comms-gatekeeper/bans'}
 
 
+# Sign-in identifiers the browser receives (public by design, the ones decentraland.org ships): taken from the shell
+# when set, so email codes, social sign-in and WalletConnect work locally. Nothing secret belongs in this list.
+PUBLIC_SIGN_IN_IDS = ('THIRDWEB_CLIENT_ID', 'MAGIC_API_KEY', 'WALLETCONNECT_PROJECT_ID')
+
+
 def runtime_env(config):
     # Do not inherit a shell's production database, upstreams or credentials.
     env = {key: os.environ[key] for key in (
         'PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'LC_ALL', 'LOCALE_ARCHIVE',
-        'SSL_CERT_FILE', 'NIX_SSL_CERT_FILE'
+        'SSL_CERT_FILE', 'NIX_SSL_CERT_FILE', *PUBLIC_SIGN_IN_IDS
     ) if key in os.environ}
     base = config['port']
     env.update({
@@ -313,6 +325,7 @@ def runtime_env(config):
             'ETH_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-ethereum-mainnet',
             'MATIC_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-matic-mainnet',
             'MARKETPLACE_SUBGRAPH_URL': 'https://subgraph.decentraland.org/marketplace',
+            'LAND_SUBGRAPH_URL': 'https://subgraph.decentraland.org/land-manager',
             'MARKETPLACE_NFT_INDEX_ENABLED': 'true', 'LAND_AUTHZ_INDEX_ENABLED': 'true',
             'ETH_RPC_URL': 'https://rpc.decentraland.org/mainnet',
             'BUILDER_CONTENT_BUCKET_URL': 'https://builder-items.decentraland.org',
@@ -326,7 +339,52 @@ def runtime_env(config):
             'EXPLORER_MAP_SOURCE_URL': 'https://api.decentraland.org',
             'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/polygon',
         })
+    if config['profile'] == 'testnet':
+        env.update(testnet_env())
     return env
+
+
+def testnet_env():
+    """The mirror profile's upstreams on Decentraland's testnet: .zone services, Amoy and Sepolia.
+
+    The Shop settles on Amoy (VITE_SHOP_CHAIN_ID, read by the Sites dev server), its order book is the
+    .zone marketplace API's, and POST /v1/trades checks ownership over the testnet RPCs. Places, events,
+    worlds and the map stay on their production sources, but ETH_NETWORK and SYNC_SOURCE move content
+    read-through, LAND authorization and the node's network id to Sepolia and the .zone peer, so /play
+    does not resolve mainnet scenes on this profile.
+
+    The trade-events index walks Amoy and Sepolia's marketplaces (MARKETPLACE_INDEX_CHAIN_ID_*), so a
+    trade signed into this stack leaves `open` once it is cancelled, replaced or executed on chain."""
+    return {
+        'ETH_NETWORK': 'sepolia',
+        'SYNC_SOURCE': 'https://peer.decentraland.zone/content',
+        'TRADES_SYNC_UPSTREAM_URL': 'https://marketplace-api.decentraland.zone/v1/trades',
+        'ETH_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-ethereum-sepolia',
+        'MATIC_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-matic-amoy',
+        'MARKETPLACE_SUBGRAPH_URL': 'https://subgraph.decentraland.org/marketplace-sepolia',
+        'LAND_SUBGRAPH_URL': 'https://subgraph.decentraland.org/land-manager-sepolia',
+        'ETH_RPC_URL': 'https://rpc.decentraland.org/sepolia',
+        'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/amoy',
+        'TRADE_RPC_URLS': '80002=https://rpc.decentraland.org/amoy,11155111=https://rpc.decentraland.org/sepolia',
+        # Gasless approvals and cancels: the local relay admits Amoy's Decentraland contracts (the bundled
+        # contract-addresses list under `amoy`) and forwards to the .zone transactions API, which pays testnet
+        # gas. COLLECTIONS_CHAIN_ID also keys the chain the relay verifies signatures and collections on.
+        'COLLECTIONS_CHAIN_ID': '80002',
+        'CONTRACT_ADDRESSES_CHAIN_KEY': 'amoy',
+        # The published list: the bundled copy predates MarketplaceV5, the off-chain V3 marketplace whose
+        # cancelSignature the Shop relays.
+        'CONTRACT_ADDRESSES_URL': 'https://contracts.decentraland.org/addresses.json',
+        'TRANSACTIONS_UPSTREAM_URL': 'https://transactions-api.decentraland.zone',
+        # Cancels and executions on chain close local trades: the trade-events index on the testnets,
+        # through TRADE_RPC_URLS' 80002 and 11155111 entries (it checks each endpoint's eth_chainId).
+        'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED': 'true',
+        'MARKETPLACE_INDEX_CHAIN_ID_MATIC': '80002',
+        'MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM': '11155111',
+        # The NFT index walks chains 1/137 only, with no chain-id check: Matic has no endpoint here, and Ethereum
+        # would read Sepolia through ETH_RPC_URL and store its logs as mainnet rows.
+        'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
+        'VITE_SHOP_CHAIN_ID': '80002',
+    }
 
 
 def socket_path():
@@ -405,7 +463,7 @@ def project(config, postgres_only=False):
         'web-install': process('web-install'), 'sites': sites, 'livekit': livekit, 'pulse': pulse,
         'nats': nats,
     }
-    if config['profile'] == 'mirror':
+    if config['profile'] in ('mirror', 'testnet'):
         # The marketplace mirrors and chain indexes run in `catalyst index`, beside `serve`.
         processes['index'] = process('index', {'postgres': 'process_healthy',
                                                'api-build': 'process_completed_successfully'})
@@ -934,7 +992,7 @@ def main():
     wait_parser = commands.add_parser('wait')
     wait_parser.add_argument('--timeout', type=int, default=1800)
     wait_parser.add_argument('--postgres-only', action='store_true')
-    commands.add_parser('profile').add_argument('profile', choices=('mirror', 'offline'))
+    commands.add_parser('profile').add_argument('profile', choices=PROFILES)
     commands.add_parser('trades-snapshot', help="Write the mirrored trades to a gzipped SQL file").add_argument('out')
     commands.add_parser('_task', help='Internal supervised process').add_argument('task', choices=(
         'postgres', 'database-ready', 'api-build', 'api', 'api-run', 'web-install', 'sites', 'index', 'livekit', 'pulse', 'nats'))
@@ -967,6 +1025,12 @@ def main():
         if supervisor_running():
             raise RuntimeError('Run foundation-dev down before changing profile.')
         config = settings()
+        data = STATE / 'postgres'
+        if (config['profile'] == 'testnet') != (args.profile == 'testnet') and data.exists() and any(data.iterdir()):
+            # Mainnet and testnet rows (trades, collections, owners) must never share a database.
+            raise RuntimeError(f"This stack already holds data of the {config['profile']} profile, and testnet data "
+                               'never shares a database with the others. Run the testnet profile in its own worktree '
+                               '(FOUNDATION_DEV_PROFILE=testnet on its first foundation-dev up).')
         config['profile'] = args.profile
         save_json(SETTINGS, config)
         print(f'Profile set to {args.profile}; run foundation-dev up. Existing data is preserved.')
@@ -976,12 +1040,17 @@ def main():
         for key, value in (('FOUNDATION_DEV_API_URL', f"http://127.0.0.1:{config['port']}"),
                            ('FOUNDATION_DEV_SITES_URL', f"http://127.0.0.1:{config['port'] + 2}"),
                            ('FOUNDATION_DEV_DATABASE_URL', database_url(config)),
-                           ('FOUNDATION_DEV_TEST_DATABASE_URL', database_url(config, 'postgres'))):
+                           ('FOUNDATION_DEV_TEST_DATABASE_URL', database_url(config, 'postgres')),
+                           ('FOUNDATION_DEV_STACK_PROFILE', config['profile'])):
             print(f'{key}={shlex.quote(value)}')
     elif args.command == 'psql':
         os.execvpe('psql', ['psql', '-X'], psql_env(settings()))
     elif args.command == 'trades-snapshot':
-        export_trades_snapshot(settings(), args.out)
+        config = settings()
+        if config['profile'] == 'testnet':
+            # seed_trades loads a snapshot into a mirror stack; testnet trades must not reach one.
+            raise RuntimeError('This stack runs the testnet profile; its trades are not a snapshot for mainnet stacks.')
+        export_trades_snapshot(config, args.out)
     return 0
 
 

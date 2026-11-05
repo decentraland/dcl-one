@@ -196,7 +196,6 @@ fn setup(
     tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/oow.dui"));
     tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/spinner.dui"));
     tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/tracker.dui"));
-    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/update.dui"));
     tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/utils.dui"));
 
     // tracker.load_asset(asset_server.load_folder("embedded://images"));

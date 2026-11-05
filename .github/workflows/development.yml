@@ -20,30 +20,16 @@ on:
       - 'schemas/**'
       - 'Makefile'
       - '.github/workflows/development.yml'
+  # Every pull request, so "CI gate" always reports and can be a required check; the `changes` plan skips the
+  # heavy jobs when nothing under push.paths changed (a skipped job counts as passing for a required check).
   pull_request:
-    paths:
-      - 'flake.*'
-      - 'rendering/bevy-explorer/upstream.lock.json'
-      - 'infra/dev/**'
-      - 'tooling/dev*'
-      - 'tooling/enet-provenance.py'
-      - 'tooling/*.py'
-      - 'tooling/tests/**'
-      - 'tooling/migration/**'
-      - 'services/catalyst/**'
-      - 'library/**'
-      - '.cargo/**'
-      - 'apps/sites/**'
-      - 'apps/ui3/**'
-      - 'schemas/**'
-      - 'Makefile'
-      - '.github/workflows/development.yml'
 permissions:
   contents: read
   actions: read
 concurrency:
   group: development-${{ github.ref }}
-  cancel-in-progress: true
+  # Main runs finish: they are the macOS check for source that PRs test on Linux only.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   changes:
     name: Changes
@@ -52,18 +38,20 @@ jobs:
     timeout-minutes: 10
     outputs:
       macos: ${{ steps.plan.outputs.macos }}
+      run: ${{ steps.plan.outputs.run }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
-      - name: Select the Rust test platforms
+      - name: Select the jobs and the Rust test platforms
         id: plan
         run: python3 tooling/dev-ci.py plan
   rust:
     name: Rust tests
     needs: changes
-    # Runs whatever the plan's outcome; without a plan (other events, a failed job) it includes macOS.
-    if: ${{ !cancelled() }}
+    # Runs whatever the plan's outcome unless it found nothing to test; without a plan (other events, a failed
+    # plan job) it runs, and includes macOS.
+    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -87,6 +75,14 @@ jobs:
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
       - name: Verify the exact public ENet source pin
         run: nix develop --command python3 tooling/enet-provenance.py
+      - name: Identify Rust build inputs
+        id: rust-inputs
+        shell: bash
+        run: |
+          # Hash tracked inputs, not the commit: unrelated documentation edits
+          # reuse a snapshot, while schema, protocol and vendored SDK edits do not.
+          source=$(git ls-tree -r HEAD -- services/catalyst library schemas .cargo apps/dcl-scene-cli flake.nix Makefile tooling infra/dev .github/workflows/development.yml | git hash-object --stdin)
+          echo "source=$source" >> "$GITHUB_OUTPUT"
       - name: Restore Rust build cache
         id: rust-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -95,8 +91,11 @@ jobs:
             services/catalyst/target
             ~/.cargo/registry
             ~/.cargo/git
-          key: foundation-dev-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
+          key: foundation-dev-v2-tests-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}-${{ steps.rust-inputs.outputs.source }}
           restore-keys: |
+            foundation-dev-v2-tests-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}-
+            foundation-dev-v2-tests-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
+            foundation-dev-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
             foundation-dev-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
       - name: Run backend tests with PostgreSQL and isolated NATS
         run: nix develop --command bash tooling/dev-test.sh rust
@@ -107,8 +106,10 @@ jobs:
           name: development-rust-logs-${{ runner.os }}-${{ runner.arch }}
           path: .cache/dev/*.log
           retention-days: 7
-      - name: Save Rust build cache from main
-        if: github.ref == 'refs/heads/main' && steps.rust-cache.outputs.cache-hit != 'true'
+      - name: Save successful Rust build snapshot
+        # Large PR snapshots require an explicit ci:cache label to bound default cache pressure.
+        # Main maintains both platforms; GitHub keeps PR writes on their merge ref.
+        if: success() && ((github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:cache') && runner.os == 'Linux' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && steps.rust-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -117,6 +118,8 @@ jobs:
             ~/.cargo/git
           key: ${{ steps.rust-cache.outputs.cache-primary-key }}
   smoke:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -144,6 +147,14 @@ jobs:
         run: nix flake show --all-systems
       - name: Build the development shell and locate the pnpm store
         run: echo "PNPM_STORE=$(nix develop --command pnpm store path)" >> "$GITHUB_ENV"
+      - name: Identify Rust build inputs
+        id: rust-inputs
+        shell: bash
+        run: |
+          # Hash tracked inputs, not the commit: unrelated documentation edits
+          # reuse a snapshot, while schema, protocol and vendored SDK edits do not.
+          source=$(git ls-tree -r HEAD -- services/catalyst library schemas .cargo apps/dcl-scene-cli flake.nix Makefile tooling infra/dev .github/workflows/development.yml | git hash-object --stdin)
+          echo "source=$source" >> "$GITHUB_OUTPUT"
       - name: Restore Rust build cache
         id: rust-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -152,9 +163,10 @@ jobs:
             services/catalyst/target
             ~/.cargo/registry
             ~/.cargo/git
-          key: foundation-dev-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
+          key: foundation-dev-v2-smoke-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}-${{ steps.rust-inputs.outputs.source }}
           restore-keys: |
-            foundation-dev-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
+            foundation-dev-v2-smoke-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}-
+            foundation-dev-v2-smoke-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
       - name: Restore the pnpm store
         id: pnpm-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -199,8 +211,21 @@ jobs:
         with:
           path: ${{ env.PNPM_STORE }}
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+      - name: Save successful smoke build snapshot
+        # PR smoke jobs restore main's snapshots without creating multi-GB copies.
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rust-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            services/catalyst/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
+
   web:
     name: Web tests and contracts
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
@@ -220,11 +245,23 @@ jobs:
         run: |
           nix develop --command pnpm --dir apps/ui3 install --frozen-lockfile
           nix develop --command pnpm --dir apps/sites install --frozen-lockfile
-      - name: Run the web unit tests
+      - name: Select web unit coverage
+        id: web-coverage
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 tooling/dev-ci.py
+      - name: Run UI3 unit tests
+        if: steps.web-coverage.outputs.run-web-unit-tests != 'false'
+        timeout-minutes: 20
+        run: nix develop --command pnpm --dir apps/ui3 test
+      - name: Run Sites unit tests
+        if: steps.web-coverage.outputs.run-web-unit-tests != 'false'
+        timeout-minutes: 20
+        run: nix develop --command pnpm --dir apps/sites test
+      - name: Run editor scene unit tests
+        if: steps.web-coverage.outputs.run-web-unit-tests != 'false'
         timeout-minutes: 20
         run: |
-          nix develop --command pnpm --dir apps/ui3 test
-          nix develop --command pnpm --dir apps/sites test
           nix develop --command pnpm --dir apps/ui3/editor-scene install --frozen-lockfile
           nix develop --command pnpm --dir apps/ui3/editor-scene test
       - name: Check web types and generated artifacts
@@ -242,3 +279,26 @@ jobs:
         with:
           path: ${{ env.PNPM_STORE }}
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+  # The one check to mark required on main. It always reports: green when the Rust and web jobs passed or were
+  # skipped because nothing they test changed, red when either failed, was cancelled or is missing. Smoke is left
+  # out: it also fails on hosted-runner limits that are not the change's.
+  gate:
+    name: CI gate
+    needs: [changes, rust, web]
+    if: ${{ always() }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the Rust and web jobs to pass or be skipped
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RUST: ${{ needs.rust.result }}
+          WEB: ${{ needs.web.result }}
+        run: |
+          echo "changes=$CHANGES rust=$RUST web=$WEB"
+          for result in "$CHANGES" "$RUST" "$WEB"; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "::error::A required job ended as '$result'"; exit 1 ;;
+            esac
+          done

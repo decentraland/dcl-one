@@ -16,6 +16,7 @@ pub struct ActiveInspectionScene(pub Option<Entity>);
 
 #[derive(SystemParam)]
 pub struct SceneResolver<'w, 's> {
+    pub(super) super_user: Query<'w, 's, (), With<scene_runner::initialize_scene::SuperUserScene>>,
     pub active: Res<'w, ActiveInspectionScene>,
     pub scenes: Query<'w, 's, (Entity, &'static mut RendererSceneContext)>,
     pub containing_scene: ContainingScene<'w, 's>,
@@ -23,7 +24,7 @@ pub struct SceneResolver<'w, 's> {
 }
 
 impl SceneResolver<'_, '_> {
-    fn resolve_entity(&self) -> Result<Entity, String> {
+    pub(crate) fn resolve_entity(&self) -> Result<Entity, String> {
         if let Some(ent) = self.active.0 {
             if self.scenes.contains(ent) {
                 return Ok(ent);
@@ -66,7 +67,23 @@ impl SceneResolver<'_, '_> {
     where
         F: FnOnce(&CrdtStore) + Send + Sync + 'static,
     {
-        let (entity, context) = self.resolve()?;
+        self.request_snapshot_from(self.resolve_entity(), pending, callback)
+    }
+
+    pub(crate) fn request_snapshot_from<F>(
+        &self,
+        entity: Result<Entity, String>,
+        pending: &mut PendingSnapshotRequests,
+        callback: F,
+    ) -> Result<(), String>
+    where
+        F: FnOnce(&CrdtStore) + Send + Sync + 'static,
+    {
+        let entity = entity?;
+        let (_, context) = self
+            .scenes
+            .get(entity)
+            .map_err(|_| "scene no longer running")?;
         context
             .sender()
             .ok_or_else(|| "scene has no thread handle".to_string())?

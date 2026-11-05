@@ -1440,6 +1440,7 @@ struct Played {
 /// Play a slot for one frame: its clip on the avatar's player (started unless it's the one already
 /// running, and on a `restart`), with its loop, `speed` and `seek`, the prop clip alongside, and
 /// the sound due. `playback` gets the clip duration and end.
+/// `wait_for_sound`: hold the clip while its sound loads, else skip that sound.
 #[allow(clippy::too_many_arguments)]
 fn play_slot(
     commands: &mut Commands,
@@ -1456,6 +1457,7 @@ fn play_slot(
     speed: f32,
     seek: &mut Option<f32>,
     default_mark: Option<f32>,
+    wait_for_sound: bool,
 ) -> Result<Played, Hold> {
     let (emote, clip, clip_duration) = resolve_playback(
         playback,
@@ -1554,8 +1556,12 @@ fn play_slot(
         default_mark,
         clip_duration,
         playback.repeat,
-    )
-    .map_err(|_| Hold::Loading)?;
+    );
+    let sound = match sound {
+        Ok(sound) => sound,
+        Err(_) if wait_for_sound => return Err(Hold::Loading),
+        Err(_) => None,
+    };
 
     // Prefer a seek requested this frame; otherwise apply one stashed when the prop was
     // spawned (deferred a frame), advanced by the load duration via the stashed start time,
@@ -1750,6 +1756,8 @@ fn play_current_emote(
         // persists so downstream `SceneDrivenAnimationFeedback` publishing reports the
         // fallback source, not the failed scene-driven one.
         let played = loop {
+            // locomotion skips loading footsteps instead of gliding in idle
+            let wait_for_sound = ![&*URN_WALK, &*URN_RUN, &*URN_JUMP].contains(&&active_emote.urn);
             match play_slot(
                 &mut commands,
                 &mut params,
@@ -1767,6 +1775,7 @@ fn play_current_emote(
                 active_emote.speed,
                 &mut active_emote.pending_seek,
                 active_emote.initial_audio_mark,
+                wait_for_sound,
             ) {
                 Err(Hold::Failed) => {
                     if let Some(fb) = active_emote.fallback.take() {
@@ -1931,6 +1940,7 @@ fn play_masked_emote(
                 1.0,
                 &mut None,
                 None,
+                true,
             ) {
                 Ok(_) => 1.0,
                 Err(Hold::Failed) => {

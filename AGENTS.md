@@ -47,7 +47,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 
 - Read the [layout ADR](docs/adr/2026-10-19-organizing-library-services-folders.md) before adding, moving or renaming a folder or crate; record layout changes as a new ADR.
 - `library/` depends only on library code.
-- `library/protocol/proto` is the only `.proto` source ([ADR](docs/adr/2026-10-25-protocol-in-dcl-one.md)); `tooling/proto-source-check.py` allowlists the copies still to be removed.
+- `library/protocol/proto` is the only `.proto` source ([ADR](docs/adr/2026-10-25-protocol-in-dcl-one.md)); `tooling/proto-source-check.py` fails on any other copy.
 - Reach other files through `env!("DCL_ONE_ROOT")`, never `../` chains.
 - Domain crates follow `docs/module-layers.toml`; no upward dependency.
 - Keep the fresh-schema bootstrap single.
@@ -84,7 +84,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 
 - Never add a dependency on a sibling checkout.
 - `rendering/bevy-explorer/source` is its own workspace; integration lives in `apps/bevy-explorer`.
-- Keep component licenses and pins (`upstream.lock.json`, `abgen-release.lock`, `livekit-release.lock`).
+- Keep component licenses and pins (`upstream.lock.json`, `abgen-release.lock`, `livekit-release.lock`, `tooling/uuav/uuav-binaries.lock.json`).
 - Regenerate `.github/CODEOWNERS` from `ownership.json` with `tooling/owners.py`.
 - No machine names, private addresses, home paths, personal emails or the operator's domain; deployments supply them via gitignored config.
 - Never delete the gitignored `credentials` and `data` directories.
