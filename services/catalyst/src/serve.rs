@@ -1031,6 +1031,26 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             config.writes.social_writes_enabled,
         );
     }
+    if config.writes.social_writes_enabled {
+        let communities = social.communities.clone();
+        jobs.spawn_periodic_leased(
+            "social-referral-rewards",
+            jobs::PeriodicCfg::every(Duration::from_secs(60)),
+            move |_ctx| {
+                let communities = communities.clone();
+                async move {
+                    communities
+                        .referral
+                        .drain_pending_rewards()
+                        .await
+                        .map_err(|error| {
+                            anyhow::anyhow!("referral reward drain failed: {error:?}")
+                        })?;
+                    Ok(())
+                }
+            },
+        );
+    }
     communities::fed::spawn_job(&social.communities, &jobs);
     // Copies of the upstream public communities; not local authority, so
     // not behind SOCIAL_WRITES_ENABLED (the explore mirrors' rule). A join or
@@ -1998,14 +2018,19 @@ mod referral_settings_tests {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
         };
-        for (cidrs, expected) in [("127.0.0.1/32", "198.51.100.7"), ("10.0.0.0/8", "127.0.0.1")] {
+        for (cidrs, expected) in [
+            ("127.0.0.1/32", "198.51.100.7"),
+            ("192.0.2.0/24", "127.0.0.1"),
+        ] {
             let config = Config::parse_env_for_tests([
                 ("DATABASE_URL", "postgres:///catalyst"),
                 ("HTTP_TRUSTED_PROXY_CIDRS", cidrs),
             ])
             .unwrap();
-            let dir = std::env::temp_dir().join(format!("catalyst-referral-ip-{}", uuid::Uuid::new_v4()));
-            let storage = std::sync::Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+            let dir =
+                std::env::temp_dir().join(format!("catalyst-referral-ip-{}", uuid::Uuid::new_v4()));
+            let storage =
+                std::sync::Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
             let state = std::sync::Arc::new(communities::State::new(
                 pool.clone(),
                 storage,
@@ -2021,7 +2046,10 @@ mod referral_settings_tests {
                 communities::State::explore_for_tests(&pool),
             ));
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let endpoint = format!("http://{}/v1/referral-progress", listener.local_addr().unwrap());
+            let endpoint = format!(
+                "http://{}/v1/referral-progress",
+                listener.local_addr().unwrap()
+            );
             let app = communities::router(state);
             let server = tokio::spawn(async move {
                 axum::serve(
@@ -2052,7 +2080,11 @@ mod referral_settings_tests {
                 request = request.header(name.as_str(), value.to_str().unwrap());
             }
             let response = request.send().await.unwrap();
-            assert_eq!(response.status(), axum::http::StatusCode::NO_CONTENT, "{cidrs}");
+            assert_eq!(
+                response.status(),
+                axum::http::StatusCode::NO_CONTENT,
+                "{cidrs}"
+            );
             let stored: String = sqlx::query_scalar(
                 "SELECT invited_user_ip FROM social.referral_progress WHERE invited_user = $1",
             )

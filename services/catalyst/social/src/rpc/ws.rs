@@ -92,8 +92,8 @@ async fn handle_connection(
     tracing::info!(address = %address, "social-rpc client authenticated");
     // The slot is taken in authentication order, as the source admits at
     // authentication: past the cap the address's oldest socket ends (3005).
-    // Attaching sends ServerReady off the server loop, so registration order
-    // is not authentication order and must not decide eviction.
+    // Transport attach runs later on the server loop; its callback order
+    // must not decide authentication-time eviction.
     let address_key = address.to_string();
     state
         .ctx
@@ -121,8 +121,8 @@ async fn handle_connection(
     }
     // The socket keeps its place in the pool until its close frame is out.
     let _ = writer.await;
-    // The server's close handler also frees it; a transport that ended
-    // before its ServerReady was never registered there.
+    // The server's close handler also frees it; writer completion releases
+    // admission even when the server has not processed transport cleanup yet.
     state.ctx.admission().release(&address_key, &slot.close);
     Ok(())
 }

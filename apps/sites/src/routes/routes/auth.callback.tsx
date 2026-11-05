@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useLoaderData, useNavigate, useSearchParams } from "react-router";
 
 import {
   clearVerifiedWalletCookie,
@@ -7,12 +7,18 @@ import {
 } from "@/core/lib/telemetry/session";
 import { useAuth } from "@/data/lib/auth/context";
 import { getWalletForToken } from "@/data/lib/auth/thirdweb/index";
+import MagicCallback from "@/features/auth/login/MagicCallback";
 import { safeRedirectTarget } from "@/features/auth/login/redirect";
 
 import type { Route } from "./+types/auth.callback";
 
 export function meta(_args: Route.MetaArgs) {
   return [{ title: "Signing you in \u{2014} Decentraland" }];
+}
+
+export function loader(_args: Route.LoaderArgs) {
+  // Magic's publishable key: public by design, but deployment configuration, so it comes from the environment.
+  return { magicApiKey: process.env.MAGIC_API_KEY || null };
 }
 
 export async function action({ request }: Route.ActionArgs) {
@@ -72,7 +78,19 @@ function extractToken(authResultRaw: string): string | null {
   }
 }
 
+/**
+ * Two sign-ins return here: Magic's (Google, Apple, Discord, X), which carries its target in `state`, and the in-app
+ * wallet's, whose links carry `next` (and `authResult` once it succeeded). A return with either of the in-app ones is
+ * the in-app wallet's, so a cancelled one keeps its own message and page.
+ */
 export default function AuthCallbackRoute() {
+  const { magicApiKey } = useLoaderData<typeof loader>();
+  const [params] = useSearchParams();
+  const inApp = params.has("authResult") || params.has("next");
+  return inApp ? <InAppCallback /> : <MagicCallback magicApiKey={magicApiKey} />;
+}
+
+function InAppCallback() {
   const auth = useAuth();
   const navigate = useNavigate();
   const [params] = useSearchParams();
