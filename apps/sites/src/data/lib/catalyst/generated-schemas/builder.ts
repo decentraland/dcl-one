@@ -201,8 +201,10 @@ export const NewsletterSubscribeOutSchema = z.object({
 
 export const OrphanItemOutSchema = z.object({
   beneficiary: z.string().nullable(),
+  blockchain_item_id: z.string().nullable(),
   category: z.string().nullable(),
   collection_id: z.string().nullable(),
+  contract_address: z.string().nullable(),
   createdAt: z.number().nullable(),
   grad: z.string().nullable(),
   id: z.string(),

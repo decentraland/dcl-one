@@ -5,4 +5,13 @@ import type { ItemKind } from "./ItemKind";
 /**
  * Row of `GET /v1/{address}/items`.
  */
-export type OrphanItemOut = { beneficiary: string | null, category: string | null, collection_id: string | null, createdAt: number | null, grad: string | null, id: string, image: string | null, is_published: boolean, max_supply: number | null, name: string, network: string | null, price: string | null, rarity: string | null, status: CollectionStatus, total_supply: number | null, type: ItemKind, updatedAt: number | null, urn: string | null, };
+export type OrphanItemOut = { beneficiary: string | null, 
+/**
+ * The item's on-chain index in its collection, as builder-server names it.
+ * The Shop counts an item as published only with it.
+ */
+blockchain_item_id: string | null, category: string | null, collection_id: string | null, 
+/**
+ * The collection's contract: on-chain rows are keyed by it, so it equals `collection_id`.
+ */
+contract_address: string | null, createdAt: number | null, grad: string | null, id: string, image: string | null, is_published: boolean, max_supply: number | null, name: string, network: string | null, price: string | null, rarity: string | null, status: CollectionStatus, total_supply: number | null, type: ItemKind, updatedAt: number | null, urn: string | null, };
