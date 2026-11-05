@@ -357,7 +357,7 @@ async fn a_deploy_with_a_bad_or_missing_signature_does_not_hold_its_pointers() {
             .await
             .unwrap_err();
         assert!(
-            matches!(&err, DeployFailure::Rejected(errors) if errors[0].starts_with("The auth chain is invalid")),
+            matches!(&err, DeployFailure::Rejected(errors) if errors[0].starts_with("The signature is invalid. ")),
             "{err:?}"
         );
         assert!(!deployer.is_rate_limited("scene", "3,3"));
@@ -399,10 +399,11 @@ async fn a_deploy_whose_write_fails_does_not_hold_its_pointers() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// The first deploy holds its pointer while its write is in flight (a database that accepts
-/// connections and never answers), so a concurrent deploy to that pointer is refused.
+/// The first deploy holds its pointer while it is in flight (a database that accepts
+/// connections and never answers), so a concurrent deploy to that pointer is refused with
+/// upstream's in-flight text, unqueued; a cancelled deploy lets its pointers go.
 #[tokio::test]
-async fn of_two_concurrent_deploys_to_one_pointer_only_one_passes_the_limit() {
+async fn of_two_concurrent_deploys_to_one_pointer_the_second_is_refused_as_in_flight() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (connected_tx, connected_rx) = tokio::sync::oneshot::channel();
@@ -440,16 +441,23 @@ async fn of_two_concurrent_deploys_to_one_pointer_only_one_passes_the_limit() {
     .await
     .expect("the second deploy is refused, not queued behind the first")
     .unwrap_err();
-    assert!(
-        second.errors()[0].starts_with("Entity rate limited"),
+    assert_eq!(
+        second.errors(),
+        [
+            "The following pointers are currently being deployed: '5,5'. Please try again in a few seconds."
+        ],
         "{second:?}"
     );
 
     first.abort();
     assert!(first.await.unwrap_err().is_cancelled());
     assert!(
-        deployer.is_rate_limited("scene", "5,5"),
-        "a deploy cancelled mid-write keeps its pointers"
+        deployer
+            .pointers_in_flight
+            .lock()
+            .values()
+            .all(HashSet::is_empty),
+        "a cancelled deploy releases its claim"
     );
     silent.abort();
     let _ = std::fs::remove_dir_all(&tmp);
@@ -916,7 +924,7 @@ async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
         .await
         .expect_err("a chain whose signature does not recover to its signer is rejected");
     assert!(
-        matches!(&forged, DeployFailure::Rejected(errors) if errors[0].starts_with("The auth chain is invalid")),
+        matches!(&forged, DeployFailure::Rejected(errors) if errors[0].starts_with("The signature is invalid. ")),
         "{forged:?}"
     );
 

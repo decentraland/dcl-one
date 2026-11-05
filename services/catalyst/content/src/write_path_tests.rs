@@ -1522,12 +1522,19 @@ fn form_request(ip: &str, fields: &[(String, String)]) -> Request<Body> {
         .unwrap()
 }
 
-/// A form that passes admission and is then refused by the deployer (400).
+/// A form that passes admission and is then refused by the deployer (400):
+/// a well-formed chain, no entity file.
 fn entity_form() -> Vec<(String, String)> {
     vec![
         ("entityId".to_string(), "bafy".to_string()),
-        ("ethAddress".to_string(), "0xabc".to_string()),
-        ("signature".to_string(), "0xsig".to_string()),
+        (
+            "authChain".to_string(),
+            json!([
+                {"type": "SIGNER", "payload": "0x0000000000000000000000000000000000000001", "signature": ""},
+                {"type": "ECDSA_SIGNED_ENTITY", "payload": "bafy", "signature": "0x01"}
+            ])
+            .to_string(),
+        ),
     ]
 }
 
@@ -1571,7 +1578,7 @@ async fn a_form_over_its_field_limits_is_refused() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(
         json_of(&body),
-        json!({"errors": ["The entity file was not part of the uploaded files."]}),
+        json!({"errors": ["Failed to find the entity file."]}),
         "a form at the limits reaches the deployer"
     );
 }
@@ -1807,8 +1814,11 @@ async fn a_repeated_form_name_is_refused() {
     );
 }
 
+/// Upstream counts a deploy once its form is read (`withDeploymentQuota`):
+/// forms the parser or its limits refuse are not counted, a form refused
+/// after it (no `entityId`, a bad chain) is.
 #[tokio::test]
-async fn forms_refused_for_their_field_limits_count_toward_the_quota() {
+async fn only_forms_that_were_read_count_toward_the_quota() {
     let settings = Settings {
         post_entities_daily_quota_max: 2,
         ..Settings::for_tests()
@@ -1817,12 +1827,126 @@ async fn forms_refused_for_their_field_limits_count_toward_the_quota() {
     let router = node.router();
     let mut large = entity_form();
     large.push(("big".to_string(), "x".repeat(32 * 1024 + 1)));
-    for _ in 0..2 {
+    for _ in 0..3 {
         let (status, _, _) = call(&router, form_request("203.0.113.10", &large)).await;
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
     }
+    assert_eq!(node.state.deploy_quota.counted_for("203.0.113.10"), 0);
+    let (status, _, body) = call(&router, form_request("203.0.113.10", &entity_form()[1..])).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"error": "Missing required field: entityId"})
+        )
+    );
     let (status, _, _) = call(&router, form_request("203.0.113.10", &entity_form())).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _, _) = call(&router, form_request("203.0.113.10", &large)).await;
+    assert_eq!(
+        status,
+        StatusCode::TOO_MANY_REQUESTS,
+        "a spent source is turned away before its body"
+    );
+}
+
+/// Upstream's order before the body: a spent quota answers 429 ahead of a
+/// full upload budget.
+#[tokio::test]
+async fn a_spent_quota_is_answered_before_the_upload_budget() {
+    let capacity = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let settings = Settings {
+        post_entities_daily_quota_max: 1,
+        max_in_memory_deployment_bytes: capacity,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-before-budget", settings).await;
+    let router = node.router();
+    let (status, _, _) = call(&router, form_request("203.0.113.16", &entity_form())).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let _held = node.state.upload_budget.try_reserve(capacity).unwrap();
+    let (status, _, _) = call(&router, form_request("203.0.113.16", &entity_form())).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    let (status, _, _) = call(&router, form_request("203.0.113.17", &entity_form())).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+}
+
+/// Upstream's per-source admission (`source-upload-admission.ts`): a client
+/// with its uploads or bytes in flight gets 429 with `Retry-After: 5`
+/// before its body is read; another client is admitted.
+#[tokio::test]
+async fn a_source_past_its_uploads_in_flight_is_turned_away() {
+    let settings = Settings {
+        max_concurrent_uploads_per_source: 1,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("source-uploads", settings).await;
+    let router = node.router();
+    let held = node
+        .state
+        .source_uploads
+        .try_acquire("203.0.113.18", 1)
+        .unwrap();
+    let (status, headers, body) = call(&router, form_request("203.0.113.18", &entity_form())).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({"error": "Too many uploads in progress from this client, please retry shortly."})
+        )
+    );
+    assert_eq!(headers[header::RETRY_AFTER], "5");
+    let (status, _, _) = call(&router, form_request("203.0.113.19", &entity_form())).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    drop(held);
+    let (status, _, _) = call(&router, form_request("203.0.113.18", &entity_form())).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "admitted once its upload ends"
+    );
+}
+
+/// A body still arriving at the upload timeout answers upstream's 408 with
+/// what arrived (`multipart.ts`).
+#[tokio::test]
+async fn a_body_past_the_upload_timeout_is_408_with_what_arrived() {
+    use futures::StreamExt;
+    let settings = Settings {
+        multipart_upload_timeout: std::time::Duration::from_millis(50),
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("upload-timeout", settings).await;
+    let first = "--catalyst-admission-boundary\r\nContent-Disposition: form-data; name=\"entityId\"\r\n\r\nbafy\r\n";
+    let stalled = futures::stream::iter([Ok::<_, std::io::Error>(Bytes::from_static(
+        first.as_bytes(),
+    ))])
+    .chain(futures::stream::pending());
+    let request = Request::post("/content/entities")
+        .header(
+            header::CONTENT_TYPE,
+            "multipart/form-data; boundary=catalyst-admission-boundary",
+        )
+        .header(header::CONTENT_LENGTH, 1000)
+        .header("x-real-ip", "203.0.113.22")
+        .body(Body::from_stream(stalled))
+        .unwrap();
+    let (status, _, body) = call(&node.router(), request).await;
+    assert_eq!(status, StatusCode::REQUEST_TIMEOUT);
+    let kib_per_s = first.len() as f64 * 1000.0 / 50.0 / 1024.0;
+    assert_eq!(
+        json_of(&body),
+        json!({"error": format!(
+            "The upload did not finish within 0.05 s: received {} of 1000 bytes ({} KiB/s). Retry on a faster connection or send smaller batches.",
+            first.len(),
+            format!("{kib_per_s:.2}").trim_end_matches('0').trim_end_matches('.')
+        )})
+    );
+    assert_eq!(
+        node.state.deploy_quota.counted_for("203.0.113.22"),
+        0,
+        "an unread form is not counted"
+    );
 }
 
 /// An unsynced copy taking only scenes: a form with no typed entity file is

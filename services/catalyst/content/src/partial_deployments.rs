@@ -78,8 +78,8 @@ use sqlx::pool::PoolConnection;
 
 use super::entity::{Entity, EntityType};
 use super::write_deployer::{
-    DeployFailure, NEWER_ENTITY_MESSAGE, REQUEST_TTL_BACKWARDS_MS, REQUEST_TTL_FORWARDS_MS,
-    UPLOAD_HASH_JOBS, WriteDeployer, bounded_upload_hash,
+    DeployFailure, REQUEST_TTL_FORWARDS_MS, UPLOAD_HASH_JOBS, WriteDeployer, bounded_upload_hash,
+    is_pointer_conflict_message,
 };
 use crate::auth::{AuthChain, hash_bytes_v1};
 use crate::config::Config;
@@ -98,6 +98,12 @@ const STORE_CONCURRENCY: usize = 8;
 /// How long a batch waits for its entity's lock (another batch of the
 /// upload publishing it) before answering 503.
 const ENTITY_LOCK_WAIT: Duration = Duration::from_secs(30);
+/// Upstream's waits for pointers another deploy holds when publishing.
+const FINALIZE_POINTER_CONFLICT_RETRIES: u32 = 3;
+const FINALIZE_POINTER_CONFLICT_DELAY: Duration = Duration::from_millis(300);
+const POINTER_CONFLICT_RETRY_AFTER_SECS: u64 = 5;
+/// Upstream's `Retry-After` on a busy lock (`SERVICE_UNAVAILABLE_RETRY_AFTER_SECONDS`).
+const LOCK_BUSY_RETRY_AFTER_SECS: u64 = 10;
 /// The `content.system_properties` key of the last cleanup run's end (ms).
 const CLEANUP_AT_KEY: &str = "partial_uploads_cleanup_at";
 
@@ -259,9 +265,10 @@ pub struct Admission {
 }
 
 /// A batch's refusal: 400 (`retry_after` unset) or 429 `{errors}`, 503
-/// `{errors}`, or a 500.
+/// `{errors}`, the 503 `{error}` of a busy entity lock, or a 500.
 #[derive(Debug)]
 enum Refusal {
+    LockBusy(String),
     Invalid {
         errors: Vec<String>,
         retry_after: Option<u64>,
@@ -317,6 +324,19 @@ impl Refusal {
 
     fn into_response(self) -> Response {
         let (status, errors, retry_after) = match self {
+            Refusal::LockBusy(entity_id) => {
+                let mut response = super::errors::json_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    &format!(
+                        "The content lock for entity {entity_id} is still busy, please retry shortly."
+                    ),
+                );
+                response.headers_mut().insert(
+                    header::RETRY_AFTER,
+                    HeaderValue::from(LOCK_BUSY_RETRY_AFTER_SECS),
+                );
+                return response;
+            }
             Refusal::Invalid {
                 errors,
                 retry_after: None,
@@ -663,10 +683,7 @@ async fn stage(
         if let Some(ts) = deployer.deployed_timestamp(entity_id).await? {
             return Ok(Outcome::Published(ts));
         }
-        return Err(Refusal::Unavailable {
-            errors: vec!["Another batch of this upload is in progress. Retry shortly.".into()],
-            retry_after: INTERNAL_ERROR_RETRY_AFTER_SECS,
-        });
+        return Err(Refusal::LockBusy(entity_id.to_string()));
     };
     let outcome = commit(deployer, limits, &batch, prepared, admission).await;
     lock.release().await;
@@ -844,7 +861,7 @@ async fn prepare(
     let ttl_anchor = seen
         .as_ref()
         .map_or(batch.requested_at_ms, |p| p.created_at);
-    if ttl_anchor - entity.timestamp > REQUEST_TTL_BACKWARDS_MS {
+    if ttl_anchor - entity.timestamp > deployer.request_ttl_backwards_ms() {
         return Err(Refusal::invalid(format!(
             "The request is not recent enough, please submit it again with a new timestamp (entityId={}).",
             entity.id
@@ -870,11 +887,7 @@ async fn prepare(
 }
 
 fn newer_entity(entity: &Entity) -> Refusal {
-    Refusal::invalid(format!(
-        "There is a newer entity pointed by one or more of the pointers you provided (entityId={} pointers={}).",
-        entity.id,
-        entity.pointers.join(",")
-    ))
+    Refusal::invalid(super::write_deployer::newer_entity_message(entity))
 }
 
 /// A resume's entity file, read back from the store; only for a chain valid
@@ -1521,15 +1534,34 @@ async fn finalize(
     }
     let pool = deployer.pool();
     let entity_id = entity.id.as_str();
-    let result = deployer
-        .deploy_entity_anchored(
-            vec![entity_bytes],
-            entity_id,
-            auth_chain,
-            "LOCAL",
-            Some(created_at),
-        )
-        .await;
+    // Another deploy of this process holding the pointers is waited out a
+    // few times, as upstream's finalize does, then answered 429.
+    let mut attempt = 0;
+    let result = loop {
+        let result = deployer
+            .deploy_entity_anchored(
+                vec![entity_bytes.clone()],
+                entity_id,
+                auth_chain.clone(),
+                "LOCAL",
+                Some(created_at),
+            )
+            .await;
+        match &result {
+            Err(DeployFailure::Rejected(errors))
+                if attempt < FINALIZE_POINTER_CONFLICT_RETRIES
+                    && errors.iter().any(|e| is_pointer_conflict_message(e)) =>
+            {
+                attempt += 1;
+                tokio::time::sleep(FINALIZE_POINTER_CONFLICT_DELAY).await;
+                if let Some(ts) = deployer.deployed_timestamp(entity_id).await? {
+                    delete_pending(pool, entity_id).await;
+                    return Ok(Outcome::Published(ts));
+                }
+            }
+            _ => break result,
+        }
+    };
     let failure = match result {
         Ok(_) => {
             delete_pending(pool, entity_id).await;
@@ -1576,8 +1608,20 @@ async fn finalize(
                 retry_after: Some(retry_after),
             })
         }
+        DeployFailure::Rejected(errors)
+            if errors.iter().any(|e| is_pointer_conflict_message(e)) =>
+        {
+            Err(Refusal::Invalid {
+                errors,
+                retry_after: Some(POINTER_CONFLICT_RETRY_AFTER_SECS),
+            })
+        }
         // Only an overtaken upload is released: other refusals may clear.
-        DeployFailure::Rejected(errors) if errors.iter().any(|e| e == NEWER_ENTITY_MESSAGE) => {
+        DeployFailure::Rejected(errors)
+            if errors
+                .iter()
+                .any(|e| super::write_deployer::is_newer_entity_message(e)) =>
+        {
             release_upload(pool, deployer.storage(), limits, entity_id).await;
             Err(Refusal::Invalid {
                 errors,
