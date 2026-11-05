@@ -19,23 +19,9 @@ on:
       - 'schemas/**'
       - 'Makefile'
       - '.github/workflows/development.yml'
+  # Every pull request, so "CI gate" always reports and can be a required check; the `changes` plan skips the
+  # heavy jobs when nothing under push.paths changed (a skipped job counts as passing for a required check).
   pull_request:
-    paths:
-      - 'flake.*'
-      - 'rendering/bevy-explorer/upstream.lock.json'
-      - 'infra/dev/**'
-      - 'tooling/dev*'
-      - 'tooling/enet-provenance.py'
-      - 'tooling/*.py'
-      - 'tooling/tests/**'
-      - 'services/catalyst/**'
-      - 'library/**'
-      - '.cargo/**'
-      - 'apps/sites/**'
-      - 'apps/ui3/**'
-      - 'schemas/**'
-      - 'Makefile'
-      - '.github/workflows/development.yml'
 permissions:
   contents: read
   actions: read
@@ -51,18 +37,20 @@ jobs:
     timeout-minutes: 10
     outputs:
       macos: ${{ steps.plan.outputs.macos }}
+      run: ${{ steps.plan.outputs.run }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 2
-      - name: Select the Rust test platforms
+      - name: Select the jobs and the Rust test platforms
         id: plan
         run: python3 tooling/dev-ci.py plan
   rust:
     name: Rust tests
     needs: changes
-    # Runs whatever the plan's outcome; without a plan (other events, a failed job) it includes macOS.
-    if: ${{ !cancelled() }}
+    # Runs whatever the plan's outcome unless it found nothing to test; without a plan (other events, a failed
+    # plan job) it runs, and includes macOS.
+    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -129,6 +117,8 @@ jobs:
             ~/.cargo/git
           key: ${{ steps.rust-cache.outputs.cache-primary-key }}
   smoke:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}
     strategy:
       fail-fast: false
       matrix:
@@ -233,6 +223,8 @@ jobs:
 
   web:
     name: Web tests and contracts
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
@@ -286,3 +278,26 @@ jobs:
         with:
           path: ${{ env.PNPM_STORE }}
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+  # The one check to mark required on main. It always reports: green when the Rust and web jobs passed or were
+  # skipped because nothing they test changed, red when either failed, was cancelled or is missing. Smoke is left
+  # out: it also fails on hosted-runner limits that are not the change's.
+  gate:
+    name: CI gate
+    needs: [changes, rust, web]
+    if: ${{ always() }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    steps:
+      - name: Require the Rust and web jobs to pass or be skipped
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          RUST: ${{ needs.rust.result }}
+          WEB: ${{ needs.web.result }}
+        run: |
+          echo "changes=$CHANGES rust=$RUST web=$WEB"
+          for result in "$CHANGES" "$RUST" "$WEB"; do
+            case "$result" in
+              success|skipped) ;;
+              *) echo "::error::A required job ended as '$result'"; exit 1 ;;
+            esac
+          done

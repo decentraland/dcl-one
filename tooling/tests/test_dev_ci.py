@@ -1,4 +1,5 @@
-"""Pull requests run the Rust tests on macOS for build, toolchain and dev-stack inputs; source stays on Linux."""
+"""Pull requests run the Rust tests on macOS for build, toolchain and dev-stack inputs; source stays on Linux. The
+workflow runs on every pull request and skips its jobs when nothing it tests changed, so its CI gate always reports."""
 import contextlib
 import importlib.util
 import io
@@ -86,12 +87,43 @@ class DevCiTest(unittest.TestCase):
         with patch.object(dev, 'load_ci_local', side_effect=FileNotFoundError('ci-local.py')):
             self.assertTrue(dev.plan('pull_request', 'HEAD', 'HEAD')[0])
 
+    def test_runs_the_jobs_only_for_what_the_workflow_tests(self):
+        self.assertEqual(dev.watched_changes(['docs/development.md', 'README.md'], self.dev), [])
+        self.assertEqual(dev.watched_changes(['docs/a.md', 'apps/ui3/src/a.ts'], self.dev), ['apps/ui3/src/a.ts'])
+        self.assertTrue(dev.watched_changes(['services/catalyst/db/src/lib.rs'], self.dev))
+        # No change and an unfiltered workflow: nothing to skip on, so everything runs.
+        self.assertFalse(dev.plan('local', 'HEAD', 'HEAD')[2])
+        with patch.object(self.dev, 'workflow_paths', return_value=None):
+            self.assertEqual(dev.watched_changes(['docs/a.md'], self.dev), ['docs/a.md'])
+
+    def test_a_failed_or_missing_plan_runs_everything(self):
+        self.assertTrue(dev.plan('push', 'HEAD^1', 'HEAD')[2])
+        self.assertTrue(dev.plan('pull_request', 'not-a-revision', 'HEAD')[2])
+        with patch.object(dev, 'load_ci_local', side_effect=FileNotFoundError('ci-local.py')):
+            self.assertTrue(dev.plan('pull_request', 'HEAD', 'HEAD')[2])
+
+    def test_the_gate_always_reports_and_requires_rust_and_web(self):
+        workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
+        on = workflow.split('\non:\n', 1)[1].split('\npermissions:', 1)[0]
+        pull_request = on.split('  pull_request:', 1)[1]
+        # A path filter here would leave a required check waiting for ever on a docs-only pull request.
+        self.assertNotIn('paths:', pull_request)
+        gate = workflow.split('\n  gate:\n', 1)[1]
+        self.assertIn('name: CI gate', gate)
+        self.assertIn('needs: [changes, rust, web]', gate)
+        self.assertIn('if: ${{ always() }}', gate)
+        self.assertIn('success|skipped)', gate)
+        for job in ('rust', 'smoke', 'web'):
+            body = workflow.split(f'\n  {job}:\n', 1)[1].split('\n  ', 1)[0] + workflow.split(f'\n  {job}:\n', 1)[1][:600]
+            with self.subTest(job=job):
+                self.assertIn("needs.changes.outputs.run != 'false'", body)
+
     def run_main(self, summary):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory, 'output')
             os.environ.update(GITHUB_EVENT_NAME='pull_request', GITHUB_OUTPUT=str(output),
                               GITHUB_STEP_SUMMARY=str(summary or Path(directory, 'summary')))
-            with patch.object(dev, 'plan', return_value=(False, 'Only Linux-covered inputs changed')), \
+            with patch.object(dev, 'plan', return_value=(False, 'Only Linux-covered inputs changed', False)), \
                     patch('sys.argv', ['dev-ci.py', 'plan']), contextlib.redirect_stdout(io.StringIO()):
                 try:
                     dev.main()
@@ -100,7 +132,7 @@ class DevCiTest(unittest.TestCase):
             return written
 
     def test_writes_the_output_last(self):
-        self.assertEqual(self.run_main(None), 'macos=false\n')
+        self.assertEqual(self.run_main(None), 'macos=false\nrun=false\n')
         # A failed step must leave no answer, so the Rust job falls back to macOS.
         with tempfile.TemporaryDirectory() as directory, self.assertRaises(OSError):
             self.run_main(Path(directory))
