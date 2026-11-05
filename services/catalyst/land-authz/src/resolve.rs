@@ -316,10 +316,32 @@ impl Store {
     }
 
     /// Subject plus both grant legs per parcel in one round trip,
-    /// positional; `None` = not indexed.
+    /// positional; `None` = not indexed. The grant legs list operators in
+    /// lamb2's order ([`GRANTED_SINCE`]).
     pub async fn rights_batch(
         &self,
         parcels: &[(i32, i32)],
+    ) -> Result<Vec<Option<ParcelRights>>, sqlx::Error> {
+        self.rights_batch_in(parcels, GRANTED_SINCE, GRANTED_ORDER)
+            .await
+    }
+
+    /// [`Self::rights_batch`] for the deploy check, which reads only whether
+    /// the actor is among the grant legs: the operators come in address
+    /// order, without the two history lookups per operator that lamb2's
+    /// order costs.
+    pub async fn deploy_rights_batch(
+        &self,
+        parcels: &[(i32, i32)],
+    ) -> Result<Vec<Option<ParcelRights>>, sqlx::Error> {
+        self.rights_batch_in(parcels, "", "ar.operator").await
+    }
+
+    async fn rights_batch_in(
+        &self,
+        parcels: &[(i32, i32)],
+        granted_since: &str,
+        granted_order: &str,
     ) -> Result<Vec<Option<ParcelRights>>, sqlx::Error> {
         if parcels.is_empty() {
             return Ok(Vec::new());
@@ -337,13 +359,13 @@ impl Store {
                         lower(COALESCE(CASE WHEN el.estate_token_id IS NOT NULL THEN et.owner END, pt.owner, '')) AS account \
              ) s \
              LEFT JOIN LATERAL ( \
-                 SELECT COALESCE(array_agg(ar.operator ORDER BY {GRANTED_ORDER}), '{{}}'::text[]) AS operators \
-                 FROM land_authz.account_right ar {GRANTED_SINCE} \
+                 SELECT COALESCE(array_agg(ar.operator ORDER BY {granted_order}), '{{}}'::text[]) AS operators \
+                 FROM land_authz.account_right ar {granted_since} \
                  WHERE ar.token_address = s.registry AND ar.account = s.account AND ar.kind = $5 AND ar.is_approved \
              ) um ON true \
              LEFT JOIN LATERAL ( \
-                 SELECT COALESCE(array_agg(ar.operator ORDER BY {GRANTED_ORDER}), '{{}}'::text[]) AS operators \
-                 FROM land_authz.account_right ar {GRANTED_SINCE} \
+                 SELECT COALESCE(array_agg(ar.operator ORDER BY {granted_order}), '{{}}'::text[]) AS operators \
+                 FROM land_authz.account_right ar {granted_since} \
                  WHERE ar.token_address = s.registry AND ar.account = s.account AND ar.kind = $6 AND ar.is_approved \
              ) af ON true"
         )))
