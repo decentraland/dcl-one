@@ -37,6 +37,7 @@ use bevy::{
     },
 };
 use common::structs::{LensFlare, SceneGlobalLight, TimeOfDay};
+use scene_runner::update_world::lights::celestial_swap;
 
 use crate::{
     day_night::day_fraction,
@@ -386,8 +387,8 @@ fn update_lens_flare_settings(
         // the light travels away from its body: the sun by day, the moon by night
         toward_light: -light.dir_direction,
         light_color: Vec3::new(color.red, color.green, color.blue),
-        // the light swaps between the sun and the moon at once, with no dip
-        intensity: flare_intensity(t, 0.0),
+        // dimmed with the light while it swings between the sun and the moon
+        intensity: flare_intensity(t, celestial_swap(t).1),
         elements: flare_set(t),
     };
 }

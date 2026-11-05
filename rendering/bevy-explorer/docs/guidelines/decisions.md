@@ -17,9 +17,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.
-- **Always HDR.** Unity's Low and Medium render without HDR. bevy keeps HDR on every preset
-  (bloom, the flare and the glow composite run in HDR), and Medium's bloom, which Unity cannot
-  show without HDR, maps to Off.
+- **Always HDR.** Unity's Low and Medium render without HDR, to save bandwidth on an 8-bit
+  target. bevy keeps HDR on every preset: the primary camera is spawned once with `hdr: true`
+  (`src/lib.rs`) and no setting reaches it, and the post stack assumes the 16-bit float target.
+  bevy's bloom only blooms values above 1.0, so it does nothing on an 8-bit target; the lens
+  flare, the stars and the avatar glow composite pick their pipeline from `view.hdr` and were
+  tuned on the HDR path; tonemapping and the sky envmap feed the same target. A per-preset
+  toggle would recreate the camera and its target on every preset change. Unity's Medium has
+  bloom enabled with HDR off, so it is effectively invisible there; our Medium maps bloom to Off
+  to reproduce what Unity shows rather than the checkbox. This is a look-parity call, not a
+  measured one: the cost of the 16-bit target on Low-class machines has not been measured, and
+  the render scale is the cheaper lever already in the presets.
 - **Lens flare before depth of field.** bevy blooms before DoF, so the flare runs straight after
   the main pass to stay ahead of bloom, as in URP, and DoF blurs it when DoF is on. Also:
   - the ring elements are procedural (Unity's ring textures were not carried) with no radial

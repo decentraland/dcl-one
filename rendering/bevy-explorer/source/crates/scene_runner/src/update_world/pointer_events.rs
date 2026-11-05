@@ -317,34 +317,47 @@ fn entity_highlighting(
 ) {
     let mut highlight_pass = EntityHashMap::<Highlight>::default();
 
-    let highlit_entries = |entity: Entity| {
-        pointer_events.get(entity).into_iter().flat_map(|pe| {
-            pe.iter().filter_map(|entry| {
-                entry.event_info.as_ref().filter(|info| {
-                    info.show_feedback != Some(false) && info.show_highlight != Some(false)
-                })
+    // the entity's entries of one mode (cursor or proximity) that want feedback and a highlight
+    let highlit_entries = |entity: Entity, mode: ActionCandidateMode| {
+        pointer_events.get(entity).into_iter().flat_map(move |pe| {
+            pe.iter().filter(move |entry| {
+                mode.matches_entry(entry)
+                    && entry.event_info.as_ref().is_some_and(|info| {
+                        info.show_feedback != Some(false) && info.show_highlight != Some(false)
+                    })
             })
         })
     };
 
     if let Some(ref hover_target) = hover_target.0 {
-        let mut entries = highlit_entries(hover_target.container).peekable();
+        let mut entries =
+            highlit_entries(hover_target.container, ActionCandidateMode::Cursor).peekable();
         if entries.peek().is_some() {
-            let in_range = entries.any(|info| {
-                passes_distance_check(
-                    Some(info),
-                    hover_target.camera_distance.0,
-                    hover_target.distance.0,
-                )
-            });
+            // green only when a click would act: the action gate wants the target in a scene and
+            // a cursor entry within reach
+            let in_range = hover_target.in_scene
+                && entries.any(|entry| {
+                    passes_distance_check(
+                        entry.event_info.as_ref(),
+                        hover_target.camera_distance.0,
+                        hover_target.distance.0,
+                    )
+                });
             if let Some(highlight) = hover_highlight(Some(hover_target), in_range) {
                 highlight_pass.insert(hover_target.container, highlight);
             }
         }
     }
+    // a proximity candidate glows valid, unless it is also hovered: the hover colour then tells
+    // whether a click would act
     for candidate in &proximity.0 {
-        if highlit_entries(candidate.entity).next().is_some() {
-            highlight_pass.insert(candidate.entity, valid_highlight());
+        if highlit_entries(candidate.entity, ActionCandidateMode::Proximity)
+            .next()
+            .is_some()
+        {
+            highlight_pass
+                .entry(candidate.entity)
+                .or_insert_with(valid_highlight);
         }
     }
     // editor selection — always outlined, no PointerEvents / hover required.
@@ -373,10 +386,13 @@ fn entity_highlighting(
 #[cfg(test)]
 mod test {
     use bevy::app::PropagateSet;
-    use dcl_component::proto_components::sdk::components::common::PointerEventType;
+    use dcl_component::proto_components::sdk::components::common::{
+        InteractionType, PointerEventType,
+    };
     use scene_material::highlight::HighlightPlugin;
 
     use super::*;
+    use crate::update_scene::pointer_results::ProximityCandidate;
 
     fn test_info() -> PointerTargetInfo {
         PointerTargetInfo {
@@ -423,6 +439,17 @@ mod test {
                     ..Default::default()
                 }),
                 ..Default::default()
+            }],
+        }
+        .into()
+    }
+
+    fn proximity_events() -> PointerEvents {
+        PbPointerEvents {
+            pointer_events: vec![Entry {
+                event_type: PointerEventType::PetDown as i32,
+                event_info: Some(Info::default()),
+                interaction_type: Some(InteractionType::Proximity as i32),
             }],
         }
         .into()
@@ -510,5 +537,57 @@ mod test {
         app.update();
         assert_eq!(highlights(&mut app), 0);
         assert!(app.world().resource::<Highlit>().is_empty());
+    }
+
+    fn glow(app: &mut App, entity: Entity) -> Option<LinearRgba> {
+        app.world()
+            .get::<Propagate<Highlight>>(entity)
+            .map(|p| p.0.color)
+    }
+
+    /// The glow says what a click would do: a target outside every scene, or one whose only
+    /// entries are proximity ones, is not clickable.
+    #[test]
+    fn hover_glow_follows_the_click_gate() {
+        let mut app = highlight_app();
+        let target = app.world_mut().spawn(pointer_events(Some(20.0))).id();
+
+        // in reach but outside every scene: a click does nothing
+        hover(&mut app, Some(target), 5.0);
+        app.world_mut()
+            .resource_mut::<PointerTarget>()
+            .0
+            .as_mut()
+            .unwrap()
+            .in_scene = false;
+        app.update();
+        assert_eq!(glow(&mut app, target), Some(HIGHLIGHT_INVALID.into()));
+
+        // only proximity entries: the cursor never acts, so hovering shows nothing
+        let near = app.world_mut().spawn(proximity_events()).id();
+        hover(&mut app, Some(near), 1.0);
+        app.update();
+        assert_eq!(glow(&mut app, near), None);
+
+        // as a proximity candidate it glows valid
+        app.world_mut()
+            .resource_mut::<ProximityCandidates>()
+            .0
+            .push(ProximityCandidate {
+                entity: near,
+                distance: 1.0,
+                nearest_point: Vec3::ZERO,
+                entity_position: Vec3::ZERO,
+            });
+        app.update();
+        assert_eq!(glow(&mut app, near), Some(HIGHLIGHT_VALID.into()));
+
+        // a hovered candidate keeps the hover's verdict: out of the cursor's reach stays pink
+        app.world_mut()
+            .entity_mut(near)
+            .insert(pointer_events(None));
+        hover(&mut app, Some(near), 12.0);
+        app.update();
+        assert_eq!(glow(&mut app, near), Some(HIGHLIGHT_INVALID.into()));
     }
 }

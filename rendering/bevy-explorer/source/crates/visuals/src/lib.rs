@@ -7,7 +7,7 @@ mod nishita_cloud;
 mod props;
 pub mod shell_texturing;
 mod sky_envmap;
-pub mod sky_preset;
+pub use common::sky_preset;
 mod solids;
 mod stars;
 pub mod terrain;
@@ -34,9 +34,9 @@ use bevy_console::ConsoleCommand;
 use common::{
     sets::SetupSets,
     structs::{
-        sun_cascades, AppConfig, DofConfig, FogSetting, PrimaryCamera, PrimaryCameraRes,
-        PrimaryUser, SceneGlobalLight, SceneLoadDistance, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER,
-        SUN_SHADOW_MAP_SIZE,
+        sun_cascades, sun_shadow_bias, AppConfig, DofConfig, FogSetting, PrimaryCamera,
+        PrimaryCameraRes, PrimaryUser, SceneGlobalLight, SceneLoadDistance, TimeOfDay,
+        AMBIENT_BRIGHTNESS_UNITY, PRIMARY_AVATAR_LIGHT_LAYER, SUN_SHADOW_MAP_SIZE,
     },
 };
 use console::DoAddConsoleCommand;
@@ -47,8 +47,8 @@ use crate::{
     day_night::{day_fraction, DayNightPlugin},
     props::PropsPlugin,
     shell_texturing::ShellTexturingPlugin,
-    sky_envmap::{SkyEnvmapPlugin, SkyEnvmapSettings},
-    sky_preset::{fog_color, FOG_DENSITY_PER_METRE},
+    sky_envmap::{SkyAmbient, SkyEnvmapPlugin, SkyEnvmapSettings},
+    sky_preset::{ambient_trilight, fog_color, FOG_DENSITY_PER_METRE},
     solids::SolidsPlugin,
     terrain::TerrainPlugin,
     trees::TreesPlugin,
@@ -102,6 +102,8 @@ impl Plugin for VisualsPlugin {
         .add_plugins(upscale::UpscalePlugin);
 
         app.add_console_command::<ShadowConsoleCommand, _>(shadow_console_command);
+        app.init_resource::<ShadowBiasOverride>();
+        app.add_console_command::<ShadowBiasConsoleCommand, _>(shadow_bias_console_command);
         app.add_console_command::<FogConsoleCommand, _>(fog_console_command);
         app.add_console_command::<DofConsoleCommand, _>(dof_console_command);
         app.add_console_command::<CloudConsoleCommand, _>(cloud_console_command);
@@ -196,12 +198,18 @@ fn apply_global_light(
     scene_distance: Res<SceneLoadDistance>,
     scene_global_light: Res<SceneGlobalLight>,
     time_of_day: Res<TimeOfDay>,
-    envmap_settings: Res<SkyEnvmapSettings>,
+    // one parameter: bevy systems take sixteen at most
+    envmap: (
+        Res<SkyEnvmapSettings>,
+        ResMut<SkyAmbient>,
+        Res<ShadowBiasOverride>,
+    ),
     mut prev: Local<(f32, SceneGlobalLight)>,
     mut cloud_dt: Local<f32>,
     mut last_primary_distance: Local<f32>,
     mut last_day_fraction: Local<f32>,
 ) {
+    let (envmap_settings, mut sky_ambient, shadow_bias) = envmap;
     // the transition has settled once the previous output exactly matches the target
     let settled = prev.0 >= TRANSITION_TIME && prev.1 == *scene_global_light;
 
@@ -301,6 +309,7 @@ fn apply_global_light(
     let skip_writes = settled
         && !setting.is_changed()
         && !envmap_settings.is_changed()
+        && !shadow_bias.is_changed()
         && !scene_distance.is_changed()
         && !fog_added
         && *last_primary_distance == primary_distance
@@ -314,6 +323,12 @@ fn apply_global_light(
         return;
     }
 
+    let (shadow_depth_bias, shadow_normal_bias) = shadow_bias.0.unwrap_or_else(|| {
+        sun_shadow_bias(
+            setting.graphics.shadow_settings,
+            setting.graphics.shadow_distance,
+        )
+    });
     let mut directional_layers = RenderLayers::none();
     for (entity, layer, mut light_trans, mut directional) in sun.iter_mut() {
         if !next_light.layers.intersects(&RenderLayers::layer(layer.0)) {
@@ -325,6 +340,8 @@ fn apply_global_light(
         light_trans.rotation = rotation;
         directional.illuminance = next_light.dir_illuminance;
         directional.color = next_light.dir_color;
+        directional.shadow_depth_bias = shadow_depth_bias;
+        directional.shadow_normal_bias = shadow_normal_bias;
     }
 
     for new_layer in next_light
@@ -350,6 +367,8 @@ fn apply_global_light(
                 color: next_light.dir_color,
                 illuminance: next_light.dir_illuminance,
                 shadows_enabled,
+                shadow_depth_bias,
+                shadow_normal_bias,
                 ..Default::default()
             },
             Transform::default().with_rotation(rotation),
@@ -372,10 +391,10 @@ fn apply_global_light(
         }
     }
 
-    // the sky envmap is the only ambient light. the pbr shaders zero the flat ambient where an
-    // envmap is bound and level the envmap towards it instead: the setting's brightness, scaled
-    // and tinted by a scene's ambient override, the envmap already following the time of day.
-    // the compression rides in the alpha, negated (see sky_envmap_lookup.wgsl); the uniform
+    // the flat ambient light is only the target the pbr shaders level the sky reflections
+    // towards (they zero it as a light where the sky envmap is bound): the setting's brightness,
+    // scaled and tinted by a scene's ambient override, the envmap already following the time
+    // of day. the compression rides in the alpha, negated (see sky_envmap_lookup.wgsl); the uniform
     // holds alpha * brightness. the brightness is kept above zero so the compression survives a
     // zero setting, levelling the envmap to ~nothing
     const MIN_AMBIENT_BRIGHTNESS: f32 = 0.01;
@@ -387,6 +406,17 @@ fn apply_global_light(
     ambient.color = next_light
         .ambient_color
         .with_alpha(-envmap_settings.compression / ambient.brightness);
+
+    // the diffuse ambient light is the Trilight ambient map (sky_envmap.rs): unity's three
+    // colours at the phase, tinted and scaled by a scene's ambient override, and by the setting
+    // relative to the default where the ambient is unity's
+    let ambient_tint = next_light.ambient_color.to_linear().to_vec3()
+        * next_light.ambient_brightness
+        * (setting.graphics.ambient_brightness as f32 / AMBIENT_BRIGHTNESS_UNITY as f32);
+    let bands = ambient_trilight(clock_fraction).map(|band| band * ambient_tint);
+    if sky_ambient.bands != bands {
+        sky_ambient.bands = bands;
+    }
 
     if prev.1.source == scene_global_light.source {
         prev.0 += time.delta_secs()
@@ -418,6 +448,40 @@ fn shadow_console_command(
                 Some(true) => "enabled",
                 Some(false) => "disabled",
             }
+        ));
+    }
+}
+
+/// The sun shadow biases set live by `/shadowbias`, in place of the preset's.
+#[derive(Resource, Default)]
+pub struct ShadowBiasOverride(pub Option<(f32, f32)>);
+
+/// set the sun shadow depth bias (world length) and normal bias (texels); no arguments restores
+/// the preset's
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/shadowbias")]
+struct ShadowBiasConsoleCommand {
+    depth: Option<f32>,
+    normal: Option<f32>,
+}
+
+fn shadow_bias_console_command(
+    mut input: ConsoleCommand<ShadowBiasConsoleCommand>,
+    mut bias: ResMut<ShadowBiasOverride>,
+    setting: Res<AppConfig>,
+) {
+    if let Some(Ok(command)) = input.take() {
+        let preset = sun_shadow_bias(
+            setting.graphics.shadow_settings,
+            setting.graphics.shadow_distance,
+        );
+        bias.0 = command
+            .depth
+            .map(|depth| (depth, command.normal.unwrap_or(preset.1)));
+        let (depth, normal) = bias.0.unwrap_or(preset);
+        input.reply_ok(format!(
+            "shadow bias depth {depth:.3} normal {normal:.3} (preset {:.3} {:.3})",
+            preset.0, preset.1
         ));
     }
 }

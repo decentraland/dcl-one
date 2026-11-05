@@ -4,7 +4,7 @@ use bevy::{
     prelude::*,
     render::{render_resource::TextureFormat, renderer::RenderAdapter},
 };
-use common::structs::{AaSetting, AppConfig};
+use common::structs::{AaSetting, AppConfig, DofSetting};
 
 use super::{AppSetting, EnumAppSetting, SettingCategory};
 
@@ -47,8 +47,9 @@ fn clamp_msaa(requested: u32, supported: impl Fn(u32) -> bool) -> u32 {
 }
 
 impl AppSetting for AaSetting {
-    // absent until the renderer is up
-    type Param = Option<SRes<RenderAdapter>>;
+    // the adapter is absent until the renderer is up; the config says whether depth of field
+    // has to yield to MSAA (see `DofSetting::apply_to_camera`)
+    type Param = (Option<SRes<RenderAdapter>>, SRes<AppConfig>);
 
     fn title() -> String {
         "Anti-aliasing".to_owned()
@@ -81,10 +82,11 @@ impl AppSetting for AaSetting {
 
     fn apply_to_camera(
         &self,
-        adapter: &SystemParamItem<Self::Param>,
+        param: &SystemParamItem<Self::Param>,
         mut commands: Commands,
         camera_entity: Entity,
     ) {
+        let (adapter, config) = param;
         let requested = match self {
             AaSetting::Off | AaSetting::FxaaLow | AaSetting::FxaaHigh => 1,
             AaSetting::Msaa2x => 2,
@@ -127,6 +129,9 @@ impl AppSetting for AaSetting {
                 edge_threshold_min: sensitivity,
             });
         }
+
+        // depth of field is there or not depending on MSAA
+        DofSetting::load(config).apply_to_camera(config, commands.reborrow(), camera_entity);
     }
 }
 

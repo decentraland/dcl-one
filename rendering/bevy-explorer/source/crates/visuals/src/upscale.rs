@@ -61,8 +61,10 @@ impl FromWorld for SceneTarget {
     }
 }
 
-/// The `Camera2d` (order 1, `ClearColorConfig::None`) that draws the scene target and carries the
-/// UI.
+/// The `Camera2d` (order 1) that draws the scene target and carries the UI. It is the only camera
+/// drawing to the window, so it clears it: while its quad's pipeline is still compiling (at
+/// startup, or on the first switch below scale 1) the window would otherwise show whatever was
+/// there before under the UI.
 #[derive(Component)]
 pub struct Compositor;
 
@@ -147,7 +149,6 @@ fn spawn_compositor(
         Camera2d,
         Camera {
             order: 1,
-            clear_color: ClearColorConfig::None,
             ..default()
         },
         // a unit quad fills the view at any window size
@@ -233,7 +234,12 @@ fn sync_scene_target(
         output.y as f32,
     );
     for quad in &quads {
-        if materials.get(&quad.0).is_some_and(|m| m.params != params) {
+        // a retarget may give the image a new GPU texture, and the material's bind group only
+        // follows when the material changes too: `params` may not (a scale factor change at the
+        // same physical size), so the material is touched on every retarget
+        let stale =
+            retarget || resize || materials.get(&quad.0).is_some_and(|m| m.params != params);
+        if stale {
             if let Some(material) = materials.get_mut(&quad.0) {
                 material.params = params;
             }

@@ -238,7 +238,7 @@ impl AppSetting for ShadowCasterCountSetting {
     }
 
     fn description(&self) -> String {
-        "Shadow Caster Count\n\nMaximum number of scene lights (excluding the global sun light) that will cast shadows. Lights that cast shadows are expensive in GPU time and memory, the cost scales linearly with the number of shadow-casting lights. Reduce this if scenes with a large number of shadow-casting lights cause slowdown.\n\nLights from currently active scenes, closest to the player, will have shadows enabled first.".to_owned()
+        "Shadow Caster Count\n\nMaximum number of scene lights (excluding the global sun light) that will cast shadows. Lights that cast shadows are expensive in GPU time and memory, the cost scales linearly with the number of shadow-casting lights. Reduce this if scenes with a large number of shadow-casting lights cause slowdown.\n\nOnly spot lights within 20 m of the player cast shadows, nearest first.".to_owned()
     }
 
     fn load(config: &AppConfig) -> Self {

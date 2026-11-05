@@ -24,10 +24,7 @@ const TWENTY_FOUR_HOURS: f32 = 24. * ONE_HOUR;
 /// How many hours per second are advanced during a [`TimeSkip`]
 const HOURS_PER_SECOND: f32 = 12. * ONE_HOUR;
 
-/// `hours` of the day as a fraction of it, wrapped into [0, 1).
-pub fn day_fraction(hours: f32) -> f32 {
-    (hours / 24.0).rem_euclid(1.0)
-}
+pub use common::sky_preset::day_fraction;
 
 #[derive(Component)]
 struct TimeKeeper;

@@ -13637,6 +13637,7 @@ dependencies = [
  "console 0.1.0",
  "dcl_component",
  "dcl_types",
+ "half",
  "ipfs",
  "naga_oil",
  "noise",

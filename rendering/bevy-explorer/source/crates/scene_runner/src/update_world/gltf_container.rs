@@ -959,6 +959,10 @@ fn update_ready_gltfs(
                             // see https://github.com/decentraland/bevy-explorer/issues/424
                             let mut base_clone = base.clone();
                             base_clone.anisotropy_strength = 0.;
+                            // unity: Scene.shader never samples the occlusion map (its
+                            // `_OCCLUSIONMAP` feature and texture are commented out), so a
+                            // glTF occlusion texture does not darken the ambient there
+                            base_clone.occlusion_texture = None;
 
                             let h_scene_material = bound_mats.add(ExtendedMaterial {
                                 base: base_clone,

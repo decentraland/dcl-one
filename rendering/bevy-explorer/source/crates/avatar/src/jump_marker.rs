@@ -176,11 +176,11 @@ fn spawn_jump_marker(
 }
 
 /// Places the quad on the ground under the player and shows it while the player is airborne.
-/// `ground_height` is the world height of the ground under the player, so the distance to it is
-/// the player's height above it; standing, they are level.
+/// `ground_height` is the player's distance above the ground (the movement system's downward
+/// shape cast, not a world height): 0 standing, whatever the platform's height.
 #[allow(clippy::type_complexity)]
 fn update_jump_marker(
-    player: Single<(&Transform, &AvatarDynamicState), With<PrimaryUser>>,
+    player: Single<&AvatarDynamicState, With<PrimaryUser>>,
     marker: Single<
         (
             &mut Transform,
@@ -191,10 +191,10 @@ fn update_jump_marker(
     >,
     mut materials: ResMut<Assets<JumpMarkerMaterial>>,
 ) {
-    let (player_transform, state) = player.into_inner();
+    let state = player.into_inner();
     let (mut transform, mut visibility, material) = marker.into_inner();
 
-    let ground_distance = player_transform.translation.y - state.ground_height;
+    let ground_distance = state.ground_height;
     let airborne = ground_distance > GROUNDED_EPSILON && ground_distance < MAX_GROUND_DISTANCE;
     visibility.set_if_neq(if airborne {
         Visibility::Visible
@@ -285,34 +285,34 @@ mod tests {
     fn marker_shows_under_an_airborne_player_only() {
         let (mut app, player) = test_app();
 
-        // standing: the ground is under the player's feet
-        app.world_mut()
-            .get_mut::<AvatarDynamicState>(player)
-            .unwrap()
-            .ground_height = 5.0;
-        app.update();
+        let set_ground_distance = |app: &mut App, distance: f32| {
+            app.world_mut()
+                .get_mut::<AvatarDynamicState>(player)
+                .unwrap()
+                .ground_height = distance;
+            app.update();
+        };
+
+        // standing (on a 5 m platform: the player's height is not the distance)
+        set_ground_distance(&mut app, 0.0);
         let (visibility, _, _, parent) = marker_state(&mut app);
         assert_eq!(visibility, Visibility::Hidden);
         assert_eq!(parent, player, "the marker is a child of the player");
 
         // airborne, the ground 3 m below
-        app.world_mut()
-            .get_mut::<AvatarDynamicState>(player)
-            .unwrap()
-            .ground_height = 2.0;
-        app.update();
+        set_ground_distance(&mut app, 3.0);
         let (visibility, y, distance, _) = marker_state(&mut app);
         assert_eq!(visibility, Visibility::Visible);
         assert_eq!(distance, 3.0);
         // local to the player: 3 m down, lifted off the ground by 2 cm
         assert!((y - (-3.0 + GROUND_LIFT)).abs() < 1e-6, "{y}");
 
-        // landed
-        app.world_mut()
-            .get_mut::<AvatarDynamicState>(player)
-            .unwrap()
-            .ground_height = 5.0;
-        app.update();
+        // too high for the marker
+        set_ground_distance(&mut app, MAX_GROUND_DISTANCE + 2.0);
+        assert_eq!(marker_state(&mut app).0, Visibility::Hidden);
+
+        // landed; the producer clamps the distance to the player's height near y=0
+        set_ground_distance(&mut app, 0.03);
         assert_eq!(marker_state(&mut app).0, Visibility::Hidden);
     }
 
