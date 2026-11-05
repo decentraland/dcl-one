@@ -767,6 +767,12 @@ fn pipe_chats_to_scene(
                 continue;
             };
 
+            // nearby chat from anyone the local user blocked, or who blocked them, is dropped
+            #[cfg(feature = "livekit")]
+            if dm_state::blocked_either_way(&social, player_address) {
+                continue;
+            }
+
             let message_id = chat_message_id(player_address, chat_event.timestamp);
             debug!("chat {message_id}: {}", chat_event.message);
             (format!("{player_address:#x}"), message_id)
