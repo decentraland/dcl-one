@@ -89,7 +89,14 @@ pub struct EmoteRepresentation {
 enum AnimLoadState {
     #[default]
     Init,
-    WaitingForGltfs(Vec<Handle<Gltf>>),
+    /// The animation glbs still loading, and every default animation's sounds, requested up front
+    /// so they load alongside the glbs rather than after them (and behind the avatar's and the
+    /// scene's own loads) — a locomotion clip skips its steps until they're in. Held until the
+    /// emotes built from the glbs own the same handles.
+    WaitingForGltfs(
+        Vec<Handle<Gltf>>,
+        #[allow(dead_code)] Vec<Handle<bevy_kira_audio::AudioSource>>,
+    ),
     Done,
 }
 
@@ -106,16 +113,24 @@ fn load_animations(
 ) {
     match &mut *state {
         AnimLoadState::Init => {
-            *state = AnimLoadState::WaitingForGltfs(vec![
-                asset_server.load("embedded://animations/idle.glb"),
-                asset_server.load("embedded://animations/jump2.glb"),
-                asset_server.load("embedded://animations/double_jump.glb"),
-                asset_server.load("embedded://animations/glide.glb"),
-                asset_server.load("embedded://animations/run.glb"),
-                asset_server.load("embedded://animations/walk.glb"),
-            ]);
+            let sounds = DEFAULT_ANIMATION_LOOKUP
+                .values()
+                .flat_map(|anim| anim.sound.iter().flat_map(|(_, files)| files))
+                .map(|f| asset_server.load(format!("embedded://sounds/avatar/{f}.wav")))
+                .collect();
+            *state = AnimLoadState::WaitingForGltfs(
+                vec![
+                    asset_server.load("embedded://animations/idle.glb"),
+                    asset_server.load("embedded://animations/jump2.glb"),
+                    asset_server.load("embedded://animations/double_jump.glb"),
+                    asset_server.load("embedded://animations/glide.glb"),
+                    asset_server.load("embedded://animations/run.glb"),
+                    asset_server.load("embedded://animations/walk.glb"),
+                ],
+                sounds,
+            );
         }
-        AnimLoadState::WaitingForGltfs(ref mut h_gltfs) => {
+        AnimLoadState::WaitingForGltfs(ref mut h_gltfs, _) => {
             h_gltfs.retain(
                 |h_gltf| match gltfs.get(h_gltf).map(|gltf| &gltf.named_animations) {
                     Some(anims) => {

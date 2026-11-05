@@ -1439,7 +1439,8 @@ struct Played {
 
 /// Play a slot for one frame: its clip on the avatar's player (started unless it's the one already
 /// running, and on a `restart`), with its loop, `speed` and `seek`, the prop clip alongside, and
-/// the sound due. `playback` gets the clip duration and end.
+/// the sound due. `playback` gets the clip duration and end. A sound still loading holds the clip
+/// only with `wait_for_sound`; otherwise the clip plays and that sound is skipped.
 #[allow(clippy::too_many_arguments)]
 fn play_slot(
     commands: &mut Commands,
@@ -1456,6 +1457,7 @@ fn play_slot(
     speed: f32,
     seek: &mut Option<f32>,
     default_mark: Option<f32>,
+    wait_for_sound: bool,
 ) -> Result<Played, Hold> {
     let (emote, clip, clip_duration) = resolve_playback(
         playback,
@@ -1554,8 +1556,12 @@ fn play_slot(
         default_mark,
         clip_duration,
         playback.repeat,
-    )
-    .map_err(|_| Hold::Loading)?;
+    );
+    let sound = match sound {
+        Ok(sound) => sound,
+        Err(_) if wait_for_sound => return Err(Hold::Loading),
+        Err(_) => None,
+    };
 
     // Prefer a seek requested this frame; otherwise apply one stashed when the prop was
     // spawned (deferred a frame), advanced by the load duration via the stashed start time,
@@ -1767,6 +1773,10 @@ fn play_current_emote(
                 active_emote.speed,
                 &mut active_emote.pending_seek,
                 active_emote.initial_audio_mark,
+                // Locomotion never waits on its footsteps: the step wavs decode on the async
+                // pool alongside the avatar's own load, and holding walk/run/jump on them
+                // leaves a freshly loaded avatar sliding around in idle.
+                active_emote.source != ActiveEmoteSource::VelocitySelected,
             ) {
                 Err(Hold::Failed) => {
                     if let Some(fb) = active_emote.fallback.take() {
@@ -1931,6 +1941,7 @@ fn play_masked_emote(
                 1.0,
                 &mut None,
                 None,
+                true,
             ) {
                 Ok(_) => 1.0,
                 Err(Hold::Failed) => {
