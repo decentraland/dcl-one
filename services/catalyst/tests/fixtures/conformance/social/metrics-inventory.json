@@ -866,7 +866,7 @@
       "candidate": [
         {
           "path": "services/catalyst/comms/src/metrics.rs",
-          "line": 113,
+          "line": 160,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [

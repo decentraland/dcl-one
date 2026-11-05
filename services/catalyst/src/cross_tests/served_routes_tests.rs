@@ -448,8 +448,8 @@ fn the_router_tables_yield_the_known_blob_routes() {
 }
 
 /// The worlds nest serves `/contents/{hashId}` and `/ipfs/{hashId}` with the
-/// content server's handler over the same state, so the enumeration above
-/// covers it without the worlds fixtures; this pins that reuse.
+/// content server's worlds entry point (same `serve` path and denylist check,
+/// over the same state); this pins that reuse.
 #[test]
 fn the_worlds_nest_reuses_the_content_handler() {
     let worlds = include_str!(concat!(
@@ -462,7 +462,7 @@ fn the_worlds_nest_reuses_the_content_handler() {
             .unwrap_or_else(|| panic!("worlds registers {path}"));
         let registration = &worlds[at..at + 200];
         assert!(
-            registration.contains("crate::content::get_content::get_content"),
+            registration.contains("crate::content::get_content::get_world_content"),
             "{path} is not the content handler: {registration}"
         );
     }

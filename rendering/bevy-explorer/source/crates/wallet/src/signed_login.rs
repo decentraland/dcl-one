@@ -1,6 +1,6 @@
 // https://github.com/decentraland/hammurabi/pull/33/files#diff-18afcd5f94e3688aad1ba36fa1db3e09b472b271d1e0cf5aeb59ebd32f43a328
 
-use super::{sign_request, SignedLoginMeta, Wallet};
+use super::{sign_service_request, SignedLoginMeta, Wallet};
 use bevy::log::warn;
 use common::util::reqwest_client;
 use http::{StatusCode, Uri};
@@ -17,7 +17,13 @@ pub async fn signed_login(
     wallet: Wallet,
     meta: SignedLoginMeta,
 ) -> Result<SignedLoginResponse, anyhow::Error> {
-    let auth_chain = sign_request("post", &uri, &wallet, serde_json::to_string(&meta)?).await?;
+    let auth_chain = sign_service_request(
+        "post",
+        &uri.to_string(),
+        &wallet,
+        serde_json::to_string(&meta)?,
+    )
+    .await?;
 
     let mut request = reqwest_client()
         .post(uri.to_string())

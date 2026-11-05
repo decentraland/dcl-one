@@ -200,6 +200,7 @@ pub struct ContentConfig {
     #[arg(long, env = "TRUSTED_CLIENT_IP_HEADER")]
     pub trusted_client_ip_header: Option<String>,
 
+    // Worlds' partial uploads also read these (not the cleanup interval or pointer cap) as their own budget.
     /// Milliseconds a partial (multi-request) upload lives from its first
     /// batch; batches do not extend it.
     #[arg(long, env = "PENDING_DEPLOYMENT_TTL", default_value_t = 60 * 60 * 1000)]

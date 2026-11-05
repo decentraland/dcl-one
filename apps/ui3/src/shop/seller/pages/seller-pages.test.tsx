@@ -53,6 +53,7 @@ beforeEach(() => {
       [MARKET]: { abi: MARKETPLACE_ABI, answer: () => 0n },
       [BOOK.collection]: { abi: [...ERC721_ABI, ...COLLECTION_V2_ABI], answer: (fn) => (fn === "globalMinters" || fn === "isApprovedForAll" ? true : 0n) },
       [COUPON_MANAGERS.v3[CHAIN.POLYGON]!.address]: { abi: COUPON_MANAGER_ABI, answer: () => 0n },
+      [COUPON_MANAGERS.v3[CHAIN.AMOY]!.address]: { abi: COUPON_MANAGER_ABI, answer: () => 0n },
     },
   });
 });
@@ -230,6 +231,31 @@ describe("Discounts, issuance and the listing import", () => {
       fireEvent.click(screen.getByRole("button", { name: "Start discount" }));
       expect(await screen.findByRole("alert")).toHaveTextContent("Discounts are not available on this node yet");
     } finally {
+      setShopClient(null);
+    }
+  });
+
+  it("signs and publishes a discount on the Shop's settlement chain, not always Polygon", async () => {
+    const { setShopClient } = await import("../../api/shop");
+    const { fakeShop } = await import("../../market/testing");
+    const shop = fakeShop([{ method: "POST", path: /^\/v1\/coupons$/, reply: () => ({ status: 503, body: { error: "Service Unavailable", message: "x", source: "coupons" } }) }]);
+    setShopClient(shop.client);
+    const win = window as Window & { __SHOP_CHAIN__?: { settlementChainId?: number } };
+    win.__SHOP_CHAIN__ = { settlementChainId: 80002 };
+    try {
+      await renderAlone(
+        <CreatorSaleForm
+          collection={{ contractAddress: BOOK.collection, name: "Neon Nights", listedCount: 1, examplePriceCredits: 10, items: [{ key: "k", name: "x", thumbnail: "", priceCredits: 10, state: "discounted", remainingSupply: 1 }] }}
+          onClose={() => {}}
+        />,
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Review discount" }));
+      fireEvent.click(screen.getByRole("button", { name: "Start discount" }));
+      expect(await screen.findByRole("alert")).toHaveTextContent("Discounts are not available on this node yet");
+      const posted = shop.requests.find((r) => r.method === "POST" && r.url.pathname.endsWith("/v1/coupons"));
+      expect(posted?.body).toMatchObject({ chainId: 80002, network: "MATIC" });
+    } finally {
+      delete win.__SHOP_CHAIN__;
       setShopClient(null);
     }
   });
