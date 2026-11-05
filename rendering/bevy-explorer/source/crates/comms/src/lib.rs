@@ -54,8 +54,8 @@ use self::{
     profile::UserProfilePlugin,
     pulse::{
         from_movement,
-        transport::{PulseFrame, PulseReliability},
-        PulseCtx,
+        transport::{FrameKind, PulseFrame, PulseReliability},
+        LocalEmote, PulseCtx,
     },
     websocket_room::{StartWsRoom, WebsocketRoomPlugin},
 };
@@ -263,7 +263,7 @@ impl Broadcast for rfc4::Movement {
     fn to_pulse(&self, ctx: &mut PulseCtx) -> Option<PulseFrame> {
         let state = from_movement(self, ctx.grid);
         // Cache the full state so a following emote can attach it — the Pulse server rejects an
-        // `EmoteStart` with a null `player_state`.
+        // `EmoteStart` with a null `player_state` — and the next handshake can carry it.
         *ctx.last_state = Some(state.clone());
         Some(PulseFrame {
             bytes: pulse_proto::ClientMessage {
@@ -273,6 +273,7 @@ impl Broadcast for rfc4::Movement {
             }
             .encode_to_vec(),
             reliability: PulseReliability::UnreliableSequenced,
+            kind: FrameKind::Input,
         })
     }
 }
@@ -309,12 +310,19 @@ impl Broadcast for Emote {
 
     fn to_pulse(&self, ctx: &mut PulseCtx) -> Option<PulseFrame> {
         let message = if self.stopping {
+            *ctx.local_emote = None;
             pulse_proto::client_message::Message::EmoteStop(pulse_proto::EmoteStop {})
         } else {
             // The server rejects an `EmoteStart` with a null `player_state`. If we haven't sent any
             // movement yet there's nothing to attach, so skip the start rather than be disconnected;
             // an emote after the first movement goes out fine.
             let state = ctx.last_state.clone()?;
+            *ctx.local_emote = Some(LocalEmote {
+                urn: self.urn.clone(),
+                duration_ms: self.duration_ms,
+                mask: self.mask.to_wire(),
+                started_at: ctx.now,
+            });
             pulse_proto::client_message::Message::EmoteStart(pulse_proto::EmoteStart {
                 emote_id: self.urn.clone(),
                 duration_ms: self.duration_ms,
@@ -328,6 +336,7 @@ impl Broadcast for Emote {
             }
             .encode_to_vec(),
             reliability: PulseReliability::Reliable,
+            kind: FrameKind::Emote,
         })
     }
 }
@@ -350,6 +359,7 @@ impl Broadcast for rfc4::AnnounceProfileVersion {
             }
             .encode_to_vec(),
             reliability: PulseReliability::Reliable,
+            kind: FrameKind::Control,
         })
     }
 }
@@ -385,6 +395,7 @@ impl Broadcast for ProfileUpdate {
             }
             .encode_to_vec(),
             reliability: PulseReliability::Reliable,
+            kind: FrameKind::Control,
         })
     }
 }

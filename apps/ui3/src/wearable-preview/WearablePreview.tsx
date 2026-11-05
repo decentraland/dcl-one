@@ -173,7 +173,8 @@ export default function WearablePreview({
   }, [outfitKey]);
 
   useEffect(() => {
-    sceneRef.current?.setEmote?.(emote);
+    // The scene catches its own lookups; this only keeps a rejected promise from going unhandled.
+    void Promise.resolve(sceneRef.current?.setEmote?.(emote)).catch(() => {});
   }, [emote, emoteNonce]);
 
   useEffect(() => {

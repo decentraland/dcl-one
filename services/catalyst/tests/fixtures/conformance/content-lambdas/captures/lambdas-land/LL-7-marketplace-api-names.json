@@ -1,0 +1,124 @@
+{
+  "captured_at": "2026-11-04",
+  "peer": "https://marketplace-api.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/v1/users/0x0000000000000000000000000000000000000027/names?limit=100&offset=0",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "ok": true,
+      "data": {
+        "elements": [
+          {
+            "name": "name-03",
+            "contractAddress": "0x0000000000000000000000000000000000000026",
+            "tokenId": "1001",
+            "price": null
+          },
+          {
+            "name": "name-12",
+            "contractAddress": "0x0000000000000000000000000000000000000026",
+            "tokenId": "1002",
+            "price": null
+          },
+          {
+            "name": "name-09",
+            "contractAddress": "0x0000000000000000000000000000000000000026",
+            "tokenId": "1003",
+            "price": null
+          },
+          {
+            "name": "name-11",
+            "contractAddress": "0x0000000000000000000000000000000000000026",
+            "tokenId": "1004",
+            "price": null
+          },
+          {
+            "name": "name-13",
+            "contractAddress": "0x0000000000000000000000000000000000000026",
+            "tokenId": "1005",
+            "price": null
+          },
+          {
+            "name": "name-07",
+            "contractAddress": "0x0000000000000000000000000000000000000026",
+            "tokenId": "1006",
+            "price": null
+          },
+          {
+            "name": "name-04",
+            "contractAddress": "0x0000000000000000000000000000000000000026",
+            "tokenId": "1007",
+            "price": null
+          },
+          {
+            "name": "name-14",
+            "contractAddress": "0x0000000000000000000000000000000000000026",
+            "tokenId": "1008",
+            "price": null
+          },
+          {
+            "name": "name-08",
+            "contractAddress": "0x0000000000000000000000000000000000000026",
+            "tokenId": "1009",
+            "price": null
+          },
+          {
+            "name": "name-02",
+            "contractAddress": "0x0000000000000000000000000000000000000026",
+            "tokenId": "1010",
+            "price": null
+          },
+          {
+            "name": "name-16",
+            "contractAddress": "0x0000000000000000000000000000000000000026",
+            "tokenId": "1011",
+            "price": null
+          },
+          {
+            "name": "name-06",
+            "contractAddress": "0x0000000000000000000000000000000000000026",
+            "tokenId": "1012",
+            "price": null
+          },
+          {
+            "name": "name-10",
+            "contractAddress": "0x0000000000000000000000000000000000000026",
+            "tokenId": "1013",
+            "price": null
+          },
+          {
+            "name": "name-01",
+            "contractAddress": "0x0000000000000000000000000000000000000026",
+            "tokenId": "1014",
+            "price": null
+          },
+          {
+            "name": "name-15",
+            "contractAddress": "0x0000000000000000000000000000000000000026",
+            "tokenId": "1015",
+            "price": null
+          },
+          {
+            "name": "name-05",
+            "contractAddress": "0x0000000000000000000000000000000000000026",
+            "tokenId": "1016",
+            "price": null
+          }
+        ],
+        "page": 1,
+        "pages": 1,
+        "limit": 100,
+        "total": 16
+      }
+    }
+  },
+  "note": "Names and token ids replaced by placeholders that keep their relative string order (token ids are label hashes of the names)."
+}
