@@ -27,6 +27,7 @@ import { requestDebugPanel } from '../debug/useDebugPanel'
 import { emitFriendEvent } from '../friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
 import { clearNotificationToasts, queueNotificationToasts } from '../notifications/NotificationToast'
+import { clearRewardPopups, queueRewardPopups } from '../rewards/RewardPopup'
 import { bootMode } from '../../lib/bootMode'
 import { notificationTimeMs } from '../../lib/notificationTime'
 import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
@@ -1285,8 +1286,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             const have = new Set(prev.map((n) => n.id))
             return [...fresh.filter((n) => !have.has(n.id)), ...prev]
           })
-          // Newest first in the list; toasts play in arrival order.
-          queueNotificationToasts([...fresh].reverse())
+          // Newest first in the list; toasts and reward popups play in arrival order.
+          const arrived = [...fresh].reverse()
+          queueNotificationToasts(arrived)
+          queueRewardPopups(arrived)
           break
         }
         case 'emotes':
@@ -2627,6 +2630,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setAvatarColors(undefined)
     setNotifications([])
     clearNotificationToasts()
+    clearRewardPopups()
     setCommunities([])
     setFriendPending(new Set())
     setMutualFriends({})

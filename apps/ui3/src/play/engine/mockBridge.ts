@@ -966,7 +966,9 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         setTimeout(() => {
           const fresh: AppNotification[] = [
             { id: 'n7', type: 'community_invite_received', read: false, timestamp: new Date().toISOString(), metadata: { communityName: 'Toxic Events', communityId: 'c5', thumbnailUrl: 'https://picsum.photos/seed/dcl/80/80' } },
-            { id: 'n8', type: 'social_service_friendship_request', read: false, timestamp: new Date(Date.now() - 1000).toISOString(), metadata: { sender: { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado' } } }
+            { id: 'n8', type: 'social_service_friendship_request', read: false, timestamp: new Date(Date.now() - 1000).toISOString(), metadata: { sender: { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado' } } },
+            // Opens the reward popup as well as its toast.
+            { id: 'n9', type: 'reward_in_progress', read: false, timestamp: new Date(Date.now() - 2000).toISOString(), metadata: { title: 'New item unlocked', description: 'Your reward is being processed', tokenName: 'Mock Reward Hat', tokenImage: 'https://picsum.photos/seed/reward/256/256', tokenRarity: 'epic', tokenCategory: 'hat' } }
           ]
           mockNotifications.unshift(...fresh)
           reply({ kind: 'notificationsNew', notifications: fresh })
