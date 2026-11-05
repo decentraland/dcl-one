@@ -134,20 +134,15 @@ pub async fn get_content(
             return Ok(response);
         }
         Some(ParsedRange::Range { start, end }) => {
-            let content = if method == Method::HEAD && query.include_mime_type.is_none() {
-                Bytes::new()
-            } else {
-                opened.read_range(start, end).await?
-            };
-
             if query.include_mime_type.is_some() {
-                set_content_type(&mut base_headers, detect_content_type(&content));
+                let sniff = opened.read_range(start, end.min(start + 31)).await?;
+                set_content_type(&mut base_headers, detect_content_type(&sniff));
             }
 
-            let body: Bytes = if method == Method::HEAD {
-                Bytes::new()
+            let body = if method == Method::HEAD {
+                Body::empty()
             } else {
-                content
+                opened.into_range_body(start, end).await?
             };
 
             let content_len = end - start + 1;
@@ -391,6 +386,68 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    }
+
+    async fn body_of(resp: Response) -> Bytes {
+        axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_range_past_the_start_sniffs_from_the_range_start() {
+        let mut blob = vec![b'x'; 4096];
+        blob[1000..1008].copy_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        let blob = Bytes::from(blob);
+        let node = TestNode::without_db("content-range-offset").await;
+        node.store(TEST_CID, blob.clone()).await;
+
+        let resp = get(&node, Method::GET, Some(""), Some("bytes=1000-1999"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(header(&resp, "content-type").unwrap(), "image/png");
+        assert_eq!(header(&resp, "content-length").unwrap(), "1000");
+        assert_eq!(
+            header(&resp, "content-range").unwrap(),
+            "bytes 1000-1999/4096"
+        );
+        assert_eq!(body_of(resp).await, blob.slice(1000..2000));
+    }
+
+    #[tokio::test]
+    async fn head_with_a_range_sends_the_window_length_and_no_body() {
+        let node = TestNode::without_db("content-range-head").await;
+        node.store(TEST_CID, Bytes::from_static(b"0123456789"))
+            .await;
+
+        let resp = get(&node, Method::HEAD, None, Some("bytes=2-5"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(header(&resp, "content-length").unwrap(), "4");
+        assert_eq!(header(&resp, "content-range").unwrap(), "bytes 2-5/10");
+        assert!(body_of(resp).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_empty_file_rejects_a_range_and_ignores_a_malformed_one() {
+        let node = TestNode::without_db("content-range-empty").await;
+        node.store(TEST_CID, Bytes::new()).await;
+
+        let resp = get(&node, Method::GET, None, Some("bytes=0-"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(header(&resp, "content-range").unwrap(), "bytes */0");
+
+        for malformed in ["bytes=abc", "bytes=0-1,2-3"] {
+            let resp = get(&node, Method::GET, None, Some(malformed))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "{malformed}");
+            assert!(body_of(resp).await.is_empty());
+        }
     }
 
     #[tokio::test]

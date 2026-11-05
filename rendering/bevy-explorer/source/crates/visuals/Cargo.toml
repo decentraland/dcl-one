@@ -6,6 +6,7 @@ edition = "2021"
 [lib]
 
 [dependencies]
+serde_json = { workspace = true }
 common = { workspace = true }
 console = { workspace = true }
 scene_runner = { workspace = true }

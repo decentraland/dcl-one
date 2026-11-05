@@ -36,6 +36,10 @@ class InventoryTests(unittest.TestCase):
                 'include_str!(concat!(env!("OUT_DIR"), "/migrations.sql"))); }\n',
                 encoding="utf-8",
             )
+            release_definitions = [
+                Path("schemas/releases/v3/41_social_voice_notifications.sql"),
+                Path("schemas/releases/v3/42_social_private_voice_indexes.sql"),
+            ]
             roots = []
             for marker in ("A", "B"):
                 source = probe / ("root-" + marker)
@@ -49,7 +53,21 @@ class InventoryTests(unittest.TestCase):
                     f"-- MIGRATION_CONTEXT_{marker}\nALTER TABLE context_{marker.lower()} ADD COLUMN label text;\n",
                     encoding="utf-8",
                 )
+                (source / "schemas/45_after_release.sql").write_text(
+                    f"-- AFTER_RELEASE_CONTEXT_{marker}\n", encoding="utf-8",
+                )
+                for relative in release_definitions:
+                    destination = source / relative
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(ROOT / relative, destination)
+                    with destination.open("ab") as body:
+                        body.write(f"\n-- NESTED_CONTEXT_{marker}_{relative.stem}\n".encode())
                 roots.append((marker, source))
+            source_state = {
+                path: (path.read_bytes(), path.stat().st_mtime_ns)
+                for directory in [fixture, *(source for _, source in roots)]
+                for path in directory.rglob("*") if path.is_file()
+            }
             target = probe / "shared-target"
             executable = target / "debug" / ("db-build-context-probe.exe" if os.name == "nt" else "db-build-context-probe")
             previous = None
@@ -70,10 +88,22 @@ class InventoryTests(unittest.TestCase):
                     self.assertEqual(paths, generated_paths, "one shared Cargo output directory is reused")
                 generated_paths = paths
                 generated = tuple(path.read_bytes() for path in paths)
+                other = "B" if marker == "A" else "A"
                 for kind, content in zip(("SCHEMA", "MIGRATION"), generated):
                     self.assertIn(f"{kind}_CONTEXT_{marker}".encode(), content)
-                    other = "B" if marker == "A" else "A"
                     self.assertNotIn(f"{kind}_CONTEXT_{other}".encode(), content)
+                for relative in release_definitions:
+                    canonical = (ROOT / relative).read_bytes().rstrip(b"\n")
+                    self.assertEqual(generated[0].count(canonical), 1, "canonical release DDL is enrolled once")
+                    self.assertIn(f"NESTED_CONTEXT_{marker}_{relative.stem}".encode(), generated[0])
+                    self.assertNotIn(f"NESTED_CONTEXT_{other}_{relative.stem}".encode(), generated[0])
+                ordered = [Path("schemas/00_context.sql"), *release_definitions, Path("schemas/45_after_release.sql")]
+                positions = [generated[0].index(f"-- ════ {path} ════".encode()) for path in ordered]
+                self.assertEqual(positions, sorted(positions), "nested release DDL follows filename order")
+                self.assertEqual(
+                    {path: (path.read_bytes(), path.stat().st_mtime_ns) for path in source_state},
+                    source_state, "changing DCL_ONE_ROOT rebuilds without touching source files",
+                )
                 embedded = subprocess.run([str(executable)], capture_output=True, timeout=10, check=True).stdout
                 self.assertEqual(embedded, generated[0] + b"\n-- PROBE MIGRATIONS --\n" + generated[1])
                 if previous is not None:

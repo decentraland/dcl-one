@@ -135,6 +135,8 @@ pub struct RendererSceneContext {
 
     // latest cumulative resource-counter snapshot from the scene thread
     pub resource_counters: Option<SceneResourceCounters>,
+    pub(crate) counter_sample_time: Option<web_time::Instant>,
+    pub(crate) crdt_bytes_per_second: Option<f64>,
 }
 
 /// Block reason used by /freeze_scene and /tick_scene.
@@ -250,6 +252,8 @@ impl RendererSceneContext {
             inspected,
             authoritative_multiplayer,
             resource_counters: None,
+            counter_sample_time: None,
+            crdt_bytes_per_second: None,
         };
 
         new_context.live_entities[SceneEntityId::ROOT.id as usize] =

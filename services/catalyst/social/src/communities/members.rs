@@ -2,31 +2,39 @@
 //! viewers, refused to signed non-members, open to the admin bearer), the
 //! join/leave/kick/role/ban/unban writes and the per-wallet community
 //! listings. A ban deletes the member row and the wallet's pending requests
-//! in the same transaction; a kick or ban of a private community's member
+//! in source-defined independent commits; a kick or ban of a private community's member
 //! reaches the voice-eviction seam.
 
 use std::collections::HashMap;
 
+use crate::rpc::http::Kind;
 use axum::Json;
-use axum::body::Bytes;
 use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::json;
+use sqlx::Connection as _;
 
 use crate::identity::can_act_on_member;
 use crate::{Address, CommunityId, CommunityPermission, CommunityRole, CommunityStanding};
 
 use super::dto::{CommunityMember, CommunityMemberV2Wire, CommunityMemberWire};
-use super::friendship::{friendship_status, friendship_statuses};
-use super::http::{CommError, Paginated, err_json, get_first, get_pagination_params};
+use super::friendship::{friendship_status, try_friendship_actions, try_friendship_statuses};
+use super::http::{
+    CommError, Paginated, get_first, get_pagination_params, handler_error as err_json,
+};
 use super::profiles::enrich_with_profiles;
-use super::standing::{CommunityBanAuthority, CommunityUnbanAuthority, load_standing};
+use super::standing::{
+    CommunityBanAuthority, CommunityUnbanAuthority, load_standing_from_database as load_standing,
+    load_standing_pair_from_database,
+};
 use super::write_support::{
-    load_client_standing, load_client_standing_pair, map_db, parse_community_id, refusal_response,
+    acquire_membership, load_client_standing, load_client_standing_pair, map_db,
+    parse_community_id, refusal_response,
 };
 use super::{SharedState, queries, signed_path};
+use crate::notifications::community::{Audience, now_ms};
 
 macro_rules! try_resp {
     ($e:expr) => {
@@ -49,7 +57,8 @@ async fn gate_member_listing(
 ) -> Result<(), CommError> {
     let only_public = signer.is_none() && !bypass_privacy;
     let (private, viewer_has_row) = queries::members_gate(&state.pool, id, signer)
-        .await?
+        .await
+        .map_err(super::http::database_error)?
         .filter(|(private, _)| !(only_public && *private))
         .ok_or_else(|| CommError::not_found(format!("Community not found: {id_str}")))?;
     if !bypass_privacy && signer.is_some() && private && !viewer_has_row {
@@ -64,16 +73,16 @@ async fn member_friendship_statuses(
     state: &SharedState,
     signer: Option<&Address>,
     members: &[CommunityMember],
-) -> HashMap<String, i32> {
+) -> sqlx::Result<HashMap<String, i32>> {
     match signer {
-        Some(user) if !members.is_empty() => {
+        Some(user) => {
             let addresses: Vec<String> = members
                 .iter()
                 .map(|m| m.member_address.to_lowercase())
                 .collect();
-            friendship_statuses(&state.pool, user, &addresses).await
+            try_friendship_statuses(&state.pool, user, &addresses).await
         }
-        _ => HashMap::new(),
+        _ => Ok(HashMap::new()),
     }
 }
 
@@ -81,47 +90,44 @@ async fn to_member_wire_rows(
     state: &SharedState,
     signer: Option<&Address>,
     members: Vec<CommunityMember>,
-) -> Vec<CommunityMemberWire> {
+) -> sqlx::Result<Vec<CommunityMemberWire>> {
     let addresses: Vec<String> = members.iter().map(|m| m.member_address.clone()).collect();
-    let (profiles, statuses) = tokio::join!(
-        state.profiles.get_profiles(&addresses),
-        member_friendship_statuses(state, signer, &members)
-    );
-    members
+    let actions = match signer {
+        Some(viewer) => try_friendship_actions(&state.pool, viewer, &addresses).await?,
+        None => HashMap::new(),
+    };
+    let profiles = state.profiles.try_get_profiles(&addresses).await?;
+    Ok(members
         .into_iter()
-        .map(|m| {
+        .filter_map(|m| {
             let addr = m.member_address.to_lowercase();
-            let info = profiles.get(&addr);
-            let (name, profile_picture_url, has_claimed_name) = match info {
-                Some(info) => (
-                    info.name.clone(),
-                    info.profile_picture_url.clone(),
-                    info.has_claimed_name,
-                ),
-                None => (String::new(), String::new(), false),
-            };
-            CommunityMemberWire {
-                name_color: info.and_then(|i| i.name_color.clone()),
-                friendship_status: statuses
+            let info = profiles.get(&addr)?;
+            Some(CommunityMemberWire {
+                name_color: info.name_color.clone(),
+                friendship_status: actions
                     .get(&addr)
-                    .copied()
+                    .zip(signer)
+                    .map(|(action, viewer)| action.status(viewer))
                     .unwrap_or(friendship_status::NONE),
+                last_friendship_action: signer
+                    .map(|_| actions.get(&addr).map(|a| a.action.clone())),
+                acting_user: signer.map(|_| actions.get(&addr).map(|a| a.acting_user.clone())),
                 base: m,
-                name,
-                profile_picture_url,
-                has_claimed_name,
-            }
+                name: info.name.clone(),
+                profile_picture_url: info.profile_picture_url.clone(),
+                has_claimed_name: info.has_claimed_name,
+            })
         })
-        .collect()
+        .collect())
 }
 
 async fn to_member_v2_wire_rows(
     state: &SharedState,
     signer: Option<&Address>,
     members: Vec<CommunityMember>,
-) -> Vec<CommunityMemberV2Wire> {
-    let statuses = member_friendship_statuses(state, signer, &members).await;
-    members
+) -> sqlx::Result<Vec<CommunityMemberV2Wire>> {
+    let statuses = member_friendship_statuses(state, signer, &members).await?;
+    Ok(members
         .into_iter()
         .map(|m| CommunityMemberV2Wire {
             friendship_status: statuses
@@ -130,20 +136,17 @@ async fn to_member_v2_wire_rows(
                 .unwrap_or(friendship_status::NONE),
             base: m,
         })
-        .collect()
+        .collect())
 }
 
-/// `friendshipStatus` on JSON rows keyed by `memberAddress` (the v2 requests
-/// and bans listings).
+/// Bans use numeric status in both versions; V1 also retains the SQL aliases.
 pub(crate) async fn enrich_with_friendship_status(
     state: &SharedState,
     signer: Option<&Address>,
     rows: &mut [serde_json::Value],
-) {
-    if rows.is_empty() {
-        return;
-    }
-    let statuses = match signer {
+    include_action: bool,
+) -> sqlx::Result<()> {
+    let actions = match signer {
         Some(user) => {
             let addresses: Vec<String> = rows
                 .iter()
@@ -153,7 +156,7 @@ pub(crate) async fn enrich_with_friendship_status(
                         .map(|s| s.to_lowercase())
                 })
                 .collect();
-            friendship_statuses(&state.pool, user, &addresses).await
+            try_friendship_actions(&state.pool, user, &addresses).await?
         }
         None => HashMap::new(),
     };
@@ -166,15 +169,27 @@ pub(crate) async fn enrich_with_friendship_status(
             .and_then(|v| v.as_str())
             .map(|s| s.to_lowercase())
             .unwrap_or_default();
-        let status = statuses
+        let status = actions
             .get(&addr)
-            .copied()
+            .zip(signer)
+            .map(|(action, viewer)| action.status(viewer))
             .unwrap_or(friendship_status::NONE);
+        if include_action && signer.is_some() {
+            obj.insert(
+                "lastFriendshipAction".into(),
+                json!(actions.get(&addr).map(|a| &a.action)),
+            );
+            obj.insert(
+                "actingUser".into(),
+                json!(actions.get(&addr).map(|a| &a.acting_user)),
+            );
+        }
         obj.insert(
             "friendshipStatus".to_string(),
             serde_json::Value::Number(status.into()),
         );
     }
+    Ok(())
 }
 
 async fn members_page(
@@ -188,9 +203,13 @@ async fn members_page(
         .unwrap_or(false);
     let (members, total) = if only_online {
         let online = state.presence.connected_peers().await;
-        queries::list_online_members(&state.pool, id, &online, &pagination).await?
+        queries::list_online_members(&state.pool, id, &online, &pagination)
+            .await
+            .map_err(super::http::database_error)?
     } else {
-        queries::list_members(&state.pool, id, &pagination).await?
+        queries::list_members(&state.pool, id, &pagination)
+            .await
+            .map_err(super::http::database_error)?
     };
     Ok((members, total, pagination))
 }
@@ -203,7 +222,7 @@ pub async fn get_members(
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<serde_json::Value>, CommError> {
     let id = CommunityId::parse(&id_str)
-        .map_err(|_| CommError::not_found(format!("Community not found: {id_str}")))?;
+        .map_err(|_| CommError::bad_request(super::http::INVALID_IDENTIFIER))?;
     let signer = state
         .optional_signer(
             &headers,
@@ -220,7 +239,9 @@ pub async fn get_members(
     )
     .await?;
     let (members, total, pagination) = members_page(&state, id, &pairs).await?;
-    let rows = to_member_wire_rows(&state, signer.as_ref(), members).await;
+    let rows = to_member_wire_rows(&state, signer.as_ref(), members)
+        .await
+        .map_err(super::http::database_error)?;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))
@@ -234,7 +255,7 @@ pub async fn get_members_v2(
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<serde_json::Value>, CommError> {
     let id = CommunityId::parse(&id_str)
-        .map_err(|_| CommError::not_found(format!("Community not found: {id_str}")))?;
+        .map_err(|_| CommError::bad_request(super::http::INVALID_IDENTIFIER))?;
     let signer = state
         .optional_signer(
             &headers,
@@ -251,7 +272,9 @@ pub async fn get_members_v2(
     )
     .await?;
     let (members, total, pagination) = members_page(&state, id, &pairs).await?;
-    let rows = to_member_v2_wire_rows(&state, signer.as_ref(), members).await;
+    let rows = to_member_v2_wire_rows(&state, signer.as_ref(), members)
+        .await
+        .map_err(super::http::database_error)?;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))
@@ -273,8 +296,6 @@ async fn bans_listing(
     ),
     CommError,
 > {
-    let id = CommunityId::parse(id_str)
-        .map_err(|_| CommError::not_found(format!("Community not found: {id_str}")))?;
     let signer = state
         .require_signer(
             headers,
@@ -282,19 +303,29 @@ async fn bans_listing(
             &signed_path(original, format!("/{version}/communities/{id_str}/bans")),
         )
         .await?;
-    if !queries::community_exists(&state.pool, id, false).await? {
+    let id = CommunityId::parse(id_str)
+        .map_err(|_| CommError::bad_request(super::http::INVALID_IDENTIFIER))?;
+
+    if !queries::community_exists(&state.pool, id, false)
+        .await
+        .map_err(super::http::database_error)?
+    {
         return Err(CommError::not_found(format!(
             "Community not found: {id_str}"
         )));
     }
-    let standing = load_standing(&state.pool, id, &signer).await?;
+    let standing = load_standing(&state.pool, id, &signer)
+        .await
+        .map_err(super::http::database_error)?;
     if !standing.has(CommunityPermission::BanPlayers) {
         return Err(CommError::not_authorized(format!(
             "The user {signer} doesn't have permission to get banned members from the community"
         )));
     }
     let pagination = get_pagination_params(pairs);
-    let (bans, total) = queries::list_bans(&state.pool, id, &pagination).await?;
+    let (bans, total) = queries::list_bans(&state.pool, id, &pagination)
+        .await
+        .map_err(super::http::database_error)?;
     let rows = bans
         .into_iter()
         .map(|b| serde_json::to_value(b).unwrap_or(serde_json::Value::Null))
@@ -309,9 +340,16 @@ pub async fn get_bans(
     Path(id_str): Path<String>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<serde_json::Value>, CommError> {
-    let (mut rows, total, pagination, _) =
+    let (mut rows, total, pagination, signer) =
         bans_listing(&state, &headers, &original, &id_str, "v1", &pairs).await?;
-    enrich_with_profiles(&state.profiles, &mut rows, "memberAddress").await;
+    // upstream `mapMembersWithProfiles`: the profile fields and the
+    // viewer's `friendshipStatus`
+    enrich_with_friendship_status(&state, Some(&signer), &mut rows, true)
+        .await
+        .map_err(super::http::database_error)?;
+    enrich_with_profiles(&state.profiles, &mut rows, "memberAddress")
+        .await
+        .map_err(super::http::database_error)?;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))
@@ -326,7 +364,9 @@ pub async fn get_bans_v2(
 ) -> Result<Json<serde_json::Value>, CommError> {
     let (mut rows, total, pagination, signer) =
         bans_listing(&state, &headers, &original, &id_str, "v2", &pairs).await?;
-    enrich_with_friendship_status(&state, Some(&signer), &mut rows).await;
+    enrich_with_friendship_status(&state, Some(&signer), &mut rows, false)
+        .await
+        .map_err(super::http::database_error)?;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))
@@ -359,7 +399,8 @@ pub async fn get_member_communities(
     let only_public_visible = signer.as_ref().is_none_or(|s| *s != member);
     let (rows, total) =
         queries::member_communities(&state.pool, &member, &pagination, None, only_public_visible)
-            .await?;
+            .await
+            .map_err(super::http::database_error)?;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))
@@ -404,8 +445,12 @@ pub async fn get_managed_communities(
     if !state.admin_bearer(&headers) {
         return Err(bearer_refusal(&headers));
     }
-    let member = Address::parse(&address).map_err(|_| CommError::bad_request("invalid address"))?;
     let pagination = get_pagination_params(&pairs);
+    let Ok(member) = Address::parse(&address) else {
+        return Ok(Json(
+            json!({ "data": Paginated::<serde_json::Value>::new(Vec::new(), 0, &pagination) }),
+        ));
+    };
     let (rows, total) = queries::member_communities(
         &state.pool,
         &member,
@@ -413,7 +458,8 @@ pub async fn get_managed_communities(
         Some(&["owner", "moderator"]),
         false,
     )
-    .await?;
+    .await
+    .map_err(super::http::database_error)?;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))
@@ -435,13 +481,33 @@ pub async fn member_communities_by_ids(
     State(state): State<SharedState>,
     headers: HeaderMap,
     Path(address): Path<String>,
-    body: Bytes,
+    body: super::http::DeferredBody,
 ) -> Response {
     if !admin_token_configured(&state) {
         return CommError::not_found("Not found").into_response();
     }
     if !state.admin_bearer(&headers) {
         return bearer_refusal(&headers).into_response();
+    }
+    let body = match body.schema().await {
+        Ok(body) => body,
+        Err(error) => return error.into_response(),
+    };
+    if let Err(error) = crate::rpc::http::body(
+        &body,
+        &[(
+            "communityIds",
+            Kind::Strings {
+                min: 1,
+                max: 50,
+                element_max: usize::MAX,
+                uuid: true,
+            },
+        )],
+        &["communityIds"],
+        0,
+    ) {
+        return error.into_response();
     }
     if body.is_empty() {
         return err_json(StatusCode::BAD_REQUEST, "communityIds is required");
@@ -480,7 +546,11 @@ pub async fn member_communities_by_ids(
         }
     }
     let Ok(member) = Address::parse(&address) else {
-        return err_json(StatusCode::BAD_REQUEST, "invalid address");
+        return (
+            StatusCode::OK,
+            Json(json!({ "data": { "communities": [] } })),
+        )
+            .into_response();
     };
     let memberships = match queries::member_communities_by_ids(&state.pool, &ids, &member).await {
         Ok(v) => v,
@@ -498,13 +568,14 @@ pub async fn member_communities_by_ids(
 }
 
 async fn signer_or_refusal(
+    caller: &super::auth::Caller,
     state: &SharedState,
     headers: &HeaderMap,
     method: &str,
     path: super::auth::SignedPath,
 ) -> Result<Address, Response> {
-    state
-        .require_signer(headers, method, &path)
+    caller
+        .require_signer(state, headers, method, &path)
         .await
         .map_err(IntoResponse::into_response)
 }
@@ -517,12 +588,13 @@ fn parse_address(raw: &str) -> Result<Address, Response> {
 /// the insert only fires when every guard holds.
 pub async fn add_member(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "post",
@@ -533,7 +605,16 @@ pub async fn add_member(
         Ok(s) => s,
         Err(r) => return r,
     };
-    let gate: Option<(bool, bool, bool)> = try_resp!(map_db(
+    let uuid = try_resp!(parse_community_id(&id));
+    let mut guard = try_resp!(map_db(acquire_membership(&state.pool, uuid).await));
+    let mut tx = try_resp!(map_db(guard.begin().await));
+    try_resp!(map_db(
+        sqlx::query("SELECT id FROM social.communities WHERE id = $1 FOR UPDATE")
+            .bind(uuid)
+            .execute(&mut *tx)
+            .await
+    ));
+    let gate: Option<(bool, bool, bool, bool, Option<uuid::Uuid>)> = try_resp!(map_db(
         sqlx::query_as(
             "WITH c AS (SELECT active, private FROM social.communities WHERE id = $1), \
                   b AS (SELECT COALESCE(bool_or(active), FALSE) AS banned FROM social.community_bans \
@@ -541,22 +622,25 @@ pub async fn add_member(
                   ins AS (INSERT INTO social.community_members (community_id, member_address, role) \
                           SELECT $1, $2, 'member' FROM c, b \
                           WHERE c.active AND NOT c.private AND NOT b.banned \
-                          ON CONFLICT (community_id, member_address) DO NOTHING) \
-             SELECT c.active, c.private, b.banned FROM c, b",
+                          ON CONFLICT (community_id, member_address) DO NOTHING RETURNING community_id), \
+                  requests AS (DELETE FROM social.community_requests \
+                               WHERE community_id = $1 AND member_address = $2 \
+                                 AND EXISTS (SELECT 1 FROM ins) RETURNING id) \
+             SELECT c.active, c.private, b.banned, EXISTS (SELECT 1 FROM ins), (SELECT id FROM requests LIMIT 1) FROM c, b",
         )
         .bind(uuid)
         .bind(&signer)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&mut *tx)
         .await
     ));
-    let Some((active, private, banned)) = gate else {
+    let Some((active, private, banned, inserted, request_id)) = gate else {
         return err_json(
             StatusCode::NOT_FOUND,
             format!("Community not found: {uuid}"),
         );
     };
     if !active {
-        return err_json(StatusCode::BAD_REQUEST, "Community is not active");
+        return CommError::not_found(format!("Community not found: {uuid}")).into_response();
     }
     if private {
         return err_json(
@@ -572,6 +656,17 @@ pub async fn add_member(
         ))
         .into_response();
     }
+    try_resp!(map_db(tx.commit().await));
+    drop(guard);
+    if inserted {
+        let mut properties = json!({"community_id":id,"user_id":signer.as_str()});
+        if let Some(request_id) = request_id {
+            properties["request_id"] = json!(request_id);
+        }
+        state.fire_analytics("JOIN_COMMUNITY", properties);
+        // The new membership is visible before the shared fan-out reads its audience.
+        state.member_status_changed(uuid, &signer, true).await;
+    }
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -579,12 +674,13 @@ pub async fn add_member(
 /// a moderator kicks members; a non-member target is treated as a member).
 pub async fn remove_member(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, address)): Path<(String, String)>,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "delete",
@@ -595,9 +691,21 @@ pub async fn remove_member(
         Ok(s) => s,
         Err(r) => return r,
     };
+    let uuid = try_resp!(parse_community_id(&id));
+    if !try_resp!(map_db(
+        queries::community_exists(&state.pool, uuid, false).await
+    )) {
+        return CommError::not_found(format!("Community not found: {uuid}")).into_response();
+    }
     let target = match parse_address(&address) {
         Ok(a) => a,
-        Err(r) => return r,
+        Err(_) => {
+            return CommError::bad_request(format!(
+                "Invalid address to remove {}",
+                address.to_lowercase()
+            ))
+            .into_response();
+        }
     };
     if target == signer {
         let standing = try_resp!(load_client_standing(&state, uuid, &signer).await);
@@ -627,22 +735,56 @@ pub async fn remove_member(
     }
     let removed = try_resp!(map_db(
         sqlx::query(
-            "DELETE FROM social.community_members WHERE community_id = $1 AND member_address = $2"
+            "WITH removed AS (DELETE FROM social.community_members \
+                              WHERE community_id = $1 AND member_address = $2 AND role <> 'owner' RETURNING community_id), \
+                  likes AS (DELETE FROM social.community_post_likes l \
+                            USING social.community_posts p \
+                            WHERE l.post_id = p.id AND p.community_id = $1 AND l.user_address = $2 \
+                              AND EXISTS (SELECT 1 FROM removed)) \
+             SELECT community_id FROM removed"
         )
         .bind(uuid)
         .bind(&target)
-        .execute(&state.pool)
+        .fetch_all(&state.pool)
         .await
     ))
-    .rows_affected()
-        > 0;
+    .len() > 0;
     if removed {
+        if target == signer {
+            state.fire_analytics(
+                "LEAVE_COMMUNITY",
+                json!({"community_id":id,"user_id":target.as_str()}),
+            );
+        } else {
+            state.fire_analytics("KICK_MEMBER_FROM_COMMUNITY",json!({"community_id":id,"kicker_user_id":signer.as_str(),"target_user_id":target.as_str()}));
+        }
         tracing::info!(community_id = %uuid, member = %target, "community member left");
         state.member_removed_from_worlds(uuid, &target);
+        // upstream `leaveCommunity` / `kickMember`: OFFLINE to the members
+        // and the wallet that left
+        state.member_status_changed(uuid, &target, false).await;
         if target != signer {
             state
                 .evict_from_private_community_voice(uuid, &target)
                 .await;
+            // upstream `kickMember`: MEMBER_REMOVED to the kicked wallet
+            state
+                .notify_community_event(
+                    "community_member_removed",
+                    format!("{uuid}-{target}-{}", now_ms()),
+                    uuid,
+                    json!({}),
+                    Audience::One(&target),
+                )
+                .await;
+        } else {
+            let event = crate::notifications::community::CommunityEvent {
+                kind: "community_member_left",
+                key: format!("{uuid}-{target}-{}", now_ms()),
+                community_id: uuid,
+                metadata: json!({}),
+            };
+            tokio::spawn(state.publish_community_event(&event, &Audience::One(&target)));
         }
     }
     StatusCode::NO_CONTENT.into_response()
@@ -653,17 +795,18 @@ pub struct RoleBody {
     pub role: String,
 }
 
-/// Owner only (AssignRoles), never on oneself, never to owner; the one
-/// stored spelling of a moderator is written.
+/// Owner only (AssignRoles), never on oneself; the one stored spelling of
+/// a moderator is written. `owner` is the ownership transfer.
 pub async fn update_member_role(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, address)): Path<(String, String)>,
-    body: Bytes,
+    body: super::http::DeferredBody,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "patch",
@@ -674,9 +817,29 @@ pub async fn update_member_role(
         Ok(s) => s,
         Err(r) => return r,
     };
+    let body = match body.schema().await {
+        Ok(body) => body,
+        Err(error) => return error.into_response(),
+    };
+    if let Err(error) = crate::rpc::http::body(
+        &body,
+        &[("role", Kind::OneOf(&["owner", "moderator", "member"]))],
+        &["role"],
+        0,
+    ) {
+        return error.into_response();
+    }
+    let uuid = try_resp!(parse_community_id(&id));
+    if !try_resp!(map_db(
+        queries::community_exists(&state.pool, uuid, false).await
+    )) {
+        return CommError::not_found(format!("Community not found: {uuid}")).into_response();
+    }
     let target = match parse_address(&address) {
         Ok(a) => a,
-        Err(r) => return r,
+        Err(_) => {
+            return CommError::bad_request("Invalid address provided".to_string()).into_response();
+        }
     };
     let parsed: RoleBody = match serde_json::from_slice(&body) {
         Ok(b) => b,
@@ -685,18 +848,13 @@ pub async fn update_member_role(
     let Some(new_role) = CommunityRole::parse(&parsed.role) else {
         return err_json(StatusCode::BAD_REQUEST, "invalid role");
     };
+    if new_role == CommunityRole::Owner {
+        return transfer_ownership(&state, uuid, &signer, &target).await;
+    }
     if signer == target {
         return err_json(
             StatusCode::UNAUTHORIZED,
             format!("The user {signer} cannot update their own role in community {uuid}"),
-        );
-    }
-    if new_role == CommunityRole::Owner {
-        return err_json(
-            StatusCode::UNAUTHORIZED,
-            format!(
-                "The user {signer} doesn't have permission to assign roles in community {uuid}"
-            ),
         );
     }
     let (updater, target_standing) =
@@ -712,7 +870,7 @@ pub async fn update_member_role(
         );
     }
     let upd = try_resp!(map_db(
-        sqlx::query("UPDATE social.community_members SET role = $3 WHERE community_id = $1 AND member_address = $2")
+        sqlx::query("UPDATE social.community_members SET role = $3 WHERE community_id = $1 AND member_address = $2 AND role <> 'owner'")
             .bind(uuid)
             .bind(&target)
             .bind(new_role.as_stored_text())
@@ -725,14 +883,108 @@ pub async fn update_member_role(
     StatusCode::NO_CONTENT.into_response()
 }
 
+/// Upstream `transferOwnership` (`logic/community/members.ts`, `roles.ts`
+/// `validatePermissionToTransferOwnership` at `b6b2cef`): `role: "owner"`
+/// hands the community from its owner to a member holding a NAME; the old
+/// owner stays as a moderator and the new one is notified.
+async fn transfer_ownership(
+    state: &SharedState,
+    uuid: CommunityId,
+    signer: &Address,
+    target: &Address,
+) -> Response {
+    if !try_resp!(map_db(
+        queries::community_exists(&state.pool, uuid, false).await
+    )) {
+        return CommError::not_found(format!("Community not found: {uuid}")).into_response();
+    }
+    let (owner, target_standing) =
+        try_resp!(load_client_standing_pair(state, uuid, signer, target).await);
+    if owner.tier() != CommunityStanding::Owner {
+        return CommError::not_authorized(format!(
+            "The user {signer} doesn't have permission to transfer ownership in community {uuid}"
+        ))
+        .into_response();
+    }
+    if !target_standing.tier().is_member() {
+        return CommError::not_authorized(format!(
+            "The target user {target} is not a member of community {uuid}"
+        ))
+        .into_response();
+    }
+    if !match state.has_owned_name(target).await {
+        Ok(owns) => owns,
+        Err(error) => return error.into_response(),
+    } {
+        return CommError::bad_request(format!("The user {target} doesn't have any names"))
+            .into_response();
+    }
+    let mut guard = try_resp!(map_db(acquire_membership(&state.pool, uuid).await));
+    let mut tx = try_resp!(map_db(guard.begin().await));
+    let old_owner: Address = try_resp!(map_db(
+        sqlx::query_scalar("SELECT owner_address FROM social.communities WHERE id = $1 FOR UPDATE")
+            .bind(uuid)
+            .fetch_one(&mut *tx)
+            .await
+    ));
+    if &old_owner != signer {
+        // a concurrent transfer moved it after the standing read
+        return CommError::not_authorized(format!(
+            "The user {signer} doesn't have permission to transfer ownership in community {uuid}"
+        ))
+        .into_response();
+    }
+    try_resp!(map_db(
+        sqlx::query("UPDATE social.communities SET owner_address = $2, updated_at = timezone('UTC', now()) WHERE id = $1")
+            .bind(uuid)
+            .bind(target)
+            .execute(&mut *tx)
+            .await
+    ));
+    // the old owner's row first: one owner row per community
+    // (`community_members_owner_uidx`)
+    for (member, role) in [(signer, "moderator"), (target, "owner")] {
+        let updated = try_resp!(map_db(
+            sqlx::query("UPDATE social.community_members SET role = $3 WHERE community_id = $1 AND member_address = $2")
+                .bind(uuid)
+                .bind(member)
+                .bind(role)
+                .execute(&mut *tx)
+                .await
+        ))
+        .rows_affected();
+        if updated == 0 {
+            // the target left after the standing read; dropping `tx` rolls
+            // the owner change back
+            return CommError::not_authorized(format!(
+                "The target user {target} is not a member of community {uuid}"
+            ))
+            .into_response();
+        }
+    }
+    try_resp!(map_db(tx.commit().await));
+    drop(guard);
+    state
+        .notify_community_event(
+            "community_ownership_transferred",
+            format!("{uuid}-{signer}-{target}-{}", now_ms()),
+            uuid,
+            json!({ "oldOwnerAddress": signer.as_str() }),
+            Audience::One(target),
+        )
+        .await;
+    StatusCode::NO_CONTENT.into_response()
+}
+
 pub async fn ban_member(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, address)): Path<(String, String)>,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "post",
@@ -746,69 +998,113 @@ pub async fn ban_member(
         Ok(s) => s,
         Err(r) => return r,
     };
+    let uuid = try_resp!(parse_community_id(&id));
+    if !try_resp!(map_db(
+        queries::community_exists(&state.pool, uuid, false).await
+    )) {
+        return CommError::not_found(format!("Community not found: {uuid}")).into_response();
+    }
     let target = match parse_address(&address) {
         Ok(a) => a,
-        Err(r) => return r,
+        Err(_) => {
+            return CommError::bad_request("Invalid member address".to_string()).into_response();
+        }
     };
-    if let Err(refusal) = CommunityBanAuthority::resolve(&state.pool, &signer, uuid, &target).await
-    {
+    let mut guard = try_resp!(map_db(acquire_membership(&state.pool, uuid).await));
+    let (actor_standing, target_standing) = try_resp!(map_db(
+        load_standing_pair_from_database(&mut *guard, uuid, &signer, &target).await
+    ));
+    if let Err(refusal) = CommunityBanAuthority::from_standings(actor_standing, target_standing) {
         return refusal_response(&refusal, StatusCode::UNAUTHORIZED, || {
             format!(
                 "The user {signer} doesn't have permission to ban {target} from community {uuid}"
             )
         });
     }
-    let mut tx = try_resp!(map_db(state.pool.begin().await));
-    let removed = try_resp!(map_db(
-        sqlx::query(
-            "DELETE FROM social.community_members WHERE community_id = $1 AND member_address = $2"
-        )
-        .bind(uuid)
-        .bind(&target)
-        .execute(&mut *tx)
-        .await
-    ))
-    .rows_affected()
-        > 0;
-    try_resp!(map_db(
-        sqlx::query("DELETE FROM social.community_requests WHERE community_id = $1 AND member_address = $2 AND status = 'pending'")
+    // The source commits each stage independently: a later ban/request failure
+    // must retain an earlier kick and unlike, including the analytics event.
+    let removed: bool = try_resp!(map_db(
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.community_members WHERE community_id=$1 AND member_address=$2)")
+            .bind(uuid).bind(&target).fetch_one(&mut *guard).await
+    ));
+    if removed {
+        try_resp!(map_db(
+            sqlx::query(
+                "DELETE FROM social.community_members WHERE community_id=$1 AND member_address=$2"
+            )
             .bind(uuid)
             .bind(&target)
-            .execute(&mut *tx)
+            .execute(&mut *guard)
             .await
-    ));
+        ));
+        try_resp!(map_db(
+            sqlx::query(
+                "DELETE FROM social.community_post_likes l USING social.community_posts p \
+                         WHERE l.post_id = p.id AND p.community_id = $1 AND l.user_address = $2"
+            )
+            .bind(uuid)
+            .bind(&target)
+            .execute(&mut *guard)
+            .await
+        ));
+        state.fire_analytics("BAN_MEMBER_FROM_COMMUNITY",json!({"community_id":id,"banner_user_id":signer.as_str(),"target_user_id":target.as_str()}));
+    }
     try_resp!(map_db(
         sqlx::query(
             "INSERT INTO social.community_bans (community_id, banned_address, banned_by, active, banned_at) \
              VALUES ($1, $2, $3, TRUE, timezone('UTC', now())) \
              ON CONFLICT (community_id, banned_address) DO UPDATE \
-               SET active = TRUE, banned_by = EXCLUDED.banned_by, banned_at = timezone('UTC', now()), \
-                   unbanned_by = NULL, unbanned_at = NULL",
+               SET active = TRUE, unbanned_by = NULL, unbanned_at = NULL",
         )
         .bind(uuid)
         .bind(&target)
         .bind(&signer)
-        .execute(&mut *tx)
+        .execute(&mut *guard)
         .await
     ));
-    try_resp!(map_db(tx.commit().await));
+    try_resp!(map_db(
+        sqlx::query(
+            "DELETE FROM social.community_requests WHERE community_id=$1 AND member_address=$2"
+        )
+        .bind(uuid)
+        .bind(&target)
+        .execute(&mut *guard)
+        .await
+    ));
+
+    drop(guard);
     state
         .evict_from_private_community_voice(uuid, &target)
         .await;
+    // upstream `banMember`: OFFLINE to the members and the banned wallet,
+    // a member or not
+    state.member_status_changed(uuid, &target, false).await;
     if removed {
         state.member_removed_from_worlds(uuid, &target);
+        // upstream `banMember`: only a member is told, under a key stable
+        // per banned wallet so a repeat ban is the same notification
+        state
+            .notify_community_event(
+                "community_member_banned",
+                format!("{uuid}-{target}"),
+                uuid,
+                json!({}),
+                Audience::One(&target),
+            )
+            .await;
     }
     StatusCode::NO_CONTENT.into_response()
 }
 
 pub async fn unban_member(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, address)): Path<(String, String)>,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "delete",
@@ -822,13 +1118,21 @@ pub async fn unban_member(
         Ok(s) => s,
         Err(r) => return r,
     };
+    let uuid = try_resp!(parse_community_id(&id));
+    if !try_resp!(map_db(
+        queries::community_exists(&state.pool, uuid, false).await
+    )) {
+        return CommError::not_found(format!("Community not found: {uuid}")).into_response();
+    }
     let target = match parse_address(&address) {
         Ok(a) => a,
-        Err(r) => return r,
+        Err(_) => {
+            return CommError::bad_request("Invalid member address".to_string()).into_response();
+        }
     };
-    if let Err(refusal) =
-        CommunityUnbanAuthority::resolve(&state.pool, &signer, uuid, &target).await
-    {
+    let (actor_standing, target_standing) =
+        try_resp!(load_client_standing_pair(&state, uuid, &signer, &target).await);
+    if let Err(refusal) = CommunityUnbanAuthority::from_standings(actor_standing, target_standing) {
         return refusal_response(&refusal, StatusCode::UNAUTHORIZED, || {
             format!(
                 "The user {signer} doesn't have permission to unban {target} from community {uuid}"

@@ -161,6 +161,7 @@ async fn a_friendship_runs_through_the_http_routes() {
     };
     let (a_key, a) = wallet();
     let (b_key, b) = wallet();
+    seed_profiles(&rig.ctx, &[&a, &b]).await;
     let mut to_b = rig.ctx.pubsub().subscribe(&b);
     let mut to_a = rig.ctx.pubsub().subscribe(&a);
 
@@ -174,17 +175,20 @@ async fn a_friendship_runs_through_the_http_routes() {
         .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let request_id = body["data"]["id"].as_str().unwrap().to_string();
+    let action_id: String = sqlx::query_scalar("SELECT id::text FROM social.friendship_actions WHERE friendship_id=$1 AND action='request' ORDER BY timestamp DESC LIMIT 1")
+        .bind(Uuid::parse_str(&request_id).unwrap()).fetch_one(&rig.pool).await.unwrap();
     assert_eq!(body["data"]["address"], b);
     assert_eq!(body["data"]["message"], "hi");
     assert!(body["data"]["createdAt"].is_i64());
     match &*to_b.try_recv().unwrap() {
         SocialEvent::Friendship(FriendshipUpdate {
+            stream_closed: None,
             update: Some(friendship_update::Update::Request(r)),
         }) => {
             assert_eq!(r.friend.as_ref().unwrap().address, a);
             assert_eq!(
                 (r.id.as_str(), r.message.as_deref()),
-                (request_id.as_str(), Some("hi"))
+                (action_id.as_str(), Some("hi"))
             );
         }
         other => panic!("{:?}", std::mem::discriminant(other)),
@@ -200,7 +204,10 @@ async fn a_friendship_runs_through_the_http_routes() {
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["data"]["total"], 1);
-    assert_eq!(body["data"]["results"][0]["id"], request_id);
+    assert_eq!(
+        body["data"]["results"][0]["id"], action_id,
+        "list entries identify the request action"
+    );
     assert_eq!(body["data"]["results"][0]["address"], a);
     assert_eq!(body["data"]["results"][0]["message"], "hi");
     let (_, sent) = rig
@@ -227,6 +234,7 @@ async fn a_friendship_runs_through_the_http_routes() {
     assert!(matches!(
         &*to_a.try_recv().unwrap(),
         SocialEvent::Friendship(FriendshipUpdate {
+            stream_closed: None,
             update: Some(friendship_update::Update::Accept(_))
         })
     ));
@@ -460,15 +468,12 @@ async fn blocks_run_through_the_http_routes() {
     assert!(body["data"]["blockedAt"].is_i64());
     assert!(matches!(
         &*to_b.try_recv().unwrap(),
-        SocialEvent::Block(BlockUpdate { address, is_blocked: true }) if *address == a
+        SocialEvent::Block(BlockUpdate {
+            stream_closed: None, address, is_blocked: true }) if *address == a
     ));
-    // The procedure's FriendshipUpdate::Block follows, as on the RPC socket.
-    assert!(matches!(
-        &*to_b.try_recv().unwrap(),
-        SocialEvent::Friendship(FriendshipUpdate {
-            update: Some(friendship_update::Update::Block(_))
-        })
-    ));
+    // A stranger has no friendship to end: no FriendshipUpdate::Block
+    // follows (upstream `applyBlock` publishes it only with a friendship).
+    assert!(to_b.try_recv().is_err());
 
     let (_, body) = rig
         .call("GET", "/v1/blocking-status", Some(&a_key), None)
@@ -522,6 +527,7 @@ async fn blocks_run_through_the_http_routes() {
         matches!(
             &*lifted,
             SocialEvent::Block(BlockUpdate {
+                stream_closed: None,
                 is_blocked: false,
                 ..
             })
@@ -562,6 +568,7 @@ async fn a_route_and_its_procedure_write_and_publish_alike() {
     let (a_key, a) = wallet();
     let (_, b) = wallet();
     let (c, d) = (addr("par1"), addr("par2"));
+    seed_profiles(&rig.ctx, &[&a, &b, &c, &d]).await;
     let mut to_b = rig.ctx.pubsub().subscribe(&b);
     let mut to_d = rig.ctx.pubsub().subscribe(&d);
 
@@ -594,6 +601,7 @@ async fn a_route_and_its_procedure_write_and_publish_alike() {
 
     let request_of = |event: &SocialEvent| match event {
         SocialEvent::Friendship(FriendshipUpdate {
+            stream_closed: None,
             update: Some(friendship_update::Update::Request(r)),
         }) => (
             r.friend.as_ref().unwrap().address.clone(),
@@ -606,8 +614,8 @@ async fn a_route_and_its_procedure_write_and_publish_alike() {
     let (from_d, id_d, message_d) = request_of(&to_d.try_recv().unwrap());
     assert_eq!((from_b, message_b), (a.clone(), Some("hello".to_string())));
     assert_eq!((from_d, message_d), (c.clone(), Some("hello".to_string())));
-    assert_eq!(id_b, http["data"]["id"].as_str().unwrap());
-    assert_eq!(id_d, accepted.id);
+    assert_ne!(id_b, http["data"]["id"].as_str().unwrap());
+    assert_ne!(id_d, accepted.id);
 
     let db = rig.ctx.db();
     for (sender, receiver) in [(&a, &b), (&c, &d)] {
@@ -964,7 +972,10 @@ async fn a_community_room_runs_through_the_http_routes() {
         (status, body),
         (
             StatusCode::FORBIDDEN,
-            error("Forbidden", "requires moderator or owner role")
+            error(
+                "Forbidden",
+                &format!("User {guest} is not a member of community {id}")
+            )
         )
     );
     let (status, body) = rig
@@ -1118,5 +1129,24 @@ async fn a_community_room_runs_through_the_http_routes() {
         )
         .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
+    // the room ended: a second end is not found
+    let (status, body) = rig
+        .call(
+            "DELETE",
+            &format!("/v1/community-voice-chats/{id}"),
+            Some(&owner_key),
+            None,
+        )
+        .await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::NOT_FOUND,
+            error(
+                "Not Found",
+                &format!("Community voice chat not found for community {id}")
+            )
+        )
+    );
     drop_community(&rig.pool, community).await;
 }

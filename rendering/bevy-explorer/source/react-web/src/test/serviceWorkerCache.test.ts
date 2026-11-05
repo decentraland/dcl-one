@@ -30,10 +30,10 @@ function serviceWorker(seeded: Record<string, string> = {}) {
   ) => void
   load(self, { open: async () => cache }, network, { log: vi.fn(), warn: vi.fn() })
 
-  const asset = async (url: string, method = 'GET'): Promise<{ body: string; cached: boolean }> => {
+  const asset = async (url: string, method = 'GET', init?: RequestInit): Promise<{ body: string; cached: boolean }> => {
     let reply: Promise<Response> | undefined
     listeners.fetch({
-      request: new Request(url, { method, headers: { 'X-IPFS': '1' } }),
+      request: new Request(url, { ...init, method, headers: { 'X-IPFS': '1' } }),
       respondWith: (r: Promise<Response>) => (reply = r)
     })
     const response = await reply!
@@ -52,6 +52,20 @@ describe('service worker asset cache', () => {
     expect(await asset(`https://peer.example${path}`)).toEqual({ body: 'https://peer.example', cached: false })
     expect(network).toHaveBeenCalledTimes(2)
     expect(keys()).toEqual([])
+  })
+
+  it('forwards a cache miss with its referrer policy and cancellation signal', async () => {
+    const { asset, network } = serviceWorker()
+    const controller = new AbortController()
+    await asset(`https://peer.example${path}`, 'GET', {
+      referrer: '', referrerPolicy: 'no-referrer', signal: controller.signal
+    })
+    const [forwarded] = network.mock.calls[0]
+    expect(forwarded.headers.has('X-IPFS')).toBe(false)
+    expect(forwarded.referrer).toBe('')
+    expect(forwarded.referrerPolicy).toBe('no-referrer')
+    controller.abort()
+    expect(forwarded.signal.aborted).toBe(true)
   })
 
   it('answers a url from its own entry, and only that url', async () => {

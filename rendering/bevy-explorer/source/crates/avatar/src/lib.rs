@@ -36,12 +36,14 @@ pub mod attach;
 mod avatar_state;
 pub mod avatar_texture;
 pub mod colliders;
+mod debug_avatars;
 mod dynamic_nametag;
 pub mod emote_report;
 pub mod foot_ik;
 pub mod foreign_dynamics;
 pub mod ghost;
 pub mod head_ik;
+mod ik_debug;
 pub mod jump_marker;
 pub mod mask_material;
 pub mod material_cache;
@@ -49,6 +51,9 @@ pub mod npc_dynamics;
 pub mod point_at_ik;
 pub mod point_at_marker;
 mod two_bone_ik;
+
+#[cfg(test)]
+mod tests;
 
 use common::{
     asset_cache::{clean_asset_cache, AssetCache},
@@ -76,6 +81,7 @@ use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
     EntityDefinition, IpfsAssetServer,
 };
+use scene_runner::scene_partition::PartitionedDownloads;
 use scene_runner::{
     renderer_context::RendererSceneContext,
     update_world::{animation::Clips, AddCrdtInterfaceExt},
@@ -131,6 +137,8 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(GhostAvatarPlugin);
         app.add_plugins(FootIkPlugin);
         app.add_plugins(HeadIkPlugin);
+        ik_debug::register(app);
+        debug_avatars::register(app);
         app.add_plugins(PointAtIkPlugin);
         app.add_plugins(PointAtMarkerPlugin);
         app.add_plugins(JumpMarkerPlugin);
@@ -168,9 +176,7 @@ impl Plugin for AvatarPlugin {
         );
 
         app.add_preview_console_command::<DebugDumpAvatar, _>(debug_dump_avatar);
-        app.add_console_command::<avatar_state::AvatarStateCommand, _>(
-            avatar_state::avatar_state_cmd,
-        );
+        avatar_state::register(app);
 
         app.add_observer(add_attach_points_to_avatar_shape);
         app.add_observer(remove_attach_points_from_avatar_shape);
@@ -576,6 +582,7 @@ fn update_render_avatar(
             Option<&AttachPoints>,
             Option<&SceneEntity>,
             Option<&PreviousAvatar>,
+            Option<&PartitionedDownloads>,
         ),
         Or<(Changed<AvatarSelection>, With<RetryRenderAvatar>)>,
     >,
@@ -590,6 +597,8 @@ fn update_render_avatar(
 ) {
     // remove renderable entities when avatar selection is removed
     for entity in removed_selections.read() {
+        // the outfit's hashes leave the request-slot queue with the component
+        commands.entity(entity).try_remove::<PartitionedDownloads>();
         if let Ok((children, attach_points)) = children.get(entity) {
             // reparent attach points
             commands
@@ -604,8 +613,15 @@ fn update_render_avatar(
         }
     }
 
-    for (entity, selection, maybe_children, maybe_attach_points, maybe_scene_ent, maybe_prev) in
-        &query
+    for (
+        entity,
+        selection,
+        maybe_children,
+        maybe_attach_points,
+        maybe_scene_ent,
+        maybe_prev,
+        maybe_downloads,
+    ) in &query
     {
         commands.entity(entity).try_remove::<RetryRenderAvatar>();
 
@@ -619,6 +635,35 @@ fn update_render_avatar(
             .as_ref()
             .and_then(|b| WearableUrn::new(b).ok())
             .unwrap_or(base_wearables::default_bodyshape_urn());
+
+        // the avatar's downloads are filed under its body's and wearables' hashes, so they
+        // take the avatar's partition in the request-slot queue; whatever has resolved so far
+        let worn: Vec<WearableUrn> = std::iter::once(body_urn.clone())
+            .chain(
+                selection
+                    .shape
+                    .0
+                    .wearables
+                    .iter()
+                    .flat_map(|w| WearableUrn::new(w).ok()),
+            )
+            .chain(
+                base_wearables::default_wearables(&body_urn)
+                    .map(|default| default.base().to_owned()),
+            )
+            .collect();
+        let hashes =
+            common::partition::resolved_hashes(worn.iter().map(|urn| urn.as_str()), |urn| {
+                WearableUrn::new(urn)
+                    .ok()
+                    .and_then(|urn| wearable_loader.get_hash(&urn).ok())
+            });
+        // only on change: inserting it re-registers the hashes with the request slots
+        if maybe_downloads.is_none_or(|current| current.0 != hashes) {
+            commands
+                .entity(entity)
+                .try_insert(PartitionedDownloads(hashes));
+        }
 
         let body = match wearable_loader.get_representation(&body_urn, body_urn.as_str()) {
             Ok(body) => body.clone(),

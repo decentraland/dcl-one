@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use axum::body::Bytes;
+use crate::communities::http::DeferredBody;
 use axum::extract::{OriginalUri, Path, Query, State as AxumState};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -34,6 +34,183 @@ type Shared = Arc<State>;
 type Answer = Result<Response, CommError>;
 
 const ADDRESS_PATTERN: &str = "^0x[a-fA-F0-9]{40}$";
+
+// Source router registration order, including HEAD inherited from GET. Native
+// federation/admin extensions are deliberately absent from this application view.
+const SOURCE_HTTP_ROUTES: &[(&str, &[&str])] = &[
+    ("/v1/communities/:address/managed", &["HEAD", "GET"]),
+    ("/v1/communities/:id", &["HEAD", "GET"]),
+    ("/v1/communities", &["HEAD", "GET"]),
+    ("/v1/communities/:id/members", &["HEAD", "GET"]),
+    ("/v1/communities/:id/members", &["POST"]),
+    ("/v1/communities/:id/members/:memberAddress", &["DELETE"]),
+    ("/v1/communities/:id/members/:address", &["PATCH"]),
+    ("/v1/communities/:id/bans", &["HEAD", "GET"]),
+    ("/v1/communities/:id/members/:memberAddress/bans", &["POST"]),
+    (
+        "/v1/communities/:id/members/:memberAddress/bans",
+        &["DELETE"],
+    ),
+    ("/v1/members/:address/communities", &["HEAD", "GET"]),
+    ("/v1/members/:address/communities", &["POST"]),
+    ("/v1/members/:address/requests", &["HEAD", "GET"]),
+    ("/v1/communities/:id/requests", &["HEAD", "GET"]),
+    ("/v1/members/:address/invites", &["HEAD", "GET"]),
+    ("/v1/communities", &["POST"]),
+    ("/v1/communities/:id", &["PUT"]),
+    ("/v1/communities/:id", &["PATCH"]),
+    ("/v1/communities/:id", &["DELETE"]),
+    ("/v1/communities/:id/places", &["HEAD", "GET"]),
+    ("/v1/communities/:id/places", &["POST"]),
+    ("/v1/communities/:id/places/:placeId", &["DELETE"]),
+    ("/v1/communities/:id/posts", &["HEAD", "GET"]),
+    ("/v1/communities/:id/posts", &["POST"]),
+    ("/v1/communities/:id/posts/:postId", &["DELETE"]),
+    ("/v1/communities/:id/posts/:postId/like", &["POST"]),
+    ("/v1/communities/:id/posts/:postId/like", &["DELETE"]),
+    ("/v1/referral-progress", &["POST"]),
+    ("/v1/referral-progress", &["PATCH"]),
+    ("/v1/referral-progress", &["HEAD", "GET"]),
+    ("/v1/referral-email", &["POST"]),
+    ("/v1/communities/:id/requests", &["POST"]),
+    ("/v1/communities/:id/requests/:requestId", &["PATCH"]),
+    ("/v1/social-settings", &["HEAD", "GET"]),
+    ("/v1/social-settings", &["PATCH"]),
+    ("/v1/private-messages-settings", &["HEAD", "GET"]),
+    ("/v1/mutes", &["HEAD", "GET"]),
+    ("/v1/mutes", &["POST"]),
+    ("/v1/mutes", &["DELETE"]),
+    ("/v1/friends/:address", &["DELETE"]),
+    ("/v1/users/:address/friendship-status", &["HEAD", "GET"]),
+    ("/v1/friendship-requests", &["POST"]),
+    ("/v1/friendship-requests/:address", &["PATCH"]),
+    ("/v1/blocks", &["POST"]),
+    ("/v1/blocks/:address", &["DELETE"]),
+    ("/v1/blocking-status", &["HEAD", "GET"]),
+    ("/v1/community-voice-chats/active", &["HEAD", "GET"]),
+    ("/v1/private-voice-chats", &["POST"]),
+    ("/v1/private-voice-chats/incoming", &["HEAD", "GET"]),
+    ("/v1/private-voice-chats/:callId", &["PATCH"]),
+    ("/v1/private-voice-chats/:callId", &["DELETE"]),
+    ("/v1/community-voice-chats", &["POST"]),
+    ("/v1/community-voice-chats/:communityId", &["DELETE"]),
+    (
+        "/v1/community-voice-chats/:communityId/participants",
+        &["POST"],
+    ),
+    (
+        "/v1/community-voice-chats/:communityId/participants/:address",
+        &["DELETE"],
+    ),
+    (
+        "/v1/community-voice-chats/:communityId/speakers/:address",
+        &["PUT"],
+    ),
+    (
+        "/v1/community-voice-chats/:communityId/speakers/:address",
+        &["PATCH"],
+    ),
+    (
+        "/v1/community-voice-chats/:communityId/speakers/:address",
+        &["DELETE"],
+    ),
+    (
+        "/v1/community-voice-chats/:communityId/speak-requests",
+        &["POST"],
+    ),
+    (
+        "/v1/community-voice-chats/:communityId/speak-requests/:address",
+        &["DELETE"],
+    ),
+    ("/v1/moderation/communities", &["HEAD", "GET"]),
+    ("/v2/communities/:id", &["HEAD", "GET"]),
+    ("/v2/communities", &["HEAD", "GET"]),
+    ("/v2/communities/:id/members", &["HEAD", "GET"]),
+    ("/v2/communities/:id/bans", &["HEAD", "GET"]),
+    ("/v2/members/:address/requests", &["HEAD", "GET"]),
+    ("/v2/communities/:id/requests", &["HEAD", "GET"]),
+    ("/v2/communities/:id/posts", &["HEAD", "GET"]),
+    ("/v2/friends", &["HEAD", "GET"]),
+    ("/v2/users/:address/mutual-friends", &["HEAD", "GET"]),
+    ("/v2/friendship-requests", &["HEAD", "GET"]),
+    ("/v2/blocks", &["HEAD", "GET"]),
+];
+
+fn source_http_route(path: &str, method: &str) -> Option<&'static str> {
+    let parts = path.trim_end_matches('/').split('/').collect::<Vec<_>>();
+    SOURCE_HTTP_ROUTES
+        .iter()
+        .rev()
+        .find_map(|(pattern, methods)| {
+            let pattern_parts = pattern.split('/').collect::<Vec<_>>();
+            (methods.contains(&method)
+                && parts.len() == pattern_parts.len()
+                && parts.iter().zip(pattern_parts).all(|(part, expected)| {
+                    expected.starts_with(':') || part.eq_ignore_ascii_case(expected)
+                }))
+            .then_some(*pattern)
+        })
+}
+
+/// Source ordinary HTTP middleware, scoped to the Social API composition.
+/// CORS and declared-size rejection run outside this observer. uWS has its own
+/// lower-case method labels and never observes the request-size family.
+pub(crate) async fn instrument_metrics(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let method = request.method().as_str().to_owned();
+    let path = request
+        .uri()
+        .path()
+        .strip_prefix("/social-api")
+        .unwrap_or(request.uri().path());
+    if matches!(method.as_str(), "OPTIONS" | "TRACE" | "TRACK") || path.starts_with("/federation/")
+    {
+        return next.run(request).await;
+    }
+    let handler = source_http_route(path, &method);
+    let size = request
+        .headers()
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| !value.is_nan())
+        .unwrap_or(0.0);
+    let started = std::time::Instant::now();
+    let response = next.run(request).await;
+    if response
+        .extensions()
+        .get::<crate::communities::fed::NativeEnvelopeResponse>()
+        .is_some()
+    {
+        return response;
+    }
+    let code = response.status();
+    let fallback = response
+        .extensions()
+        .get::<crate::communities::http::SocialApiNotFound>()
+        .is_some();
+    if handler.is_some()
+        || fallback
+        || matches!(
+            code,
+            StatusCode::METHOD_NOT_ALLOWED | StatusCode::NOT_IMPLEMENTED
+        )
+    {
+        let handler = if matches!(
+            code,
+            StatusCode::METHOD_NOT_ALLOWED | StatusCode::NOT_IMPLEMENTED
+        ) {
+            ""
+        } else {
+            handler.unwrap_or("")
+        };
+        metrics::histogram!("http_request_size_bytes", "method" => super::metrics::http_method_label(&method), "handler" => handler, "code" => code.as_u16().to_string()).record(size);
+        super::metrics::http_finished(method, handler, code.as_u16(), started);
+    }
+    response
+}
 
 /// The routes, with the social-api CORS answer; `social::router` mounts them
 /// at the root and under `/social-api`, behind the writes switch.
@@ -183,74 +360,337 @@ fn path_uuid(raw: &str, name: &str) -> Result<(), CommError> {
 }
 
 /// One body property's schema (the AJV schemas of `handlers/http/schemas.ts`).
-enum Kind {
+pub(crate) enum Kind {
     Address,
+    Email,
     Uuid,
     OneOf(&'static [&'static str]),
-    Text { max: usize },
+    Text {
+        max: usize,
+    },
+    TextRange {
+        min: usize,
+        max: usize,
+        non_whitespace: bool,
+    },
+    Strings {
+        min: usize,
+        max: usize,
+        element_max: usize,
+        uuid: bool,
+    },
     Bool,
 }
 
-/// A JSON object body checked against upstream's schema: every listed
-/// property of its kind, `required` present, nothing else, at least
-/// `min_properties`. A refusal is a 400; its message names the rule, the
-/// way AJV words it.
-fn body(
+pub(crate) fn js_whitespace(character: char) -> bool {
+    character != '\u{0085}' && (character.is_whitespace() || character == '\u{FEFF}')
+}
+
+/// Upstream `UUID_PATTERN` (`src/utils/uuid.ts`).
+const UUID_PATTERN: &str =
+    "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
+
+/// One AJV error object (`instancePath`, `schemaPath`, `keyword`, `params`, `message`).
+fn ajv_error(property: Option<&str>, keyword: &str, params: Value, message: String) -> Value {
+    let (instance_path, schema_path) = match property {
+        Some(name) => (format!("/{name}"), format!("#/properties/{name}/{keyword}")),
+        None => (String::new(), format!("#/{keyword}")),
+    };
+    json!({
+        "instancePath": instance_path,
+        "schemaPath": schema_path,
+        "keyword": keyword,
+        "params": params,
+        "message": message,
+    })
+}
+
+/// `@dcl/schema-validator-component` 1.0.1's 400: `{ ok: false, message }`
+/// when the body is not JSON, `{ ok: false, message: "Invalid JSON body",
+/// data: [<AJV error>] }` when it fails the schema.
+fn schema_refusal(message: String, error: Option<Value>) -> CommError {
+    let mut body = json!({ "ok": false, "message": message });
+    if let Some(error) = error {
+        body["data"] = json!([error]);
+    }
+    CommError::Body(StatusCode::BAD_REQUEST, body)
+}
+
+/// AJV visits object properties in JavaScript order. Keep that order when
+/// selecting the first unknown field even though Value uses a sorted map.
+fn input_keys(bytes: &[u8]) -> Vec<String> {
+    struct Keys;
+    impl<'de> serde::de::Visitor<'de> for Keys {
+        type Value = Vec<String>;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("an object")
+        }
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut keys = Vec::new();
+            while let Some(key) = map.next_key::<String>()? {
+                map.next_value::<serde::de::IgnoredAny>()?;
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+            let index = |key: &str| {
+                key.parse::<u32>()
+                    .ok()
+                    .filter(|n| *n < u32::MAX && n.to_string() == key)
+            };
+            keys.sort_by(|left, right| match (index(left), index(right)) {
+                (Some(a), Some(b)) => a.cmp(&b),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                _ => std::cmp::Ordering::Equal,
+            });
+            Ok(keys)
+        }
+    }
+    serde::Deserializer::deserialize_map(&mut serde_json::Deserializer::from_slice(bytes), Keys)
+        .unwrap_or_default()
+}
+
+/// A JSON object body checked against upstream's schema as AJV checks it
+/// (one error, the first in AJV's order: the type, `minProperties`,
+/// `required`, `additionalProperties` in the body's order, then each
+/// property in the schema's order: its type, then its pattern, enum or
+/// length). The refusal is the schema validator's 400.
+pub(crate) fn body(
     bytes: &[u8],
     properties: &[(&str, Kind)],
     required: &[&str],
     min_properties: usize,
 ) -> Result<Map<String, Value>, CommError> {
-    let invalid = |m: String| CommError::bad_request(m);
-    let Ok(Value::Object(object)) = serde_json::from_slice::<Value>(bytes) else {
-        return Err(invalid("Invalid JSON body: must be object".into()));
+    let invalid = |property: Option<&str>, keyword: &str, params: Value, message: String| {
+        schema_refusal(
+            "Invalid JSON body".into(),
+            Some(ajv_error(property, keyword, params, message)),
+        )
     };
-    for name in required {
-        if !object.contains_key(*name) {
-            return Err(invalid(format!("must have required property '{name}'")));
-        }
-    }
-    if object.len() < min_properties {
-        return Err(invalid(format!(
-            "must NOT have fewer than {min_properties} properties"
-        )));
-    }
-    for (name, value) in &object {
-        let Some((_, kind)) = properties.iter().find(|(p, _)| p == name) else {
-            return Err(invalid("must NOT have additional properties".into()));
+    let value: Value = serde_json::from_slice(bytes).map_err(|e| {
+        // V8's message for the common empty body; any other parse error
+        // carries serde's wording.
+        let message = if bytes.iter().all(u8::is_ascii_whitespace) {
+            "Unexpected end of JSON input".to_string()
+        } else {
+            e.to_string()
         };
-        let field = format!("/{name}");
-        match (kind, value) {
-            (Kind::Bool, Value::Bool(_)) => {}
-            (Kind::Bool, _) => return Err(invalid(format!("{field} must be boolean"))),
-            (_, Value::String(text)) => match kind {
-                Kind::Address if !crate::auth::is_eth_address(text) => {
-                    return Err(invalid(format!(
-                        "{field} must match pattern \"{ADDRESS_PATTERN}\""
-                    )));
+        schema_refusal(message, None)
+    })?;
+    let Value::Object(object) = value else {
+        return Err(invalid(
+            None,
+            "type",
+            json!({ "type": "object" }),
+            "must be object".into(),
+        ));
+    };
+    if object.len() < min_properties {
+        return Err(invalid(
+            None,
+            "minProperties",
+            json!({ "limit": min_properties }),
+            format!("must NOT have fewer than {min_properties} properties"),
+        ));
+    }
+    if let Some(name) = required.iter().find(|name| !object.contains_key(**name)) {
+        return Err(invalid(
+            None,
+            "required",
+            json!({ "missingProperty": name }),
+            format!("must have required property '{name}'"),
+        ));
+    }
+    if let Some(name) = input_keys(bytes)
+        .iter()
+        .find(|name| !properties.iter().any(|(p, _)| p == name))
+    {
+        return Err(invalid(
+            None,
+            "additionalProperties",
+            json!({ "additionalProperty": name }),
+            "must NOT have additional properties".into(),
+        ));
+    }
+    for (name, kind) in properties {
+        let Some(value) = object.get(*name) else {
+            continue;
+        };
+        let field = Some(*name);
+        let wrong_type = |expected: &str| {
+            invalid(
+                field,
+                "type",
+                json!({ "type": expected }),
+                format!("must be {expected}"),
+            )
+        };
+        if let Kind::Strings {
+            min,
+            max,
+            element_max,
+            uuid,
+        } = kind
+        {
+            let Value::Array(items) = value else {
+                return Err(wrong_type("array"));
+            };
+            for (keyword, limit, fails, message) in [
+                (
+                    "maxItems",
+                    *max,
+                    items.len() > *max,
+                    format!("must NOT have more than {max} items"),
+                ),
+                (
+                    "minItems",
+                    *min,
+                    items.len() < *min,
+                    format!("must NOT have fewer than {min} items"),
+                ),
+            ] {
+                if fails {
+                    return Err(invalid(field, keyword, json!({ "limit": limit }), message));
                 }
-                Kind::Uuid if !is_uuid(text) => {
-                    return Err(invalid(format!("{field} must match format \"uuid\"")));
+            }
+            for (index, item) in items.iter().enumerate() {
+                let violation = match item.as_str() {
+                    None => Some((
+                        "type",
+                        json!({ "type": "string" }),
+                        "must be string".to_string(),
+                    )),
+                    Some(text) if text.chars().count() > *element_max => Some((
+                        "maxLength",
+                        json!({ "limit": element_max }),
+                        format!("must NOT have more than {element_max} characters"),
+                    )),
+                    Some(text) if *uuid && !is_uuid(text) => Some((
+                        "pattern",
+                        json!({ "pattern": UUID_PATTERN }),
+                        format!("must match pattern \"{UUID_PATTERN}\""),
+                    )),
+                    _ => None,
+                };
+                if let Some((keyword, params, message)) = violation {
+                    let mut error = ajv_error(field, keyword, params, message);
+                    error["instancePath"] = json!(format!("/{name}/{index}"));
+                    error["schemaPath"] = json!(format!("#/properties/{name}/items/{keyword}"));
+                    return Err(schema_refusal("Invalid JSON body".into(), Some(error)));
                 }
-                Kind::OneOf(allowed) if !allowed.contains(&text.as_str()) => {
-                    return Err(invalid(format!(
-                        "{field} must be equal to one of the allowed values"
-                    )));
+            }
+            continue;
+        }
+        let text = match (kind, value) {
+            (Kind::Bool, Value::Bool(_)) => continue,
+            (Kind::Bool, _) => return Err(wrong_type("boolean")),
+            (_, Value::String(text)) => text,
+            _ => return Err(wrong_type("string")),
+        };
+        let pattern = |pattern: &str| {
+            invalid(
+                field,
+                "pattern",
+                json!({ "pattern": pattern }),
+                format!("must match pattern \"{pattern}\""),
+            )
+        };
+        match kind {
+            Kind::Email => {
+                if text.is_empty() {
+                    return Err(invalid(
+                        field,
+                        "minLength",
+                        json!({"limit":1}),
+                        "must NOT have fewer than 1 characters".into(),
+                    ));
                 }
-                Kind::Text { max } if text.chars().count() > *max => {
-                    return Err(invalid(format!(
-                        "{field} must NOT have more than {max} characters"
-                    )));
+                if !schema_email(text) {
+                    return Err(invalid(
+                        field,
+                        "format",
+                        json!({"format":"email"}),
+                        "must match format \"email\"".into(),
+                    ));
                 }
-                _ => {}
-            },
-            _ => return Err(invalid(format!("{field} must be string"))),
+            }
+            Kind::Address if !crate::auth::is_eth_address(text) => {
+                return Err(pattern(ADDRESS_PATTERN));
+            }
+            Kind::Uuid if !is_uuid(text) => return Err(pattern(UUID_PATTERN)),
+            Kind::OneOf(allowed) if !allowed.contains(&text.as_str()) => {
+                return Err(invalid(
+                    field,
+                    "enum",
+                    json!({ "allowedValues": allowed }),
+                    "must be equal to one of the allowed values".into(),
+                ));
+            }
+            // AJV counts code points (`ucs2length`).
+            Kind::Text { max } if text.chars().count() > *max => {
+                return Err(invalid(
+                    field,
+                    "maxLength",
+                    json!({ "limit": max }),
+                    format!("must NOT have more than {max} characters"),
+                ));
+            }
+            Kind::TextRange {
+                min,
+                max,
+                non_whitespace,
+            } => {
+                if text.chars().count() > *max {
+                    return Err(invalid(
+                        field,
+                        "maxLength",
+                        json!({ "limit": max }),
+                        format!("must NOT have more than {max} characters"),
+                    ));
+                }
+                if text.chars().count() < *min {
+                    return Err(invalid(
+                        field,
+                        "minLength",
+                        json!({ "limit": min }),
+                        format!("must NOT have fewer than {min} characters"),
+                    ));
+                }
+                if *non_whitespace && text.starts_with(js_whitespace) {
+                    return Err(pattern("^\\S"));
+                }
+            }
+            _ => {}
         }
     }
     Ok(object)
 }
 
-fn text<'a>(object: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
+// ajv-formats default/full email regexp used by the source schema middleware.
+fn schema_email(text: &str) -> bool {
+    let Some((local, domain)) = text.split_once('@') else {
+        return false;
+    };
+    let atom = |part: &str| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+/=?^_`{|}~-".contains(&c))
+    };
+    let label = |part: &str| {
+        !part.is_empty()
+            && part.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
+            && part.as_bytes()[0].is_ascii_alphanumeric()
+            && part.as_bytes()[part.len() - 1].is_ascii_alphanumeric()
+    };
+    local.split('.').all(atom) && domain.contains('.') && domain.split('.').all(label)
+}
+
+pub(crate) fn text<'a>(object: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
     object.get(name).and_then(Value::as_str)
 }
 
@@ -376,10 +816,11 @@ async fn create_friendship_request(
     AxumState(state): AxumState<Shared>,
     headers: HeaderMap,
     original: OriginalUri,
-    bytes: Bytes,
+    bytes: DeferredBody,
 ) -> Answer {
     let local = "/v1/friendship-requests".to_string();
     let me = signer(&state, &headers, &original, "post", local).await?;
+    let bytes = bytes.schema().await?;
     let object = body(
         &bytes,
         &[
@@ -416,10 +857,11 @@ async fn update_friendship_request(
     headers: HeaderMap,
     original: OriginalUri,
     Path(address): Path<String>,
-    bytes: Bytes,
+    bytes: DeferredBody,
 ) -> Answer {
     let local = format!("/v1/friendship-requests/{address}");
     let me = signer(&state, &headers, &original, "patch", local).await?;
+    let bytes = bytes.schema().await?;
     let object = body(
         &bytes,
         &[(
@@ -499,9 +941,10 @@ async fn block_user(
     AxumState(state): AxumState<Shared>,
     headers: HeaderMap,
     original: OriginalUri,
-    bytes: Bytes,
+    bytes: DeferredBody,
 ) -> Answer {
     let me = signer(&state, &headers, &original, "post", "/v1/blocks".into()).await?;
+    let bytes = bytes.schema().await?;
     let object = body(&bytes, &[("address", Kind::Address)], &["address"], 0)?;
     let other = text(&object, "address").unwrap_or_default().to_lowercase();
     if other == me {
@@ -587,10 +1030,11 @@ async fn update_social_settings(
     AxumState(state): AxumState<Shared>,
     headers: HeaderMap,
     original: OriginalUri,
-    bytes: Bytes,
+    bytes: DeferredBody,
 ) -> Answer {
     let local = "/v1/social-settings".to_string();
     let me = signer(&state, &headers, &original, "patch", local).await?;
+    let bytes = bytes.schema().await?;
     let object = body(
         &bytes,
         &[
@@ -662,10 +1106,11 @@ async fn start_private_voice_chat(
     AxumState(state): AxumState<Shared>,
     headers: HeaderMap,
     original: OriginalUri,
-    bytes: Bytes,
+    bytes: DeferredBody,
 ) -> Answer {
     let local = "/v1/private-voice-chats".to_string();
     let me = signer(&state, &headers, &original, "post", local).await?;
+    let bytes = bytes.schema().await?;
     let object = body(
         &bytes,
         &[("calleeAddress", Kind::Address)],
@@ -709,10 +1154,11 @@ async fn update_private_voice_chat(
     headers: HeaderMap,
     original: OriginalUri,
     Path(call_id): Path<String>,
-    bytes: Bytes,
+    bytes: DeferredBody,
 ) -> Answer {
     let local = format!("/v1/private-voice-chats/{call_id}");
     let me = signer(&state, &headers, &original, "patch", local).await?;
+    let bytes = bytes.schema().await?;
     let object = body(
         &bytes,
         &[("intention", Kind::OneOf(&["accepted", "rejected"]))],
@@ -722,12 +1168,12 @@ async fn update_private_voice_chat(
     path_uuid(&call_id, "callId")?;
     let id = uuid::Uuid::parse_str(&call_id).map_err(failed)?;
     if text(&object, "intention") == Some("rejected") {
-        ops::reject_private_voice_chat(&state.ctx, &me, id)
+        ops::reject_private_voice_chat_with_id(&state.ctx, &me, id, &call_id)
             .await
             .map_err(refused)?;
         return no_content();
     }
-    let connection_url = ops::accept_private_voice_chat(&state.ctx, &me, id)
+    let connection_url = ops::accept_private_voice_chat_with_id(&state.ctx, &me, id, &call_id)
         .await
         .map_err(refused)?;
     data(
@@ -746,7 +1192,7 @@ async fn end_private_voice_chat(
     let me = signer(&state, &headers, &original, "delete", local).await?;
     path_uuid(&call_id, "callId")?;
     let id = uuid::Uuid::parse_str(&call_id).map_err(failed)?;
-    ops::end_private_voice_chat(&state.ctx, &me, id)
+    ops::end_private_voice_chat_with_id(&state.ctx, &me, id, &call_id)
         .await
         .map_err(refused)?;
     no_content()
@@ -758,13 +1204,14 @@ async fn start_community_voice_chat(
     AxumState(state): AxumState<Shared>,
     headers: HeaderMap,
     original: OriginalUri,
-    bytes: Bytes,
+    bytes: DeferredBody,
 ) -> Answer {
     let local = "/v1/community-voice-chats".to_string();
     let me = signer(&state, &headers, &original, "post", local).await?;
+    let bytes = bytes.schema().await?;
     let object = body(&bytes, &[("communityId", Kind::Uuid)], &["communityId"], 0)?;
     let community_id = text(&object, "communityId").unwrap_or_default();
-    let connection_url = ops::start_community_voice_chat(&state.ctx, &me, community_id)
+    let connection_url = ops::start_community_voice_chat(&state.ctx, &me, community_id, false)
         .await
         .map_err(refused)?;
     data(
@@ -797,7 +1244,7 @@ async fn join_community_voice_chat(
     let local = format!("/v1/community-voice-chats/{community_id}/participants");
     let me = signer(&state, &headers, &original, "post", local).await?;
     path_uuid(&community_id, "communityId")?;
-    let connection_url = ops::join_community_voice_chat(&state.ctx, &me, &community_id)
+    let connection_url = ops::join_community_voice_chat(&state.ctx, &me, &community_id, false)
         .await
         .map_err(refused)?;
     data(
@@ -869,10 +1316,11 @@ async fn mute_speaker(
     headers: HeaderMap,
     original: OriginalUri,
     Path(path): Path<(String, String)>,
-    bytes: Bytes,
+    bytes: DeferredBody,
 ) -> Answer {
     let local = format!("/v1/community-voice-chats/{}/speakers/{}", path.0, path.1);
     let me = signer(&state, &headers, &original, "patch", local).await?;
+    let bytes = bytes.schema().await?;
     let object = body(&bytes, &[("muted", Kind::Bool)], &["muted"], 0)?;
     path_uuid(&path.0, "communityId")?;
     let target = path_address(&path.1)?;
@@ -931,6 +1379,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn metrics_handler_catalog_matches_actual_pinned_source_router() {
+        let fixture: Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"), "/services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json"))).unwrap();
+        let actual = SOURCE_HTTP_ROUTES
+            .iter()
+            .map(|(path, methods)| json!({ "path": path, "methods": methods }))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, fixture["httpRoutes"].as_array().unwrap().to_owned());
+    }
+
+    #[test]
     fn uuids_are_upstreams_hyphenated_form() {
         assert!(is_uuid("6f1c2a52-0f3e-4a8e-9d55-1b2c3d4e5f60"));
         assert!(is_uuid("6F1C2A52-0F3E-4A8E-9D55-1B2C3D4E5F60"));
@@ -980,5 +1438,160 @@ mod tests {
             0,
         );
         assert!(request.is_err());
+    }
+
+    fn refusal(result: Result<Map<String, Value>, CommError>) -> Value {
+        match result {
+            Err(CommError::Body(status, body)) => {
+                assert_eq!(status, StatusCode::BAD_REQUEST);
+                body
+            }
+            other => panic!("not a schema refusal: {other:?}"),
+        }
+    }
+
+    /// `@dcl/schema-validator-component` 1.0.1 (`dist/src/component.js`):
+    /// `{ ok: false, message: "Invalid JSON body", data: [<AJV error>] }`,
+    /// the first error in AJV's order, and the parse error's message alone
+    /// for a body that is not JSON.
+    #[test]
+    fn a_body_failing_the_schema_answers_as_the_schema_validator() {
+        let request = |raw: &str| {
+            body(
+                raw.as_bytes(),
+                &[
+                    ("address", Kind::Address),
+                    ("message", Kind::Text { max: 3 }),
+                ],
+                &["address"],
+                0,
+            )
+        };
+        assert_eq!(
+            refusal(request("")),
+            json!({ "ok": false, "message": "Unexpected end of JSON input" })
+        );
+        let cases = [
+            (
+                "[]",
+                json!({ "instancePath": "", "schemaPath": "#/type", "keyword": "type",
+                    "params": { "type": "object" }, "message": "must be object" }),
+            ),
+            (
+                r#"{"extra":1}"#,
+                json!({ "instancePath": "", "schemaPath": "#/required", "keyword": "required",
+                    "params": { "missingProperty": "address" },
+                    "message": "must have required property 'address'" }),
+            ),
+            (
+                r#"{"address":7,"extra":1}"#,
+                json!({ "instancePath": "", "schemaPath": "#/additionalProperties",
+                    "keyword": "additionalProperties", "params": { "additionalProperty": "extra" },
+                    "message": "must NOT have additional properties" }),
+            ),
+            (
+                r#"{"message":"long","address":"0x1"}"#,
+                json!({ "instancePath": "/address", "schemaPath": "#/properties/address/pattern",
+                    "keyword": "pattern", "params": { "pattern": ADDRESS_PATTERN },
+                    "message": format!("must match pattern \"{ADDRESS_PATTERN}\"") }),
+            ),
+            (
+                r#"{"address":"0x0000000000000000000000000000000000000001","message":"long"}"#,
+                json!({ "instancePath": "/message", "schemaPath": "#/properties/message/maxLength",
+                    "keyword": "maxLength", "params": { "limit": 3 },
+                    "message": "must NOT have more than 3 characters" }),
+            ),
+        ];
+        for (raw, error) in cases {
+            assert_eq!(
+                refusal(request(raw)),
+                json!({ "ok": false, "message": "Invalid JSON body", "data": [error] }),
+                "{raw}"
+            );
+        }
+        let intention = body(
+            br#"{"intention":"maybe"}"#,
+            &[("intention", Kind::OneOf(&["accepted", "rejected"]))],
+            &["intention"],
+            0,
+        );
+        assert_eq!(
+            refusal(intention)["data"][0]["params"],
+            json!({ "allowedValues": ["accepted", "rejected"] })
+        );
+        let settings = body(b"{}", &[("x", Kind::Bool)], &[], 1);
+        assert_eq!(
+            refusal(settings)["data"][0]["message"],
+            "must NOT have fewer than 1 properties"
+        );
+        let community = body(
+            br#"{"communityId":"nope"}"#,
+            &[("communityId", Kind::Uuid)],
+            &["communityId"],
+            0,
+        );
+        assert_eq!(
+            refusal(community)["data"][0]["params"]["pattern"],
+            UUID_PATTERN
+        );
+    }
+
+    /// The served `/social-api/openapi.json` documents every twin route
+    /// (upstream `docs/openapi.yaml` at `b6b2cef`).
+    #[test]
+    fn the_served_openapi_documents_every_route() {
+        let doc: Value = serde_json::from_str(crate::shared::openapi::COMMUNITIES).unwrap();
+        for (path, method) in [
+            ("/v2/friends", "get"),
+            ("/v1/friends/{address}", "delete"),
+            ("/v2/users/{address}/mutual-friends", "get"),
+            ("/v1/users/{address}/friendship-status", "get"),
+            ("/v2/friendship-requests", "get"),
+            ("/v1/friendship-requests", "post"),
+            ("/v1/friendship-requests/{address}", "patch"),
+            ("/v2/blocks", "get"),
+            ("/v1/blocks", "post"),
+            ("/v1/blocks/{address}", "delete"),
+            ("/v1/blocking-status", "get"),
+            ("/v1/social-settings", "get"),
+            ("/v1/social-settings", "patch"),
+            ("/v1/private-messages-settings", "get"),
+            ("/v1/private-voice-chats", "post"),
+            ("/v1/private-voice-chats/incoming", "get"),
+            ("/v1/private-voice-chats/{callId}", "patch"),
+            ("/v1/private-voice-chats/{callId}", "delete"),
+            ("/v1/community-voice-chats", "post"),
+            ("/v1/community-voice-chats/{communityId}", "delete"),
+            (
+                "/v1/community-voice-chats/{communityId}/participants",
+                "post",
+            ),
+            (
+                "/v1/community-voice-chats/{communityId}/participants/{address}",
+                "delete",
+            ),
+            (
+                "/v1/community-voice-chats/{communityId}/speakers/{address}",
+                "put",
+            ),
+            (
+                "/v1/community-voice-chats/{communityId}/speakers/{address}",
+                "patch",
+            ),
+            (
+                "/v1/community-voice-chats/{communityId}/speakers/{address}",
+                "delete",
+            ),
+            (
+                "/v1/community-voice-chats/{communityId}/speak-requests",
+                "post",
+            ),
+            (
+                "/v1/community-voice-chats/{communityId}/speak-requests/{address}",
+                "delete",
+            ),
+        ] {
+            assert!(doc["paths"][path][method].is_object(), "{method} {path}");
+        }
     }
 }

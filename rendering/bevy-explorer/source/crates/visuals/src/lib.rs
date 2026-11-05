@@ -1,6 +1,7 @@
 mod atmosphere_params;
 mod coast;
 mod day_night;
+mod debug_panel;
 mod lens_flare;
 mod nishita_cloud;
 mod props;
@@ -59,6 +60,7 @@ pub struct VisualsPlugin {
 
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
+        debug_panel::register(app);
         app.insert_resource(DirectionalLightShadowMap {
             size: SUN_SHADOW_MAP_SIZE,
         })
@@ -119,6 +121,7 @@ impl Plugin for VisualsPlugin {
     }
 
     fn finish(&self, app: &mut App) {
+        debug_panel::register_gpu(app);
         let snapshots_only = app
             .world()
             .resource::<scene_runner::initialize_scene::TestingData>()

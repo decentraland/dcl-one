@@ -1,4 +1,5 @@
 pub mod bake_scene;
+mod debug_panel;
 pub mod fade;
 pub mod floor_imposter;
 pub mod imposter_mesh;
@@ -27,6 +28,7 @@ impl Plugin for DclImposterPlugin {
             .add_preview_console_command::<ImpostMultisampleCommand, _>(set_impost_multi)
             .add_preview_console_command::<DebugImpostersCommand, _>(toggle_debug_imposters);
         app.insert_resource(self.clone());
+        debug_panel::register(app);
     }
 }
 

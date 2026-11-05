@@ -69,7 +69,10 @@
         "@decentraland/apis"
       ],
       "paths": [
-        "/services/catalyst/social/"
+        "/services/catalyst/social/",
+        "/tooling/social-*.cjs",
+        "/tooling/social-captures.json",
+        "/tooling/tests/social-*.test.cjs"
       ]
     },
     {
@@ -238,6 +241,20 @@
         "/apps/bevy-explorer/",
         "/.github/workflows/bevy-explorer-*.yml",
         "/.github/actions/bevy-explorer-*/"
+      ]
+    },
+    {
+      "id": "uuav-native",
+      "description": "UUAV native video player: the client crate the Explorer links, the sandboxed uuav-helper, the committed runtime set and its lock, the native build and verification workflows",
+      "owners": [
+        "@decentraland/client"
+      ],
+      "paths": [
+        "/library/uuav/",
+        "/tooling/uuav/",
+        "/tooling/native-lock/",
+        "/.github/workflows/uuav-native.yml",
+        "/.github/workflows/uuav-verify.yml"
       ]
     },
     {

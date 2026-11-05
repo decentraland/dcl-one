@@ -1,0 +1,191 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+  },
+  "runtime": {
+    "node": "v26.12.0"
+  },
+  "scope": "Actual source component-key order, official sequential lifecycle, pubsub.start/subscribe/publish and RPC start with controlled Redis promises and listen callback. No real Redis or TCP listener; standalone source listener admission differs from the target monolith empty503 guard.",
+  "component_key_order": [
+    "aiCompliance",
+    "analytics",
+    "archipelagoStats",
+    "registry",
+    "catalystClient",
+    "cdnCacheInvalidator",
+    "commsGatekeeper",
+    "communities",
+    "communitiesDb",
+    "communityBans",
+    "communityBroadcaster",
+    "communityComplianceValidator",
+    "communityFieldsValidator",
+    "communityEvents",
+    "communityMembers",
+    "communityOwners",
+    "communityPlaces",
+    "communityPosts",
+    "communityRoles",
+    "communityRequests",
+    "communityThumbnail",
+    "communityVoice",
+    "communityVoiceChatCache",
+    "communityVoiceChatPolling",
+    "communityVoiceChatPollingJob",
+    "communityRankingCalculationJob",
+    "config",
+    "email",
+    "expirePrivateVoiceChatJob",
+    "features",
+    "featureFlags",
+    "fetcher",
+    "friends",
+    "friendsDb",
+    "httpServer",
+    "logs",
+    "memoryCache",
+    "queueProcessor",
+    "metrics",
+    "nats",
+    "peerTracking",
+    "peersStats",
+    "peersSynchronizer",
+    "pg",
+    "placesApi",
+    "pubsub",
+    "queue",
+    "communityRanking",
+    "redis",
+    "referral",
+    "referralDb",
+    "rewards",
+    "rpcServer",
+    "settings",
+    "slack",
+    "sns",
+    "statusChecks",
+    "storage",
+    "streamSessions",
+    "subscribersContext",
+    "tracing",
+    "updateHandler",
+    "uwsServer",
+    "voice",
+    "voiceDb",
+    "worldsStats",
+    "wsPool",
+    "wsAdmission",
+    "schemaValidator",
+    "userMutesDb",
+    "userMutes"
+  ],
+  "cases": [
+    {
+      "id": "sub-connect-pending",
+      "state": {
+        "stages": [
+          "sub-connect-start"
+        ],
+        "sub_ready": false,
+        "pub_ready": false,
+        "subscription_attempts": 0,
+        "listen_count": 0,
+        "close_count": 0
+      }
+    },
+    {
+      "id": "pub-connect-pending",
+      "state": {
+        "stages": [
+          "sub-connect-start",
+          "sub-connected",
+          "pub-connect-start"
+        ],
+        "sub_ready": true,
+        "pub_ready": false,
+        "subscription_attempts": 0,
+        "listen_count": 0,
+        "close_count": 0
+      }
+    },
+    {
+      "id": "subscriptions-pending",
+      "state": {
+        "stages": [
+          "sub-connect-start",
+          "sub-connected",
+          "pub-connect-start",
+          "pub-connected"
+        ],
+        "sub_ready": true,
+        "pub_ready": true,
+        "subscription_attempts": 9,
+        "listen_count": 0,
+        "close_count": 0
+      }
+    },
+    {
+      "id": "ready",
+      "state": {
+        "stages": [
+          "sub-connect-start",
+          "sub-connected",
+          "pub-connect-start",
+          "pub-connected",
+          "uws-server-start"
+        ],
+        "sub_ready": true,
+        "pub_ready": true,
+        "subscription_attempts": 9,
+        "listen_count": 1,
+        "close_count": 0
+      },
+      "channels": [
+        "friendship.updates",
+        "friendship.updates",
+        "friend.status.updates",
+        "community.member.connectivity.updates",
+        "community.member.status.updates",
+        "community.deleted.updates",
+        "block.updates",
+        "privateVoiceChat.updates",
+        "communityVoiceChat.updates"
+      ]
+    },
+    {
+      "id": "outage-after-ready",
+      "state": {
+        "stages": [
+          "sub-connect-start",
+          "sub-connected",
+          "pub-connect-start",
+          "pub-connected",
+          "uws-server-start"
+        ],
+        "sub_ready": false,
+        "pub_ready": false,
+        "subscription_attempts": 9,
+        "listen_count": 1,
+        "close_count": 0
+      }
+    },
+    {
+      "id": "subscription-failure",
+      "state": {
+        "stages": [
+          "sub-connect-start",
+          "sub-connected",
+          "pub-connect-start",
+          "pub-connected"
+        ],
+        "sub_ready": true,
+        "pub_ready": true,
+        "subscription_attempts": 9,
+        "listen_count": 0,
+        "close_count": 0
+      },
+      "error": "synthetic subscription failure"
+    }
+  ]
+}

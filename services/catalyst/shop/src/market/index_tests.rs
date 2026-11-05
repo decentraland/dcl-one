@@ -192,6 +192,7 @@ fn answer(chain: &FakeChain, body: &Value) -> Value {
     let refuse = |message: String| json!({ "jsonrpc": "2.0", "id": body["id"], "error": { "code": -32602, "message": message } });
     match body["method"].as_str() {
         Some("eth_blockNumber") => reply(json!(format!("0x{:x}", *chain.head.lock()))),
+        Some("eth_chainId") => reply(json!("0x89")),
         Some("eth_getBlockByNumber") => {
             let n = if body["params"][0] == "finalized" {
                 if !chain.finalized_available.load(Ordering::SeqCst) {
@@ -525,16 +526,26 @@ async fn status_of(pool: &PgPool, id: &str) -> Option<String> {
 }
 
 #[tokio::test]
+async fn the_trade_events_walk_refuses_an_endpoint_of_another_chain() {
+    let url = serve(FakeChain::new(1_000, vec![], 10_000, 1_000)).await;
+    let http = crate::http::Outbound::for_tests();
+    let rpc = Rpc::at(&http, &url);
+    super::ensure_chain(&rpc, 137).await.unwrap();
+    let refused = super::ensure_chain(&rpc, 80_002)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(refused.contains("serves chain 137, not 80002"), "{refused}");
+}
+
+#[tokio::test]
 async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_and_answer_accept()
 {
     let Some(db) = ScratchDb::create().await else {
         return;
     };
     let market = trade_events::marketplaces(ChainNet::Matic)[1].0;
-    let start = TradeEventsIndex {
-        net: ChainNet::Matic,
-    }
-    .start_block();
+    let start = TradeEventsIndex::mainnet(ChainNet::Matic).start_block();
     let item = "0x00000000000000000000000000000000000000c1";
     let mana = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
     let sold = seed_trade(
@@ -630,14 +641,7 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
     // accept route answers the envelope.
     let st = state_over(db.pool.clone(), &url, index_settings(4, 10_000), false);
     let app = super::market_router(st.clone());
-    let first = pass(
-        &st,
-        &url,
-        &TradeEventsIndex {
-            net: ChainNet::Matic,
-        },
-    )
-    .await;
+    let first = pass(&st, &url, &TradeEventsIndex::mainnet(ChainNet::Matic)).await;
     assert!(first.paused && !first.published, "{first:?}");
     assert!(first.indexed_to >= s as i64 && first.indexed_to < head as i64);
     let (code, body) = get_json(&app, &format!("/v1/trades/{}/accept", sold.1)).await;
@@ -658,14 +662,7 @@ async fn trade_events_walk_under_a_budget_resume_after_a_kill_fold_the_verdicts_
     let st = state_over(db.pool.clone(), &url, index_settings(4, 10_000), false);
     let mut last = PassOutcome::default();
     for _ in 0..20 {
-        last = pass(
-            &st,
-            &url,
-            &TradeEventsIndex {
-                net: ChainNet::Matic,
-            },
-        )
-        .await;
+        last = pass(&st, &url, &TradeEventsIndex::mainnet(ChainNet::Matic)).await;
         if last.published {
             break;
         }
@@ -798,10 +795,7 @@ async fn a_v3_cancellation_names_the_digest_the_fold_recomputes_from_the_stored_
         Ok(id) => id,
         Err(e) => panic!("the fixture trade is stored: {e}"),
     };
-    let start = TradeEventsIndex {
-        net: ChainNet::Matic,
-    }
-    .start_block();
+    let start = TradeEventsIndex::mainnet(ChainNet::Matic).start_block();
     let head = 93_600_000u64.max(start + 200);
     let chain = FakeChain::new(
         head,
@@ -822,14 +816,7 @@ async fn a_v3_cancellation_names_the_digest_the_fold_recomputes_from_the_stored_
     );
     let mut last = PassOutcome::default();
     for _ in 0..10 {
-        last = pass(
-            &st,
-            &url,
-            &TradeEventsIndex {
-                net: ChainNet::Matic,
-            },
-        )
-        .await;
+        last = pass(&st, &url, &TradeEventsIndex::mainnet(ChainNet::Matic)).await;
         if last.published {
             break;
         }
@@ -1390,6 +1377,14 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
     )
         .abi_encode_params();
     let reg = nft_index::DCL_REGISTRAR;
+    // PixelGolf on sale for 5,000 wei, under the parcel's 9,000: the NAME browse's price range.
+    let name_order = (
+        FixedBytes::<32>::repeat_byte(0x08),
+        Address::from_str(reg).unwrap(),
+        U256::from(5_000u64),
+        U256::from(4_000_000_000u64),
+    )
+        .abi_encode_params();
     let logs = vec![
         transfer(v1, ZERO, ALICE, U256::from(0u8), s + 100, 0),
         log_at(
@@ -1452,6 +1447,17 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
             s + 400,
             0,
         ),
+        log_at(
+            market,
+            vec![
+                nft_index::TOPIC_ORDER_CREATED.into(),
+                topic_word(name_token),
+                topic_addr(BOB),
+            ],
+            name_order,
+            s + 401,
+            0,
+        ),
     ];
     let head = s + 1_000;
     let chain = FakeChain::new(head, logs, 1_000_000, 100);
@@ -1493,6 +1499,41 @@ async fn ethereum_names_v1_wearables_land_data_and_the_land_routes() {
         ),
         (Some("PixelGolf"), Some("PixelGolf"), Some(BOB))
     );
+    // The NAME browse's price range is in wei and bounds the open listing; `cheapest` sorts by it.
+    // A search reads this index (without one the subgraph serves, its `where` checked in nfts.rs).
+    for (range, listed) in [
+        ("minPrice=5000&maxPrice=5000", true),
+        ("minPrice=1&maxPrice=9000", true),
+        ("minPrice=5001", false),
+        ("maxPrice=4999", false),
+    ] {
+        let (code, body) = get_json(
+            &app,
+            &format!("/v1/nfts?category=ens&search=pixel&isOnSale=true&sortBy=cheapest&{range}"),
+        )
+        .await;
+        assert_eq!(code, StatusCode::OK, "{range}: {body}");
+        let names: Vec<_> = body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["nft"]["name"].as_str())
+            .collect();
+        assert_eq!(
+            names,
+            if listed {
+                vec![Some("PixelGolf")]
+            } else {
+                vec![]
+            },
+            "{range}: {body}"
+        );
+        if listed {
+            assert_eq!(body["data"][0]["order"]["price"], "5000", "{range}: {body}");
+        }
+    }
+    let (code, body) = get_json(&app, "/v1/nfts?category=ens&isOnSale=true&minPrice=abc").await;
+    assert_eq!(code, StatusCode::BAD_REQUEST, "{body}");
     let (code, body) = get_json(&app, "/v1/nfts?search=jester&network=ETHEREUM").await;
     assert_eq!(
         (

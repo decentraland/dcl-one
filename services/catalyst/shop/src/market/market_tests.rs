@@ -727,6 +727,54 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         "5 MANA at the seeded 0.02 spot is one credit: {}",
         body["data"][0]
     );
+    // isOnSale=false is the complement of isOnSale=true, not the whole list:
+    // item 4 sold out is the one item of c1 not on sale.
+    let sold_out = |available: i32| {
+        sqlx::query(
+            "UPDATE shop.items SET available = $1 WHERE contract_address = $2 AND item_id = '4'",
+        )
+        .bind(available)
+        .bind(c1.clone())
+        .execute(&pool)
+    };
+    let stock: i32 = sqlx::query_scalar(
+        "SELECT available::int FROM shop.items WHERE contract_address = $1 AND item_id = '4'",
+    )
+    .bind(c1.clone())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sold_out(0).await.unwrap();
+    state.readers.clear();
+    let total = |body: &Value| body["total"].as_i64().unwrap();
+    let (_, all) = get(
+        app(),
+        &format!("/v3/catalog/items?contractAddress={c1}&first=1000"),
+    )
+    .await;
+    let (_, on) = get(
+        app(),
+        &format!("/v3/catalog/items?contractAddress={c1}&first=1000&isOnSale=true"),
+    )
+    .await;
+    let (status, off) = get(
+        app(),
+        &format!("/v3/catalog/items?contractAddress={c1}&first=1000&isOnSale=false"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{off}");
+    assert_eq!(total(&off), 1, "{off}");
+    assert_eq!(off["data"][0]["itemId"], "4", "{off}");
+    assert_eq!(off["data"][0]["isOnSale"], false, "{off}");
+    assert_eq!(
+        total(&on) + total(&off),
+        total(&all),
+        "on {} / all {}",
+        total(&on),
+        total(&all)
+    );
+    sold_out(stock).await.unwrap();
+    state.readers.clear();
 
     // The collections mirror behind /v1/contracts and /v1/collections.
     let (status, body) = get(app(), "/v1/contracts?first=1000").await;
@@ -764,6 +812,32 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         (Some(3), Some("primary"), Some("male"))
     );
     assert!(listing["coupon"].is_null() && listing["compareAtCredits"].is_null());
+    // `creator` takes a comma-separated list, any of which matches, in any case (the Shop's creators filter).
+    let stranger = "0x00000000000000000000000000000000000000aa";
+    for feed in ["/v3/catalog/shop?", "/v3/catalog/unified?groupBy=item&"] {
+        let (_, all) = get(app(), &format!("{feed}contractAddress={c1}")).await;
+        let listed = all["total"].as_i64().unwrap();
+        assert!(listed > 0, "{feed}: {all}");
+        for (creators, want) in [
+            (
+                format!("{stranger},0x{}", CREATOR[2..].to_uppercase()),
+                listed,
+            ),
+            (stranger.to_string(), 0),
+        ] {
+            let (status, body) = get(
+                app(),
+                &format!("{feed}contractAddress={c1}&creator={creators}"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(
+                body["total"].as_i64(),
+                Some(want),
+                "{feed}creator={creators}: {body}"
+            );
+        }
+    }
     // The creator's live coupon discounts the listing, but only one signed
     // against the manager paired with the marketplace the listing settles on
     // (the V3 trade here): the bigger V2-manager coupon never applies.
@@ -930,6 +1004,50 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         picked,
         vec![format!("{c2}-10"), format!("{c2}-5")],
         "{body}"
+    );
+    // The emote attributes: c2's items 5 and 10 are emotes on sale; 5 loops
+    // with sound, 10 plays once with props.
+    let emote = |item: &'static str, looped: bool, sound: bool, geometry: bool| {
+        sqlx::query("UPDATE shop.items SET emote_loop = $1, emote_has_sound = $2, emote_has_geometry = $3 WHERE contract_address = $4 AND item_id = $5::numeric")
+            .bind(looped)
+            .bind(sound)
+            .bind(geometry)
+            .bind(c2.clone())
+            .bind(item)
+            .execute(&pool)
+    };
+    emote("5", true, true, false).await.unwrap();
+    emote("10", false, false, true).await.unwrap();
+    let picked_with = |filter: &'static str| {
+        let app = app();
+        let uri =
+            format!("/v3/catalog/unified?groupBy=item&items={c2}-5,{c2}-10&first=10&{filter}");
+        async move {
+            let (status, body) = get(app, &uri).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let mut ids: Vec<String> = body["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|d| d["itemId"].as_str().unwrap().to_string())
+                .collect();
+            ids.sort();
+            ids
+        }
+    };
+    assert_eq!(picked_with("emotePlayMode=loop").await, vec!["5"]);
+    assert_eq!(picked_with("emotePlayMode=simple").await, vec!["10"]);
+    assert_eq!(
+        picked_with("emotePlayMode=loop&emotePlayMode=simple").await,
+        vec!["10", "5"],
+        "both modes is no filter"
+    );
+    assert_eq!(picked_with("emoteHasSound=true").await, vec!["5"]);
+    assert_eq!(picked_with("emoteHasGeometry=true").await, vec!["10"]);
+    assert!(
+        picked_with("emoteHasSound=true&emoteHasGeometry=true")
+            .await
+            .is_empty()
     );
     let (_, body) = get(
         app(),

@@ -108,7 +108,7 @@ impl BlockchainChecker for StubChecker {
         _eth_address: &str,
         _contract_address: &str,
         _item_id: &str,
-        _entity: &Entity,
+        _deployment: &Deployment<'_>,
         _timestamp: Timestamp,
         _layer: BlockchainLayer,
     ) -> Result<bool, ValidatorError> {
@@ -135,6 +135,8 @@ fn validator(external: &StubExternalCalls) -> ContentValidator<'_, StubExternalC
         external_calls: external,
         blockchain_checker: &StubChecker,
         ignore_blockchain_access: true,
+        synced: false,
+        access_passed: false,
     }
 }
 
@@ -153,7 +155,7 @@ fn deployment(
         version: "v3".to_string(),
         metadata,
     });
-    d.files = files;
+    d.files = files.into_iter().map(|(k, v)| (k, v.into())).collect();
     d
 }
 

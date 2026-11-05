@@ -29,9 +29,9 @@ use crate::{Address, CommunityId};
 use super::db::{PendingPrivateCall, PrivateVoiceChatRow, StartOutcome};
 
 use super::{
-    CommunityVoiceChatBody, community_voice_credentials_for, destroy_community_voice_chat,
-    end_private_call, get_private_voice_chat_room_credentials, kick_from_community_room,
-    merge_metadata, patch, require_livekit, set_speaker,
+    CommunityVoiceChatBody, community_status, community_voice_credentials_for,
+    destroy_community_voice_chat, end_private_call, kick_from_community_room, merge_metadata,
+    patch, pending_private_voice_chat_room_credentials, require_livekit, set_speaker,
 };
 use crate::gatekeeper::CommsState;
 use crate::gatekeeper::errors::ApiError;
@@ -67,7 +67,10 @@ impl CommunityVoiceAction {
 
 #[async_trait]
 pub trait VoiceRooms: Send + Sync {
-    /// Atomically reclaim stale calls and create a pending call unless either party is busy.
+    /// The existing comms presence configuration also governs shared SQL readers.
+    fn presence_config(&self) -> super::db::VoiceDbConfig;
+
+    /// Create a pending call unless either party is busy; expiry belongs to the sweep.
     async fn create_pending_private_call(
         &self,
         caller: &str,
@@ -113,14 +116,25 @@ pub trait VoiceRooms: Send + Sync {
     ) -> Result<Option<PrivateVoiceChatRow>, VoiceUnavailable>;
 
     /// A grant for `voice-chat-community-<community_id>`; `role` is the stored
-    /// community role text, `Create` opens the room, `Join` enters it.
+    /// community role text, `Create` opens the room, `Join` enters it;
+    /// `profile` (`name`, `has_claimed_name`, `profile_picture_url`) reaches
+    /// the participant's room metadata.
     async fn community_voice_credentials(
         &self,
         community_id: Uuid,
         address: &str,
         role: &str,
         action: CommunityVoiceAction,
+        profile: Option<serde_json::Value>,
     ) -> Result<String, VoiceUnavailable>;
+
+    /// Whether the community's room is live: a moderator connected, or
+    /// still within its connection window (the gatekeeper's
+    /// `GET /community-voice-chat/{id}/status` `active`).
+    async fn community_voice_chat_active(
+        &self,
+        community_id: Uuid,
+    ) -> Result<bool, VoiceUnavailable>;
 
     async fn end_community_voice_chat(
         &self,
@@ -160,6 +174,9 @@ pub struct NoVoiceRuntime;
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait]
 impl VoiceRooms for NoVoiceRuntime {
+    fn presence_config(&self) -> super::db::VoiceDbConfig {
+        Default::default()
+    }
     async fn create_pending_private_call(
         &self,
         _: &str,
@@ -209,7 +226,15 @@ impl VoiceRooms for NoVoiceRuntime {
         _address: &str,
         _role: &str,
         _action: CommunityVoiceAction,
+        _profile: Option<serde_json::Value>,
     ) -> Result<String, VoiceUnavailable> {
+        Err(VoiceUnavailable::NotConfigured)
+    }
+
+    async fn community_voice_chat_active(
+        &self,
+        _community_id: Uuid,
+    ) -> Result<bool, VoiceUnavailable> {
         Err(VoiceUnavailable::NotConfigured)
     }
 
@@ -266,7 +291,9 @@ impl VoiceRooms for NoVoiceRuntime {
 }
 
 fn unavailable(e: ApiError) -> VoiceUnavailable {
-    if e.code == 503 {
+    if e.code == 404 {
+        VoiceUnavailable::NotFound
+    } else if e.code == 503 {
         VoiceUnavailable::NotConfigured
     } else {
         VoiceUnavailable::Failed(e.to_string())
@@ -302,6 +329,9 @@ fn address(raw: &str) -> Result<Address, VoiceUnavailable> {
 
 #[async_trait]
 impl VoiceRooms for CommsState {
+    fn presence_config(&self) -> super::db::VoiceDbConfig {
+        self.voice_db.config()
+    }
     async fn create_pending_private_call(
         &self,
         caller: &str,
@@ -343,7 +373,7 @@ impl VoiceRooms for CommsState {
         require_livekit(self).map_err(unavailable)?;
         let participants = [address(caller)?, address(callee)?];
         let grants =
-            get_private_voice_chat_room_credentials(self, &call_id.to_string(), &participants)
+            pending_private_voice_chat_room_credentials(self, &call_id.to_string(), &participants)
                 .await
                 .map_err(unavailable)?;
         Ok(grants
@@ -374,17 +404,28 @@ impl VoiceRooms for CommsState {
         address_raw: &str,
         role: &str,
         action: CommunityVoiceAction,
+        profile: Option<serde_json::Value>,
     ) -> Result<String, VoiceUnavailable> {
         let body = CommunityVoiceChatBody {
             community_id: community_id.to_string(),
             user_address: address_raw.to_string(),
             user_role: Some(role.to_string()),
             action: Some(action.as_str().to_string()),
-            profile_data: None,
+            profile_data: profile,
         };
         community_voice_credentials_for(self, body)
             .await
             .map_err(unavailable)
+    }
+
+    async fn community_voice_chat_active(
+        &self,
+        community_id: Uuid,
+    ) -> Result<bool, VoiceUnavailable> {
+        let (active, _, _) = community_status(self, CommunityId::from_uuid(community_id))
+            .await
+            .map_err(unavailable)?;
+        Ok(active)
     }
 
     async fn end_community_voice_chat(

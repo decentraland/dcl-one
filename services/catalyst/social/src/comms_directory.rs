@@ -43,7 +43,17 @@ impl SocialDirectory for Directory {
         event: &serde_json::Value,
         occurred_at: NaiveDateTime,
     ) -> Result<(), sqlx::Error> {
-        sqlx::query("INSERT INTO social.notifications (id, address, type, metadata, broadcast_key, occurred_at, read, created_at) SELECT gen_random_uuid(), m.member_address, 'community-streaming-ended', $2, $3, $4, FALSE, $4 FROM social.community_members m WHERE m.community_id = $1 ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO NOTHING").bind(community).bind(event).bind(event_key).bind(occurred_at).execute(&self.pool).await?;
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("INSERT INTO social.notifications (id, address, type, metadata, broadcast_key, occurred_at, read, created_at) SELECT gen_random_uuid(), m.member_address, 'community-streaming-ended', $2, $3, $4, FALSE, $4 FROM social.community_members m WHERE m.community_id = $1 ON CONFLICT (address, broadcast_key) WHERE broadcast_key IS NOT NULL DO NOTHING").bind(community).bind(event).bind(event_key).bind(occurred_at).execute(&mut *tx).await?;
+        crate::communities::ranking::record_stream(
+            &mut tx,
+            community.as_uuid(),
+            event_key,
+            event,
+            occurred_at,
+        )
+        .await?;
+        tx.commit().await?;
         Ok(())
     }
     async fn notify_streaming_notification(

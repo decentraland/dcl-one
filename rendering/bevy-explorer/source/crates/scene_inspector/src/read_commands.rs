@@ -161,14 +161,31 @@ fn scene_target_cmd(
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/scene_logs")]
 struct SceneLogsCommand {
+    /// Read logs from the world debug panel's parcel.
+    #[arg(long)]
+    panel: bool,
     /// Number of entries to show (default 20)
     #[arg(default_value = "20")]
     count: usize,
 }
 
-fn scene_logs_cmd(mut input: ConsoleCommand<SceneLogsCommand>, resolver: SceneResolver) {
+fn scene_logs_cmd(
+    mut input: ConsoleCommand<SceneLogsCommand>,
+    resolver: SceneResolver,
+    panel: Res<crate::panel::InspectionParcel>,
+) {
     if let Some(Ok(cmd)) = input.take() {
-        match resolver.resolve() {
+        let target = if cmd.panel {
+            panel.resolve(&resolver).and_then(|root| {
+                resolver
+                    .scenes
+                    .get(root)
+                    .map_err(|_| "scene no longer running".to_owned())
+            })
+        } else {
+            resolver.resolve()
+        };
+        match target {
             Err(e) => input.reply_failed(e),
             Ok((_, ctx)) => {
                 let (missed, entries, _) = ctx.logs.read();
@@ -199,12 +216,16 @@ fn scene_logs_cmd(mut input: ConsoleCommand<SceneLogsCommand>, resolver: SceneRe
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/scene_entities")]
 struct SceneEntitiesCommand {
+    /// Use the debug panel's parcel instead of the active editor inspection scene.
+    #[arg(long)]
+    panel: bool,
     /// Filter to entities that have this component (PascalCase)
     component: Option<String>,
 }
 
 fn scene_entities_cmd(
     mut input: ConsoleCommand<SceneEntitiesCommand>,
+    panel: Res<crate::panel::InspectionParcel>,
     resolver: SceneResolver,
     registry: Res<ComponentNameRegistry>,
     mut pending: ResMut<PendingSnapshotRequests>,
@@ -223,7 +244,12 @@ fn scene_entities_cmd(
         };
 
         let (tx, rx) = tokio::sync::oneshot::channel();
-        match resolver.request_snapshot(&mut pending, move |crdt| {
+        let target = if cmd.panel {
+            panel.resolve(&resolver)
+        } else {
+            resolver.resolve_entity()
+        };
+        match resolver.request_snapshot_from(target, &mut pending, move |crdt| {
             let entities: Vec<SceneEntityId> = crdt
                 .lww
                 .iter()
@@ -271,12 +297,16 @@ fn scene_entities_cmd(
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/entity_components")]
 struct EntityComponentsCommand {
+    /// Use the debug panel's parcel instead of the active editor inspection scene.
+    #[arg(long)]
+    panel: bool,
     /// Entity id (u16) or alias: root, player, camera
     entity: String,
 }
 
 fn entity_components_cmd(
     mut input: ConsoleCommand<EntityComponentsCommand>,
+    panel: Res<crate::panel::InspectionParcel>,
     resolver: SceneResolver,
     registry: Res<ComponentNameRegistry>,
     mut pending: ResMut<PendingSnapshotRequests>,
@@ -297,7 +327,12 @@ fn entity_components_cmd(
             .collect();
         let entity_str = cmd.entity.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
-        match resolver.request_snapshot(&mut pending, move |crdt| {
+        let target = if cmd.panel {
+            panel.resolve(&resolver)
+        } else {
+            resolver.resolve_entity()
+        };
+        match resolver.request_snapshot_from(target, &mut pending, move |crdt| {
             let mut components: Vec<String> = Vec::new();
 
             for (cid, state) in &crdt.lww {

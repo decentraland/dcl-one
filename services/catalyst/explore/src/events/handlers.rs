@@ -12,6 +12,7 @@ use super::{
 };
 use crate::SharedState;
 use crate::shared::errors::{ApiData, ApiError};
+pub(crate) use crate::shared::parcel::is_inside_world_limits;
 
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "events/"))]
@@ -40,6 +41,7 @@ pub struct EventListQuery {
     pub highlighted: Option<String>,
     pub creator: Option<String>,
     pub world: Option<String>,
+    pub recurrent: Option<String>,
     pub world_names: Option<Vec<String>>,
     pub position: Option<String>,
     pub positions: Option<Vec<String>>,
@@ -73,6 +75,7 @@ impl EventListQuery {
                 "highlighted" => q.highlighted = Some(v.clone()),
                 "creator" => q.creator = Some(v.clone()),
                 "world" => q.world = Some(v.clone()),
+                "recurrent" => q.recurrent = Some(v.clone()),
                 "position" => q.position = Some(v.clone()),
                 "estate_id" => q.estate_id = Some(v.clone()),
                 "community_id" => q.community_id = Some(v.clone()),
@@ -128,6 +131,15 @@ fn parse_filters(
     admin: bool,
     include_unapproved: bool,
 ) -> Result<Option<EventListFilters>, ApiError> {
+    let recurrent = q
+        .recurrent
+        .as_deref()
+        .map(|value| {
+            parse_bool(value)
+                .ok_or_else(|| ApiError::bad_request("recurrent must be true, false, 1 or 0"))
+        })
+        .transpose()?;
+
     let with_recurrent_dates = q
         .with_recurrent_dates
         .as_deref()
@@ -238,6 +250,7 @@ fn parse_filters(
         highlighted,
         creator,
         world: q.world.as_deref().and_then(parse_bool),
+        recurrent,
         world_names: q.world_names.clone().unwrap_or_default(),
         positions,
         estate_id,
@@ -300,18 +313,6 @@ fn is_ethereum_address(s: &str) -> bool {
     hex.len() == 40 && hex.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-pub(crate) fn is_inside_world_limits(x: i32, y: i32) -> bool {
-    const RANGES: [(i32, i32, i32, i32); 4] = [
-        (-150, -150, 150, 150),
-        (62, 151, 162, 158),
-        (151, 144, 162, 150),
-        (151, 59, 163, 143),
-    ];
-    RANGES.iter().any(|(x_min, y_min, x_max, y_max)| {
-        x >= *x_min && x <= *x_max && y >= *y_min && y <= *y_max
-    })
-}
-
 fn resolve_only_attendee(q: &EventListQuery) -> bool {
     match q.only_attendee.as_deref() {
         Some(v) => parse_bool(v).unwrap_or(true),
@@ -336,7 +337,10 @@ pub(crate) async fn viewer_is_admin(
         return Ok(true);
     }
     match viewer {
-        Some(v) => state.events.viewer_is_moderator(v).await,
+        Some(v) => {
+            let permissions = super::profiles::event_permissions(&state.pool, v).await?;
+            Ok(permissions.edit_any || permissions.approve_any)
+        }
         None => Ok(false),
     }
 }
@@ -361,8 +365,8 @@ async fn list_with(
             "owner filter requires authentication",
         ));
     }
-    let admin = is_admin_request(headers, state);
-    let include_unapproved = viewer_is_admin(state, headers, user.as_deref()).await?;
+    let admin = viewer_is_admin(state, headers, user.as_deref()).await?;
+    let include_unapproved = admin;
     let Some(filters) = parse_filters(
         q,
         body_place_ids,
@@ -404,9 +408,8 @@ pub(super) async fn fill_connected(
     let connected = live.connected_by_key(keys).await;
     for e in events {
         let key = connected_key(e.world, e.server.as_deref(), e.x, e.y);
-        // Legacy events clients expect an array; a failed/unknown room
-        // lookup keeps the upstream's empty-array fallback.
-        e.connected_addresses = Some(connected.get(&key).cloned().flatten().unwrap_or_default());
+        // An omitted observation is unknown; a successful empty room remains an empty array.
+        e.connected_addresses = connected.get(&key).cloned().flatten();
     }
 }
 
@@ -558,6 +561,63 @@ pub async fn get_schedule_by_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn signed_event_list_filters_use_current_trusted_admin_permissions() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let key = alloy_signer_local::PrivateKeySigner::random();
+        let address = format!("{:#x}", key.address());
+        let community = uuid::Uuid::new_v4().to_string();
+        let pending = uuid::Uuid::new_v4().to_string();
+        let public = uuid::Uuid::new_v4().to_string();
+        for (id, approved) in [(&pending, false), (&public, true)] {
+            super::super::mirror::upsert_event(&pool,&serde_json::json!({"id":id,"name":"Filter fixture","user":"0x1111111111111111111111111111111111111111","community_id":community,"approved":approved,"start_at":"2099-06-01T18:00:00Z","duration":3600000})).await.unwrap();
+        }
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions,permissions_granted) VALUES($1,'[\"edit_any_event\"]',false)").bind(&address).execute(&pool).await.unwrap();
+        let state = std::sync::Arc::new(crate::ExploreState::new(
+            pool.clone(),
+            crate::Settings::for_tests(),
+            None,
+        ));
+        let headers = crate::shared::signed_fetch::test_support::signed_headers_by(
+            &key,
+            "get",
+            "/api/events",
+            "{}",
+            true,
+            &Utc::now().timestamp_millis().to_string(),
+        )
+        .await;
+        let query = EventListQuery::from_pairs(&[
+            ("community_id".into(), community),
+            ("list".into(), "all".into()),
+            ("approved".into(), "false".into()),
+        ]);
+        for granted in [false, true, false] {
+            sqlx::query("UPDATE explore.event_profile_settings SET permissions_granted=$2 WHERE \"user\"=$1").bind(&address).bind(granted).execute(&pool).await.unwrap();
+            let Json(body) =
+                list_with(&state, &headers, "get", "/api/events", &query, vec![], None)
+                    .await
+                    .unwrap();
+            let body = serde_json::to_value(body).unwrap();
+            let ids: Vec<_> = body["data"]["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|event| event["id"].as_str().unwrap())
+                .collect();
+            assert_eq!(
+                ids,
+                vec![if granted {
+                    pending.as_str()
+                } else {
+                    public.as_str()
+                }]
+            );
+        }
+    }
 
     /// A community_id query selects the WithTotal envelope. The Unity client
     /// (EventWithPlaceIdDTOListResponse) parses exactly
@@ -712,5 +772,18 @@ mod tests {
         assert!(is_inside_world_limits(151, 151));
         assert!(!is_inside_world_limits(151, 159));
         assert!(!is_inside_world_limits(200, 0));
+    }
+    #[test]
+    fn invalid_recurrent_filters_are_rejected_instead_of_ignored() {
+        let query = EventListQuery {
+            recurrent: Some("yes".into()),
+            ..Default::default()
+        };
+        assert!(parse_filters(&query, Vec::new(), None, None, false, false).is_err());
+        let query = EventListQuery {
+            search: Some("x".into()),
+            ..query
+        };
+        assert!(parse_filters(&query, Vec::new(), None, None, false, false).is_err());
     }
 }

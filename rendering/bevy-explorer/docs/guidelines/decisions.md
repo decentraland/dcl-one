@@ -45,6 +45,18 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   RCAS; the UI rides the compositor at full resolution; `/screenshot` captures the window.
 - **Sky preset curves are linear.** The fog and flare keys are interpolated linearly; Unity's
   curve tangents are not carried.
+- **Scene and download priority without distance buckets.** unity-explorer ranks scenes and
+  asset loads by distance buckets and a bucket-indexed tick-rate table. We keep the aging
+  scheduler and measure raw squared distance from the player to the nearest point of a scene's
+  nearest parcel (not its corner); a scene behind the rendering camera counts four times
+  farther in the tick queue (no once-a-second cap, no frozen far scenes). Request slots go to
+  the head of the best-ranked queue (one per scene or wearable hash, and one for requests with
+  no hash): the player's scenes, then avatars' wearables, then the other scenes, the last two by
+  parcel ring, in front before behind, then raw distance; then requests no scene or avatar owns
+  (no hash, or a hash nobody holds), oldest first; last, the downloads of a scene that has left.
+  Scene roots and avatars register their hashes through component hooks; the publisher writes
+  the values in place. See the
+  [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
 
 ## Deliberate choices that look like mistakes
 
