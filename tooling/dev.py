@@ -383,7 +383,25 @@ def testnet_env():
         # The NFT index knows mainnet's contracts only: on Sepolia (ETH_RPC_URL) it would find nothing.
         'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         'VITE_SHOP_CHAIN_ID': '80002',
+        # Credits settle through Amoy's CreditsManager (contracts.decentraland.org, `amoy`). The usage index
+        # reads its CreditUsed events over RPC_ENDPOINT_POLYGON on COLLECTIONS_CHAIN_ID; POST /credits/authorize
+        # signs only while that index is ready. Mock card top-ups grant test credits with no charge.
+        'CREDITS_MANAGER_CONTRACT': '0x8052a560e6e6ac86eeb7e711a4497f639b322fb3',
+        'CREDITS_USAGE_INDEX_ENABLED': 'true',
+        'CREDITS_MOCK_CARD': 'true',
+        **credits_signer_env(),
     }
+
+
+def credits_signer_env():
+    """On-chain credit authorization, when the stack's state holds a signer key.
+
+    The operator places the key in the gitignored stack state (credits-signer.key). It has to hold
+    CREDITS_SIGNER_ROLE on Amoy's CreditsManager, or the contract rejects every credit it signs."""
+    key = STATE / 'credits-signer.key'
+    if not key.is_file():
+        return {'CREDITS_ONCHAIN_AUTHORIZE_ENABLED': 'false'}
+    return {'CREDITS_ONCHAIN_AUTHORIZE_ENABLED': 'true', 'CREDITS_SIGNER_KEY_FILE': str(key)}
 
 
 def socket_path():

@@ -30,3 +30,17 @@ export function parseToken(value: string | undefined): { contract: string; token
   if (!m) throw new Error("E2E_TOKEN must be <contract>:<tokenId>, an Amoy NFT the seller owns");
   return { contract: m[1]!.toLowerCase(), tokenId: m[2]! };
 }
+
+/** `0xcollection:itemId` → its parts, lowercased collection: a primary item, by its blockchain item id. */
+export function parseItem(value: string | undefined): { contract: string; itemId: string } {
+  const m = value?.trim().match(/^(0x[0-9a-fA-F]{40}):(\d+)$/);
+  if (!m) throw new Error("E2E_ITEM must be <collection>:<itemId>, an Amoy item of the seller's collection listed in the Shop");
+  return { contract: m[1]!.toLowerCase(), itemId: m[2]! };
+}
+
+/** A whole-number discount within the Shop's bounds (MIN_SALE_PCT..MAX_SALE_PCT in seller/lib/coupons.ts). */
+export function parseDiscount(value: string | undefined): number {
+  const pct = Number(value ?? "10");
+  if (!Number.isInteger(pct) || pct < 5 || pct > 70) throw new Error("E2E_DISCOUNT must be a whole percentage from 5 to 70");
+  return pct;
+}
