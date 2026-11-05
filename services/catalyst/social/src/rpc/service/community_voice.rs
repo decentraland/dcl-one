@@ -243,9 +243,6 @@ async fn announce_started(
         }
     };
     let broadcast = async {
-        if let Some(state) = ctx.communities() {
-            state.publish_community_event(&event, &audience).await;
-        }
         notify(ctx.db().pool(), event, audience).await;
     };
     let analytics = async {
