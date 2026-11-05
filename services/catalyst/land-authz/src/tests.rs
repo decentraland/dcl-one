@@ -1960,19 +1960,32 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
         json!({ "id": "0x2500000000000000000000000000000037", "x": "37", "y": "55", "owner": ALICE, "updateOperator": BOB }),
         "the land-manager subgraph's Parcel.id"
     );
-    let (_, _, body) = get_json(
-        &app,
-        &format!("/lambdas/users/{BOB}/lands-permissions?pageSize=0&pageNum=-1"),
-    )
-    .await;
-    assert_eq!(
-        (
-            body["pageSize"].as_i64(),
-            body["pageNum"].as_i64(),
-            body["totalAmount"].as_i64()
-        ),
-        (Some(1), Some(1), Some(1))
-    );
+    // lamb2's `paginationObject` and `slice`: nothing is clamped, a
+    // negative bound counts from the end, `NaN` is answered `null`.
+    for (query, page_size, page_num, elements) in [
+        ("pageSize=0&pageNum=-1", json!(0), json!(-1), 0),
+        ("pageSize=1&pageNum=0", json!(1), json!(0), 0),
+        ("pageSize=-1&pageNum=0", json!(-1), json!(0), 0),
+        ("pageSize=abc", Value::Null, json!(1), 0),
+        ("pageSize=1.9&pageNum=1x", json!(1), json!(1), 1),
+    ] {
+        let (status, _, body) = get_json(
+            &app,
+            &format!("/lambdas/users/{BOB}/lands-permissions?{query}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{query}");
+        assert_eq!(
+            (
+                &body["pageSize"],
+                &body["pageNum"],
+                body["elements"].as_array().unwrap().len(),
+                body["totalAmount"].as_i64()
+            ),
+            (&page_size, &page_num, elements, Some(1)),
+            "{query}"
+        );
+    }
     let (_, _, body) = get_json(&app, &format!("/lambdas/users/{CARL}/lands-permissions")).await;
     assert_eq!(
         (
@@ -2002,6 +2015,24 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
     )
     .await;
     assert_eq!(body["owner"], true, "case-insensitive address");
+    // `EthAddress.validate` wants a lower-case `0x`.
+    let (status, _, body) = get_json(
+        &app,
+        &format!("/lambdas/users/0X{}/parcels/37/55/permissions", &ALICE[2..]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["message"], "Address must be a valid Ethereum address");
+    // `parseInt`: a fraction, a suffix and a hex prefix all read.
+    for parcel in ["37.9/55", "37abc/55", "0x25/55", "%2037/+55"] {
+        let (status, _, body) = get_json(
+            &app,
+            &format!("/lambdas/users/{BOB}/parcels/{parcel}/permissions"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{parcel}: {body}");
+        assert_eq!(body["updateOperator"], true, "{parcel}");
+    }
     let (status, _, _) = get_json(
         &app,
         &format!("/lambdas/users/{DANA}/parcels/99/99/permissions"),

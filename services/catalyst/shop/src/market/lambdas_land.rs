@@ -19,22 +19,21 @@ use serde_json::{Value, json};
 use sqlx::Row;
 
 use crate::land_authz::{ESTATE_REGISTRY_MAINNET, LAND_REGISTRY_MAINNET};
-use crate::shared::http_util::fetcher_error;
+use crate::shared::http_util::{fetcher_error, lambdas_internal_error};
 use crate::shared::query_params::{
-    MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination, parse_pagination_with,
-    parse_query_string,
+    JsPagination, MAX_PAGE_SIZE, NonPositivePolicy, OversizePolicy, Pagination,
+    parse_pagination_with, parse_query_string,
 };
 
 use super::chain_walk::{ChainNet, INDEXER_NFT, ready_cursor};
 use super::graph::{self, OwnedLand};
 use super::nft_index::DCL_REGISTRAR;
 use super::nft_reads::land_ready;
-use super::{SharedState, Source, bad_request, internal_server_error, unavailable};
+use super::{SharedState, Source, bad_request, unavailable};
 
-/// The land routes' pagination: a page over `max` clamps to it, a
-/// non-positive page or size to 1. `/lands` has no maximum, as lamb2's
-/// `paginationObject(url, Number.MAX_VALUE)` (`lands-handler.ts`);
-/// `/genesis-parcels` keeps 1000.
+/// `/genesis-parcels`' pagination: a page over `max` clamps to it, a
+/// non-positive page or size to 1. `/lands` pages as lamb2 does
+/// ([`JsPagination`], no maximum: `paginationObject(url, Number.MAX_VALUE)`).
 fn parse_pagination(req: &Request, max: i64) -> (i64, i64) {
     let params = parse_query_string(req.uri().query().unwrap_or(""));
     let p = parse_pagination_with(
@@ -143,34 +142,26 @@ fn land_element(base: &str, land: &OwnedLand) -> Value {
     obj
 }
 
-fn lands_page(base: &str, lands: &[OwnedLand], page_size: i64, page_num: i64) -> Response {
-    let offset = page_offset(page_num, page_size).max(0) as usize;
-    let elements: Vec<Value> = lands
+fn lands_page(base: &str, lands: &[OwnedLand], page: JsPagination) -> Response {
+    let elements: Vec<Value> = lands[page.range(lands.len())]
         .iter()
-        .skip(offset)
-        .take(page_size.max(0) as usize)
         .map(|l| land_element(base, l))
         .collect();
-    Json(json!({ "elements": elements, "totalAmount": lands.len() as i64, "pageNum": page_num, "pageSize": page_size })).into_response()
+    Json(json!({ "elements": elements, "totalAmount": lands.len() as i64, "pageNum": page.page_num, "pageSize": page.page_size })).into_response()
 }
 
 /// The owner's lands from the marketplace subgraph, paged here (the reader
 /// holds the whole holding for 30 s, so `totalAmount` is the same count the
-/// index path reports).
+/// index path reports). A failed reader answers the owner's last good list,
+/// as lamb2 does (`graph::owned_lands_or_stale`), else lamb2's 502.
 async fn user_lands_from_reader(
     state: &SharedState,
     requested: &str,
     owner: &str,
-    page_size: i64,
-    page_num: i64,
+    page: JsPagination,
 ) -> Response {
-    match graph::owned_lands(&state.index, owner).await {
-        Ok(lands) => lands_page(
-            &state.settings.land_image_base_url,
-            &lands,
-            page_size,
-            page_num,
-        ),
+    match graph::owned_lands_or_stale(&state.index, owner).await {
+        Ok(lands) => lands_page(&state.settings.land_image_base_url, &lands, page),
         Err(e) => {
             tracing::warn!(owner = %owner, error = %e, "marketplace LAND reader failed");
             fetcher_error(requested)
@@ -185,12 +176,16 @@ pub async fn user_lands(
     Path(addr): Path<String>,
     req: Request,
 ) -> Response {
-    let (page_size, page_num) = parse_pagination(&req, i64::MAX);
+    let params = parse_query_string(req.uri().query().unwrap_or(""));
+    let page = match JsPagination::parse(&params, i64::MAX) {
+        Ok(p) => p,
+        Err(msg) => return bad_request(&msg),
+    };
     let owner = addr.to_lowercase();
     let land_ready = land_ready(&state.pool).await;
     if !land_ready || !nft_index_ready(&state.pool).await {
         if state.settings.marketplace_subgraph_url.is_some() {
-            return user_lands_from_reader(&state, &addr, &owner, page_size, page_num).await;
+            return user_lands_from_reader(&state, &addr, &owner, page).await;
         }
         if !land_ready {
             return land_index_unavailable();
@@ -200,10 +195,31 @@ pub async fn user_lands(
             "LAND names, descriptions and orders read the ethereum nft index, which is not published yet",
         );
     }
+    let count = || {
+        sqlx::query_scalar::<_, i64>(USER_LANDS_COUNT_SQL)
+            .bind(&owner)
+            .bind(LAND_REGISTRY_MAINNET)
+            .bind(ESTATE_REGISTRY_MAINNET)
+            .fetch_one(&state.pool)
+    };
+    // A negative bound counts from the end of the list: its length first.
+    let (offset, limit, counted) = match page.sql_window() {
+        Some((offset, limit)) => (offset, limit, None),
+        None => match count().await {
+            Ok(total) => {
+                let r = page.range(total.max(0) as usize);
+                (r.start as i64, r.len() as i64, Some(total))
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "user lands count failed");
+                return lambdas_internal_error();
+            }
+        },
+    };
     let rows = match sqlx::query(USER_LANDS_SQL)
         .bind(&owner)
-        .bind(page_size)
-        .bind(page_offset(page_num, page_size))
+        .bind(limit)
+        .bind(offset)
         .bind(LAND_REGISTRY_MAINNET)
         .bind(ESTATE_REGISTRY_MAINNET)
         .fetch_all(&state.pool)
@@ -212,18 +228,13 @@ pub async fn user_lands(
         Ok(rows) => rows,
         Err(e) => {
             tracing::error!(error = %e, "user lands query failed");
-            return internal_server_error();
+            return lambdas_internal_error();
         }
     };
-    let total: i64 = match rows.first() {
-        Some(r) => r.get("total"),
-        None => sqlx::query_scalar(USER_LANDS_COUNT_SQL)
-            .bind(&owner)
-            .bind(LAND_REGISTRY_MAINNET)
-            .bind(ESTATE_REGISTRY_MAINNET)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(0),
+    let total: i64 = match (counted, rows.first()) {
+        (Some(total), _) => total,
+        (None, Some(r)) => r.get("total"),
+        (None, None) => count().await.unwrap_or(0),
     };
     let base = &state.settings.land_image_base_url;
     let elements: Vec<Value> = rows
@@ -236,9 +247,13 @@ pub async fn user_lands(
                 name: r.get("name"),
                 x: r.get("x"),
                 y: r.get("y"),
+                // `parse_land_data` stores an empty and a missing
+                // description alike (NULL), so a data record answers `""`.
                 description: r.get::<bool, _>("has_data").then(|| {
-                    r.get::<Option<String>, _>("description")
-                        .unwrap_or_default()
+                    Some(
+                        r.get::<Option<String>, _>("description")
+                            .unwrap_or_default(),
+                    )
                 }),
                 price: r.get("price"),
                 image: None,
@@ -247,7 +262,7 @@ pub async fn user_lands(
             land_element(base, &land)
         })
         .collect();
-    Json(json!({ "elements": elements, "totalAmount": total, "pageNum": page_num, "pageSize": page_size })).into_response()
+    Json(json!({ "elements": elements, "totalAmount": total, "pageNum": page.page_num, "pageSize": page.page_size })).into_response()
 }
 
 /// Every Genesis parcel owned directly or through an owned estate: a parcel
@@ -344,7 +359,7 @@ pub async fn name_owner(State(state): State<SharedState>, Path(name): Path<Strin
         Err(NameOwnerError::Fetcher(name)) => fetcher_error(&name),
         Err(NameOwnerError::Store(error)) => {
             tracing::error!(%error, "name owner query failed");
-            internal_server_error()
+            lambdas_internal_error()
         }
     }
 }
@@ -482,11 +497,6 @@ mod tests {
         assert_eq!(
             parse_pagination(&req("pageSize=10&pageNum=3"), genesis),
             (10, 3)
-        );
-        // `/lands` honours any size, lamb2's `Number.MAX_VALUE` maximum.
-        assert_eq!(
-            parse_pagination(&req("pageSize=5000&pageNum=2"), i64::MAX),
-            (5000, 2)
         );
         assert_eq!(page_offset(3, 10), 20);
     }

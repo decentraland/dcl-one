@@ -421,7 +421,6 @@ async fn user_item_routes_reject_a_malformed_address_before_any_reader_call() {
     for path in [
         "/lambdas/users/not-an-address/wearables",
         "/lambdas/users/0xZZ/emotes",
-        "/lambdas/users/0x8d6f/names",
     ] {
         let (status, body) = get_json(router(state.clone()), path).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
@@ -430,6 +429,20 @@ async fn user_item_routes_reject_a_malformed_address_before_any_reader_call() {
             "{path}"
         );
     }
+    // lamb2's names answer an empty page for a string that owns nothing
+    // (the unreachable reader would answer the 502 if it were asked).
+    let (status, body) = get_json(
+        router(state),
+        "/lambdas/users/0x8d6f/names?pageSize=2&pageNum=3",
+    )
+    .await;
+    assert_eq!(
+        (status, body),
+        (
+            StatusCode::OK,
+            json!({ "elements": [], "totalAmount": 0, "pageNum": 3, "pageSize": 2 })
+        )
+    );
 }
 
 #[tokio::test]

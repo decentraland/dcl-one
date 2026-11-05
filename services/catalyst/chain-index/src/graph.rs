@@ -39,6 +39,10 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_ATTEMPTS: u32 = 3;
 const RETRY_BASE_MS: u64 = 500;
 pub const OWNED_TTL: Duration = Duration::from_secs(30);
+/// How long after its fetch the lambdas `/users/{a}/names` route still
+/// answers an owner's names when the subgraph fails: lamb2's `maxAge +
+/// maxStaleAge` (`elements-fetcher.ts`, `ELEMENTS_CACHE_DEFAULTS`).
+pub const NAMES_STALE_MAX_AGE: Duration = Duration::from_secs(120);
 const OWNED_CACHE_MAX_ENTRIES: usize = 20_000;
 /// Owners folded into one aliased ownership document.
 const OWNERS_PER_QUERY: usize = 20;
@@ -131,8 +135,10 @@ pub struct OwnedLand {
     pub name: Option<String>,
     pub x: Option<i32>,
     pub y: Option<i32>,
-    /// `Some` when the LAND carries a data record (its description, possibly empty).
-    pub description: Option<String>,
+    /// `Some` when the LAND carries a data record, holding its description
+    /// (`None` for a null one, answered `null` as lamb2's `fetch-lands.ts`
+    /// passes it through); `None` without a record (no key).
+    pub description: Option<Option<String>>,
     pub price: Option<String>,
     /// The subgraph's `nft.image` (the map service's PNG), which lamb2's
     /// `/lands` answers as is; `None` on the index path, which synthesizes it.
@@ -153,6 +159,17 @@ pub struct Caches {
     pub name_owner: TtlMap<String, Arc<Option<String>>>,
     /// `owner` -> the parcels and estates the owner holds, newest transfer first.
     lands: TtlMap<String, Arc<Vec<OwnedLand>>>,
+}
+
+impl Caches {
+    /// Ages `owner`'s names and lands entries by `by`.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn backdate_owner_for_tests(&self, owner: &str, by: Duration) {
+        let owner = owner.to_lowercase();
+        self.names.backdate(&owner, by);
+        self.all_names.backdate(&owner, by);
+        self.lands.backdate(&owner, by);
+    }
 }
 
 impl Default for Caches {
@@ -574,6 +591,24 @@ async fn walk_names(
         .await
 }
 
+/// [`all_owned_names`] for the lambdas `/users/{a}/names` list alone: when the
+/// subgraph fails, the last good list fetched within
+/// [`NAMES_STALE_MAX_AGE`], as lamb2 serves its stale entry. Never for an
+/// ownership decision (worlds' NAME owner, comms admission, profiles), which
+/// reads [`owned_names`] and fails on an outage.
+pub async fn owned_names_or_stale(
+    state: &ChainIndex,
+    owner: &str,
+) -> Result<Arc<Vec<OwnedName>>, String> {
+    all_owned_names(state, owner).await.or_else(|err| {
+        state
+            .graph
+            .all_names
+            .get_within(&owner.to_lowercase(), NAMES_STALE_MAX_AGE)
+            .ok_or(err)
+    })
+}
+
 /// The parcel NFTs standing on the requested coordinates. `searchParcelX_in`
 /// x `searchParcelY_in` is a superset (the cross product of the distinct
 /// columns and rows), filtered back to the requested pairs here; the old
@@ -807,8 +842,7 @@ pub(crate) fn parse_owned_lands(data: &Value) -> Vec<OwnedLand> {
             .map(|d| {
                 d.get("description")
                     .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string()
+                    .map(str::to_string)
             })
     };
     data.get("nfts")
@@ -891,6 +925,23 @@ pub async fn owned_lands(state: &ChainIndex, owner: &str) -> Result<Arc<Vec<Owne
         .await
 }
 
+/// [`owned_lands`] for the lambdas `/users/{a}/lands` list: when the
+/// subgraph fails, the last good list whatever its age. lamb2's lands cache
+/// (`createLegacyElementsFetcherComponent`) stores the stale value again on
+/// a failed refresh, so it answers it for as long as the outage lasts.
+pub async fn owned_lands_or_stale(
+    state: &ChainIndex,
+    owner: &str,
+) -> Result<Arc<Vec<OwnedLand>>, String> {
+    owned_lands(state, owner).await.or_else(|err| {
+        state
+            .graph
+            .lands
+            .get_stale(&owner.to_lowercase())
+            .ok_or(err)
+    })
+}
+
 /// Whether `owner` holds any of the parcels at `coords`, directly or through
 /// the estate the parcel sits in: the LAND half of "scene owner".
 pub async fn owns_land_at(
@@ -933,7 +984,9 @@ mod tests {
               "transferredAt": "1693411667", "parcel": { "data": null }, "estate": null, "activeOrder": null },
             { "id": "estate-0x959e-9", "name": "Home", "contractAddress": "0x959e", "tokenId": "9", "category": "estate", "searchParcelX": null, "searchParcelY": null,
               "transferredAt": "1700000000", "parcel": null, "estate": { "data": { "description": "" } }, "activeOrder": { "price": "1000" },
-              "image": "https://api.decentraland.org/v1/estates/9/map.png" }
+              "image": "https://api.decentraland.org/v1/estates/9/map.png" },
+            { "id": "parcel-0xF87E-6", "name": null, "contractAddress": "0xF87E", "tokenId": "6", "category": "parcel", "searchParcelX": "15", "searchParcelY": "-72",
+              "transferredAt": "1693411667", "parcel": { "data": { "description": null } }, "estate": null, "activeOrder": null }
         ] });
         let lands = parse_owned_lands(&data);
         assert_eq!(
@@ -960,11 +1013,16 @@ mod tests {
                 name: Some("Home".into()),
                 x: None,
                 y: None,
-                description: Some(String::new()),
+                description: Some(Some(String::new())),
                 price: Some("1000".into()),
                 image: Some("https://api.decentraland.org/v1/estates/9/map.png".into()),
                 transferred_at: 1700000000
             }
+        );
+        assert_eq!(
+            lands[2].description,
+            Some(None),
+            "a null description stays null"
         );
     }
 
