@@ -251,7 +251,8 @@ async fn unlink_unreferenced(
     if keys.is_empty() {
         return Ok(());
     }
-    let referenced: HashSet<String> = gc::referenced_among(pool, keys).await?;
+    let mut lock = gc::lock_store_exclusive(pool).await?;
+    let referenced: HashSet<String> = gc::referenced_among_on(&mut lock, keys).await?;
     for key in keys {
         if referenced.contains(key) {
             report.blobs_kept += 1;
@@ -268,6 +269,7 @@ async fn unlink_unreferenced(
             }
         }
     }
+    lock.commit().await?;
     Ok(())
 }
 

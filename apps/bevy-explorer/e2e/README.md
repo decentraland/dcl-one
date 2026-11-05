@@ -73,6 +73,11 @@ second one on its own realm.
 | `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added); the UUAV runtime set must be staged next to it (`tooling/uuav/stage-dist.py`) for scene video to play | unset |
 | `DCL_E2E_NATIVE_PORT`, `DCL_E2E_NATIVE_TOKEN` | A running standalone's loopback console and the token it was started with | `15702`, unset |
 
+To run the native Explorer against a gateway, set
+`DCL_E2E_NATIVE_ARGS="--gateway https://gateway.example.test"`.
+The [running guide](../../../rendering/bevy-explorer/docs/guidelines/running.md#gateway-routing)
+describes the gateway layouts and service overrides.
+
 The report goes to `report/`: `junit-<groups>.xml`, and per scenario `commands.jsonl` (every
 console command, its reply or error and its time; `/login_identity` and `/hud_login` payloads
 redacted) and

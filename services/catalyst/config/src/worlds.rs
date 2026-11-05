@@ -110,6 +110,14 @@ pub struct WorldsConfig {
     )]
     pub worlds_personal_world_max_size_bytes: u64,
 
+    /// Parcels a world scene may span unless `worlds.world_limit_overrides` says otherwise.
+    #[arg(long, env = "MAX_PARCELS", default_value_t = 4, value_parser = clap::value_parser!(u32).range(1..))]
+    pub max_parcels: u32,
+
+    /// Entries a deployed entity's `content` may list, at most the 10,000 file parts a deploy may upload.
+    #[arg(long, env = "MAX_FILE_COUNT", default_value_t = 10_000, value_parser = clap::value_parser!(u32).range(1..=10_000))]
+    pub max_file_count: u32,
+
     /// Deploy payload bytes buffered at once across every upload (>= one 350 MiB deploy).
     #[arg(
         long,
@@ -123,6 +131,23 @@ pub struct WorldsConfig {
 
     #[arg(long, env = "MAX_IN_FLIGHT_UPLOAD_FILES", default_value_t = 40_000)]
     pub max_in_flight_upload_files: u64,
+
+    /// How long a replaced or undeployed world scene stays resolvable for
+    /// scene comms and its content stays out of the blob collector (7 days).
+    #[arg(long, env = "SCENE_EVICTION_TTL_MS", default_value_t = 604_800_000)]
+    pub scene_eviction_ttl_ms: u64,
+
+    /// Multipart uploads one client address (IPv6 by /64) may have in flight.
+    #[arg(long, env = "MAX_CONCURRENT_UPLOADS_PER_SOURCE", default_value_t = 4)]
+    pub max_concurrent_uploads_per_source: u64,
+
+    /// Declared upload bytes one client address may have in flight (>= one 350 MiB deploy).
+    #[arg(
+        long,
+        env = "MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE",
+        default_value_t = 367_001_600
+    )]
+    pub max_in_flight_upload_bytes_per_source: u64,
 
     #[arg(long, env = "MULTIPART_UPLOAD_TIMEOUT_MS", default_value_t = 300_000)]
     pub multipart_upload_timeout_ms: u64,
@@ -374,6 +399,14 @@ pub struct WorldsConfig {
     #[arg(long, env = "MAX_USERS_PER_WORLD", default_value_t = 100)]
     pub max_users_per_world: i64,
 
+    /// Wrong shared secrets a caller may present per world and minute before the mints answer 429.
+    #[arg(
+        long,
+        env = "SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE",
+        default_value_t = 3
+    )]
+    pub shared_secret_max_attempts_per_minute: u32,
+
     /// The deployment audience clients sign for /ws/v4; unset leaves the v4 control authority unavailable.
     #[arg(long, env = "ARCHIPELAGO_CONTROL_V4_AUDIENCE")]
     pub archipelago_control_v4_audience: Option<String>,
@@ -431,6 +464,22 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn max_file_count_is_capped_at_the_deploy_file_parts() {
+        let with = |v: &str| {
+            parse(&[
+                "x",
+                "--database-url",
+                "postgres:///c",
+                "--max-file-count",
+                v,
+            ])
+        };
+        assert_eq!(with("10000").unwrap().worlds.max_file_count, 10_000);
+        assert!(with("10001").is_err());
+        assert!(with("0").is_err());
     }
 
     #[test]

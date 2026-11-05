@@ -561,3 +561,24 @@ CREATE TABLE worlds.forward_outbox (
 CREATE INDEX forward_outbox_due_idx ON worlds.forward_outbox USING btree (target, next_attempt_at, id)
     WHERE status IN ('queued', 'sending');
 -- ==== end section: forwarding ====
+
+-- ==== section: world-limits ====
+-- Per-world exceptions to the publish limits (the old WHITELIST_URL
+-- document's `max_parcels` / `max_size_in_mb`, here in bytes); NULL keeps the
+-- node default (MAX_PARCELS, the world or personal-world size cap). Workload:
+-- tens of rows written by an operator, one primary-key probe per publish and
+-- per GET /world/{name}/limits (policy.rs::world_limits). No FK to
+-- worlds.worlds: an exception may be granted before the world's first
+-- publish, and an undeployed world keeps it.
+CREATE TABLE worlds.world_limit_overrides (
+    world_name text NOT NULL,
+    max_parcels integer,
+    max_size_bytes bigint,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT world_limit_overrides_pkey PRIMARY KEY (world_name),
+    CONSTRAINT world_limit_overrides_world_lowercase CHECK (world_name = lower(world_name) AND world_name <> ''),
+    CONSTRAINT world_limit_overrides_max_parcels_check CHECK (max_parcels > 0),
+    CONSTRAINT world_limit_overrides_max_size_check CHECK (max_size_bytes > 0)
+);
+-- ==== end section: world-limits ====

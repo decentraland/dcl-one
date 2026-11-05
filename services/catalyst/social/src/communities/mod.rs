@@ -621,31 +621,7 @@ pub(crate) fn signed_path(original: &OriginalUri, local: impl Into<String>) -> S
 /// document. Nested under `/social-api` only: the root `/health/*` belong to
 /// the node.
 pub fn health_router() -> Router {
-    const PASS: &str = r#"{"details":{"httpServer":{"status":"pass"}},"status":"pass"}"#;
-    let pass = || async {
-        (
-            [(
-                axum::http::header::CONTENT_TYPE,
-                "application/health+json; charset=utf-8",
-            )],
-            PASS,
-        )
-    };
-    Router::new()
-        .route(
-            "/health/live",
-            get(|| async {
-                (
-                    [(
-                        axum::http::header::CONTENT_TYPE,
-                        "text/plain; charset=utf-8",
-                    )],
-                    "alive",
-                )
-            }),
-        )
-        .route("/health/ready", get(pass))
-        .route("/health/startup", get(pass))
+    crate::shared::health::status_checks_router()
         .layer(axum::middleware::from_fn(cors::social_api_cors))
 }
 
