@@ -7,6 +7,7 @@ declare global {
     __DCL_PUBLIC__?: {
       thirdwebClientId?: string;
       walletConnectProjectId?: string;
+      magicApiKey?: string;
       thirdwebSignProxy?: string;
       docsBase?: string;
     };
