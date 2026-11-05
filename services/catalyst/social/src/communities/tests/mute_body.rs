@@ -110,6 +110,23 @@ async fn the_mute_body_is_read_after_the_signature_and_as_upstream_reads_it() {
         other.address.as_str(),
         "{v}"
     );
+    let (_, v) = hit(
+        app,
+        Case::new(
+            "get",
+            format!(
+                "/v1/mutes?address={}&addresses={}",
+                user.address, other.address
+            ),
+        )
+        .signed(&user)
+        .await,
+    )
+    .await;
+    assert_eq!(
+        v["data"]["total"], 0,
+        "address takes precedence over addresses: {v}"
+    );
 
     let (status, v) = hit(
         app,

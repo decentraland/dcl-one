@@ -87,6 +87,9 @@ pub struct OwnedCopy {
     pub rarity: String,
     pub name: String,
     pub category: String,
+    /// The subgraph's `itemType` (`wearable_v1`, `wearable_v2`,
+    /// `smart_wearable_v1`, `emote_v1`); empty when unknown.
+    pub item_type: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
@@ -236,6 +239,7 @@ query owned($owner: String!, $idFrom: ID!, $first: Int!) {
     id
     urn
     tokenId
+    itemType
     transferredAt
     item { rarity price }
     metadata { wearable { name category } emote { name category } }
@@ -282,6 +286,7 @@ pub(crate) fn parse_owned_copies(data: &Value, category: &str) -> Vec<OwnedCopy>
                 rarity: item.map(|i| str_of(i, "rarity")).unwrap_or_default(),
                 name: meta.map(|m| str_of(m, "name")).unwrap_or_default(),
                 category: meta.map(|m| str_of(m, "category")).unwrap_or_default(),
+                item_type: str_of(nft, "itemType"),
             })
         })
         .collect()
@@ -906,7 +911,7 @@ mod tests {
     fn owned_copies_parse_the_item_and_metadata_legs() {
         let data = json!({ "nfts": [
             { "id": "0xc0ffee-1", "urn": "urn:decentraland:matic:collections-v2:0xc0ffee:1", "tokenId": "7",
-              "transferredAt": "100", "item": { "rarity": "epic", "price": "10" },
+              "itemType": "smart_wearable_v1", "transferredAt": "100", "item": { "rarity": "epic", "price": "10" },
               "metadata": { "wearable": { "name": "Hat", "category": "hat" }, "emote": null } },
             { "id": "0xold-1", "urn": "urn:decentraland:mainnet:collections-v1:oldies:hat", "tokenId": "1",
               "transferredAt": 50, "item": null, "metadata": null },
@@ -919,6 +924,8 @@ mod tests {
         assert_eq!(copies[0].rarity, "epic");
         assert_eq!(copies[0].price, "10");
         assert_eq!(copies[0].transferred_at, 100);
+        assert_eq!(copies[0].item_type, "smart_wearable_v1");
+        assert_eq!(copies[1].item_type, "", "an unknown type is empty");
         assert_eq!(
             copies[1].urn,
             "urn:decentraland:ethereum:collections-v1:oldies:hat"

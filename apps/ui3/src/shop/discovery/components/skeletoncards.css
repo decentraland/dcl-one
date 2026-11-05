@@ -1,35 +1,55 @@
-/* from: shop@94584a5c:app/src/components/SkeletonCards/SkeletonCards.styles.ts */
+/* from: shop@3a322cf9:app/src/components/SkeletonCards/SkeletonCards.styles.ts (SkeletonCard, SkeletonThumb,
+   SkeletonInfo, SkeletonBar). Sized to the real AssetCard (300px, 250px below sm) so a loading grid or rail holds
+   its eventual height. Colours and radii are the shop tokens (frames/shoptheme.css) mirroring theme.ts. */
 .shop-skel-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding-bottom: 12px;
-  border-radius: var(--ui-card-radius, 14px);
-  background: var(--ui-panel);
-  border: 1px solid var(--ui-border);
-  overflow: hidden;
+  min-height: 300px;
+  border-radius: var(--shop-radius-tile);
+  background: var(--shop-overlay);
+  animation: shop-skel-pulse 1.4s ease-in-out infinite;
 }
-.shop-skel-card__media {
-  aspect-ratio: 1 / 1;
-  background: var(--fill-2, rgba(255, 255, 255, 0.06));
+.shop-skel-card__thumb {
+  flex: 1;
+  min-height: 0;
+  border-radius: var(--shop-radius-tile);
+  background: linear-gradient(to left, var(--shop-loading-wash-faint), var(--shop-loading-wash));
 }
-.shop-skel-card__line {
-  height: 12px;
-  margin: 0 12px;
-  border-radius: 6px;
-  background: var(--fill-3, rgba(255, 255, 255, 0.08));
+.shop-skel-card__info {
+  flex: 0 0 112px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  padding: 16px;
+  box-sizing: border-box;
 }
-.shop-skel-card__line--short {
-  width: 45%;
+.shop-skel-card__bar {
+  width: 100%;
+  height: 20px;
+  border-radius: var(--shop-radius-pill);
+  background: linear-gradient(to left, var(--shop-loading-wash-faint), var(--shop-loading-wash));
 }
-@media (prefers-reduced-motion: no-preference) {
-  .shop-skel-card__media,
-  .shop-skel-card__line {
-    animation: shop-skel-pulse 1.4s ease-in-out infinite;
-  }
+.shop-skel-card__bar[data-short] {
+  width: 140px;
+  max-width: 75%;
+  height: 14px;
 }
 @keyframes shop-skel-pulse {
   50% {
-    opacity: 0.55;
+    opacity: 0.6;
+  }
+}
+@media (max-width: 720px) {
+  .shop-skel-card {
+    min-height: 250px;
+  }
+  .shop-skel-card__info {
+    flex-basis: 114px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shop-skel-card {
+    animation: none;
   }
 }

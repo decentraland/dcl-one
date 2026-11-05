@@ -96,10 +96,29 @@ pub fn create_cef_key_events(modifiers: u32, key_event: &KeyboardInput) -> Vec<c
     match key_event.state {
         ButtonState::Pressed => {
             let mut events = vec![make(cef_key_event_type_t::KEYEVENT_RAWKEYDOWN)];
+            // Windows CEF interprets CHAR like WM_CHAR: wParam is a UTF-16 code unit.
+            // The virtual key belongs only to RAWKEYDOWN/KEYUP (e.g. VK_OEM_2 = 0xBF).
+            #[cfg(target_os = "windows")]
+            if let Some(text) = &key_event.text {
+                for c in text
+                    .chars()
+                    .filter(|c| !c.is_control() || matches!(c, '\r' | '\t'))
+                {
+                    for &unit in c.encode_utf16(&mut [0; 2]).iter() {
+                        events.push(cef::KeyEvent {
+                            windows_key_code: i32::from(unit),
+                            character: unit,
+                            unmodified_character: unit,
+                            ..make(cef_key_event_type_t::KEYEVENT_CHAR)
+                        });
+                    }
+                }
+            }
             // CHAR only for text-producing keys: control keys (backspace, arrows, escape...) act
             // through the keydown's default handling, and a stray CHAR would insert junk. The
             // AppKit function-key code points (U+F700..) are not control chars but must not
             // produce CHAR either.
+            #[cfg(not(target_os = "windows"))]
             if (!character.is_control() && !('\u{F700}'..='\u{F8FF}').contains(&character))
                 || character == '\r'
                 || character == '\t'
@@ -1176,5 +1195,61 @@ fn to_native_key_code(keycode: &KeyCode) -> u32 {
 
         // Default case for unhandled keys
         _ => 0,
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_tests {
+    use super::*;
+    use bevy::input::keyboard::Key;
+    use bevy::prelude::Entity;
+
+    #[test]
+    fn text_uses_the_keyboard_layout_while_keydown_and_keyup_keep_the_virtual_key() {
+        for (key_code, vk, text) in [
+            (KeyCode::Slash, 0xbf, "/"),
+            (KeyCode::Digit7, 0x37, "/"),
+            (KeyCode::Slash, 0xbf, "¿"),
+            (KeyCode::KeyQ, 0x51, "й"),
+            (KeyCode::KeyE, 0x45, "é🙂"),
+        ] {
+            let mut input = KeyboardInput {
+                key_code,
+                logical_key: Key::Character(text.into()),
+                text: Some(text.into()),
+                state: ButtonState::Pressed,
+                repeat: false,
+                window: Entity::PLACEHOLDER,
+            };
+            let events = create_cef_key_events(0, &input);
+            assert_eq!(events[0].windows_key_code, vk);
+            let units: Vec<_> = events[1..]
+                .iter()
+                .map(|event| event.windows_key_code)
+                .collect();
+            assert_eq!(
+                units,
+                text.encode_utf16().map(i32::from).collect::<Vec<_>>()
+            );
+
+            input.state = ButtonState::Released;
+            input.text = None;
+            let events = create_cef_key_events(0, &input);
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].windows_key_code, vk);
+        }
+    }
+
+    #[test]
+    fn a_key_without_committed_text_only_sends_keydown() {
+        let input = KeyboardInput {
+            key_code: KeyCode::Quote,
+            logical_key: Key::Dead(Some('´')),
+            text: None,
+            state: ButtonState::Pressed,
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        };
+        assert_eq!(create_cef_key_events(0, &input).len(), 1);
     }
 }

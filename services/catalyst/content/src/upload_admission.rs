@@ -211,6 +211,23 @@ impl DailyQuota {
     }
 }
 
+impl DailyQuota {
+    /// `Some(retry_after_secs)` when `client_ip` has spent its quota; counts nothing.
+    pub fn exhausted(&self, client_ip: &str) -> Option<u64> {
+        if self.max == 0 || client_ip.trim().is_empty() {
+            return None;
+        }
+        let now = Instant::now();
+        let mut windows = self.windows.lock();
+        windows.prune(now);
+        windows
+            .by_source
+            .get(&source_key(client_ip))
+            .filter(|w| w.count >= self.max)
+            .map(|w| retry_after(w, now))
+    }
+}
+
 #[cfg(test)]
 impl DailyQuota {
     /// Deploys counted for `client_ip` in its live window.

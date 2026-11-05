@@ -1,0 +1,39 @@
+{
+  "repository": "decentraland/dcl-one",
+  "revision": "c1fab3991444f7f95522683b488ae35371c7277b",
+  "captured_at": "2026-11-03T20:14:42.183522+00:00",
+  "scope": "Actual version2 reviewed release and schema_migrate executor in the pinned populated closure-base tests. pg_dump observes immediately after migrate; original assertions continue. Real ledger rows retained, not synthesized; no external application database used. Regeneration varies generated UUIDs/timestamps. Application-row captures project only tables exercised by each pinned test, including persistent event moderation decisions; canonical unrelated seed datasets are excluded. Cluster-provided collation CREATE and pg_dump-only transaction_timeout statements excluded; cluster collation remains the normal schema prerequisite.",
+  "inputs": [
+    {
+      "file": "services/catalyst/tests/schema_upgrade_from_closure_base.rs",
+      "sha256": "f022eb47e1107bd3f6a0e6df17a30328c247cbc780fb2e21f43ad54443532ab3"
+    },
+    {
+      "file": "services/catalyst/db/src/schema_migrate.rs",
+      "sha256": "611409e027da32970e9aa7c6a564c37e184f3e2ba52bfa135dc01ff229f9bd68"
+    },
+    {
+      "file": "schemas/releases/v2-shop-schema.sql",
+      "sha256": "fed50d2589e93ef8993aa6cb6ed3a7d4e0bc31ceeba57f3753fccd0282398205"
+    },
+    {
+      "file": "services/catalyst/tests/fixtures/schema/closure-base-c96370f21.sql",
+      "sha256": "060d7ba1219e2db344e5d789ee5a51771acadb42d5d43b0babef8717f2d731de"
+    }
+  ],
+  "outputs": [
+    {
+      "file": "v2-prepared-c1fab3991.sql",
+      "sha256": "3242308447fdc6294c7c100d1265eaba911f56dfaf1c03a463dcfc542c6328c6"
+    },
+    {
+      "file": "v2-upgrade-rows-c1fab3991.sql",
+      "sha256": "c8354451493799ce31e99c9369fc247021aa61045dedd9682709e2bbff0396bf"
+    },
+    {
+      "file": "v2-origin-rows-c1fab3991.sql",
+      "sha256": "869841157fcb18ddb32fd030f6920127c41142656f91046ae426be0dd1ab3925"
+    }
+  ],
+  "postgres_dump": "pg_dump (PostgreSQL) 18.6"
+}

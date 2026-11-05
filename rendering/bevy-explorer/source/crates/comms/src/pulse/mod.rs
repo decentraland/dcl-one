@@ -200,6 +200,7 @@ pub struct PulseCtx<'a> {
 /// keep the last reconstructed full state and overlay deltas onto it.
 struct Subject {
     wallet: Address,
+    active_emote: Option<String>,
     /// The realm the server last placed them in — from `PlayerJoined`, updated by a
     /// `TeleportPerformed` (the only thing that can move a peer between realms). Deltas carry
     /// none and don't need to: a realm change is always a teleport. A listener observing several
@@ -398,7 +399,8 @@ impl PulseDecoder {
                     false,
                     None,
                 );
-                if let Some(subject) = self.subjects.get(&e.subject_id) {
+                if let Some(subject) = self.subjects.get_mut(&e.subject_id) {
+                    subject.active_emote = Some(e.emote_id.clone());
                     events.push(PulseEvent::EmoteStart {
                         address: subject.wallet,
                         urn: e.emote_id,
@@ -418,7 +420,8 @@ impl PulseDecoder {
                     false,
                     None,
                 );
-                if let Some(subject) = self.subjects.get(&e.subject_id) {
+                if let Some(subject) = self.subjects.get_mut(&e.subject_id) {
+                    subject.active_emote = None;
                     events.push(PulseEvent::EmoteStop {
                         address: subject.wallet,
                         completed: e.reason == pulse::EmoteStopReason::Completed as i32,
@@ -463,6 +466,7 @@ impl PulseDecoder {
             full.subject_id,
             Subject {
                 wallet: address,
+                active_emote: None,
                 realm: realm.clone(),
                 profile_version: joined.profile_version,
                 last_seq: full.sequence,

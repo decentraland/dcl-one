@@ -157,6 +157,13 @@ globalThis.console = console;
 globalThis.self = {};
 
 // this does NOT seem like the nicest way to do re-exports but i can't figure out how to do it otherwise
+// Fetch's AbortSignal uses the DOMException global when a caller aborts or times out.
+import { DOMException } from "ext:deno_web/01_dom_exception.js";
+import { AbortController, AbortSignal } from "ext:deno_web/03_abort_signal.js";
+globalThis.DOMException = DOMException;
+globalThis.AbortController = AbortController;
+globalThis.AbortSignal = AbortSignal;
+
 import { Request } from "ext:deno_fetch/23_request.js"
 globalThis.Request = Request;
 
