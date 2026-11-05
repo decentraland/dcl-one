@@ -13,7 +13,8 @@
 //! procedures (`rpc::service`, `SocialError::WritesDisabled`).
 //!
 //! Admission and presence are not user authority: the LiveKit token mints
-//! (`/get-scene-adapter`, `/get-server-scene-adapter`), the Pulse room
+//! (`/get-scene-adapter`, `/get-server-scene-adapter`, the world comms mints
+//! and the shared-secret attempt throttle they keep), the Pulse room
 //! authority (`/internal/pulse/room-authority/v1`) and the media server's
 //! webhook stay open, as does `/translate` (a cached read of an external
 //! engine) and the two operator routes that change no durable state

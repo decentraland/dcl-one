@@ -138,7 +138,7 @@ pub struct Caches {
     /// The sorted coordinate list of a place -> its parcels and their owners.
     land: TtlMap<Vec<(i32, i32)>, Arc<Vec<LandParcel>>>,
     /// lowercased DCL name -> its holder.
-    name_owner: TtlMap<String, Arc<Option<String>>>,
+    pub name_owner: TtlMap<String, Arc<Option<String>>>,
     /// `owner` -> the parcels and estates the owner holds, newest transfer first.
     lands: TtlMap<String, Arc<Vec<OwnedLand>>>,
 }
@@ -680,6 +680,72 @@ pub async fn name_owner(state: &ChainIndex, name: &str) -> Result<Option<String>
         .map(|a| (*a).clone())
 }
 
+const QUERY_NAME_OWNERS: &str = r#"
+query nameOwners($names: [String!]!, $idFrom: ID!, $first: Int!) {
+  nfts(where: { category: ens, searchText_in: $names, id_gt: $idFrom }, orderBy: id, orderDirection: asc, first: $first) {
+    id
+    searchText
+    owner { id }
+  }
+}"#;
+
+/// DCL names asked about in one subgraph query by [`name_owners`].
+const NAMES_PER_QUERY: usize = 100;
+
+/// [`name_owner`] for many names at once, uncached (the background reconcile):
+/// each lowercased name maps to its first holder by id, `None` when nobody holds it.
+pub async fn name_owners(
+    state: &ChainIndex,
+    names: &[String],
+) -> Result<HashMap<String, Option<String>>, String> {
+    let mut names: Vec<String> = names.iter().map(|n| n.to_lowercase()).collect();
+    names.sort_unstable();
+    names.dedup();
+    let mut out: HashMap<String, Option<String>> =
+        names.iter().map(|n| (n.clone(), None)).collect();
+    let Some(url) = state.settings.marketplace_subgraph_url.as_deref() else {
+        return Ok(out);
+    };
+    for chunk in names.chunks(NAMES_PER_QUERY) {
+        let mut id_from = String::new();
+        for _ in 0..MAX_PAGES {
+            let data = graph_query(
+                state,
+                url,
+                QUERY_NAME_OWNERS,
+                json!({ "names": chunk, "idFrom": id_from, "first": THE_GRAPH_PAGE_SIZE }),
+            )
+            .await?;
+            for nft in data
+                .get("nfts")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let (Some(name), Some(owner)) = (
+                    nft.get("searchText").and_then(Value::as_str),
+                    nft.pointer("/owner/id")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty()),
+                ) else {
+                    continue;
+                };
+                if let Some(slot @ None) = out.get_mut(&name.to_lowercase()) {
+                    *slot = Some(owner.to_lowercase());
+                }
+            }
+            if (page_len(&data) as i64) < THE_GRAPH_PAGE_SIZE {
+                break;
+            }
+            match last_id(&data) {
+                Some(id) => id_from = id,
+                None => break,
+            }
+        }
+    }
+    Ok(out)
+}
+
 const QUERY_OWNED_LANDS: &str = r#"
 query ownedLands($owner: String!, $idFrom: ID!, $first: Int!) {
   nfts(where: { owner: $owner, category_in: [parcel, estate], id_gt: $idFrom }, orderBy: id, orderDirection: asc, first: $first) {
@@ -1004,6 +1070,24 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("not a publicly routable"), "{err}");
     }
+
+    #[tokio::test]
+    async fn name_owners_answers_many_names_in_one_query_without_caching() {
+        let (index, names) = test_support::index_with_names().await;
+        let holder =
+            crate::shared::identity::Address::parse("0x00000000000000000000000000000000000000aa")
+                .unwrap();
+        names.set(&holder, "Alpha");
+        let asked = ["alpha".to_string(), "BETA".to_string()];
+        let owners = name_owners(&index, &asked).await.unwrap();
+        assert_eq!(owners.len(), 2);
+        assert_eq!(owners["alpha"].as_deref(), Some(holder.as_str()));
+        assert_eq!(owners["beta"], None);
+        assert!(
+            index.graph.name_owner.is_empty(),
+            "the admission memo is untouched"
+        );
+    }
 }
 
 /// A loopback marketplace subgraph answering the `names` query from a
@@ -1046,7 +1130,53 @@ pub mod test_support {
         axum::Json(body): axum::Json<Value>,
     ) -> axum::response::Response {
         let query = body["query"].as_str().unwrap_or("");
-        let nfts: Vec<Value> = if query.contains("names(") {
+        let nfts: Vec<Value> = if query.contains("nameOwners(") {
+            if !body["variables"]["idFrom"]
+                .as_str()
+                .unwrap_or("")
+                .is_empty()
+            {
+                return axum::Json(json!({ "data": { "nfts": [] } })).into_response();
+            }
+            let wanted: Vec<String> = body["variables"]["names"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_lowercase)
+                .collect();
+            let registry = names.0.lock().unwrap();
+            let mut out: Vec<Value> = registry
+                .iter()
+                .flat_map(|(owner, labels)| {
+                    labels
+                        .iter()
+                        .map(|l| l.to_lowercase())
+                        .filter(|l| wanted.contains(l))
+                        .map(move |l| json!({ "id": format!("0xname-{l}-{owner}"), "searchText": l, "owner": { "id": owner } }))
+                })
+                .collect();
+            out.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+            out
+        } else if query.contains("nameOwner(") {
+            let name = body["variables"]["name"]
+                .as_str()
+                .unwrap_or("")
+                .to_lowercase();
+            let registry = names.0.lock().unwrap();
+            let mut owners: Vec<&String> = registry
+                .iter()
+                .filter(|(_, labels)| labels.iter().any(|l| l.eq_ignore_ascii_case(&name)))
+                .map(|(owner, _)| owner)
+                .collect();
+            owners.sort();
+            owners
+                .first()
+                .map(|owner| {
+                    vec![json!({ "id": format!("0xname-{name}"), "owner": { "id": owner } })]
+                })
+                .unwrap_or_default()
+        } else if query.contains("names(") {
             let owner = body["variables"]["owner"]
                 .as_str()
                 .unwrap_or("")
