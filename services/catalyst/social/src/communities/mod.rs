@@ -11,8 +11,8 @@
 //! (a banned wallet has no member row; a re-ban reactivates), the admin
 //! bearer and the global-moderator allow-list. The federation envelopes each
 //! write route also accepts, the federation log and its content routes are
-//! `fed` (over `crate::fed`). A banned or kicked member of a private
-//! community leaves its voice room ([`State::evict_from_private_community_voice`]
+//! `fed` (over `crate::fed`). A member who leaves, is banned or is kicked from a
+//! private community leaves its voice room ([`State::evict_from_private_community_voice`]
 //! through the [`VoiceEviction`] the comms module attaches in `main`). What
 //! did not come along, and why, is listed in `README.md`'s deviations; in
 //! short: the archipelago presence probe, which is configured explicitly and
@@ -443,10 +443,8 @@ impl State {
         }
     }
 
-    /// Upstream #482's ban-side half: a ban or kick landing after the join
-    /// must find the seat in the private community's voice room and remove
-    /// it. As the old service did, a failure is logged and never fails the
-    /// request that banned or kicked.
+    /// A leave, ban or kick removes the wallet's seat in a private community's
+    /// voice room. A failure is logged and never fails the membership request.
     pub async fn evict_from_private_community_voice(
         &self,
         community_id: CommunityId,
@@ -514,51 +512,7 @@ impl State {
             community_id,
             metadata,
         };
-        // Every HTTP producer starts its source broadcaster in the background.
-        // Prepare owned input before borrowing caller-owned audience values ends.
-        tokio::spawn(self.publish_community_event(&event, &audience));
         crate::notifications::community::notify(&self.pool, event, audience).await;
-    }
-
-    /// The shared legacy publisher carries the raw community event before the
-    /// inbox consumer filters opt-outs. The future owns only existing resources;
-    /// HTTP producers spawn it and voice START awaits it, matching the source.
-    pub(crate) fn publish_community_event(
-        &self,
-        event: &crate::notifications::community::CommunityEvent,
-        audience: &crate::notifications::community::Audience<'_>,
-    ) -> futures::future::BoxFuture<'static, ()> {
-        use crate::notifications::community::{Audience, broadcast_legacy, legacy_event, now_ms};
-        let publisher = self.referral.publisher().cloned();
-        let pool = self.pool.clone();
-        let timestamp = if matches!(
-            event.kind,
-            "community_member_removed"
-                | "community_member_left"
-                | "community_ownership_transferred"
-        ) {
-            event
-                .key
-                .rsplit('-')
-                .next()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or_else(now_ms)
-        } else {
-            now_ms()
-        };
-        let raw = legacy_event(event, audience, timestamp);
-        let (online, excluded) = match audience {
-            Audience::OnlineMembersExcept { online, except } => (
-                Some(online.iter().cloned().collect()),
-                vec![except.to_string()],
-            ),
-            _ => (None, Vec::new()),
-        };
-        Box::pin(async move {
-            if let Some(publisher) = publisher {
-                broadcast_legacy(&pool, &publisher, raw, online, excluded).await;
-            }
-        })
     }
 
     /// The old `PLACES_API_URL` `/api/destinations` ownership check as a
@@ -724,6 +678,7 @@ pub fn router(state: SharedState) -> Router {
                 .patch(referral::update_referral_signed_up),
         )
         .route("/v1/referral-email", post(referral::add_referral_email))
+        .route("/v1/client-login", post(referral::client_login))
         .route(
             "/v1/moderation/communities",
             get(admin::get_moderation_communities),
