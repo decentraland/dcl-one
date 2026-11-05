@@ -190,7 +190,9 @@ export class Explorer {
     try {
       const reply = await this.console.run(line)
       record.ms = Date.now() - startedAt
-      record.reply = reply.length > 4000 ? `${reply.slice(0, 4000)}... (${reply.length} chars)` : reply
+      // redacted before it is cut, so a cut cannot leave a part of the credential
+      const safe = redact(line, reply)
+      record.reply = safe.length > 4000 ? `${safe.slice(0, 4000)}... (${safe.length} chars)` : safe
       return reply
     } catch (error) {
       record.ms = Date.now() - startedAt
@@ -209,7 +211,7 @@ export class Explorer {
     try {
       return JSON.parse(reply) as T
     } catch {
-      throw new Error(`\`${redactLine(line)}\` did not reply JSON: ${redact(line, reply.slice(0, 200))}`)
+      throw new Error(`\`${redactLine(line)}\` did not reply JSON: ${redact(line, reply).slice(0, 200)}`)
     }
   }
 

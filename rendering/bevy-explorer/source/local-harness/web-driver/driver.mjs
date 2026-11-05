@@ -84,10 +84,11 @@ function noChromeMessage(env) {
 }
 
 /** The credential a console line carries: the first argument of `/login_identity` or
- *  `/hud_login`, an AuthIdentity (an ephemeral private key and a signed delegation valid for
- *  days), or undefined. The e2e suite's `driver/console.ts` has the same rule. */
+ *  `/hud_login` that is not a bare flag, an AuthIdentity (an ephemeral private key and a signed
+ *  delegation valid for days), or undefined. The e2e suite's `driver/console.ts` has the same
+ *  rule, which its tests keep in step. */
 export function secretOf(line) {
-  return /^\s*\/?(?:login_identity|hud_login)\s+(\S+)/.exec(line)?.[1];
+  return /^\s*\/?(?:login_identity|hud_login)\s+(?:--\S+\s+)*([^-\s]\S*)/.exec(line)?.[1];
 }
 
 /** `text` with the line's credential replaced wherever it appears, for what the command line

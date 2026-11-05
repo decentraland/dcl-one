@@ -320,6 +320,21 @@ describe('/hud_login through the session', () => {
     }
   })
 
+  it("is answered with the engine's crash, the stored sign-in put back", async () => {
+    const driver = new IdentityDriver()
+    driver.hold = true
+    const h = await ready(driver)
+    const first = login(ENCODED)
+    await waitFor(() => expect(driver.identityLogins).toHaveLength(1))
+    // the same-document engine: boot.js's crash watchdog calls window.__onEngineCrash directly
+    act(() => {
+      ;(window as Window & { __onEngineCrash?: (message: string, source: string) => void }).__onEngineCrash?.('engine stalled', 'watchdog')
+    })
+    await expect(first).rejects.toThrow('engine stalled')
+    await waitFor(() => expect(h.session().login.account).toBeNull())
+    driver.release()
+  })
+
   it('is answered when the engine fails to launch, the stored sign-in put back', async () => {
     const driver = new LaunchFailingDriver()
     const h = await ready(driver)

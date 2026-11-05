@@ -145,7 +145,8 @@ async function serveFile(root: string, origin: () => string, request: IncomingMe
     response.writeHead(404).end()
     return
   }
-  if ((request.url ?? '').split('?')[0] === BRIDGE_ABOUT_PATH) {
+  // the file the request resolved to, as `resolveFile` decodes and normalises the path
+  if (file === path.join(root, ...BRIDGE_ABOUT_PATH.split('/').filter(Boolean))) {
     let body: string
     try {
       body = bridgeAbout(await readFile(file, 'utf8'), origin())

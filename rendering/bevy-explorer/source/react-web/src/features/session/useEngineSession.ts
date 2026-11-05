@@ -665,8 +665,9 @@ export interface EngineSession {
   avatarPreviewRect: { x: number; y: number; width: number; height: number } | null
   /** The persisted home destination the lobby's landing card shows (null before the engine knows). */
   homeScene: () => { realm: string | null; parcel: string } | null
-  /** Post-jump-in Places picker: choose where to spawn (or null to skip → Genesis Plaza). */
-  pickDestination: (dest: Destination) => void
+  /** Post-jump-in Places picker: choose where to spawn (or null to skip → Genesis Plaza). False
+   *  when nothing was done: no driver, or the lobby still signing in. */
+  pickDestination: (dest: Destination) => boolean
   login: LoginFlow
   welcome: WelcomeFlow
   /** Entry overlay state (the sceneLoading stream): what is loading while `phase` is
@@ -2275,16 +2276,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
 
   // Post-jump-in Places picker (or the lobby): choose a destination (or null to skip → home),
   // then leave the picker. A world switches realm now; a parcel is teleported once the avatar spawns.
-  const pickDestination = useCallback((dest: Destination) => {
+  const pickDestination = useCallback((dest: Destination): boolean => {
     const driver = driverRef.current
-    if (driver == null) return
+    if (driver == null) return false
     // from the lobby, a pick waits for sign-in: it releases the hold, so a failed sign-in
     // afterwards would leave the world loaded under the sign-in screen
-    if (lobbyRef.current && busyRef.current) return
+    if (lobbyRef.current && busyRef.current) return false
     setDestinationPicked(true) // flip to the loading overlay first
     if (lobbyRef.current) {
       travelFromLobby(dest)
-      return
+      return true
     }
     setBusy(true)
 
@@ -2324,6 +2325,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     }
     requestAnimationFrame(() => requestAnimationFrame(run))
     setTimeout(run, 60)
+    return true
   }, [launchEngine, runPendingLogin, travelFromLobby, travelInPlace, settleHudLogin])
   // Boot-mode flags (?hud=0 / ?guest=1 / ?systemScene= — see lib/bootMode.ts), captured once
   // per session mount so tests can vary location.search between mounts.
@@ -3043,11 +3045,22 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     if (pending == null || !pending.landed || pending.welcomeAwaited || phase === 'login' || phase === 'welcome' || welcomeSaving) return
     if (phase === 'lobby' && busy) return
     const destination = hudDestination.current
-    const picking = destination != null && (phase === 'lobby' || phase === 'picking')
-    if (picking) pickDestination(destination)
+    // `entering` only when the pick went out: a pick that did nothing leaves the HUD where it is
+    const picked = destination != null && (phase === 'lobby' || phase === 'picking') && pickDestination(destination)
     // the identity the command sent, not the page's stored sign-in as it may have moved on
-    settleHudLogin({ address: pending.login.address, guest: pending.login.guest === true, phase: picking ? 'entering' : phase })
+    settleHudLogin({ address: pending.login.address, guest: pending.login.guest === true, phase: picked ? 'entering' : phase })
   }, [phase, busy, welcomeSaving, hudLoginTick, pickDestination, settleHudLogin])
+
+  // An engine that fails (a boot panic, the watchdog's crash) answers no sign-in: a pending
+  // /hud_login is answered with the failure, and its stored sign-in put back when the sign-in
+  // never took. The launch and realm-check failures have answered theirs by the time this runs.
+  useEffect(() => {
+    if (fatalError == null) return
+    const pending = hudLoginPending.current
+    if (pending == null) return
+    if (!pending.landed) pending.restore()
+    settleHudLogin(new Error(fatalError.message))
+  }, [fatalError, settleHudLogin])
 
   // The screens a phase shows (the loading screen's own are the engine's: LOADING_START / END /
   // TIMEOUT come from `crates/analytics/src/loading.rs`).

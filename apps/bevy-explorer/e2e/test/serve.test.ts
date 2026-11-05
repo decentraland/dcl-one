@@ -81,9 +81,11 @@ describe('serveWebApp', () => {
     const head = await fetch(server.url + BRIDGE_ABOUT_PATH.slice(1), { method: 'HEAD' })
     assert.equal(head.headers.get('content-length'), String(Buffer.byteLength(JSON.stringify(about))))
     assert.equal(await head.text(), '')
-    // a query string changes nothing
-    const queried = (await (await fetch(`${server.url}${BRIDGE_ABOUT_PATH.slice(1)}?x=1`)).json()) as typeof BRIDGE_ABOUT
-    assert.deepEqual(queried, about)
+    // a query string, an escaped or a doubled slash change nothing: the file decides
+    for (const spelling of [`${BRIDGE_ABOUT_PATH.slice(1)}?x=1`, BRIDGE_ABOUT_PATH.slice(1).replace('/about', '%2Fabout'), BRIDGE_ABOUT_PATH.slice(1).replace('/about', '//about')]) {
+      const same = (await (await fetch(server.url + spelling)).json()) as typeof BRIDGE_ABOUT
+      assert.deepEqual(same, about, spelling)
+    }
   })
 
   test('HEAD carries the length and no body', async () => {

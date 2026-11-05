@@ -228,14 +228,19 @@ describe('hudLogin', () => {
     assert.deepEqual(fake.lines, [])
   })
 
-  test('a reply that is not JSON fails the command, the payload redacted', async () => {
-    const payload = 'eyJhIjoxfQ=='
+  test('a reply that is not JSON fails the command, the payload redacted before the reply is cut', async () => {
+    // longer than the cut, so a cut before the redaction would leave a part of it
+    const payload = 'eyJ' + 'A'.repeat(400) + '='
     const fake = new FakeConsole({ hud_login: `signed in with ${payload}` })
-    await assert.rejects(new Explorer(fake).hudLogin(payload), (error: unknown) => {
+    const explorer = new Explorer(fake)
+    const records: CommandRecord[] = []
+    explorer.onCommand((record) => records.push(record))
+    await assert.rejects(explorer.hudLogin(payload), (error: unknown) => {
       assert.ok(error instanceof Error)
       assert.equal(error.message, '`/hud_login <redacted>` did not reply JSON: signed in with <redacted>')
       return true
     })
+    assert.equal(records[0]!.reply, 'signed in with <redacted>')
   })
 
   test('fails with the sign-in error the HUD reports, the payload redacted', async () => {
