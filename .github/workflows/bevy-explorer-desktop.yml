@@ -43,7 +43,7 @@ jobs:
         # the organisation's bandwidth, so a miss pulls only this target and the hit skips LFS.
         # stage-dist.py checks every staged file against the lock, whichever way it arrived.
         id: uuav-dist
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: library/uuav/dist/${{ env.UUAV_TARGET }}
           key: uuav-dist-${{ env.UUAV_TARGET }}-${{ hashFiles('tooling/uuav/uuav-binaries.lock.json') }}
