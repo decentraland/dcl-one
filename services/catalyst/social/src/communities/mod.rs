@@ -514,8 +514,6 @@ impl State {
             community_id,
             metadata,
         };
-        // Every HTTP producer starts its source broadcaster in the background.
-        // Prepare owned input before borrowing caller-owned audience values ends.
         crate::notifications::community::notify(&self.pool, event, audience).await;
     }
 

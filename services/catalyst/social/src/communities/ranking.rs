@@ -1,7 +1,6 @@
 //! Ranking contracts from social-service-ea b6b2cef, logic/community/ranking.ts,
-//! communities-db.ts. Local lifecycle events
-//! use durable receipts; external delivery retains the source's at-least-once
-//! contribution semantics. Mirrored rankings are never recalculated here.
+//! communities-db.ts. Local lifecycle events use durable receipts. Mirrored
+//! rankings are never recalculated here.
 use std::{sync::Arc, time::Duration};
 
 use chrono::{NaiveDateTime, Utc};

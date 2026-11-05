@@ -372,7 +372,7 @@ async fn authenticated_native_logins_preserve_days_threshold_identity_and_duplic
         hit(&rig.app, Case::new("post", "/social-api/v1/client-login"))
             .await
             .0,
-        StatusCode::UNAUTHORIZED
+        StatusCode::BAD_REQUEST
     );
     let mut forged = login_case(&invited, first, now).await;
     forged
