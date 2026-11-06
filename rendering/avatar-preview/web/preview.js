@@ -109,6 +109,8 @@ export function parseOptions(search) {
     hideControls: flag(p.get('hideControls')),
     disableLoader: p.has('disableLoader') && p.get('disableLoader') !== 'false',
     disableSwitcher: flag(p.get('disableSwitcher')),
+    disableFace: flag(p.get('disableFace')),
+    showSceneBoundaries: flag(p.get('showSceneBoundaries')) || flag(p.get('showAnimationReference')),
     mode: p.get('mode'),
   };
 }
@@ -339,8 +341,58 @@ async function inlineDefinitions(o) {
   return defs.map(registerDefinition);
 }
 
+// the Unity renderer's builder dresses a base avatar, not a profile: the categories nothing
+// requested covers get these, by body shape
+const BUILDER_DEFAULTS = {
+  hair: ['casual_hair_01', 'standard_hair'],
+  upper_body: ['green_hoodie', 'f_sweater'],
+  lower_body: ['brown_pants', 'f_jeans'],
+  feet: ['sneakers', 'bun_shoes'],
+};
+const BUILDER_FACE = {
+  eyebrows: ['eyebrows_00', 'f_eyebrows_00'],
+  mouth: ['mouth_00', 'f_mouth_00'],
+  eyes: ['eyes_00', 'f_eyes_00'],
+};
+const BUILDER_SKIN = '#cc9b76';
+
+// builder mode, as the Unity renderer loads it: the page's own items, then the requested urns (the
+// page's win a category), dressed with base wearables where nothing covers it (and the face's
+// unless `disableFace`), a male body unless one is asked for, the builder's skin and black hair
+// and eyes. Only an emote of the page's own plays; a urn emote is not worn.
+async function resolveBuilder(o, peer) {
+  const bodyShape = o.bodyShape || BODY.male;
+  const male = bodyShape === BODY.male;
+  const urns = o.urns || [];
+  const described = await describe(peer, urns);
+  const requested = urns.map((urn) => ({ urn, isEmote: false, category: null, bodyShapes: [], ...described.get(urn.toLowerCase()) }));
+  const local = await inlineDefinitions(o);
+  const wearables = [...local, ...requested].filter((i) => !i.isEmote);
+  const covered = new Set(wearables.map((i) => i.category).filter(Boolean));
+  const defaults = [];
+  if (!o.disableDefaultWearables) {
+    const table = o.disableFace ? BUILDER_DEFAULTS : { ...BUILDER_DEFAULTS, ...BUILDER_FACE };
+    for (const [category, [m, f]] of Object.entries(table)) {
+      if (!covered.has(category)) defaults.push(`urn:decentraland:off-chain:base-avatars:${male ? m : f}`);
+    }
+  }
+  const hexOf = (v, fallback) => (v ? (v.startsWith('#') ? v : '#' + v) : fallback);
+  return {
+    outfit: {
+      op: 'outfit', bodyShape,
+      wearables: [...wearables.map((i) => i.urn), ...defaults],
+      skin: hexOf(o.skin, BUILDER_SKIN), hair: hexOf(o.hair, '#000000'), eyes: hexOf(o.eyes, '#000000'),
+      hideFace: !!o.disableFace,
+    },
+    itemEmote: local.find((i) => i.isEmote)?.urn ?? null,
+    solo: null,
+    locked: false,
+  };
+}
+
 async function resolveOutfit(o) {
   const peer = o.peerUrl || (o.env === 'dev' ? PEER.dev : PEER.prod);
+  if (modeOf(o) === 'builder') return resolveBuilder(o, peer);
   const outfit = { op: 'outfit', bodyShape: o.bodyShape || null, wearables: [], skin: o.skin, hair: o.hair, eyes: o.eyes };
   let itemEmote = null;
   // looked up first, added after the profile, which replaces the outfit's wearables
@@ -372,6 +424,7 @@ async function resolveOutfit(o) {
   outfit.wearables = [...worn.map((i) => i.urn), ...outfit.wearables];
   // shown even where another wearable would hide it: the item is what the page is about
   outfit.forceRender = [...new Set(worn.map((i) => i.category).filter(Boolean))];
+  outfit.hideFace = !!o.disableFace;
   for (const k of ['skin', 'hair', 'eyes']) if (outfit[k] && !outfit[k].startsWith('#')) outfit[k] = '#' + outfit[k];
   return { outfit, itemEmote, solo, locked };
 }
@@ -441,6 +494,8 @@ function cameraFrom(o) {
     lockRadius: !!o.lockRadius,
     panning: o.panning !== false,
     wheelPrecision: o.wheelPrecision ?? 100,
+    // the builder view fits the avatar whatever its size, as the renderer's builder camera does
+    fitSubject: mode === 'builder',
     reset: true,
   };
 }
@@ -498,6 +553,7 @@ async function apply() {
     state.view = itemView ? 'item' : 'avatar';
     ui.configure(o);
     command(cameraFrom(o));
+    command({ op: 'boundaries', shown: !!o.showSceneBoundaries });
     command({ op: 'background', color: o.disableBackground ? null : (o.background ? (o.background.startsWith('#') ? o.background : '#' + o.background) : DEFAULT_BACKGROUND) });
     command(outfit);
     command(solo

@@ -76,6 +76,7 @@ pub struct StagePlugin;
 impl Plugin for StagePlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "shadow_catcher.wgsl");
+        bevy::asset::embedded_asset!(app, "grid_01.png");
         app.add_plugins(MaterialPlugin::<ShadowCatcherMaterial>::default())
             .init_resource::<StageLight>()
             .insert_resource(bevy::pbr::DirectionalLightShadowMap { size: 2048 })
@@ -89,6 +90,8 @@ fn spawn_stage(
     light: Res<StageLight>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut catchers: ResMut<Assets<ShadowCatcherMaterial>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    assets: Res<AssetServer>,
 ) {
     commands.spawn((
         DirectionalLight {
@@ -130,7 +133,42 @@ fn spawn_stage(
         NotShadowCaster,
         ShadowCatcher { item: true },
     ));
+    // the scene boundaries (the builder's animation reference, as the Unity renderer draws it): a
+    // translucent cylinder, 1 m round and 3 m tall, the space an emote has to stay in, on a 4 m
+    // grid floor whose inner ring is the cylinder's
+    commands.spawn((
+        Mesh3d(meshes.add(Cylinder::new(1.0, 3.0))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            // the renderer's (1, 0.18, 0.33) at 30%, raised so it reads the same through this
+            // camera's tonemapping: measured over a dark background against the renderer's
+            base_color: Color::srgba(1.0, 0.32, 0.45, 0.4),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        })),
+        Transform::from_xyz(0.0, 1.5, 0.0),
+        Visibility::Hidden,
+        NotShadowCaster,
+        Boundaries,
+    ));
+    commands.spawn((
+        Mesh3d(meshes.add(Plane3d::default().mesh().size(4.0, 4.0))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color_texture: Some(assets.load("embedded://dcl_avatar_preview/grid_01.png")),
+            unlit: true,
+            cull_mode: None,
+            ..default()
+        })),
+        Transform::default(),
+        Visibility::Hidden,
+        NotShadowCaster,
+        Boundaries,
+    ));
 }
+
+/// The scene boundaries' cylinder and grid floor, shown with `boundaries`.
+#[derive(Component)]
+pub struct Boundaries;
 
 /// A floor: the avatar's (its shadow and the glow around its feet), or the item view's (a glow
 /// under the item). Each shows in its own view, as the Unity renderer swaps them.
@@ -172,25 +210,41 @@ fn apply_light(
 
 /// Shows the floor of the view on screen, the item's under the item, as the Unity renderer swaps
 /// its avatar and item floors with the view.
+#[allow(clippy::type_complexity)]
 fn place_floors(
     orbit: Res<OrbitCamera>,
-    mut catchers: Query<(
-        &ShadowCatcher,
-        &MeshMaterial3d<ShadowCatcherMaterial>,
-        &mut Transform,
-        &mut Visibility,
-    )>,
+    mut catchers: Query<
+        (
+            &ShadowCatcher,
+            &MeshMaterial3d<ShadowCatcherMaterial>,
+            &mut Transform,
+            &mut Visibility,
+        ),
+        Without<Boundaries>,
+    >,
+    mut boundaries: Query<&mut Visibility, (With<Boundaries>, Without<ShadowCatcher>)>,
     mut materials: ResMut<Assets<ShadowCatcherMaterial>>,
 ) {
     if !orbit.is_changed() {
         return;
     }
-    for (catcher, handle, mut transform, mut visibility) in catchers.iter_mut() {
-        visibility.set_if_neq(if catcher.item == orbit.item_view {
+    let shown = |yes: bool| {
+        if yes {
             Visibility::Inherited
         } else {
             Visibility::Hidden
-        });
+        }
+    };
+    for mut visibility in boundaries.iter_mut() {
+        visibility.set_if_neq(shown(orbit.boundaries));
+    }
+    for (catcher, handle, mut transform, mut visibility) in catchers.iter_mut() {
+        // the grid floor stands in for the avatar's shadow and glow, as in the renderer
+        visibility.set_if_neq(shown(if catcher.item {
+            orbit.item_view
+        } else {
+            !orbit.item_view && !orbit.boundaries
+        }));
         if catcher.item {
             let at = Vec3::new(
                 orbit.item_target.x,

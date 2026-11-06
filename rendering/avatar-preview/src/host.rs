@@ -86,6 +86,9 @@ pub enum Command {
         /// categories shown even where another wearable hides them (the items being previewed)
         #[serde(default)]
         force_render: Vec<String>,
+        /// no eyes, eyebrows or mouth on the face (`disableFace`)
+        #[serde(default)]
+        hide_face: bool,
     },
     /// The wearable shown on its own in the item view, or none: a second avatar that wears only
     /// it, its body hidden (but the head, with `keepHead`, for a facial feature).
@@ -98,6 +101,11 @@ pub enum Command {
         eyes: Option<String>,
         #[serde(default)]
         keep_head: bool,
+    },
+    /// The scene boundaries (the builder's animation reference): a cylinder 1 m round and 3 m
+    /// tall on a grid floor, around the avatar; the avatar's framing grows to show it.
+    Boundaries {
+        shown: bool,
     },
     /// Which subject is shown: the item alone, or the avatar wearing it.
     View {
@@ -135,6 +143,9 @@ pub enum Command {
         zoom_max: Option<f32>,
         /// drop the zoom, pan and spin the controls left
         reset: Option<bool>,
+        /// frame the avatar's measured bounds whatever their size, as the renderer's builder view
+        /// does (otherwise the default view stands, and only an avatar too big for it is fitted)
+        fit_subject: Option<bool>,
     },
     /// Background colour `#rrggbb`, or none for a transparent canvas.
     Background {
@@ -291,6 +302,10 @@ pub struct OrbitCamera {
     pub item_floor: f32,
     /// the item has been measured: from then on it turns about `item_target`
     pub item_ready: bool,
+    /// fit the avatar's measured bounds whatever their size (the builder view)
+    pub fit_subject: bool,
+    /// the scene boundaries are shown, and framed with the avatar
+    pub boundaries: bool,
     pub lock_beta: bool,
     tilt: f32,
     tilt_velocity: f32,
@@ -330,6 +345,8 @@ impl Default for OrbitCamera {
             item_distance: 4.6,
             item_floor: 0.0,
             item_ready: false,
+            fit_subject: false,
+            boundaries: false,
             lock_beta: false,
             tilt: 0.0,
             tilt_velocity: 0.0,
@@ -400,6 +417,43 @@ pub struct LoadGate {
     item_framed: bool,
 }
 
+/// The avatar's face without its features (`disableFace`).
+#[derive(Resource, Default)]
+pub struct HideFace(pub bool);
+
+/// A facial feature mesh `hide_face` hid, so it can show it again.
+#[derive(Component)]
+struct FaceHidden;
+
+/// Hides the avatar's eyes, eyebrows and mouth (its body's mask meshes) while `HideFace` asks,
+/// and shows again only what it hid.
+#[allow(clippy::type_complexity)]
+fn hide_face(
+    mut commands: Commands,
+    face: Res<HideFace>,
+    avatars: Query<Entity, With<PreviewAvatar>>,
+    children: Query<&Children>,
+    mut masks: Query<(&mut Visibility, &Name, Has<FaceHidden>), With<avatar::AvatarBodyMesh>>,
+) {
+    for avatar in avatars.iter() {
+        for entity in children.iter_descendants(avatar) {
+            let Ok((mut visibility, name, hidden)) = masks.get_mut(entity) else {
+                continue;
+            };
+            if !name.as_str().to_lowercase().contains("mask_") {
+                continue;
+            }
+            if face.0 && !hidden {
+                *visibility = Visibility::Hidden;
+                commands.entity(entity).insert(FaceHidden);
+            } else if !face.0 && hidden {
+                *visibility = Visibility::Inherited;
+                commands.entity(entity).remove::<FaceHidden>();
+            }
+        }
+    }
+}
+
 /// An outfit received before the avatar entity exists; `spawn_avatar_on_first_outfit` takes it.
 #[derive(Resource, Default)]
 pub struct PendingOutfit(pub Option<PbAvatarShape>);
@@ -411,6 +465,7 @@ impl Plugin for HostPlugin {
         app.init_resource::<OrbitCamera>();
         app.init_resource::<PendingOutfit>();
         app.init_resource::<LoadGate>();
+        app.init_resource::<HideFace>();
         app.add_systems(
             Update,
             (
@@ -419,6 +474,7 @@ impl Plugin for HostPlugin {
                 fit_to_bounds,
                 fit_item,
                 prepare_item,
+                hide_face,
                 place_camera,
                 show_subjects,
                 report_load,
@@ -462,7 +518,11 @@ fn apply_commands(
         Res<Assets<Mesh>>,
         Res<Assets<SceneMaterial>>,
     ),
-    (items, mut gate): (Query<Entity, With<PreviewItem>>, ResMut<LoadGate>),
+    (items, mut gate, mut face): (
+        Query<Entity, With<PreviewItem>>,
+        ResMut<LoadGate>,
+        ResMut<HideFace>,
+    ),
     (flags, mut images, views): (
         Res<crate::StageFlags>,
         ResMut<Assets<Image>>,
@@ -486,7 +546,9 @@ fn apply_commands(
                 hair,
                 eyes,
                 force_render,
+                hide_face,
             } => {
+                face.0 = hide_face;
                 // `load` follows once this outfit (and the item, if one comes) is framed
                 gate.armed = true;
                 gate.avatar_framed = false;
@@ -560,6 +622,9 @@ fn apply_commands(
                     ));
                 }
             }
+            Command::Boundaries { shown } => {
+                orbit.boundaries = shown;
+            }
             Command::View { item } => {
                 if orbit.item_view != item {
                     // the camera glides from one subject to the other, as the Unity renderer
@@ -590,9 +655,13 @@ fn apply_commands(
                 zoom_min,
                 zoom_max,
                 reset,
+                fit_subject,
             } => {
                 if reset == Some(true) {
                     orbit.reset_view();
+                }
+                if let Some(v) = fit_subject {
+                    orbit.fit_subject = v;
                 }
                 if let Some(v) = drag_speed {
                     orbit.drag_speed = v;
@@ -1152,12 +1221,13 @@ fn fit_to_bounds(
     let axis = surfaces.origin(root);
     let fields = &mut *state;
     let (seen, reach) = (&mut fields.seen, &mut fields.reach);
-    surfaces.measure(root, true, &mut |point: Vec3| {
+    let mut grow = |point: Vec3| {
         let (min, max) = seen.get_or_insert((point, point));
         *min = min.min(point);
         *max = max.max(point);
         *reach = reach.max((point - axis).xz().length());
-    });
+    };
+    surfaces.measure(root, true, &mut grow);
 
     // the whole clip, a pose at a time, short of its end (a one-shot at its end has finished)
     const SAMPLES: u32 = 20;
@@ -1180,7 +1250,21 @@ fn fit_to_bounds(
     let Some((min, max)) = state.seen else {
         return;
     };
-    let reach = state.reach;
+    // the avatar's footprint as the renderer measures it (the circumradius about its middle)
+    let mut radius = 0.5 * (max - min).xz().length();
+    let mut reach = state.reach;
+    // the scene boundaries are framed with the avatar, as the renderer frames its cylinder: the
+    // height from the floor to its top, and across, the larger of the two
+    let (min, max) = if orbit.boundaries {
+        radius = radius.max(1.0);
+        reach = reach.max(1.0);
+        (
+            min.min(Vec3::new(-1.0, 0.0, -1.0)),
+            max.max(Vec3::new(1.0, 3.0, 1.0)),
+        )
+    } else {
+        (min, max)
+    };
     let aspect = windows
         .single()
         .map(|w| w.width() / w.height().max(1.0))
@@ -1195,7 +1279,17 @@ fn fit_to_bounds(
         tall.max(wide)
     };
     let ordinary = needs(0.0, ORDINARY_TOP, ORDINARY_REACH, orbit.target.y);
-    if needs(min.y, max.y, reach, orbit.target.y) > ordinary {
+    if orbit.fit_subject {
+        // the builder view, as the renderer fits it: centred on the bounds' middle, its height and
+        // its widest turn across (the circumradius of its footprint) in view, with a margin. The
+        // renderer's is 5% over its renderers' bounds, which run looser than the skinned surface
+        // measured here: 13% matches its builder captures
+        const MARGIN: f32 = 1.13;
+        let middle = (min.y + max.y) / 2.0;
+        let distance = ((max.y - min.y) / 2.0 / tan_v).max(radius / tan_h) * MARGIN;
+        orbit.fit = distance / orbit.radius.max(0.01);
+        orbit.fit_target = Vec3::Y * (middle - orbit.target.y);
+    } else if needs(min.y, max.y, reach, orbit.target.y) > ordinary {
         // too big for the default view: look at its middle, from as far as that needs, with a
         // little room around it as the Unity renderer's fit keeps
         const MARGIN: f32 = 1.1;

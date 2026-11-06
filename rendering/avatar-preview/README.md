@@ -21,7 +21,10 @@ for avatars, wearables and emotes, replacing the Unity renderer slot of
 - `src/audio.rs`: plays the sounds the Explorer's emote code asks for (its `AudioEmitter`s),
   following the emote's pause and the host's sound toggle.
 - `src/stage.rs`, `src/shadow_catcher.wgsl`: the light rig and the floor that shows only the
-  avatar's shadow, so a transparent canvas still grounds it on the host page.
+  avatar's shadow, so a transparent canvas still grounds it on the host page; the scene
+  boundaries' cylinder and grid floor (`src/grid_01.png`, the Unity renderer's grid texture,
+  copied unchanged from `decentraland/unity-explorer` (Apache-2.0) at `49c1644901`,
+  `avatar-preview-renderer/Assets/Textures/`).
 - `web/preview.js`: the `wearable-preview` iframe contract over the host surface.
 - `web/compare.html`: wearable-preview's Unity renderer (`ref=<origin>`, default production) and
   this one side by side with the same preview options, with sliders that tune the light rig live.
@@ -68,10 +71,11 @@ Commands, as JSON objects with an `op`:
 
 | `op` | fields | effect |
 | --- | --- | --- |
-| `outfit` | `bodyShape`, `wearables[]`, `skin`, `hair`, `eyes` (`#rrggbb`), `forceRender[]` (categories no other wearable hides) | the avatar; the first one spawns it |
+| `outfit` | `bodyShape`, `wearables[]`, `skin`, `hair`, `eyes` (`#rrggbb`), `forceRender[]` (categories no other wearable hides), `hideFace` (no eyes, eyebrows or mouth) | the avatar; the first one spawns it |
 | `item` | `urn` (or null), `bodyShape`, `skin`, `hair`, `eyes`, `keepHead` | the wearable shown on its own: a second avatar wearing only it, its body hidden (but the head, for a facial feature), framed once before `load` |
+| `boundaries` | `shown` | the scene boundaries: a cylinder 1 m round and 3 m tall on a grid floor, framed with the avatar |
 | `view` | `item` | the item on its own, or the avatar wearing it; a switch glides the camera across and starts the view over |
-| `camera` | `alpha`, `beta` (radians), `radius` (m), `fov` (degrees), `orthographic`, `target[3]`, `autoRotate`, `autoRotateSpeed`, `interactive`, `lockAlpha`, `lockBeta` (the item view's vertical drag), `lockRadius` | the orbit camera; unset fields keep their value |
+| `camera` | `alpha`, `beta` (radians), `radius` (m), `fov` (degrees), `orthographic`, `target[3]`, `autoRotate`, `autoRotateSpeed`, `interactive`, `lockAlpha`, `lockBeta` (the item view's vertical drag), `lockRadius`, `fitSubject` (fit the avatar whatever its size, the builder view) | the orbit camera; unset fields keep their value |
 | `background` | `color` (`#rrggbb` or null for transparent) | the clear colour |
 | `emote` | `urn` (a urn or a base emote name), `loop` | plays on the avatar |
 | `stopEmote` | | |
@@ -97,7 +101,8 @@ The page speaks the `@dcl/schemas` preview protocol: options from the URL (`cont
 `bodyShape`, `urn`, `skin`, `hair`, `eyes`, `emote`, `camera`, `projection`, `zoom`,
 `zoomScale`, `offsetX/Y/Z`, `cameraX/Y/Z`, `autoRotateSpeed`, `disableAutoRotate`,
 `background`, `disableBackground`, `disableDefaultEmotes`, `peerUrl`, `marketplaceServerUrl`,
-`env`, `type`, `lockAlpha`, `lockBeta`, `lockRadius`, `disableSwitcher`) and from
+`env`, `type`, `mode`, `lockAlpha`, `lockBeta`, `lockRadius`, `disableSwitcher`, `disableFace`,
+`disableDefaultWearables`, `showSceneBoundaries`, `showAnimationReference`) and from
 `update` messages; `ready` at boot, `load {renderer: "bevy"}`, `error`, `emote_event`
 (`animation_play`, `animation_end`); `controller_request` dispatched to `scene`
 (`getScreenshot`, `getMetrics`, `changeZoom`, `panCamera`, `changeCameraPosition`,
@@ -156,11 +161,21 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
   with the live look and vertical framing, no controls; without a size, the canvas as it is; an
   invalid size, one over 4096, or a request while loading fails as the renderer's does.
 
+- its builder mode (the publishing tool, which takes its thumbnails from it): no profile, but the
+  page's own items and the requested urns (the page's win a category), dressed with the renderer's
+  base wearables where nothing covers a category (the face's too unless `disableFace`, which also
+  clears the face's features), a male body unless one is asked for, the builder's skin `#cc9b76` and
+  black hair and eyes; only an emote of the page's own plays. Its view fits the avatar whatever its
+  size, as the renderer's builder camera does;
+- its scene boundaries (`showSceneBoundaries`, `showAnimationReference`): the translucent cylinder,
+  1 m round and 3 m tall, on its 4 m grid floor, which stands in for the shadow and glow; the
+  avatar's framing grows to take it in.
+
 A named default emote plays once in the marketplace, then the avatar idles; it loops in the
 builder.
 
-Still to come: builder mode's default wearables, profile, authentication and jesus modes, scene
-boundaries, social emotes, spring bones, and configurator mode.
+Still to come: profile, authentication and jesus modes, social emotes, spring bones, and
+configurator mode.
 
 The emote controller follows the Unity renderer: `goTo` on a stopped emote starts it and holds
 it at that time, `play` resumes a paused one, and emote events wait for `load`.
