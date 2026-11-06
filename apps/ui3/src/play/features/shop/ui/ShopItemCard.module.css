@@ -53,7 +53,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 203px;
+  /* 203px high, as the design's 197px and 203px cards draw it; a card widened to fill its row stays square. */
+  min-height: 203px;
+  aspect-ratio: 1;
   overflow: hidden;
   border-radius: var(--r-lg);
   background-size: cover;
@@ -203,7 +205,8 @@
 }
 .skeletonTile {
   flex: none;
-  height: 203px;
+  min-height: 203px;
+  aspect-ratio: 1;
   margin-bottom: -14px;
   border-radius: var(--r-md);
 }
