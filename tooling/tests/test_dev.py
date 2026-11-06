@@ -502,7 +502,9 @@ class DevTest(unittest.TestCase):
         # The Sites build trusts the same manager.
         self.assertEqual(env['VITE_SHOP_CREDITS_MANAGER'], env['CREDITS_MANAGER_CONTRACT'])
         self.assertEqual((env['CREDITS_USAGE_INDEX_ENABLED'], env['CREDITS_MOCK_CARD']), ('true', 'true'))
-        for key in ('CREDITS_MANAGER_CONTRACT', 'VITE_SHOP_CREDITS_MANAGER', 'CREDITS_MOCK_CARD', 'CREDITS_SIGNER_KEY_FILE'):
+        # Its usage index replays from the manager's deployment block, not the shared manager's.
+        self.assertEqual(env['CREDITS_USAGE_START_BLOCK'], '52152027')
+        for key in ('CREDITS_MANAGER_CONTRACT', 'VITE_SHOP_CREDITS_MANAGER', 'CREDITS_MOCK_CARD', 'CREDITS_SIGNER_KEY_FILE', 'CREDITS_USAGE_START_BLOCK'):
             self.assertNotIn(key, mirror, key)
         # Without a signer key in the stack's state, nothing signs credits on chain.
         self.assertEqual(env['CREDITS_ONCHAIN_AUTHORIZE_ENABLED'], 'false')

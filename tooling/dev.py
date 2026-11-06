@@ -407,6 +407,9 @@ def testnet_env():
         # The same manager, for the Sites build: the in-world Shop's shell refuses a credit signed for any other.
         'VITE_SHOP_CREDITS_MANAGER': '0xb65fd692d15c30c3adcacdd5ccf80e1facecfc7c',
         'CREDITS_USAGE_INDEX_ENABLED': 'true',
+        # The index replays from the block that deployed the manager. Unset, it starts where the shared one was
+        # deployed (block 20612932), over 31 million blocks before this manager existed.
+        'CREDITS_USAGE_START_BLOCK': '52152027',
         # Free test credits. With the signer key below they are spent through that manager, which pays testnet
         # MANA only. This profile sets the mock card on Amoy alone, and the stack listens on 127.0.0.1.
         'CREDITS_MOCK_CARD': 'true',
