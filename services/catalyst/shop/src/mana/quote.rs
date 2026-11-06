@@ -79,14 +79,11 @@ impl QuoteRates {
 /// current answer is no rate, and that line says its price is unavailable),
 /// else the newest price snapshot within its freshness budget for both.
 pub async fn mana_usd_rates(pool: &sqlx::PgPool) -> Result<QuoteRates, sqlx::Error> {
-    if super::feed_rate::installed() {
-        let display = super::feed_rate::current()
-            .and_then(Result::ok)
-            .map(|shop| shop.rate);
-        let purchase = super::feed_rate::current_for_purchase()
-            .and_then(Result::ok)
-            .map(|shop| shop.rate);
-        return Ok(QuoteRates { display, purchase });
+    if let Some((display, purchase)) = super::feed_rate::current_rates() {
+        return Ok(QuoteRates {
+            display: display.ok().map(|shop| shop.rate),
+            purchase: purchase.ok().map(|shop| shop.rate),
+        });
     }
     let spot = mana_usd_spot(pool).await?;
     Ok(QuoteRates {

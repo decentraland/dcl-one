@@ -9,9 +9,12 @@
 //! sizes with: the marketplace's own `manaUsdAggregator()` and
 //! `manaUsdAggregatorTolerance()`, the aggregator's `decimals()` and
 //! `latestRoundData()`, all at one block hash, the endpoint's chain checked,
-//! the round refused when the marketplace's check would revert at that
-//! block, when it runs ahead of the clock, or past
-//! `CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS`.
+//! the round refused when it runs ahead of the clock or past
+//! `CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS`. Unlike a credits authorization,
+//! it answers a round past the marketplace's tolerance
+//! (`ChainFeed::reading_past_tolerance`): showing a price does not need the
+//! tolerance, a purchase quote is cut at it here, and a node that boots
+//! while the feed is between rounds still shows prices.
 //!
 //! Only the newest marketplace is read: every venue the Shop signs new
 //! listings for converts at that one. A USD-pegged trade signed for an older
@@ -26,11 +29,12 @@
 //!   pricing, and the credits quote of a line not priced in USD): the last
 //!   good read while its round is within the local age bound
 //!   (`CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS`, an hour by default). An RPC
-//!   outage, or a round past the marketplace's tolerance that `ChainFeed`
-//!   refuses to read, keeps the last good price shown: browsing never goes
-//!   down with the endpoint. Only a node that has not read the feed yet (the
-//!   seconds after boot) or whose last good round is past that bound answers
-//!   unavailable.
+//!   outage keeps the last good price shown until its round reaches that
+//!   bound: browsing does not go down with the endpoint. Only a node that
+//!   has not read the feed yet (the seconds after boot) or whose last good
+//!   round is past that bound answers unavailable. A credit charge bounds it
+//!   tighter, by `MANA_PRICE_MAX_STALENESS_SECS` since the read
+//!   (`credits::pricing::LocalMarket`).
 //! - [`current_for_purchase`], for the MANA quote of a line priced in USD:
 //!   also refused once the read is [`SERVE_FOR`] old or the round is within
 //!   [`SETTLE_MARGIN_SECS`] of the marketplace's tolerance, measured on the
@@ -45,11 +49,12 @@
 //!
 //! The refresher reads again [`REFRESH_EVERY`] while the round is far from
 //! the tolerance, just before the round leaves it, and every
-//! [`REFRESH_MIN`] once it has, until the feed publishes a newer round. While
-//! reads fail it backs off, doubling up to [`REFRESH_BACKOFF_MAX`], so an
-//! outage does not hammer the endpoint. Each read runs in its own task: one
+//! [`REFRESH_MIN`] once it has, until the feed publishes a newer round (a
+//! round past the tolerance is a good read, not a failure). While reads fail
+//! (the endpoint, not the feed) it backs off, doubling up to
+//! [`REFRESH_BACKOFF_MAX`], so an outage does not hammer the endpoint. Each read runs in its own task: one
 //! that panics is a failed read and the refresher goes on. [`health`] reports
-//! the slot (the economy `/health`).
+//! the slot (the transactions API's `/health`, `shop_mana_usd_feed`).
 //!
 //! The rate can still move between a quote and the block that settles it:
 //! the approval a USD-pegged quote asks for carries upstream's +2%
@@ -64,8 +69,6 @@ use chrono::{DateTime, Utc};
 
 use crate::credits::feed::{FeedReading, MarketplaceFeed};
 use crate::types::ManaUsdRate;
-
-pub use crate::types::decimal_text;
 
 /// How often the refresher reads while the round is far from the tolerance.
 pub const REFRESH_EVERY: Duration = Duration::from_secs(15);
@@ -133,8 +136,11 @@ struct Good {
 }
 
 impl Good {
+    /// Whole seconds since the read started, rounded up (a cut is never late).
     fn elapsed_s(&self, now: Instant) -> i64 {
-        i64::try_from(now.saturating_duration_since(self.started).as_secs()).unwrap_or(i64::MAX)
+        let elapsed = now.saturating_duration_since(self.started);
+        let secs = elapsed.as_secs() + u64::from(elapsed.subsec_nanos() > 0);
+        i64::try_from(secs).unwrap_or(i64::MAX)
     }
 
     /// The round's age on the chain's clock at `now`: the read block's
@@ -254,6 +260,20 @@ impl RateSlot {
             .checked(now, self.max_age_secs, true)
     }
 
+    /// Both rates from one snapshot: (to show, to quote a purchase).
+    pub fn rates_at(
+        &self,
+        now: Instant,
+    ) -> (Result<ShopRate, Unavailable>, Result<ShopRate, Unavailable>) {
+        match self.good() {
+            Some(good) => (
+                good.checked(now, self.max_age_secs, false),
+                good.checked(now, self.max_age_secs, true),
+            ),
+            None => (Err(Unavailable), Err(Unavailable)),
+        }
+    }
+
     /// When the refresher should read next, at `now`: backing off while
     /// reads fail, else at the round's own pace.
     pub fn next_read_in(&self, now: Instant) -> Duration {
@@ -275,13 +295,13 @@ impl RateSlot {
     pub fn health(&self, now: Instant) -> serde_json::Value {
         let good = self.good();
         serde_json::json!({
-            "lastGoodReadAt": good.map(|g| g.started_wall.to_rfc3339()),
-            "roundUpdatedAt": good
+            "last_good_read_at": good.map(|g| g.started_wall.to_rfc3339()),
+            "round_updated_at": good
                 .and_then(|g| DateTime::<Utc>::from_timestamp(g.reading.updated_at_s, 0))
                 .map(|t| t.to_rfc3339()),
-            "chainRoundAgeSecs": good.map(|g| g.chain_round_age(now)),
-            "toleranceSecs": good.map(|g| g.reading.tolerance_secs),
-            "failedReadsSinceGood": self.failures.load(Ordering::Relaxed),
+            "chain_round_age_secs": good.map(|g| g.chain_round_age(now)),
+            "tolerance_secs": good.map(|g| g.reading.tolerance_secs),
+            "failed_reads_since_good": self.failures.load(Ordering::Relaxed),
             "shown": self.at(now).is_ok(),
             "purchasable": self.for_purchase_at(now).is_ok(),
         })
@@ -367,6 +387,11 @@ pub fn current_for_purchase() -> Option<Result<ShopRate, Unavailable>> {
     slot().map(|slot| slot.for_purchase_at(Instant::now()))
 }
 
+/// Both rates now from one snapshot ([`RateSlot::rates_at`]).
+pub fn current_rates() -> Option<(Result<ShopRate, Unavailable>, Result<ShopRate, Unavailable>)> {
+    slot().map(|slot| slot.rates_at(Instant::now()))
+}
+
 /// The process's slot for `/health`: `None` where no feed is wired.
 pub fn health() -> Option<serde_json::Value> {
     slot().map(|slot| slot.health(Instant::now()))
@@ -387,6 +412,7 @@ pub fn usd_pegged_allowance(mana: U256) -> U256 {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::types::decimal_text;
     use alloy_primitives::B256;
 
     /// A read at `block_time_s` (the node's clock in step with the chain's).
@@ -489,8 +515,8 @@ pub(crate) mod tests {
         );
         assert_eq!(slot.next_read_in(at(T0 + 10)), REFRESH_EVERY);
         let health = slot.health(at(T0 + 10));
-        assert_eq!(health["failedReadsSinceGood"], 0);
-        assert_eq!(health["chainRoundAgeSecs"], 0);
+        assert_eq!(health["failed_reads_since_good"], 0);
+        assert_eq!(health["chain_round_age_secs"], 0);
         assert_eq!(health["shown"], true);
         assert_eq!(health["purchasable"], true);
     }
@@ -651,6 +677,42 @@ pub(crate) mod tests {
         );
     }
 
+    #[test]
+    fn a_node_booting_between_rounds_shows_prices_and_polls_for_the_next() {
+        // The first read lands on a round already past Amoy's 27 s tolerance.
+        let slot = RateSlot::new(3_600);
+        slot.record(Ok(read_at("0.26960836", T0 - 40, 27, T0)), at(T0), wall(T0));
+        assert!(slot.at(at(T0)).is_ok(), "the catalog is priced");
+        assert_eq!(slot.for_purchase_at(at(T0)), Err(Unavailable));
+        assert_eq!(
+            slot.next_read_in(at(T0)),
+            REFRESH_MIN,
+            "no backoff: the endpoint answered"
+        );
+        assert_eq!(slot.health(at(T0))["failed_reads_since_good"], 0);
+        let (shown, purchase) = slot.rates_at(at(T0));
+        assert!(
+            shown.is_ok() && purchase.is_err(),
+            "one snapshot, both answers"
+        );
+    }
+
+    #[test]
+    fn a_fraction_of_a_second_counts_as_a_whole_one() {
+        let slot = RateSlot::new(3_600);
+        slot.record(Ok(read_at("0.26960836", T0 - 23, 27, T0)), at(T0), wall(T0));
+        assert!(
+            slot.for_purchase_at(at(T0) + Duration::from_millis(500))
+                .is_ok(),
+            "24 s, rounded up"
+        );
+        assert_eq!(
+            slot.for_purchase_at(at(T0) + Duration::from_millis(1_500)),
+            Err(Unavailable),
+            "25 s, rounded up"
+        );
+    }
+
     struct Scripted {
         calls: std::sync::atomic::AtomicUsize,
     }
@@ -776,6 +838,24 @@ pub(crate) mod tests {
         assert_eq!(rates.display.unwrap().decimal_text(), "0.26960836");
         assert!(crate::market::items::mana_usd_rate(&market).await.is_ok());
         assert!(local.mana_usd().await.is_ok());
+
+        // A read older than MANA_PRICE_MAX_STALENESS_SECS (60 here) is shown, never charged.
+        let old = Arc::new(RateSlot::new(3_600));
+        old.record(
+            Ok(reading("0.26960836", now - 61)),
+            Instant::now() - Duration::from_secs(61),
+            Utc::now() - chrono::Duration::seconds(61),
+        );
+        with_test_slot(Some(old));
+        assert!(
+            crate::market::items::mana_usd_rate(&market).await.is_ok(),
+            "the catalog shows it"
+        );
+        let refused = local.mana_usd().await.unwrap_err().to_string();
+        assert!(
+            refused.contains("last read") && !refused.contains("http"),
+            "{refused}"
+        );
 
         wired(None);
         assert_eq!(

@@ -311,12 +311,24 @@ impl Market for LocalMarket {
 
     async fn mana_usd(&self) -> Result<String, ApiError> {
         // The marketplace's feed where it is wired (`mana::feed_rate::current`): the
-        // rate the contract converts with. Why a read failed is logged by the
-        // refresher; the client gets the generic reason only.
+        // rate the contract converts with. This rate sizes credit charges
+        // (authorize, cart, top-up, reprice), so it keeps the spot's bound: a read
+        // older than `MANA_PRICE_MAX_STALENESS_SECS` is not charged at, though the
+        // catalog may still show it. Why a read failed is logged by the refresher;
+        // the client gets the generic reason only.
         if let Some(feed) = crate::mana::feed_rate::current() {
-            return feed
-                .map(|shop| shop.usd_per_mana())
-                .map_err(|unavailable| ApiError::service_unavailable(unavailable.to_string()));
+            let shop =
+                feed.map_err(|unavailable| ApiError::service_unavailable(unavailable.to_string()))?;
+            let now = chrono::Utc::now().timestamp();
+            let read_at = shop.observed_at.timestamp();
+            if is_stale(read_at, now, self.max_staleness_secs) {
+                return Err(ApiError::service_unavailable(format!(
+                    "the marketplace's MANA/USD feed was last read {}s ago, past {}s",
+                    now - read_at,
+                    self.max_staleness_secs
+                )));
+            }
+            return Ok(shop.usd_per_mana());
         }
         let Some(price) = self.price.as_ref() else {
             return Err(ApiError::service_unavailable(
