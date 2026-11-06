@@ -67,6 +67,41 @@ describe('Rail pagination', () => {
     expect(paged()).toBe(false)
   })
 
+  it('pages eight outfits as two pages, the end bleed being padding, and ends the last one at the very end', () => {
+    // Eight 295px cards 20px apart with the 12px bleed on each side: 2524px over a 1252px viewport. The
+    // cards travel 1260px, one stride of four; the last 12px are the end bleed.
+    vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockReturnValue(295)
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1252)
+    vi.spyOn(HTMLElement.prototype, 'scrollWidth', 'get').mockReturnValue(2524)
+    let left = 0
+    HTMLElement.prototype.scrollTo = function (options?: ScrollToOptions | number): void {
+      left = Math.min(typeof options === 'object' ? (options.left ?? 0) : (options ?? 0), 1272)
+      this.scrollLeft = left
+      fireEvent.scroll(this)
+    }
+    render(
+      <Rail perPage={4} gap={20} bleed={12}>
+        {Array.from({ length: 8 }, (_, i) => (
+          <div key={i}>Outfit {i + 1}</div>
+        ))}
+      </Rail>
+    )
+    expect(screen.getByRole('button', { name: 'Page 2' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Page 3' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(left).toBe(1272)
+    expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'true')
+    expect(screen.queryByRole('button', { name: 'Next' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Previous' }))
+    expect(left).toBe(0)
+    expect(screen.getByRole('button', { name: 'Page 1' })).toHaveAttribute('aria-current', 'true')
+    // Scrolled by hand to where the last four cards start (a snap point, short of the end bleed): the last page.
+    const viewport = screen.getByText('Outfit 1').parentElement!.parentElement!
+    viewport.scrollLeft = 1260
+    fireEvent.scroll(viewport)
+    expect(screen.getByRole('button', { name: 'Page 2' })).toHaveAttribute('aria-current', 'true')
+  })
+
   it('pages the cards that don’t fit, and drops the pages a wider viewport no longer needs', () => {
     const resized: Array<() => void> = []
     vi.stubGlobal(

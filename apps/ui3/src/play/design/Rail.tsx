@@ -13,16 +13,21 @@ function pageStride(el: HTMLDivElement, perPage: number, gap: number): number {
   return perPage * ((card?.offsetWidth ?? 0) + gap)
 }
 
+/** How far the cards themselves scroll: the viewport's whole scroll less the end `bleed`, which is padding. */
+function cardsTravel(el: HTMLDivElement, bleed: number): number {
+  return Math.max(0, el.scrollWidth - el.clientWidth - bleed)
+}
+
 /**
- * The pages the viewport scrolls through: one per stride, the last clamped to the end, and one when the
- * cards fit (the end `bleed` is padding, not a card). Before it has a width (no layout yet), `fallback`.
+ * The pages the cards scroll through: one per stride, the last clamped to the end of the cards, and one
+ * when they fit. Before the viewport has a width (no layout yet), `fallback`.
  */
 function measuredPages(el: HTMLDivElement, perPage: number, gap: number, bleed: number, fallback: number): number {
   if (el.clientWidth === 0) return fallback
-  const max = el.scrollWidth - el.clientWidth
-  if (max <= bleed + 1) return 1
+  const travel = cardsTravel(el, bleed)
+  if (travel <= 1) return 1
   const stride = pageStride(el, perPage, gap)
-  return stride > 0 ? 1 + Math.ceil((max - 1) / stride) : fallback
+  return stride > 0 ? 1 + Math.ceil((travel - 1) / stride) : fallback
 }
 
 export function Rail({
@@ -82,7 +87,9 @@ export function Rail({
       const el = viewport.current
       const next = Math.max(0, Math.min(pages - 1, p))
       if (el == null) return
-      el.scrollTo({ left: Math.min(next * pageStride(el, perPage, gap), el.scrollWidth - el.clientWidth), behavior: 'smooth' })
+      const end = el.scrollWidth - el.clientWidth
+      // The last page scrolls to the very end, so its last card keeps the end bleed's room on the right.
+      el.scrollTo({ left: next === pages - 1 ? end : Math.min(next * pageStride(el, perPage, gap), end), behavior: 'smooth' })
     },
     [gap, pages, perPage]
   )
@@ -91,15 +98,16 @@ export function Rail({
     const el = viewport.current
     if (el == null) return
     const onScroll = (): void => {
-      const max = el.scrollWidth - el.clientWidth
+      const travel = cardsTravel(el, bleed)
       const stride = pageStride(el, perPage, gap)
-      if (max <= 0 || stride <= 0) setPage(0)
-      else if (el.scrollLeft >= max - 1) setPage(pages - 1)
+      if (travel <= 0 || stride <= 0) setPage(0)
+      // The end of the cards, or past it into the end bleed, is the last page.
+      else if (el.scrollLeft >= travel - 1) setPage(pages - 1)
       else setPage(Math.max(0, Math.min(pages - 2, Math.round(el.scrollLeft / stride))))
     }
     el.addEventListener('scroll', onScroll, { passive: true })
     return () => el.removeEventListener('scroll', onScroll)
-  }, [gap, pages, perPage])
+  }, [bleed, gap, pages, perPage])
 
   useEffect(() => {
     viewport.current?.scrollTo({ left: 0 })
