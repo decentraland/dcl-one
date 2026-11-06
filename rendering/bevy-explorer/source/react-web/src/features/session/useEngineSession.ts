@@ -1289,7 +1289,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           // Newest first in the list; toasts and reward popups play in arrival order.
           const arrived = [...fresh].reverse()
           queueNotificationToasts(arrived)
-          queueRewardPopups(arrived)
+          // A popup, unlike the toasts, would still render with the HUD hidden (?hud=0).
+          if (!bootMode().hideHud) queueRewardPopups(arrived)
           break
         }
         case 'emotes':

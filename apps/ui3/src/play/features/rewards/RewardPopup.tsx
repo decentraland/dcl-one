@@ -35,7 +35,7 @@ export function rewardOf(n: AppNotification): Reward | null {
     name: str(m, 'tokenName'),
     image: str(m, 'tokenImage'),
     rarity: RARITIES.find((r) => r === rarity) ?? 'base',
-    category: str(m, 'tokenCategory')
+    category: str(m, 'tokenCategory')?.toLowerCase()
   }
 }
 
@@ -81,7 +81,7 @@ export function RewardPopup({ reward, onCollect }: { reward: Reward; onCollect: 
     >
       <span className={styles.rays} aria-hidden="true" />
       <div className={styles.content}>
-        <span className={styles.header}>Quest reward</span>
+        <span className={styles.header}>Reward</span>
         <h2 id="reward-popup-title" className={styles.title}>New Item Unlocked!</h2>
         <div className={styles.item} style={{ backgroundImage: `url(${rarityTile(reward.rarity)})` }}>
           {reward.image != null && <img className={styles.thumb} src={reward.image} alt="" />}
