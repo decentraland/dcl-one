@@ -243,7 +243,7 @@ pub async fn add_admin(
     }
     if state
         .moderation
-        .is_scene_banned(place.place_id(), &admin)
+        .is_scene_banned(context.ban_key.as_str(), &admin)
         .await?
     {
         return Err(ApiError::bad_request(
@@ -381,7 +381,7 @@ pub async fn list_bans(
     let (limit, offset) = pagination(q.limit, q.offset);
     let (addresses, total) = state
         .moderation
-        .list_scene_ban_addresses(&place_id, limit, offset)
+        .list_scene_ban_addresses(context.ban_key.as_str(), limit, offset)
         .await?;
     let names = scene::names_for(&state, &addresses).await;
     let results: Vec<Value> = addresses
@@ -421,7 +421,7 @@ pub async fn list_ban_addresses(
     let (limit, offset) = pagination(q.limit, q.offset);
     let (addresses, total) = state
         .moderation
-        .list_scene_ban_addresses(&place_id, limit, offset)
+        .list_scene_ban_addresses(context.ban_key.as_str(), limit, offset)
         .await?;
     Ok(Json(PaginatedResponse::one_based(
         addresses, total, limit, offset,
@@ -454,18 +454,20 @@ pub async fn ban_user(
         .into_result()?;
     let target = target_address(&state, &input, "banned_address", Some("banned_name")).await?;
     scene::ensure_target_not_protected(&state, place, &target).await?;
+    let mut rooms = context.rooms.clone();
+    rooms.extend(context.replaced_scene_rooms(&state).await?);
     state
         .moderation
         .scene_ban(
-            place.place_id(),
+            context.ban_key.as_str(),
             &target,
             &sf.signer,
-            &context.rooms,
+            &rooms,
             &context.place_title,
         )
         .await?;
-    scene::kick(&state, &context.rooms, &target).await;
-    scene::add_ban(&state, &context.rooms, &target).await;
+    scene::kick(&state, &rooms, &target).await;
+    scene::add_ban(&state, &rooms, &target).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -494,11 +496,13 @@ pub async fn unban_user(
         .await
         .into_result()?;
     let target = target_address(&state, &input, "banned_address", Some("banned_name")).await?;
+    let mut rooms = context.rooms.clone();
+    rooms.extend(context.replaced_scene_rooms(&state).await?);
     state
         .moderation
-        .scene_unban(place.place_id(), &target, &context.place_title)
+        .scene_unban(context.ban_key.as_str(), &target, &context.place_title)
         .await?;
-    scene::remove_ban(&state, &context.rooms, &target).await;
+    scene::remove_ban(&state, &rooms, &target).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -526,7 +530,7 @@ pub async fn world_ban_check(
             tracing::error!(%error, world = %world_name, parcel = %base_parcel, "world ban check: scene resolution unavailable");
             unavailable()
         })?;
-    let place_id = resolved.scene_id.ok_or_else(unavailable)?;
+    let place_id = resolved.ban_key().ok_or_else(unavailable)?;
     let is_banned = match state
         .moderation
         .is_scene_banned(place_id.as_str(), &address)
@@ -534,7 +538,7 @@ pub async fn world_ban_check(
     {
         Ok(banned) => banned,
         Err(e) => {
-            tracing::error!(error = %e, world = %world_name, parcel = %base_parcel, %address, %place_id, "world ban check: ban store query failed");
+            tracing::error!(error = %e, world = %world_name, parcel = %base_parcel, %address, place_id = place_id.as_str(), "world ban check: ban store query failed");
             return Err(unavailable());
         }
     };

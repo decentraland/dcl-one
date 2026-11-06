@@ -12,15 +12,9 @@ use crate::Address;
 use crate::world_identity::WorldName;
 
 use super::CommsState;
-use super::admission::scene::{kick, live_world_rooms, readmit_until_settled};
+use super::admission::scene::{kick, live_world_rooms, readmit_world_rooms_in_inventory};
 
-/// Waits before re-running an access-change pass that left a decision or eviction undone.
-const READMIT_RETRY_DELAYS: [std::time::Duration; 4] = [
-    std::time::Duration::from_secs(1),
-    std::time::Duration::from_secs(5),
-    std::time::Duration::from_secs(30),
-    std::time::Duration::from_secs(120),
-];
+const WORLD_BATCH: usize = 16;
 
 /// What an edit revoked, in the rooms' terms.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,11 +54,23 @@ impl CommsState {
                     kick(&state, &rooms, address).await;
                 }
                 RoomRevocation::WorldAccess { world } => {
-                    if !readmit_until_settled(&state, world, &READMIT_RETRY_DELAYS).await {
-                        tracing::warn!(%world, "access-change revocation incomplete after retries; no completion claimed");
-                        return;
+                    // The worlds edit already committed its unique revision and
+                    // cutoff. A delayed advisory wakeup must not enqueue another
+                    // revision/cutoff and revoke sessions admitted since the edit.
+                    let rooms = match state.room_service().list_rooms().await {
+                        Ok(rooms) => rooms,
+                        Err(error) => {
+                            tracing::warn!(%error,%world,"world access inventory unavailable; durable intent retained");
+                            return;
+                        }
+                    };
+                    if let Err(error) =
+                        retry_access_rechecks(&state, Some(world.key()), &rooms).await
+                    {
+                        tracing::warn!(%error,%world,"world access enforcement retained for maintenance retry");
                     }
                 }
+
                 RoomRevocation::Everywhere { address } => {
                     if let Err(error) = super::removal::operator_block(&state.pool, address).await {
                         tracing::error!(%error,%address,"operator-block removal intent was not accepted; worlds write is already committed");
@@ -80,3 +86,94 @@ impl CommsState {
         });
     }
 }
+
+/// Rotate due work before external calls; failed/undecided participants retain
+/// their obligation across restarts. A newer edit cannot be cleared by this pass.
+async fn retry_access_rechecks(
+    state: &CommsState,
+    only_world: Option<&str>,
+    rooms: &[String],
+) -> anyhow::Result<()> {
+    if !state.livekit.configured {
+        return Ok(());
+    }
+    let rows:Vec<(String,uuid::Uuid,chrono::NaiveDateTime)>=sqlx::query_as("WITH due AS (SELECT world_name FROM social.world_access_rechecks WHERE next_attempt_at<=timezone('UTC',now()) AND ($1::text IS NULL OR world_name=$1) ORDER BY next_attempt_at,world_name LIMIT $2 FOR UPDATE SKIP LOCKED) UPDATE social.world_access_rechecks q SET next_attempt_at=timezone('UTC',now())+interval '1 minute' FROM due WHERE q.world_name=due.world_name RETURNING q.world_name,q.revision,q.changed_at")
+        .bind(only_world).bind(WORLD_BATCH as i64).fetch_all(&state.pool).await?;
+    for (raw, _revision, changed_at) in rows {
+        let Ok(world) = WorldName::parse(&raw) else {
+            continue;
+        };
+        match readmit_world_rooms_in_inventory(state, &world, Some(changed_at), rooms).await {
+            // Keep the latest accepted cutoff after success: old LiveKit tokens
+            // can reconnect and refresh after an empty inventory or an eviction.
+            // The preclaimed next_attempt_at bounds repeated checks fairly.
+            Ok(()) => {}
+            Err(error) => tracing::warn!(%error,%world,"world access recheck retained"),
+        }
+    }
+    Ok(())
+}
+
+/// Recheck live worlds even when an operator/name-deny change did not emit a
+/// revocation, and retry undecided allow-list reads on the next maintenance tick.
+/// Existing shared-secret admissions are preserved unless an access-change
+/// revocation explicitly requires them to mint again.
+pub(crate) async fn sweep(state: &CommsState) -> anyhow::Result<()> {
+    // Retain durable obligations while disabled, without making doomed SFU
+    // calls or warning every tick. Enabling LiveKit resumes those obligations.
+    if !state.livekit.configured {
+        return Ok(());
+    }
+    let rooms = state.room_service().list_rooms().await?;
+    retry_access_rechecks(state, None, &rooms).await?;
+    let live_worlds = world_batch(state, &rooms);
+    let names: Vec<&str> = live_worlds.iter().map(|world| world.key()).collect();
+    let cutoffs: Vec<(String, chrono::NaiveDateTime)> = sqlx::query_as(
+        "SELECT world_name,changed_at FROM social.world_access_rechecks WHERE world_name=ANY($1::text[])")
+        .bind(&names).fetch_all(&state.pool).await?;
+    // Live worlds do not wait behind inactive historical cutoffs in the due queue.
+    for world in live_worlds {
+        let cutoff = cutoffs
+            .iter()
+            .find(|(name, _)| name == world.key())
+            .map(|(_, cutoff)| *cutoff);
+        if let Err(error) = readmit_world_rooms_in_inventory(state, &world, cutoff, &rooms).await {
+            tracing::warn!(%error,%world,"world access maintenance retained for next tick");
+        }
+    }
+    Ok(())
+}
+
+fn world_batch(state: &CommsState, rooms: &[String]) -> Vec<WorldName> {
+    let mut worlds = std::collections::BTreeMap::new();
+    for room in rooms {
+        if let Some((world, _)) = crate::rooms::decode_world_scene_room(room) {
+            worlds.insert(world.key().to_owned(), world);
+        } else if let Some(raw) = room.strip_prefix(crate::rooms::WORLD_ROOM_PREFIX)
+            && let Ok(world) = WorldName::parse(raw)
+        {
+            worlds.insert(world.key().to_owned(), world);
+        }
+    }
+    let after = state.world_access_cursor.lock().unwrap().clone();
+    let mut selected: Vec<_> = worlds
+        .values()
+        .filter(|world| after.as_deref().is_none_or(|after| world.key() > after))
+        .take(WORLD_BATCH)
+        .cloned()
+        .collect();
+    if selected.len() < WORLD_BATCH && after.is_some() {
+        let remaining = WORLD_BATCH - selected.len();
+        selected.extend(
+            worlds
+                .values()
+                .filter(|world| world.key() <= after.as_deref().unwrap())
+                .take(remaining)
+                .cloned(),
+        );
+    }
+    *state.world_access_cursor.lock().unwrap() =
+        selected.last().map(|world| world.key().to_owned());
+    selected
+}
+

@@ -3,6 +3,8 @@
 //! the `Init` frame (the entity range and the state snapshot) and the CRDT
 //! relay until either side closes or the client is removed.
 
+use crate::comms::interfaces::AccessPolicy;
+
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -136,10 +138,11 @@ pub async fn ws_upgrade(
     let ws = ws
         .max_frame_size(state.settings.ws_max_frame_bytes)
         .max_message_size(state.settings.ws_max_frame_bytes);
+    let caller_ip = crate::shared::client_ip::client_ip(&headers);
     let mgr = Arc::clone(&state);
     ws.on_upgrade(move |socket| async move {
         mgr.scenes.on_ws_connected();
-        handle_socket(&mgr, socket, scene, paths).await;
+        handle_socket(&mgr, socket, scene, paths, caller_ip).await;
         mgr.scenes.on_ws_closed();
     })
     .into_response()
@@ -150,6 +153,7 @@ async fn handle_socket(
     socket: WebSocket,
     scene: Arc<Scene>,
     paths: Vec<String>,
+    caller_ip: String,
 ) {
     let (mut sink, mut stream) = socket.split();
 
@@ -180,8 +184,41 @@ async fn handle_socket(
         }
     };
 
+    let caller = if caller_ip.is_empty() {
+        authed.signer.as_str()
+    } else {
+        &caller_ip
+    };
     let now = chrono::Utc::now().naive_utc();
-    let grant = match admit(
+    let throttle = if let SceneKey::World(world) = &scene.identity.key {
+        match state.policy.world_admission(world, now).await {
+            Ok(crate::comms::access::WorldAdmission::Open(
+                crate::policy::AccessType::SharedSecret,
+            )) => Some(
+                crate::comms::gatekeeper::admission::world_mint::SecretThrottle {
+                    pool: &state.pool,
+                    max_attempts: state.secret_max_attempts,
+                    world: world.key(),
+                    subject: caller,
+                },
+            ),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let reservation = if let Some(throttle) = &throttle {
+        match throttle.reserve(now).await {
+            Ok(Some(reservation)) => Some(reservation),
+            _ => {
+                let _ = sink.close().await;
+                return;
+            }
+        }
+    } else {
+        None
+    };
+    let admission = admit(
         state,
         &scene,
         &authed.signer,
@@ -189,8 +226,16 @@ async fn handle_socket(
         None,
         now,
     )
-    .await
-    {
+    .await;
+    if let (Some(throttle), Some(reservation)) = (&throttle, reservation) {
+        throttle
+            .settle(
+                matches!(admission, Err(AdmissionRefused::InvalidSecret)),
+                reservation,
+            )
+            .await;
+    }
+    let grant = match admission {
         Ok(grant) => grant,
         Err(reason) => {
             tracing::info!(scene = %scene.name, address = %authed.signer, %reason, "ws admission refused");

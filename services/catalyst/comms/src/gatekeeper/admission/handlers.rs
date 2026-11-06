@@ -120,6 +120,12 @@ pub async fn get_scene_adapter(
         .as_str();
     let device_id = device_identifier(&sf.metadata);
     let secret = scene::meta_str(&sf.metadata, "secret");
+    let started = if let Some(world) = resolved.realm.world() {
+        Some(super::world_mint::authorization_started(&state.pool, world).await
+            .map_err(|error| ApiError::http(503, format!("World authorization unavailable: {error}")))?)
+    } else { None };
+    let caller_ip = crate::shared::client_ip::client_ip(&headers);
+    let caller = if caller_ip.is_empty() { identity.as_str() } else { &caller_ip };
     let record = crate::writes::side_refusal(switch).is_none();
     let ((), gate, world_allowed) = tokio::join!(
         async {
@@ -141,6 +147,7 @@ pub async fn get_scene_adapter(
                 Some(&resolved_scene_id),
                 secret.as_deref(),
                 device_id.as_deref(),
+                caller,
             )
             .await
         },
@@ -153,13 +160,18 @@ pub async fn get_scene_adapter(
     }
     let mut grants = join_grants(&resolved.room);
     grants.can_update_own_metadata = true;
+    let mut metadata = serde_json::json!({ "isGuest": sf.is_guest });
+    if let (Some(world), Some(started)) = (resolved.realm.world(), started) {
+        metadata[super::world_mint::AUTHORIZATION_FIELD] = super::world_mint::authorization_proof(
+            &state.livekit.api_secret, world, identity.as_str(), &resolved.room, started);
+    }
     let mut token = AccessToken::new(
         &state.livekit.api_key,
         &state.livekit.api_secret,
         identity.as_str(),
         grants,
     )
-    .with_metadata(serde_json::json!({ "isGuest": sf.is_guest }).to_string());
+    .with_metadata(metadata.to_string());
     token.name = sf
         .metadata
         .get("displayName")

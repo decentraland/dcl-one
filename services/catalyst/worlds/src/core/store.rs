@@ -1570,6 +1570,7 @@ pub async fn store_access_for_owner(
             .execute(&mut *tx)
             .await?;
     }
+    queue_access_recheck(&mut tx, world).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -1651,6 +1652,7 @@ pub async fn modify_allow_list_access(
         .bind(world.key())
         .execute(&mut *tx)
         .await?;
+    queue_access_recheck(&mut tx, world).await?;
     tx.commit().await?;
     Ok(AllowListEditOutcome::Applied)
 }
@@ -2425,4 +2427,14 @@ mod tests {
             AccessType::Unrestricted
         );
     }
+}
+
+
+async fn queue_access_recheck(
+    conn: &mut sqlx::PgConnection,
+    world: &WorldName,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO social.world_access_rechecks(world_name,changed_at) VALUES($1,timezone('UTC',clock_timestamp())) ON CONFLICT(world_name) DO UPDATE SET revision=gen_random_uuid(),changed_at=timezone('UTC',clock_timestamp()),next_attempt_at=timezone('UTC',now())")
+        .bind(world.key()).execute(conn).await?;
+    Ok(())
 }

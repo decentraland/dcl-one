@@ -460,6 +460,7 @@ impl Settings {
 }
 
 pub struct SceneHostState {
+    pub(crate) secret_max_attempts: u32,
     pub pool: PgPool,
     pub storage: Arc<Storage>,
     /// The permission core: admission and re-admission of every socket.
@@ -483,6 +484,8 @@ pub struct SceneHostState {
 pub type SharedState = Arc<SceneHostState>;
 
 impl SceneHostState {
+    pub fn with_secret_max_attempts(mut self, max: u32) -> Self { self.secret_max_attempts = max.max(1); self }
+
     pub fn new(
         pool: PgPool,
         storage: Arc<Storage>,
@@ -504,6 +507,7 @@ impl SceneHostState {
             fetch_http = fetch_http.allowing_private_hosts();
         }
         Ok(Self {
+            secret_max_attempts: crate::comms::gatekeeper::admission::world_mint::DEFAULT_SHARED_SECRET_MAX_ATTEMPTS,
             pool,
             storage,
             policy,

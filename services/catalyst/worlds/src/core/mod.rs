@@ -396,7 +396,24 @@ impl CoreState {
     /// `community` was deleted, suspended or deactivated: each allow-list
     /// world listing it re-decides every participant.
     pub async fn community_closed(&self, community: uuid::Uuid) {
-        for world in self.worlds_listing_community(community).await {
+        // Persist the entire affected set before advisory wakeups. Preserve an
+        // earlier edit's cutoff/revision so delayed closures cannot revoke fresh
+        // secret admissions or erase newer edit obligations.
+        let names: Vec<String> = match sqlx::query_scalar(
+            "INSERT INTO social.world_access_rechecks AS q(world_name) \
+             SELECT wac.world_name FROM worlds.world_access_communities wac \
+             JOIN worlds.worlds w ON w.name=wac.world_name \
+             WHERE wac.community_id=$1 AND w.access_type='allow-list' \
+             ON CONFLICT(world_name) DO UPDATE SET next_attempt_at=LEAST(q.next_attempt_at,timezone('UTC',now())) \
+             RETURNING world_name",
+        ).bind(community).fetch_all(&self.pool).await {
+            Ok(names) => names,
+            Err(error) => {
+                tracing::warn!(%error, %community, "community closure recheck could not be persisted");
+                return;
+            }
+        };
+        for world in names.iter().filter_map(|name| WorldName::parse(name).ok()) {
             self.revoked(Revocation::AccessSetting { world }).await;
         }
     }

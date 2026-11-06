@@ -1008,7 +1008,7 @@ impl Policy {
             .bind(world.key())
             .fetch_one(&self.pool)
             .await
-            .map_err(|e| store_unavailable("worlds.world_scenes", &e))?;
+            .map_err(|e| AuthorityNotEstablished::UndeterminedStoreUnavailable { store: "worlds.world_scenes", reason_for_operators: e.to_string() })?;
             return match self.personal_worlds.admit(already, hosted.max(0) as u64) {
                 Ok(()) if owner == *actor => Ok(Deploy::Owner),
                 Ok(()) => Err(AuthorityNotEstablished::RefusedLacksAuthority {
@@ -1037,10 +1037,12 @@ impl Policy {
             }) => {}
             PermissionDecision::Refused(undetermined) => return Err(undetermined),
         }
-        let overlapping = self
-            .overlapping_scenes(world, parcels)
-            .await
-            .map_err(|e| store_unavailable("worlds.world_scenes", &e))?;
+        let overlapping = self.overlapping_scenes(world, parcels).await.map_err(|e| {
+            AuthorityNotEstablished::UndeterminedStoreUnavailable {
+                store: "worlds.world_scenes",
+                reason_for_operators: e.to_string(),
+            }
+        })?;
         let mut required = parcels.clone();
         for (_, footprint) in &overlapping {
             required.extend(footprint.iter().copied());
@@ -1129,6 +1131,51 @@ impl Policy {
     ) -> Result<Access, AuthorityNotEstablished> {
         if let Some(ban) = self.is_banned(actor, scene, device_id, now).await? {
             return Ok(Access::Banned(ban));
+        }
+        let selected = match scene {
+            Some(scene) => crate::rooms::world_scene(&self.pool, world, scene).await,
+            None => crate::rooms::world_active_scene(&self.pool, world).await,
+        }
+        .map_err(|e| AuthorityNotEstablished::UndeterminedStoreUnavailable {
+            store: "worlds.world_scenes",
+            reason_for_operators: e.to_string(),
+        })?;
+        let mut keys = vec![world.key().to_owned()];
+        if let Some(selected) = selected {
+            keys.push(
+                crate::comms::access::SceneBanKey::world(world, selected.base)
+                    .as_str()
+                    .to_owned(),
+            );
+            // The lobby also observes a legacy ban on the active deployment.
+            if scene.is_none() {
+                keys.push(selected.scene_id.as_str().to_owned());
+            }
+        }
+        if let Some(scene) = scene {
+            if let Some(retired) = crate::rooms::replaced_world_scene(&self.pool, world, scene, now)
+                .await
+                .map_err(|e| AuthorityNotEstablished::UndeterminedStoreUnavailable {
+                    store: "worlds.retired_world_scenes",
+                    reason_for_operators: e.to_string(),
+                })?
+            {
+                keys.extend(
+                    retired
+                        .ban_keys(world)
+                        .iter()
+                        .map(|key| key.as_str().to_owned()),
+                );
+            }
+        }
+        for key in keys {
+            if self
+                .is_scene_banned(&key, actor)
+                .await
+                .map_err(|e| store_unavailable("social.scene_bans", &e))?
+            {
+                return Ok(Access::Banned(Ban::Scene));
+            }
         }
         let row = self
             .world(world)

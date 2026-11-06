@@ -361,10 +361,14 @@ async fn room_metadata_fields(
     {
         admins.insert(admin.admin);
     }
+    let ban_key = match (&context.world_name, context.world) {
+        (Some(world), true) => format!("{}:{}", world, context.base_position),
+        _ => context.place_id.clone(),
+    };
     let bans: Vec<String> = sqlx::query_scalar(
-        "SELECT banned_address FROM social.scene_bans WHERE place_id = $1 ORDER BY banned_address",
+        "SELECT DISTINCT banned_address FROM social.scene_bans WHERE place_id = ANY($1::text[]) ORDER BY banned_address",
     )
-    .bind(&context.place_id)
+    .bind([ban_key, context.place_id.clone()].as_slice())
     .fetch_all(&state.pool)
     .await?;
     Ok(Some(
@@ -426,6 +430,7 @@ async fn refresh(state: &CommsState) -> Result<(), ApiError> {
 }
 
 pub async fn run_once(state: &CommsState) -> anyhow::Result<()> {
+    crate::gatekeeper::revocation::sweep(state).await?;
     let feed = RemovedPlaces::new(state.pool.clone());
     for event in feed.pending().await? {
         if let Err(error) = cleanup(state, &feed, &event).await {
@@ -941,6 +946,12 @@ mod tests {
             sqlx::query("INSERT INTO social.scene_bans (place_id,banned_address,banned_by) VALUES ($1,$2,$3)")
                 .bind(key).bind(banned).bind(by.as_str()).execute(&pool).await.unwrap();
         }
+        sqlx::query("UPDATE social.scene_bans SET place_id=$1 WHERE place_id=$2")
+            .bind(format!("{}:5,6", first.key()))
+            .bind(scene.as_str())
+            .execute(&pool)
+            .await
+            .unwrap();
         state.policy = Arc::new(FootprintPolicy(parcels));
         state.scenes = Arc::new(StubScenes {
             room: Ok(resolved),

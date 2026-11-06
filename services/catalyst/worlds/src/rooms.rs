@@ -112,6 +112,47 @@ pub async fn world_scene(
     row.map(|r| world_row(world, &r)).transpose()
 }
 
+pub async fn replaced_world_scene(
+    pool: &PgPool,
+    world: &WorldName,
+    scene: &SceneId,
+    _now: chrono::NaiveDateTime,
+) -> Result<Option<crate::comms::rooms::ReplacedScene>, ResolveError> {
+    let row: Option<(Vec<String>, Option<String>)> = sqlx::query_as(
+        "SELECT parcels, entity #>> '{metadata,scene,base}' FROM worlds.retired_world_scenes \
+         WHERE world_name = $1 AND entity_id = $2",
+    )
+    .bind(world.key())
+    .bind(scene)
+    .fetch_optional(pool)
+    .await?;
+    let Some((parcels, base)) = row else {
+        return Ok(None);
+    };
+    let Ok((footprint_parcels, base)) = footprint(&parcels, base.as_deref(), scene) else {
+        return Ok(None);
+    };
+    let current: Vec<(String, Vec<String>, Option<String>)> = sqlx::query_as(
+        "SELECT entity_id, parcels, entity #>> '{metadata,scene,base}' FROM worlds.world_scenes \
+         WHERE world_name = $1 AND parcels && $2::text[]",
+    )
+    .bind(world.key())
+    .bind(footprint_parcels.canonical())
+    .fetch_all(pool)
+    .await?;
+    let mut successors: Vec<Parcel> = current
+        .iter()
+        .filter_map(|(id, parcels, base)| {
+            footprint(parcels, base.as_deref(), &SceneId::from_stored(id.clone()))
+                .ok()
+                .map(|(_, base)| base)
+        })
+        .collect();
+    successors.sort();
+    successors.dedup();
+    Ok(Some(crate::comms::rooms::ReplacedScene { base, successors }))
+}
+
 /// The world scene standing on `parcel` (newest first, like the about).
 pub async fn world_scene_at(
     pool: &PgPool,
@@ -445,6 +486,10 @@ impl crate::comms::interfaces::SceneIdentity for SceneResolver {
         scene: &SceneId,
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         world_scene(&self.pool, world, scene).await
+    }
+
+    async fn replaced_world_scene(&self, world: &WorldName, scene: &SceneId) -> Result<Option<crate::comms::rooms::ReplacedScene>, ResolveError> {
+        replaced_world_scene(&self.pool, world, scene, chrono::Utc::now().naive_utc()).await
     }
 
     async fn world_active_scene(
