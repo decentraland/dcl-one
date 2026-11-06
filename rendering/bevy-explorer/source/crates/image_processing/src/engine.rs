@@ -31,7 +31,9 @@ impl Plugin for ImageProcessingPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<AssetForProcessing>();
         app.add_systems(Update, (check_assets, pipe_events));
-        app.preregister_asset_loader::<crate::ktx2_loader::Ktx2Loader>(&["ktx2"]);
+        // every KTX2 bevy decodes (a `.ktx2` through its `ImageLoader`, or an image embedded
+        // in a glTF) goes through `ktx2::transcode_ktx2_image`
+        crate::ktx2::install_ktx2_transcoder();
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -52,11 +54,6 @@ impl Plugin for ImageProcessingPlugin {
         app.init_resource::<ImgReprocessStats>();
         app.init_resource::<DebugProcessingEnabled>();
         app.add_preview_console_command::<DebugProcessingCommand, _>(toggle_debug_processing);
-    }
-
-    fn finish(&self, app: &mut App) {
-        // after the renderer, which reports the compressed formats the gpu takes
-        app.init_asset_loader::<crate::ktx2_loader::Ktx2Loader>();
     }
 }
 
@@ -109,10 +106,10 @@ struct ImgReprocessStats {
 
 /// Frees a `.ktx2` transcode the loader stashed when its cache write is not going to happen
 /// (uncacheable or unhashable paths), so the stash holds queued work only. Anything missed here
-/// is evicted by `ktx2_loader::evict_stale_results`.
+/// is evicted by `ktx2::evict_stale_results`.
 fn drop_ktx2_result(ty: ProcessingAssetType, path: &AssetPath) {
     if matches!(ty, ProcessingAssetType::Ktx2Cache) {
-        if let Ok(mut results) = crate::ktx2_loader::KTX2_RESULTS.lock() {
+        if let Ok(mut results) = crate::ktx2::KTX2_RESULTS.lock() {
             results.remove(&path.to_string());
         }
     }
@@ -131,7 +128,7 @@ fn check_assets(
     mut task: Local<Option<Task<(usize, usize, Vec<AssetForProcessing>)>>>,
 ) {
     // before any early return, so stale transcodes go even when nothing can be cached
-    crate::ktx2_loader::evict_stale_results();
+    crate::ktx2::evict_stale_results();
 
     #[cfg(not(target_arch = "wasm32"))]
     let Some(cache_root) = ipfas.ipfs_cache_path() else {
@@ -158,16 +155,13 @@ fn check_assets(
                 stats.skip_unloaded += 1;
                 continue;
             };
-            // a `.ktx2` loads compressed already; when the loader transcoded it, the dds is
-            // waiting in `KTX2_RESULTS` to be written over the cached ktx2 bytes. a cached
-            // or bc7 ktx2 has nothing waiting and is left as it is
-            let ktx2 = asset_path.label().is_none()
-                && asset_path
-                    .path()
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("ktx2"));
+            // a `.ktx2` loads compressed already; when bevy's image loader transcoded it
+            // (`ktx2::transcode_ktx2_image`), the dds is waiting in `KTX2_RESULTS` to be
+            // written over the cached ktx2 bytes. a cached ktx2 has nothing waiting and is
+            // left as it is
+            let ktx2 = crate::ktx2::is_cached_ktx2_path(asset_path);
             if ktx2 {
-                let waiting = crate::ktx2_loader::KTX2_RESULTS
+                let waiting = crate::ktx2::KTX2_RESULTS
                     .lock()
                     .is_ok_and(|results| results.contains_key(&asset_path.to_string()));
                 if !waiting {

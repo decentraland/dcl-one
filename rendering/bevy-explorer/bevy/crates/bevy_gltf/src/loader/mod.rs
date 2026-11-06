@@ -2,7 +2,6 @@ mod extensions;
 mod gltf_ext;
 
 use std::{
-    borrow::Cow,
     io::Error,
     path::{Path, PathBuf},
     sync::Arc,
@@ -153,14 +152,6 @@ pub(crate) fn resolve_uri(
     }
 }
 
-/// Re-encodes an embedded image (buffer view or `data:` URI) the loader cannot decode, given its
-/// bytes and MIME type, into bytes of a type it can, returned with their MIME type; `None` leaves
-/// the image as it is.
-///
-/// See [`GltfLoader::image_transcoder`].
-pub type GltfImageTranscoder =
-    Arc<dyn Fn(&[u8], &str) -> Option<(Vec<u8>, &'static str)> + Send + Sync>;
-
 /// Loads glTF files with all of their data as their corresponding bevy representations.
 pub struct GltfLoader {
     /// List of compressed image formats handled by the loader.
@@ -173,10 +164,6 @@ pub struct GltfLoader {
     /// namespace cannot express that through [`Path::join`] alone, since `join` treats every
     /// leading component as an ordinary directory.
     pub uri_resolver: Option<GltfUriResolver>,
-    /// Re-encodes embedded images whose type `Image::from_buffer` cannot decode, such as the
-    /// UASTC KTX2 images of `KHR_texture_basisu`. Images referenced by path go through the asset
-    /// server instead, where the host registers a loader for them.
-    pub image_transcoder: Option<GltfImageTranscoder>,
     /// Custom vertex attributes that will be recognized when loading a glTF file.
     ///
     /// Keys must be the attribute names as found in the glTF data, which must start with an underscore.
@@ -589,7 +576,6 @@ async fn load_gltf<'a, 'b, 'c>(
             &linear_textures,
             parent_path,
             loader.uri_resolver.as_ref(),
-            loader.image_transcoder.as_ref(),
             loader.supported_compressed_formats,
             settings.load_materials,
             settings.transfer_priority,
@@ -1049,9 +1035,10 @@ fn basisu_source(texture: &gltf::json::Texture, image_count: usize) -> Option<u3
 
 /// Points every texture whose only image is its `KHR_texture_basisu` one at that image, so the
 /// rest of the loader reads the KTX2 as the texture's ordinary `source`: by path through the
-/// asset server (where the host registers a KTX2 loader), or embedded through
-/// [`GltfLoader::image_transcoder`]. `gltf`'s `allow_empty_texture` feature is what lets a file
-/// that requires the extension, and whose textures have no `source`, through validation.
+/// asset server, or embedded through `Image::from_buffer`. Both end in `bevy_image`'s KTX2
+/// decode, where the host's transcoder (`bevy_image::set_ktx2_transcoder`) takes UASTC.
+/// `gltf`'s `allow_empty_texture` feature is what lets a file that requires the extension, and
+/// whose textures have no `source`, through validation.
 fn prefer_basisu_sources(gltf: gltf::Gltf) -> gltf::Gltf {
     let image_count = gltf.document.images().len();
     if !gltf
@@ -1077,19 +1064,6 @@ fn prefer_basisu_sources(gltf: gltf::Gltf) -> gltf::Gltf {
     }
 }
 
-/// The bytes and MIME type to decode an embedded image from: the image as it is, or what
-/// [`GltfLoader::image_transcoder`] re-encoded it to.
-fn transcoded<'a>(
-    transcoder: Option<&GltfImageTranscoder>,
-    bytes: &'a [u8],
-    mime_type: &'a str,
-) -> (Cow<'a, [u8]>, &'a str) {
-    match transcoder.and_then(|transcode| transcode(bytes, mime_type)) {
-        Some((bytes, mime_type)) => (Cow::Owned(bytes), mime_type),
-        None => (Cow::Borrowed(bytes), mime_type),
-    }
-}
-
 /// Loads a glTF texture as a bevy [`Image`] and returns it together with its label.
 fn load_image<'a, 'b>(
     gltf_texture: gltf::Texture<'a>,
@@ -1097,7 +1071,6 @@ fn load_image<'a, 'b>(
     linear_textures: &HashSet<usize>,
     parent_path: &'b Path,
     uri_resolver: Option<&GltfUriResolver>,
-    image_transcoder: Option<&GltfImageTranscoder>,
     supported_compressed_formats: CompressedImageFormats,
     render_asset_usages: RenderAssetUsages,
     transfer_priority: RenderAssetTransferPriority,
@@ -1160,11 +1133,10 @@ fn load_image<'a, 'b>(
             let start = view.offset();
             let end = view.offset() + view.length();
             let buffer = &buffer_data[view.buffer().index()][start..end];
-            let (buffer, mime_type) = transcoded(image_transcoder, buffer, mime_type);
             let image = Image::from_buffer(
                 #[cfg(all(debug_assertions, feature = "dds"))]
                 name,
-                &buffer,
+                buffer,
                 ImageType::MimeType(mime_type),
                 supported_compressed_formats,
                 is_srgb,
@@ -1274,14 +1246,13 @@ fn load_image<'a, 'b>(
             let uri = uri.as_ref();
             if let Ok(data_uri) = DataUri::parse(uri) {
                 let bytes = data_uri.decode()?;
-                let mime_type = mime_type.unwrap_or(data_uri.mime_type);
-                let (bytes, mime_type) = transcoded(image_transcoder, &bytes, mime_type);
+                let image_type = ImageType::MimeType(data_uri.mime_type);
 
                 let image = Image::from_buffer(
                     #[cfg(all(debug_assertions, feature = "dds"))]
                     name,
                     &bytes,
-                    ImageType::MimeType(mime_type),
+                    mime_type.map(ImageType::MimeType).unwrap_or(image_type),
                     supported_compressed_formats,
                     is_srgb,
                     ImageSampler::Descriptor(sampler_descriptor),

@@ -1,6 +1,6 @@
 pub mod engine;
 pub use engine::ImageProcessingPlugin;
-mod ktx2_loader;
+mod ktx2;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -21,7 +21,7 @@ pub enum ProcessingAssetType {
     // success it is reloaded in place
     UnloadableGltf,
     Image,
-    // the dds a `.ktx2` load produced (`ktx2_loader::KTX2_RESULTS`), to be written over the
+    // the dds a `.ktx2` load produced (`ktx2::KTX2_RESULTS`), to be written over the
     // cached ktx2 bytes so the next load skips the transcode. nothing is reprocessed or reloaded
     Ktx2Cache,
 }
@@ -31,28 +31,6 @@ pub struct AssetForProcessing {
     pub cache_path: String,
     pub base_path: AssetPath<'static>,
     pub ty: ProcessingAssetType,
-}
-
-const KTX2_MAGIC: &[u8] = &[
-    0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
-];
-
-/// [`bevy::gltf::GltfPlugin::with_image_transcoder`]: an embedded KTX2 image (a
-/// `KHR_texture_basisu` image in a glb buffer view or a `data:` URI) becomes the BC7 dds a
-/// standalone `.ktx2` loads as, through the same `processor::transcode_ktx2`. External `.ktx2`
-/// images never get here: the glTF loader loads them by path, through `Ktx2Loader`. Anything
-/// else, or a KTX2 the transcoder rejects, is left to the loader as it is.
-pub fn transcode_gltf_image(bytes: &[u8], mime_type: &str) -> Option<(Vec<u8>, &'static str)> {
-    if mime_type != "image/ktx2" && !bytes.starts_with(KTX2_MAGIC) {
-        return None;
-    }
-    match processor::transcode_ktx2(bytes) {
-        Ok(dds) => Some((dds, "image/vnd-ms.dds")),
-        Err(e) => {
-            warn!("embedded ktx2 transcode failed: {e:?}");
-            None
-        }
-    }
 }
 
 #[cfg(target_arch = "wasm32")]
