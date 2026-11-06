@@ -785,10 +785,11 @@ const AVATAR_BOX_MIN: Vec3 = Vec3::new(-1.24, 0.0, -0.7);
 const AVATAR_BOX_MAX: Vec3 = Vec3::new(1.24, 2.42, 0.7);
 
 /// Frames what the avatar shows, emote props included, as the Unity renderer does for avatars too
-/// big for its default view: the bounds seen since the outfit or emote last changed (so an emote's
-/// whole motion counts, and a looping one does not make the camera breathe), against the
-/// ordinary avatar's box, at the panel's aspect. Skinned meshes count by their animated joints,
-/// their own bounds being the rest pose. The camera eases out to it and back.
+/// big for its default view, once: from when the avatar first shows after an outfit change, until
+/// its bounds have stopped growing for half a second (a prop can arrive after the body) or three
+/// seconds have passed. Then the framing stays, however the emote moves; only the user moves the
+/// camera. Bounds are against the ordinary avatar's box, at the panel's aspect; skinned meshes
+/// count by their animated joints, their own bounds being the rest pose.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn fit_to_bounds(
     time: Res<Time>,
@@ -806,14 +807,20 @@ fn fit_to_bounds(
     joints: Query<&GlobalTransform>,
     children: Query<&Children>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    mut seen: Local<Option<(Vec3, Vec3)>>,
+    mut state: Local<FitState>,
 ) {
-    let Ok((root, selection, emote)) = avatars.single() else {
+    let Ok((root, selection, _emote)) = avatars.single() else {
         return;
     };
-    if selection.is_changed() || emote.as_ref().is_some_and(|e| e.is_changed()) {
-        *seen = None;
+    let now = time.elapsed_secs();
+    if selection.is_changed() {
+        *state = FitState::default();
     }
+    if state.done {
+        return;
+    }
+    let before = state.seen;
+    let seen = &mut state.seen;
     let mut grow = |point: Vec3| {
         let (min, max) = seen.get_or_insert((point, point));
         *min = min.min(point);
@@ -853,6 +860,13 @@ fn fit_to_bounds(
     let Some((min, max)) = *seen else {
         return;
     };
+    let started = *state.started.get_or_insert(now);
+    if before != Some((min, max)) {
+        state.last_growth = now;
+    }
+    if (now - state.last_growth > 0.5 && now - started > 1.0) || now - started > 3.0 {
+        state.done = true;
+    }
     let (min, max) = (min.min(AVATAR_BOX_MIN), max.max(AVATAR_BOX_MAX));
     let aspect = windows
         .single()
@@ -877,8 +891,8 @@ fn fit_to_bounds(
     } else {
         Vec3::ZERO
     };
-    // ease towards it: out quickly, back slowly
-    let rate = if fit > orbit.fit { 6.0 } else { 2.0 };
+    // ease towards it while measuring (the canvas shows only once the avatar has loaded)
+    let rate = 6.0;
     let t = 1.0 - (-rate * time.delta_secs()).exp();
     let (current_fit, current_target) = (orbit.fit, orbit.fit_target);
     let next_fit = current_fit + (fit - current_fit) * t;
@@ -887,6 +901,15 @@ fn fit_to_bounds(
         orbit.fit = next_fit;
         orbit.fit_target = next_target;
     }
+}
+
+/// What `fit_to_bounds` has measured since the last outfit change.
+#[derive(Default)]
+struct FitState {
+    seen: Option<(Vec3, Vec3)>,
+    started: Option<f32>,
+    last_growth: f32,
+    done: bool,
 }
 
 fn place_camera(

@@ -122,8 +122,9 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
   pans within 2 m; the wheel zooms between 1/1.5 and 2 times the framed distance; input in
   marketplace and builder modes only, four times the drag speed in builder;
 - its floor: the shadow catcher and, under it, the glow around the feet;
-- its framing of avatars too big for the default view: the camera fits what the avatar shows,
-  emote props included, over the emote's whole motion, at the panel's aspect.
+- its framing of avatars too big for the default view: after the avatar or outfit changes, the
+  camera measures what the avatar shows for up to 3 s, fits it at the panel's aspect, then leaves
+  the camera to the user.
 
 Still to come: the item view and its view switcher, builder mode's default wearables and looping
 emote, profile, authentication and jesus modes, scene boundaries, sized screenshots rendered
