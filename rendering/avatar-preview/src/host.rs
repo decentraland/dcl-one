@@ -874,11 +874,15 @@ fn fit_to_bounds(
         .unwrap_or(1.0);
     let tan_v = (orbit.fov_degrees.to_radians() / 2.0).tan();
     let tan_h = tan_v * aspect;
+    // the avatar turns about the vertical axis through its root, as the Unity renderer's avatar
+    // does, so the reach across is measured from that axis, not from the box's own centre
+    let axis = joints.get(root).map(|t| t.translation()).unwrap_or(Vec3::ZERO);
     // the distance a box needs, height or width bound, seen from the side it turns to
     let needs = |min: Vec3, max: Vec3| {
-        let half = (max - min) / 2.0;
-        let across = half.x.max(half.z);
-        (half.y / tan_v).max(across / tan_h) + across
+        let half_y = (max.y - min.y) / 2.0;
+        let (near, far) = (min - axis, max - axis);
+        let across = near.x.abs().max(far.x.abs()).max(near.z.abs()).max(far.z.abs());
+        (half_y / tan_v).max(across / tan_h) + across
     };
     let ordinary = {
         let half = (AVATAR_BOX_MAX - AVATAR_BOX_MIN) / 2.0;
@@ -886,8 +890,9 @@ fn fit_to_bounds(
     };
     let fit = (needs(min, max) / ordinary).max(1.0);
     let ordinary_centre = (AVATAR_BOX_MIN + AVATAR_BOX_MAX) / 2.0;
+    // only the height moves: the turn axis stays on the avatar however its wearables reach out
     let fit_target = if fit > 1.0 {
-        (min + max) / 2.0 - ordinary_centre
+        Vec3::Y * ((min.y + max.y) / 2.0 - ordinary_centre.y)
     } else {
         Vec3::ZERO
     };
