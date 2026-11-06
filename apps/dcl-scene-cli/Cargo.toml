@@ -62,6 +62,12 @@ chrono = { workspace = true }
 # and two `links = "sqlite3"` packages cannot coexist); `bundled` keeps the binary self-contained.
 rusqlite = { version = "=0.39.0", features = ["bundled"] }
 brotli-decompressor = "6"
+# `--optimize-textures` (src/textures): source images are decoded and resized
+# with `image`, then encoded to UASTC KTX2 by the Basis Universal WASI module
+# pinned in basisu-release.lock, run in-process by wasmtime (WASI preview 1).
+image.workspace = true
+wasmtime = { version = "=50.0.0", default-features = false, features = ["anyhow", "cranelift", "parallel-compilation", "runtime", "std"] }
+wasmtime-wasi = { version = "=50.0.0", default-features = false, features = ["p1"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
@@ -80,9 +86,10 @@ prost-build = "0.14"
 prost = { workspace = true }
 prost-types = "0.14"
 protox = "0.10"
-# The abgen and livekit-server embeds (abgen-release.lock, livekit-release.lock):
-# sha2 verifies the pinned release archives, flate2 compresses them before they
-# go into the binary, zip opens LiveKit's Windows archives.
+# The abgen, livekit-server and basisu embeds (abgen-release.lock,
+# livekit-release.lock, basisu-release.lock): sha2 verifies the pinned
+# downloads, flate2 compresses them before they go into the binary, zip opens
+# LiveKit's Windows archives.
 sha2 = { workspace = true }
 base64 = { workspace = true }
 # csp.json in PLAY_EMBED_DIR (engine/web/csp-policy.mts) is the page's policy.
