@@ -83,6 +83,7 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 24px;
 align-self: stretch;
+flex-shrink: 0;
 opacity: 1;
 overflow: hidden;
 text-overflow: ellipsis;
@@ -116,6 +117,7 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -204,6 +206,7 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 24px;
 align-self: stretch;
+flex-shrink: 0;
 opacity: 1;
 overflow: hidden;
 text-overflow: ellipsis;
@@ -237,5 +240,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
+flex-shrink: 0;
 opacity: 1;
 }

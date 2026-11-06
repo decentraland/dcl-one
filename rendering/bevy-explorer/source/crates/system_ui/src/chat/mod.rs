@@ -722,6 +722,9 @@ pub(crate) fn select_chat_tab(
 fn pipe_chats_to_scene(
     mut chat_events: EventReader<ChatEvent>,
     #[cfg(feature = "livekit")] mut dms: EventReader<comms::private_chat::PrivateChatReceived>,
+    #[cfg(feature = "livekit")] mut community_chats: EventReader<
+        comms::private_chat::CommunityChatReceived,
+    >,
     #[cfg(feature = "livekit")] social: Res<social::SocialClient>,
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<ChatMessage>>>,
@@ -800,6 +803,25 @@ fn pipe_chats_to_scene(
             });
         }
     }
+
+    // incoming community messages: the channel is the community's; blocked authors are dropped
+    #[cfg(feature = "livekit")]
+    for chat in community_chats
+        .read()
+        .filter(|chat| !dm_state::blocked_by_me(&social, chat.from))
+    {
+        let channel = comms::community_chat::channel_for(&chat.community_id);
+        let message_id = chat_message_id(chat.from, chat.timestamp);
+        debug!("{channel} {message_id}: {}", chat.message);
+        for sender in senders.iter() {
+            let _ = sender.send(ChatMessage {
+                sender_address: format!("{:#x}", chat.from),
+                message: chat.message.clone(),
+                channel: channel.clone(),
+                message_id: message_id.clone(),
+            });
+        }
+    }
 }
 
 /// The local user's reaction requests become reactions from the local user, which the channel's
@@ -822,7 +844,8 @@ fn emit_user_reactions(
         let Some(from) = wallet.address() else {
             continue;
         };
-        if channel != "Nearby" && channel.as_h160().is_none() {
+        if channel != "Nearby" && comms::community_chat::PrivateChatTarget::parse(channel).is_none()
+        {
             warn!("ignoring reaction in channel {channel:?}");
             continue;
         }
@@ -910,7 +933,7 @@ fn pipe_chat_reactions_to_scene(
 }
 
 /// `/react <channel> <message id> <emoji> [--remove]` adds or removes a reaction, the same way the
-/// HUD does. The channel is "Nearby" or the DM partner's wallet.
+/// HUD does. The channel is "Nearby", the DM partner's wallet or `community:<id>`.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/react")]
 struct ReactCommand {

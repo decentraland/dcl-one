@@ -295,6 +295,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_failed_refresh_keeps_the_stale_value() {
+        let map: TtlMap<String, u32> = TtlMap::new(Duration::ZERO);
+        assert_eq!(map.get_stale(&"k".into()), None);
+        map.insert("k".into(), 3);
+        assert_eq!(
+            map.get_fresh(&"k".into()),
+            None,
+            "a zero TTL is never fresh"
+        );
+        let failed = map
+            .get_or_fetch("k".into(), || async { Err::<u32, &str>("boom") })
+            .await;
+        assert_eq!(failed, Err("boom"));
+        assert_eq!(map.get_stale(&"k".into()), Some(3));
+    }
+
+    #[tokio::test]
     async fn a_failed_fetch_is_not_cached() {
         let map: TtlMap<String, u32> = TtlMap::new(Duration::from_secs(5));
         let failed = map

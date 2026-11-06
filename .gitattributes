@@ -7,7 +7,6 @@ apps/bevy-explorer/e2e/scenes/**/*.[gG][lL][bB] filter=lfs diff=lfs merge=lfs -t
 apps/bevy-explorer/e2e/scenes/**/*.[pP][nN][gG] filter=lfs diff=lfs merge=lfs -text
 apps/bevy-explorer/e2e/scenes/**/*.[jJ][pP][gG] filter=lfs diff=lfs merge=lfs -text
 apps/bevy-explorer/e2e/scenes/**/*.[jJ][pP][eE][gG] filter=lfs diff=lfs merge=lfs -text
-apps/bevy-explorer/e2e/scenes/**/*.[mM][pP]4 filter=lfs diff=lfs merge=lfs -text
 apps/bevy-explorer/e2e/references/**/*.[pP][nN][gG] filter=lfs diff=lfs merge=lfs -text
 
 # The vendored docs.decentraland.org media (apps/sites/content/docs, apps/sites/scripts/gen-docs-content.mts)

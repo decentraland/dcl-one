@@ -265,6 +265,7 @@
       }
     },
     "NavBar": {
+      "exposeTextSlots": false,
       "semantics": {
         "@root": {
           "role": "navigation",

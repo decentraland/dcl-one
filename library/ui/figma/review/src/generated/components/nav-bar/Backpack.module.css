@@ -83,6 +83,7 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: center;
 line-height: 14.52px;
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -173,5 +174,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: center;
 line-height: 14.52px;
+flex-shrink: 0;
 opacity: 1;
 }

@@ -52,6 +52,7 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 19.36px;
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -126,6 +127,7 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 19.36px;
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -136,6 +138,7 @@ flex-direction: row;
 justify-content: flex-start;
 align-items: center;
 gap: var(--dcl-space-4);
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -150,6 +153,7 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -250,6 +254,7 @@ flex-direction: row;
 justify-content: flex-start;
 align-items: center;
 gap: var(--dcl-space-4);
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -264,6 +269,7 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -364,6 +370,7 @@ flex-direction: row;
 justify-content: flex-start;
 align-items: center;
 gap: var(--dcl-space-4);
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -378,6 +385,7 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -401,6 +409,7 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
 text-transform: capitalize;
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -458,6 +467,7 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 19.36px;
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -536,6 +546,7 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 19.36px;
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -549,6 +560,7 @@ background: url("data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 2
 
 .v5n1 {
 box-sizing: border-box;
+flex-shrink: 0;
 width: 29px;
 height: 17px;
 opacity: 1;
@@ -621,6 +633,7 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 19.36px;
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -642,6 +655,7 @@ background: url("data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 2
 
 .v6n1 {
 box-sizing: border-box;
+flex-shrink: 0;
 width: 29px;
 height: 17px;
 opacity: 1;
@@ -714,6 +728,7 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 19.36px;
+flex-shrink: 0;
 opacity: 1;
 }
 
@@ -735,6 +750,7 @@ background: url("data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 2
 
 .v7n1 {
 box-sizing: border-box;
+flex-shrink: 0;
 width: 29px;
 height: 17px;
 opacity: 1;

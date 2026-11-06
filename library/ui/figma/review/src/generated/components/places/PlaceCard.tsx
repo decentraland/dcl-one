@@ -6,12 +6,6 @@ import { FigmaView, registerComponent, type ForcedState, type ViewNode } from '.
 import type { MatrixCase } from '../../../components/StateMatrix'
 
 export type PlaceCardProps = {
-  layout?: 'below' | 'overlay' | 'horizontal'
-  product?: 'explorer' | 'web'
-  state?: 'default' | 'add'
-  access?: 'public' | 'private' | 'noAccess' | 'password'
-  size?: 'lg' | 'sm'
-  viewport?: 'desktop' | 'mobile'
   loading?: boolean
   label?: ReactNode
   label2?: ReactNode
@@ -23,7 +17,26 @@ export type PlaceCardProps = {
   label8?: ReactNode
   label9?: ReactNode
   forceState?: ForcedState
-} & Omit<HTMLAttributes<HTMLElement>, 'children'>
+} & (
+  | { layout?: 'below'; product?: 'explorer'; state: 'default'; access?: 'public'; size?: 'lg'; viewport?: 'desktop' }
+  | { layout?: 'below'; product?: 'explorer'; state: 'default'; access: 'private'; size?: 'lg'; viewport?: 'desktop' }
+  | { layout?: 'below'; product?: 'explorer'; state: 'default'; access: 'noAccess'; size?: 'lg'; viewport?: 'desktop' }
+  | { layout?: 'below'; product?: 'explorer'; state: 'default'; access: 'password'; size?: 'lg'; viewport?: 'desktop' }
+  | { layout: 'overlay'; product: 'web'; state: 'default'; access?: 'public'; size?: 'lg'; viewport?: 'desktop' }
+  | { layout?: 'below'; product: 'web'; state: 'default'; access?: 'public'; size?: 'lg'; viewport?: 'desktop' }
+  | { layout?: 'below'; product: 'web'; state: 'default'; access: 'private'; size?: 'lg'; viewport?: 'desktop' }
+  | { layout?: 'below'; product: 'web'; state: 'default'; access: 'noAccess'; size?: 'lg'; viewport?: 'desktop' }
+  | { layout?: 'below'; product: 'web'; state: 'default'; access: 'password'; size?: 'lg'; viewport?: 'desktop' }
+  | { layout: 'overlay'; product: 'web'; state: 'default'; access?: 'public'; size: 'sm'; viewport?: 'desktop' }
+  | { layout: 'horizontal'; product: 'web'; state: 'default'; access?: 'public'; size: 'sm'; viewport?: 'desktop' }
+  | { layout?: 'below'; product?: 'explorer'; state?: 'add'; access?: 'public'; size?: 'lg'; viewport?: 'desktop' }
+  | { layout?: 'below'; product: 'web'; state?: 'add'; access?: 'public'; size?: 'lg'; viewport?: 'desktop' }
+  | { layout?: 'below'; product: 'web'; state: 'default'; access?: 'public'; size?: 'lg'; viewport: 'mobile' }
+  | { layout?: 'below'; product: 'web'; state: 'default'; access: 'private'; size?: 'lg'; viewport: 'mobile' }
+  | { layout?: 'below'; product: 'web'; state: 'default'; access: 'noAccess'; size?: 'lg'; viewport: 'mobile' }
+  | { layout?: 'below'; product: 'web'; state: 'default'; access: 'password'; size?: 'lg'; viewport: 'mobile' }
+  | { layout: 'horizontal'; product: 'web'; state: 'default'; access?: 'public'; size: 'sm'; viewport: 'mobile' }
+) & Omit<HTMLAttributes<HTMLElement>, 'children'>
 
 export const placeCardViews: Record<string, ViewNode> = {
   'layout:below|product:explorer|state:default|access:public|size:lg|viewport:desktop': {
@@ -215,6 +228,42 @@ export const placeCardViews: Record<string, ViewNode> = {
             ],
           },
           {
+            kind: 'box',
+            path: '1.1000',
+            name: "Actions",
+            className: styles.v0n1_1000,
+          },
+          {
+            kind: 'box',
+            path: '1.1001',
+            name: "CTA",
+            className: styles.v0n1_1001,
+            children: [
+              {
+                kind: 'box',
+                path: '1.1001.0',
+                name: "JumpInCTA",
+                className: styles.v0n1_1001_0,
+                children: [
+                  {
+                    kind: 'text',
+                    path: '1.1001.0.0',
+                    name: "label",
+                    className: styles.v0n1_1001_0_0,
+                    text: "Jump in",
+                    slot: 'label6',
+                  },
+                  {
+                    kind: 'box',
+                    path: '1.1001.0.1',
+                    name: "icon",
+                    className: styles.v0n1_1001_0_1,
+                  }
+                ],
+              }
+            ],
+          },
+          {
             kind: 'text',
             path: '1.1',
             name: "Creator",
@@ -269,42 +318,6 @@ export const placeCardViews: Record<string, ViewNode> = {
                     className: styles.v0n1_2_1_1,
                     text: "0,0",
                     slot: 'label8',
-                  }
-                ],
-              }
-            ],
-          },
-          {
-            kind: 'box',
-            path: '1.1000',
-            name: "Actions",
-            className: styles.v0n1_1000,
-          },
-          {
-            kind: 'box',
-            path: '1.1001',
-            name: "CTA",
-            className: styles.v0n1_1001,
-            children: [
-              {
-                kind: 'box',
-                path: '1.1001.0',
-                name: "JumpInCTA",
-                className: styles.v0n1_1001_0,
-                children: [
-                  {
-                    kind: 'text',
-                    path: '1.1001.0.0',
-                    name: "label",
-                    className: styles.v0n1_1001_0_0,
-                    text: "Jump in",
-                    slot: 'label6',
-                  },
-                  {
-                    kind: 'box',
-                    path: '1.1001.0.1',
-                    name: "icon",
-                    className: styles.v0n1_1001_0_1,
                   }
                 ],
               }
@@ -509,6 +522,42 @@ export const placeCardViews: Record<string, ViewNode> = {
             ],
           },
           {
+            kind: 'box',
+            path: '1.1000',
+            name: "Actions",
+            className: styles.v1n1_1000,
+          },
+          {
+            kind: 'box',
+            path: '1.1001',
+            name: "CTA",
+            className: styles.v1n1_1001,
+            children: [
+              {
+                kind: 'box',
+                path: '1.1001.0',
+                name: "JumpInCTA",
+                className: styles.v1n1_1001_0,
+                children: [
+                  {
+                    kind: 'text',
+                    path: '1.1001.0.0',
+                    name: "label",
+                    className: styles.v1n1_1001_0_0,
+                    text: "Jump in",
+                    slot: 'label6',
+                  },
+                  {
+                    kind: 'box',
+                    path: '1.1001.0.1',
+                    name: "icon",
+                    className: styles.v1n1_1001_0_1,
+                  }
+                ],
+              }
+            ],
+          },
+          {
             kind: 'text',
             path: '1.1',
             name: "Creator",
@@ -563,42 +612,6 @@ export const placeCardViews: Record<string, ViewNode> = {
                     className: styles.v1n1_2_1_1,
                     text: "0,0",
                     slot: 'label8',
-                  }
-                ],
-              }
-            ],
-          },
-          {
-            kind: 'box',
-            path: '1.1000',
-            name: "Actions",
-            className: styles.v1n1_1000,
-          },
-          {
-            kind: 'box',
-            path: '1.1001',
-            name: "CTA",
-            className: styles.v1n1_1001,
-            children: [
-              {
-                kind: 'box',
-                path: '1.1001.0',
-                name: "JumpInCTA",
-                className: styles.v1n1_1001_0,
-                children: [
-                  {
-                    kind: 'text',
-                    path: '1.1001.0.0',
-                    name: "label",
-                    className: styles.v1n1_1001_0_0,
-                    text: "Jump in",
-                    slot: 'label6',
-                  },
-                  {
-                    kind: 'box',
-                    path: '1.1001.0.1',
-                    name: "icon",
-                    className: styles.v1n1_1001_0_1,
                   }
                 ],
               }
@@ -803,6 +816,28 @@ export const placeCardViews: Record<string, ViewNode> = {
             ],
           },
           {
+            kind: 'box',
+            path: '1.1000',
+            name: "Actions",
+            className: styles.v2n1_1000,
+          },
+          {
+            kind: 'box',
+            path: '1.1001',
+            name: "CTA",
+            className: styles.v2n1_1001,
+            children: [
+              {
+                kind: 'text',
+                path: '1.1001.0',
+                name: "Invited only",
+                className: styles.v2n1_1001_0,
+                text: "INVITED ONLY",
+                slot: 'label6',
+              }
+            ],
+          },
+          {
             kind: 'text',
             path: '1.1',
             name: "Creator",
@@ -859,28 +894,6 @@ export const placeCardViews: Record<string, ViewNode> = {
                     slot: 'label8',
                   }
                 ],
-              }
-            ],
-          },
-          {
-            kind: 'box',
-            path: '1.1000',
-            name: "Actions",
-            className: styles.v2n1_1000,
-          },
-          {
-            kind: 'box',
-            path: '1.1001',
-            name: "CTA",
-            className: styles.v2n1_1001,
-            children: [
-              {
-                kind: 'text',
-                path: '1.1001.0',
-                name: "Invited only",
-                className: styles.v2n1_1001_0,
-                text: "INVITED ONLY",
-                slot: 'label6',
               }
             ],
           }
@@ -1083,6 +1096,36 @@ export const placeCardViews: Record<string, ViewNode> = {
             ],
           },
           {
+            kind: 'box',
+            path: '1.1000',
+            name: "Actions",
+            className: styles.v3n1_1000,
+          },
+          {
+            kind: 'box',
+            path: '1.1001',
+            name: "CTA",
+            className: styles.v3n1_1001,
+            children: [
+              {
+                kind: 'box',
+                path: '1.1001.0',
+                name: "Button",
+                className: styles.v3n1_1001_0,
+                children: [
+                  {
+                    kind: 'text',
+                    path: '1.1001.0.0',
+                    name: "label",
+                    className: styles.v3n1_1001_0_0,
+                    text: "ENTER PASSWORD",
+                    slot: 'label6',
+                  }
+                ],
+              }
+            ],
+          },
+          {
             kind: 'text',
             path: '1.1',
             name: "Creator",
@@ -1137,36 +1180,6 @@ export const placeCardViews: Record<string, ViewNode> = {
                     className: styles.v3n1_2_1_1,
                     text: "0,0",
                     slot: 'label8',
-                  }
-                ],
-              }
-            ],
-          },
-          {
-            kind: 'box',
-            path: '1.1000',
-            name: "Actions",
-            className: styles.v3n1_1000,
-          },
-          {
-            kind: 'box',
-            path: '1.1001',
-            name: "CTA",
-            className: styles.v3n1_1001,
-            children: [
-              {
-                kind: 'box',
-                path: '1.1001.0',
-                name: "Button",
-                className: styles.v3n1_1001_0,
-                children: [
-                  {
-                    kind: 'text',
-                    path: '1.1001.0.0',
-                    name: "label",
-                    className: styles.v3n1_1001_0_0,
-                    text: "ENTER PASSWORD",
-                    slot: 'label6',
                   }
                 ],
               }
@@ -1708,6 +1721,42 @@ export const placeCardViews: Record<string, ViewNode> = {
           },
           {
             kind: 'box',
+            path: '1.1000',
+            name: "Actions",
+            className: styles.v7n1_1000,
+          },
+          {
+            kind: 'box',
+            path: '1.1001',
+            name: "CTA",
+            className: styles.v7n1_1001,
+            children: [
+              {
+                kind: 'box',
+                path: '1.1001.0',
+                name: "JumpInCTA",
+                className: styles.v7n1_1001_0,
+                children: [
+                  {
+                    kind: 'text',
+                    path: '1.1001.0.0',
+                    name: "label",
+                    className: styles.v7n1_1001_0_0,
+                    text: "Jump in",
+                    slot: 'label6',
+                  },
+                  {
+                    kind: 'box',
+                    path: '1.1001.0.1',
+                    name: "icon",
+                    className: styles.v7n1_1001_0_1,
+                  }
+                ],
+              }
+            ],
+          },
+          {
+            kind: 'box',
             path: '1.1',
             name: "Secondary",
             className: styles.v7n1_1,
@@ -1799,42 +1848,6 @@ export const placeCardViews: Record<string, ViewNode> = {
                         slot: 'label9',
                       }
                     ],
-                  }
-                ],
-              }
-            ],
-          },
-          {
-            kind: 'box',
-            path: '1.1000',
-            name: "Actions",
-            className: styles.v7n1_1000,
-          },
-          {
-            kind: 'box',
-            path: '1.1001',
-            name: "CTA",
-            className: styles.v7n1_1001,
-            children: [
-              {
-                kind: 'box',
-                path: '1.1001.0',
-                name: "JumpInCTA",
-                className: styles.v7n1_1001_0,
-                children: [
-                  {
-                    kind: 'text',
-                    path: '1.1001.0.0',
-                    name: "label",
-                    className: styles.v7n1_1001_0_0,
-                    text: "Jump in",
-                    slot: 'label6',
-                  },
-                  {
-                    kind: 'box',
-                    path: '1.1001.0.1',
-                    name: "icon",
-                    className: styles.v7n1_1001_0_1,
                   }
                 ],
               }
@@ -2040,6 +2053,42 @@ export const placeCardViews: Record<string, ViewNode> = {
           },
           {
             kind: 'box',
+            path: '1.1000',
+            name: "Actions",
+            className: styles.v8n1_1000,
+          },
+          {
+            kind: 'box',
+            path: '1.1001',
+            name: "CTA",
+            className: styles.v8n1_1001,
+            children: [
+              {
+                kind: 'box',
+                path: '1.1001.0',
+                name: "JumpInCTA",
+                className: styles.v8n1_1001_0,
+                children: [
+                  {
+                    kind: 'text',
+                    path: '1.1001.0.0',
+                    name: "label",
+                    className: styles.v8n1_1001_0_0,
+                    text: "Jump in",
+                    slot: 'label6',
+                  },
+                  {
+                    kind: 'box',
+                    path: '1.1001.0.1',
+                    name: "icon",
+                    className: styles.v8n1_1001_0_1,
+                  }
+                ],
+              }
+            ],
+          },
+          {
+            kind: 'box',
             path: '1.1',
             name: "Secondary",
             className: styles.v8n1_1,
@@ -2131,42 +2180,6 @@ export const placeCardViews: Record<string, ViewNode> = {
                         slot: 'label9',
                       }
                     ],
-                  }
-                ],
-              }
-            ],
-          },
-          {
-            kind: 'box',
-            path: '1.1000',
-            name: "Actions",
-            className: styles.v8n1_1000,
-          },
-          {
-            kind: 'box',
-            path: '1.1001',
-            name: "CTA",
-            className: styles.v8n1_1001,
-            children: [
-              {
-                kind: 'box',
-                path: '1.1001.0',
-                name: "JumpInCTA",
-                className: styles.v8n1_1001_0,
-                children: [
-                  {
-                    kind: 'text',
-                    path: '1.1001.0.0',
-                    name: "label",
-                    className: styles.v8n1_1001_0_0,
-                    text: "Jump in",
-                    slot: 'label6',
-                  },
-                  {
-                    kind: 'box',
-                    path: '1.1001.0.1',
-                    name: "icon",
-                    className: styles.v8n1_1001_0_1,
                   }
                 ],
               }
@@ -2372,6 +2385,28 @@ export const placeCardViews: Record<string, ViewNode> = {
           },
           {
             kind: 'box',
+            path: '1.1000',
+            name: "Actions",
+            className: styles.v9n1_1000,
+          },
+          {
+            kind: 'box',
+            path: '1.1001',
+            name: "CTA",
+            className: styles.v9n1_1001,
+            children: [
+              {
+                kind: 'text',
+                path: '1.1001.0',
+                name: "Invited only",
+                className: styles.v9n1_1001_0,
+                text: "INVITED ONLY",
+                slot: 'label6',
+              }
+            ],
+          },
+          {
+            kind: 'box',
             path: '1.1',
             name: "Secondary",
             className: styles.v9n1_1,
@@ -2465,28 +2500,6 @@ export const placeCardViews: Record<string, ViewNode> = {
                     ],
                   }
                 ],
-              }
-            ],
-          },
-          {
-            kind: 'box',
-            path: '1.1000',
-            name: "Actions",
-            className: styles.v9n1_1000,
-          },
-          {
-            kind: 'box',
-            path: '1.1001',
-            name: "CTA",
-            className: styles.v9n1_1001,
-            children: [
-              {
-                kind: 'text',
-                path: '1.1001.0',
-                name: "Invited only",
-                className: styles.v9n1_1001_0,
-                text: "INVITED ONLY",
-                slot: 'label6',
               }
             ],
           }
@@ -2690,6 +2703,36 @@ export const placeCardViews: Record<string, ViewNode> = {
           },
           {
             kind: 'box',
+            path: '1.1000',
+            name: "Actions",
+            className: styles.v10n1_1000,
+          },
+          {
+            kind: 'box',
+            path: '1.1001',
+            name: "CTA",
+            className: styles.v10n1_1001,
+            children: [
+              {
+                kind: 'box',
+                path: '1.1001.0',
+                name: "Button",
+                className: styles.v10n1_1001_0,
+                children: [
+                  {
+                    kind: 'text',
+                    path: '1.1001.0.0',
+                    name: "label",
+                    className: styles.v10n1_1001_0_0,
+                    text: "ENTER PASSWORD",
+                    slot: 'label6',
+                  }
+                ],
+              }
+            ],
+          },
+          {
+            kind: 'box',
             path: '1.1',
             name: "Secondary",
             className: styles.v10n1_1,
@@ -2781,36 +2824,6 @@ export const placeCardViews: Record<string, ViewNode> = {
                         slot: 'label9',
                       }
                     ],
-                  }
-                ],
-              }
-            ],
-          },
-          {
-            kind: 'box',
-            path: '1.1000',
-            name: "Actions",
-            className: styles.v10n1_1000,
-          },
-          {
-            kind: 'box',
-            path: '1.1001',
-            name: "CTA",
-            className: styles.v10n1_1001,
-            children: [
-              {
-                kind: 'box',
-                path: '1.1001.0',
-                name: "Button",
-                className: styles.v10n1_1001_0,
-                children: [
-                  {
-                    kind: 'text',
-                    path: '1.1001.0.0',
-                    name: "label",
-                    className: styles.v10n1_1001_0_0,
-                    text: "ENTER PASSWORD",
-                    slot: 'label6',
                   }
                 ],
               }
@@ -3232,28 +3245,6 @@ export const placeCardViews: Record<string, ViewNode> = {
               },
               {
                 kind: 'box',
-                path: '0.1.1',
-                name: "Coords",
-                className: styles.v14n0_1_1,
-                children: [
-                  {
-                    kind: 'box',
-                    path: '0.1.1.0',
-                    name: "PinIcn",
-                    className: styles.v14n0_1_1_0,
-                  },
-                  {
-                    kind: 'text',
-                    path: '0.1.1.1',
-                    name: "0,0",
-                    className: styles.v14n0_1_1_1,
-                    text: "0,0",
-                    slot: 'label4',
-                  }
-                ],
-              },
-              {
-                kind: 'box',
                 path: '0.1.1000',
                 name: "JumpInCTA",
                 className: styles.v14n0_1_1000,
@@ -3271,6 +3262,28 @@ export const placeCardViews: Record<string, ViewNode> = {
                     path: '0.1.1000.1',
                     name: "icon",
                     className: styles.v14n0_1_1000_1,
+                  }
+                ],
+              },
+              {
+                kind: 'box',
+                path: '0.1.1',
+                name: "Coords",
+                className: styles.v14n0_1_1,
+                children: [
+                  {
+                    kind: 'box',
+                    path: '0.1.1.0',
+                    name: "PinIcn",
+                    className: styles.v14n0_1_1_0,
+                  },
+                  {
+                    kind: 'text',
+                    path: '0.1.1.1',
+                    name: "0,0",
+                    className: styles.v14n0_1_1_1,
+                    text: "0,0",
+                    slot: 'label4',
                   }
                 ],
               }

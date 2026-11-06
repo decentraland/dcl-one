@@ -1168,18 +1168,18 @@ async fn fetch_registry_profiles(
     debug!("requesting {} profiles from {registry_url}", ids.len());
 
     let outcome: Result<Vec<LambdaProfiles>, anyhow::Error> = async {
-        let response = ipfs
-            .client()
-            .post(&registry_url)
-            .timeout(std::time::Duration::from_secs(10))
-            .body(serde_json::json!({ "ids": ids }).to_string())
-            .header("content-type", "application/json")
-            .send()
-            .await?;
+        let response = platform::TracedJsonResponse::send(
+            ipfs.client()
+                .post(&registry_url)
+                .timeout(std::time::Duration::from_secs(10))
+                .body(serde_json::json!({ "ids": ids }).to_string())
+                .header("content-type", "application/json"),
+        )
+        .await?;
         if response.status() != StatusCode::OK {
-            anyhow::bail!("bad response: {}", response.status());
+            anyhow::bail!("bad response: {}", response.discard());
         }
-        Ok(response.json::<Vec<LambdaProfiles>>().await?)
+        response.json::<Vec<LambdaProfiles>>().await
     }
     .await;
 

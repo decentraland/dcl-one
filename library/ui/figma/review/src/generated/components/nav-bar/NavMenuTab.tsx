@@ -35,12 +35,6 @@ export const navMenuTabViews: Record<string, ViewNode> = {
       },
       {
         kind: 'box',
-        path: '1',
-        name: "general/down-arrow",
-        className: styles.v0n1,
-      },
-      {
-        kind: 'box',
         path: '1000',
         name: "general/up-arrow",
         className: styles.v0n1000,
@@ -84,6 +78,12 @@ export const navMenuTabViews: Record<string, ViewNode> = {
             ],
           }
         ],
+      },
+      {
+        kind: 'box',
+        path: '1',
+        name: "general/down-arrow",
+        className: styles.v0n1,
       }
     ],
   },
@@ -100,12 +100,6 @@ export const navMenuTabViews: Record<string, ViewNode> = {
         className: styles.v1n0,
         text: "Shop",
         slot: 'label',
-      },
-      {
-        kind: 'box',
-        path: '1',
-        name: "general/down-arrow",
-        className: styles.v1n1,
       },
       {
         kind: 'box',
@@ -216,6 +210,12 @@ export const navMenuTabViews: Record<string, ViewNode> = {
             ],
           }
         ],
+      },
+      {
+        kind: 'box',
+        path: '1',
+        name: "general/down-arrow",
+        className: styles.v1n1,
       }
     ],
   },
@@ -232,12 +232,6 @@ export const navMenuTabViews: Record<string, ViewNode> = {
         className: styles.v2n0,
         text: "Create",
         slot: 'label',
-      },
-      {
-        kind: 'box',
-        path: '1',
-        name: "general/down-arrow",
-        className: styles.v2n1,
       },
       {
         kind: 'box',
@@ -300,6 +294,12 @@ export const navMenuTabViews: Record<string, ViewNode> = {
             ],
           }
         ],
+      },
+      {
+        kind: 'box',
+        path: '1',
+        name: "general/down-arrow",
+        className: styles.v2n1,
       }
     ],
   },
@@ -332,12 +332,6 @@ export const navMenuTabViews: Record<string, ViewNode> = {
         className: styles.v4n0,
         text: "Discover",
         slot: 'label',
-      },
-      {
-        kind: 'box',
-        path: '1',
-        name: "general/down-arrow",
-        className: styles.v4n1,
       },
       {
         kind: 'box',
@@ -384,6 +378,12 @@ export const navMenuTabViews: Record<string, ViewNode> = {
             ],
           }
         ],
+      },
+      {
+        kind: 'box',
+        path: '1',
+        name: "general/down-arrow",
+        className: styles.v4n1,
       }
     ],
   },
@@ -400,12 +400,6 @@ export const navMenuTabViews: Record<string, ViewNode> = {
         className: styles.v5n0,
         text: "Shop",
         slot: 'label',
-      },
-      {
-        kind: 'box',
-        path: '1',
-        name: "general/down-arrow",
-        className: styles.v5n1,
       },
       {
         kind: 'box',
@@ -516,6 +510,12 @@ export const navMenuTabViews: Record<string, ViewNode> = {
             ],
           }
         ],
+      },
+      {
+        kind: 'box',
+        path: '1',
+        name: "general/down-arrow",
+        className: styles.v5n1,
       }
     ],
   },
@@ -532,12 +532,6 @@ export const navMenuTabViews: Record<string, ViewNode> = {
         className: styles.v6n0,
         text: "Create",
         slot: 'label',
-      },
-      {
-        kind: 'box',
-        path: '1',
-        name: "general/down-arrow",
-        className: styles.v6n1,
       },
       {
         kind: 'box',
@@ -600,6 +594,12 @@ export const navMenuTabViews: Record<string, ViewNode> = {
             ],
           }
         ],
+      },
+      {
+        kind: 'box',
+        path: '1',
+        name: "general/down-arrow",
+        className: styles.v6n1,
       }
     ],
   },

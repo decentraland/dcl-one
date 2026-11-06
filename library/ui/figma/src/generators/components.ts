@@ -238,6 +238,43 @@ function caseProps(view: ViewSpec): Record<string, string | boolean> {
   return props
 }
 
+// Sparse axes are a relation, not independent options. Interaction flags keep their existing
+// fallback contract; only captured enum and non-flag boolean combinations constrain the API.
+function variantContract(spec: ComponentSpec): string | undefined {
+  const axes = spec.props.filter((prop) => !FLAG_PROPS.includes(prop.name))
+  const rows = [
+    ...new Set(
+      spec.views.map((view) =>
+        JSON.stringify(
+          axes.map((prop) =>
+            prop.kind === 'boolean'
+              ? (view.booleans[prop.name] ?? false)
+              : (view.values[prop.name] ?? prop.default)
+          )
+        )
+      )
+    )
+  ].map((row) => JSON.parse(row) as (string | boolean)[])
+  const product = axes.reduce(
+    (count, prop) => count * (prop.kind === 'boolean' ? 2 : prop.values.length),
+    1
+  )
+  if (rows.length === product || axes.length === 0) return undefined
+  return [
+    '(',
+    ...rows.map(
+      (row) =>
+        `  | { ${axes
+          .map((prop, index) => {
+            const value = row[index]!
+            return `${prop.name}${value === prop.default ? '?' : ''}: ${typeof value === 'boolean' ? value : quote(value)}`
+          })
+          .join('; ')} }`
+    ),
+    ')'
+  ].join('\n')
+}
+
 function emitComponent(
   spec: ComponentSpec,
   context: GeneratorContext,
@@ -250,7 +287,8 @@ function emitComponent(
   const booleans = spec.props.filter(
     (prop) => prop.kind === 'boolean' && !FLAG_PROPS.includes(prop.name)
   )
-  const slots = spec.slots
+  const slots = spec.slots.filter((slot) => spec.exposeTextSlots !== false || slot.kind !== 'text')
+  const contract = variantContract(spec)
 
   const refImports = [
     ...new Set(
@@ -276,7 +314,9 @@ function emitComponent(
   const semanticNames = [...hrefProps, ...handlerProps]
 
   const typeLines = [
-    ...spec.props.map((prop) => `  ${prop.name}?: ${propType(prop)}`),
+    ...spec.props
+      .filter((prop) => !contract || FLAG_PROPS.includes(prop.name))
+      .map((prop) => `  ${prop.name}?: ${propType(prop)}`),
     ...slots.map((slot) => `  ${slot.name}?: ReactNode`),
     ...hrefProps.map((name) => `  ${name}?: string`),
     ...handlerProps.map((name) => `  ${name}?: () => void`),
@@ -319,7 +359,7 @@ function emitComponent(
 
   return [
     header().trimEnd(),
-    `// Figma: ${spec.page} / ${spec.figmaName} (${spec.figmaId})`,
+    `// Figma: ${commentText(spec.page)} / ${commentText(spec.figmaName)} (${commentText(spec.figmaId)})`,
     ...(spec.needsManual.length > 0
       ? [`// needs-manual: ${spec.needsManual.length} item(s), see componentManifest`]
       : []),
@@ -327,7 +367,7 @@ function emitComponent(
     '',
     `export type ${spec.name}Props = {`,
     ...typeLines,
-    "} & Omit<HTMLAttributes<HTMLElement>, 'children'>",
+    `}${contract ? ` & ${contract}` : ''} & Omit<HTMLAttributes<HTMLElement>, 'children'>`,
     '',
     `export const ${varName}Views: Record<string, ViewNode> = {`,
     views.join(',\n'),
@@ -443,6 +483,9 @@ function generateComponents(specs: ComponentSpec[], context: GeneratorContext) {
   })
   return { files, manifest }
 }
+
+// Figma names are free text; a line terminator would end the `//` comment and turn the rest into code.
+const commentText = (text: string) => text.replace(/[\r\n\u2028\u2029]/g, ' ')
 
 export { externalizeSvgs, generateComponents }
 export type { ManifestEntry }
