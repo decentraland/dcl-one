@@ -1,4 +1,5 @@
 use super::*;
+use crate::audio_source::{AudioSource, ClipLoad, LastPropagatedAudioState, Playing};
 use bevy_console::ConsoleCommand;
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use scene_runner::SceneEntity;
@@ -15,11 +16,13 @@ pub(super) fn register(app: &mut App) {
                 ("Playback backend", "backend"),
                 ("Loaded video players", "video"),
                 ("Loaded audio streams", "audio"),
+                ("Loaded audio clips", "clipCount"),
                 ("Current scene", "scene"),
                 ("Current parcel video players", "parcelVideo"),
                 ("Current parcel audio streams", "parcelAudio"),
                 ("Current parcel HTTP media", "parcelExternal"),
                 ("Players", "players"),
+                ("Audio clips", "clips"),
             ],
             actions: &[],
             inputs: &[],
@@ -47,6 +50,13 @@ fn media_state(
         &SceneEntity,
         Has<InScene>,
         Has<ShouldBePlaying<AudioStream>>,
+    )>,
+    clips: Query<(
+        &AudioSource,
+        &SceneEntity,
+        Option<&ClipLoad>,
+        Has<Playing>,
+        Option<&LastPropagatedAudioState>,
     )>,
     scenes: Query<&RendererSceneContext>,
     player: Query<Entity, With<PrimaryUser>>,
@@ -94,6 +104,16 @@ fn media_state(
         add_sink(&mut item, audio_sinks.get(_ent).ok(), &images);
         rows.push(item);
     }
+    // AudioSource clips: what the scene asked, where the clip is and the last state it was told
+    let clip_rows = clips
+        .iter()
+        .map(|(source, entity, load, playing, last)| {
+            json!({"entity":entity.id.to_string(), "scene":scenes.get(entity.root).ok().map(|ctx| &ctx.title),
+                   "clip":source_label(&source.0.audio_clip_url), "requested":source.0.playing(),
+                   "playing":playing, "loop":source.0.r#loop(), "loadState":load.map(|load| format!("{load:?}")),
+                   "lastEvent":last.map(|last| last.0.as_str_name())})
+        })
+        .collect::<Vec<_>>();
     let backend = if cfg!(feature = "html") {
         "HTML media"
     } else if cfg!(feature = "uuav") {
@@ -101,7 +121,7 @@ fn media_state(
     } else {
         "No playback backend"
     };
-    cmd.reply_ok(json!({"backend":backend, "scene":scene, "video":video.iter().len(), "audio":audio.iter().len(), "parcelVideo":parcel_video, "parcelAudio":parcel_audio, "parcelExternal":parcel_external, "players":rows,
+    cmd.reply_ok(json!({"backend":backend, "scene":scene, "video":video.iter().len(), "audio":audio.iter().len(), "clipCount":clip_rows.len(), "parcelVideo":parcel_video, "parcelAudio":parcel_audio, "parcelExternal":parcel_external, "players":rows, "clips":clip_rows,
         "unavailable":{"scene":"No loaded scene at the player's parcel."}}).to_string());
 }
 

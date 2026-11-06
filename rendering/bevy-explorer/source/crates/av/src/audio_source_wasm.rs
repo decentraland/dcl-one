@@ -6,7 +6,10 @@ use common::{
 use ipfs::IpfsAssetServer;
 use scene_runner::{ContainingScene, SceneEntity};
 
-use crate::audio_host_wasm::{send, AudioCommand, InstanceId};
+use crate::{
+    audio_host_wasm::{send, AudioCommand, InstanceId},
+    audio_source::{Playing, RetryEmitter},
+};
 
 pub struct AudioSourcePluginImpl;
 
@@ -112,12 +115,6 @@ impl AudioGraph {
         });
     }
 }
-
-#[derive(Component)]
-pub struct Playing;
-
-#[derive(Component)]
-pub struct RetryEmitter;
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn manage_audio_sources(

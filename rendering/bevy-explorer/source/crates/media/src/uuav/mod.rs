@@ -163,7 +163,9 @@ impl Shared {
 /// A source the `av` crate opened, waiting for the runtime's next look.
 struct NewSource {
     commands: mpsc::UnboundedReceiver<AVCommand>,
-    video: Option<mpsc::Sender<VideoData>>,
+    /// States for every player, frames and sizes for one with video.
+    video: mpsc::Sender<VideoData>,
+    has_video: bool,
     url: String,
     image: AssetId<Image>,
     audio: mpsc::Sender<StreamingSoundData<AudioDecoderError>>,
@@ -172,13 +174,14 @@ struct NewSource {
 
 static NEW_SOURCES: Mutex<Vec<NewSource>> = Mutex::new(Vec::new());
 
-/// Plays `url` on a uuav player, rendering its frames into `image`, driven by `commands` and
-/// reporting on `video` (`None` for an audio stream). The player's sound goes out on `audio`
-/// for the audio sink to play; the sink hands the playing sound's handle back on
-/// `audio_handle`, which is where the volume commands land.
+/// Plays `url` on a uuav player, driven by `commands` and reporting its states on `video`;
+/// with `has_video` its frames render into `image` and their sizes and clock go on `video`
+/// too. The player's sound goes out on `audio` for the audio sink to play; the sink hands the
+/// playing sound's handle back on `audio_handle`, which is where the volume commands land.
 pub fn spawn_av(
     commands: mpsc::UnboundedReceiver<AVCommand>,
-    video: Option<mpsc::Sender<VideoData>>,
+    video: mpsc::Sender<VideoData>,
+    has_video: bool,
     url: String,
     image: &Handle<Image>,
     audio: mpsc::Sender<StreamingSoundData<AudioDecoderError>>,
@@ -187,6 +190,7 @@ pub fn spawn_av(
     lock(&NEW_SOURCES).push(NewSource {
         commands,
         video,
+        has_video,
         url,
         image: image.id(),
         audio,
@@ -359,7 +363,7 @@ impl UuavRuntime {
             }
             _ => {
                 debug!("uuav: no player runtime, `{}` will not play", source.url);
-                send(source.video.as_ref(), VideoData::State(VideoState::VsError));
+                send(&source.video, VideoData::State(VideoState::VsError));
                 return;
             }
         }
@@ -374,7 +378,7 @@ impl UuavRuntime {
             Ok(_) => self.creating.push(Creating { source, done }),
             Err(e) => {
                 warn!("uuav: player for `{}` not created: {e}", source.url);
-                send(source.video.as_ref(), VideoData::State(VideoState::VsError));
+                send(&source.video, VideoData::State(VideoState::VsError));
             }
         }
     }
@@ -399,7 +403,7 @@ impl UuavRuntime {
                         creating.source.url
                     );
                     send(
-                        creating.source.video.as_ref(),
+                        &creating.source.video,
                         VideoData::State(VideoState::VsError),
                     );
                 }
@@ -413,7 +417,7 @@ impl UuavRuntime {
         if let Err(e) = ffi::open_media(id, &source.url) {
             warn!("uuav player {id}: open `{}` failed: {e}", source.url);
             self.shared.retire(id);
-            send(source.video.as_ref(), VideoData::State(VideoState::VsError));
+            send(&source.video, VideoData::State(VideoState::VsError));
             return;
         }
 
@@ -423,7 +427,7 @@ impl UuavRuntime {
             debug!("uuav player {id}: audio sink gone before the sound started");
         }
 
-        let target = source.video.as_ref().map(|_| {
+        let target = source.has_video.then(|| {
             let target = Arc::new(Target {
                 image: source.image,
                 presented: AtomicU64::new(0),
@@ -438,6 +442,7 @@ impl UuavRuntime {
             id,
             commands: source.commands,
             video: source.video,
+            has_video: source.has_video,
             audio_handle: Some(source.audio_handle),
             handle: None,
             volume: None,
@@ -455,7 +460,9 @@ impl UuavRuntime {
 struct Player {
     id: PlayerId,
     commands: mpsc::UnboundedReceiver<AVCommand>,
-    video: Option<mpsc::Sender<VideoData>>,
+    video: mpsc::Sender<VideoData>,
+    /// Sizes, frames and the clock go out too; an audio stream sends states only.
+    has_video: bool,
     audio_handle: Option<oneshot::Receiver<AudioHandle>>,
     handle: Option<AudioHandle>,
     /// The last volume commanded, applied once the sound handle arrives.
@@ -519,14 +526,12 @@ impl Player {
         }
         if std::mem::take(&mut self.seeking) {
             // Seeking went out with the seek; the helper answers it from next frame
-        } else if self.last_state != Some(state)
-            && send(self.video.as_ref(), VideoData::State(state))
-        {
+        } else if self.last_state != Some(state) && send(&self.video, VideoData::State(state)) {
             debug!("uuav player {}: {state:?}", self.id);
             self.last_state = Some(state);
         }
 
-        if self.video.is_some() {
+        if self.has_video {
             if let Some((width, height)) = self.size(max_dimension) {
                 let rate = ffi::framerate(self.id).unwrap_or(0.0);
                 // live streams have no duration
@@ -534,7 +539,7 @@ impl Player {
                 let info = (width, height, rate, length);
                 if self.last_info != Some(info)
                     && send(
-                        self.video.as_ref(),
+                        &self.video,
                         VideoData::Info(VideoInfo {
                             width,
                             height,
@@ -554,7 +559,7 @@ impl Player {
                         .is_none_or(|at| at.elapsed() >= CLOCK_INTERVAL);
                 if presented != self.last_presented || clock_due {
                     let time = ffi::current_time(self.id).unwrap_or(0.0);
-                    if send(self.video.as_ref(), VideoData::Frame(VideoFrame {}, time)) {
+                    if send(&self.video, VideoData::Frame(VideoFrame {}, time)) {
                         self.last_presented = presented;
                         self.last_clock = Some(Instant::now());
                     }
@@ -593,7 +598,7 @@ impl Player {
                 ffi::consume(uuav::uuav_player_set_looping(id, u8::from(repeat)))
             }
             AVCommand::Seek(time) => {
-                if send(self.video.as_ref(), VideoData::State(VideoState::VsSeeking)) {
+                if send(&self.video, VideoData::State(VideoState::VsSeeking)) {
                     self.last_state = Some(VideoState::VsSeeking);
                 }
                 self.seeking = true;
@@ -623,12 +628,8 @@ impl Player {
     }
 }
 
-/// Whether the data went out. A player without a video channel has nowhere to send and counts
-/// as sent.
-fn send(video: Option<&mpsc::Sender<VideoData>>, data: VideoData) -> bool {
-    let Some(video) = video else {
-        return true;
-    };
+/// Whether the data went out.
+fn send(video: &mpsc::Sender<VideoData>, data: VideoData) -> bool {
     match video.try_send(data) {
         Ok(()) => true,
         Err(_) => {

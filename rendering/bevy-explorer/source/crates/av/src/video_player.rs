@@ -14,7 +14,7 @@ use common::{
     util::ReportErr,
 };
 use dcl_component::{
-    proto_components::sdk::components::{PbVideoEvent, VideoState},
+    proto_components::sdk::components::{PbAudioEvent, PbVideoEvent, VideoState},
     SceneComponentId,
 };
 use dcl_types::interface::CrdtType;
@@ -38,7 +38,14 @@ pub struct VideoPlayerPlugin;
 
 impl Plugin for VideoPlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, play_videos.before(update_materials));
+        app.add_systems(
+            Update,
+            (
+                report_av_states::<AudioStream>,
+                report_av_states::<VideoPlayer>,
+            )
+                .before(update_materials),
+        );
         app.add_systems(
             Update,
             (
@@ -345,13 +352,13 @@ fn av_player_should_be_playing_on_remove<T: AVPlayer>(
     sinks.command_sender.send(AVCommand::Pause).report();
 }
 
-fn play_videos(
+/// Drains what the backend reports for each player of `T` into the scene: a video player's
+/// frames, size and clock plus a `VideoEvent` on every state change and once a second while
+/// playing; an audio stream's states as `AudioEvent`s (unity-explorer's `AudioEventsSystem`
+/// reports the media player's state cast to `MediaState`, deduplicated per entity).
+fn report_av_states<T: AVPlayer>(
     mut images: ResMut<Assets<Image>>,
-    mut q: Query<(
-        &mut AVSinks<VideoPlayer>,
-        &ContainerEntity,
-        &mut VideoTextureOutput,
-    )>,
+    mut q: Query<(&mut AVSinks<T>, &ContainerEntity, &mut VideoTextureOutput)>,
     mut scenes: Query<&mut RendererSceneContext>,
     frame: Res<FrameCount>,
     snapshot: Option<Res<SnapshotInProgress>>,
@@ -427,6 +434,27 @@ fn play_videos(
             }
         }
 
+        if !T::has_video() {
+            // an audio stream: only a changed state reaches the scene
+            if let Some(state) = new_state.filter(|state| video.last_state != Some(*state)) {
+                video.last_state = Some(state);
+                if let Ok(mut context) = scenes.get_mut(container.root) {
+                    let event = PbAudioEvent {
+                        // MediaState mirrors VideoState's numbering
+                        state: state as i32,
+                        timestamp: context.tick_number,
+                    };
+                    context.update_crdt(
+                        SceneComponentId::AUDIO_EVENT,
+                        CrdtType::GO_ANY,
+                        container.container_id,
+                        &event,
+                    );
+                }
+            }
+            continue;
+        }
+
         const VIDEO_REPORT_FREQUENCY: f64 = 1.0;
         if new_state.is_none()
             && (video.current_time > video.last_reported_time + VIDEO_REPORT_FREQUENCY
@@ -492,7 +520,7 @@ mod snapshot_tests {
         let mut app = App::new();
         app.init_resource::<Assets<Image>>()
             .init_resource::<FrameCount>()
-            .add_systems(Update, play_videos);
+            .add_systems(Update, report_av_states::<VideoPlayer>);
         let image = app
             .world_mut()
             .resource_mut::<Assets<Image>>()

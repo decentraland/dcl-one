@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use bevy::{prelude::*, render::view::RenderLayers};
+use bevy::{asset::LoadState, prelude::*, render::view::RenderLayers};
 use common::{
     sets::{SceneSets, SetupSets},
     structs::{
@@ -8,7 +8,10 @@ use common::{
     },
     util::AudioReceiver,
 };
-use dcl_component::{proto_components::sdk::components::PbAudioSource, SceneComponentId};
+use dcl_component::{
+    proto_components::sdk::components::{common::MediaState, PbAudioSource},
+    SceneComponentId,
+};
 use dcl_types::interface::ComponentPosition;
 use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
@@ -19,7 +22,34 @@ use scene_runner::{
 };
 
 #[derive(Component, Debug)]
-pub struct AudioSource(PbAudioSource);
+pub struct AudioSource(pub PbAudioSource);
+
+/// The emitter has a playback instance (kira natively, a page graph on the web).
+#[derive(Component)]
+pub struct Playing;
+
+/// The emitter's instance could not start this frame (the clip or the page buffer is not ready).
+#[derive(Component)]
+pub struct RetryEmitter;
+
+/// Where the emitter's clip asset is, as the asset server last reported it.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClipLoad {
+    Loading,
+    Loaded,
+    Failed,
+}
+
+/// The last `PBAudioEvent` state the scene was told about for this AudioSource
+/// (unity-explorer's `AudioSourceComponent.LastPropagatedAudioState`, initially `MS_NONE`).
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LastPropagatedAudioState(pub MediaState);
+
+impl Default for LastPropagatedAudioState {
+    fn default() -> Self {
+        Self(MediaState::MsNone)
+    }
+}
 
 impl From<PbAudioSource> for AudioSource {
     fn from(value: PbAudioSource) -> Self {
@@ -39,7 +69,16 @@ impl Plugin for AudioSourcePlugin {
             SceneComponentId::AUDIO_SOURCE,
             ComponentPosition::EntityOnly,
         );
-        app.add_systems(Update, map_scene_audio_sources.in_set(SceneSets::PostLoop));
+        app.add_systems(
+            Update,
+            (
+                map_scene_audio_sources,
+                track_clip_load,
+                crate::audio_events::report_audio_source_events,
+            )
+                .chain()
+                .in_set(SceneSets::PostLoop),
+        );
         app.add_systems(Startup, setup_audio.in_set(SetupSets::Main));
     }
 
@@ -80,6 +119,7 @@ fn map_scene_audio_sources(
             audio_source.0.audio_clip_url.to_owned(),
         )));
 
+        let maybe_emitter_was_none = maybe_emitter.is_none();
         let handle = maybe_emitter
             .and_then(|mut existing| {
                 if existing.handle.path().is_none_or(|p| p.path() != ipfs_path) {
@@ -115,6 +155,29 @@ fn map_scene_audio_sources(
 
         debug!("emitter: {emitter:?}");
 
-        commands.entity(ent).try_insert(emitter);
+        let mut entity = commands.entity(ent);
+        entity.try_insert(emitter);
+        if maybe_emitter_was_none {
+            entity.try_insert(LastPropagatedAudioState::default());
+        }
+    }
+}
+
+/// Mirrors the asset server's view of each emitter's clip into [`ClipLoad`], writing only on a
+/// change.
+pub fn track_clip_load(
+    mut commands: Commands,
+    emitters: Query<(Entity, &AudioEmitter, Option<&ClipLoad>), With<AudioSource>>,
+    asset_server: Res<AssetServer>,
+) {
+    for (ent, emitter, maybe_load) in emitters.iter() {
+        let load = match asset_server.get_load_state(emitter.handle.id()) {
+            Some(LoadState::Loaded) => ClipLoad::Loaded,
+            Some(LoadState::Failed(_)) => ClipLoad::Failed,
+            Some(LoadState::NotLoaded | LoadState::Loading) | None => ClipLoad::Loading,
+        };
+        if maybe_load != Some(&load) {
+            commands.entity(ent).try_insert(load);
+        }
     }
 }

@@ -33,5 +33,16 @@ whenever it is sampled and the audio path runs too. `specs/visual/video.test.ts`
 player's events and the frame's centre pixel instead of comparing a reference; the scene's label
 shows the last event for whoever reads the report's frame.
 
-`bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png`, `.jpg` and
-`.mp4` assets are in Git LFS.
+## The audio scene
+
+`audio` plays scene audio through the engine, after unity-explorer's `AudioEventsSystem` tests
+(`Explorer/Assets/DCL/SDKComponents/AudioSources/Tests/AudioEventsSystemShould.cs`), at parcel
+`216,0`: an `AudioSource` clip that ends (`assets/audio/tone_440_3s.mp3`, 3 s of a 440 Hz tone,
+written by `audio/generate-fixture.sh`), an `AudioStream` of the scene's own 20 s tone
+(`tone_440_loop.mp3`) and an `AudioStream` of a url nothing serves. Each emitter's label shows the
+last `AudioEvent` the scene received, and the clip's label its `playing` flag, which the engine
+clears when the clip ends. `specs/visual/audio.test.ts` asserts the events' order and the
+write-back; the labels are for whoever reads the report's frame.
+
+`bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png`, `.jpg`,
+`.mp4` and `.mp3` assets are in Git LFS.
