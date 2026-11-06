@@ -139,11 +139,10 @@ pub struct ShadowCatcher {
     item: bool,
 }
 
-/// The key light keeps its place relative to the camera as it orbits, so the avatar stays lit
-/// from the front whichever side the camera is on.
+/// The key light stands fixed in the world, in front of the subject as the camera is; the
+/// subject turns under it.
 fn apply_light(
     light: Res<StageLight>,
-    orbit: Res<OrbitCamera>,
     mut keys: Query<(&mut DirectionalLight, &mut Transform), With<KeyLight>>,
     mut cameras: Query<&mut bevy::render::camera::Exposure, With<crate::host::PreviewCamera>>,
     mut ambient: ResMut<AmbientLight>,
@@ -152,9 +151,9 @@ fn apply_light(
 ) {
     for (mut directional, mut transform) in keys.iter_mut() {
         directional.illuminance = light.illuminance;
-        // the light shines along -Z: turn it to face the avatar from the camera's side
-        transform.rotation =
-            Quat::from_rotation_y(orbit.alpha + light.yaw) * Quat::from_rotation_x(-light.pitch);
+        // the light shines along -Z and stays put, as the camera does: the subject turns under it,
+        // as in the Unity renderer
+        transform.rotation = Quat::from_rotation_y(light.yaw) * Quat::from_rotation_x(-light.pitch);
     }
     if light.is_changed() {
         ambient.brightness = light.ambient;

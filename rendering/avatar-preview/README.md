@@ -116,7 +116,7 @@ so the host page shows through around the avatar, with the avatar's shadow on it
 
 The look follows the Explorer's lobby preview (its noon sun, about 7000 lux, raised to 8000, and the ambient its
 camera layer overrides to) and the Unity renderer's framing and light placement, measured with
-`web/compare.html`: the key light keeps its place relative to the camera as it orbits, and bloom
+`web/compare.html`: the camera and the key light stay put and the subject turns under them, and bloom
 takes only what is brighter than white (emissive parts). Open differences from the Unity
 renderer: its colours are deeper and more saturated, and it draws a soft light pool under the
 feet.
@@ -130,7 +130,8 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
   item (mute only when it has sound), the loading spinner (`disableLoader`), the thumbnail frame
   (`showThumbnailBoundaries`), its cursors; `hideControls`, and the framing options the
   wrapper hid them for (`zoom`, `wheelZoom`, `showThumbnailBoundaries`, `camera=static`);
-- its interaction: drag turns on yaw with inertia, auto-rotation (0.2 rad/s) resumes a second
+- its interaction: the camera stays put and the subject turns in front of it, under a light fixed
+  in the world; drag turns on yaw with inertia, auto-rotation (0.2 rad/s) resumes a second
   after the last drag, in marketplace mode only and not while an emote item plays; right drag
   pans within 2 m; the wheel zooms between 1/1.5 and 2 times the framed distance; input in
   marketplace and builder modes only, four times the drag speed in builder;

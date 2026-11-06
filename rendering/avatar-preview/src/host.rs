@@ -236,11 +236,12 @@ pub enum Event {
     },
 }
 
-/// The camera's state, applied to the camera transform every frame. Interaction follows the
-/// Unity preview renderer: dragging turns the avatar (here, the camera around it, with the key
-/// light following, which looks the same) on yaw only, with inertia; auto-rotation resumes a
-/// second after the last drag and eases the pitch back; the right button pans within 2 m of the
-/// framed target; the wheel zooms between 1/1.5 and 2 times the framed distance.
+/// The view's state, applied every frame. As in the Unity preview renderer the camera stays put,
+/// looking at its subject, and the subject turns in front of it under a light fixed in the world:
+/// dragging turns the avatar on yaw only, with inertia (`alpha` is that turn); the item turns on
+/// both axes, the tilt easing back upright; auto-rotation resumes a second after the last drag;
+/// the right button slides the camera within 2 m; the wheel zooms between 1/1.5 and 2 times the
+/// framed distance.
 #[derive(Resource, Debug, Clone)]
 pub struct OrbitCamera {
     pub alpha: f32,
@@ -279,6 +280,8 @@ pub struct OrbitCamera {
     pub item_distance: f32,
     /// where the item's glow lies: the bottom of the item
     pub item_floor: f32,
+    /// the item has been measured: from then on it turns about `item_target`
+    pub item_ready: bool,
     pub lock_beta: bool,
     tilt: f32,
     tilt_velocity: f32,
@@ -317,6 +320,7 @@ impl Default for OrbitCamera {
             item_target: Vec3::new(0.0, 0.95, 0.0),
             item_distance: 4.6,
             item_floor: 0.0,
+            item_ready: false,
             lock_beta: false,
             tilt: 0.0,
             tilt_velocity: 0.0,
@@ -338,13 +342,9 @@ impl OrbitCamera {
         }
     }
 
-    /// The pitch the camera looks down at: the item view adds its tilt.
+    /// The pitch the camera looks down at its subject from.
     pub fn pitch(&self) -> f32 {
-        if self.item_view {
-            self.beta + self.tilt
-        } else {
-            self.beta
-        }
+        self.beta
     }
 
     /// The point the view orbits.
@@ -510,6 +510,7 @@ fn apply_commands(
                 }
                 gate.item_wanted = urn.is_some();
                 gate.item_framed = false;
+                orbit.item_ready = false;
                 if let Some(urn) = urn {
                     let shape = PbAvatarShape {
                         id: "preview-item".to_owned(),
@@ -1275,6 +1276,7 @@ fn fit_item(
     let radius = 0.5 * size.xz().length();
     orbit.item_target = (min + max) / 2.0;
     orbit.item_floor = min.y;
+    orbit.item_ready = true;
     orbit.item_distance = ((size.y / 2.0) / tan_v).max(radius / tan_h).max(0.1) * MARGIN;
 }
 
@@ -1314,10 +1316,10 @@ fn prepare_item(
     }
 }
 
-/// Shows the subject of the view and hides the other. The camera orbits its subject where the
-/// Unity renderer turns the subject in front of a fixed camera, so the other one, 5 m away, would
-/// swing into the background; the renderer never shows it. Both show during a switch's glide, and
-/// while a subject is measured (behind the loading spinner, as measuring needs it visible).
+/// Shows the subject of the view and hides the other, 5 m away: out of frame in an ordinary view,
+/// but a big avatar's framing zoomed out can reach it, and the Unity renderer never shows it. Both
+/// show during a switch's glide, and while a subject is measured (behind the loading spinner, as
+/// measuring needs it visible).
 #[allow(clippy::type_complexity)]
 fn show_subjects(
     orbit: Res<OrbitCamera>,
@@ -1405,23 +1407,56 @@ struct FitState {
     done: bool,
 }
 
+#[allow(clippy::type_complexity)]
 fn place_camera(
     time: Res<Time>,
     mut orbit: ResMut<OrbitCamera>,
-    mut cameras: Query<(&mut Transform, &mut Projection), With<PreviewCamera>>,
+    gate: Res<LoadGate>,
+    mut cameras: Query<
+        (&mut Transform, &mut Projection),
+        (
+            With<PreviewCamera>,
+            Without<PreviewAvatar>,
+            Without<PreviewItem>,
+        ),
+    >,
+    mut avatars: Query<&mut Transform, (With<PreviewAvatar>, Without<PreviewItem>)>,
+    mut items: Query<&mut Transform, (With<PreviewItem>, Without<PreviewAvatar>)>,
 ) {
     let dt = time.delta_secs();
-    // auto-rotation resumes a second after the last drag, once the spin has settled
+    // auto-rotation resumes a second after the last drag, once the spin has settled, and waits
+    // for `load`: the subjects are measured standing as they were built
     if orbit.auto_rotate
         && !orbit.lock_alpha
         && !orbit.dragging
         && orbit.since_drag > 1.0
         && orbit.velocity == 0.0
+        && !gate.armed
     {
         orbit.alpha += orbit.auto_rotate_speed * dt;
     }
-    // the view orbits the avatar's own axis (or the item's centre); the pan slides the camera
-    // across the screen
+
+    // the subject in view turns in front of the camera: the avatar about its own vertical axis,
+    // the item about its centre on both axes (the one out of view keeps its last turn, and starts
+    // over when it comes back, as the Unity renderer resets its rotator)
+    let facing = Quat::from_rotation_y(std::f32::consts::PI);
+    if orbit.item_view {
+        if orbit.item_ready {
+            let turn = Quat::from_rotation_x(orbit.tilt) * Quat::from_rotation_y(-orbit.alpha);
+            let centre = orbit.item_target;
+            for mut transform in items.iter_mut() {
+                transform.translation = centre + turn * (ITEM_OFFSET - centre);
+                transform.rotation = turn * facing;
+            }
+        }
+    } else {
+        for mut transform in avatars.iter_mut() {
+            transform.rotation = Quat::from_rotation_y(-orbit.alpha) * facing;
+        }
+    }
+
+    // the camera looks at its subject from straight in front, at its pitch and distance; the pan
+    // slides it across the screen
     let (mut pivot, mut distance, mut pitch) = (orbit.pivot(), orbit.distance(), orbit.pitch());
     // a view switch eases from the old view to the new in 0.3 s, the Unity renderer's blend
     if let Some((from_pivot, from_distance, from_pitch, t)) = orbit.blend {
@@ -1432,12 +1467,12 @@ fn place_camera(
         pitch = from_pitch + (pitch - from_pitch) * s;
         orbit.blend = (t < 1.0).then_some((from_pivot, from_distance, from_pitch, t));
     }
-    let rotation = Quat::from_rotation_y(orbit.alpha) * Quat::from_rotation_x(-pitch);
-    let orbited = Transform::from_translation(pivot + rotation * Vec3::new(0.0, 0.0, distance))
+    let rotation = Quat::from_rotation_x(-pitch);
+    let placed = Transform::from_translation(pivot + rotation * Vec3::new(0.0, 0.0, distance))
         .looking_at(pivot, Vec3::Y);
-    let slide = orbited.rotation * orbit.pan.extend(0.0);
+    let slide = placed.rotation * orbit.pan.extend(0.0);
     for (mut transform, mut projection) in cameras.iter_mut() {
-        *transform = orbited.with_translation(orbited.translation + slide);
+        *transform = placed.with_translation(placed.translation + slide);
         if orbit.is_changed() {
             *projection = projection_for(&orbit);
         }
