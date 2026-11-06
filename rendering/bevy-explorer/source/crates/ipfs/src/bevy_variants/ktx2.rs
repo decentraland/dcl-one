@@ -257,7 +257,7 @@ pub(crate) mod tests {
         for value in [32, 4, u32::from_le_bytes(*b"DX10"), 0, 0, 0, 0, 0] {
             expected.extend_from_slice(&value.to_le_bytes());
         }
-        for value in [0x40_1008, 0, 0, 0, 0, 98, 3, 0, 1, 0] {
+        for value in [0x40_1008u32, 0, 0, 0, 0, 98, 3, 0, 1, 0] {
             expected.extend_from_slice(&value.to_le_bytes());
         }
         assert_eq!(expected.len(), DDS_HEADER_BYTES);
