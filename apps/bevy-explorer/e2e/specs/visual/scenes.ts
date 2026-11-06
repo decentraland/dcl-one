@@ -37,6 +37,3 @@ export const SCENES: readonly VisualScene[] = [
   { id: 'tweens', base: [180, 0], settleMs: 6000, maxDifferentRatio: 0.003 }, // 5 s + 1 s
   { id: 'ui', base: [192, 0], settleMs: 5000, maxDifferentRatio: 0.003 }
 ]
-
-/** The video scene (`scenes/video`): in the workspace, not in `SCENES`, so without a reference. */
-export const VIDEO_SCENE = { id: 'video', base: [204, 0] as const }

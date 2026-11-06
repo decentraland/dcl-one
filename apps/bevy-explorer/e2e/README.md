@@ -59,7 +59,7 @@ boots a second one on its own realm.
 | `DCL_E2E_WINDOW` | The window size, `<width>x<height>` | `1600x900` (the Visual suite uses 960x540) |
 | `DCL_E2E_RECORD` | `1` records a missing visual reference instead of failing | unset |
 | `DCL_E2E_TRANSPORT` | `native` drives the standalone through `dcl/console` instead of a browser | `web` |
-| `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added); the UUAV runtime set must be staged next to it (`tooling/uuav/stage-dist.py`) for scene video to play | unset |
+| `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added) | unset |
 | `DCL_E2E_NATIVE_PORT`, `DCL_E2E_NATIVE_TOKEN` | A running standalone's loopback console and the token it was started with | `15702`, unset |
 
 To run the native Explorer against a gateway, set
@@ -127,7 +127,12 @@ test is in the spec file's header. Port 40, Partial 32, Gap 15, Drop 2.
 | SelfPreview (2) | `self-preview` | | | 2 | | No `--self-preview-wearables` launch option |
 | ViewSignalSmoke (2) | `view-signal` | | | | 2 | A Unity harness self-test |
 | Visual (17) | `visual/visual` | 17 | | | | The scenes at their own parcels; references recorded anew |
-| UUAV PlayMode (unity-explorer's player tests) | `visual/video` | 2 | 1 | 4 | | One scenario on the `video` scene: the state reaches Playing, the clock runs, the frame is red; seek, audio capture and helper recovery stay in the UUAV workspace's tests |
+
+Beyond explorer-automation, `specs/community-chat.test.ts` covers community text chat: a
+member's community card opens its chat (`Open chat`), the rail shows a
+pressed `Chat in <name>` tab and the title bar its `Conversation options`, and a message typed there
+counts in `/community_state` and lands in `/dm_history community:<id>`. It needs an automation
+account that is a member of a community in the browse grid, and fails saying so otherwise.
 
 What the HUD would need for more Ports, found while porting: roles or labels on the minimap's
 name and coordinates, the chat message text, the communities titles and counts, the passport
@@ -143,14 +148,6 @@ header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed`
 the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
 differs when any RGB channel differs by more than 8, and the scene passes when at most 0.3% of the
 pixels differ (1.5% for `avatar-shape`), as explorer-automation compared.
-
-`specs/visual/video.test.ts` plays the `video` scene ([scenes/README.md](scenes/README.md), after
-unity-explorer's UUAV PlayMode suite) on the same realm (`specs/visual/realm.ts` serves every
-workspace scene once per process) and asserts through the engine instead of a reference: the
-player's `VideoEvent`s (`/inspect_component`) reach Playing without an error and report a running
-clock, and the frame's pixel at the screen (`/entity_screen_position`) is the fixture's red. On
-the web the player is the browser's video element; on the standalone it is UUAV, which the
-scenes workflow runs (below).
 
 Build the scenes first with `apps/dcl-scene-cli`:
 
@@ -202,21 +199,10 @@ A reference counts as approved once a reviewer has checked it against the scene'
   *InWorld* and *Automation* sections of the PR's CI status comment from the uploaded report
   (`tooling/bevy-e2e-report.py`).
 
-`tooling/bevy-ci.py` selects the scenes lane of `bevy-explorer-ci.yml` for a change to an
-input of the video run below (the scenes, the driver, the runner scripts, the visual specs and
-the package files) and no engine lane for the rest of this folder.
+`tooling/bevy-ci.py` selects no engine lane for a change under this folder.
 
-The standalone runs in `.github/workflows/bevy-explorer-scenes.yml` only: its graphical job
-plays the video spec (`npm run e2e -- --visual --filter 'video plays'`) on the Linux release
-build it made, through the loopback console under xvfb (`DCL_E2E_TRANSPORT=native`,
-`UUAV_FORCE_SW_DECODE=1`: hosted runners have no VA driver), and uploads `report/` as
-`bevy-explorer-video-e2e-<sha>`. That build has no HUD bundle: the standalone holds the world for
-its welcome page until the first realm change, and with no `Jump In` to press the driver asks for
-the realm through the console (`driver/session.ts`, `enterWorld`), which is what the button does. `tooling/bevy-ci.py` selects that job for the scenes, the
-driver, the runner scripts, the video spec and its realm.
-
-Not in this workflow yet: the standalone for the other specs, a macOS leg, and sharding across
-accounts.
+Not in this workflow yet: the standalone (`DCL_E2E_TRANSPORT=native` drives a native build
+through its loopback console; no CI job runs one), a macOS leg, and sharding across accounts.
 
 ## Practices
 
@@ -253,7 +239,6 @@ change on the left updates what is on the right in the same change, then runs th
 | A console command's name, arguments or reply, in the engine or in `hudAutomation.ts` | `driver/explorer.ts` and `test/explorer.test.ts`; the Explorer readme's "Agents and tests" | `npm test` |
 | `--automation-token`, `--automation-port`, their environment fallbacks, the `dcl/console` methods, or the `__dclTrustedInput` contract | `driver/native.ts`, `driver/web.ts`, `local-harness/web-driver` and its README; the readme section | `npm test`; the web driver's tests |
 | A scene under `scenes/`, its parcels or spawn, `specs/visual/scenes.ts`, the 960x540 window or the tolerance | The references, re-recorded in CI (`record`) and committed in a PR; `scenes/README.md` | the visual scenarios in CI |
-| The `video` scene, its fixture (`scenes/video/generate-fixture.sh`), the engine's `VideoEvent` reporting or the video player's source resolution (`crates/media/src/uuav`, `crates/av`) | `specs/visual/video.test.ts` (the states, the clock mark, the colour probe); `scenes/README.md`; the scenes workflow's video steps | `npm run typecheck`; the video scenario on the web (this workflow) and on the standalone (the scenes workflow) |
 | A path moved under `apps/bevy-explorer/e2e`, `tooling/bevy-e2e-*.py` or the workflow | The workflow's `paths` filters, `tooling/bevy-ci.py` and `tooling/tests/test_bevy_ci.py`, the LFS patterns in `.gitattributes`, the links in this README | the tooling tests |
 | The CI workflow's name, its job names, the `bevy-explorer-web-<sha>` artifact or the status comment's sections | `tooling/bevy-e2e-inputs.py`, `tooling/bevy-e2e-report.py` and their tests; the e2e workflow's `workflow_run` | the tooling tests |
 | A scenario the HUD can no longer run, or a Gap whose feature landed | A `todo` with the reason, or the todo back into a scenario; its header row and the scenario map | the scenarios in CI |

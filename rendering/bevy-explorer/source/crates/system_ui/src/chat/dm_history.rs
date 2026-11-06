@@ -1,5 +1,6 @@
-//! Local DM history: every DM sent or received, and every reaction to one, is stored per account
-//! and read back per partner, reactions folded onto their DMs.
+//! Local DM and community chat history: every DM or community message sent or received, and
+//! every reaction to one, is stored per account and read back per conversation (a partner's
+//! wallet or `community:<id>`), reactions folded onto their messages.
 //! Storage is the platform crate's (encrypted files on native, IndexedDB on web). Nothing here
 //! talks to a server, and which conversations the HUD shows is the HUD's business.
 //!
@@ -20,8 +21,9 @@ use common::{
 };
 use comms::{
     chat_reaction::{chat_message_id, ChatReactionEvent},
+    community_chat::{channel_for, PrivateChatTarget},
     global_crdt::ChatEvent,
-    private_chat::PrivateChatReceived,
+    private_chat::{CommunityChatReceived, PrivateChatReceived},
 };
 use console::PendingConsoleResponses;
 use platform::{DmHistoryEntry, DmHistoryReaction};
@@ -46,7 +48,22 @@ enum DmStoreOp {
         account: String,
         partner: String,
     },
+    /// Keeps the last `keep` messages of a conversation and the reactions to them, within the
+    /// last `keep_records` records.
+    Trim {
+        account: String,
+        partner: String,
+        keep: usize,
+        keep_records: usize,
+    },
 }
+
+/// The most messages a community's history keeps, with the reactions to them: what the HUD shows
+/// of a conversation (`MAX_CHAT_LINES`). A DM history is not trimmed.
+const MAX_COMMUNITY_HISTORY: usize = 200;
+/// The most records (messages and reactions) a community's history keeps: reactions alone would
+/// otherwise grow it without a new message ever moving the message cut.
+const MAX_COMMUNITY_RECORDS: usize = 1000;
 
 /// Pending store operations and the one in flight.
 #[derive(Resource, Default)]
@@ -84,6 +101,18 @@ impl DmStoreOp {
             DmStoreOp::Delete { account, partner } => {
                 if let Err(e) = platform::dm_history_delete(&account, &partner).await {
                     warn!("failed to delete dm history with {partner}: {e}");
+                }
+            }
+            DmStoreOp::Trim {
+                account,
+                partner,
+                keep,
+                keep_records,
+            } => {
+                if let Err(e) =
+                    platform::dm_history_trim(&account, &partner, keep, keep_records).await
+                {
+                    warn!("failed to trim history of {partner}: {e}");
                 }
             }
         }
@@ -160,15 +189,22 @@ fn now_unix() -> f64 {
         .as_secs_f64()
 }
 
-fn normalize(address: &str) -> Option<String> {
-    address.as_h160().map(|a| format!("{a:#x}"))
+/// The store key of a conversation: the partner's wallet in lowercase hex, or a community's
+/// channel; `None` for a channel that is neither (Nearby, System).
+pub fn history_key(channel: &str) -> Option<String> {
+    match PrivateChatTarget::parse(channel)? {
+        PrivateChatTarget::Dm(address) => Some(format!("{address:#x}")),
+        PrivateChatTarget::Community(id) => Some(channel_for(&id)),
+    }
 }
 
-/// Stores every DM sent or received, and every reaction to one, under the local account, except
-/// from blocked senders.
+/// Stores every DM or community message sent or received, and every reaction to one, under the
+/// local account, except from blocked senders.
+#[allow(clippy::too_many_arguments)]
 pub fn record_dms(
     mut chats: EventReader<ChatEvent>,
     mut received: EventReader<PrivateChatReceived>,
+    mut community_received: EventReader<CommunityChatReceived>,
     mut reactions: EventReader<ChatReactionEvent>,
     player: Query<Entity, With<PrimaryUser>>,
     wallet: Res<Wallet>,
@@ -178,6 +214,7 @@ pub fn record_dms(
     let Some(account) = wallet.address().map(|a| format!("{a:#x}")) else {
         chats.clear();
         received.clear();
+        community_received.clear();
         reactions.clear();
         return;
     };
@@ -188,7 +225,7 @@ pub fn record_dms(
         if Some(ev.sender) != player {
             continue;
         }
-        let Some(partner) = normalize(&ev.channel) else {
+        let Some(partner) = history_key(&ev.channel) else {
             continue;
         };
         entries.push((
@@ -218,11 +255,26 @@ pub fn record_dms(
             },
         ));
     }
+    for chat in community_received.read() {
+        if blocked_by_me(&social, chat.from) {
+            continue;
+        }
+        entries.push((
+            channel_for(&chat.community_id),
+            DmHistoryEntry {
+                from: format!("{:#x}", chat.from),
+                message: chat.message.clone(),
+                received_at: now_unix(),
+                sent_at: Some(chat.timestamp),
+                reaction: None,
+            },
+        ));
+    }
     for ev in reactions.read() {
         if blocked_by_me(&social, ev.from) {
             continue;
         }
-        let Some(partner) = normalize(&ev.channel) else {
+        let Some(partner) = history_key(&ev.channel) else {
             continue;
         };
         entries.push((
@@ -241,11 +293,26 @@ pub fn record_dms(
         ));
     }
 
+    // a community's history is trimmed behind the frame's appends, once per community
+    let mut communities = Vec::<String>::new();
     for (partner, entry) in entries {
+        if partner.starts_with(comms::community_chat::CHANNEL_PREFIX)
+            && !communities.contains(&partner)
+        {
+            communities.push(partner.clone());
+        }
         store.queue.push_back(DmStoreOp::Append {
             account: account.clone(),
             partner,
             entry,
+        });
+    }
+    for partner in communities {
+        store.queue.push_back(DmStoreOp::Trim {
+            account: account.clone(),
+            partner,
+            keep: MAX_COMMUNITY_HISTORY,
+            keep_records: MAX_COMMUNITY_RECORDS,
         });
     }
 }
@@ -259,7 +326,8 @@ pub fn handle_dm_history_requests(
         match request {
             SystemApi::GetDmHistory(partner, sender) => {
                 let sender = sender.clone();
-                let (Some(account), Some(partner)) = (wallet.address(), normalize(partner)) else {
+                let (Some(account), Some(partner)) = (wallet.address(), history_key(partner))
+                else {
                     sender.send(Vec::new());
                     continue;
                 };
@@ -270,7 +338,8 @@ pub fn handle_dm_history_requests(
                 });
             }
             SystemApi::DeleteDmHistory(partner) => {
-                let (Some(account), Some(partner)) = (wallet.address(), normalize(partner)) else {
+                let (Some(account), Some(partner)) = (wallet.address(), history_key(partner))
+                else {
                     continue;
                 };
                 store.queue.push_back(DmStoreOp::Delete {
@@ -283,7 +352,8 @@ pub fn handle_dm_history_requests(
     }
 }
 
-/// `/dm_history <address> [count]` prints the last `count` (default 20) stored DMs with a partner.
+/// `/dm_history <address|community:<id>> [count]` prints the last `count` (default 20) stored
+/// messages of a conversation.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/dm_history")]
 pub struct DmHistoryCommand {
@@ -318,7 +388,7 @@ pub fn dm_history(
     );
 }
 
-/// `/dm_delete <address>` deletes the stored DMs with a partner.
+/// `/dm_delete <address|community:<id>>` deletes a conversation's stored messages.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/dm_delete")]
 pub struct DmDeleteCommand {
@@ -329,5 +399,25 @@ pub fn dm_delete(mut input: ConsoleCommand<DmDeleteCommand>, mut events: EventWr
     if let Some(Ok(command)) = input.take() {
         events.write(SystemApi::DeleteDmHistory(command.address));
         input.reply_ok("");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::history_key;
+
+    #[test]
+    fn conversations_are_keyed_by_wallet_or_community_channel() {
+        assert_eq!(
+            history_key("0xABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD").as_deref(),
+            Some("0xabcdefabcdefabcdefabcdefabcdefabcdefabcd")
+        );
+        assert_eq!(
+            history_key("community:ABC-1").as_deref(),
+            Some("community:abc-1")
+        );
+        assert_eq!(history_key("Nearby"), None);
+        assert_eq!(history_key("System"), None);
+        assert_eq!(history_key("community:"), None);
     }
 }

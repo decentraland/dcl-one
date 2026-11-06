@@ -3,6 +3,8 @@ mod http_client;
 pub use http_client::http_client_builder;
 
 #[cfg(not(target_arch = "wasm32"))]
+pub mod devtools;
+#[cfg(not(target_arch = "wasm32"))]
 mod native;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::*;
@@ -39,4 +41,4 @@ pub struct DmHistoryReaction {
 }
 
 pub mod http;
-pub use http::{fetch, FetchError, FetchedResponse};
+pub use http::{fetch, FetchError, FetchedResponse, TracedJsonResponse};
