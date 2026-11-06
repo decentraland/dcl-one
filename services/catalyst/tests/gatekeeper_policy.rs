@@ -788,6 +788,7 @@ mod tests {
                 .await
                 .unwrap()
         );
+        media_server.abort();
     }
 }
 
@@ -883,7 +884,6 @@ mod stream_access {
             status,
             serde_json::from_slice(&bytes).unwrap_or(Value::Null),
         )
-        media_server.abort();
     }
 
     /// The lifecycle over a Genesis place the signer administers: add mints
