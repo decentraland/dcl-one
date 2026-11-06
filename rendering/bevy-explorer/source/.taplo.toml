@@ -1,0 +1,2 @@
+# The vendored crates keep their published crates.io manifests byte-exact (see verify.py there).
+exclude = ["vendor/**"]

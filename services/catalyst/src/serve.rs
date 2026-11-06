@@ -219,6 +219,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     .await
     .context("connecting to DATABASE_URL")?;
     db::bootstrap(&pool).await?;
+    worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
 
     let storage_root = Path::new(&config.node.storage_root_folder);
     let storage = Arc::new(
@@ -549,7 +550,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             crate::index::market_settings(&config, &self_hosts)?,
         )
         .with_eip1654(eip1654.clone())
-        .with_read_through(read_through.clone()),
+        .with_read_through(read_through.clone())
+        .with_denylist(storage.denylist().clone()),
     );
     market.spawn_api_jobs(&jobs);
 
@@ -605,6 +607,24 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .await
         .context("loading content.denylist")?;
     content.spawn_jobs(&jobs);
+    // The remote moderation lists (DENYLIST_URLS; Decentraland's on a
+    // mirror), fetched once before the routes serve and every 120 s after,
+    // into the same projection; a failed fetch is logged, never fatal.
+    let denylist_urls = config.content.denylist_urls()?;
+    if !denylist_urls.is_empty() {
+        let (remote, errors) = content
+            .reload_remote_denylist(&http_client, &denylist_urls)
+            .await;
+        for error in &errors {
+            tracing::warn!(%error, "remote denylist fetch failed at boot");
+        }
+        tracing::info!(
+            urls = denylist_urls.len(),
+            remote,
+            "remote denylists loaded"
+        );
+    }
+    content.spawn_remote_denylist(&jobs, http_client.clone(), denylist_urls);
     if config.writes.content_writes_enabled {
         tracing::warn!(
             denylisted,
@@ -1363,6 +1383,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         content::create_entity::MAX_DEPLOYMENT_BYTES
             .max(worlds::core::deploy::MAX_UPLOAD_WIRE_SIZE_BYTES) as u64,
     );
+    // Upstream's router under /content/: static segments matched whatever
+    // their case, and its `Allow` list on a 405. Other paths pass untouched.
+    let app = content::routing::upstream_routing(app);
     // The old executable trimmed trailing slashes outside its router
     // (`/api/events/` is what the explorer requests), so the layer wraps the
     // finished app rather than any one router.
@@ -1665,12 +1688,13 @@ async fn worlds_states(
                     deployment_processing_timeout_ms: config
                         .worlds
                         .deployment_processing_timeout_ms,
-                    max_concurrent_uploads_per_source: config
-                        .worlds
-                        .max_concurrent_uploads_per_source,
+                    max_concurrent_uploads_per_source: u64::from(
+                        config.content.max_concurrent_uploads_per_source,
+                    ),
                     max_in_flight_upload_bytes_per_source: config
-                        .worlds
-                        .max_in_flight_upload_bytes_per_source,
+                        .content
+                        .max_in_flight_upload_bytes_per_source
+                        .unwrap_or(worlds::core::upload_limits::DEFAULT_MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE),
                 },
             )
             .and_then(|s| {
@@ -1806,7 +1830,8 @@ async fn worlds_states(
                 settings,
                 eip1654.clone(),
             )
-            .context("building the scene host")?,
+            .context("building the scene host")?
+            .with_secret_max_attempts(config.worlds.shared_secret_max_attempts_per_minute),
         );
         host.spawn_jobs(jobs);
         Some(host)

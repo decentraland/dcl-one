@@ -33,9 +33,17 @@ artifacts() { # artifacts '<name>:<id>[:expired]' ...
   done
   echo "$out]}" > "$WORK/artifacts.json"
 }
+run_metadata() { # run_metadata <event> [referenced workflow SHA ...]
+  local event="$1"
+  shift
+  jq -nc --arg event "$event" --arg head "$SHA" '
+    {event:$event, head_sha:$head, referenced_workflows:[$ARGS.positional[] as $sha |
+      {ref:"refs/pull/10/merge", path:("o/r/.github/workflows/child.yml@" + $sha), sha:$sha}]}
+  ' --args "$@" > "$WORK/run.json"
+}
 compose() {
   (cd "$WORK" && REPO=o/r RUN_ID=1 RUN_URL=https://github.com/o/r/actions/runs/1 HEAD_SHA="$SHA" \
-    JOBS_FILE=jobs.json ARTIFACTS_FILE=artifacts.json bash "$COMPOSER")
+    RUN_FILE=run.json PR_NUMBER=10 JOBS_FILE=jobs.json ARTIFACTS_FILE=artifacts.json bash "$COMPOSER")
 }
 check() { # check <name> <file> <pattern>
   if grep -qF -- "$3" "$WORK/$2"; then
@@ -59,6 +67,7 @@ check_absent() {
 }
 
 echo "test-explorer-ci-sections.sh"
+run_metadata push
 
 # 1. Everything ran and passed, with every product's artifact.
 jobs "$(job 'Integration guards' success 30)" "$(job Changes success 40)" \
@@ -84,7 +93,7 @@ check "macOS row" tests.md '| [Test Suite (macOS)]('
 check "an hour-long job" tests.md '| ✅ Passed | 1h 1m |'
 check "headless smoke is a test row" tests.md '| [Headless Smoke](https://github.com/o/r/actions/runs/1/job/Headless-Smoke) | ✅ Passed | 15m 0s |'
 check_absent "rustfmt is not a test row" tests.md 'Rustfmt'
-check "footer names the run and the commit" tests.md '<sub>[Run summary](https://github.com/o/r/actions/runs/1) · commit `1111111`</sub>'
+check "footer names the run and the commit" tests.md '<sub>[Run summary](https://github.com/o/r/actions/runs/1) · PR head `1111111`</sub>'
 
 # 2. A failed Linux suite, a cancelled Windows one, a web build that failed with no artifact.
 jobs "$(job Changes success 40)" "$(job 'Test Suite (windows-2025)' cancelled 100)" \
@@ -127,20 +136,95 @@ check "grey build badge" build.md 'Build-Cancelled-lightgrey'
 check "grey tests badge" tests.md 'Tests-Cancelled-lightgrey'
 check "the cancelled headline" tests.md 'Push a new commit or re-run the workflow to refresh this section.'
 
-# 7. A PR preview: linked beside the web app on the zone services, only for a built web app, and
-#    never with a version that is not a plain npm version.
+# 6. A PR preview uses the actual web checkout and the package from this run.
+WEB_SHA=abc1234222222222222222222222222222222222
+VERSION=0.1.1-1.commit-abc1234
+SPOOF_SHA=abc1234333333333333333333333333333333333
+run_metadata pull_request "$WEB_SHA" "$WEB_SHA"
 jobs "$(job Changes success 40)" "$(job 'Web engine, HUD and bridge scene' success 1300)"
-artifacts "bevy-explorer-web-$SHA:11"
-PREVIEW_VERSION=0.1.0-1.commit-abc1234 compose
+artifacts "bevy-explorer-web-$WEB_SHA:11" "dcl-regenesislabs-bevy-explorer-web-$VERSION.tgz:12" \
+  "bevy-explorer-web-$SPOOF_SHA:13"
+jq '.artifacts[-1].created_at = "2026-10-28T11:00:00Z"' "$WORK/artifacts.json" > "$WORK/new.json"
+mv "$WORK/new.json" "$WORK/artifacts.json"
+cat > "$WORK/npm" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+[[ "$1" = view ]]
+case "$2 $3" in
+  '@dcl-regenesislabs/bevy-explorer-web@pr-10 version') printf '%s\n' "${TAG_VERSION:-}" ;;
+  "@dcl-regenesislabs/bevy-explorer-web@$PUBLISHED_VERSION gitHead") printf '%s\n' "$PUBLISHED_SHA" ;;
+  *) exit 64 ;;
+esac
+EOF
+chmod +x "$WORK/npm"
+preview_compose() {
+  PATH="$WORK:$PATH" PUBLISHED_VERSION="$VERSION" PUBLISHED_SHA="$1" compose
+}
+preview_compose "$WEB_SHA"
 check "the preview is linked after the web app" build.md \
-  '[web app](https://github.com/o/r/actions/runs/1/artifacts/11) · [preview](https://cdn.decentraland.org/@dcl-regenesislabs/bevy-explorer-web/0.1.0-1.commit-abc1234/index.html?position=0%2C-2&baseDomain=decentraland.zone) |'
-PREVIEW_VERSION='0.1.0)[x](https://evil' compose
-check_absent "a malformed version is not linked" build.md 'preview'
-jobs "$(job Changes success 40)" "$(job 'Web engine, HUD and bridge scene' failure 300)"
-PREVIEW_VERSION=0.1.0-1.commit-abc1234 compose
-check_absent "a failed web build has no preview" build.md 'preview'
+  "[web app](https://github.com/o/r/actions/runs/1/artifacts/11) · [preview](https://cdn.decentraland.org/@dcl-regenesislabs/bevy-explorer-web/$VERSION/index.html?position=0%2C-2&baseDomain=decentraland.zone) |"
+check "the build report distinguishes the PR head from the web build" build.md \
+  'PR head `1111111` · Web build `abc1234`'
+check_absent "a newer artifact with another SHA is ignored" build.md 'artifacts/13'
+TAG_VERSION=0.1.1-2.commit-abc1234 preview_compose "$WEB_SHA"
+check "a newer PR tag does not change the versioned link" build.md "$VERSION/index.html"
+preview_compose "$SPOOF_SHA"
+check_absent "a package with a different full SHA is not linked" build.md '[preview]'
+artifacts "bevy-explorer-web-$WEB_SHA:11" "dcl-regenesislabs-bevy-explorer-web-0.1.1-2.commit-abc1234.tgz:12"
+VERSION=0.1.1-2.commit-abc1234 preview_compose "$WEB_SHA"
+check_absent "a package for a different run is not linked" build.md '[preview]'
+artifacts "bevy-explorer-web-$WEB_SHA:11" "dcl-regenesislabs-bevy-explorer-web-0.1.1-1.commit-7654321.tgz:12"
+VERSION=0.1.1-1.commit-7654321 preview_compose "$WEB_SHA"
+check_absent "a version for a different checkout is not linked" build.md '[preview]'
+artifacts "bevy-explorer-web-$WEB_SHA:11:true" "dcl-regenesislabs-bevy-explorer-web-$VERSION.tgz:12"
+preview_compose "$WEB_SHA"
+check "an expired Actions download can still have a CDN preview" build.md '[preview]'
+check_absent "the expired Actions download is hidden" build.md 'artifacts/11'
+artifacts "bevy-explorer-web-$WEB_SHA:11"
+TAG_VERSION="$VERSION" preview_compose "$WEB_SHA"
+check "a published preview can outlive its package artifact" build.md '[preview]'
+TAG_VERSION=0.1.1-2.commit-abc1234 preview_compose "$WEB_SHA"
+check_absent "the fallback tag must still point to this run" build.md '[preview]'
+BOGUS_VERSION=999.0.0-1.commit-abc1234
+artifacts "bevy-explorer-web-$WEB_SHA:11" "dcl-regenesislabs-bevy-explorer-web-$BOGUS_VERSION.tgz:13"
+TAG_VERSION="$VERSION" preview_compose "$WEB_SHA"
+check "an unpublished artifact candidate does not block the PR tag fallback" build.md "$VERSION/index.html"
+artifacts "bevy-explorer-web-$WEB_SHA:11" "dcl-regenesislabs-bevy-explorer-web-$VERSION.tgz:12" \
+  "dcl-regenesislabs-bevy-explorer-web-$BOGUS_VERSION.tgz:13"
+jq '.artifacts[-1].created_at = "2026-10-28T11:00:00Z"' "$WORK/artifacts.json" > "$WORK/new.json"
+mv "$WORK/new.json" "$WORK/artifacts.json"
+TAG_VERSION=0.1.1-2.commit-abc1234 preview_compose "$WEB_SHA"
+check "a newer unpublished candidate does not hide an earlier published artifact" build.md "$VERSION/index.html"
+run_metadata pull_request "$WEB_SHA" "$SPOOF_SHA"
+TAG_VERSION="$VERSION" preview_compose "$WEB_SHA"
+check_absent "ambiguous run metadata produces no web download" build.md 'artifacts/11'
+check_absent "ambiguous run metadata produces no web build label" build.md 'Web build'
+check_absent "ambiguous run metadata produces no preview" build.md '[preview]'
+run_metadata pull_request
+TAG_VERSION="$VERSION" preview_compose "$WEB_SHA"
+check_absent "missing merge metadata produces no preview" build.md '[preview]'
+run_metadata pull_request "$WEB_SHA"
+jq '.referenced_workflows[0].path = "other/r/.github/workflows/child.yml@refs/pull/10/merge"' \
+  "$WORK/run.json" > "$WORK/foreign.json"
+mv "$WORK/foreign.json" "$WORK/run.json"
+TAG_VERSION="$VERSION" preview_compose "$WEB_SHA"
+check_absent "an external reusable workflow does not establish the checkout" build.md 'Web build'
 
-# 6. A job name with table furniture renders as text.
+run_metadata workflow_dispatch
+VERSION=0.1.0-1.commit-1111111
+artifacts "bevy-explorer-web-$SHA:11" "dcl-regenesislabs-bevy-explorer-web-$VERSION.tgz:12"
+TAG_VERSION="$VERSION" preview_compose "$SHA"
+check "a branch dispatch published to the PR tag has a preview" build.md '[preview]'
+preview_compose "$SHA"
+check_absent "a branch dispatch published to another tag has no preview" build.md '[preview]'
+jobs "$(job Changes success 40)" "$(job 'Web engine, HUD and bridge scene' failure 300)"
+TAG_VERSION="$VERSION" preview_compose "$SHA"
+check_absent "a failed web build has no preview" build.md '[preview]'
+jobs "$(job Changes success 40)" "$(job 'Web engine, HUD and bridge scene' skipped)"
+TAG_VERSION="$VERSION" preview_compose "$SHA"
+check_absent "a skipped web build does not link an artifact" build.md 'artifacts/11'
+
+# 7. A job name with table furniture renders as text.
 jobs "$(job Changes success 40)" "$(job 'Test Suite (ubuntu|24.04)' success 10)"
 artifacts
 compose

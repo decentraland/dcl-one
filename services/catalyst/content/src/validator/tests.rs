@@ -236,7 +236,7 @@ async fn a_signed_scene_validates_end_to_end_and_its_land_leg_decides() {
     let verdict = validate(&entity, &files, &ctx).await;
     assert_eq!(
         verdict,
-        unavailable(&["Error checking parcel access: no L1 RPC is configured (ETH_RPC_URL)"])
+        unavailable(&[super::checker::PARCEL_ACCESS_UNDECIDED])
     );
     assert!(matches!(
         into_deploy_failure(verdict.unwrap_err()),
@@ -544,7 +544,7 @@ async fn claimed_names_are_asked_of_the_registrar() {
         validate_profile_access(&owned.view(), &no_rpc, OWNER)
             .await
             .into_result(),
-        unavailable(&["Error checking name ownership: no L1 RPC is configured (ETH_RPC_URL)"])
+        unavailable(&["Error checking name ownership."])
     );
     let failing = fake_chain::serve(|_, _| Reply::Yes(true)).await;
     failing.set_down(true);
@@ -554,7 +554,7 @@ async fn claimed_names_are_asked_of_the_registrar() {
         .into_result()
         .unwrap_err();
     assert!(
-        matches!(&verdict[..], [ValidationError::Unavailable(m)] if m.starts_with("Error checking name ownership: blockchain query failed: L1 block lookup")),
+        matches!(&verdict[..], [ValidationError::Unavailable(m)] if m == "Error checking name ownership."),
         "{verdict:?}"
     );
     let _ = std::fs::remove_dir_all(&tmp);
@@ -677,9 +677,7 @@ async fn owned_items_come_from_the_chain_and_the_escrow_overlay() {
         validate_profile_access(&d.view(), &l2_unset, &owner)
             .await
             .into_result(),
-        unavailable(&[
-            "Error checking item ownership: no L2 RPC is configured (RPC_ENDPOINT_POLYGON)"
-        ])
+        unavailable(&["Error checking item ownership."])
     );
 
     sqlx::query("DELETE FROM shop.usage_grants WHERE grantee_address = $1")
@@ -879,9 +877,7 @@ async fn collection_access_follows_the_checker_at_the_deploy_block() {
         validate_item_access(&item(EDITABLE).view(), &no_rpc, OWNER)
             .await
             .into_result(),
-        unavailable(&[
-            "Error checking collection access: no L2 RPC is configured (RPC_ENDPOINT_POLYGON)"
-        ])
+        unavailable(&["Error checking collection access."])
     );
     // The deploy block denies and the node cannot answer for the earlier one.
     let pruned = fake_chain::serve(|q, block| {
@@ -898,7 +894,7 @@ async fn collection_access_follows_the_checker_at_the_deploy_block() {
         .into_result()
         .unwrap_err();
     assert!(
-        matches!(&verdict[..], [ValidationError::Unavailable(m)] if m.starts_with("Error checking collection access: blockchain query failed: L2 eth_call")),
+        matches!(&verdict[..], [ValidationError::Unavailable(m)] if m == "Error checking collection access."),
         "{verdict:?}"
     );
     assert!(
@@ -984,7 +980,7 @@ async fn third_party_items_are_proven_against_the_registry_at_the_deploy_block()
         .into_result()
         .unwrap_err();
     assert!(
-        matches!(&verdict[..], [ValidationError::Unavailable(m)] if m.starts_with("Error checking third-party access: blockchain query failed: L2 eth_call")),
+        matches!(&verdict[..], [ValidationError::Unavailable(m)] if m == "Error checking third-party access."),
         "{verdict:?}"
     );
     let s = sources(lazy_pool(), storage, mainnet());
@@ -992,9 +988,7 @@ async fn third_party_items_are_proven_against_the_registry_at_the_deploy_block()
         validate_item_access(&d.view(), &s, STRANGER)
             .await
             .into_result(),
-        unavailable(&[
-            "Error checking third-party access: no L2 RPC is configured (RPC_ENDPOINT_POLYGON)"
-        ])
+        unavailable(&["Error checking third-party access."])
     );
     let _ = std::fs::remove_dir_all(&tmp);
 }
@@ -1199,6 +1193,8 @@ async fn the_erc721_route_formats_the_active_wearable() {
     )
     .await;
     let _plain = seed("1", json!({ "name": "no rarity" })).await;
+    let _null_rarity = seed("3", json!({ "rarity": null })).await;
+    let _empty_rarity = seed("4", json!({ "rarity": "" })).await;
 
     let state = Arc::new(crate::ContentState::new(
         pool.clone(),
@@ -1247,8 +1243,7 @@ async fn the_erc721_route_formats_the_active_wearable() {
             "attributes": [
                 {"trait_type": "Rarity", "value": "epic"},
                 {"trait_type": "Category", "value": "hat"},
-                {"trait_type": "Tag", "value": "a"},
-                {"trait_type": "Body Shape", "value": "BaseMale"}
+                {"trait_type": "Tag", "value": "a"}
             ]
         })
     );
@@ -1269,6 +1264,19 @@ async fn the_erc721_route_formats_the_active_wearable() {
     assert_eq!(
         get_json(format!("/queries/erc721/137/{contract}/2")).await,
         (404, json!({"error": "Entity does not exist"}))
+    );
+    // CS-17: a null or empty rarity is not standard, and the chain id is
+    // upstream's `/^\d+$/` (no sign).
+    for item in ["3", "4"] {
+        assert_eq!(
+            get_json(format!("/queries/erc721/137/{contract}/{item}")).await,
+            (400, json!({"error": "Wearable is not standard."})),
+            "{item}"
+        );
+    }
+    assert_eq!(
+        get_json(format!("/queries/erc721/+137/{contract}/0")).await,
+        (400, json!({"error": "Invalid chainId '+137'"}))
     );
     state.denylist.add(&standard);
     assert_eq!(

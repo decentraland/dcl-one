@@ -121,8 +121,10 @@ or when touching the bridge protocol.
   plus `/login_*`, `/logout`, `/chat`.
 
 **Still tier-1-only** (a fresh guest can't reach them, so they can't round-trip here): accepting a
-friend request, leaving a community, marking notifications read — these need seeded data and are
-covered deterministically in tier 1. **TODO to deepen tier 2** (would need engine query commands or
+friend request, leaving a community, marking notifications read, community chat (the tabs come
+from the communities the account is a member of; `src/test/communityChat*.test.tsx`, and
+`apps/bevy-explorer/e2e/specs/community-chat.test.ts` with a member account) — these need seeded
+data and are covered deterministically in tier 1. **TODO to deepen tier 2** (would need engine query commands or
 fixtures): map *UI* teleport by clicking a parcel, a `/mic_state` query to confirm the mic toggle,
 logout via the profile chip.
 
@@ -138,6 +140,8 @@ these by hand (or have an agent drive the Chrome extension against a live world)
 - [ ] **Nametags** appear above every avatar's head, follow them while walking, and **face the camera**.
 - [ ] Name **colour** = profile custom colour if set, else the address-hash palette; **claimed** names
       show the verified seal, **unclaimed** show `#abcd` tight to the name.
+- [ ] A name colour picked on the passport reaches the tag once the passport closes, on your own
+      avatar and, for other players, on theirs, without a rename or a reload.
 - [ ] **Fixed world scale — never a giant.** A tag is a constant *world* size (it shrinks with distance,
       like the old SDK scene); it must NEVER balloon into a screen-filling pill when the camera pulls back
       or when its `AvatarAttach` fails to bind. (We dropped the old constant-on-screen scaling precisely
@@ -150,6 +154,10 @@ these by hand (or have an agent drive the Chrome extension against a live world)
       hidden in first person.
 - [ ] **Crosshair** shows when the camera is locked (mouse hidden) and hides when the cursor is free.
 - [ ] **Hover / proximity prompts** ("Press E…") show on interactables and sit on the right entity.
+- [ ] **Community chat bubbles** (`bridge-scene/src/domains/{chat,nametags}.*`): a message said in a
+      community chat by a player standing nearby shows as their bubble with the community's name on
+      a smaller, dimmer, left-aligned row above their name, cut short with an ellipsis (and over
+      your own head for your own); a Nearby message shows no such row, and a DM no bubble at all.
 - [ ] **Lobby stage** (`bridge-scene/src/domains/avatarPreview.tsx`, lobby region): after sign-in the
       page's stand-in (backdrop + snapshot) crossfades to the engine stage with the live avatar centred;
       Customize opens the Backpack modal with the avatar through its hole and hands the stage back on

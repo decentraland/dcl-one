@@ -243,6 +243,36 @@ class PlayImportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'inputs differ'):
             play.install(self.build)
 
+    def test_vendored_bevy_edits_invalidate_the_artifact(self):
+        # The engine compiles rendering/bevy-explorer/bevy; this fixture has no .git, so this is
+        # the walk Nix's filtered contract takes.
+        self.write('rendering/bevy-explorer/bevy/crates/bevy_scene/src/scene_spawner.rs', 'fn changed() {}\n')
+        with self.assertRaisesRegex(ValueError, 'inputs differ'):
+            play.install(self.build)
+
+    def test_vendored_bevy_is_an_engine_input_in_git_and_in_the_nix_contract(self):
+        bevy = 'rendering/bevy-explorer/bevy/crates/bevy_scene/src/scene_spawner.rs'
+        self.write(bevy, 'fn spawn() {}\n')
+        def git(*args):
+            return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
+                                            *args], cwd=self.root, text=True).strip()
+        git('init', '-q')
+        git('config', 'maintenance.auto', 'false')
+        git('config', 'gc.auto', '0')
+        git('add', '.')
+        git('commit', '-qm', 'fixture')
+        self.assertIn(bevy, contract.input_files(self.root, engine_only=True))
+        key = contract.engine_inputs(self.root)
+        self.assertEqual(key, contract.engine_inputs(self.root, git('rev-parse', 'HEAD')))
+        filtered = self.root / 'nix-contract'
+        for name in git('ls-files').splitlines():
+            target = filtered / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(self.root / name, target)
+        self.assertEqual(key, contract.engine_inputs(filtered))
+        self.write(bevy, 'fn spawn_sliced() {}\n')
+        self.assertNotEqual(key, contract.engine_inputs(self.root))
+
     def test_rebuilt_hud_changes_require_reviewing_the_sites_adaptation(self):
         self.write(contract.HUD + 'new-screen.ts', 'export const screen = "new";\n')
         contract.pack(self.build, self.root)

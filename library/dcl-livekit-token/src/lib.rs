@@ -100,6 +100,7 @@ pub struct AccessToken {
     pub identity: String,
     pub name: Option<String>,
     pub metadata: Option<String>,
+    pub attributes: std::collections::BTreeMap<String, String>,
     pub grants: VideoGrants,
     pub ttl: Duration,
     /// How far before the minting second `nbf` sits, for verifiers whose clock
@@ -120,6 +121,7 @@ impl AccessToken {
             identity: identity.into(),
             name: None,
             metadata: None,
+            attributes: Default::default(),
             grants,
             ttl: Duration::from_secs(5 * 60),
             clock_skew: Duration::ZERO,
@@ -128,6 +130,11 @@ impl AccessToken {
 
     pub fn with_metadata(mut self, metadata: impl Into<String>) -> Self {
         self.metadata = Some(metadata.into());
+        self
+    }
+
+    pub fn with_attribute(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.attributes.insert(key.into(), value.into());
         self
     }
 
@@ -160,6 +167,9 @@ impl AccessToken {
         }
         if let Some(m) = &self.metadata {
             payload.insert("metadata".into(), serde_json::json!(m));
+        }
+        if !self.attributes.is_empty() {
+            payload.insert("attributes".into(), serde_json::json!(self.attributes));
         }
         payload.insert("video".into(), serde_json::to_value(&self.grants)?);
         sign_hs256(
@@ -304,6 +314,20 @@ mod tests {
         assert_eq!(v["roomList"], false);
         assert_eq!(v["canPublishSources"], serde_json::json!(["microphone"]));
         assert!(p["exp"].as_i64().unwrap() > p["nbf"].as_i64().unwrap());
+    }
+
+    #[test]
+    fn attributes_are_independent_of_client_metadata() {
+        let token = AccessToken::new("key", "secret", "wallet", join_grants("room"))
+            .with_attribute("dcl.worldAuthorization", "signed-proof")
+            .with_metadata("replacement-client-payload");
+        let payload = decode_jwt_payload(&token.to_jwt().unwrap());
+        assert_eq!(
+            payload["attributes"]["dcl.worldAuthorization"],
+            "signed-proof"
+        );
+        assert_eq!(payload["metadata"], "replacement-client-payload");
+        assert_eq!(payload["video"]["canUpdateOwnMetadata"], true);
     }
 
     #[test]

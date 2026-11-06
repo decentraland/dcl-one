@@ -380,6 +380,7 @@ mod tests {
             "metadata",
         ] {
             let mut participant = ParticipantInfo {
+                attributes: Default::default(),
                 sid: "PA_fixture".into(),
                 identity: WALLET.into(),
                 metadata: Some(

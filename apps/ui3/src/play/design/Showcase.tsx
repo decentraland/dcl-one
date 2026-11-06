@@ -10,6 +10,7 @@ import { Pager } from './Pager'
 import { Rail } from './Rail'
 import { HeaderButton } from './HeaderButton'
 import { OptionMenu } from './OptionMenu'
+import { ContextMenu } from './ContextMenu'
 import { HintsButton, KeyCap } from './HintsButton'
 import { useRef, useState } from 'react'
 import { ControlButton } from './ControlButton'
@@ -464,6 +465,22 @@ export function Showcase(): React.JSX.Element {
         />
       </Section>
 
+      <Section title="ContextMenu (items · submenu · exclusive options)">
+        <ContextMenu
+          items={[
+            { label: 'View Community' },
+            { kind: 'submenu', label: 'Notification Ping' },
+            { kind: 'separator' },
+            { kind: 'title', label: 'Notification Ping' },
+            { kind: 'option', label: 'All Messages', checked: true },
+            { kind: 'option', label: 'Mentions Only', checked: false },
+            { kind: 'option', label: 'None', checked: false },
+            { kind: 'separator' },
+            { label: 'Delete chat history', danger: true }
+          ]}
+        />
+      </Section>
+
       <Section title="HintsButton (opens upward)">
         <div style={{ paddingTop: 120 }}>
           <HintsButton hints={[{ icon: <KeyCap label="1" />, text: 'Press a number key to pick a slot.' }, { icon: <KeyCap label="E" />, text: 'Press E to open emotes.' }]} />
@@ -507,6 +524,10 @@ export function Showcase(): React.JSX.Element {
         <div style={{ maxWidth: 320 }}>
           <ColorPicker label="Hair color" value="#5b310f" presets={['#1c1c1c', '#3c210b', '#5b310f', '#7b4818', '#985f37', '#8c2014', '#e98234', '#ffbe28', '#fad281', '#d4d4d4']} onChange={() => undefined} />
         </div>
+      </Section>
+
+      <Section title="ColorPicker (swatch, hue only: name colour)">
+        <ColorPicker label="Name color" value="#40eaff" presets={['#a140ff', '#ff40ad', '#ff9840', '#ffe340', '#40ff45', '#40eaff']} hueOnly swatch onChange={() => undefined} />
       </Section>
 
       <Section title="Panel">
@@ -556,6 +577,20 @@ export function Showcase(): React.JSX.Element {
               name={`${r[0].toUpperCase()}${r.slice(1)} Item`}
               rarity={r}
               shopUrl={i % 2 === 0 ? 'https://decentraland.org/shop/item/0xa42e166edac870aa5351b098ae6458d39ca0fca6/0' : undefined}
+              categoryIcon={<Icon name="emotes" size={15} />}
+            />
+          ))}
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 108px)', gap: 12, marginTop: 12 }}>
+          {(['epic', 'legendary', 'rare'] as Rarity[]).map((r, i) => (
+            <EquippedItemCard
+              key={r}
+              name={`Pinned ${r}`}
+              rarity={r}
+              shopUrl="https://decentraland.org/shop/item/0xa42e166edac870aa5351b098ae6458d39ca0fca6/0"
+              shopLabel={i === 0 ? 'Buy' : 'View'}
+              price={i === 0 ? '25 Credits' : undefined}
+              pinShop
               categoryIcon={<Icon name="emotes" size={15} />}
             />
           ))}

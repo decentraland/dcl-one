@@ -98,6 +98,20 @@
 /.github/workflows/bevy-explorer-*.yml @decentraland/client
 /.github/actions/bevy-explorer-*/ @decentraland/client
 
+# explorer-rust
+/rendering/bevy-explorer/source/crates/ @robtfm
+/rendering/bevy-explorer/source/src/ @robtfm
+/rendering/bevy-explorer/source/Cargo.toml @robtfm
+/rendering/bevy-explorer/source/Cargo.lock @robtfm
+/rendering/bevy-explorer/source/build.rs @robtfm
+/rendering/bevy-explorer/source/.cargo/config.toml @robtfm
+/rendering/bevy-explorer/source/local-harness/benchmark/ @robtfm
+/rendering/bevy-explorer/source/local-harness/presence/harness-util/ @robtfm
+/rendering/bevy-explorer/source/vendor/ @robtfm
+/rendering/bevy-explorer/bevy/ @robtfm
+/rendering/bevy-explorer/cargo-patches.toml @robtfm
+/rendering/bevy-explorer/forks.toml @robtfm
+
 # uuav-native
 /library/uuav/ @decentraland/client
 /tooling/uuav/ @decentraland/client

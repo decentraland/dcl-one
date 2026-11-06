@@ -1,7 +1,7 @@
 // The shell purchase on the web Shop's real rails: the executor, its relayed and direct paths, and the
 // wallet guard bound to the confirmed purchase. The Shop server, the chain, the relay and the wallet are
 // the checkout's fakes; a credit is issued for a dedicated CreditsManager, as the server requires.
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Hex } from 'viem'
 import { batchAuthorization, createFakeChain, createFakeRelay, createFakeShop, createFakeWallet } from '../../shop/checkout/fakes'
 import type { CatalogItem } from '../../shop/discovery/lib/catalogItem'
@@ -57,7 +57,15 @@ function memoryStorage(refuse: (key: string, value: string) => boolean = () => f
   }
 }
 
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
+
 function rails(opts: { trusted: string; kind: 'managed' | 'web3'; gasless?: boolean; storage?: Storage }) {
+  // The deployment names its manager the way a build does, so the checkout's address book (which the rails
+  // spend through) and the shell's trust agree on it.
+  vi.stubEnv('VITE_SHOP_CHAIN_ID', '137')
+  vi.stubEnv('VITE_SHOP_CREDITS_MANAGER', opts.trusted)
   const chain = createFakeChain()
   const relay = createFakeRelay({ chain, confirm: 'success' })
   const shop = createFakeShop({

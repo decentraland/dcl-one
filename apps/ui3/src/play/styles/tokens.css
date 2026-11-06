@@ -90,6 +90,7 @@
   --shadow-panel: 0 8px 24px rgba(0, 0, 0, 0.35);
   --shadow-modal: 0 30px 80px rgba(0, 0, 0, 0.5);
   --shadow-popup: 0 4px 10px rgba(0, 0, 0, 0.25);
+  --shadow-text: 0 1px 2px rgba(0, 0, 0, 0.7), 0 0 8px rgba(0, 0, 0, 0.45); /* coloured text on gradients */
 
   /* ---- stacking order ---- */
   --z-hud: 100; /* in-world chrome: sidebar, chat, minimap */
