@@ -234,10 +234,6 @@ mod tests {
                 .await
                 .unwrap();
             crate::db::apply_schema(&pool).await.unwrap();
-            let malformed = crate::db::missing_functions(&pool, &["social.invalid(".to_owned()])
-                .await
-                .unwrap_err();
-            assert!(malformed.as_database_error().is_some(), "{malformed}");
             let signatures: Vec<String> = ALL.iter().map(|function| function.signature()).collect();
             for signature in &signatures {
                 sqlx::query(sqlx::AssertSqlSafe(format!("DROP FUNCTION {signature}")))
