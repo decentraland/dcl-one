@@ -8,10 +8,16 @@
 
 use bevy::{color::palettes::basic, prelude::*};
 use bevy_console::ConsoleCommand;
-use common::dynamics::PLAYER_COLLIDER_OVERLAP;
+use common::{
+    dynamics::{PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS},
+    structs::{AppConfig, PrimaryUser},
+};
+use std::time::Duration;
+use web_time::Instant;
 
 use crate::{
     initialize_scene::SuperUserScene,
+    update_scene::raycast_budget::{candidate_order, run_within_budget, Candidate, RaycastStats},
     update_world::{
         gltf_container::GLTF_LOADING,
         mesh_collider::{GlobalGroundCollider, RaycastResult, SceneColliderData},
@@ -39,6 +45,7 @@ impl Plugin for RaycastResultPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, run_raycasts.in_set(SceneSets::Input));
         app.init_resource::<DebugRaycast>();
+        app.init_resource::<RaycastStats>();
         app.init_resource::<SuperUserRaycastScene>();
         app.add_preview_console_command::<DebugRaycastCommand, _>(debug_raycast);
     }
@@ -90,6 +97,9 @@ fn run_raycasts(
         (Entity, &mut SceneColliderData),
         (With<GlobalGroundCollider>, Without<RendererSceneContext>),
     >,
+    config: Res<AppConfig>,
+    mut stats: ResMut<RaycastStats>,
+    player: Query<Entity, With<PrimaryUser>>,
 ) {
     // redraw non-continuous gizmos for 1 sec
     gizmo_cache.retain(|(until, origin, end)| {
@@ -97,11 +107,15 @@ fn run_raycasts(
         time.elapsed_secs_f64() > *until
     });
 
-    for (e, scene_ent, mut raycast, transform) in raycast_requests.iter_mut() {
-        debug!("{e:?} has raycast request: {raycast:?}");
-        let Ok((_, context, mut scene_data, scene_transform, super_user)) =
-            scene_context.get_mut(scene_ent.root)
-        else {
+    let player_scenes = player
+        .single()
+        .map(|player| containing_scene.get_area(player, PLAYER_COLLIDER_RADIUS))
+        .unwrap_or_default();
+
+    // collect the requests that are due this frame, in the order they should run
+    let mut candidates: Vec<(Entity, Candidate)> = Vec::new();
+    for (e, scene_ent, raycast, _) in raycast_requests.iter() {
+        let Ok((_, context, ..)) = scene_context.get(scene_ent.root) else {
             continue;
         };
 
@@ -119,6 +133,32 @@ fn run_raycasts(
         if continuous && raycast.last_run >= context.last_update_frame {
             continue;
         }
+
+        candidates.push((
+            e,
+            Candidate {
+                in_player_scene: player_scenes.contains(&scene_ent.root),
+                priority: context.priority,
+                last_run: raycast.last_run,
+                entity_id: e.index(),
+            },
+        ));
+    }
+    candidates.sort_by(|(_, a), (_, b)| candidate_order(a, b));
+    let order: Vec<Entity> = candidates.into_iter().map(|(e, _)| e).collect();
+
+    // returns false when the request or its scene is gone, so it counts as neither ran nor deferred
+    let mut cast_one = |e: Entity| -> bool {
+        let Ok((_, scene_ent, mut raycast, transform)) = raycast_requests.get_mut(e) else {
+            return false;
+        };
+        debug!("{e:?} has raycast request: {raycast:?}");
+        let Ok((_, context, mut scene_data, scene_transform, super_user)) =
+            scene_context.get_mut(scene_ent.root)
+        else {
+            return false;
+        };
+        let continuous = raycast.raycast.continuous.unwrap_or(false);
         raycast.last_run = context.last_update_frame;
         debug!("running raycast");
 
@@ -150,7 +190,7 @@ fn run_raycasts(
             }
             None => {
                 warn!("no direction on raycast");
-                continue;
+                return true;
             }
         }
         .normalize();
@@ -380,5 +420,13 @@ fn run_raycasts(
             scene_ent.id,
             &result,
         );
-    }
+        true
+    };
+
+    *stats = run_within_budget(
+        order,
+        Duration::from_millis(config.raycast_budget_ms as u64),
+        &mut Instant::now,
+        &mut cast_one,
+    );
 }

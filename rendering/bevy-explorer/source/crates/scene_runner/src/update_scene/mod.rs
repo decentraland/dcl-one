@@ -9,6 +9,7 @@ use self::{
 pub mod camera_mode;
 pub mod pointer_lock;
 pub mod pointer_results;
+pub mod raycast_budget;
 pub mod raycast_result;
 
 pub struct SceneInputPlugin;
