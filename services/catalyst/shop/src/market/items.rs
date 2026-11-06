@@ -866,8 +866,8 @@ pub fn rate_to_numeric_string(rate: f64) -> String {
 }
 
 /// The Shop's MANA/USD. Where the marketplace's feed is wired
-/// (`mana::feed_rate`), its answer read live, and the price route's
-/// unavailable envelope when that read fails. Otherwise the spot: the newest
+/// (`mana::feed_rate::current`), its last good answer, and the price route's
+/// unavailable envelope when there is none. Otherwise the spot: the newest
 /// row of `economy.price_snapshots` from any source (the `mana-price-poll`
 /// job's archive: CoinGecko, or the exchange it fell back to), as the price
 /// route reads it, memoized 60 s, accepted only while younger than
@@ -876,14 +876,14 @@ pub fn rate_to_numeric_string(rate: f64) -> String {
 /// (the 0.02 the slice first shipped priced 75 MANA items at 15 credits
 /// against 69 at the day's spot).
 pub async fn mana_usd_rate(state: &MarketplaceState) -> Result<f64, Response> {
-    if let Some(feed) = crate::mana::feed_rate::read().await {
+    if let Some(feed) = crate::mana::feed_rate::current() {
         return feed
             .ok()
-            .and_then(|read| read.usd_per_mana.parse::<f64>().ok())
+            .and_then(|shop| shop.usd_per_mana().parse::<f64>().ok())
             .filter(|r| r.is_finite() && *r > 0.0)
             .ok_or_else(|| {
                 crate::price::unavailable(
-                    "the marketplace's MANA/USD feed could not be read; credit prices need its answer",
+                    "the marketplace's MANA/USD feed has no current answer; credit prices need one",
                 )
             });
     }

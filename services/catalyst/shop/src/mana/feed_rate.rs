@@ -1,213 +1,185 @@
 //! The Shop's MANA/USD rate: the answer of the feed the settlement chain's
-//! marketplace converts USD-pegged prices with (`MANA_USD_AGGREGATOR_ADDRESS`
-//! over `RPC_ENDPOINT_POLYGON`), read live as upstream's `readManaUsdRate`
-//! does (shop@3a322cf9 `app/src/lib/mana-rate.ts`), so a MANA price the Shop
-//! shows is the one the contract charges. The market spot (CoinGecko) can sit
-//! far from that feed (on Amoy the feed is a test answer), and it stays the
-//! economy routes' price only.
+//! newest marketplace converts USD-pegged prices with, as upstream's
+//! `readManaUsdRate` reads it (shop@3a322cf9 `app/src/lib/mana-rate.ts`), so a
+//! MANA price the Shop shows is the one the contract charges. The market spot
+//! (CoinGecko) can sit far from that feed (on Amoy the feed is a test answer),
+//! and it stays the economy routes' price only.
 //!
-//! [`install`] wires the feed once per process (`serve`); [`read`] answers
-//! `None` where it is not wired (no endpoint or aggregator: the Shop prices at
-//! the spot as before). A read is `decimals()` and `latestRoundData()` at
-//! `latest`. One read at a time is in flight ([`RateCache`]): its answer is
-//! shared with every caller that waited for it, kept [`CACHE_TTL`] when it is
-//! a rate and [`FAILURE_TTL`] when it is a failure, so a dead endpoint costs
-//! one read per [`FAILURE_TTL`], not one per waiting caller. A caller waits
-//! at most [`READ_BUDGET`] for the lock and the read together. A failure is
-//! the Shop's "price unavailable", never the spot, and never an older rate.
-//! A round the feed has not refreshed for longer than upstream's
-//! `MAX_STALENESS_SECONDS` (the heartbeat plus an hour), an incomplete round
-//! or a non-positive answer is refused. [`FeedRead::observed_at`] is when
-//! this node read the answer, so a caller never presents a cached read as
-//! fresher than it is.
+//! The read is `credits::feed::ChainFeed`'s, the one a credits authorization
+//! sizes with: the marketplace's own `manaUsdAggregator()` and
+//! `manaUsdAggregatorTolerance()`, the aggregator's `decimals()` and
+//! `latestRoundData()`, all at one block hash, the endpoint's chain checked,
+//! the round refused when the marketplace's check would revert, when it runs
+//! ahead of the clock, or past `CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS`.
 //!
-//! The rate can still move between a quote and the block that settles it;
-//! the approval a USD-pegged quote asks for carries upstream's +2% for that
+//! No request waits on that read. [`install`] starts one refresher per
+//! process that reads every [`REFRESH_EVERY`] into a slot; [`current`] answers
+//! from the slot without blocking: the last good read while it is at most
+//! [`SERVE_FOR`] old and its round still within the feed's age bound, and
+//! "unavailable" otherwise (never the spot, never an older rate). A node with
+//! no endpoint for the settlement chain, or no marketplace on it, wires no
+//! feed and prices at the spot as before ([`current`] answers `None`).
+//!
+//! The rate can still move between a quote and the block that settles it:
+//! the approval a USD-pegged quote asks for carries upstream's +2%
 //! ([`USD_PEGGED_ALLOWANCE_BUFFER_PCT`]).
 
-use std::future::Future;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, OnceLock, RwLock};
 use std::time::Duration;
 
-use tokio::time::Instant;
-
 use alloy_primitives::{Address, U256};
-use alloy_sol_types::SolCall;
 use chrono::{DateTime, Utc};
 
-use crate::evm::chain::ChainComponent;
-use crate::evm::oracle::{decimalsCall, latestRoundDataCall};
+use crate::credits::feed::{FeedReading, MarketplaceFeed};
+use crate::types::ManaUsdRate;
 
-/// Upstream's `MAX_STALENESS_SECONDS`: the feed's heartbeat plus an hour.
-pub const MAX_FEED_AGE_SECS: i64 = 90_000;
+/// How often the refresher reads the feed.
+pub const REFRESH_EVERY: Duration = Duration::from_secs(15);
 
-/// How long one read answers for: upstream's rate query is stale after 60 s.
-pub const CACHE_TTL: Duration = Duration::from_secs(30);
-
-/// How long a failed read answers for, so callers do not queue retries.
-pub const FAILURE_TTL: Duration = Duration::from_secs(5);
-
-/// The most a caller waits for a rate: the lock and both calls together.
-pub const READ_BUDGET: Duration = Duration::from_secs(12);
+/// How long one good read is served: four refreshes, so a single failed
+/// refresh never makes the Shop's prices flicker to unavailable.
+pub const SERVE_FOR: Duration = Duration::from_secs(60);
 
 /// Upstream's approval buffer over a USD-pegged trade's MANA (shop@3a322cf9
-/// `app/src/lib/buy.ts` `tradeManaPriceWei`: `mul(102).div(100)`).
+/// `app/src/lib/buy.ts` `tradeManaPriceWei`: `mul(102).div(100)`). It is an
+/// approval margin for the rate moving before the block that settles the
+/// trade, not a slippage bound: the broker's `USD_PEGGED_SLIPPAGE_BPS` (1%)
+/// is what a broker purchase checks the settled MANA against.
 pub const USD_PEGGED_ALLOWANCE_BUFFER_PCT: u64 = 2;
 
-/// One read of the feed.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FeedRead {
-    /// USD per MANA as exact decimal text ("0.26960836").
-    pub usd_per_mana: String,
-    /// When the feed last updated its answer.
-    pub updated_at: DateTime<Utc>,
+/// The rate as the Shop prices with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShopRate {
+    pub rate: ManaUsdRate,
     /// When this node read it.
     pub observed_at: DateTime<Utc>,
 }
 
-/// One read in flight, its outcome shared: a rate for [`CACHE_TTL`], a
-/// failure for [`FAILURE_TTL`]; each caller bounded by [`READ_BUDGET`].
-pub struct RateCache {
-    last: tokio::sync::Mutex<Option<(Instant, Result<FeedRead, String>)>>,
-}
-
-impl Default for RateCache {
-    fn default() -> Self {
-        Self::new()
+impl ShopRate {
+    /// USD per MANA as exact decimal text ("0.26960836").
+    pub fn usd_per_mana(&self) -> String {
+        decimal_text(self.rate.rate(), self.rate.decimals())
     }
 }
 
-impl RateCache {
-    pub const fn new() -> Self {
+/// Why there is no rate to price with. The detail is logged, never sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unavailable;
+
+impl std::fmt::Display for Unavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the marketplace's MANA/USD feed has no current answer")
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Good {
+    reading: FeedReading,
+    observed_at: DateTime<Utc>,
+}
+
+/// The slot the refresher writes and every reader reads.
+pub struct RateSlot {
+    good: RwLock<Option<Good>>,
+    max_age_secs: u64,
+}
+
+impl RateSlot {
+    pub fn new(max_age_secs: u64) -> Self {
         Self {
-            last: tokio::sync::Mutex::const_new(None),
+            good: RwLock::new(None),
+            max_age_secs,
         }
     }
 
-    pub async fn get<F, Fut>(&self, fetch: F) -> Result<FeedRead, String>
-    where
-        F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<FeedRead, String>>,
-    {
-        let deadline = Instant::now() + READ_BUDGET;
-        let Ok(mut last) = tokio::time::timeout_at(deadline, self.last.lock()).await else {
-            return Err(format!(
-                "the MANA/USD feed's read in flight did not finish within {}s",
-                READ_BUDGET.as_secs()
-            ));
-        };
-        if let Some((at, outcome)) = last.as_ref() {
-            let ttl = if outcome.is_ok() {
-                CACHE_TTL
-            } else {
-                FAILURE_TTL
-            };
-            if at.elapsed() < ttl {
-                return outcome.clone();
+    /// Records one refresh. A failure keeps the last good read: [`Self::at`]
+    /// stops serving it once it is [`SERVE_FOR`] old.
+    pub fn record(&self, read: Result<FeedReading, String>, now: DateTime<Utc>) {
+        match read {
+            Ok(reading) => {
+                *self.good.write().unwrap() = Some(Good {
+                    reading,
+                    observed_at: now,
+                })
+            }
+            Err(reason) => {
+                tracing::warn!(%reason, "the marketplace's MANA/USD feed could not be read")
             }
         }
-        let outcome = match tokio::time::timeout_at(deadline, fetch()).await {
-            Ok(outcome) => outcome,
-            Err(_) => Err(format!(
-                "the MANA/USD feed did not answer within {}s",
-                READ_BUDGET.as_secs()
-            )),
-        };
-        *last = Some((Instant::now(), outcome.clone()));
-        outcome
+    }
+
+    /// The rate to price with at `now`.
+    pub fn at(&self, now: DateTime<Utc>) -> Result<ShopRate, Unavailable> {
+        let good = (*self.good.read().unwrap()).ok_or(Unavailable)?;
+        let observed_for = (now - good.observed_at).num_seconds();
+        let round_age = now.timestamp() - good.reading.updated_at_s;
+        let served_for = i64::try_from(SERVE_FOR.as_secs()).unwrap_or(i64::MAX);
+        let max_age = i64::try_from(self.max_age_secs).unwrap_or(i64::MAX);
+        if observed_for > served_for || round_age > max_age {
+            return Err(Unavailable);
+        }
+        Ok(ShopRate {
+            rate: good.reading.rate,
+            observed_at: good.observed_at,
+        })
     }
 }
 
-struct LiveFeed {
-    chain: Arc<ChainComponent>,
-    aggregator: Address,
-    cache: RateCache,
-}
+static SLOT: OnceLock<Arc<RateSlot>> = OnceLock::new();
 
-static FEED: OnceLock<LiveFeed> = OnceLock::new();
-
-/// Whether this process reads the marketplace's feed ([`install`]).
-pub fn installed() -> bool {
-    FEED.get().is_some()
-}
-
-/// Wires the feed for this process; a second call is ignored.
-pub fn install(chain: Option<Arc<ChainComponent>>, aggregator: Address) {
-    let Some(chain) = chain.filter(|_| aggregator != Address::ZERO) else {
-        tracing::info!(
-            "shop MANA/USD: no RPC_ENDPOINT_POLYGON or aggregator; the Shop prices at the market spot"
-        );
+/// Starts the refresher of the settlement chain's newest marketplace and
+/// wires its slot for this process; a second call is ignored.
+pub fn install(
+    feed: Arc<dyn MarketplaceFeed>,
+    chain_id: u64,
+    marketplace: Address,
+    max_age_secs: u64,
+) {
+    let slot = Arc::new(RateSlot::new(max_age_secs));
+    if SLOT.set(slot.clone()).is_err() {
         return;
-    };
-    let _ = FEED.set(LiveFeed {
-        chain,
-        aggregator,
-        cache: RateCache::new(),
+    }
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(REFRESH_EVERY);
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            slot.record(feed.read(chain_id, marketplace).await, Utc::now());
+        }
     });
 }
 
-/// The feed's rate, read at most [`CACHE_TTL`] ago; `None` where no feed is wired.
-pub async fn read() -> Option<Result<FeedRead, String>> {
-    let feed = FEED.get()?;
-    Some(
-        feed.cache
-            .get(|| read_chain(&feed.chain, feed.aggregator))
-            .await,
-    )
+#[cfg(test)]
+thread_local! {
+    static TEST_SLOT: std::cell::RefCell<Option<Arc<RateSlot>>> = const { std::cell::RefCell::new(None) };
 }
 
-async fn read_chain(chain: &ChainComponent, aggregator: Address) -> Result<FeedRead, String> {
-    let decimals = chain
-        .eth_call(aggregator, &decimalsCall {}.abi_encode())
-        .await
-        .map_err(|e| format!("the MANA/USD feed's decimals could not be read ({e})"))?;
-    let round = chain
-        .eth_call(aggregator, &latestRoundDataCall {}.abi_encode())
-        .await
-        .map_err(|e| format!("the MANA/USD feed's latest round could not be read ({e})"))?;
-    reading(&decimals, &round, Utc::now())
+/// Wires `slot` for the current test's thread (a `#[tokio::test]` runs its
+/// tasks there), leaving the process's slot and other tests alone.
+#[cfg(test)]
+pub(crate) fn with_test_slot(slot: Option<Arc<RateSlot>>) {
+    TEST_SLOT.with(|s| *s.borrow_mut() = slot);
 }
 
-/// Decodes and checks a `decimals()` and a `latestRoundData()` answer at `now`.
-pub fn reading(
-    decimals_ret: &[u8],
-    round_ret: &[u8],
-    now: DateTime<Utc>,
-) -> Result<FeedRead, String> {
-    let decimals =
-        decimalsCall::abi_decode_returns(decimals_ret).map_err(|e| format!("decimals(): {e}"))?;
-    let round = latestRoundDataCall::abi_decode_returns(round_ret)
-        .map_err(|e| format!("latestRoundData(): {e}"))?;
-    if round.answer.is_negative() || round.answer.is_zero() {
-        return Err(format!(
-            "the MANA/USD feed answers {}, not a positive rate",
-            round.answer
-        ));
-    }
-    if round.answeredInRound < round.roundId {
-        return Err("the MANA/USD feed's latest round is incomplete".into());
-    }
-    let updated_at = i64::try_from(round.updatedAt)
-        .ok()
-        .filter(|s| *s > 0)
-        .and_then(|s| DateTime::<Utc>::from_timestamp(s, 0))
-        .ok_or_else(|| {
-            format!(
-                "the MANA/USD feed's updatedAt {} is not a time",
-                round.updatedAt
-            )
-        })?;
-    let age = (now - updated_at).num_seconds();
-    if age > MAX_FEED_AGE_SECS {
-        return Err(format!(
-            "the MANA/USD feed's latest round is {age} s old (at most {MAX_FEED_AGE_SECS} s)"
-        ));
-    }
-    Ok(FeedRead {
-        usd_per_mana: decimal_text(round.answer.into_raw(), decimals),
-        updated_at,
-        observed_at: now,
-    })
+#[cfg(test)]
+fn slot() -> Option<Arc<RateSlot>> {
+    TEST_SLOT.with(|s| s.borrow().clone())
+}
+
+#[cfg(not(test))]
+fn slot() -> Option<Arc<RateSlot>> {
+    SLOT.get().cloned()
+}
+
+/// The Shop's rate now: `None` where no feed is wired (price at the spot),
+/// else the last good read or [`Unavailable`]. Never blocks on the network.
+pub fn current() -> Option<Result<ShopRate, Unavailable>> {
+    slot().map(|slot| slot.at(Utc::now()))
+}
+
+/// Whether this process prices at the marketplace's feed.
+pub fn installed() -> bool {
+    slot().is_some()
 }
 
 /// `answer / 10^decimals` as exact decimal text, trailing zeros dropped.
@@ -235,87 +207,68 @@ pub fn usd_pegged_allowance(mana: U256) -> U256 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
-    use alloy_primitives::I256;
+    use alloy_primitives::B256;
 
-    fn word(v: U256) -> [u8; 32] {
-        v.to_be_bytes::<32>()
+    pub(crate) fn reading(usd_per_mana: &str, updated_at_s: i64) -> FeedReading {
+        FeedReading {
+            rate: ManaUsdRate::parse_usd_per_mana(usd_per_mana).unwrap(),
+            aggregator: Address::repeat_byte(0xaa),
+            tolerance_secs: 27,
+            updated_at_s,
+            block: 1,
+            block_hash: B256::ZERO,
+        }
     }
 
-    fn encode_round(round_id: u64, answer: i64, updated_at: i64, answered_in: u64) -> Vec<u8> {
-        let mut out = Vec::with_capacity(5 * 32);
-        out.extend_from_slice(&word(U256::from(round_id)));
-        out.extend_from_slice(&I256::try_from(answer).unwrap().to_be_bytes::<32>());
-        out.extend_from_slice(&word(U256::from(updated_at as u64)));
-        out.extend_from_slice(&word(U256::from(updated_at as u64)));
-        out.extend_from_slice(&word(U256::from(answered_in)));
-        out
-    }
-
-    fn decimals(d: u8) -> Vec<u8> {
-        word(U256::from(d)).to_vec()
+    fn at(s: i64) -> DateTime<Utc> {
+        DateTime::<Utc>::from_timestamp(s, 0).unwrap()
     }
 
     #[test]
-    fn a_fresh_round_is_the_exact_rate_at_its_decimals() {
-        let now = DateTime::<Utc>::from_timestamp(1_800_000_000, 0).unwrap();
-        let read = reading(
-            &decimals(8),
-            &encode_round(7, 26_960_836, now.timestamp() - 3_600, 7),
-            now,
-        )
-        .unwrap();
+    fn nothing_read_yet_is_unavailable() {
+        assert_eq!(RateSlot::new(3_600).at(at(1_800_000_000)), Err(Unavailable));
+    }
+
+    #[test]
+    fn a_good_read_serves_for_a_minute_through_failed_refreshes() {
+        let slot = RateSlot::new(3_600);
+        let t0 = 1_800_000_000;
+        slot.record(Ok(reading("0.26960836", t0 - 10)), at(t0));
+        let served = slot.at(at(t0 + 59)).unwrap();
+        assert_eq!(served.usd_per_mana(), "0.26960836");
         assert_eq!(
-            read.usd_per_mana, "0.26960836",
-            "the Amoy answer of 2026-11-06"
+            served.observed_at,
+            at(t0),
+            "the time of the read, not of serving it"
         );
-        assert_eq!(read.updated_at.timestamp(), now.timestamp() - 3_600);
-        let read = reading(
-            &decimals(8),
-            &encode_round(9, 7_240_733, now.timestamp(), 9),
-            now,
-        )
-        .unwrap();
+        slot.record(Err("rpc down".into()), at(t0 + 15));
+        slot.record(Err("rpc down".into()), at(t0 + 30));
+        assert!(
+            slot.at(at(t0 + 60)).is_ok(),
+            "failed refreshes keep the last good read"
+        );
         assert_eq!(
-            read.usd_per_mana, "0.07240733",
-            "the Polygon answer of 2026-11-06"
+            slot.at(at(t0 + 61)),
+            Err(Unavailable),
+            "past a minute it is not served"
+        );
+        slot.record(Ok(reading("0.3", t0 + 70)), at(t0 + 75));
+        assert_eq!(
+            slot.at(at(t0 + 76)).unwrap().usd_per_mana(),
+            "0.3",
+            "a good refresh brings it back"
         );
     }
 
     #[test]
-    fn a_dead_incomplete_or_non_positive_round_is_refused() {
-        let now = DateTime::<Utc>::from_timestamp(1_800_000_000, 0).unwrap();
-        let old = now.timestamp() - MAX_FEED_AGE_SECS - 1;
-        assert!(
-            reading(&decimals(8), &encode_round(7, 26_960_836, old, 7), now)
-                .unwrap_err()
-                .contains("old")
-        );
-        assert!(
-            reading(
-                &decimals(8),
-                &encode_round(7, 26_960_836, now.timestamp(), 6),
-                now
-            )
-            .unwrap_err()
-            .contains("incomplete")
-        );
-        assert!(
-            reading(&decimals(8), &encode_round(7, 0, now.timestamp(), 7), now)
-                .unwrap_err()
-                .contains("positive")
-        );
-        assert!(
-            reading(&decimals(8), &encode_round(7, -5, now.timestamp(), 7), now)
-                .unwrap_err()
-                .contains("positive")
-        );
-        assert!(
-            reading(&decimals(8), &encode_round(7, 26_960_836, 0, 7), now)
-                .unwrap_err()
-                .contains("not a time")
-        );
+    fn a_round_past_the_feed_bound_is_not_served() {
+        let slot = RateSlot::new(3_600);
+        let t0 = 1_800_000_000;
+        slot.record(Ok(reading("0.26960836", t0 - 3_590)), at(t0));
+        assert!(slot.at(at(t0 + 10)).is_ok());
+        assert_eq!(slot.at(at(t0 + 11)), Err(Unavailable));
     }
 
     #[test]
@@ -325,6 +278,15 @@ mod tests {
         assert_eq!(decimal_text(U256::from(150_000_000u64), 8), "1.5");
         assert_eq!(decimal_text(U256::from(5u64), 8), "0.00000005");
         assert_eq!(decimal_text(U256::from(42u64), 0), "42");
+        let feed = ShopRate {
+            rate: ManaUsdRate::new(U256::from(269_608_360_000_000_000u128), 18).unwrap(),
+            observed_at: at(0),
+        };
+        assert_eq!(
+            feed.usd_per_mana(),
+            "0.26960836",
+            "the feed's 18-decimal rate"
+        );
     }
 
     #[test]
@@ -336,100 +298,77 @@ mod tests {
         assert_eq!(usd_pegged_allowance(U256::from(100u64)), U256::from(102u64));
     }
 
-    fn rate(text: &str) -> FeedRead {
-        let at = DateTime::<Utc>::from_timestamp(1_800_000_000, 0).unwrap();
-        FeedRead {
-            usd_per_mana: text.into(),
-            updated_at: at,
-            observed_at: at,
+    fn lazy_pool() -> sqlx::PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/nowhere")
+            .unwrap()
+    }
+
+    pub(crate) fn wired(read: Option<FeedReading>) -> Arc<RateSlot> {
+        let slot = Arc::new(RateSlot::new(3_600));
+        if let Some(read) = read {
+            slot.record(Ok(read), Utc::now());
         }
+        with_test_slot(Some(slot.clone()));
+        slot
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn waiting_callers_share_one_slow_failure_then_the_feed_recovers() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        let cache = Arc::new(RateCache::new());
-        let reads = Arc::new(AtomicUsize::new(0));
-        let started = Instant::now();
-        let callers: Vec<_> = (0..4)
-            .map(|_| {
-                let (cache, reads) = (cache.clone(), reads.clone());
-                tokio::spawn(async move {
-                    cache
-                        .get(|| async move {
-                            reads.fetch_add(1, Ordering::SeqCst);
-                            tokio::time::sleep(Duration::from_secs(8)).await;
-                            Err::<FeedRead, _>("rpc down".to_string())
-                        })
-                        .await
-                })
-            })
-            .collect();
-        for caller in callers {
-            assert_eq!(caller.await.unwrap().unwrap_err(), "rpc down");
-        }
-        assert_eq!(
-            reads.load(Ordering::SeqCst),
-            1,
-            "one read for every waiting caller"
-        );
-        assert!(
-            started.elapsed() < Duration::from_secs(9),
-            "the failure is not retried in a queue"
-        );
-        tokio::time::advance(FAILURE_TTL).await;
-        let fresh = cache
-            .get(|| async {
-                reads.fetch_add(1, Ordering::SeqCst);
-                Ok(rate("0.26960836"))
-            })
-            .await;
-        assert_eq!(
-            fresh.unwrap().usd_per_mana,
-            "0.26960836",
-            "the feed is read again once the failure lapses"
-        );
-        assert_eq!(reads.load(Ordering::SeqCst), 2);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn a_rate_answers_for_thirty_seconds_and_a_failure_never_serves_it_again() {
-        let cache = RateCache::new();
-        let a = cache.get(|| async { Ok(rate("0.1")) }).await.unwrap();
-        tokio::time::advance(Duration::from_secs(29)).await;
-        let at_29 = cache.get(|| async { Ok(rate("0.2")) }).await.unwrap();
-        assert_eq!(at_29, a, "t=29: the read of t=0");
-        tokio::time::advance(Duration::from_secs(2)).await;
-        let at_31 = cache.get(|| async { Err("rpc down".to_string()) }).await;
-        assert_eq!(
-            at_31.unwrap_err(),
-            "rpc down",
-            "t=31: no rate, never the expired one"
-        );
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn a_hung_read_is_bounded_and_so_is_the_wait_behind_it() {
-        let cache = Arc::new(RateCache::new());
-        let started = Instant::now();
-        let hung = {
-            let cache = cache.clone();
-            tokio::spawn(async move {
-                cache
-                    .get(|| async {
-                        tokio::time::sleep(Duration::from_secs(600)).await;
-                        Ok(rate("0.1"))
-                    })
-                    .await
-            })
+    // Each reader answers from the slot alone (the pool below cannot connect), and
+    // with no current answer it is "unavailable", never the spot.
+    #[tokio::test]
+    async fn every_shop_reader_prices_at_the_slot_and_never_falls_back() {
+        let now = Utc::now().timestamp();
+        wired(Some(reading("0.26960836", now - 5)));
+        let rate = crate::mana::quote::mana_usd_rate(&lazy_pool())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(decimal_text(rate.rate(), rate.decimals()), "0.26960836");
+        let (rate, observed) = crate::import::current_rate(&lazy_pool())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(decimal_text(rate.rate(), rate.decimals()), "0.26960836");
+        assert!((now - observed).abs() <= 2, "the time of the read");
+        let local = crate::credits::pricing::LocalMarket {
+            pool: lazy_pool(),
+            market: None,
+            price: None,
+            max_staleness_secs: 60,
         };
-        tokio::task::yield_now().await;
-        let behind = cache.get(|| async { Ok(rate("0.2")) }).await;
-        assert!(
-            behind.unwrap_err().contains("in flight"),
-            "the caller behind gives up at its budget"
+        use crate::credits::pricing::Market as _;
+        assert_eq!(
+            local.mana_usd().await.unwrap(),
+            "0.26960836",
+            "with no PRICE_POLL either"
         );
-        assert!(hung.await.unwrap().unwrap_err().contains("did not answer"));
-        assert!(started.elapsed() <= READ_BUDGET + Duration::from_secs(1));
+        let market = crate::market::MarketplaceState::new(
+            lazy_pool(),
+            crate::http::Outbound::for_tests(),
+            crate::market::Settings::for_tests(),
+        );
+        assert_eq!(
+            crate::market::items::mana_usd_rate(&market).await.unwrap(),
+            0.26960836
+        );
+
+        wired(None);
+        assert_eq!(
+            crate::mana::quote::mana_usd_rate(&lazy_pool())
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            crate::import::current_rate(&lazy_pool()).await.unwrap(),
+            None
+        );
+        let refused = local.mana_usd().await.unwrap_err().to_string();
+        assert!(
+            refused.contains("no current answer") && !refused.contains("http"),
+            "{refused}"
+        );
+        assert!(crate::market::items::mana_usd_rate(&market).await.is_err());
+        with_test_slot(None);
     }
 }

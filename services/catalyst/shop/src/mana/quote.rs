@@ -48,20 +48,13 @@ pub fn static_gas(listing: &Listing) -> u64 {
     }
 }
 
-/// The Shop's MANA/USD as the rule's rate, exact decimal text, never a
-/// float: the marketplace's feed read live where it is wired
-/// ([`super::feed_rate`]; a failed read is no rate, so every line says the
-/// price is unavailable), else the newest price snapshot within its
-/// freshness budget.
+/// The Shop's MANA/USD as the rule's rate, exact, never a float: the
+/// marketplace's feed where it is wired ([`super::feed_rate::current`]; no
+/// current answer is no rate, so every line says the price is unavailable),
+/// else the newest price snapshot within its freshness budget.
 pub async fn mana_usd_rate(pool: &sqlx::PgPool) -> Result<Option<ManaUsdRate>, sqlx::Error> {
-    if let Some(feed) = super::feed_rate::read().await {
-        return Ok(match feed {
-            Ok(read) => ManaUsdRate::parse_usd_per_mana(&read.usd_per_mana),
-            Err(e) => {
-                tracing::warn!(error = %e, "the MANA/USD feed is unavailable; quoting no MANA/USD price");
-                None
-            }
-        });
+    if let Some(feed) = super::feed_rate::current() {
+        return Ok(feed.ok().map(|shop| shop.rate));
     }
     let row: Option<(String, chrono::NaiveDateTime)> = sqlx::query_as(
         "SELECT mana_usd::text, taken_at FROM economy.price_snapshots ORDER BY taken_at DESC LIMIT 1",
@@ -174,8 +167,7 @@ async fn mana_execution(
     let caller = wallet.unwrap_or(Address::ZERO);
     // A USD-pegged trade settles at the feed's answer in the block that takes it,
     // which can move after this quote: its approval carries upstream's +2%.
-    let usd_pegged = matches!(&resolved.offer, crate::types::Offer::Trade { trade, .. }
-        if trade.received.first().is_some_and(|r| r.asset_type == crate::types::TradeAssetType::UsdPeggedMana));
+    let usd_pegged = crate::policy::priced_in_usd(&resolved.offer);
     let approve = if usd_pegged {
         super::feed_rate::usd_pegged_allowance(amount.get())
     } else {

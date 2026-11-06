@@ -5781,26 +5781,28 @@ async fn a_discounted_purchase_offer_authorizes_its_discounted_credits_price() {
 }
 
 #[tokio::test]
-async fn pricing_memoizes_the_spot_but_never_the_live_feed_again() {
-    // The feed is kept once (`mana::feed_rate::RateCache`, 30 s); a second memo here would
-    // answer a read past that, or a rate the quote and the catalog have since dropped.
-    let live_market = Arc::new(FakeMarket::default().with_mana_usd("0.26960836"));
-    let live = super::pricing::Pricing::new(live_market.clone(), 0).with_live_rate(|| true);
-    assert_eq!(live.fetch_mana_usd().await.unwrap(), "0.26960836");
-    assert_eq!(live.fetch_mana_usd().await.unwrap(), "0.26960836");
+async fn pricing_memoizes_the_spot_but_never_the_marketplace_feed() {
+    // The feed is one slot the refresher keeps current; a second memo here would
+    // answer a rate the quote and the catalog have since dropped.
+    let market = Arc::new(FakeMarket::default().with_mana_usd("0.5"));
+    let pricing = super::pricing::Pricing::new(market.clone(), 0);
+    crate::mana::feed_rate::tests::wired(Some(crate::mana::feed_rate::tests::reading(
+        "0.5",
+        chrono::Utc::now().timestamp(),
+    )));
+    pricing.fetch_mana_usd().await.unwrap();
+    pricing.fetch_mana_usd().await.unwrap();
     assert_eq!(
-        live_market.oracle_reads.load(Ordering::SeqCst),
+        market.oracle_reads.load(Ordering::SeqCst),
         2,
-        "each price asks the feed's own cache"
+        "the feed's slot is asked each time"
     );
-
-    let spot_market = Arc::new(FakeMarket::default().with_mana_usd("0.0724"));
-    let spot = super::pricing::Pricing::new(spot_market.clone(), 0).with_live_rate(|| false);
-    spot.fetch_mana_usd().await.unwrap();
-    spot.fetch_mana_usd().await.unwrap();
+    crate::mana::feed_rate::with_test_slot(None);
+    pricing.fetch_mana_usd().await.unwrap();
+    pricing.fetch_mana_usd().await.unwrap();
     assert_eq!(
-        spot_market.oracle_reads.load(Ordering::SeqCst),
-        1,
+        market.oracle_reads.load(Ordering::SeqCst),
+        3,
         "the spot keeps its 20 s memo"
     );
 }

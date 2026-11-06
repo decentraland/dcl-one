@@ -703,20 +703,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .context("provisioning the economy relayers")?,
     );
     shop::checkout::spawn_jobs(&economy_state, &jobs);
-    shop::mana::feed_rate::install(
-        economy_state
-            .settings
-            .polygon_rpc_url
-            .as_deref()
-            .map(|url| {
-                Arc::new(shop::evm::chain::ChainComponent::new(
-                    http_client.clone(),
-                    url,
-                    Duration::from_secs(10),
-                ))
-            }),
-        economy_state.settings.mana_usd_aggregator,
-    );
 
     let price = Arc::new(price::State::new(
         pool.clone(),
@@ -985,6 +971,34 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .context("the Shop's MANA settlement venues")?,
     );
     shop::mana::spawn_jobs(&mana, &jobs);
+    // The Shop prices at the settlement chain's newest marketplace's own feed
+    // (`shop::mana::feed_rate`), read in the background; without an endpoint or a
+    // marketplace on that chain it keeps the spot.
+    let settlement = shop::types::ChainId(mana.settings.collections_chain_id);
+    match mana.venues.chain(settlement).and_then(|chain| {
+        Some((
+            chain.rpc_url.as_deref()?,
+            chain.latest_marketplace()?.address,
+        ))
+    }) {
+        Some((url, marketplace)) => shop::mana::feed_rate::install(
+            Arc::new(shop::credits::feed::ChainFeed::new(
+                Arc::new(shop::evm::chain::ChainComponent::new(
+                    http_client.clone(),
+                    url,
+                    shop::evm::chain::DEFAULT_RPC_TIMEOUT,
+                )),
+                config.shop.credits_usd_pegged_feed_max_age_secs,
+            )),
+            settlement.0,
+            marketplace,
+            config.shop.credits_usd_pegged_feed_max_age_secs,
+        ),
+        None => tracing::info!(
+            chain_id = settlement.0,
+            "shop MANA/USD: no endpoint or marketplace for the settlement chain; the Shop prices at the market spot"
+        ),
+    }
     let social = social_states(
         &config,
         &pool,

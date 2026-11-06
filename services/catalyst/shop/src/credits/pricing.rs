@@ -310,14 +310,13 @@ impl Market for LocalMarket {
     }
 
     async fn mana_usd(&self) -> Result<String, ApiError> {
-        // The marketplace's feed, read live where it is wired (`mana::feed_rate`):
-        // the rate the contract converts with. Its round age is judged by the read.
-        if let Some(feed) = crate::mana::feed_rate::read().await {
-            return feed.map(|read| read.usd_per_mana).map_err(|e| {
-                ApiError::service_unavailable(format!(
-                    "the marketplace's MANA/USD feed is unavailable: {e}"
-                ))
-            });
+        // The marketplace's feed where it is wired (`mana::feed_rate::current`): the
+        // rate the contract converts with. Why a read failed is logged by the
+        // refresher; the client gets the generic reason only.
+        if let Some(feed) = crate::mana::feed_rate::current() {
+            return feed
+                .map(|shop| shop.usd_per_mana())
+                .map_err(|unavailable| ApiError::service_unavailable(unavailable.to_string()));
         }
         let Some(price) = self.price.as_ref() else {
             return Err(ApiError::service_unavailable(
@@ -372,9 +371,6 @@ pub struct Pricing {
     market: Arc<dyn Market>,
     markup_bps: i64,
     mana_usd: TtlMap<(), String>,
-    /// Whether the rate is the marketplace's feed, read live and already kept
-    /// once (`mana::feed_rate::installed`): then it is not memoized again here.
-    rate_is_live: fn() -> bool,
 }
 
 impl Pricing {
@@ -383,14 +379,7 @@ impl Pricing {
             market,
             markup_bps,
             mana_usd: TtlMap::new(MANA_USD_MEMO_TTL),
-            rate_is_live: crate::mana::feed_rate::installed,
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_live_rate(mut self, live: fn() -> bool) -> Self {
-        self.rate_is_live = live;
-        self
     }
 
     pub fn markup_bps(&self) -> i64 {
@@ -413,11 +402,11 @@ impl Pricing {
     }
 
     /// The rate every credit price here converts at. The spot is memoized
-    /// [`MANA_USD_MEMO_TTL`]; the marketplace's feed is already one read per
-    /// `mana::feed_rate::CACHE_TTL`, and memoizing it again would serve a read
-    /// older than that, or a rate the other Shop paths have since dropped.
+    /// [`MANA_USD_MEMO_TTL`]; the marketplace's feed is already one slot the
+    /// refresher keeps current, and memoizing it again would serve a rate the
+    /// other Shop paths have since dropped.
     pub async fn fetch_mana_usd(&self) -> Result<String, ApiError> {
-        if (self.rate_is_live)() {
+        if crate::mana::feed_rate::installed() {
             return self.market.mana_usd().await;
         }
         self.mana_usd
