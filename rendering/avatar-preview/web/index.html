@@ -14,10 +14,51 @@
            white-space: pre-wrap; pointer-events: none; }
     #log .e { color: #f99; } #log .w { color: #fd8; }
     body.debug #status, body.debug #log { display: block; }
+
+    /* The Unity preview renderer's controls (UI/Preview/PreviewUI.uxml, PreviewStyle.uss), in its
+       700x700 reference space scaled to the panel: --s is the scale, set from the panel's size. */
+    @font-face { font-family: 'Inter UI'; src: url('ui/Inter-UI-Bold.otf') format('opentype'); font-weight: 700; }
+    :root { --s: 1; }
+    canvas { cursor: url('ui/cursor_rotate.png') 32 32, grab; }
+    body.panning canvas { cursor: url('ui/cursor_pan.png') 32 32, move; }
+    body.loading canvas { visibility: hidden; }
+    .ui { position: fixed; inset: calc(20px * var(--s)); pointer-events: none; font: 700 calc(14px * var(--s)) 'Inter UI', system-ui, sans-serif; }
+    body.loading .ui, body.hide-controls .ui { display: none; }
+    .ui button { pointer-events: auto; border: 0; padding: 0; cursor: url('ui/cursor_interactive.png') 32 32, pointer;
+      transition: transform .2s; }
+    .ui button:hover { transform: scale(.95); }
+    .ui button:active { transform: scale(.9); }
+    .icon { display: inline-block; background-color: #000; -webkit-mask: var(--img) center / contain no-repeat; mask: var(--img) center / contain no-repeat; }
+    #emote-controls { position: absolute; left: 0; bottom: 0; display: none; flex-direction: row; gap: calc(8px * var(--s)); align-items: center; }
+    body.emote-item #emote-controls { display: flex; }
+    #play-stop { display: flex; align-items: center; height: calc(32px * var(--s)); border-radius: calc(8px * var(--s));
+      padding: 0 calc(12px * var(--s)) 0 calc(7px * var(--s)); background: #fff; color: #000; font: inherit; }
+    #play-stop .icon { width: calc(30px * var(--s)); height: calc(30px * var(--s)); --img: url('ui/Stop.png'); }
+    #play-stop.stopped .icon { --img: url('ui/PlayArrow.png'); }
+    #mute { display: none; width: calc(32px * var(--s)); height: calc(32px * var(--s)); border-radius: calc(8px * var(--s)); background: #fff; }
+    body.emote-sound #mute { display: block; }
+    #mute .icon { width: 75%; height: 75%; --img: url('ui/SoundOn.png'); }
+    #mute.muted .icon { --img: url('ui/SoundOff.png'); }
+    #loader { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; pointer-events: none; }
+    body.loading:not(.no-loader) #loader { display: flex; }
+    #loader .icon { width: calc(64px * var(--s)); height: calc(64px * var(--s)); --img: url('ui/Spinner.png'); background-color: #fff;
+      animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #thumbnail-bounds { position: fixed; top: 0; bottom: 0; left: 25%; width: 50%; box-sizing: border-box;
+      border: 2px solid rgb(115,110,125); display: none; pointer-events: none; }
+    body.thumbnail-bounds #thumbnail-bounds { display: block; }
   </style>
 </head>
 <body>
   <div id="stage"><canvas id="preview-canvas"></canvas></div>
+  <div class="ui">
+    <div id="emote-controls">
+      <button id="play-stop" type="button"><span class="icon"></span><span class="label">STOP EMOTE</span></button>
+      <button id="mute" type="button" aria-label="Mute"><span class="icon"></span></button>
+    </div>
+  </div>
+  <div id="loader"><span class="icon"></span></div>
+  <div id="thumbnail-bounds"></div>
   <div id="status">loading…</div>
   <pre id="log"></pre>
   <script>

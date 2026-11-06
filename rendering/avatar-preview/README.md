@@ -31,7 +31,8 @@ for avatars, wearables and emotes, replacing the Unity renderer slot of
 - `tools/contract-check.mjs`: drives a page in headless Chrome like a host (waits for `load`,
   posts controller requests, saves the canvas, the screenshot and the page; `PROBE_JS`
   evaluates an expression in the page at the end).
-- `web/index.html`: the page; `?debug=1` or the backquote key shows the console and the commands on screen.
+- `web/ui/`: the Unity renderer's control icons, cursors and font (see its README).
+- `web/index.html`: the page, with the Unity renderer's controls laid out over the canvas; `?debug=1` or the backquote key shows the console and the commands on screen.
 - `build.sh`: `wasm-pack build --target web` into `web/pkg` with the Explorer's toolchain
   (`nightly-2026-04-15`). `./build.sh` is the shipping build (size-first release profile,
   wasm-opt, minutes); `./build.sh --fast` the iteration build (tuned dev profile, no wasm-opt,
@@ -106,6 +107,26 @@ camera layer overrides to) and the Unity renderer's framing and light placement,
 takes only what is brighter than white (emissive parts). Open differences from the Unity
 renderer: its colours are deeper and more saturated, and it draws a soft light pool under the
 feet.
+
+## Parity with the Unity renderer
+
+The target is the Unity renderer's behaviour, not only its look. In place so far:
+
+- marketplace mode's controls, drawn over the canvas as its UI is (`web/ui/`, its 700x700
+  reference scaled to the panel): the emote play/stop pill and the mute button for an emote
+  item (mute only when it has sound), the loading spinner (`disableLoader`), the thumbnail frame
+  (`showThumbnailBoundaries`), its cursors; `hideControls`, and the framing options the
+  wrapper hid them for (`zoom`, `wheelZoom`, `showThumbnailBoundaries`, `camera=static`);
+- its interaction: drag turns on yaw with inertia, auto-rotation (0.2 rad/s) resumes a second
+  after the last drag, in marketplace mode only and not while an emote item plays; right drag
+  pans within 2 m; the wheel zooms between 1/1.5 and 2 times the framed distance; input in
+  marketplace and builder modes only, four times the drag speed in builder;
+- its floor: the shadow catcher and, under it, the glow around the feet.
+
+Still to come: the item view and its view switcher, builder mode's default wearables and looping
+emote, profile, authentication and jesus modes, scene boundaries, sized screenshots rendered
+without the controls, social emotes, spring bones, refitting the framing to the panel's aspect,
+and configurator mode.
 
 The emote controller follows the Unity renderer: `goTo` on a stopped emote starts it and holds
 it at that time, `play` resumes a paused one, and emote events wait for `load`.

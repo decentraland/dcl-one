@@ -27,6 +27,8 @@ pub struct StageLight {
     /// exposure in stops above bevy's default (EV100 9.7): the toon shading ignores ambient
     /// light and scales with exposure, so this is what brightens or darkens the avatar
     pub exposure: f32,
+    /// the floor glow around the feet, as a factor of the Unity renderer's (0 for none)
+    pub glow: f32,
 }
 
 impl Default for StageLight {
@@ -41,6 +43,7 @@ impl Default for StageLight {
             shadow: 0.4,
             shadow_reach: 4.0,
             exposure: -0.4,
+            glow: 1.0,
         }
     }
 }
@@ -105,7 +108,7 @@ fn spawn_stage(
     commands.spawn((
         Mesh3d(meshes.add(Plane3d::default().mesh().size(12.0, 12.0))),
         MeshMaterial3d(catchers.add(ShadowCatcherMaterial {
-            params: Vec4::new(light.shadow, light.shadow_reach, 0.0, 0.0),
+            params: Vec4::new(light.shadow, light.shadow_reach, light.glow, 2.5),
         })),
         Transform::from_xyz(0.0, 0.002, 0.0),
         NotShadowCaster,
@@ -142,6 +145,7 @@ fn apply_light(
             if let Some(material) = materials.get_mut(&handle.0) {
                 material.params.x = light.shadow;
                 material.params.y = light.shadow_reach.max(0.1);
+                material.params.z = light.glow.max(0.0);
             }
         }
     }

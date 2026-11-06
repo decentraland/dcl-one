@@ -93,6 +93,15 @@ export function parseOptions(search) {
     lockAlpha: p.get('lockAlpha') === 'true',
     lockBeta: p.get('lockBeta') === 'true',
     lockRadius: p.get('lockRadius') === 'true',
+    panning: p.get('panning') !== 'false',
+    wheelZoom: num(p.get('wheelZoom')),
+    wheelStart: num(p.get('wheelStart')),
+    wheelPrecision: num(p.get('wheelPrecision')),
+    showThumbnailBoundaries: flag(p.get('showThumbnailBoundaries')),
+    hideControls: flag(p.get('hideControls')),
+    disableLoader: p.has('disableLoader') && p.get('disableLoader') !== 'false',
+    disableSwitcher: flag(p.get('disableSwitcher')),
+    mode: p.get('mode'),
   };
 }
 
@@ -135,6 +144,7 @@ function onEngineEvent(json) {
   state.log(`<- ${json.length > 200 ? json.slice(0, 200) + '…' : json}`);
   switch (event.type) {
     case 'load':
+      ui.loading(false);
       send('load', { renderer: RENDERER });
       state.loadSent = true;
       for (const held of state.heldEvents.splice(0)) send('emote_event', held);
@@ -151,6 +161,7 @@ function onEngineEvent(json) {
         const message = { type, payload };
         if (state.loadSent) send('emote_event', message); else state.heldEvents.push(message);
       };
+      queueMicrotask(() => ui.emote());
       switch (event.event) {
         case 'play':
           e.playing = true; e.paused = false; e.time = 0;
@@ -359,15 +370,33 @@ function cameraFrom(o) {
   } else {
     c.radius = (DEFAULT_RADIUS / zoomFactor(o.zoom)) * (o.zoomScale || 1);
   }
+  const mode = modeOf(o);
+  // the Unity renderer: input in marketplace and builder only; auto-rotation in marketplace, and
+  // there only when no emote item plays; a builder avatar turns four times faster under the drag
+  const interactive = o.camera !== 'static' && (mode === 'marketplace' || mode === 'builder');
   return {
     op: 'camera',
     alpha: c.alpha, beta: c.beta, radius: c.radius, target: c.target,
     orthographic: o.projection === 'orthographic',
-    autoRotate: !o.disableAutoRotate,
-    autoRotateSpeed: o.autoRotateSpeed ?? 0.25,
-    interactive: o.camera !== 'static',
+    autoRotate: interactive && mode === 'marketplace' && !state.itemEmote && !o.disableAutoRotate,
+    autoRotateSpeed: o.autoRotateSpeed ?? 0.2,
+    interactive,
+    dragSpeed: ((mode === 'builder' ? 2 : 0.5) * Math.PI) / 180,
+    lockAlpha: !!o.lockAlpha,
+    lockRadius: !!o.lockRadius,
+    panning: o.panning !== false,
+    wheelPrecision: o.wheelPrecision ?? 100,
+    reset: true,
   };
 }
+
+// the Unity renderer's modes; an unknown or missing one is marketplace, as the wrapper sends
+const MODES = ['marketplace', 'builder', 'profile', 'authentication', 'jesus', 'configurator'];
+const modeOf = (o) => (MODES.includes(o.mode) ? o.mode : 'marketplace');
+
+// the wrapper hid the Unity renderer's controls whenever the host frames the canvas itself
+const hidesControls = (o) => !!o.hideControls || o.zoom != null || o.wheelZoom != null
+  || !!o.showThumbnailBoundaries || o.camera === 'static';
 
 function sendCamera() {
   const c = state.camera;
@@ -380,9 +409,12 @@ async function apply() {
   const run = (async () => {
     state.loadSent = false;
     state.heldEvents = [];
+    ui.loading(true, o);
+    const { outfit, itemEmote } = await resolveOutfit(o);
+    state.itemEmote = itemEmote;
+    ui.configure(o);
     command(cameraFrom(o));
     command({ op: 'background', color: o.disableBackground ? null : (o.background ? (o.background.startsWith('#') ? o.background : '#' + o.background) : DEFAULT_BACKGROUND) });
-    const { outfit, itemEmote } = await resolveOutfit(o);
     command(outfit);
     const urn = itemEmote || (o.disableDefaultEmotes ? null : emoteUrn(o.emote));
     if (urn) {
@@ -427,8 +459,8 @@ const controller = {
     },
     pause: async () => { if (state.emote.playing) command({ op: 'pauseEmote' }); },
     stop: async () => { command({ op: 'stopEmote' }); },
-    enableSound: async () => { command({ op: 'sound', enabled: true }); },
-    disableSound: async () => { command({ op: 'sound', enabled: false }); },
+    enableSound: async () => { state.bridgeSound = true; ui.sound(); },
+    disableSound: async () => { state.bridgeSound = false; ui.sound(); },
     hasSound: async () => state.emote.hasSound,
     isSocialEmote: async () => false,
     getSocialEmoteAnimations: async () => null,
@@ -438,6 +470,71 @@ const controller = {
     setSpringBonesParams: () => unsupported('physics.setSpringBonesParams'),
   },
 };
+
+// --- the Unity renderer's controls (index.html lays them out) ---
+state.bridgeSound = true;
+state.muted = false;
+const ui = (() => {
+  const body = document.body;
+  const $ = (id) => document.getElementById(id);
+  const scale = () => {
+    // UI Toolkit's ScaleWithScreenSize against 700x700, match 0.5: the geometric mean
+    const s = Math.sqrt(window.innerWidth * window.innerHeight) / 700;
+    document.documentElement.style.setProperty('--s', String(s));
+  };
+  window.addEventListener('resize', scale);
+  scale();
+  // right drag pans: the pan cursor while it is held, and no context menu
+  window.addEventListener('contextmenu', (e) => e.preventDefault());
+  window.addEventListener('pointerdown', (e) => { if (e.button === 2) body.classList.add('panning'); });
+  window.addEventListener('pointerup', (e) => { if (e.button === 2) body.classList.remove('panning'); });
+
+  let lastClick = 0;
+  const playStop = $('play-stop');
+  playStop?.addEventListener('click', () => {
+    const now = performance.now();
+    if (now - lastClick < 500) return; // the renderer's debounce
+    lastClick = now;
+    const e = state.emote;
+    if (e.playing && !e.paused) {
+      // the in-canvas stop returns to idle; the controller's stop holds the first frame
+      command({ op: 'stopEmote' });
+    } else if (e.playing && e.paused) {
+      command({ op: 'resumeEmote' });
+    } else if (e.urn) {
+      command({ op: 'emote', urn: e.urn, loop: false });
+    }
+  });
+  const mute = $('mute');
+  mute?.addEventListener('click', () => { state.muted = !state.muted; api.sound(); });
+
+  const api = {
+    loading(on, o) {
+      body.classList.toggle('loading', on);
+      if (o) body.classList.toggle('no-loader', !!o.disableLoader);
+    },
+    configure(o) {
+      const marketplace = modeOf(o) === 'marketplace';
+      body.classList.toggle('hide-controls', hidesControls(o));
+      body.classList.toggle('emote-item', marketplace && !!state.itemEmote);
+      body.classList.toggle('thumbnail-bounds', !!o.showThumbnailBoundaries);
+      api.emote();
+    },
+    emote() {
+      const e = state.emote;
+      const running = e.playing && !e.paused;
+      playStop?.classList.toggle('stopped', !running);
+      const label = playStop?.querySelector('.label');
+      if (label) label.textContent = running ? 'STOP EMOTE' : 'PLAY EMOTE';
+      body.classList.toggle('emote-sound', !!e.hasSound);
+    },
+    sound() {
+      mute?.classList.toggle('muted', state.muted);
+      command({ op: 'sound', enabled: state.bridgeSound && !state.muted });
+    },
+  };
+  return api;
+})();
 
 window.addEventListener('message', async (event) => {
   const data = event.data;

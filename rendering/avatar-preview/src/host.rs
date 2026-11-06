@@ -101,8 +101,19 @@ pub enum Command {
         auto_rotate: Option<bool>,
         /// radians per second
         auto_rotate_speed: Option<f32>,
-        /// drag to orbit, wheel to zoom
+        /// drag to turn, wheel to zoom, right button to pan
         interactive: Option<bool>,
+        /// radians per pixel of drag
+        drag_speed: Option<f32>,
+        lock_alpha: Option<bool>,
+        lock_radius: Option<bool>,
+        panning: Option<bool>,
+        wheel_precision: Option<f32>,
+        /// the zoom range, as factors of the framed distance (closer is larger)
+        zoom_min: Option<f32>,
+        zoom_max: Option<f32>,
+        /// drop the zoom, pan and spin the controls left
+        reset: Option<bool>,
     },
     /// Background colour `#rrggbb`, or none for a transparent canvas.
     Background {
@@ -152,6 +163,7 @@ pub enum Command {
         shadow: Option<f32>,
         shadow_reach: Option<f32>,
         exposure: Option<f32>,
+        glow: Option<f32>,
     },
     /// Capture the frame as PNG, `width` x `height` (the frame is scaled and cropped to fit).
     Screenshot {
@@ -203,35 +215,82 @@ pub enum Event {
     },
 }
 
-/// The orbit camera's state, applied to the camera transform every frame.
+/// The camera's state, applied to the camera transform every frame. Interaction follows the
+/// Unity preview renderer: dragging turns the avatar (here, the camera around it, with the key
+/// light following, which looks the same) on yaw only, with inertia; auto-rotation resumes a
+/// second after the last drag and eases the pitch back; the right button pans within 2 m of the
+/// framed target; the wheel zooms between 1/1.5 and 2 times the framed distance.
 #[derive(Resource, Debug, Clone)]
 pub struct OrbitCamera {
     pub alpha: f32,
+    /// the pitch the camera rests at (auto-rotation eases back to it)
     pub beta: f32,
+    /// the framed distance; the camera stands at `radius / zoom`
     pub radius: f32,
     pub fov_degrees: f32,
     pub orthographic: bool,
+    /// the framed target; `pan` moves the view from it
     pub target: Vec3,
     pub auto_rotate: bool,
+    /// radians per second
     pub auto_rotate_speed: f32,
+    /// drag, wheel and pan
     pub interactive: bool,
+    /// radians per pixel of horizontal drag
+    pub drag_speed: f32,
+    pub lock_alpha: bool,
+    pub lock_radius: bool,
+    pub panning: bool,
+    /// higher is slower, as in Babylon (100 is the Unity renderer's unit step)
+    pub wheel_precision: f32,
+    pub zoom: f32,
+    pub zoom_min: f32,
+    pub zoom_max: f32,
+    pub pan: Vec3,
     dragging: bool,
+    velocity: f32,
+    since_drag: f32,
 }
 
 impl Default for OrbitCamera {
     fn default() -> Self {
         Self {
             alpha: 0.0,
-            beta: 0.05,
-            radius: 6.0,
+            beta: 0.12,
+            radius: 4.6,
             fov_degrees: 26.2,
             orthographic: false,
-            target: Vec3::new(0.0, 1.0, 0.0),
+            target: Vec3::new(0.0, 0.95, 0.0),
             auto_rotate: false,
-            auto_rotate_speed: 0.25,
+            auto_rotate_speed: 0.2,
             interactive: true,
+            drag_speed: 0.5f32.to_radians(),
+            lock_alpha: false,
+            lock_radius: false,
+            panning: true,
+            wheel_precision: 100.0,
+            zoom: 1.0,
+            zoom_min: 1.0 / 1.5,
+            zoom_max: 2.0,
+            pan: Vec3::ZERO,
             dragging: false,
+            velocity: 0.0,
+            since_drag: f32::MAX,
         }
+    }
+}
+
+impl OrbitCamera {
+    /// Where the camera stands from the target, at the current zoom.
+    pub fn distance(&self) -> f32 {
+        self.radius / self.zoom
+    }
+
+    /// The view as the camera command last set it, and the controls' drift dropped.
+    pub fn reset_view(&mut self) {
+        self.zoom = 1.0;
+        self.pan = Vec3::ZERO;
+        self.velocity = 0.0;
     }
 }
 
@@ -342,7 +401,40 @@ fn apply_commands(
                 auto_rotate,
                 auto_rotate_speed,
                 interactive,
+                drag_speed,
+                lock_alpha,
+                lock_radius,
+                panning,
+                wheel_precision,
+                zoom_min,
+                zoom_max,
+                reset,
             } => {
+                if reset == Some(true) {
+                    orbit.reset_view();
+                }
+                if let Some(v) = drag_speed {
+                    orbit.drag_speed = v;
+                }
+                if let Some(v) = lock_alpha {
+                    orbit.lock_alpha = v;
+                }
+                if let Some(v) = lock_radius {
+                    orbit.lock_radius = v;
+                }
+                if let Some(v) = panning {
+                    orbit.panning = v;
+                }
+                if let Some(v) = wheel_precision {
+                    orbit.wheel_precision = v.max(1.0);
+                }
+                if let Some(v) = zoom_min {
+                    orbit.zoom_min = v.max(0.05);
+                }
+                if let Some(v) = zoom_max {
+                    orbit.zoom_max = v.max(orbit.zoom_min);
+                }
+                orbit.zoom = orbit.zoom.clamp(orbit.zoom_min, orbit.zoom_max);
                 if let Some(v) = alpha {
                     orbit.alpha = v;
                 }
@@ -415,6 +507,7 @@ fn apply_commands(
                 shadow,
                 shadow_reach,
                 exposure,
+                glow,
             } => {
                 let light = light.as_mut();
                 for (slot, value) in [
@@ -425,6 +518,7 @@ fn apply_commands(
                     (&mut light.shadow, shadow),
                     (&mut light.shadow_reach, shadow_reach),
                     (&mut light.exposure, exposure),
+                    (&mut light.glow, glow),
                 ] {
                     if let Some(value) = value {
                         *slot = value;
@@ -593,7 +687,7 @@ impl InlineCollectibles<'_, '_> {
 pub fn projection_for(orbit: &OrbitCamera) -> Projection {
     if orbit.orthographic {
         // the perspective frustum's height at the target, so a projection switch keeps the framing
-        let height = 2.0 * orbit.radius * (orbit.fov_degrees.to_radians() / 2.0).tan();
+        let height = 2.0 * orbit.distance() * (orbit.fov_degrees.to_radians() / 2.0).tan();
         Projection::Orthographic(OrthographicProjection {
             scaling_mode: bevy::render::camera::ScalingMode::FixedVertical {
                 viewport_height: height,
@@ -611,33 +705,70 @@ pub fn projection_for(orbit: &OrbitCamera) -> Projection {
     }
 }
 
-/// Drag to orbit, wheel to zoom, when interactive.
+/// Drag turns the view on yaw with inertia, the right button pans, the wheel zooms: the Unity
+/// preview renderer's controls (its `DragRotator`, pan and `ZoomRange`).
 fn orbit_input(
+    time: Res<Time>,
     mut orbit: ResMut<OrbitCamera>,
     buttons: Res<ButtonInput<MouseButton>>,
     mut motion: EventReader<MouseMotion>,
     mut wheel: EventReader<MouseWheel>,
+    windows: Query<&Window, With<PrimaryWindow>>,
 ) {
-    if !orbit.interactive {
-        motion.clear();
-        wheel.clear();
-        return;
-    }
-    orbit.dragging = buttons.pressed(MouseButton::Left);
+    let dt = time.delta_secs();
     let delta: Vec2 = motion.read().map(|m| m.delta).sum();
-    if orbit.dragging && delta != Vec2::ZERO {
-        orbit.alpha -= delta.x * 0.01;
-        orbit.beta = (orbit.beta + delta.y * 0.01).clamp(-1.4, 1.4);
-    }
     let scroll: f32 = wheel
         .read()
         .map(|w| match w.unit {
-            MouseScrollUnit::Line => w.y * 40.0,
-            MouseScrollUnit::Pixel => w.y,
+            MouseScrollUnit::Line => w.y,
+            MouseScrollUnit::Pixel => w.y / 100.0,
         })
         .sum();
-    if scroll != 0.0 {
-        orbit.radius = (orbit.radius * (-scroll * 0.002).exp()).clamp(0.5, 30.0);
+    if !orbit.interactive {
+        orbit.dragging = false;
+        orbit.velocity = 0.0;
+        return;
+    }
+    let turning = buttons.pressed(MouseButton::Left) && !orbit.lock_alpha;
+    if turning {
+        let step = -delta.x * orbit.drag_speed;
+        orbit.alpha += step;
+        if dt > 0.0 && delta.x != 0.0 {
+            orbit.velocity = step / dt;
+        } else if delta.x == 0.0 {
+            orbit.velocity = 0.0;
+        }
+        orbit.since_drag = 0.0;
+    } else {
+        // inertia, decaying to a quarter each second
+        orbit.alpha += orbit.velocity * dt;
+        orbit.velocity *= 0.25f32.powf(dt);
+        if orbit.velocity.abs() < 1e-3 {
+            orbit.velocity = 0.0;
+        }
+        orbit.since_drag += dt;
+    }
+    orbit.dragging = turning;
+
+    // right drag pans 1:1 with the cursor at the framed distance, within 2 m of the target
+    if buttons.pressed(MouseButton::Right) && orbit.panning && delta != Vec2::ZERO {
+        let height = windows
+            .single()
+            .map(|w| w.height())
+            .unwrap_or(768.0)
+            .max(1.0);
+        let per_pixel =
+            2.0 * orbit.distance() * (orbit.fov_degrees.to_radians() / 2.0).tan() / height;
+        let yaw = Quat::from_rotation_y(orbit.alpha);
+        let right = yaw * Vec3::X;
+        let pan = orbit.pan - right * delta.x * per_pixel + Vec3::Y * delta.y * per_pixel;
+        orbit.pan = pan.clamp_length_max(2.0);
+        orbit.since_drag = 0.0;
+    }
+
+    if scroll != 0.0 && !orbit.lock_radius {
+        let factor = 1.03f32.powf(scroll * 3.0 * 100.0 / orbit.wheel_precision);
+        orbit.zoom = (orbit.zoom * factor).clamp(orbit.zoom_min, orbit.zoom_max);
     }
 }
 
@@ -646,13 +777,21 @@ fn place_camera(
     mut orbit: ResMut<OrbitCamera>,
     mut cameras: Query<(&mut Transform, &mut Projection), With<PreviewCamera>>,
 ) {
-    if orbit.auto_rotate && !orbit.dragging {
-        orbit.alpha += orbit.auto_rotate_speed * time.delta_secs();
+    let dt = time.delta_secs();
+    // auto-rotation resumes a second after the last drag, once the spin has settled
+    if orbit.auto_rotate
+        && !orbit.lock_alpha
+        && !orbit.dragging
+        && orbit.since_drag > 1.0
+        && orbit.velocity == 0.0
+    {
+        orbit.alpha += orbit.auto_rotate_speed * dt;
     }
+    let target = orbit.target + orbit.pan;
     let rotation = Quat::from_rotation_y(orbit.alpha) * Quat::from_rotation_x(-orbit.beta);
-    let position = orbit.target + rotation * Vec3::new(0.0, 0.0, orbit.radius);
+    let position = target + rotation * Vec3::new(0.0, 0.0, orbit.distance());
     for (mut transform, mut projection) in cameras.iter_mut() {
-        *transform = Transform::from_translation(position).looking_at(orbit.target, Vec3::Y);
+        *transform = Transform::from_translation(position).looking_at(target, Vec3::Y);
         if orbit.is_changed() {
             *projection = projection_for(&orbit);
         }
