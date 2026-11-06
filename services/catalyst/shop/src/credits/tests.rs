@@ -5779,3 +5779,28 @@ async fn a_discounted_purchase_offer_authorizes_its_discounted_credits_price() {
     assert_eq!(status, StatusCode::CONFLICT, "the discount ended: {v}");
     db.drop().await;
 }
+
+#[tokio::test]
+async fn pricing_memoizes_the_spot_but_never_the_live_feed_again() {
+    // The feed is kept once (`mana::feed_rate::RateCache`, 30 s); a second memo here would
+    // answer a read past that, or a rate the quote and the catalog have since dropped.
+    let live_market = Arc::new(FakeMarket::default().with_mana_usd("0.26960836"));
+    let live = super::pricing::Pricing::new(live_market.clone(), 0).with_live_rate(|| true);
+    assert_eq!(live.fetch_mana_usd().await.unwrap(), "0.26960836");
+    assert_eq!(live.fetch_mana_usd().await.unwrap(), "0.26960836");
+    assert_eq!(
+        live_market.oracle_reads.load(Ordering::SeqCst),
+        2,
+        "each price asks the feed's own cache"
+    );
+
+    let spot_market = Arc::new(FakeMarket::default().with_mana_usd("0.0724"));
+    let spot = super::pricing::Pricing::new(spot_market.clone(), 0).with_live_rate(|| false);
+    spot.fetch_mana_usd().await.unwrap();
+    spot.fetch_mana_usd().await.unwrap();
+    assert_eq!(
+        spot_market.oracle_reads.load(Ordering::SeqCst),
+        1,
+        "the spot keeps its 20 s memo"
+    );
+}

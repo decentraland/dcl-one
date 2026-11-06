@@ -441,7 +441,7 @@ pub async fn current_rate(pool: &PgPool) -> Result<Option<(ManaUsdRate, i64)>, A
     if let Some(feed) = crate::mana::feed_rate::read().await {
         return Ok(feed.ok().and_then(|read| {
             ManaUsdRate::parse_usd_per_mana(&read.usd_per_mana)
-                .map(|rate| (rate, chrono::Utc::now().timestamp()))
+                .map(|rate| (rate, read.observed_at.timestamp()))
         }));
     }
     let row: Option<(String, chrono::NaiveDateTime)> =

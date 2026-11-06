@@ -9,18 +9,27 @@
 //! [`install`] wires the feed once per process (`serve`); [`read`] answers
 //! `None` where it is not wired (no endpoint or aggregator: the Shop prices at
 //! the spot as before). A read is `decimals()` and `latestRoundData()` at
-//! `latest`, kept [`CACHE_TTL`] so a page of prices costs one round trip. A
-//! failed read is not kept, and is the Shop's "price unavailable", never the
-//! spot. A round the feed has not refreshed for longer than upstream's
+//! `latest`. One read at a time is in flight ([`RateCache`]): its answer is
+//! shared with every caller that waited for it, kept [`CACHE_TTL`] when it is
+//! a rate and [`FAILURE_TTL`] when it is a failure, so a dead endpoint costs
+//! one read per [`FAILURE_TTL`], not one per waiting caller. A caller waits
+//! at most [`READ_BUDGET`] for the lock and the read together. A failure is
+//! the Shop's "price unavailable", never the spot, and never an older rate.
+//! A round the feed has not refreshed for longer than upstream's
 //! `MAX_STALENESS_SECONDS` (the heartbeat plus an hour), an incomplete round
-//! or a non-positive answer is refused.
+//! or a non-positive answer is refused. [`FeedRead::observed_at`] is when
+//! this node read the answer, so a caller never presents a cached read as
+//! fresher than it is.
 //!
 //! The rate can still move between a quote and the block that settles it;
 //! the approval a USD-pegged quote asks for carries upstream's +2% for that
 //! ([`USD_PEGGED_ALLOWANCE_BUFFER_PCT`]).
 
+use std::future::Future;
 use std::sync::{Arc, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use tokio::time::Instant;
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
@@ -35,6 +44,12 @@ pub const MAX_FEED_AGE_SECS: i64 = 90_000;
 /// How long one read answers for: upstream's rate query is stale after 60 s.
 pub const CACHE_TTL: Duration = Duration::from_secs(30);
 
+/// How long a failed read answers for, so callers do not queue retries.
+pub const FAILURE_TTL: Duration = Duration::from_secs(5);
+
+/// The most a caller waits for a rate: the lock and both calls together.
+pub const READ_BUDGET: Duration = Duration::from_secs(12);
+
 /// Upstream's approval buffer over a USD-pegged trade's MANA (shop@3a322cf9
 /// `app/src/lib/buy.ts` `tradeManaPriceWei`: `mul(102).div(100)`).
 pub const USD_PEGGED_ALLOWANCE_BUFFER_PCT: u64 = 2;
@@ -46,15 +61,75 @@ pub struct FeedRead {
     pub usd_per_mana: String,
     /// When the feed last updated its answer.
     pub updated_at: DateTime<Utc>,
+    /// When this node read it.
+    pub observed_at: DateTime<Utc>,
+}
+
+/// One read in flight, its outcome shared: a rate for [`CACHE_TTL`], a
+/// failure for [`FAILURE_TTL`]; each caller bounded by [`READ_BUDGET`].
+pub struct RateCache {
+    last: tokio::sync::Mutex<Option<(Instant, Result<FeedRead, String>)>>,
+}
+
+impl Default for RateCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RateCache {
+    pub const fn new() -> Self {
+        Self {
+            last: tokio::sync::Mutex::const_new(None),
+        }
+    }
+
+    pub async fn get<F, Fut>(&self, fetch: F) -> Result<FeedRead, String>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<FeedRead, String>>,
+    {
+        let deadline = Instant::now() + READ_BUDGET;
+        let Ok(mut last) = tokio::time::timeout_at(deadline, self.last.lock()).await else {
+            return Err(format!(
+                "the MANA/USD feed's read in flight did not finish within {}s",
+                READ_BUDGET.as_secs()
+            ));
+        };
+        if let Some((at, outcome)) = last.as_ref() {
+            let ttl = if outcome.is_ok() {
+                CACHE_TTL
+            } else {
+                FAILURE_TTL
+            };
+            if at.elapsed() < ttl {
+                return outcome.clone();
+            }
+        }
+        let outcome = match tokio::time::timeout_at(deadline, fetch()).await {
+            Ok(outcome) => outcome,
+            Err(_) => Err(format!(
+                "the MANA/USD feed did not answer within {}s",
+                READ_BUDGET.as_secs()
+            )),
+        };
+        *last = Some((Instant::now(), outcome.clone()));
+        outcome
+    }
 }
 
 struct LiveFeed {
     chain: Arc<ChainComponent>,
     aggregator: Address,
-    last: tokio::sync::Mutex<Option<(Instant, FeedRead)>>,
+    cache: RateCache,
 }
 
 static FEED: OnceLock<LiveFeed> = OnceLock::new();
+
+/// Whether this process reads the marketplace's feed ([`install`]).
+pub fn installed() -> bool {
+    FEED.get().is_some()
+}
 
 /// Wires the feed for this process; a second call is ignored.
 pub fn install(chain: Option<Arc<ChainComponent>>, aggregator: Address) {
@@ -67,26 +142,18 @@ pub fn install(chain: Option<Arc<ChainComponent>>, aggregator: Address) {
     let _ = FEED.set(LiveFeed {
         chain,
         aggregator,
-        last: tokio::sync::Mutex::new(None),
+        cache: RateCache::new(),
     });
 }
 
-/// The feed's rate, at most [`CACHE_TTL`] old; `None` where no feed is wired.
+/// The feed's rate, read at most [`CACHE_TTL`] ago; `None` where no feed is wired.
 pub async fn read() -> Option<Result<FeedRead, String>> {
     let feed = FEED.get()?;
-    let mut last = feed.last.lock().await;
-    if let Some((at, read)) = last.as_ref()
-        && at.elapsed() < CACHE_TTL
-    {
-        return Some(Ok(read.clone()));
-    }
-    let fresh = read_chain(&feed.chain, feed.aggregator).await;
-    if let Ok(read) = &fresh {
-        *last = Some((Instant::now(), read.clone()));
-    } else {
-        *last = None;
-    }
-    Some(fresh)
+    Some(
+        feed.cache
+            .get(|| read_chain(&feed.chain, feed.aggregator))
+            .await,
+    )
 }
 
 async fn read_chain(chain: &ChainComponent, aggregator: Address) -> Result<FeedRead, String> {
@@ -139,6 +206,7 @@ pub fn reading(
     Ok(FeedRead {
         usd_per_mana: decimal_text(round.answer.into_raw(), decimals),
         updated_at,
+        observed_at: now,
     })
 }
 
@@ -266,5 +334,102 @@ mod tests {
             U256::from(5_296_571_664_172_431_707u128)
         );
         assert_eq!(usd_pegged_allowance(U256::from(100u64)), U256::from(102u64));
+    }
+
+    fn rate(text: &str) -> FeedRead {
+        let at = DateTime::<Utc>::from_timestamp(1_800_000_000, 0).unwrap();
+        FeedRead {
+            usd_per_mana: text.into(),
+            updated_at: at,
+            observed_at: at,
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn waiting_callers_share_one_slow_failure_then_the_feed_recovers() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let cache = Arc::new(RateCache::new());
+        let reads = Arc::new(AtomicUsize::new(0));
+        let started = Instant::now();
+        let callers: Vec<_> = (0..4)
+            .map(|_| {
+                let (cache, reads) = (cache.clone(), reads.clone());
+                tokio::spawn(async move {
+                    cache
+                        .get(|| async move {
+                            reads.fetch_add(1, Ordering::SeqCst);
+                            tokio::time::sleep(Duration::from_secs(8)).await;
+                            Err::<FeedRead, _>("rpc down".to_string())
+                        })
+                        .await
+                })
+            })
+            .collect();
+        for caller in callers {
+            assert_eq!(caller.await.unwrap().unwrap_err(), "rpc down");
+        }
+        assert_eq!(
+            reads.load(Ordering::SeqCst),
+            1,
+            "one read for every waiting caller"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(9),
+            "the failure is not retried in a queue"
+        );
+        tokio::time::advance(FAILURE_TTL).await;
+        let fresh = cache
+            .get(|| async {
+                reads.fetch_add(1, Ordering::SeqCst);
+                Ok(rate("0.26960836"))
+            })
+            .await;
+        assert_eq!(
+            fresh.unwrap().usd_per_mana,
+            "0.26960836",
+            "the feed is read again once the failure lapses"
+        );
+        assert_eq!(reads.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_rate_answers_for_thirty_seconds_and_a_failure_never_serves_it_again() {
+        let cache = RateCache::new();
+        let a = cache.get(|| async { Ok(rate("0.1")) }).await.unwrap();
+        tokio::time::advance(Duration::from_secs(29)).await;
+        let at_29 = cache.get(|| async { Ok(rate("0.2")) }).await.unwrap();
+        assert_eq!(at_29, a, "t=29: the read of t=0");
+        tokio::time::advance(Duration::from_secs(2)).await;
+        let at_31 = cache.get(|| async { Err("rpc down".to_string()) }).await;
+        assert_eq!(
+            at_31.unwrap_err(),
+            "rpc down",
+            "t=31: no rate, never the expired one"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_hung_read_is_bounded_and_so_is_the_wait_behind_it() {
+        let cache = Arc::new(RateCache::new());
+        let started = Instant::now();
+        let hung = {
+            let cache = cache.clone();
+            tokio::spawn(async move {
+                cache
+                    .get(|| async {
+                        tokio::time::sleep(Duration::from_secs(600)).await;
+                        Ok(rate("0.1"))
+                    })
+                    .await
+            })
+        };
+        tokio::task::yield_now().await;
+        let behind = cache.get(|| async { Ok(rate("0.2")) }).await;
+        assert!(
+            behind.unwrap_err().contains("in flight"),
+            "the caller behind gives up at its budget"
+        );
+        assert!(hung.await.unwrap().unwrap_err().contains("did not answer"));
+        assert!(started.elapsed() <= READ_BUDGET + Duration::from_secs(1));
     }
 }

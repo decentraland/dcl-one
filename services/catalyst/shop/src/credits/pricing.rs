@@ -372,6 +372,9 @@ pub struct Pricing {
     market: Arc<dyn Market>,
     markup_bps: i64,
     mana_usd: TtlMap<(), String>,
+    /// Whether the rate is the marketplace's feed, read live and already kept
+    /// once (`mana::feed_rate::installed`): then it is not memoized again here.
+    rate_is_live: fn() -> bool,
 }
 
 impl Pricing {
@@ -380,7 +383,14 @@ impl Pricing {
             market,
             markup_bps,
             mana_usd: TtlMap::new(MANA_USD_MEMO_TTL),
+            rate_is_live: crate::mana::feed_rate::installed,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_live_rate(mut self, live: fn() -> bool) -> Self {
+        self.rate_is_live = live;
+        self
     }
 
     pub fn markup_bps(&self) -> i64 {
@@ -402,7 +412,14 @@ impl Pricing {
         self.market.items(pairs).await
     }
 
+    /// The rate every credit price here converts at. The spot is memoized
+    /// [`MANA_USD_MEMO_TTL`]; the marketplace's feed is already one read per
+    /// `mana::feed_rate::CACHE_TTL`, and memoizing it again would serve a read
+    /// older than that, or a rate the other Shop paths have since dropped.
     pub async fn fetch_mana_usd(&self) -> Result<String, ApiError> {
+        if (self.rate_is_live)() {
+            return self.market.mana_usd().await;
+        }
         self.mana_usd
             .get_or_fetch((), || self.market.mana_usd())
             .await
