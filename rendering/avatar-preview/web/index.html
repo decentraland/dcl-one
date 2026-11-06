@@ -19,12 +19,13 @@
        700x700 reference space scaled to the panel: --s is the scale, set from the panel's size. */
     @font-face { font-family: 'Inter UI'; src: url('ui/Inter-UI-Bold.otf') format('opentype'); font-weight: 700; }
     :root { --s: 1; }
-    canvas { cursor: url('ui/cursor_rotate.png') 32 32, grab; }
-    body.panning canvas { cursor: url('ui/cursor_pan.png') 32 32, move; }
+    /* the cursor images are 64px drawn at 32, as the Unity renderer shows them: 2x density */
+    canvas { cursor: image-set(url('ui/cursor_rotate.png') 2x) 16 16, grab; }
+    body.panning canvas { cursor: image-set(url('ui/cursor_pan.png') 2x) 16 16, move; }
     body.loading canvas { visibility: hidden; }
     .ui { position: fixed; inset: calc(20px * var(--s)); pointer-events: none; font: 700 calc(14px * var(--s)) 'Inter UI', system-ui, sans-serif; }
     body.loading .ui, body.hide-controls .ui { display: none; }
-    .ui button { pointer-events: auto; border: 0; padding: 0; cursor: url('ui/cursor_interactive.png') 32 32, pointer;
+    .ui button { pointer-events: auto; border: 0; padding: 0; cursor: image-set(url('ui/cursor_interactive.png') 2x) 16 16, pointer;
       transition: transform .2s; }
     .ui button:hover { transform: scale(.95); }
     .ui button:active { transform: scale(.9); }
