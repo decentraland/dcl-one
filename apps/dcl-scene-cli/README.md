@@ -158,7 +158,9 @@ import sends its status on the live-reload socket instead: `WsSceneMessage.textu
 `state` is `RUNNING` while textures are encoded (at most every 500 ms), then `READY` or `FAILED` once.
 `READY` is sent only when the optimized files or the setting changed. A client connecting later gets
 the last status first. The next reload, from a save or from the client, serves the new files.
-Offering that reload when `READY` arrives is up to the client; the explorer does not yet show it.
+The Bevy Explorer's HUD shows the status as one toast: the progress while textures are encoded, then
+the size saved with a **Reload** button, or how many textures stay PNG. It shows nothing when the
+setting is off, and ignores a `READY` that is the last status replayed as it connects.
 
 `deploy` with the setting on finishes in the foreground whatever the cache lacks, with a progress
 line, before it reads the payload; a warm cache costs nothing. It never uploads a half-optimized
