@@ -47,7 +47,7 @@
 //! ([`USD_PEGGED_ALLOWANCE_BUFFER_PCT`]).
 
 use std::sync::{Arc, OnceLock, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use alloy_primitives::{Address, U256};
 use chrono::{DateTime, Utc};
@@ -105,34 +105,70 @@ impl std::fmt::Display for Unavailable {
     }
 }
 
+/// A good read, anchored where it started: the chain may have moved on
+/// during the read itself, so every age counts from the read's start, on a
+/// monotonic clock (a local clock set back never lengthens a read's life).
 #[derive(Debug, Clone, Copy)]
 struct Good {
     reading: FeedReading,
-    observed_at: DateTime<Utc>,
+    /// When the read started, monotonic.
+    started: Instant,
+    /// When the read started, by this node's wall clock (shown, and the
+    /// local age bound's base).
+    started_wall: DateTime<Utc>,
 }
 
 impl Good {
-    /// The round's age on the chain's clock at `now`.
-    fn chain_round_age(&self, now: DateTime<Utc>) -> i64 {
-        let since_read = (now - self.observed_at).num_seconds().max(0);
-        self.reading.block_time_s + since_read - self.reading.updated_at_s
+    fn elapsed_s(&self, now: Instant) -> i64 {
+        i64::try_from(now.saturating_duration_since(self.started).as_secs()).unwrap_or(i64::MAX)
+    }
+
+    /// The round's age on the chain's clock at `now`: the read block's
+    /// timestamp plus everything since the read started.
+    fn chain_round_age(&self, now: Instant) -> i64 {
+        self.reading
+            .block_time_s
+            .saturating_add(self.elapsed_s(now))
+            .saturating_sub(self.reading.updated_at_s)
     }
 
     /// Seconds left, on the chain's clock, before a purchase stops being quoted.
-    fn settle_left(&self, now: DateTime<Utc>) -> i64 {
+    fn settle_left(&self, now: Instant) -> i64 {
         let tolerance = i64::try_from(self.reading.tolerance_secs).unwrap_or(i64::MAX);
         tolerance
             .saturating_sub(SETTLE_MARGIN_SECS)
             .saturating_sub(self.chain_round_age(now))
     }
 
-    fn shop_rate(&self) -> ShopRate {
-        ShopRate {
-            rate: self.reading.rate,
-            observed_at: self.observed_at,
-            updated_at: DateTime::<Utc>::from_timestamp(self.reading.updated_at_s, 0)
-                .unwrap_or(self.observed_at),
+    /// This one snapshot, checked: refused once the read is [`SERVE_FOR`] old,
+    /// its round past the local age bound, or (for a purchase) within
+    /// [`SETTLE_MARGIN_SECS`] of the marketplace's tolerance.
+    fn checked(
+        &self,
+        now: Instant,
+        max_age_secs: u64,
+        purchase: bool,
+    ) -> Result<ShopRate, Unavailable> {
+        let elapsed = self.elapsed_s(now);
+        let served_for = i64::try_from(SERVE_FOR.as_secs()).unwrap_or(i64::MAX);
+        let max_age = i64::try_from(max_age_secs).unwrap_or(i64::MAX);
+        let local_round_age = self
+            .started_wall
+            .timestamp()
+            .saturating_add(elapsed)
+            .saturating_sub(self.reading.updated_at_s);
+        if elapsed > served_for
+            || local_round_age > max_age
+            || (purchase && self.settle_left(now) < 0)
+        {
+            return Err(Unavailable);
         }
+        Ok(ShopRate {
+            rate: self.reading.rate,
+            observed_at: self.started_wall,
+            updated_at: DateTime::<Utc>::from_timestamp(self.reading.updated_at_s, 0)
+                .unwrap_or(self.started_wall),
+        })
     }
 }
 
@@ -150,14 +186,21 @@ impl RateSlot {
         }
     }
 
-    /// Records one refresh. A failure keeps the last good read: [`Self::at`]
-    /// stops showing it once it is [`SERVE_FOR`] old.
-    pub fn record(&self, read: Result<FeedReading, String>, now: DateTime<Utc>) {
+    /// Records one refresh that started at `started` (`started_wall` on the
+    /// wall clock). A failure keeps the last good read: [`Self::at`] stops
+    /// showing it once it is [`SERVE_FOR`] old.
+    pub fn record(
+        &self,
+        read: Result<FeedReading, String>,
+        started: Instant,
+        started_wall: DateTime<Utc>,
+    ) {
         match read {
             Ok(reading) => {
                 *self.good.write().unwrap() = Some(Good {
                     reading,
-                    observed_at: now,
+                    started,
+                    started_wall,
                 })
             }
             Err(reason) => {
@@ -170,34 +213,24 @@ impl RateSlot {
         *self.good.read().unwrap()
     }
 
-    /// The rate to show at `now`: refused once the read is [`SERVE_FOR`] old
-    /// or its round past the local age bound.
-    pub fn at(&self, now: DateTime<Utc>) -> Result<ShopRate, Unavailable> {
-        let good = self.good().ok_or(Unavailable)?;
-        let observed_for = (now - good.observed_at).num_seconds();
-        let round_age = now.timestamp() - good.reading.updated_at_s;
-        let served_for = i64::try_from(SERVE_FOR.as_secs()).unwrap_or(i64::MAX);
-        let max_age = i64::try_from(self.max_age_secs).unwrap_or(i64::MAX);
-        if observed_for > served_for || round_age > max_age {
-            return Err(Unavailable);
-        }
-        Ok(good.shop_rate())
+    /// The rate to show at `now`.
+    pub fn at(&self, now: Instant) -> Result<ShopRate, Unavailable> {
+        self.good()
+            .ok_or(Unavailable)?
+            .checked(now, self.max_age_secs, false)
     }
 
-    /// The rate to quote a purchase at `now`: [`Self::at`], and refused once
-    /// the round is within [`SETTLE_MARGIN_SECS`] of the marketplace's
-    /// tolerance on the chain's clock (a 0 tolerance is never quoted).
-    pub fn for_purchase_at(&self, now: DateTime<Utc>) -> Result<ShopRate, Unavailable> {
-        let rate = self.at(now)?;
-        let good = self.good().ok_or(Unavailable)?;
-        if good.settle_left(now) < 0 {
-            return Err(Unavailable);
-        }
-        Ok(rate)
+    /// The rate to quote a purchase at `now`: the same snapshot, also cut at
+    /// the marketplace's tolerance on the chain's clock (a 0 tolerance is
+    /// never quoted).
+    pub fn for_purchase_at(&self, now: Instant) -> Result<ShopRate, Unavailable> {
+        self.good()
+            .ok_or(Unavailable)?
+            .checked(now, self.max_age_secs, true)
     }
 
-    /// When the refresher should read next, after a refresh at `now`.
-    pub fn next_read_in(&self, now: DateTime<Utc>) -> Duration {
+    /// When the refresher should read next, at `now`.
+    pub fn next_read_in(&self, now: Instant) -> Duration {
         let Some(good) = self.good() else {
             return REFRESH_MIN;
         };
@@ -234,12 +267,12 @@ pub fn spawn_refresher(
     tokio::spawn(async move {
         loop {
             let reader = feed.clone();
+            let (started, started_wall) = (Instant::now(), Utc::now());
             let read = tokio::spawn(async move { reader.read(chain_id, marketplace).await })
                 .await
                 .unwrap_or_else(|e| Err(format!("the feed read ended abnormally: {e}")));
-            let now = Utc::now();
-            slot.record(read, now);
-            tokio::time::sleep(slot.next_read_in(now)).await;
+            slot.record(read, started, started_wall);
+            tokio::time::sleep(slot.next_read_in(Instant::now())).await;
         }
     })
 }
@@ -269,12 +302,12 @@ fn slot() -> Option<Arc<RateSlot>> {
 /// The rate to show a price at now: `None` where no feed is wired (price at
 /// the spot), else the last good read or [`Unavailable`]. Never blocks.
 pub fn current() -> Option<Result<ShopRate, Unavailable>> {
-    slot().map(|slot| slot.at(Utc::now()))
+    slot().map(|slot| slot.at(Instant::now()))
 }
 
 /// The rate to quote a purchase at now ([`RateSlot::for_purchase_at`]).
 pub fn current_for_purchase() -> Option<Result<ShopRate, Unavailable>> {
-    slot().map(|slot| slot.for_purchase_at(Utc::now()))
+    slot().map(|slot| slot.for_purchase_at(Instant::now()))
 }
 
 /// Whether this process prices at the marketplace's feed.
@@ -317,8 +350,15 @@ pub(crate) mod tests {
         read_at(usd_per_mana, updated_at_s, 27, Utc::now().timestamp())
     }
 
-    fn at(s: i64) -> DateTime<Utc> {
+    /// The wall clock at `s`.
+    fn wall(s: i64) -> DateTime<Utc> {
         DateTime::<Utc>::from_timestamp(s, 0).unwrap()
+    }
+
+    /// The monotonic clock at `s` (seconds from [`T0`], which it reads as now).
+    fn at(s: i64) -> Instant {
+        static BASE: OnceLock<Instant> = OnceLock::new();
+        *BASE.get_or_init(Instant::now) + Duration::from_secs(u64::try_from(s - T0).unwrap())
     }
 
     const T0: i64 = 1_800_000_000;
@@ -334,17 +374,21 @@ pub(crate) mod tests {
     #[test]
     fn a_good_read_is_shown_for_a_minute_through_failed_refreshes() {
         let slot = RateSlot::new(3_600);
-        slot.record(Ok(read_at("0.26960836", T0 - 10, 3_600, T0)), at(T0));
+        slot.record(
+            Ok(read_at("0.26960836", T0 - 10, 3_600, T0)),
+            at(T0),
+            wall(T0),
+        );
         let shown = slot.at(at(T0 + 59)).unwrap();
         assert_eq!(shown.usd_per_mana(), "0.26960836");
         assert_eq!(
             shown.observed_at,
-            at(T0),
+            wall(T0),
             "the time of the read, not of serving it"
         );
-        assert_eq!(shown.updated_at, at(T0 - 10), "the time the feed set it");
-        slot.record(Err("rpc down".into()), at(T0 + 15));
-        slot.record(Err("rpc down".into()), at(T0 + 30));
+        assert_eq!(shown.updated_at, wall(T0 - 10), "the time the feed set it");
+        slot.record(Err("rpc down".into()), at(T0 + 15), wall(T0 + 15));
+        slot.record(Err("rpc down".into()), at(T0 + 30), wall(T0 + 30));
         assert!(
             slot.at(at(T0 + 60)).is_ok(),
             "failed refreshes keep the last good read"
@@ -354,14 +398,22 @@ pub(crate) mod tests {
             Err(Unavailable),
             "past a minute it is not shown"
         );
-        slot.record(Ok(read_at("0.3", T0 + 70, 3_600, T0 + 75)), at(T0 + 75));
+        slot.record(
+            Ok(read_at("0.3", T0 + 70, 3_600, T0 + 75)),
+            at(T0 + 75),
+            wall(T0 + 75),
+        );
         assert_eq!(slot.at(at(T0 + 76)).unwrap().usd_per_mana(), "0.3");
     }
 
     #[test]
     fn a_round_past_the_local_bound_is_not_shown() {
         let slot = RateSlot::new(3_600);
-        slot.record(Ok(read_at("0.26960836", T0 - 3_590, 7_200, T0)), at(T0));
+        slot.record(
+            Ok(read_at("0.26960836", T0 - 3_590, 7_200, T0)),
+            at(T0),
+            wall(T0),
+        );
         assert!(slot.at(at(T0 + 10)).is_ok());
         assert_eq!(slot.at(at(T0 + 11)), Err(Unavailable));
     }
@@ -370,7 +422,7 @@ pub(crate) mod tests {
     fn browsing_keeps_its_price_while_a_purchase_stops_at_the_tolerance() {
         // Amoy: 27 s tolerance, read 10 s into the round.
         let slot = RateSlot::new(3_600);
-        slot.record(Ok(read_at("0.26960836", T0 - 10, 27, T0)), at(T0));
+        slot.record(Ok(read_at("0.26960836", T0 - 10, 27, T0)), at(T0), wall(T0));
         assert!(
             slot.for_purchase_at(at(T0 + 14)).is_ok(),
             "24 s = 27 - 3: still quoted"
@@ -382,13 +434,21 @@ pub(crate) mod tests {
         );
         assert!(slot.at(at(T0 + 15)).is_ok(), "the catalog still shows it");
         assert!(slot.at(at(T0 + 59)).is_ok());
-        slot.record(Err("the marketplace would revert".into()), at(T0 + 20));
+        slot.record(
+            Err("the marketplace would revert".into()),
+            at(T0 + 20),
+            wall(T0 + 20),
+        );
         assert_eq!(
             slot.for_purchase_at(at(T0 + 21)),
             Err(Unavailable),
             "a failed refresh does not revive it"
         );
-        slot.record(Ok(read_at("0.27", T0 + 25, 27, T0 + 26)), at(T0 + 26));
+        slot.record(
+            Ok(read_at("0.27", T0 + 25, 27, T0 + 26)),
+            at(T0 + 26),
+            wall(T0 + 26),
+        );
         assert_eq!(
             slot.for_purchase_at(at(T0 + 27)).unwrap().usd_per_mana(),
             "0.27"
@@ -399,7 +459,11 @@ pub(crate) mod tests {
     fn the_purchase_cut_follows_the_chains_clock_not_this_nodes() {
         // This node's clock runs 10 s behind the chain: the round is older on chain than it looks here.
         let slot = RateSlot::new(3_600);
-        slot.record(Ok(read_at("0.26960836", T0 - 10, 27, T0 + 10)), at(T0));
+        slot.record(
+            Ok(read_at("0.26960836", T0 - 10, 27, T0 + 10)),
+            at(T0),
+            wall(T0),
+        );
         assert!(slot.for_purchase_at(at(T0 + 4)).is_ok(), "chain age 24 s");
         assert_eq!(
             slot.for_purchase_at(at(T0 + 5)),
@@ -411,7 +475,7 @@ pub(crate) mod tests {
     #[test]
     fn a_zero_tolerance_is_never_quoted_for_a_purchase() {
         let slot = RateSlot::new(3_600);
-        slot.record(Ok(read_at("0.26960836", T0, 0, T0)), at(T0));
+        slot.record(Ok(read_at("0.26960836", T0, 0, T0)), at(T0), wall(T0));
         assert_eq!(slot.for_purchase_at(at(T0)), Err(Unavailable));
         assert!(slot.at(at(T0)).is_ok());
     }
@@ -419,23 +483,53 @@ pub(crate) mod tests {
     #[test]
     fn a_read_late_in_the_tolerance_is_refreshed_quickly() {
         let slot = RateSlot::new(3_600);
-        slot.record(Ok(read_at("0.26960836", T0 - 1, 54, T0)), at(T0));
+        slot.record(Ok(read_at("0.26960836", T0 - 1, 54, T0)), at(T0), wall(T0));
         assert_eq!(
             slot.next_read_in(at(T0)),
             REFRESH_EVERY,
             "50 s left: the usual cadence"
         );
-        slot.record(Ok(read_at("0.26960836", T0 - 18, 27, T0)), at(T0));
+        slot.record(Ok(read_at("0.26960836", T0 - 18, 27, T0)), at(T0), wall(T0));
         assert_eq!(
             slot.next_read_in(at(T0)),
             Duration::from_secs(6),
             "just before it leaves the tolerance"
         );
-        slot.record(Ok(read_at("0.26960836", T0 - 23, 27, T0)), at(T0));
+        slot.record(Ok(read_at("0.26960836", T0 - 23, 27, T0)), at(T0), wall(T0));
         assert_eq!(
             slot.next_read_in(at(T0)),
             REFRESH_MIN,
             "inside the margin: until a newer round"
+        );
+    }
+
+    #[test]
+    fn a_slow_read_counts_its_own_time_on_the_chains_clock() {
+        // The block was read at T0 with the round 24 s old; the rest of the read took 4 s.
+        let slot = RateSlot::new(3_600);
+        slot.record(Ok(read_at("0.26960836", T0 - 24, 27, T0)), at(T0), wall(T0));
+        assert_eq!(
+            slot.for_purchase_at(at(T0 + 4)),
+            Err(Unavailable),
+            "28 s on chain when the read lands: past the tolerance"
+        );
+        assert_eq!(slot.next_read_in(at(T0 + 4)), REFRESH_MIN);
+        assert!(slot.at(at(T0 + 4)).is_ok(), "still shown");
+    }
+
+    #[test]
+    fn a_purchase_is_quoted_at_the_round_it_checked() {
+        let slot = RateSlot::new(3_600);
+        slot.record(Ok(read_at("0.1", T0 - 26, 27, T0)), at(T0), wall(T0));
+        assert_eq!(slot.for_purchase_at(at(T0 + 1)), Err(Unavailable));
+        slot.record(
+            Ok(read_at("0.9", T0 + 1, 27, T0 + 1)),
+            at(T0 + 1),
+            wall(T0 + 1),
+        );
+        assert_eq!(
+            slot.for_purchase_at(at(T0 + 1)).unwrap().usd_per_mana(),
+            "0.9"
         );
     }
 
@@ -466,7 +560,10 @@ pub(crate) mod tests {
             feed.calls.load(std::sync::atomic::Ordering::SeqCst) >= 2,
             "it read again after the panic"
         );
-        assert_eq!(slot.at(Utc::now()).unwrap().usd_per_mana(), "0.26960836");
+        assert_eq!(
+            slot.at(Instant::now()).unwrap().usd_per_mana(),
+            "0.26960836"
+        );
         assert!(!refresher.is_finished());
         refresher.abort();
     }
@@ -504,7 +601,7 @@ pub(crate) mod tests {
     pub(crate) fn wired(read: Option<FeedReading>) -> Arc<RateSlot> {
         let slot = Arc::new(RateSlot::new(3_600));
         if let Some(read) = read {
-            slot.record(Ok(read), Utc::now());
+            slot.record(Ok(read), Instant::now(), Utc::now());
         }
         with_test_slot(Some(slot.clone()));
         slot
