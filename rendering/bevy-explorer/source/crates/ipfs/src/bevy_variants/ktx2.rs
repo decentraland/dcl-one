@@ -229,7 +229,11 @@ pub(crate) mod tests {
     pub(crate) fn bc7_two_levels() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let level0: Vec<u8> = (0..32).collect();
         let level1: Vec<u8> = (100..116).collect();
-        (ktx2(145, 8, 4, &[level0.clone(), level1.clone()]), level0, level1)
+        (
+            ktx2(145, 8, 4, &[level0.clone(), level1.clone()]),
+            level0,
+            level1,
+        )
     }
 
     #[test]
@@ -269,7 +273,10 @@ pub(crate) mod tests {
         assert_eq!(u32_at(&dds, 128), 71);
         assert_eq!(&dds[DDS_HEADER_BYTES..], &[7; 8]);
         let bc5 = ktx2(141, 4, 4, &[vec![9; 16]]);
-        assert_eq!(u32_at(&bc_ktx2_to_dds(&bc5, BcFormat::Bc5).unwrap(), 128), 83);
+        assert_eq!(
+            u32_at(&bc_ktx2_to_dds(&bc5, BcFormat::Bc5).unwrap(), 128),
+            83
+        );
     }
 
     #[test]
@@ -282,17 +289,32 @@ pub(crate) mod tests {
         assert!(bc_ktx2_to_dds(&file[..LEVEL_INDEX + 10], BcFormat::Bc7).is_err());
         assert!(bc_ktx2_to_dds(&file[..40], BcFormat::Bc7).is_err());
         // a vkFormat that is not the manifest's format, or not UNORM
-        assert!(bc_ktx2_to_dds(&file, BcFormat::Bc1).unwrap_err().contains("vkFormat"));
+        assert!(bc_ktx2_to_dds(&file, BcFormat::Bc1)
+            .unwrap_err()
+            .contains("vkFormat"));
         let srgb = ktx2(146, 8, 4, &[level0.clone(), level1.clone()]);
-        assert!(bc_ktx2_to_dds(&srgb, BcFormat::Bc7).unwrap_err().contains("vkFormat"));
+        assert!(bc_ktx2_to_dds(&srgb, BcFormat::Bc7)
+            .unwrap_err()
+            .contains("vkFormat"));
         // oversized, and more levels than the mip chain has
         let huge = ktx2(145, 16384, 4, &[level0.clone()]);
-        assert!(bc_ktx2_to_dds(&huge, BcFormat::Bc7).unwrap_err().contains("outside"));
-        let deep = ktx2(145, 4, 4, &[vec![0; 16], vec![0; 16], vec![0; 16], vec![0; 16]]);
-        assert!(bc_ktx2_to_dds(&deep, BcFormat::Bc7).unwrap_err().contains("mip chain"));
+        assert!(bc_ktx2_to_dds(&huge, BcFormat::Bc7)
+            .unwrap_err()
+            .contains("outside"));
+        let deep = ktx2(
+            145,
+            4,
+            4,
+            &[vec![0; 16], vec![0; 16], vec![0; 16], vec![0; 16]],
+        );
+        assert!(bc_ktx2_to_dds(&deep, BcFormat::Bc7)
+            .unwrap_err()
+            .contains("mip chain"));
         // a level whose declared or inflated size is not the block bytes its size needs
         let short = ktx2(145, 8, 4, &[level0[..16].to_vec(), level1.clone()]);
-        assert!(bc_ktx2_to_dds(&short, BcFormat::Bc7).unwrap_err().contains("declares"));
+        assert!(bc_ktx2_to_dds(&short, BcFormat::Bc7)
+            .unwrap_err()
+            .contains("declares"));
         // the index declares the right size, but the frame inflates to one byte less
         let mut lying = ktx2(145, 8, 4, &[vec![0; 31], level1.clone()]);
         lying[LEVEL_INDEX + 16] = 32;
@@ -302,7 +324,9 @@ pub(crate) mod tests {
         // not supercompressed
         let mut plain = file.clone();
         plain[12 + 4 * 8] = 0;
-        assert!(bc_ktx2_to_dds(&plain, BcFormat::Bc7).unwrap_err().contains("scheme"));
+        assert!(bc_ktx2_to_dds(&plain, BcFormat::Bc7)
+            .unwrap_err()
+            .contains("scheme"));
         assert!(bc_ktx2_to_dds(&[0x44; 100], BcFormat::Bc7).is_err());
     }
 }
