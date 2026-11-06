@@ -64,7 +64,7 @@ function answerShell(): void {
   shell.request.mockImplementation(async (method: string) => {
     if (method === 'shop.capabilities') return { v: 1, buyer: BUYER, wallet: 'managed', credits: true }
     if (method === 'shop.balance') return { v: 1, credits: balance }
-    if (method === 'shop.buy') return { v: 1, operation: 'op', state: 'reviewing', item: { contract: CONTRACT, itemId: '1' } }
+    if (method === 'shop.buy') return { v: 1, operation: 'op', state: 'reviewing', items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }] }
     if (method === 'shop.status') return []
     throw new Error(`unexpected ${method}`)
   })
@@ -94,7 +94,7 @@ function renderShop(): InWorldShopProps {
 }
 
 const emit = (event: Record<string, unknown>): void =>
-  act(() => shell.handlers.get(SHOP_EVENT)?.({ type: SHOP_EVENT, v: 1, operation: 'op', item: { contract: CONTRACT, itemId: '1' }, ...event }))
+  act(() => shell.handlers.get(SHOP_EVENT)?.({ type: SHOP_EVENT, v: 1, operation: 'op', buyer: BUYER, items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }], ...event }))
 
 afterEach(() => {
   resetPopups()
@@ -113,7 +113,7 @@ describe('buying in the in-world Shop', () => {
     expect(await screen.findByRole('status', { name: 'Credits balance: 700' })).toBeTruthy()
   })
 
-  it('asks the shell to buy the card’s item with Credits: the item and the creator’s name, nothing else', async () => {
+  it('asks the shell to buy the card’s item with Credits: one of the item, nothing else', async () => {
     serveCatalogue()
     answerShell()
     renderShop()
@@ -121,7 +121,7 @@ describe('buying in the in-world Shop', () => {
     await userEvent.click(within(card).getByRole('button', { name: 'BUY' }))
     await waitFor(() => expect(shell.request).toHaveBeenCalledWith('shop.buy', expect.anything()))
     const [, params] = shell.request.mock.calls.find(([m]) => m === 'shop.buy')!
-    expect(params).toEqual({ v: 1, item: { contract: CONTRACT, itemId: '1' }, method: 'credits', creatorName: expect.any(String), input: 'pointer' })
+    expect(params).toEqual({ v: 1, items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }], method: 'credits', input: 'pointer' })
   })
 
   it('tells the shell BUY was pressed from the keyboard, so its dialog rings the focus', async () => {

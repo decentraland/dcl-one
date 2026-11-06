@@ -74,3 +74,6 @@ library/uuav/**/*.sb text eol=lf
 library/uuav/**/*.sh text eol=lf
 tooling/uuav/*.sh text eol=lf
 tooling/uuav/uuav-binaries.lock.json text eol=lf
+
+# The SDK snapshot keeps its upstream bytes (one api-extractor report is CRLF).
+library/js-sdk-toolchain/** -text
