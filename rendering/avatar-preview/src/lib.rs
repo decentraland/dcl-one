@@ -39,13 +39,34 @@ pub struct PreviewAvatar;
 /// the first `outfit` command (`preview_command`).
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
-pub fn start(canvas: String, base_domain: Option<String>, on_event: js_sys::Function) {
+pub fn start(
+    canvas: String,
+    base_domain: Option<String>,
+    on_event: js_sys::Function,
+    flags: Option<String>,
+) {
     console_error_panic_hook::set_once();
     host::set_event_callback(on_event);
-    run(&canvas, base_domain.as_deref());
+    run(&canvas, base_domain.as_deref(), &flags.unwrap_or_default());
 }
 
-pub fn run(canvas: &str, base_domain: Option<&str>) {
+/// Diagnostic switches (`flags`, comma-separated) for the camera pipeline.
+#[derive(Resource, Default, Debug, Clone)]
+pub struct StageFlags {
+    pub no_bloom: bool,
+    pub no_msaa: bool,
+    pub sdr: bool,
+    pub clear_surface: bool,
+}
+
+pub fn run(canvas: &str, base_domain: Option<&str>, flags: &str) {
+    let stage = StageFlags {
+        no_bloom: flags.split(',').any(|f| f == "nobloom"),
+        no_msaa: flags.split(',').any(|f| f == "nomsaa"),
+        sdr: flags.split(',').any(|f| f == "sdr"),
+        clear_surface: flags.split(',').any(|f| f == "clearsurface"),
+    };
+    info!("{stage:?}");
     if let Some(domain) = base_domain {
         if let Err(e) = common::base_domain::set(domain) {
             error!("{e}");
@@ -65,8 +86,11 @@ pub fn run(canvas: &str, base_domain: Option<&str>) {
                     canvas: Some(canvas.to_owned()),
                     fit_canvas_to_parent: true,
                     resolution: WindowResolution::new(512.0, 768.0),
-                    // the page decides the background: a colour, or none through the canvas
+                    // the page decides the background: a colour, or none through the canvas.
+                    // The surface must present alpha too: the web default is opaque, which
+                    // discards it at presentation and shows black where nothing was drawn
                     transparent: true,
+                    composite_alpha_mode: bevy::window::CompositeAlphaMode::PreMultiplied,
                     ..default()
                 }),
                 ..default()
@@ -108,7 +132,8 @@ pub fn run(canvas: &str, base_domain: Option<&str>) {
             brightness: 575.0,
             ..default()
         })
-        .insert_resource(request);
+        .insert_resource(request)
+        .insert_resource(stage);
     app.add_systems(Startup, (point_at_catalyst, setup_stage));
     app.add_systems(Update, spawn_avatar_on_first_outfit);
     app.run();
@@ -153,12 +178,20 @@ fn point_at_catalyst(ipfs: Res<IpfsResource>, request: Res<PreviewRequest>) {
     info!("content server: {}", request.content_url);
 }
 
-fn setup_stage(mut commands: Commands, orbit: Res<OrbitCamera>) {
-    commands.spawn((
+fn setup_stage(mut commands: Commands, orbit: Res<OrbitCamera>, flags: Res<StageFlags>) {
+    let mut camera = commands.spawn((
         Camera3d::default(),
         Camera {
-            hdr: true,
+            hdr: !flags.sdr,
             clear_color: ClearColorConfig::Custom(Color::srgb(0.16, 0.14, 0.2)),
+            output_mode: if flags.clear_surface {
+                bevy::render::camera::CameraOutputMode::Write {
+                    blend_state: None,
+                    clear_color: ClearColorConfig::Custom(Color::NONE),
+                }
+            } else {
+                bevy::render::camera::CameraOutputMode::default()
+            },
             ..default()
         },
         host::projection_for(&orbit),
@@ -166,6 +199,12 @@ fn setup_stage(mut commands: Commands, orbit: Res<OrbitCamera>) {
         platform::default_camera_components(),
         PreviewCamera,
     ));
+    if flags.no_bloom {
+        camera.remove::<bevy::core_pipeline::bloom::Bloom>();
+    }
+    if flags.no_msaa {
+        camera.insert(Msaa::Off);
+    }
     commands.spawn((
         DirectionalLight {
             illuminance: 8000.0,

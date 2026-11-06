@@ -19,19 +19,28 @@ for avatars, wearables and emotes, replacing the Unity renderer slot of
   points the collectible resolver at the catalyst and waits for the first `outfit` command.
 - `src/host.rs`: the host surface, below.
 - `web/preview.js`: the `wearable-preview` iframe contract over the host surface.
+- `web/harness.html`: embeds the page in an iframe from another origin, as the shop does, and
+  lists the messages it sends (`?target=<origin>&page=<file>` plus the preview's own query).
+  `web/blank.html` is a transparent page for checking the embedding itself.
+- `tools/contract-check.mjs`: drives a page in headless Chrome like a host (waits for `load`,
+  posts controller requests, saves the canvas, the screenshot and the page; `PROBE_JS`
+  evaluates an expression in the page at the end).
 - `web/index.html`: the page; `?debug=1` or the backquote key shows the console and the commands on screen.
 - `build.sh`: `wasm-pack build --target web` into `web/pkg` with the Explorer's toolchain
-  (`nightly-2026-04-15`); `./build.sh --no-opt` skips wasm-opt for iteration.
+  (`nightly-2026-04-15`). `./build.sh` is the shipping build (size-first release profile,
+  wasm-opt, minutes); `./build.sh --fast` the iteration build (tuned dev profile, no wasm-opt,
+  about a minute, a larger module that never ships).
 
 ## Build and run
 
 ```
 ./build.sh
-cd web && python3 -m http.server 5300
+python3 tools/serve.py
 ```
 
 Open `http://localhost:5300/` in a WebGPU browser, or embed it in an iframe as a host embeds
-`wearable-preview`. Release profile: `opt-level = "z"`, fat LTO, `panic = "abort"`,
+`wearable-preview`. `?flags=` takes camera pipeline switches for diagnosis: `nobloom`,
+`nomsaa`, `sdr` (no HDR), `clearsurface` (an explicit transparent surface clear). Release profile: `opt-level = "z"`, fat LTO, `panic = "abort"`,
 `wasm-opt -Oz`. Measured on 2026-11-05: 24.9 MB raw, 8.3 MB gzip.
 
 ## The host surface (`src/host.rs`)
@@ -55,10 +64,12 @@ png}` (base64), `metrics {id, triangles, materials, textures, meshes, bodies, en
 
 ## The iframe contract (`web/preview.js`)
 
-The page speaks the `@dcl/schemas` preview protocol: options from the URL (`profile`,
+The page speaks the `@dcl/schemas` preview protocol: options from the URL (`contract` with
+`item` or `token`, `profile` (an address, `default`, `defaultN` or a profile entity hash),
 `bodyShape`, `urn`, `skin`, `hair`, `eyes`, `emote`, `camera`, `projection`, `zoom`,
 `zoomScale`, `offsetX/Y/Z`, `cameraX/Y/Z`, `autoRotateSpeed`, `disableAutoRotate`,
-`background`, `disableBackground`, `disableDefaultEmotes`, `peerUrl`, `type`) and from
+`background`, `disableBackground`, `disableDefaultEmotes`, `peerUrl`, `marketplaceServerUrl`,
+`env`, `type`) and from
 `update` messages; `ready` at boot, `load {renderer: "bevy"}`, `error`, `emote_event`
 (`animation_play`, `animation_end`); `controller_request` dispatched to `scene`
 (`getScreenshot`, `getMetrics`, `changeZoom`, `panCamera`, `changeCameraPosition`,
@@ -66,9 +77,21 @@ The page speaks the `@dcl/schemas` preview protocol: options from the URL (`prof
 `physics`, with `controller_response` back. Profiles resolve on the page through
 `/lambdas/profiles/{id}`, so the engine only receives urns.
 
-Not supported yet, answered with an error: `emote.pause`, `emote.goTo`, `emote.getLength`,
-`physics.setSpringBonesParams`; `contract`/`item`/`token` lookups through the marketplace
-API; `url`, `base64` and `blob` items; social emotes; the Unity `mode` flows.
+Emote names map to the catalyst's base emotes (`clap`, `dab`, `dance`, `money`, `wave`,
+`fist-pump`, `head-explode`); the names wearable-preview serves from its own files (`fashion`
+poses, `love`, `walk`, `run`, `jump`) idle for now. A transparent background (`disableBackground`) presents the canvas with premultiplied alpha,
+so the host page shows through around the avatar. Not supported yet, answered with an error:
+`emote.pause`, `emote.goTo`, `emote.getLength`, `physics.setSpringBonesParams`; `url`,
+`base64` and `blob` items; social emotes; the Unity `mode` flows.
+
+## Embedding it in the shop
+
+The shop (`decentraland/shop`) embeds the preview through `decentraland-ui2`'s `WearablePreview`
+and takes the iframe origin from `VITE_WEARABLE_PREVIEW_URL`. Pointing that at this page (no
+trailing slash: the host filters messages by origin) switches every preview in the shop to this
+renderer: item pages by contract and item or token id, outfits by profile and urns, promo tiles.
+Items resolve through the marketplace API the host names (`marketplaceServerUrl`, else by
+`env`), profiles through the host's `peerUrl`, whose domain also becomes the engine's catalyst.
 
 ## What it renders today
 

@@ -78,6 +78,17 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 
+# `./build.sh --fast`, the iteration build (wasm-pack --dev): dependencies optimised once and cached,
+# the crate itself compiled quickly and incrementally, no debug info in the module, no wasm-opt.
+[profile.dev]
+opt-level = 1
+debug = false
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-Oz"]
 
