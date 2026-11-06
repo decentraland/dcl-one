@@ -22,6 +22,30 @@ pub fn client_ip(headers: &HeaderMap) -> String {
     String::new()
 }
 
+/// The TCP peer, or the single `X-Real-IP` it supplies when it is a trusted proxy
+/// (`HTTP_TRUSTED_PROXY_CIDRS`); `None` without a peer or with a bad header.
+pub fn peer_client_ip(
+    headers: &HeaderMap,
+    peer: Option<std::net::SocketAddr>,
+    trusted_proxies: &[ipnet::IpNet],
+) -> Option<String> {
+    let peer = peer?.ip().to_canonical();
+    let ip = if trusted_proxies
+        .iter()
+        .any(|network| network.contains(&peer))
+    {
+        let mut values = headers.get_all("x-real-ip").iter();
+        let candidate = values.next()?.to_str().ok()?;
+        if values.next().is_some() {
+            return None;
+        }
+        candidate.parse::<std::net::IpAddr>().ok()?.to_canonical()
+    } else {
+        peer
+    };
+    Some(ip.to_string())
+}
+
 pub fn normalize_ip(ip: &str) -> String {
     ip.strip_prefix("::ffff:").unwrap_or(ip).trim().to_string()
 }

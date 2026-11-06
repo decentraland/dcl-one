@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { CatalystError } from "../../data/catalyst/client";
 import {
   chainName,
+  deliverTip,
+  TIP_DELIVERY_WINDOW_MS,
   encodeManaTransfer,
   manaToWei,
   sendManaTip,
@@ -116,5 +119,78 @@ describe("shouldForwardTip", () => {
     expect(shouldForwardTip({ target: polygon, hash: "0xdeadbeef", from, signer: from })).toBe(false);
     expect(shouldForwardTip({ target: polygon, hash, from, signer: null })).toBe(false);
     expect(shouldForwardTip({ target: polygon, hash, from, signer: OWNER })).toBe(false);
+  });
+});
+
+describe("deliverTip", () => {
+  const hash = `0x${"cd".repeat(32)}`;
+
+  // A wallet whose receipt reads return `receipts` in turn (the last repeats), on a fake clock.
+  function harness(receipts: unknown[], outcomes: (number | null)[]) {
+    let clock = 0;
+    const slept: number[] = [];
+    const methods: string[] = [];
+    const forwards: number[] = [];
+    let r = 0;
+    const provider = {
+      request: async ({ method }: { method: string }) => {
+        methods.push(method);
+        const next = receipts[Math.min(r++, receipts.length - 1)];
+        if (next instanceof Error) throw next;
+        return next;
+      },
+    };
+    let f = 0;
+    const forward = async () => {
+      forwards.push(clock);
+      const status = outcomes[Math.min(f++, outcomes.length - 1)];
+      if (status === null) return;
+      throw new CatalystError(`Catalyst returned ${status}`, "url", status);
+    };
+    const opts = {
+      forward,
+      now: () => clock,
+      sleep: async (ms: number) => {
+        slept.push(ms);
+        clock += ms;
+      },
+    };
+    return { provider, opts, slept, methods, forwards };
+  }
+
+  it("forwards only once the receipt is mined, polling past pending and failed reads", async () => {
+    const h = harness([null, new Error("rpc down"), { status: "0x1" }], [null]);
+    expect(await deliverTip(h.provider, hash, h.opts)).toBe("notified");
+    expect(h.methods).toEqual(Array(3).fill("eth_getTransactionReceipt"));
+    expect(h.forwards).toEqual([8_000]);
+  });
+
+  it("never forwards a reverted transfer", async () => {
+    const h = harness([{ status: "0x0" }], [null]);
+    expect(await deliverTip(h.provider, hash, h.opts)).toBe("reverted");
+    expect(h.forwards).toEqual([]);
+  });
+
+  it("retries 429, 5xx and network failures with growing backoff and stops at the first answer", async () => {
+    const h = harness([{ status: "0x1" }], [429, 503, 0, null]);
+    expect(await deliverTip(h.provider, hash, h.opts)).toBe("notified");
+    expect(h.forwards).toHaveLength(4);
+    expect(h.slept).toEqual([5_000, 10_000, 20_000]);
+  });
+
+  it("stops without retrying when the server refuses the tip", async () => {
+    const h = harness([{ status: "0x1" }], [400, null]);
+    expect(await deliverTip(h.provider, hash, h.opts)).toBe("refused");
+    expect(h.forwards).toHaveLength(1);
+  });
+
+  it("gives up once the delivery window closes, with bounded waits", async () => {
+    const h = harness([{ status: "0x1" }], [429]);
+    expect(await deliverTip(h.provider, hash, h.opts)).toBe("gave-up");
+    expect(h.slept.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(TIP_DELIVERY_WINDOW_MS);
+    expect(Math.max(...h.slept)).toBe(120_000);
+    const unmined = harness([null], [null]);
+    expect(await deliverTip(unmined.provider, hash, unmined.opts)).toBe("gave-up");
+    expect(unmined.forwards).toEqual([]);
   });
 });

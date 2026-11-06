@@ -131,11 +131,14 @@ pub(crate) fn market_settings(
             chain_id_ethereum: config.marketplace.marketplace_index_chain_id_ethereum,
             chain_id_matic: config.marketplace.marketplace_index_chain_id_matic,
         })?)
-        .with_tips(shop::market::tips::TipSettings::parse(
-            &config.marketplace.marketplace_tip_min_amount_wei,
-            config.marketplace.marketplace_tip_max_age_secs,
-            config.marketplace.marketplace_tip_max_pending,
-        )?),
+        .with_tips(
+            shop::market::tips::TipSettings::parse(
+                &config.marketplace.marketplace_tip_min_amount_wei,
+                config.marketplace.marketplace_tip_max_age_secs,
+                config.marketplace.marketplace_tip_max_pending,
+            )?
+            .with_trusted_proxies(config.node.http_trusted_proxy_cidrs.clone()),
+        ),
     ))
 }
 

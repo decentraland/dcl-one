@@ -681,30 +681,10 @@ impl Referral {
     }
 }
 
-/// The socket identifies the trust boundary. Direct clients cannot choose their
-/// quota bucket with forwarding headers. A configured backend proxy overwrites
-/// X-Real-IP; CDN and forwarding-chain headers never authorize that value here.
-fn client_ip(
-    headers: &HeaderMap,
-    peer: Option<std::net::SocketAddr>,
-    trusted_proxies: &[ipnet::IpNet],
-) -> Option<String> {
-    let peer = peer?.ip().to_canonical();
-    let ip = if trusted_proxies
-        .iter()
-        .any(|network| network.contains(&peer))
-    {
-        let mut values = headers.get_all("x-real-ip").iter();
-        let candidate = values.next()?.to_str().ok()?;
-        if values.next().is_some() {
-            return None;
-        }
-        candidate.parse::<std::net::IpAddr>().ok()?.to_canonical()
-    } else {
-        peer
-    };
-    Some(ip.to_string())
-}
+// The socket identifies the trust boundary. Direct clients cannot choose their
+// quota bucket with forwarding headers. A configured backend proxy overwrites
+// X-Real-IP; CDN and forwarding-chain headers never authorize that value here.
+use crate::shared::client_ip::peer_client_ip as client_ip;
 
 #[derive(Serialize)]
 #[cfg_attr(

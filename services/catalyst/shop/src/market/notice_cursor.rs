@@ -23,7 +23,8 @@ pub const SALES_TRADED_ETHEREUM: &str = "sales:traded:ethereum";
 pub const SALES_TRADED_MATIC: &str = "sales:traded:matic";
 pub const SALES_ORDER_SUCCESSFUL_MATIC: &str = "sales:order_successful:matic";
 
-/// Every producer; no other name is ever written to `shop.notification_cursor`.
+/// Every producer; no other name is ever written to `shop.notification_cursor`
+/// (its CHECK lists exactly these).
 pub const PRODUCERS: &[&str] = &[
     TRANSFER_RECEIVED,
     ROYALTIES_EARNED,
@@ -48,8 +49,27 @@ pub fn producers_of(indexer: &str, net: ChainNet) -> &'static [&'static str] {
         ],
         (INDEXER_TRADE_EVENTS, ChainNet::Matic) => &[TRANSFER_RECEIVED, SALES_TRADED_MATIC],
         (INDEXER_TRADE_EVENTS, ChainNet::Ethereum) => &[SALES_TRADED_ETHEREUM],
-        (INDEXER_RENTALS, _) => &[RENTAL_STARTED, RENTAL_ENDED],
+        (INDEXER_RENTALS, ChainNet::Ethereum) => &[RENTAL_STARTED, RENTAL_ENDED],
         _ => &[],
+    }
+}
+
+/// The index whose positions `producer`'s cursor holds.
+fn cursor_index(producer: &str) -> &'static str {
+    match producer {
+        SALES_TRADED_ETHEREUM | SALES_TRADED_MATIC => INDEXER_TRADE_EVENTS,
+        RENTAL_STARTED | RENTAL_ENDED => INDEXER_RENTALS,
+        _ => INDEXER_NFT,
+    }
+}
+
+fn known(producer: &str) -> sqlx::Result<()> {
+    if PRODUCERS.contains(&producer) {
+        Ok(())
+    } else {
+        Err(sqlx::Error::InvalidArgument(format!(
+            "unknown notification producer {producer}"
+        )))
     }
 }
 
@@ -61,7 +81,7 @@ pub(crate) async fn seed(
     block_number: i64,
     log_index: i32,
 ) -> sqlx::Result<()> {
-    debug_assert!(PRODUCERS.contains(&producer), "unknown producer {producer}");
+    known(producer)?;
     sqlx::query(
         "INSERT INTO shop.notification_cursor (producer, end_time, block_number, log_index, seed_end_time, seed_block, seed_log_index) \
          VALUES ($1, $2, $3, $4, $2, $3, $4) ON CONFLICT (producer) DO NOTHING",
@@ -80,6 +100,7 @@ pub(crate) async fn lock(
     conn: &mut PgConnection,
     producer: &'static str,
 ) -> sqlx::Result<(Option<i64>, i64, i32)> {
+    known(producer)?;
     sqlx::query_as("SELECT end_time, block_number, log_index FROM shop.notification_cursor WHERE producer = $1 FOR UPDATE")
         .bind(producer)
         .fetch_one(conn)
@@ -93,6 +114,7 @@ pub(crate) async fn advance(
     block_number: i64,
     log_index: i32,
 ) -> sqlx::Result<()> {
+    known(producer)?;
     sqlx::query(
         "UPDATE shop.notification_cursor SET end_time = $2, block_number = $3, log_index = $4, \
          updated_at = timezone('UTC', now()) WHERE producer = $1",
@@ -109,17 +131,19 @@ pub(crate) async fn advance(
 /// A cursor move-back worked out before the index's rows change.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Replay {
-    producers: &'static [&'static str],
-    from: i64,
+    /// Each producer and the block it moves back to just after.
+    moves: Vec<(&'static str, i64)>,
     /// `rental_ended`'s end-time floor: the earliest rent it may have missed.
     rental_since: Option<i64>,
 }
 
-/// Plans moving the cursors of `indexer` on `net` back to just after
-/// `from_block`, for rows written again up to `max_block`: nothing when
-/// no producer reads the index or `max_block` is [`REPLAY_BLOCKS`] or more
-/// below its head; never further back than that. Reads only, so it runs
-/// before the rows are deleted without holding the cursor rows.
+/// Plans moving the cursors of the producers reading `indexer` on `net`
+/// back to just after `from_block`, for rows written again up to
+/// `max_block`. Each producer is clamped by the head of the index its
+/// cursor tracks ([`cursor_index`]): nothing when `max_block` is
+/// [`REPLAY_BLOCKS`] or more below it, never further back than that.
+/// Reads only, so it runs before the rows are deleted without holding the
+/// cursor rows.
 pub async fn plan_replay(
     conn: &mut PgConnection,
     indexer: &str,
@@ -127,38 +151,37 @@ pub async fn plan_replay(
     from_block: i64,
     max_block: i64,
 ) -> sqlx::Result<Option<Replay>> {
-    let producers = producers_of(indexer, net);
-    if producers.is_empty() {
+    let mut moves = Vec::new();
+    for &producer in producers_of(indexer, net) {
+        let head: Option<i64> = sqlx::query_scalar(
+            "SELECT last_block FROM shop.chain_cursor WHERE indexer = $1 AND network = $2",
+        )
+        .bind(cursor_index(producer))
+        .bind(net.db_name())
+        .fetch_optional(&mut *conn)
+        .await?;
+        match head {
+            Some(head) if max_block > head - REPLAY_BLOCKS => {
+                moves.push((producer, from_block.max(head - REPLAY_BLOCKS)));
+            }
+            _ => {}
+        }
+    }
+    if moves.is_empty() {
         return Ok(None);
     }
-    let head: Option<i64> = sqlx::query_scalar(
-        "SELECT last_block FROM shop.chain_cursor WHERE indexer = $1 AND network = $2",
-    )
-    .bind(indexer)
-    .bind(net.db_name())
-    .fetch_optional(&mut *conn)
-    .await?;
-    let Some(head) = head else {
-        return Ok(None);
-    };
-    if max_block <= head - REPLAY_BLOCKS {
-        return Ok(None);
-    }
-    let from = from_block.max(head - REPLAY_BLOCKS);
-    let rental_since = if producers.contains(&RENTAL_ENDED) {
-        sqlx::query_scalar(
+    let rental_since = match moves.iter().find(|(p, _)| *p == RENTAL_ENDED) {
+        Some(&(_, from)) => sqlx::query_scalar(
             "SELECT min(block_time) FROM shop.rental_event WHERE network = $1 AND kind = 'rented' AND block_number > $2",
         )
         .bind(net.db_name())
         .bind(from)
         .fetch_one(&mut *conn)
-        .await?
-    } else {
-        None
+        .await?,
+        None => None,
     };
     Ok(Some(Replay {
-        producers,
-        from,
+        moves,
         rental_since,
     }))
 }
@@ -167,19 +190,21 @@ impl Replay {
     /// Moves the cursors back, never below their seed; the ids keep the
     /// replay from notifying twice. Locks the cursor rows until commit.
     pub async fn apply(self, conn: &mut PgConnection) -> sqlx::Result<()> {
-        sqlx::query(
+        for (producer, from) in self.moves {
+            sqlx::query(
             "UPDATE shop.notification_cursor SET \
                  block_number = CASE WHEN ($2::bigint, 2147483647) > (seed_block, seed_log_index) THEN $2 ELSE seed_block END, \
                  log_index = CASE WHEN ($2::bigint, 2147483647) > (seed_block, seed_log_index) THEN 2147483647 ELSE seed_log_index END, \
                  updated_at = timezone('UTC', now()) \
-             WHERE producer = ANY($1) AND end_time IS NULL \
+             WHERE producer = $1 AND end_time IS NULL \
                AND (block_number, log_index) > ($2::bigint, 2147483647) \
                AND (block_number, log_index) > (seed_block, seed_log_index)",
-        )
-        .bind(self.producers)
-        .bind(self.from)
-        .execute(&mut *conn)
-        .await?;
+            )
+            .bind(producer)
+            .bind(from)
+            .execute(&mut *conn)
+            .await?;
+        }
         if let Some(since) = self.rental_since {
             sqlx::query(
                 "UPDATE shop.notification_cursor SET \
@@ -301,12 +326,36 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(rows, PRODUCERS.len() as i64);
+        for name in ["Transfer Received", "sales:traded:base"] {
+            assert!(
+                sqlx::query("INSERT INTO shop.notification_cursor (producer, block_number, log_index, seed_block, seed_log_index) VALUES ($1, 0, 0, 0, 0)")
+                    .bind(name)
+                    .execute(pool)
+                    .await
+                    .is_err(),
+                "{name}"
+            );
+        }
+        let check: String = sqlx::query_scalar(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'notification_cursor_producer_known'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let mut listed: Vec<&str> = check.split('\'').skip(1).step_by(2).collect();
+        listed.sort();
+        let mut known = PRODUCERS.to_vec();
+        known.sort();
+        assert_eq!(listed, known, "the CHECK lists exactly PRODUCERS: {check}");
+        assert!(seed(pool, "sales:traded:base", None, 0, 0).await.is_err());
+        let mut conn = pool.acquire().await.unwrap();
+        assert!(lock(&mut conn, "sales:traded:base").await.is_err());
         assert!(
-            sqlx::query("INSERT INTO shop.notification_cursor (producer, block_number, log_index, seed_block, seed_log_index) VALUES ('Transfer Received', 0, 0, 0, 0)")
-                .execute(pool)
+            advance(&mut conn, "sales:traded:base", None, 0, 0)
                 .await
                 .is_err()
         );
+        drop(conn);
         crate::market::transfer_notices::tests::publish(
             pool,
             INDEXER_NFT,
@@ -388,6 +437,76 @@ mod tests {
             (5_000, 3),
             "another index's producer is not moved"
         );
+        db.drop().await;
+    }
+
+    /// A trade_events reorg moves `transfer_received` (nft positions) only
+    /// within the nft index's window, and `sales:traded:matic` by its own.
+    #[tokio::test]
+    async fn replays_clamp_each_producer_by_the_index_it_tracks() {
+        let Some(db) = crate::market::transfer_notices::tests::PrivateDb::create("noticeidx").await
+        else {
+            return;
+        };
+        let pool = &db.pool;
+        let publish = |indexer: &'static str, block: i64| async move {
+            crate::market::transfer_notices::tests::publish(
+                pool,
+                indexer,
+                "matic",
+                block,
+                1_700_000_000,
+            )
+            .await;
+        };
+        let cursor = |p: &'static str| async move {
+            sqlx::query_as::<_, (i64, i32)>(
+                "SELECT block_number, log_index FROM shop.notification_cursor WHERE producer = $1",
+            )
+            .bind(p)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+        };
+        for p in [TRANSFER_RECEIVED, SALES_TRADED_MATIC] {
+            seed(pool, p, None, 0, -1).await.unwrap();
+        }
+        let mut conn = pool.acquire().await.unwrap();
+        advance(&mut conn, TRANSFER_RECEIVED, None, 8_999, 0)
+            .await
+            .unwrap();
+        advance(&mut conn, SALES_TRADED_MATIC, None, 2_999, 0)
+            .await
+            .unwrap();
+        drop(conn);
+        publish(INDEXER_NFT, 9_000).await;
+        publish(INDEXER_TRADE_EVENTS, 3_000).await;
+
+        // The trade index lags: its reorg is far below the nft head.
+        replay(
+            &mut pool.acquire().await.unwrap(),
+            INDEXER_TRADE_EVENTS,
+            ChainNet::Matic,
+            10,
+            2_999,
+        )
+        .await
+        .unwrap();
+        assert_eq!(cursor(SALES_TRADED_MATIC).await, (2_000, i32::MAX));
+        assert_eq!(cursor(TRANSFER_RECEIVED).await, (8_999, 0), "not moved");
+
+        // Near the nft head, the transfer cursor moves to the reorged block.
+        publish(INDEXER_TRADE_EVENTS, 9_000).await;
+        replay(
+            &mut pool.acquire().await.unwrap(),
+            INDEXER_TRADE_EVENTS,
+            ChainNet::Matic,
+            8_950,
+            8_990,
+        )
+        .await
+        .unwrap();
+        assert_eq!(cursor(TRANSFER_RECEIVED).await, (8_950, i32::MAX));
         db.drop().await;
     }
 }

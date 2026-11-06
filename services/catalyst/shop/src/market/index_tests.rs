@@ -2407,3 +2407,92 @@ async fn api_jobs_never_attach_market_indexing_even_when_enabled() {
     );
     db.drop().await;
 }
+
+/// The rewind path of `run_pass` (plan, delete, apply) moves a producer's
+/// cursor back: the gift that replaces a reorged one is announced once the
+/// index republishes.
+#[tokio::test]
+async fn a_reorg_rewind_replays_the_notification_producers() {
+    use super::transfer_notices::{self, Pass};
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let s = nft_index::start_block(ChainNet::Matic);
+    let c1 = "0x00000000000000000000000000000000000000c1";
+    seed_collection(
+        &db.pool,
+        "matic",
+        c1,
+        s + 10,
+        "urn:decentraland:matic:collections-v2:0xc1",
+        "Pirates",
+    )
+    .await;
+    let t1 = v2_token(0, 1);
+    let chain = FakeChain::new(
+        s + 1_500,
+        vec![transfer(c1, ZERO, ALICE, t1, s + 100, 0)],
+        1_000_000,
+        100,
+    );
+    let url = serve(chain.clone()).await;
+    let st = state_over(db.pool.clone(), &url, index_settings(50, 100_000), false);
+    let ix = NftIndex::new(ChainNet::Matic);
+    assert!(publish_nft(&st, &url, &ix).await.published);
+    transfer_notices::tests::publish(
+        &db.pool,
+        INDEXER_TRADE_EVENTS,
+        "matic",
+        (s + 1_000_000) as i64,
+        chrono::Utc::now().timestamp(),
+    )
+    .await;
+    let notified = || async {
+        sqlx::query_scalar::<_, String>(
+            "SELECT address FROM social.notifications WHERE type = 'transfer_received' ORDER BY address",
+        )
+        .fetch_all(&db.pool)
+        .await
+        .unwrap()
+    };
+    assert_eq!(
+        transfer_notices::run_once(&db.pool, 137).await.unwrap(),
+        Pass::Emitted(0),
+        "seeded at the mint"
+    );
+
+    chain
+        .logs
+        .lock()
+        .push(log_json(&transfer(c1, ALICE, BOB, t1, s + 1_900, 0)));
+    *chain.head.lock() = s + 2_000;
+    assert!(publish_nft(&st, &url, &ix).await.published);
+    assert_eq!(
+        transfer_notices::run_once(&db.pool, 137).await.unwrap(),
+        Pass::Emitted(1)
+    );
+
+    let cursor = chain_walk::cursor(&db.pool, INDEXER_NFT, ChainNet::Matic)
+        .await
+        .unwrap()
+        .unwrap();
+    chain
+        .forks
+        .lock()
+        .insert(cursor.last_block as u64, format!("0x{}", "ee".repeat(32)));
+    {
+        let mut logs = chain.logs.lock();
+        logs.retain(|l| l["blockNumber"] != json!(format!("0x{:x}", s + 1_900)));
+        logs.push(log_json(&transfer(c1, ALICE, CARL, t1, s + 1_880, 0)));
+    }
+    assert!(pass(&st, &url, &ix).await.reorg_rewound_to.is_some());
+    chain.forks.lock().clear();
+    assert!(publish_nft(&st, &url, &ix).await.published);
+    assert_eq!(
+        transfer_notices::run_once(&db.pool, 137).await.unwrap(),
+        Pass::Emitted(1),
+        "the replacing gift is read again below the old cursor"
+    );
+    assert_eq!(notified().await, vec![BOB.to_string(), CARL.to_string()]);
+    db.drop().await;
+}
