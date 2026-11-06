@@ -10,9 +10,7 @@
 //! (autotranslate) and `profile_images`; domain readers share the default outbound
 //! client, SQL pool and blob store. Configured AI compliance, analytics and
 //! referral Slack each lazily retain one Outbound provider profile with its
-//! own HTTP transport pools; no profile is built per request. Optional legacy
-//! SQS/SNS transports use the official AWS SDK clients
-//! inside the existing job lifecycle (`legacy_events`). The
+//! own HTTP transport pools; no profile is built per request. The
 //! LiveKit gatekeeper itself is `comms::gatekeeper`; its state is the RPC's
 //! voice runtime and the communities' voice eviction. [`router`] composes
 //! them the way the old gateway's location table did, behind the [`writes`]
@@ -42,7 +40,6 @@ pub mod chat;
 pub mod comms_directory;
 pub mod communities;
 
-pub mod legacy_events;
 pub mod media;
 pub mod messaging;
 mod mls;
