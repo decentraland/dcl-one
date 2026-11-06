@@ -779,22 +779,31 @@ fn orbit_input(
     }
 }
 
-/// The avatar's size, as the Explorer bounds a body: every avatar mesh gets this box, so an avatar
-/// of ordinary size measures exactly this and keeps the default framing.
-const AVATAR_BOX_MIN: Vec3 = Vec3::new(-1.24, 0.0, -0.7);
-const AVATAR_BOX_MAX: Vec3 = Vec3::new(1.24, 2.42, 0.7);
+/// What the default view is set for, measured as `fit_to_bounds` measures: an ordinary avatar
+/// through the walk a wearable is shown in, from the floor to the top of its head, reaching this
+/// far from its turn axis. An avatar inside it keeps the default framing.
+const ORDINARY_TOP: f32 = 2.05;
+const ORDINARY_REACH: f32 = 1.0;
 
 /// Frames what the avatar shows, emote props included, as the Unity renderer does for avatars too
-/// big for its default view, once: from when the avatar first shows after an outfit change, until
-/// its bounds have stopped growing for half a second (a prop can arrive after the body) or three
-/// seconds have passed. Then the framing stays, however the emote moves; only the user moves the
-/// camera. Bounds are against the ordinary avatar's box, at the panel's aspect; skinned meshes
-/// count by their animated joints, their own bounds being the rest pose.
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+/// big for its default view, once and before it is seen: after an outfit change it waits for the
+/// outfit and the emote the host asked for, steps the paused clip through its poses, measures the
+/// skinned surface at each, rewinds the clip and sets the camera. Only then does it send `load`,
+/// which shows the canvas, so the avatar appears framed and the camera never moves on its own.
+/// Bounds are against the ordinary avatar's box, at the panel's aspect.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn fit_to_bounds(
     time: Res<Time>,
     mut orbit: ResMut<OrbitCamera>,
-    avatars: Query<(Entity, Ref<AvatarSelection>, Option<Ref<EmoteCommand>>), With<PreviewAvatar>>,
+    mut avatars: Query<
+        (
+            Entity,
+            Ref<AvatarSelection>,
+            Option<Ref<EmoteCommand>>,
+            Option<&mut avatar::animate::EmoteControl>,
+        ),
+        With<PreviewAvatar>,
+    >,
     meshes: Query<(
         &GlobalTransform,
         &bevy::render::primitives::Aabb,
@@ -805,14 +814,18 @@ fn fit_to_bounds(
     joints: Query<&GlobalTransform>,
     children: Query<&Children>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    mut reports: EventReader<AvatarLoadReport>,
-    (mesh_assets, bindposes): (
+    (mut reports, mut emote_events): (
+        EventReader<AvatarLoadReport>,
+        EventReader<EmoteLifecycleEvent>,
+    ),
+    (mesh_assets, bindposes, mut sound): (
         Res<Assets<Mesh>>,
         Res<Assets<bevy::render::mesh::skinning::SkinnedMeshInverseBindposes>>,
+        ResMut<crate::audio::PreviewSound>,
     ),
     mut state: Local<FitState>,
 ) {
-    let Ok((root, selection, _emote)) = avatars.single() else {
+    let Ok((root, selection, emote, mut control)) = avatars.single_mut() else {
         return;
     };
     let now = time.elapsed_secs();
@@ -823,26 +836,76 @@ fn fit_to_bounds(
         };
     }
     for report in reports.read() {
-        if report.owner == root
-            && matches!(
-                report.state,
-                LoadingState::Finished | LoadingState::FinishedWithError
-            )
-        {
-            state.loaded = true;
+        if report.owner == root {
+            match report.state {
+                LoadingState::Finished => state.loaded = Some(now),
+                // the error is the host's answer; the fit still frames what did load
+                LoadingState::FinishedWithError => {
+                    state.loaded = Some(now);
+                    state.failed = true;
+                }
+                _ => {}
+            }
         }
     }
-    // measure only the finished outfit: the body shows before its wearables, and a fit taken
-    // from it alone would stay too close for a big item (10 s is a fallback for a lost report)
-    if state.done || (!state.loaded && now - state.changed_at < 10.0) {
+    if state.done {
         return;
     }
-    let before = state.seen;
-    let seen = &mut state.seen;
+    // the emote the host asked for is part of the outfit's framing: wait for it to start
+    if emote
+        .as_ref()
+        .is_some_and(|e| e.is_changed() && !e.urn.is_empty())
+    {
+        state.emote_wanted = true;
+        state.emote_started = false;
+    }
+    for event in emote_events.read() {
+        if matches!(event.event, EmoteLifecycle::Started { .. }) {
+            state.emote_started = true;
+        }
+    }
+    let Some(control) = control.as_deref_mut() else {
+        return;
+    };
+
+    if state.samples.is_none() {
+        // measure the finished outfit once it plays what the host asked for; the page shows the
+        // canvas only on `load`, so the wait is behind the loading spinner (a lost report or an
+        // emote that never starts gives up after 10 s)
+        let settled = state.loaded.is_some_and(|at| now - at > 0.3)
+            && (!state.emote_wanted || state.emote_started)
+            && control.duration > 0.0;
+        if !settled && now - state.changed_at < 10.0 {
+            return;
+        }
+        // hold the clip and its sound while the pose is stepped through it
+        state.restore = Some((control.paused, sound.held));
+        sound.held = true;
+        state.samples = Some(0);
+        state.wait = 2;
+        control.paused = true;
+        control.seek = Some(0.0);
+        return;
+    }
+
+    // a seek reaches the skeleton a frame later, and the world transforms the frame after
+    if state.wait > 0 {
+        state.wait -= 1;
+        return;
+    }
+    // the avatar turns about the vertical axis through its root, as the Unity renderer's avatar
+    // does: how far anything reaches from that axis matters whichever way it faces the camera
+    let axis = joints
+        .get(root)
+        .map(|t| t.translation())
+        .unwrap_or(Vec3::ZERO);
+    let fields = &mut *state;
+    let (seen, reach) = (&mut fields.seen, &mut fields.reach);
     let mut grow = |point: Vec3| {
         let (min, max) = seen.get_or_insert((point, point));
         *min = min.min(point);
         *max = max.max(point);
+        *reach = reach.max((point - axis).xz().length());
     };
     for entity in children.iter_descendants(root) {
         let Ok((transform, aabb, visible, skin, mesh)) = meshes.get(entity) else {
@@ -853,7 +916,7 @@ fn fit_to_bounds(
         }
         if let Some(skin) = skin {
             // a skinned mesh's box is its rest pose in the space it was bound in: skin the
-            // vertices on the CPU instead, as the GPU will draw them in this frame's pose
+            // vertices on the CPU instead, as the GPU will draw them in this pose
             let skinned = mesh_assets
                 .get(&mesh.0)
                 .zip(bindposes.get(&skin.inverse_bindposes))
@@ -896,64 +959,58 @@ fn fit_to_bounds(
             grow(transform.transform_point(centre + half * sign));
         }
     }
-    let Some((min, max)) = *seen else {
+
+    // the whole clip, a pose at a time, short of its end (a one-shot at its end has finished)
+    const SAMPLES: u32 = 20;
+    let sample = state.samples.unwrap_or(0) + 1;
+    if sample < SAMPLES && control.duration > 0.0 {
+        state.samples = Some(sample);
+        state.wait = 2;
+        control.seek = Some(control.duration * sample as f32 / SAMPLES as f32);
+        return;
+    }
+
+    // measured: the clip starts over as it would have, and the camera is set once
+    state.done = true;
+    let (paused, held) = state.restore.take().unwrap_or((false, false));
+    control.paused = paused;
+    control.seek = Some(0.0);
+    sound.held = held;
+    let Some((min, max)) = state.seen else {
+        if !state.failed {
+            emit(&Event::Load);
+        }
         return;
     };
-    let started = *state.started.get_or_insert(now);
-    if before != Some((min, max)) {
-        state.last_growth = now;
-    }
-    if (now - state.last_growth > 0.5 && now - started > 1.0) || now - started > 3.0 {
-        state.done = true;
-    }
-    let (min, max) = (min.min(AVATAR_BOX_MIN), max.max(AVATAR_BOX_MAX));
+    let reach = state.reach;
     let aspect = windows
         .single()
         .map(|w| w.width() / w.height().max(1.0))
         .unwrap_or(1.0);
     let tan_v = (orbit.fov_degrees.to_radians() / 2.0).tan();
     let tan_h = tan_v * aspect;
-    // the avatar turns about the vertical axis through its root, as the Unity renderer's avatar
-    // does, so the reach across is measured from that axis, not from the box's own centre
-    let axis = joints
-        .get(root)
-        .map(|t| t.translation())
-        .unwrap_or(Vec3::ZERO);
-    // the distance a box needs, height or width bound, seen from the side it turns to
-    let needs = |min: Vec3, max: Vec3| {
-        let half_y = (max.y - min.y) / 2.0;
-        let (near, far) = (min - axis, max - axis);
-        let across = near
-            .x
-            .abs()
-            .max(far.x.abs())
-            .max(near.z.abs())
-            .max(far.z.abs());
-        (half_y / tan_v).max(across / tan_h) + across
+    // the distance that keeps a body in view looking at a height: up and down from it, nearer by
+    // what reaches towards the camera; across, anything at its reach turned side-on
+    let needs = |bottom: f32, top: f32, reach: f32, at: f32| {
+        let tall = (top - at).max(at - bottom) / tan_v + reach;
+        let wide = reach * (1.0 + 1.0 / (tan_h * tan_h)).sqrt();
+        tall.max(wide)
     };
-    let ordinary = {
-        let half = (AVATAR_BOX_MAX - AVATAR_BOX_MIN) / 2.0;
-        half.y / tan_v + half.x.max(half.z)
-    };
-    // a little room around a big avatar, as the Unity renderer's fit keeps
-    const MARGIN: f32 = 1.06;
-    let fit = (needs(min, max) * MARGIN / ordinary).max(1.0);
-    let ordinary_centre = (AVATAR_BOX_MIN + AVATAR_BOX_MAX) / 2.0;
-    // only the height moves: the turn axis stays on the avatar however its wearables reach out
-    let fit_target = if fit > 1.0 {
-        Vec3::Y * ((min.y + max.y) / 2.0 - ordinary_centre.y)
+    let ordinary = needs(0.0, ORDINARY_TOP, ORDINARY_REACH, orbit.target.y);
+    if needs(min.y, max.y, reach, orbit.target.y) > ordinary {
+        // too big for the default view: look at its middle, from as far as that needs, with a
+        // little room around it as the Unity renderer's fit keeps
+        const MARGIN: f32 = 1.1;
+        let middle = (min.y + max.y) / 2.0;
+        orbit.fit = (needs(min.y, max.y, reach, middle) * MARGIN / ordinary).max(1.0);
+        orbit.fit_target = Vec3::Y * (middle - orbit.target.y);
     } else {
-        Vec3::ZERO
-    };
-    // ease towards it while measuring (the canvas shows only once the avatar has loaded)
-    let rate = 6.0;
-    let t = 1.0 - (-rate * time.delta_secs()).exp();
-    let (current_fit, current_target) = (orbit.fit, orbit.fit_target);
-    let next_fit = current_fit + (fit - current_fit) * t;
-    let next_target = current_target.lerp(fit_target, t);
-    if (next_fit - current_fit).abs() > 1e-4 || (next_target - current_target).length() > 1e-4 {
-        orbit.fit = next_fit;
-        orbit.fit_target = next_target;
+        orbit.fit = 1.0;
+        orbit.fit_target = Vec3::ZERO;
+    }
+    warn!(orbit.fit);
+    if !state.failed {
+        emit(&Event::Load);
     }
 }
 
@@ -987,14 +1044,24 @@ fn skin_points(mesh: &Mesh, matrices: &[Mat4], grow: &mut impl FnMut(Vec3)) -> b
     true
 }
 
-/// What `fit_to_bounds` has measured since the last outfit change.
+/// What `fit_to_bounds` has measured since the last outfit change: it waits for the outfit (and
+/// the emote the host asked for), steps the paused clip through `SAMPLES` poses, then frames once.
 #[derive(Default)]
 struct FitState {
     changed_at: f32,
-    loaded: bool,
+    loaded: Option<f32>,
+    failed: bool,
+    emote_wanted: bool,
+    emote_started: bool,
+    /// the pose being measured; `None` before measuring starts
+    samples: Option<u32>,
+    /// frames left before the pose a seek asked for is in the world transforms
+    wait: u32,
+    /// the host's pause and sound hold, given back when measuring ends
+    restore: Option<(bool, bool)>,
     seen: Option<(Vec3, Vec3)>,
-    started: Option<f32>,
-    last_growth: f32,
+    /// the farthest anything reaches from the turn axis
+    reach: f32,
     done: bool,
 }
 
@@ -1036,12 +1103,11 @@ fn report_load(
         if !avatars.contains(report.owner) {
             continue;
         }
-        match report.state {
-            LoadingState::Finished => emit(&Event::Load),
-            LoadingState::FinishedWithError => emit(&Event::Error {
+        // `load` waits for the framing: `fit_to_bounds` sends it
+        if report.state == LoadingState::FinishedWithError {
+            emit(&Event::Error {
                 message: format!("could not load {}", report.body_shape),
-            }),
-            _ => {}
+            });
         }
     }
 }

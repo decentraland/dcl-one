@@ -122,10 +122,11 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
   pans within 2 m; the wheel zooms between 1/1.5 and 2 times the framed distance; input in
   marketplace and builder modes only, four times the drag speed in builder;
 - its floor: the shadow catcher and, under it, the glow around the feet;
-- its framing of avatars too big for the default view: after the avatar or outfit changes, the
-  camera waits for the outfit to load, measures its skinned surface for up to 3 s, fits it at the
-  panel's aspect, then leaves the camera to the user; the fit raises or lowers the view but the
-  avatar always turns about its own vertical axis.
+- its framing of avatars too big for the default view, set once before the avatar is seen: after the
+  avatar or outfit changes, the page keeps its loading state while the preview waits for the outfit
+  and the emote, steps the paused emote through its clip, measures the skinned surface at each pose
+  and sets the camera; `load` follows and the camera then moves only for the user. The fit raises or
+  lowers the view but the avatar always turns about its own vertical axis.
 
 A named default emote plays once in the marketplace, then the avatar idles; it loops in the
 builder.

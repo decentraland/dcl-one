@@ -85,6 +85,13 @@ for (const t of (process.env.TIMELINE || '').split(',').filter(Boolean).map(Numb
 }
 const evaluate = async (expression) => (await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })).result?.value;
 
+// PROBE_EARLY=1 starts PROBE_JS as soon as the page is evaluable instead of at the end, for a
+// probe that waits for an event itself (the page's `load`, say) and records what follows it
+let earlyProbe = null;
+if (process.env.PROBE_EARLY && process.env.PROBE_JS) {
+  await sleep(300);
+  earlyProbe = evaluate(process.env.PROBE_JS);
+}
 const deadline = Date.now() + seconds * 1000;
 let loaded = false;
 while (Date.now() < deadline) {
@@ -118,7 +125,7 @@ if (canvas) writeFileSync(`${out}-canvas.png`, Buffer.from(canvas, 'base64'));
 // `PROBE_JS` is evaluated in the page at the end and printed, for a host page's own state; the page
 // itself is also captured (`<outPrefix>-page.png`), which shows a host's overlays even where WebGPU
 // canvases come out black in headless mode
-if (process.env.PROBE_JS) console.log('PROBE', await evaluate(process.env.PROBE_JS));
+if (process.env.PROBE_JS) console.log('PROBE', await (earlyProbe ?? evaluate(process.env.PROBE_JS)));
 const page = await send('Page.captureScreenshot', { format: 'png' });
 if (page?.data) writeFileSync(`${out}-page.png`, Buffer.from(page.data, 'base64'));
 console.log(logs.filter((l) => /panic|exception|ERROR|WARN|->|<-|emote "/.test(l)).join('\n'));
