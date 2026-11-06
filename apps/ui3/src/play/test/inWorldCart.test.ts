@@ -86,6 +86,80 @@ describe('the in-world cart', () => {
     expect(reloaded.getSnapshot().map((l) => `${l.itemId}x${l.quantity}`)).toEqual(['1x1'])
   })
 
+  /** A storage that stops keeping anything once `refuse` is set. */
+  function flaky() {
+    const s = storage()
+    const state = { refuse: false }
+    return {
+      state,
+      s,
+      storage: (): CartStorage => ({
+        getItem: s.getItem,
+        setItem: (k, v) => {
+          if (state.refuse) throw new Error('full')
+          s.setItem(k, v)
+        },
+        removeItem: (k) => {
+          if (state.refuse) throw new Error('full')
+          s.removeItem(k)
+        }
+      })
+    }
+  }
+
+  it('keeps a purchase and its taking-out together: a write that fails keeps neither, and the replay takes it out once', () => {
+    const f = flaky()
+    const cart = createInWorldCart({ storage: f.storage })
+    cart.scopeTo(A)
+    cart.add(item('1'))
+    cart.add(item('1'))
+    f.state.refuse = true
+    cart.applyPurchase(A, OP, bought('1'))
+    expect(cart.getSnapshot()[0].quantity).toBe(1)
+    // Within the page, what it couldn't keep is what it knows: heard again, nothing more leaves.
+    cart.applyPurchase(A, OP, bought('1'))
+    expect(cart.getSnapshot()[0].quantity).toBe(1)
+    // After a reload, neither was kept: the replay (the shell's status) takes it out, once.
+    f.state.refuse = false
+    const reloaded = createInWorldCart({ storage: f.storage })
+    reloaded.scopeTo(A)
+    expect(reloaded.getSnapshot()[0].quantity).toBe(2)
+    reloaded.applyPurchase(A, OP, bought('1'))
+    expect(reloaded.getSnapshot()[0].quantity).toBe(1)
+    const again = createInWorldCart({ storage: f.storage })
+    again.scopeTo(A)
+    again.applyPurchase(A, OP, bought('1'))
+    expect(again.getSnapshot()[0].quantity).toBe(1)
+  })
+
+  it('keeps an account’s record in memory when its write fails, so a replay for it takes nothing more', () => {
+    const f = flaky()
+    const cart = createInWorldCart({ storage: f.storage })
+    cart.scopeTo(A)
+    cart.add(item('1'))
+    cart.add(item('1'))
+    cart.scopeTo(B)
+    f.state.refuse = true
+    cart.applyPurchase(A, OP, bought('1'))
+    cart.applyPurchase(A, OP, bought('1'))
+    cart.scopeTo(A)
+    expect(cart.getSnapshot()[0].quantity).toBe(1)
+  })
+
+  it('remembers what was taken out even once the cart is empty', () => {
+    const s = storage()
+    const cart = createInWorldCart({ storage: () => s })
+    cart.scopeTo(A)
+    cart.add(item('1'))
+    cart.applyPurchase(A, OP, bought('1'))
+    expect(cart.getSnapshot()).toEqual([])
+    const reloaded = createInWorldCart({ storage: () => s })
+    reloaded.scopeTo(A)
+    reloaded.add(item('1'))
+    reloaded.applyPurchase(A, OP, bought('1'))
+    expect(reloaded.getSnapshot().map((l) => `${l.itemId}x${l.quantity}`)).toEqual(['1x1'])
+  })
+
   it('takes a purchase out of its buyer’s cart, whichever account is active', () => {
     const s = storage()
     const cart = createInWorldCart({ storage: () => s })
@@ -126,10 +200,20 @@ describe('the in-world cart', () => {
 
   it('skips what storage holds in another shape', () => {
     const s = storage()
-    s.setItem(`dcl-inworld-shop:cart:v1:${A}`, JSON.stringify([{ contract: 'nope', itemId: '1', quantity: 1 }, { ...item('2'), quantity: 2, addedAt: 1 }, { ...item('2'), quantity: 1, addedAt: 2 }]))
+    const key = `dcl-inworld-shop:cart:v2:${A}`
+    s.setItem(key, JSON.stringify({ v: 2, lines: [{ contract: 'nope', itemId: '1', quantity: 1 }, { ...item('2'), quantity: 2, addedAt: 1 }, { ...item('2'), quantity: 1, addedAt: 2 }], applied: ['nope', OP] }))
     const cart = createInWorldCart({ storage: () => s })
     cart.scopeTo(A)
     expect(cart.getSnapshot().map((l) => `${l.itemId}x${l.quantity}`)).toEqual(['2x2'])
+    // The operation it kept is still taken out; the malformed id was dropped.
+    cart.applyPurchase(A, OP, bought('2'))
+    expect(cart.getSnapshot()[0].quantity).toBe(2)
+    for (const other of [JSON.stringify([{ ...item('2'), quantity: 1, addedAt: 1 }]), JSON.stringify({ v: 1, lines: [], applied: [] }), '{not json']) {
+      s.setItem(key, other)
+      const fresh = createInWorldCart({ storage: () => s })
+      fresh.scopeTo(A)
+      expect(fresh.getSnapshot()).toEqual([])
+    }
   })
 
   it('stays in memory when storage refuses it', () => {

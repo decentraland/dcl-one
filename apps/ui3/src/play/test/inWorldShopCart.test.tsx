@@ -205,8 +205,8 @@ describe('the in-world Shop’s cart', () => {
 
   it('takes out what the cart bought while the app wasn’t listening, from the shell’s status', async () => {
     localStorage.setItem(
-      `dcl-inworld-shop:cart:v1:${BUYER}`,
-      JSON.stringify([{ contract: CONTRACT, itemId: '1', quantity: 2, name: 'Golden Armor', rarity: 'epic', category: 'upper_body', creator: CREATOR, credits: 500, available: 35, addedAt: 1 }])
+      `dcl-inworld-shop:cart:v2:${BUYER}`,
+      JSON.stringify({ v: 2, lines: [{ contract: CONTRACT, itemId: '1', quantity: 2, name: 'Golden Armor', rarity: 'epic', category: 'upper_body', creator: CREATOR, credits: 500, available: 35, addedAt: 1 }], applied: [] })
     )
     serveCatalogue()
     answerShell()

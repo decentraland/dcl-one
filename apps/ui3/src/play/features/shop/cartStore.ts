@@ -9,7 +9,10 @@
 //
 // What a purchase from the cart bought leaves the cart of the account that bought it (whichever is active
 // now): as many of each item as it bought, once per operation, however often its success is heard (an
-// event, the shell's status after a reload). The operations already taken out are kept beside the cart.
+// event, the shell's status after a reload). The cart and the operations already taken out of it are one
+// record per account, written whole in one go: a write that sticks keeps both, one that doesn't keeps
+// neither, so a replay after a reload takes the purchase out exactly once either way. Within the page, the
+// record a write couldn't keep is the one in memory.
 
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
 import { cardPrice } from '../../../shop/discovery/cardPrice'
@@ -41,9 +44,9 @@ export type InWorldCartInput = Omit<InWorldCartLine, 'quantity' | 'addedAt'>
 
 export type CartStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>
 
-const KEY_PREFIX = 'dcl-inworld-shop:cart:v1:'
-/** The operations whose purchase already left the account's cart. */
-const APPLIED_PREFIX = 'dcl-inworld-shop:cart-applied:v1:'
+const KEY_PREFIX = 'dcl-inworld-shop:cart:v2:'
+const RECORD_VERSION = 2
+/** Operations remembered as taken out of the cart (newest kept). */
 const MAX_APPLIED = 100
 const OPERATION_ID = /^[0-9a-f-]{8,64}$/
 const GUEST = 'guest'
@@ -78,6 +81,25 @@ function isLine(v: unknown): v is InWorldCartLine {
   )
 }
 
+/** An account's cart: its lines, and the operations whose purchase already left it. */
+interface CartRecord {
+  lines: readonly InWorldCartLine[]
+  applied: readonly string[]
+}
+const EMPTY: CartRecord = { lines: [], applied: [] }
+
+/** A stored record in the shape this page writes, its lines each item once and within the cap; or null. */
+function parseRecord(raw: string): CartRecord | null {
+  const v = JSON.parse(raw) as unknown
+  if (v == null || typeof v !== 'object' || Array.isArray(v)) return null
+  const r = v as Record<string, unknown>
+  if (r.v !== RECORD_VERSION || !Array.isArray(r.lines) || !Array.isArray(r.applied)) return null
+  const lines: InWorldCartLine[] = []
+  for (const line of r.lines.filter(isLine)) if (!lines.some((k) => sameItem(k, line)) && cartUnits(lines) + line.quantity <= MAX_PURCHASE_UNITS) lines.push(line)
+  const applied = r.applied.filter((id): id is string => typeof id === 'string' && OPERATION_ID.test(id)).slice(-MAX_APPLIED)
+  return { lines, applied }
+}
+
 /** The most of one line a cart may hold: what is left of it, within the purchase's cap. */
 function capFor(line: Pick<InWorldCartLine, 'available'>, others: number): number {
   return Math.max(0, Math.min(line.available ?? MAX_PURCHASE_UNITS, MAX_PURCHASE_UNITS - others))
@@ -106,73 +128,53 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
   const now = opts.now ?? Date.now
   const listeners = new Set<() => void>()
   let account: string | null = null
-  let lines: readonly InWorldCartLine[] = []
-  /** Every account's cart this page read or wrote, kept in memory when storage fails. */
-  const memory = new Map<string, readonly InWorldCartLine[]>()
-  const appliedMemory = new Map<string, readonly string[]>()
+  /** The active account's record; its lines are the snapshot. */
+  let current: CartRecord = EMPTY
+  /** Every account's record this page read or wrote. */
+  const memory = new Map<string, CartRecord>()
+  /** Records whose last write didn't stick: memory, not storage, holds them now. */
+  const unsaved = new Set<string>()
 
-  const readApplied = (who: string): readonly string[] => {
-    try {
-      const raw = storage()?.getItem(APPLIED_PREFIX + who)
-      if (raw != null) {
-        const parsed = JSON.parse(raw) as unknown
-        const ids = Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === 'string' && OPERATION_ID.test(id)) : []
-        appliedMemory.set(who, ids)
-        return ids
-      }
-    } catch {
-      // Unreadable: what this page knows of it.
-    }
-    return appliedMemory.get(who) ?? []
-  }
-  const writeApplied = (who: string, ids: readonly string[]): void => {
-    appliedMemory.set(who, ids)
-    try {
-      storage()?.setItem(APPLIED_PREFIX + who, JSON.stringify(ids))
-    } catch {
-      // Storage refused: remembered for the page's life.
-    }
-  }
-
-  const read = (who: string | null): readonly InWorldCartLine[] => {
+  const read = (who: string | null): CartRecord => {
     const key = keyOf(who)
+    if (unsaved.has(key)) return memory.get(key) ?? EMPTY
     try {
       const raw = storage()?.getItem(key)
       if (raw != null) {
-        const parsed = JSON.parse(raw) as unknown
-        const list = Array.isArray(parsed) ? parsed.filter(isLine) : []
-        // Each item once, within the cap, as this page writes it.
-        const kept: InWorldCartLine[] = []
-        for (const line of list) if (!kept.some((k) => sameItem(k, line)) && cartUnits(kept) + line.quantity <= MAX_PURCHASE_UNITS) kept.push(line)
-        memory.set(key, kept)
-        return kept
+        const record = parseRecord(raw) ?? EMPTY
+        memory.set(key, record)
+        return record
       }
     } catch {
       // Unreadable: what this page knows of it.
     }
-    return memory.get(key) ?? []
+    return memory.get(key) ?? EMPTY
   }
-  const write = (who: string | null, next: readonly InWorldCartLine[]): void => {
+  /** The whole record, in one write. */
+  const write = (who: string | null, next: CartRecord): void => {
     const key = keyOf(who)
     memory.set(key, next)
     try {
       const s = storage()
-      if (next.length === 0) s?.removeItem(key)
-      else s?.setItem(key, JSON.stringify(next))
+      if (!s) throw new Error('no storage')
+      if (next.lines.length === 0 && next.applied.length === 0) s.removeItem(key)
+      else s.setItem(key, JSON.stringify({ v: RECORD_VERSION, lines: next.lines, applied: next.applied }))
+      unsaved.delete(key)
     } catch {
-      // Storage refused: the cart stays in memory.
+      // Storage refused: the record stays in memory for the page's life.
+      unsaved.add(key)
     }
   }
-  const commit = (next: readonly InWorldCartLine[]): void => {
-    lines = next
-    write(account, next)
+  const commit = (lines: readonly InWorldCartLine[]): void => {
+    current = { lines, applied: current.applied }
+    write(account, current)
     listeners.forEach((l) => l())
   }
 
-  lines = read(null)
+  current = read(null)
 
   const cart: InWorldCart = {
-    getSnapshot: () => lines,
+    getSnapshot: () => current.lines,
     subscribe(listener) {
       listeners.add(listener)
       return () => listeners.delete(listener)
@@ -184,9 +186,9 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
       let mine = read(who)
       // A signed-out cart is the account's once it signs in: its lines join, within the cap.
       if (who != null) {
-        const guest = read(null)
+        const guest = read(null).lines
         if (guest.length > 0) {
-          const merged = [...mine]
+          const merged = [...mine.lines]
           for (const g of guest) {
             const at = merged.findIndex((l) => sameItem(l, g))
             const others = cartUnits(merged) - (at >= 0 ? merged[at].quantity : 0)
@@ -195,15 +197,16 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
             if (at >= 0) merged[at] = { ...merged[at], quantity }
             else merged.push({ ...g, quantity })
           }
-          write(null, [])
-          write(who, merged)
-          mine = merged
+          mine = { lines: merged, applied: mine.applied }
+          write(who, mine)
+          write(null, EMPTY)
         }
       }
-      lines = mine
+      current = mine
       listeners.forEach((l) => l())
     },
     canAdd(item) {
+      const { lines } = current
       const line = lines.find((l) => sameItem(l, item))
       const others = cartUnits(lines) - (line?.quantity ?? 0)
       return (line?.quantity ?? 0) + 1 <= capFor(line ?? item, others)
@@ -211,6 +214,7 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
     add(input) {
       const item = { ...input, contract: input.contract.toLowerCase() }
       if (!cart.canAdd(item)) return false
+      const { lines } = current
       const at = lines.findIndex((l) => sameItem(l, item))
       if (at >= 0) {
         const next = [...lines]
@@ -221,6 +225,7 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
       return true
     },
     setQuantity(item, quantity) {
+      const { lines } = current
       const at = lines.findIndex((l) => sameItem(l, item))
       if (at < 0) return
       const line = lines[at]
@@ -231,22 +236,26 @@ export function createInWorldCart(opts: { storage?: () => CartStorage | null; no
       commit(next)
     },
     remove(item) {
+      const { lines } = current
       if (lines.some((l) => sameItem(l, item))) commit(lines.filter((l) => !sameItem(l, item)))
     },
     applyPurchase(buyer, operation, items) {
       const who = buyer.toLowerCase()
-      const done = readApplied(who)
-      if (done.includes(operation)) return
-      writeApplied(who, [...done, operation].slice(-MAX_APPLIED))
-      const mine = who === account ? lines : read(who)
-      const next = mine.flatMap((l) => {
-        const bought = items.reduce((n, i) => (sameItem(l, i) ? n + i.quantity : n), 0)
-        if (bought === 0) return [l]
-        return l.quantity > bought ? [{ ...l, quantity: l.quantity - bought }] : []
-      })
-      if (next.length === mine.length && next.every((l, i) => l === mine[i])) return
-      if (who === account) commit(next)
-      else write(who, next)
+      const mine = who === account ? current : read(who)
+      if (mine.applied.includes(operation)) return
+      // What it bought and that it was taken out, together: one record, one write.
+      const next: CartRecord = {
+        lines: mine.lines.flatMap((l) => {
+          const bought = items.reduce((n, i) => (sameItem(l, i) ? n + i.quantity : n), 0)
+          if (bought === 0) return [l]
+          return l.quantity > bought ? [{ ...l, quantity: l.quantity - bought }] : []
+        }),
+        applied: [...mine.applied, operation].slice(-MAX_APPLIED)
+      }
+      write(who, next)
+      if (who !== account) return
+      current = next
+      listeners.forEach((l) => l())
     }
   }
   return cart
