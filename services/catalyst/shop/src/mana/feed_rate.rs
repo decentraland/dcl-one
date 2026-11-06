@@ -32,9 +32,10 @@
 //!   outage keeps the last good price shown until its round reaches that
 //!   bound: browsing does not go down with the endpoint. Only a node that
 //!   has not read the feed yet (the seconds after boot) or whose last good
-//!   round is past that bound answers unavailable. A credit charge bounds it
-//!   tighter, by `MANA_PRICE_MAX_STALENESS_SECS` since the read
-//!   (`credits::pricing::LocalMarket`).
+//!   round is past that bound answers unavailable.
+//! - [`current_for_charge`], for sizing a credit charge
+//!   (`credits::pricing::LocalMarket`): the same, with the round at most
+//!   `MANA_PRICE_MAX_STALENESS_SECS` old, the spot's bound.
 //! - [`current_for_purchase`], for the MANA quote of a line priced in USD:
 //!   also refused once the read is [`SERVE_FOR`] old or the round is within
 //!   [`SETTLE_MARGIN_SECS`] of the marketplace's tolerance, measured on the
@@ -260,6 +261,23 @@ impl RateSlot {
             .checked(now, self.max_age_secs, true)
     }
 
+    /// The rate to charge credits at `now`: the same snapshot, its round
+    /// (not the read: reading an old round again does not make it new) at
+    /// most `max_round_age_secs` old, measured from the read's monotonic
+    /// anchor, so a local clock set back never lengthens it. A store mint
+    /// or a fixed-MANA line needs no tolerance: it settles at no feed.
+    pub fn for_charge_at(
+        &self,
+        now: Instant,
+        max_round_age_secs: u64,
+    ) -> Result<ShopRate, Unavailable> {
+        self.good().ok_or(Unavailable)?.checked(
+            now,
+            self.max_age_secs.min(max_round_age_secs),
+            false,
+        )
+    }
+
     /// Both rates from one snapshot: (to show, to quote a purchase).
     pub fn rates_at(
         &self,
@@ -385,6 +403,11 @@ pub fn current() -> Option<Result<ShopRate, Unavailable>> {
 /// The rate to quote a purchase at now ([`RateSlot::for_purchase_at`]).
 pub fn current_for_purchase() -> Option<Result<ShopRate, Unavailable>> {
     slot().map(|slot| slot.for_purchase_at(Instant::now()))
+}
+
+/// The rate to charge credits at now ([`RateSlot::for_charge_at`]).
+pub fn current_for_charge(max_round_age_secs: u64) -> Option<Result<ShopRate, Unavailable>> {
+    slot().map(|slot| slot.for_charge_at(Instant::now(), max_round_age_secs))
 }
 
 /// Both rates now from one snapshot ([`RateSlot::rates_at`]).
@@ -713,6 +736,39 @@ pub(crate) mod tests {
         );
     }
 
+    #[test]
+    fn a_charge_needs_a_young_round_on_the_monotonic_clock() {
+        let slot = RateSlot::new(3_600);
+        // A round set 1 800 s ago, read now: shown, not charged.
+        slot.record(
+            Ok(read_at("0.26960836", T0 - 1_800, 27, T0)),
+            at(T0),
+            wall(T0),
+        );
+        assert!(slot.at(at(T0)).is_ok());
+        assert_eq!(slot.for_charge_at(at(T0), 300), Err(Unavailable));
+        slot.record(
+            Ok(read_at("0.26960836", T0 - 1_800, 27, T0 + 2)),
+            at(T0 + 2),
+            wall(T0 + 2),
+        );
+        assert_eq!(
+            slot.for_charge_at(at(T0 + 2), 300),
+            Err(Unavailable),
+            "read again: still old"
+        );
+        // A round set 10 s ago: charged until its own age, not the read's, passes 300 s.
+        slot.record(Ok(read_at("0.27", T0 - 10, 27, T0)), at(T0), wall(T0));
+        assert!(slot.for_charge_at(at(T0 + 290), 300).is_ok());
+        assert_eq!(slot.for_charge_at(at(T0 + 291), 300), Err(Unavailable));
+        // The age runs on the monotonic clock from the read's start: a wall clock set
+        // back after the read (its start is all the slot keeps) cannot reopen it.
+        assert_eq!(
+            slot.for_charge_at(at(T0 + 291) + Duration::from_secs(0), 300),
+            Err(Unavailable)
+        );
+    }
+
     struct Scripted {
         calls: std::sync::atomic::AtomicUsize,
     }
@@ -839,22 +895,32 @@ pub(crate) mod tests {
         assert!(crate::market::items::mana_usd_rate(&market).await.is_ok());
         assert!(local.mana_usd().await.is_ok());
 
-        // A read older than MANA_PRICE_MAX_STALENESS_SECS (60 here) is shown, never charged.
+        // A round older than MANA_PRICE_MAX_STALENESS_SECS (60 here), read just now, is
+        // shown but never charged at: reading an old round again does not make it new.
         let old = Arc::new(RateSlot::new(3_600));
         old.record(
-            Ok(reading("0.26960836", now - 61)),
-            Instant::now() - Duration::from_secs(61),
-            Utc::now() - chrono::Duration::seconds(61),
+            Ok(reading("0.26960836", now - 1_800)),
+            Instant::now(),
+            Utc::now(),
         );
-        with_test_slot(Some(old));
+        with_test_slot(Some(old.clone()));
         assert!(
             crate::market::items::mana_usd_rate(&market).await.is_ok(),
             "the catalog shows it"
         );
         let refused = local.mana_usd().await.unwrap_err().to_string();
         assert!(
-            refused.contains("last read") && !refused.contains("http"),
+            refused.contains("no current answer") && !refused.contains("http"),
             "{refused}"
+        );
+        old.record(
+            Ok(reading("0.26960836", now - 1_800)),
+            Instant::now(),
+            Utc::now(),
+        );
+        assert!(
+            local.mana_usd().await.is_err(),
+            "a second read of the same round"
         );
 
         wired(None);

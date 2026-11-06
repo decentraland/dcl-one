@@ -310,25 +310,17 @@ impl Market for LocalMarket {
     }
 
     async fn mana_usd(&self) -> Result<String, ApiError> {
-        // The marketplace's feed where it is wired (`mana::feed_rate::current`): the
-        // rate the contract converts with. This rate sizes credit charges
-        // (authorize, cart, top-up, reprice), so it keeps the spot's bound: a read
-        // older than `MANA_PRICE_MAX_STALENESS_SECS` is not charged at, though the
-        // catalog may still show it. Why a read failed is logged by the refresher;
-        // the client gets the generic reason only.
-        if let Some(feed) = crate::mana::feed_rate::current() {
-            let shop =
-                feed.map_err(|unavailable| ApiError::service_unavailable(unavailable.to_string()))?;
-            let now = chrono::Utc::now().timestamp();
-            let read_at = shop.observed_at.timestamp();
-            if is_stale(read_at, now, self.max_staleness_secs) {
-                return Err(ApiError::service_unavailable(format!(
-                    "the marketplace's MANA/USD feed was last read {}s ago, past {}s",
-                    now - read_at,
-                    self.max_staleness_secs
-                )));
-            }
-            return Ok(shop.usd_per_mana());
+        // The marketplace's feed where it is wired: the rate the contract converts
+        // with. It sizes credit charges (authorize, cart, top-up, reprice), so its
+        // round keeps the spot's bound, `MANA_PRICE_MAX_STALENESS_SECS`, on the
+        // slot's monotonic clock (`mana::feed_rate::current_for_charge`); the
+        // catalog may still show an older one. Why a read failed is logged by the
+        // refresher; the client gets the generic reason only.
+        let max_round_age = u64::try_from(self.max_staleness_secs).unwrap_or(0);
+        if let Some(feed) = crate::mana::feed_rate::current_for_charge(max_round_age) {
+            return feed
+                .map(|shop| shop.usd_per_mana())
+                .map_err(|unavailable| ApiError::service_unavailable(unavailable.to_string()));
         }
         let Some(price) = self.price.as_ref() else {
             return Err(ApiError::service_unavailable(
