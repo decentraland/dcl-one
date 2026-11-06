@@ -9,8 +9,8 @@
 # branch: until this file is on main, no run starts.
 #
 # Repository variables: BENCHMARK_ENABLED_RUNNERS (the laptops that are online, by runner label;
-# empty means all), BENCHMARK_RUNS (measured runs per build, 3 by default) and
-# BENCHMARK_QUEUE_TIMEOUT_MINUTES (60 by default).
+# empty means all; `none` means none, and PR engine builds then skip wasm-opt), BENCHMARK_RUNS
+# (measured runs per build, 3 by default) and BENCHMARK_QUEUE_TIMEOUT_MINUTES (60 by default).
 name: Bevy Explorer / Benchmark
 'on':
   workflow_run:
