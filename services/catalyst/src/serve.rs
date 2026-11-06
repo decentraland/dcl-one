@@ -2339,6 +2339,12 @@ fn social_states(
                 notification_template_id: non_empty(
                     &config.social.sendgrid_notification_template_id,
                 ),
+                validate_email_template_id: non_empty(
+                    &config.social.sendgrid_validate_email_template_id,
+                ),
+                validate_credits_email_template_id: non_empty(
+                    &config.social.sendgrid_validate_credits_email_template_id,
+                ),
                 account_base_url: config.social.account_base_url.clone(),
                 turnstile_secret_key: non_empty(&config.social.turnstile_secret_key),
                 domain_blacklist: notifications::EmailConfig::parse_domain_blacklist(

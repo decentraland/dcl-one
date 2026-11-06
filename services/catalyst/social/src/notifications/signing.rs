@@ -50,13 +50,15 @@ pub fn has_valid_signature(key: &str, url: &str) -> bool {
     } else {
         parsed.query_pairs_mut().clear().extend_pairs(rest);
     }
-    let expected = hmac_hex(key, parsed.as_str());
-    expected.len() == received.len()
-        && expected
-            .bytes()
-            .zip(received.bytes())
-            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
-            == 0
+    constant_time_eq(
+        hmac_hex(key, parsed.as_str()).as_bytes(),
+        received.as_bytes(),
+    )
+}
+
+/// Equality whose time depends on the lengths only.
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 #[cfg(test)]

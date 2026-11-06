@@ -75,7 +75,7 @@ pub async fn post_email(
         .await
     {
         Ok(_) => Ok(StatusCode::NO_CONTENT),
-        Err(SendFailure::NotConfigured) => {
+        Err(SendFailure::NotConfigured | SendFailure::NoSigningKey) => {
             Err(ApiError::Internal("email delivery is not configured".into()).into())
         }
         Err(SendFailure::Transient(e) | SendFailure::Permanent(e)) => {

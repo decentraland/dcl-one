@@ -543,11 +543,19 @@ pub struct SocialConfig {
     #[arg(long, env = "SENDGRID_NOTIFICATION_TEMPLATE_ID")]
     pub sendgrid_notification_template_id: Option<String>,
 
-    /// SendGrid validates notification and confirmation emails but delivers none.
+    /// The account confirmation email's own template; unset uses SENDGRID_NOTIFICATION_TEMPLATE_ID.
+    #[arg(long, env = "SENDGRID_VALIDATE_EMAIL_TEMPLATE_ID")]
+    pub sendgrid_validate_email_template_id: Option<String>,
+
+    /// The credits confirmation email's own template; unset uses SENDGRID_NOTIFICATION_TEMPLATE_ID.
+    #[arg(long, env = "SENDGRID_VALIDATE_CREDITS_EMAIL_TEMPLATE_ID")]
+    pub sendgrid_validate_credits_email_template_id: Option<String>,
+
+    /// SendGrid validates notification, confirmation and ad-hoc emails but delivers none (never the code-rendered mail).
     #[arg(long, env = "SENDGRID_SANDBOX_MODE", default_value_t = false, action = clap::ArgAction::Set)]
     pub sendgrid_sandbox_mode: bool,
 
-    /// HMAC key of the notification emails' unsubscribe links; unset sends no notification email.
+    /// HMAC key of the notification emails' unsubscribe links; unset holds notification emails pending.
     #[arg(long, env = "SIGNING_KEY", hide_env_values = true)]
     pub signing_key: Option<String>,
 

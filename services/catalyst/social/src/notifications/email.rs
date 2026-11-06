@@ -32,10 +32,14 @@ pub struct EmailConfig {
     /// outbox's `email` channel, the confirmation and the ad-hoc email; unset,
     /// every delivery row ends `skipped`.
     pub notification_template_id: Option<String>,
+    /// `SENDGRID_VALIDATE_EMAIL_TEMPLATE_ID`: the account confirmation's own template, when set.
+    pub validate_email_template_id: Option<String>,
+    /// `SENDGRID_VALIDATE_CREDITS_EMAIL_TEMPLATE_ID`: the credits confirmation's own template, when set.
+    pub validate_credits_email_template_id: Option<String>,
     pub account_base_url: String,
     pub turnstile_secret_key: Option<String>,
     pub domain_blacklist: Vec<String>,
-    /// `SENDGRID_SANDBOX_MODE`: SendGrid validates but delivers nothing.
+    /// `SENDGRID_SANDBOX_MODE`: SendGrid validates the generic-template mail but delivers none.
     pub sandbox_mode: bool,
     /// `ENV`: the `environment` custom arg of a notification email.
     pub environment: String,
@@ -86,6 +90,8 @@ impl EmailSource {
 pub enum SendFailure {
     /// Nothing to send with: no key, sender or template.
     NotConfigured,
+    /// No `SIGNING_KEY` for the unsubscribe links: held until one is set.
+    NoSigningKey,
     /// Transport or 5xx/429: retry later.
     Transient(String),
     /// The provider refused the message (4xx): retrying cannot help.
@@ -124,12 +130,16 @@ impl EmailSender {
         self
     }
 
-    /// Key, sender, the notification template and the signing key are all set.
+    /// Key, sender and the notification template are set; a missing
+    /// signing key holds deliveries pending instead ([`Self::has_signing_key`]).
     pub fn notifications_configured(&self) -> bool {
         self.cfg.sendgrid_api_key.is_some()
             && self.cfg.from_email.is_some()
             && self.cfg.notification_template_id.is_some()
-            && self.unsubscribe.is_some()
+    }
+
+    pub fn has_signing_key(&self) -> bool {
+        self.unsubscribe.is_some()
     }
 
     /// The old domain validator's rules: more than one dot, or a leading or
@@ -164,8 +174,6 @@ impl EmailSender {
     }
 
     async fn sendgrid(&self, api_key: &str, body: &Json) -> Result<Option<String>, SendFailure> {
-        let mut body = body.clone();
-        body["mail_settings"] = json!({ "sandbox_mode": { "enable": self.cfg.sandbox_mode } });
         let resp = self
             .http
             .post(SENDGRID_SEND_URL)
@@ -195,6 +203,18 @@ impl EmailSender {
         }
     }
 
+    /// The source's own `SENDGRID_VALIDATE_*` template when set (and `true`), else the generic one.
+    fn confirmation_template(&self, source: EmailSource) -> (Option<&str>, bool) {
+        let own = match source {
+            EmailSource::Account => self.cfg.validate_email_template_id.as_deref(),
+            EmailSource::Credits => self.cfg.validate_credits_email_template_id.as_deref(),
+        };
+        match own {
+            Some(id) => (Some(id), true),
+            None => (self.cfg.notification_template_id.as_deref(), false),
+        }
+    }
+
     /// The old inbox's validate-email / validate-credits-email body through
     /// the generic template.
     pub async fn send_confirmation(
@@ -206,9 +226,21 @@ impl EmailSender {
         user_name: Option<&str>,
     ) -> Result<Option<String>, ApiError> {
         let link = self.confirm_url(source, address, code);
-        let data = validate_email_data(source, &link, user_name);
+        let mut data = validate_email_data(source, &link, user_name);
+        let (template, own) = self.confirmation_template(source);
+        if own {
+            // The dedicated templates' own fields.
+            data["confirmUrl"] = json!(link);
+            data["code"] = json!(code);
+            data["source"] = json!(source.as_str());
+        }
         match self
-            .send_generic(to, data, json!({ "email_type": "validation_attempt" }))
+            .send_with_template(
+                template,
+                to,
+                data,
+                json!({ "email_type": "validation_attempt" }),
+            )
             .await
         {
             Ok(message_id) => {
@@ -223,7 +255,7 @@ impl EmailSender {
             Err(SendFailure::Permanent(_)) => Err(ApiError::Internal(
                 "failed to send confirmation email".into(),
             )),
-            Err(SendFailure::NotConfigured) => {
+            Err(SendFailure::NotConfigured | SendFailure::NoSigningKey) => {
                 tracing::error!(
                     source = source.as_str(),
                     "SendGrid not configured; cannot send confirmation email"
@@ -241,28 +273,57 @@ impl EmailSender {
     pub async fn send_generic(
         &self,
         to: &str,
-        mut data: Json,
-        mut custom_args: Json,
+        data: Json,
+        custom_args: Json,
+    ) -> Result<Option<String>, SendFailure> {
+        self.send_with_template(
+            self.cfg.notification_template_id.as_deref(),
+            to,
+            data,
+            custom_args,
+        )
+        .await
+    }
+
+    async fn send_with_template(
+        &self,
+        template_id: Option<&str>,
+        to: &str,
+        data: Json,
+        custom_args: Json,
     ) -> Result<Option<String>, SendFailure> {
         let (Some(api_key), Some(from), Some(template_id)) = (
             self.cfg.sendgrid_api_key.as_deref(),
             self.cfg.from_email.as_deref(),
-            self.cfg.notification_template_id.as_deref(),
+            template_id,
         ) else {
             return Err(SendFailure::NotConfigured);
         };
+        let body = self.template_body(from, template_id, to, data, custom_args);
+        self.sendgrid(api_key, &body).await
+    }
+
+    /// The old sendgrid-client's body; `SENDGRID_SANDBOX_MODE` rides here only.
+    fn template_body(
+        &self,
+        from: &str,
+        template_id: &str,
+        to: &str,
+        mut data: Json,
+        mut custom_args: Json,
+    ) -> Json {
         data["address"] = json!(to);
         custom_args["environment"] = json!(self.cfg.environment);
         if custom_args.get("tracking_id").is_none() {
             custom_args["tracking_id"] = json!(Uuid::new_v4().to_string());
         }
-        let body = json!({
+        json!({
             "personalizations": [{ "to": [{ "email": to }], "dynamic_template_data": data }],
             "from": { "email": from, "name": "Decentraland" },
             "template_id": template_id,
             "custom_args": custom_args,
-        });
-        self.sendgrid(api_key, &body).await
+            "mail_settings": { "sandbox_mode": { "enable": self.cfg.sandbox_mode } },
+        })
     }
 
     /// Key and sender are set: a code-rendered message can go out.
@@ -311,7 +372,7 @@ impl EmailSender {
         metadata: &Json,
     ) -> Result<Option<Json>, SendFailure> {
         let Some(unsubscribe) = &self.unsubscribe else {
-            return Err(SendFailure::NotConfigured);
+            return Err(SendFailure::NoSigningKey);
         };
         let Some(rendered) =
             templates::render(kind, address, metadata).map_err(SendFailure::Permanent)?
@@ -346,6 +407,19 @@ impl EmailSender {
                 data.insert(key.into(), v.clone());
             }
         }
+        // The user's name and the link come from metadata: HTML-escaped like
+        // the confirmation's, and a non-http(s) link drops the button.
+        if let Some(Json::String(name)) = data.get("titleHighlight").cloned() {
+            data.insert("titleHighlight".into(), json!(html_escape(&name)));
+        }
+        if let Some(Json::String(link)) = data.get("actionButtonLink").cloned() {
+            if is_http_link(&link) {
+                data.insert("actionButtonLink".into(), json!(html_escape(&link)));
+            } else if !link.is_empty() {
+                data.remove("actionButtonLink");
+                data.remove("actionButtonText");
+            }
+        }
         data.insert(
             "unsubscribeAllUrl".into(),
             json!(sign(format!("/unsubscribe/{address}"))?),
@@ -368,6 +442,9 @@ impl EmailSender {
         kind: &str,
         metadata: &Json,
     ) -> Result<(), SendFailure> {
+        if !self.notifications_configured() {
+            return Err(SendFailure::NotConfigured);
+        }
         let Some(data) = self.notification_data(to, address, kind, metadata)? else {
             return Err(SendFailure::Permanent(format!(
                 "no email template for {kind}"
@@ -381,6 +458,11 @@ impl EmailSender {
         });
         self.send_generic(to, data, custom_args).await.map(|_| ())
     }
+}
+
+/// An absolute `http`/`https` URL.
+fn is_http_link(link: &str) -> bool {
+    url::Url::parse(link).is_ok_and(|u| matches!(u.scheme(), "http" | "https"))
 }
 
 /// Turnstile's verdict and its `error-codes`. No secret configured passes
@@ -649,7 +731,7 @@ mod tests {
         );
         assert_eq!(
             s.notification_data("e@example.com", "0xa", "ban_lifted", &json!({})),
-            Err(SendFailure::NotConfigured),
+            Err(SendFailure::NoSigningKey),
             "no signing key, no unsubscribe link, no email"
         );
         let s = s.with_unsubscribe(
@@ -687,6 +769,103 @@ mod tests {
         assert_eq!(
             s.notification_data("e@example.com", "0xa", "land_transfer_received", &json!({})),
             Ok(None)
+        );
+    }
+
+    fn configured(sandbox_mode: bool) -> EmailSender {
+        EmailSender::new(
+            EmailConfig {
+                sendgrid_api_key: Some("sg-example".into()),
+                from_email: Some("noreply@example.com".into()),
+                notification_template_id: Some("d-generic".into()),
+                account_base_url: "https://account.decentraland.org".into(),
+                sandbox_mode,
+                environment: "prd".into(),
+                ..Default::default()
+            },
+            Outbound::for_tests(),
+        )
+        .with_unsubscribe(Some("k"), "https://notifications.decentraland.org")
+    }
+
+    #[test]
+    fn the_template_body_carries_the_sender_name_custom_args_and_sandbox_flag() {
+        for sandbox in [false, true] {
+            let body = configured(sandbox).template_body(
+                "noreply@example.com",
+                "d-generic",
+                "to@example.com",
+                json!({"subject": "s"}),
+                json!({"tracking_id": "t1", "email_type": "notification", "notification_id": "t1"}),
+            );
+            assert_eq!(
+                body["from"],
+                json!({"email": "noreply@example.com", "name": "Decentraland"})
+            );
+            assert_eq!(body["template_id"], "d-generic");
+            assert_eq!(
+                body["custom_args"],
+                json!({"tracking_id": "t1", "email_type": "notification", "notification_id": "t1", "environment": "prd"})
+            );
+            assert_eq!(
+                body["personalizations"][0],
+                json!({"to": [{"email": "to@example.com"}], "dynamic_template_data": {"subject": "s", "address": "to@example.com"}})
+            );
+            assert_eq!(body["mail_settings"]["sandbox_mode"]["enable"], sandbox);
+        }
+        let body = configured(false).template_body(
+            "f@example.com",
+            "d",
+            "t@example.com",
+            json!({}),
+            json!({}),
+        );
+        assert!(
+            body["custom_args"]["tracking_id"]
+                .as_str()
+                .is_some_and(|t| t.len() == 36),
+            "a fresh tracking id when none is given"
+        );
+    }
+
+    #[test]
+    fn notification_data_escapes_the_name_and_keeps_only_http_links() {
+        let s = configured(false);
+        let data = |metadata: Json| {
+            s.notification_data("e@example.com", "0xa", "item_sold", &metadata)
+                .unwrap()
+                .unwrap()
+        };
+        let d = data(json!({"userName": "<b>x</b>", "link": "https://market.example/a?b=1&c=2"}));
+        assert_eq!(d["titleHighlight"], "&lt;b&gt;x&lt;/b&gt;");
+        assert_eq!(
+            d["actionButtonLink"],
+            "https://market.example/a?b&#x3D;1&amp;c&#x3D;2"
+        );
+        for bad in ["javascript:alert(1)", "data:text/html,x", "/relative"] {
+            let d = data(json!({"userName": "u", "link": bad}));
+            assert!(d.get("actionButtonLink").is_none(), "{bad}");
+            assert!(d.get("actionButtonText").is_none(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn confirmation_uses_its_own_template_when_set_else_the_generic_one() {
+        let generic = configured(false);
+        assert_eq!(
+            generic.cfg.notification_template_id.as_deref(),
+            Some("d-generic")
+        );
+        let mut cfg = generic.cfg.clone();
+        cfg.validate_credits_email_template_id = Some("d-credits".into());
+        let own = EmailSender::new(cfg, Outbound::for_tests());
+        assert_eq!(
+            own.confirmation_template(EmailSource::Credits),
+            (Some("d-credits"), true)
+        );
+        assert_eq!(
+            own.confirmation_template(EmailSource::Account),
+            (Some("d-generic"), false)
         );
     }
 

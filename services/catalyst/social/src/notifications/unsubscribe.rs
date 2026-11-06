@@ -10,12 +10,12 @@ use axum::extract::{Path, State};
 use axum::http::Uri;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::{IntoResponse, Response};
-use serde_json::{Value as Json, json};
+use serde_json::json;
 
 use super::email::html_escape;
 use super::errors::{ApiError, NotificationsError};
 use super::signing::has_valid_signature;
-use super::types::{is_known_type, normalize_details};
+use super::types::is_known_type;
 use crate::identity::Address;
 
 type AppState = Arc<super::State>;
@@ -54,22 +54,6 @@ fn parse_address(raw: &str) -> Result<Address, NotificationsError> {
     Address::parse(raw).map_err(|_| ApiError::bad_request("Invalid address").into())
 }
 
-/// Reads the full details, applies `edit`, stores them back (the old handlers' round trip).
-async fn update_details(
-    state: &AppState,
-    address: &Address,
-    edit: impl FnOnce(&mut Json),
-) -> Result<(), NotificationsError> {
-    let current = state.store.get_subscription(address).await?;
-    let mut details = current.map_or_else(|| normalize_details(&json!({})), |s| s.details);
-    edit(&mut details);
-    state
-        .store
-        .put_subscription_details(address, &details)
-        .await?;
-    Ok(())
-}
-
 fn html(body: String) -> Response {
     ([(CONTENT_TYPE, "text/html")], body).into_response()
 }
@@ -81,7 +65,7 @@ pub async fn unsubscribe_all(
 ) -> Result<Response, NotificationsError> {
     verify(&state, &local)?;
     let address = parse_address(&address)?;
-    update_details(&state, &address, |d| d["ignore_all_email"] = json!(true)).await?;
+    state.store.unsubscribe_email(&address, None).await?;
     let user_name = crate::rpc::profiles::Profiles::new(Some(state.store.pool().clone()))
         .get_profile(address.as_str())
         .await
@@ -113,10 +97,7 @@ pub async fn unsubscribe_one(
     if !is_known_type(&kind) {
         return Err(ApiError::bad_request(format!("Invalid notification type: {kind}")).into());
     }
-    update_details(&state, &address, |d| {
-        d["message_type"][kind.as_str()]["email"] = json!(false)
-    })
-    .await?;
+    state.store.unsubscribe_email(&address, Some(&kind)).await?;
     state.track(
         "user_unsubscribed",
         json!({ "address": address.as_str(), "notification_type": kind }),
