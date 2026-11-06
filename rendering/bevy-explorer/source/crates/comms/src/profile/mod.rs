@@ -1454,18 +1454,18 @@ async fn fetch_profiles(
     debug!("requesting {} profiles from {url}", ids.len());
 
     let outcome: Result<Vec<LambdaProfiles>, anyhow::Error> = async {
-        let response = ipfs
-            .client()
-            .post(&url)
-            .timeout(std::time::Duration::from_secs(10))
-            .body(serde_json::json!({ "ids": ids }).to_string())
-            .header("content-type", "application/json")
-            .send()
-            .await?;
+        let response = platform::TracedJsonResponse::send(
+            ipfs.client()
+                .post(&url)
+                .timeout(std::time::Duration::from_secs(10))
+                .body(serde_json::json!({ "ids": ids }).to_string())
+                .header("content-type", "application/json"),
+        )
+        .await?;
         if response.status() != StatusCode::OK {
-            anyhow::bail!("bad response: {}", response.status());
+            anyhow::bail!("bad response: {}", response.discard());
         }
-        Ok(response.json::<Vec<LambdaProfiles>>().await?)
+        response.json::<Vec<LambdaProfiles>>().await
     }
     .await;
 
@@ -1535,16 +1535,19 @@ async fn fetch_compact_profiles(
         .collect::<Vec<_>>();
     debug!("requesting {} compact profiles from {url}", ids.len());
 
-    let response = ipfs
-        .client()
-        .post(&url)
-        .timeout(std::time::Duration::from_secs(10))
-        .body(serde_json::json!({ "ids": ids }).to_string())
-        .header("content-type", "application/json")
-        .send()
-        .await
-        .map_err(|e| CompactFetchError::Failed(anyhow!("compact profile fetch from {url}: {e}")))?;
-    compact_status(&url, response.status())?;
+    let response = platform::TracedJsonResponse::send(
+        ipfs.client()
+            .post(&url)
+            .timeout(std::time::Duration::from_secs(10))
+            .body(serde_json::json!({ "ids": ids }).to_string())
+            .header("content-type", "application/json"),
+    )
+    .await
+    .map_err(|e| CompactFetchError::Failed(anyhow!("compact profile fetch from {url}: {e}")))?;
+    if let Err(e) = compact_status(&url, response.status()) {
+        response.discard();
+        return Err(e);
+    }
     let found = response
         .json::<Vec<CompactProfile>>()
         .await
