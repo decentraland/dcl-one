@@ -8,7 +8,7 @@ use bevy::{
 };
 use common::util::{TryChildBuilder, TryPushChildrenEx};
 
-#[cfg(feature = "uuav")]
+#[cfg(feature = "ffmpeg")]
 use crate::AVSinks;
 use crate::{AVPlayer, InScene, ShouldBePlaying, VideoPlayer};
 
@@ -30,7 +30,7 @@ impl Plugin for AvPlayerDebugPlugin {
         app.add_observer(av_player_on_add::<VideoPlayer>);
         app.add_observer(av_player_on_remove::<VideoPlayer>);
         app.add_observer(av_player_on_insert::<VideoPlayer>);
-        #[cfg(feature = "uuav")]
+        #[cfg(feature = "ffmpeg")]
         {
             app.add_observer(on_add_column::<AVSinks<VideoPlayer>, VideoPlayerSinksColumn>);
             app.add_observer(on_remove_column::<AVSinks<VideoPlayer>, VideoPlayerSinksColumn>);
@@ -52,10 +52,10 @@ struct AvPlayerRef(Entity);
 struct AvPlayerColumn;
 const AV_PLAYER_COLUMN_COLUMN: i16 = 1;
 
-#[cfg(feature = "uuav")]
+#[cfg(feature = "ffmpeg")]
 #[derive(Component)]
 struct VideoPlayerSinksColumn;
-#[cfg(feature = "uuav")]
+#[cfg(feature = "ffmpeg")]
 const VIDEO_PLAYER_SINKS_COLUMN_COLUMN: i16 = 2;
 
 #[derive(Component)]
@@ -66,13 +66,13 @@ const IN_SCENE_COLUMN_COLUMN: i16 = 5;
 struct ShouldPlayColumn;
 const SHOULD_PLAY_COLUMN_COLUMN: i16 = 6;
 
-#[cfg(not(feature = "uuav"))]
+#[cfg(not(feature = "ffmpeg"))]
 type AnyColumn = Or<(
     With<AvPlayerColumn>,
     With<InSceneColumn>,
     With<ShouldPlayColumn>,
 )>;
-#[cfg(feature = "uuav")]
+#[cfg(feature = "ffmpeg")]
 type AnyColumn = Or<(
     With<AvPlayerColumn>,
     With<VideoPlayerSinksColumn>,
@@ -106,7 +106,7 @@ fn setup_av_player_debug_ui(mut commands: Commands) {
                 Entity::PLACEHOLDER,
                 (
                     "Source",
-                    #[cfg(feature = "uuav")]
+                    #[cfg(feature = "ffmpeg")]
                     "VideoPlayerSink",
                     "InScene",
                     "ShouldBePlaying",
@@ -162,7 +162,7 @@ fn av_player_on_add<T: AVPlayer>(
                 entity,
                 (
                     av_player.url(),
-                    #[cfg(feature = "uuav")]
+                    #[cfg(feature = "ffmpeg")]
                     "No",
                     "No",
                     "No",
@@ -318,15 +318,15 @@ fn on_remove_column<T: Component, C: Component>(
     ));
 }
 
-#[cfg(not(feature = "uuav"))]
+#[cfg(not(feature = "ffmpeg"))]
 type RowTexts<'a> = (&'a str, &'a str, &'a str);
-#[cfg(feature = "uuav")]
+#[cfg(feature = "ffmpeg")]
 type RowTexts<'a> = (&'a str, &'a str, &'a str, &'a str);
 
 fn build_row(parent: &mut TryChildBuilder, row: i16, av_player: Entity, row_texts: RowTexts) {
-    #[cfg(not(feature = "uuav"))]
+    #[cfg(not(feature = "ffmpeg"))]
     let (av_player_name, in_scene, should_play) = row_texts;
-    #[cfg(feature = "uuav")]
+    #[cfg(feature = "ffmpeg")]
     let (av_player_name, video_player_sinks, in_scene, should_play) = row_texts;
 
     let av_player_name = if av_player_name.len() >= 32 {
@@ -342,7 +342,7 @@ fn build_row(parent: &mut TryChildBuilder, row: i16, av_player: Entity, row_text
         AV_PLAYER_COLUMN_COLUMN,
         av_player_name,
     ));
-    #[cfg(feature = "uuav")]
+    #[cfg(feature = "ffmpeg")]
     parent.spawn(build_cel(
         av_player,
         VideoPlayerSinksColumn,

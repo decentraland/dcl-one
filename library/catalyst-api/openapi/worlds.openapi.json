@@ -56,7 +56,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -94,7 +94,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -152,7 +152,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -198,7 +198,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -431,7 +431,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -482,7 +482,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -544,7 +544,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -655,7 +655,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -671,6 +671,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A run is already in progress, or deployments kept the content lock busy; retry after Retry-After seconds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployRejection"
                 }
               }
             }
@@ -721,7 +731,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -769,7 +779,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -835,7 +845,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -893,7 +903,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -951,7 +961,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -1159,12 +1169,22 @@
               }
             }
           },
+          "202": {
+            "description": "A partial batch was stored; the listed files are still missing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PartialDeployPending"
+                }
+              }
+            }
+          },
           "400": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DeployErrors"
+                  "$ref": "#/components/schemas/DeployRejection"
                 }
               }
             }
@@ -1174,7 +1194,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DeployErrors"
+                  "$ref": "#/components/schemas/DeployRejection"
                 }
               }
             }
@@ -1184,7 +1204,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DeployErrors"
+                  "$ref": "#/components/schemas/DeployRejection"
                 }
               }
             }
@@ -1199,12 +1219,32 @@
               }
             }
           },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployRejection"
+                }
+              }
+            }
+          },
           "413": {
             "description": "",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DeployErrors"
+                  "$ref": "#/components/schemas/DeployRejection"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "A partial upload staging budget is full; retry after Retry-After seconds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployRejection"
                 }
               }
             }
@@ -1214,7 +1254,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/DeployErrors"
+                  "$ref": "#/components/schemas/DeployRejection"
                 }
               }
             }
@@ -1229,7 +1269,19 @@
               }
             }
           }
-        }
+        },
+        "parameters": [
+          {
+            "name": "partial",
+            "in": "query",
+            "description": "Declares a partial (multi-request) batch; requires the `partial=true` form field",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "description": "A world publish. With the multipart field `partial=true` the scene's files may arrive over several batches keyed by the signed entity id: a batch answers 202 with the content hashes still missing, and the batch that completes the content publishes (200). A batch of an already published entity answers 200 with its publication; 429 with Retry-After means a staging budget is full for now."
       }
     },
     "/entities/active": {
@@ -1538,7 +1590,7 @@
               }
             }
           },
-          "403": {
+          "401": {
             "description": "",
             "content": {
               "application/json": {
@@ -1554,6 +1606,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A run is already in progress, or deployments kept the content lock busy; retry after Retry-After seconds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeployRejection"
                 }
               }
             }
@@ -1639,6 +1701,16 @@
             }
           },
           "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
             "description": "",
             "content": {
               "application/json": {
@@ -1875,6 +1947,112 @@
         }
       }
     },
+    "/wallet/contribute": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "get_contributable_domains",
+        "description": "Signed fetch: the worlds the signer holds a deployment or streaming grant in.",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "domains",
+                    "count"
+                  ],
+                  "properties": {
+                    "count": {
+                      "type": "integer"
+                    },
+                    "domains": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "name",
+                          "user_permissions",
+                          "size",
+                          "owner",
+                          "parcelCount"
+                        ],
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "user_permissions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "size": {
+                            "type": "string"
+                          },
+                          "owner": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "parcelCount": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/wallet/{wallet}/connected-world": {
       "get": {
         "tags": [
@@ -1923,6 +2101,124 @@
         }
       }
     },
+    "/wallet/{wallet}/stats": {
+      "get": {
+        "tags": [
+          "wallet"
+        ],
+        "operationId": "get_wallet_stats",
+        "parameters": [
+          {
+            "name": "wallet",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "wallet",
+                    "dclNames",
+                    "ensNames",
+                    "usedSpace",
+                    "maxAllowedSpace"
+                  ],
+                  "properties": {
+                    "wallet": {
+                      "type": "string"
+                    },
+                    "dclNames": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "name",
+                          "size"
+                        ],
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "size": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "ensNames": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "name",
+                          "size"
+                        ],
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "size": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "usedSpace": {
+                      "type": "string"
+                    },
+                    "maxAllowedSpace": {
+                      "type": "string"
+                    },
+                    "blockedSince": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/world/{world_name}/about": {
       "get": {
         "tags": [
@@ -1946,6 +2242,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AboutResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
                 }
               }
             }
@@ -2009,6 +2315,89 @@
             }
           },
           "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/world/{world_name}/limits": {
+      "get": {
+        "tags": [
+          "worlds"
+        ],
+        "operationId": "get_world_limits",
+        "parameters": [
+          {
+            "name": "world_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "parcels",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "style": "form",
+            "explode": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorldLimitsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
             "description": "",
             "content": {
               "application/json": {
@@ -2896,6 +3285,78 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "1-100, default 100; an invalid value is the default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "description": "default 0; an invalid value is the default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x1",
+            "in": "query",
+            "required": false,
+            "description": "bounding box: all of x1, x2, y1, y2 or none",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x2",
+            "in": "query",
+            "required": false,
+            "description": "bounding box",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "y1",
+            "in": "query",
+            "required": false,
+            "description": "bounding box",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "y2",
+            "in": "query",
+            "required": false,
+            "description": "bounding box",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "authorized_deployer",
+            "in": "query",
+            "required": false,
+            "description": "address: scenes of worlds it owns or may deploy to",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "entity_id",
+            "in": "query",
+            "required": false,
+            "description": "CIDv1 entity id",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -2909,7 +3370,163 @@
               }
             }
           },
-          "404": {
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "scenes"
+        ],
+        "operationId": "post_list_scenes",
+        "parameters": [
+          {
+            "name": "world_name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "1-100, default 100; an invalid value is the default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "description": "default 0; an invalid value is the default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x1",
+            "in": "query",
+            "required": false,
+            "description": "bounding box: all of x1, x2, y1, y2 or none",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x2",
+            "in": "query",
+            "required": false,
+            "description": "bounding box",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "y1",
+            "in": "query",
+            "required": false,
+            "description": "bounding box",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "y2",
+            "in": "query",
+            "required": false,
+            "description": "bounding box",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "authorized_deployer",
+            "in": "query",
+            "required": false,
+            "description": "address: scenes of worlds it owns or may deploy to",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "entity_id",
+            "in": "query",
+            "required": false,
+            "description": "CIDv1 entity id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "coordinates"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "coordinates": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 500,
+                    "uniqueItems": true,
+                    "items": {
+                      "type": "string",
+                      "pattern": "^-?\\d+,-?\\d+$"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SceneListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "415": {
             "description": "",
             "content": {
               "application/json": {
@@ -2958,7 +3575,32 @@
         ],
         "responses": {
           "200": {
-            "description": ""
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "message"
+                  ],
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           },
           "401": {
             "description": "",
@@ -2970,27 +3612,17 @@
               }
             }
           },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorBody"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorBody"
-                }
-              }
-            }
-          },
           "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
             "description": "",
             "content": {
               "application/json": {
@@ -3285,6 +3917,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           }
         }
       }
@@ -3375,6 +4017,16 @@
             }
           },
           "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
             "description": "",
             "content": {
               "application/json": {
@@ -3561,25 +4213,14 @@
       "ApiErrorBody": {
         "type": "object",
         "required": [
-          "ok",
-          "error",
-          "message"
+          "error"
         ],
         "properties": {
           "error": {
             "type": "string"
           },
-          "federation_adr": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "message": {
             "type": "string"
-          },
-          "ok": {
-            "type": "boolean"
           }
         }
       },
@@ -3654,20 +4295,6 @@
           }
         }
       },
-      "DeployErrors": {
-        "type": "object",
-        "required": [
-          "errors"
-        ],
-        "properties": {
-          "errors": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        }
-      },
       "DeployRejection": {
         "type": "object",
         "required": [
@@ -3696,6 +4323,35 @@
           },
           "message": {
             "type": "string"
+          }
+        }
+      },
+      "ExpiredUploadsCleanup": {
+        "type": "object",
+        "description": "One expired-upload cleanup run, as `/gc` reports it under `expiredUploads`.",
+        "required": [
+          "outcome",
+          "removed",
+          "failed"
+        ],
+        "properties": {
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "success",
+              "deferred",
+              "error"
+            ]
+          },
+          "removed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
           }
         }
       },
@@ -4038,14 +4694,15 @@
       "GcResponse": {
         "type": "object",
         "required": [
-          "message",
-          "dryRun",
-          "removed",
-          "failed",
-          "candidates",
-          "scanned",
           "activeKeys",
-          "minAgeSeconds"
+          "candidates",
+          "dryRun",
+          "failed",
+          "message",
+          "minAgeSeconds",
+          "removed",
+          "removedBytes",
+          "scanned"
         ],
         "properties": {
           "activeKeys": {
@@ -4078,6 +4735,22 @@
           "scanned": {
             "type": "integer",
             "minimum": 0
+          },
+          "removedBytes": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "expiredUploads": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ExpiredUploadsCleanup"
+              }
+            ],
+            "description": "The expired partial upload cleanup the run did; null for a dry run"
           }
         }
       },
@@ -4200,6 +4873,22 @@
               "string",
               "null"
             ]
+          }
+        }
+      },
+      "PartialDeployPending": {
+        "type": "object",
+        "description": "`202` of a batch that left files outstanding.",
+        "required": [
+          "missing"
+        ],
+        "properties": {
+          "missing": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The content hashes still to send, in the manifest's order."
           }
         }
       },
@@ -4513,6 +5202,24 @@
             "items": {
               "$ref": "#/components/schemas/IndexSceneSummary"
             }
+          }
+        }
+      },
+      "WorldLimitsResponse": {
+        "type": "object",
+        "required": [
+          "maxSceneSizeInBytes",
+          "maxParcels"
+        ],
+        "properties": {
+          "maxSceneSizeInBytes": {
+            "type": "string",
+            "description": "A decimal string, as the old service's bigint."
+          },
+          "maxParcels": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },

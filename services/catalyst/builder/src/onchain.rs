@@ -150,8 +150,13 @@ pub struct ReviewRowOut {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS), ts(export, export_to = "builder/"))]
 pub struct OrphanItemOut {
     pub beneficiary: Option<String>,
+    /// The item's on-chain index in its collection, as builder-server names it.
+    /// The Shop counts an item as published only with it.
+    pub blockchain_item_id: Option<String>,
     pub category: Option<String>,
     pub collection_id: Option<String>,
+    /// The collection's contract: on-chain rows are keyed by it, so it equals `collection_id`.
+    pub contract_address: Option<String>,
     #[serde(rename = "createdAt")]
     #[cfg_attr(feature = "ts", ts(type = "number | null"))]
     pub created_at: Option<i64>,
@@ -235,6 +240,7 @@ struct DbCollection {
 #[derive(Debug)]
 struct DbItem {
     id: String,
+    blockchain_id: Option<String>,
     item_type: Option<String>,
     rarity: Option<String>,
     price: Option<String>,
@@ -307,6 +313,7 @@ fn parse_item(v: &Value, reader: &Reader) -> Option<DbItem> {
     let named = leg("wearable").or_else(|| leg("emote"));
     Some(DbItem {
         id: v.get("id")?.as_str()?.to_string(),
+        blockchain_id: opt_str(v, "blockchainId"),
         item_type: opt_str(v, "itemType"),
         rarity: opt_str(v, "rarity"),
         price: v.get("price").map(|p| match p {
@@ -349,7 +356,7 @@ fn collections_query() -> String {
 
 const ITEMS_QUERY: &str = "query builderItems($address: String!, $first: Int!) {\
   items(first: $first, where: { creator: $address }, orderBy: createdAt, orderDirection: desc) {\
-    id itemType rarity price beneficiary totalSupply maxSupply urn image collection { id } createdAt updatedAt\
+    id blockchainId itemType rarity price beneficiary totalSupply maxSupply urn image collection { id } createdAt updatedAt \
     metadata { wearable { name category } emote { name category } }\
   }\
 }";
@@ -708,7 +715,9 @@ fn item_out(i: DbItem) -> OrphanItemOut {
     });
     OrphanItemOut {
         beneficiary: i.beneficiary,
+        blockchain_item_id: i.blockchain_id,
         category: i.category,
+        contract_address: i.collection_id.clone(),
         collection_id: i.collection_id,
         created_at: to_ms(i.created_at),
         grad: None,
@@ -753,6 +762,7 @@ mod tests {
     fn db_item() -> DbItem {
         DbItem {
             id: "item-1".into(),
+            blockchain_id: Some("3".into()),
             item_type: Some("smart_wearable_v1".into()),
             rarity: Some("epic".into()),
             price: Some("1000000000000000000".into()),
@@ -826,6 +836,41 @@ mod tests {
         );
     }
 
+    /// A `\` line continuation drops the newline and the next line's indent, so a field at
+    /// the end of a line fuses with the first one of the next (`updatedAtmetadata`), and
+    /// the subgraph refuses the whole query.
+    #[test]
+    fn the_items_query_names_every_field_it_parses() {
+        let words: HashSet<&str> = ITEMS_QUERY
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .collect();
+        for field in [
+            "id",
+            "blockchainId",
+            "itemType",
+            "rarity",
+            "price",
+            "beneficiary",
+            "totalSupply",
+            "maxSupply",
+            "urn",
+            "image",
+            "collection",
+            "createdAt",
+            "updatedAt",
+            "metadata",
+            "wearable",
+            "emote",
+            "name",
+            "category",
+        ] {
+            assert!(
+                words.contains(field),
+                "ITEMS_QUERY does not name `{field}` on its own"
+            );
+        }
+    }
+
     #[test]
     fn item_wire_bytes_match_the_old_json_macro() {
         let i = db_item();
@@ -846,6 +891,8 @@ mod tests {
             "urn": i.urn,
             "image": i.image,
             "collection_id": i.collection_id,
+            "contract_address": i.collection_id,
+            "blockchain_item_id": i.blockchain_id,
             "is_published": true,
             "network": i.network,
         });
@@ -949,7 +996,7 @@ mod tests {
             "a zero reviewedAt renders null as the squid's did"
         );
         let i = parse_item(
-            &json!({ "id": "0xc0ffee-0", "itemType": "emote_v1", "rarity": "rare", "price": "10", "beneficiary": "0xb", "totalSupply": "1",
+            &json!({ "id": "0xc0ffee-0", "blockchainId": "0", "itemType": "emote_v1", "rarity": "rare", "price": "10", "beneficiary": "0xb", "totalSupply": "1",
                      "maxSupply": "100", "urn": "urn:y", "image": null, "collection": { "id": "0xc0ffee" }, "createdAt": "5", "updatedAt": "6",
                      "metadata": { "wearable": null, "emote": { "name": "Dance", "category": "dance" } } }),
             reader,
@@ -963,7 +1010,15 @@ mod tests {
             ),
             (Some("Dance"), Some("dance"), Some("0xc0ffee"))
         );
-        assert_eq!(item_out(i).kind, ItemKind::Emote);
+        let out = item_out(i);
+        assert_eq!(out.kind, ItemKind::Emote);
+        assert_eq!(
+            (
+                out.blockchain_item_id.as_deref(),
+                out.contract_address.as_deref()
+            ),
+            (Some("0"), Some("0xc0ffee"))
+        );
         assert!(parse_collection(&json!({ "name": "no id" }), reader).is_none());
     }
 
