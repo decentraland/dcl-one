@@ -16,7 +16,7 @@ conformance capture corpus and internal docs stay in the private repository.
 | `apps/creator-hub/` | Creator Hub native shell |
 | `rendering/bevy-explorer/` | Explorer source and Play pins |
 | `apps/bevy-explorer/` | Explorer builds and images |
-| `library/` | Shared crates, API types, the protocol (`library/protocol`) |
+| `library/` | Shared crates, API types, the protocol (`library/protocol`), the SDK (`library/js-sdk-toolchain`) |
 | `schemas/` | The PostgreSQL schema |
 | `infra/` | Nix packages, container images, the gateway |
 | `tooling/` | Build and publication tools used by the workflows, developer tools such as the Shop parity harness, and their tests |
