@@ -191,6 +191,17 @@ The HUD and input:
   as the typing left it. The page's side is `react-web/src/lib/hudAutomation.ts`.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
   `/click_at <x> <y> [--button left|right|middle]`.
+- `/hover_entity <entity> [--bounds] [--frames N] [--timeout-frames N]`, `/hover_entity --clear`
+  and `/click_entity <entity> [--bounds] [--button pointer|primary|secondary] [--event
+  click|down|up] [--timeout-frames N]`: hover or click a scene entity of the active scene by id
+  through the pointer pipeline, on native and web alike. The pointer ray is aimed from the camera
+  at the entity, and a click presses the key or mouse button bound to the action. The reply is
+  JSON: `hit` (`entity`, `container`, `scene`, `playerDistance`, `cameraDistance`, or `null`), the
+  hover `entries`, the pointer `events` the scene got (`event`, `button`, `tick`) and a `diagnosis`
+  (`null`, `blocked by entity <id>`, `no collider hit`, `beyond 100 m`, `entity not live`, `input
+  held by the HUD`, `timed out waiting for target|tick|release`). `--event down` keeps the press
+  held until `--event up` or `/hover_entity --clear`; other pointer commands are refused meanwhile
+  (`src/automation/pointer.rs`).
 
 The accepted design makes these commands the client's agent surface in every build,
 so agents and tests share the same interface. Its native implementation asks the page where

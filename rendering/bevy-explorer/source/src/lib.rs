@@ -1,6 +1,5 @@
-// the loopback console server and the native input commands; the headless binary takes the same
-// launch options
-#[cfg(not(target_arch = "wasm32"))]
+// the input and scene pointer commands on every target, and the native loopback console server;
+// the headless binary takes the same launch options
 pub mod automation;
 mod autopilot;
 mod commands;
@@ -676,9 +675,9 @@ impl DecentralandApp {
             }
         }
 
+        app.add_plugins(automation::AutomationPlugin);
         #[cfg(not(target_arch = "wasm32"))]
         {
-            app.add_plugins(automation::AutomationPlugin);
             // only when a token is given, and then only the token-checked methods that run
             // console commands: Bevy's own remote methods (`bevy/query`, `bevy/insert`, ...)
             // check no token, so they are never served

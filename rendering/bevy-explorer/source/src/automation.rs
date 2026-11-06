@@ -1,4 +1,4 @@
-//! Console commands end-to-end tests and agents drive the native client with
+//! Console commands end-to-end tests and agents drive the client with
 //! (docs/guidelines/running.md, "Test commands"):
 //!
 //! - [`AutomationPlugin`]: `/press_key` and `/click_at`, which feed the engine the same input
@@ -6,11 +6,13 @@
 //!   every unlocked-cursor mouse event, react_hud_cef.rs) see them. On the web the browser, not
 //!   the engine, delivers input, so react-web's `lib/hudAutomation.ts` answers these two commands
 //!   in the page.
+//! - [`pointer`], in the same plugin: `/hover_entity` and `/click_entity`, which hover and click
+//!   a scene entity by id through the pointer pipeline, on native and web alike.
 //! - [`remote`]: the loopback server that runs any console command from outside the process, for
 //!   callers holding the run's token, started by [`AutomationOptions`] (`--automation-token`).
 //!
-//! `/world_state` is `world_state.rs`, which the headless client has too. This module is native
-//! only (lib.rs).
+//! `/world_state` is `world_state.rs`, which the headless client has too. [`AutomationPlugin`]
+//! runs on every target; [`remote`] is native only (lib.rs).
 
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
@@ -82,7 +84,7 @@ impl AutomationOptions {
     }
 }
 
-/// `/press_key` and `/click_at`, in every native build.
+/// `/press_key`, `/click_at`, `/hover_entity` and `/click_entity`, in every build.
 pub struct AutomationPlugin;
 
 impl Plugin for AutomationPlugin {
@@ -94,8 +96,11 @@ impl Plugin for AutomationPlugin {
                 PreUpdate,
                 input::play_input_script.before(bevy::input::InputSystem),
             );
+        pointer::register(app);
     }
 }
+
+pub(crate) mod pointer;
 
 pub(crate) mod input {
     use std::collections::VecDeque;
@@ -116,6 +121,11 @@ pub(crate) mod input {
     pub struct InputScript(VecDeque<Step>);
 
     impl InputScript {
+        /// Queue a step after those already queued.
+        pub(crate) fn push(&mut self, step: Step) {
+            self.0.push_back(step);
+        }
+
         #[cfg(test)]
         pub fn steps(&self) -> usize {
             self.0.len()
