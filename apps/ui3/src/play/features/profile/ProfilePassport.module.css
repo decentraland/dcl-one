@@ -30,6 +30,8 @@
   font-weight: 800;
   /* The player's name colour (claimed custom colour or the derived hue), set per profile. */
   color: var(--name-color);
+  /* Keeps any player's colour readable on the gradient: some presets and remote colours are dark. */
+  text-shadow: var(--shadow-text);
 }
 .tag {
   color: rgba(255, 255, 255, 0.55);

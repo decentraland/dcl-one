@@ -22,7 +22,7 @@ const PASSPORT_TABS: TabItem<Tab>[] = (['overview', 'badges', 'photos'] as const
 // A single selected-but-disabled tab: the same bar, holding the same height, with nothing to switch to.
 const EDIT_TAB: TabItem<'edit'>[] = [{ id: 'edit', label: 'EDIT PROFILE', disabled: true }]
 // unity-explorer's name colour presets (UI/ColorPicker/NameColors.asset), in its order.
-export const NAME_COLOR_PRESETS = [
+const NAME_COLOR_PRESETS = [
   '#a140ff', '#d740ff', '#ff40ad', '#ff4046', '#ff9840', '#ffbd40',
   '#ffe340', '#b1ff40', '#40ff45', '#40eaff', '#4092ff', '#4740ff'
 ] as const

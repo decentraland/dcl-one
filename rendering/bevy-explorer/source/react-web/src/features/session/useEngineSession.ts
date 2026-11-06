@@ -1042,6 +1042,30 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // The profile store asks the engine itself for any address it's shown and doesn't hold.
     setProfileRequester((address, extras) => driver.send({ kind: 'getUserProfile', address, extras }))
 
+    // The engine's answer to the profile save in flight, or the bridge failing to handle it (then no
+    // answer ever comes, so it counts as a failure rather than leaving every later save queued).
+    const settleProfileSave = (ok: boolean, error?: string): void => {
+      profileInFlightRef.current = false
+      // A failed save must not leave the optimistic edit on screen claiming to be saved, so the
+      // pre-save profile goes back — see saveProfile.
+      const revert = profileRevertRef.current
+      profileRevertRef.current = null
+      if (!ok) {
+        if (revert?.quiet !== true) setProfileSaveError(error ?? 'Could not save your profile.')
+        if (revert != null) {
+          // Also the base a queued save starts from below, before any render catches up.
+          profileRef.current = revert.profile
+          setProfile(revert.profile)
+          updateProfile(revert.address, () => revert.stored)
+        }
+      }
+      const queued = queuedProfileEditRef.current
+      queuedProfileEditRef.current = null
+      // A quiet save left waiting runs on its own; the form's SAVE is done once its deploy is.
+      if (queued == null || queued.quiet) setProfileSaving(false)
+      if (queued != null) startProfileSaveRef.current(queued.edit, queued.quiet)
+    }
+
     // One generic subscription; switch on kind (mirrors dcl-editor's onSceneMessage).
     const off = driver.on((msg) => {
       switch (msg.kind) {
@@ -1266,28 +1290,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'ownedNames':
           setOwnedNames(msg.names)
           break
-        case 'profileSaved': {
-          profileInFlightRef.current = false
-          // A failed save must not leave the optimistic edit on screen claiming to be saved, so the
-          // pre-save profile goes back — see saveProfile.
-          const revert = profileRevertRef.current
-          profileRevertRef.current = null
-          if (!msg.ok) {
-            if (revert?.quiet !== true) setProfileSaveError(msg.error ?? 'Could not save your profile.')
-            if (revert != null) {
-              // Also the base a queued save starts from below, before any render catches up.
-              profileRef.current = revert.profile
-              setProfile(revert.profile)
-              updateProfile(revert.address, () => revert.stored)
-            }
-          }
-          const queued = queuedProfileEditRef.current
-          queuedProfileEditRef.current = null
-          // A quiet save left waiting runs on its own; the form's SAVE is done once its deploy is.
-          if (queued == null || queued.quiet) setProfileSaving(false)
-          if (queued != null) startProfileSaveRef.current(queued.edit, queued.quiet)
+        case 'profileSaved':
+          settleProfileSave(msg.ok, msg.error)
           break
-        }
         case 'notifications':
           setNotifications(msg.notifications)
           break
@@ -1300,6 +1305,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'requestFailed':
           fetchedRef.current.delete(msg.request)
           console.error(`[bridge] ${msg.request} failed:`, msg.error)
+          if (msg.request === 'saveProfile' && profileInFlightRef.current) settleProfileSave(false)
           break
         case 'avatarSaveFailed':
           setSaveError(SAVE_FAILED_MESSAGE)

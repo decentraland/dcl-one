@@ -169,6 +169,14 @@ describe('the name colour picker', () => {
     expect(s.profile.saveNameColor).toHaveBeenCalledWith({ r: 0x40 / 255, g: 0xea / 255, b: 1 })
   })
 
+  it('deploys nothing when the colour picked is the one already saved', async () => {
+    const s = openOwn({ ...ME, nameColor: { r: 1, g: 0x40 / 255, b: 0x46 / 255 } })
+    await pickPreset('#40eaff')
+    await pickPreset('#ff4046')
+    act(() => closeTopPopup())
+    expect(s.profile.saveNameColor).not.toHaveBeenCalled()
+  })
+
   it('deploys nothing when no colour was picked', () => {
     const s = openOwn()
     act(() => closeTopPopup())

@@ -10,7 +10,7 @@ import { relationshipOf } from '../../lib/relationship'
 import { openNameEdit } from './NameEditModal'
 import { ProfilePassport } from './ProfilePassport'
 import type { Profile } from '../../engine/protocol'
-import { splitName } from '../../lib/identity'
+import { splitName, userColor } from '../../lib/identity'
 import { hexToColor3 } from '../../lib/color'
 import { confirmUnblock, confirmUnfriend } from '../friends/friendDialogs'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
@@ -53,6 +53,9 @@ export function Passport({
   saveNameColorRef.current = session.profile.saveNameColor
   const claimedRef = useRef(stored.hasClaimedName)
   claimedRef.current = stored.hasClaimedName
+  // The colour the profile already shows, so picking it back deploys nothing.
+  const shownRef = useRef(userColor(stored.address, stored.name, stored.hasClaimedName, stored.nameColor))
+  shownRef.current = userColor(stored.address, stored.name, stored.hasClaimedName, stored.nameColor)
   // Still this account's own passport: a colour picked before an account switch is not the next one's.
   const ownRef = useRef(isSelf)
   ownRef.current = isSelf
@@ -60,6 +63,7 @@ export function Passport({
     () => () => {
       const picked = pickedRef.current
       if (picked == null || discarded?.current === true || !claimedRef.current || !ownRef.current) return
+      if (picked.toLowerCase() === shownRef.current.toLowerCase()) return
       saveNameColorRef.current(hexToColor3(picked))
     },
     [discarded]

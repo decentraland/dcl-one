@@ -131,6 +131,20 @@ describe('profile domain', () => {
     expect(h.session().profile.data).toMatchObject({ description: 'hi', nameColor: { r: 0, g: 0, b: 1 } })
   })
 
+  it('a save the bridge failed to handle counts as failed, so the queue behind it still runs', async () => {
+    const h = renderSession()
+    await enterAsGuest(h, { keepSent: true })
+    h.driver.emit({ kind: 'profile', profile })
+    act(() => h.session().profile.save({ description: 'gm' }))
+    act(() => h.session().profile.saveNameColor({ r: 1, g: 0, b: 1 }))
+
+    h.driver.emit({ kind: 'requestFailed', request: 'saveProfile', error: 'boom' })
+    expect(h.session().profile.saveError).toBe('Could not save your profile.')
+    expect(h.session().profile.data?.description).toBe('hi')
+    expect(h.driver.last('saveProfile')).toEqual({ kind: 'saveProfile', nameColor: { r: 1, g: 0, b: 1 } })
+    expect(h.session().profile.saving).toBe(false)
+  })
+
   it('relays the claimed names the picker offers', async () => {
     const h = renderSession()
     await enterAsGuest(h)
