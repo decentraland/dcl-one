@@ -64,6 +64,7 @@ function answerShell(): void {
     if (method === 'shop.capabilities') return { v: 1, buyer: BUYER, wallet: 'managed', credits: true }
     if (method === 'shop.balance') return { v: 1, credits: balance }
     if (method === 'shop.buy') return { v: 1, operation: 'op', state: 'reviewing', item: { contract: CONTRACT, itemId: '1' } }
+    if (method === 'shop.status') return []
     throw new Error(`unexpected ${method}`)
   })
 }
@@ -140,6 +141,13 @@ describe('buying in the in-world Shop', () => {
     expect(props.onNavigate).not.toHaveBeenCalledWith('backpack')
     emit({ state: 'succeeded', txHash: '0xabc', next: 'backpack' })
     expect(props.onNavigate).toHaveBeenCalledWith('backpack')
+  })
+
+  it('asks the shell for its operations when it mounts, so a reloaded app follows them', async () => {
+    serveCatalogue()
+    answerShell()
+    renderShop()
+    await waitFor(() => expect(shell.request).toHaveBeenCalledWith('shop.status', {}))
   })
 
   it('ignores a malformed event', async () => {

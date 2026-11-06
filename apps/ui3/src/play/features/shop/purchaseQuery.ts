@@ -68,6 +68,17 @@ export function useShopPurchase(onBackpack: () => void): ShopPurchase {
   const last = useRef<ShopOperation | null>(null)
   useEffect(() => {
     if (!inShell) return
+    // A reloaded app picks up where the shell is: its newest operation (a purchase still settling
+    // reports to it as it ends).
+    shellRequest<ShopOperation[]>(SHOP_METHODS.status, {})
+      .then((list) => {
+        const newest = Array.isArray(list) ? list[0] : undefined
+        if (newest && last.current == null) {
+          last.current = newest
+          setOperation(newest)
+        }
+      })
+      .catch(() => {})
     return onShellMessage(SHOP_EVENT, (message) => {
       const event = parseOperationEvent(message)
       if (!event) return
