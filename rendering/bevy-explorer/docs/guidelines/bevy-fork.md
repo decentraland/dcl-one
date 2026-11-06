@@ -105,6 +105,12 @@ across workers:
 
 - `GltfLoader::uri_resolver` (`GltfPlugin::with_uri_resolver`): the host resolves every URI a
   glTF references. This is how content paths are contained; see the security page.
+- `KHR_texture_basisu` is supported: `gltf`'s `allow_empty_texture` feature lets a file that
+  requires it (and textures with no `source`) through. A texture with no `source` samples its
+  extension image; one with a PNG/JPEG fallback keeps the fallback. A KTX2 referenced by path
+  loads through the host's `.ktx2` asset loader; an embedded one goes through
+  `GltfLoader::image_transcoder` (`GltfPlugin::with_image_transcoder`), which `image_processing`
+  sets to transcode UASTC to BC7.
 - Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets).
 - Texture decode is skipped when `load_materials` is empty, with a 1x1 placeholder under the
   normal label: headless servers keep geometry without pixels.

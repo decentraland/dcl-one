@@ -733,6 +733,18 @@ mod tests {
     }
 
     #[test]
+    fn embedded_ktx2_is_transcoded_for_the_gltf_loader() {
+        let (dds, mime_type) = crate::transcode_gltf_image(UASTC_8, "image/ktx2").unwrap();
+        assert_eq!(mime_type, "image/vnd-ms.dds");
+        assert_eq!(dds_size(&dds), (8, 8));
+        // recognised by its magic when the mime type is missing or wrong
+        assert!(crate::transcode_gltf_image(UASTC_8, "application/octet-stream").is_some());
+        // everything else is left to the loader
+        assert!(crate::transcode_gltf_image(&png_bytes(8, 8), "image/png").is_none());
+        assert!(crate::transcode_gltf_image(b"not a ktx2", "image/ktx2").is_none());
+    }
+
+    #[test]
     fn uastc_transcodes_to_bc7_in_whole_blocks() {
         assert_eq!(dds_size(&transcode_ktx2(UASTC_8).unwrap()), (8, 8));
         // not whole blocks: decoded and encoded like a png of that size

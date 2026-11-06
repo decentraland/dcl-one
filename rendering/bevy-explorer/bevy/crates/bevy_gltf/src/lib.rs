@@ -120,6 +120,7 @@ pub use {assets::*, label::GltfAssetLabel, loader::*};
 pub struct GltfPlugin {
     custom_vertex_attributes: HashMap<Box<str>, MeshVertexAttribute>,
     uri_resolver: Option<GltfUriResolver>,
+    image_transcoder: Option<GltfImageTranscoder>,
 }
 
 impl GltfPlugin {
@@ -141,6 +142,13 @@ impl GltfPlugin {
     /// buffers. See [`GltfLoader::uri_resolver`].
     pub fn with_uri_resolver(mut self, resolver: GltfUriResolver) -> Self {
         self.uri_resolver = Some(resolver);
+        self
+    }
+
+    /// Set the transcoder for embedded images the loader cannot decode itself. See
+    /// [`GltfLoader::image_transcoder`].
+    pub fn with_image_transcoder(mut self, transcoder: GltfImageTranscoder) -> Self {
+        self.image_transcoder = Some(transcoder);
         self
     }
 }
@@ -169,6 +177,7 @@ impl Plugin for GltfPlugin {
             supported_compressed_formats,
             custom_vertex_attributes: self.custom_vertex_attributes.clone(),
             uri_resolver: self.uri_resolver.clone(),
+            image_transcoder: self.image_transcoder.clone(),
         });
     }
 }

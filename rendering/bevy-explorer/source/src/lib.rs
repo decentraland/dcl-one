@@ -909,7 +909,8 @@ fn desktop_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> P
         })
         .set(
             bevy::gltf::GltfPlugin::default()
-                .with_uri_resolver(std::sync::Arc::new(ipfs::ipfs_path::resolve_content_uri)),
+                .with_uri_resolver(std::sync::Arc::new(ipfs::ipfs_path::resolve_content_uri))
+                .with_image_transcoder(std::sync::Arc::new(image_processing::transcode_gltf_image)),
         )
         .build()
         .add_before::<bevy::asset::AssetPlugin>(IpfsIoPlugin {
@@ -971,7 +972,8 @@ fn wasm_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> Plug
         })
         .set(
             bevy::gltf::GltfPlugin::default()
-                .with_uri_resolver(std::sync::Arc::new(ipfs::ipfs_path::resolve_content_uri)),
+                .with_uri_resolver(std::sync::Arc::new(ipfs::ipfs_path::resolve_content_uri))
+                .with_image_transcoder(std::sync::Arc::new(image_processing::transcode_gltf_image)),
         )
         .disable::<LogPlugin>()
         // `engine_run` sets the console panic hook itself and, with a benchmark stream, chains the
