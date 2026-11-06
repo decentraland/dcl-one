@@ -73,7 +73,15 @@ pub fn reload_frames(
         ReloadEvent::Scene => update_scene_frame(scene_id),
         ReloadEvent::Model { path, removed } => {
             let src = model_src(root, path);
-            let hash = b64_content_hash(&root.join(&src).display().to_string(), machine);
+            // a model `--optimize-textures` rewrote is served from its stage
+            let hash = match crate::textures::staged_source(root, &src) {
+                Some(staged) => crate::scene::b64_content_hash_in_root(
+                    &crate::scene::root_tag(root, machine),
+                    &src,
+                    &staged,
+                ),
+                None => b64_content_hash(&root.join(&src).display().to_string(), machine),
+            };
             update_model_frame(scene_id, &src, &hash, *removed)
         }
     };

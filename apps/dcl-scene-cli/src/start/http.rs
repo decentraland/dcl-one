@@ -441,7 +441,9 @@ pub(super) async fn contents(
         tracing::info!(target: "access", "contents <scene-entity-json> 200");
         return Json(scene_entity(&st, &project)).into_response();
     }
-    let Ok(canonical) = dunce::canonicalize(project.root.join(&rel)) else {
+    let source = crate::textures::staged_source(&project.root, &rel)
+        .unwrap_or_else(|| project.root.join(&rel));
+    let Ok(canonical) = dunce::canonicalize(source) else {
         return not_found();
     };
     if !canonical.starts_with(&project.root) {
@@ -647,7 +649,7 @@ fn build_and_cache(st: &AppState, project: &Project) -> (Value, PublishedPaths) 
 pub(super) fn build_scene_entity(project: &Project, machine: &str) -> Value {
     let root = &project.root;
     let rels = match collect_publishable_files(root) {
-        Ok(rels) => rels,
+        Ok(rels) => crate::textures::publishable(root, rels),
         Err(e) => {
             tracing::warn!(
                 "collecting scene files under {} failed ({e:#}); serving an empty scene entity",
@@ -658,9 +660,11 @@ pub(super) fn build_scene_entity(project: &Project, machine: &str) -> Value {
     };
     let tag = root_tag(root, machine);
     let content: Vec<Value> = crate::scene::parallel_map(&rels, |rel| {
+        let source =
+            crate::textures::staged_source(root, rel).unwrap_or_else(|| root.join(rel));
         json!({
             "file": rel,
-            "hash": b64_content_hash_in_root(&tag, rel, &root.join(rel)),
+            "hash": b64_content_hash_in_root(&tag, rel, &source),
         })
     });
     let ts = SystemTime::now()
