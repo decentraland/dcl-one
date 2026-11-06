@@ -498,4 +498,67 @@ mod roster_regressions {
         );
         server.abort();
     }
+
+    /// A failed access-setting read retains the pass before any roster call.
+    /// Nobody is evicted on an undecided setting.
+    #[tokio::test]
+    async fn a_failed_access_read_retains_the_pass_and_evicts_nobody() {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let fixture = axum::Router::new().route(
+            "/twirp/livekit.RoomService/{method}",
+            axum::routing::post({
+                let calls = calls.clone();
+                move |axum::extract::Path(method): axum::extract::Path<String>| {
+                    let calls = calls.clone();
+                    async move {
+                        calls.lock().unwrap().push(method.clone());
+                        axum::Json(match method.as_str() {
+                            "ListRooms" => serde_json::json!({"rooms":[{"name":"world-faulted.dcl.eth"}]}),
+                            "ListParticipants" => serde_json::json!({"participants":[{"identity":format!("0x{:040x}", 1),"sid":"PA_1"}]}),
+                            _ => serde_json::json!({}),
+                        })
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, fixture).await.unwrap();
+        });
+        let mut state = CommsState::new(
+            sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap(),
+            crate::http::Outbound::for_tests(),
+            super::super::Settings::for_tests(),
+            None,
+            None,
+            Arc::new(StubPolicy {
+                access_type: Err(crate::AuthorityNotEstablished::store_unavailable(
+                    "worlds.worlds",
+                    &sqlx::Error::PoolTimedOut,
+                )),
+                ..Default::default()
+            }),
+            Arc::new(StubScenes::default()),
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(StubDirectory::default()),
+        );
+        state.livekit.configured = true;
+        state.livekit.api_url = url;
+        let world = WorldName::parse("faulted.dcl.eth").unwrap();
+        let inventory = state.room_service().list_rooms().await.unwrap();
+        let outcome = readmit_world_rooms_in_inventory(&state, &world, None, &inventory).await;
+        assert!(outcome.is_err(), "the pass is retained: {outcome:?}");
+        assert_eq!(
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|method| *method != "ListRooms")
+                .count(),
+            0,
+            "no roster read and no eviction on an undecided access setting"
+        );
+        server.abort();
+    }
 }
