@@ -603,9 +603,11 @@ mod tests {
         let Some(pool) = scratch().await else { return };
         let mut state = state_with(pool.clone(), Settings::for_tests());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        Arc::get_mut(&mut state).unwrap().livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
-        let media = axum::Router::new().fallback(|| async { Json(serde_json::json!({"rooms":[]})) });
-        let media_server = tokio::spawn(async move { axum::serve(listener,media).await.unwrap() });
+        Arc::get_mut(&mut state).unwrap().livekit.api_url =
+            format!("http://{}", listener.local_addr().unwrap());
+        let media =
+            axum::Router::new().fallback(|| async { Json(serde_json::json!({"rooms":[]})) });
+        let media_server = tokio::spawn(async move { axum::serve(listener, media).await.unwrap() });
         let place_id = format!("ToolkitScene{}", tag());
         let world = format!("toolkit-{}.eth", tag());
         seed_world_scene(&pool, &world, &place_id, &["10,20"]).await;
