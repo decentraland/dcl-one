@@ -109,10 +109,11 @@ pub struct StartOptions {
     pub no_host: bool,
     /// `--talk`: hands-free listening in the web explorer's Scene assistant.
     pub talk: Option<Talk>,
-    /// `--optimize-textures`: the preview serves models' textures as UASTC
-    /// KTX2, the same staged files a deploy from it uploads
-    /// ([`crate::textures`]).
-    pub textures: Option<crate::textures::Settings>,
+    /// `--[no-]optimize-textures` and `--[no-]keep-source-textures`, stored
+    /// as the project setting. The background import runs either way; with
+    /// the setting on, the preview serves models' textures as UASTC KTX2, the
+    /// same staged files a deploy from it uploads ([`crate::textures`]).
+    pub textures: crate::textures::Overrides,
 }
 
 /// `--talk`: the web explorer that will be opened is let through the
@@ -785,21 +786,8 @@ pub async fn start(opts: StartOptions) -> Result<()> {
         prepare_single(&opts, first.clone(), &state).await?
     };
 
-    if let Some(settings) = opts.textures {
-        for project in &workspace.projects {
-            crate::textures::enable(&project.root, settings);
-            let root = project.root.clone();
-            let done = tokio::task::spawn_blocking(move || {
-                crate::textures::refresh_and_report(&root, false, false)
-            })
-            .await
-            .map_err(|e| anyhow::anyhow!("the texture optimizer stopped: {e}"))
-            .and_then(|r| r);
-            if let Err(e) = done {
-                let e = e.context("optimizing textures; the preview serves the original files");
-                ux::report_watch(&e);
-            }
-        }
+    for project in &workspace.projects {
+        start_texture_import(&state, project, opts.textures);
     }
 
     let app = build_router(state.clone(), comms_state);
@@ -1415,7 +1403,8 @@ async fn retry_initial_build(
 /// listening".
 fn notify_reload(root: &Path, scene: &str, state: &AppState, event: ReloadEvent) {
     state.refresh_scene_json(root);
-    refresh_textures(root);
+    // in the background: this reload serves the overlay in place now
+    crate::textures::import::request(root);
     lock_cache(state).remove(root);
     state.follow_reload(root, &event);
     let mut clients = 0;
@@ -1429,25 +1418,57 @@ fn notify_reload(root: &Path, scene: &str, state: &AppState, event: ReloadEvent)
     tracing::info!("scene update pushed to {clients} client(s)");
 }
 
-/// `--optimize-textures`: re-stage what the change touched before the
-/// reload goes out, so the client fetches the new bytes. Unchanged inputs
-/// return at once; changed textures not in the cache are encoded here,
-/// blocking this watch batch rather than serving a half-optimized scene.
-fn refresh_textures(root: &Path) {
-    if crate::textures::settings(root).is_none() {
-        return;
+/// Stores the project's texture setting and starts its background import
+/// ([`crate::textures::import`]). Each status update goes to every client on
+/// the reload channel; a finished run that changed the optimized files also
+/// drops the cached scene entity, so the next fetch lists them. No reload is
+/// sent: the client offers one.
+fn start_texture_import(
+    state: &Arc<AppState>,
+    project: &Project,
+    overrides: crate::textures::Overrides,
+) {
+    match crate::textures::settings::apply(&project.root, overrides) {
+        Ok(s) if s.optimize_textures => ux::note_arrow(format!(
+            "Textures: optimized (UASTC KTX2{}), imported in the background; until an import finishes the preview serves the last optimized files",
+            if s.keep_source_textures {
+                ", originals kept"
+            } else {
+                ""
+            }
+        )),
+        Ok(_) => {}
+        Err(e) => ux::report_watch(&e.context("saving the texture setting")),
     }
-    let run = || crate::textures::refresh_and_report(root, false, true);
-    let multi_thread = tokio::runtime::Handle::try_current()
-        .is_ok_and(|h| h.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread);
-    let result = match multi_thread {
-        true => tokio::task::block_in_place(run),
-        false => run(),
-    };
-    if let Err(e) = result {
-        let e = e.context("optimizing textures; the preview keeps the last optimized files");
-        ux::report_watch(&e);
+    let scene = scene_id_for(project, &state.machine);
+    let root = project.root.clone();
+    let st = state.clone();
+    let started = crate::textures::import::start(&project.root, move |status| {
+        if status.state != crate::textures::import::ImportState::Running {
+            lock_cache(&st).remove(&root);
+        }
+        for frame in live_reload::texture_optimization_frames(&scene, status) {
+            let _ = st.reload_tx.send(frame);
+        }
+    });
+    if let Err(e) = started {
+        ux::report_watch(&anyhow::Error::new(e).context("starting the texture import"));
     }
+}
+
+/// What a client connecting now is told first: each project's last texture
+/// import status, when an import has sent one.
+pub(crate) fn texture_status_frames(state: &AppState) -> Vec<ReloadFrame> {
+    state
+        .projects()
+        .iter()
+        .filter_map(|project| {
+            let status = crate::textures::import::last_status(&project.root)?;
+            let scene = scene_id_for(project, &state.machine);
+            Some(live_reload::texture_optimization_frames(&scene, &status))
+        })
+        .flatten()
+        .collect()
 }
 
 fn reload_note(clients: usize) -> String {

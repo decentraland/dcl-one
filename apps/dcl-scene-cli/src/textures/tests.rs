@@ -99,7 +99,11 @@ fn scene(tag: &str) -> (TempTree, PathBuf, Vec<u8>) {
 
 fn run(root: &Path, settings: Settings, encoder: &dyn Encoder) -> Outcome {
     let rels = crate::deploy::collect_publishable_files(root).unwrap();
-    optimize(root, &rels, settings, encoder, &|rel| root.join(rel)).unwrap()
+    let run = Run {
+        workers: 4,
+        progress: &|_| {},
+    };
+    optimize(root, &rels, settings, encoder, &|rel| root.join(rel), &run).unwrap()
 }
 
 #[test]
@@ -172,7 +176,9 @@ fn models_are_rewritten_staged_and_originals_ignored_unless_named() {
         .map(|t| t["colorMode"].as_str().unwrap())
         .collect();
     assert_eq!(modes, BTreeSet::from(["normal", "srgb"]));
-    assert!(root.join(STAGE).join("manifest.json").is_file());
+    assert_eq!(out.summary.total, 3);
+    assert_eq!(out.summary.failed, 0);
+    assert!(out.summary.ktx2_bytes > 0 && out.summary.ktx2_bytes < out.summary.converted_bytes);
 }
 
 #[test]
@@ -233,7 +239,260 @@ fn an_unregistered_project_is_untouched() {
     let rels = vec!["a.glb".to_string(), "t.png".to_string()];
     assert_eq!(publishable(root, rels.clone()), rels);
     assert_eq!(staged_source(root, "a.glb"), None);
-    assert_eq!(settings(root), None);
+}
+
+#[test]
+fn a_disabled_overlay_is_not_applied() {
+    let root = Path::new("/nowhere/disabled");
+    let overlay = Overlay {
+        sources: BTreeMap::from([("a.glb".to_string(), PathBuf::from("/stage/a.glb"))]),
+        added: BTreeSet::new(),
+        removed: BTreeSet::from(["t.png".to_string()]),
+    };
+    let entry = |enabled| Entry {
+        enabled,
+        settings: Settings::default(),
+        overlay: Some(Arc::new(overlay.clone())),
+        stamps: None,
+    };
+    let rels = vec!["a.glb".to_string(), "t.png".to_string()];
+    assert!(swap(root, entry(false)), "a new overlay is a change, applied or not");
+    assert_eq!(publishable(root, rels.clone()), rels);
+    assert_eq!(staged_source(root, "a.glb"), None);
+    assert!(swap(root, entry(true)), "turning it on changes what is served");
+    assert_eq!(publishable(root, rels.clone()), ["a.glb"]);
+    assert!(!swap(root, entry(true)), "the same overlay again changes nothing");
+    registry().remove(root);
+}
+
+#[test]
+fn a_quoted_stem_keeps_the_original() {
+    let (t, root, _) = scene("textures-stem");
+    // code that appends the extension itself: `${name}.png`
+    t.write(
+        "bin/index.js",
+        "const names = ['wall', \"other\"]; names.map(n => `images/${n}.png`); 'images/ui.png'",
+    );
+    let out = run(&root, Settings::default(), &FakeEncoder { bloat: false });
+    assert!(out.overlay.removed.is_empty(), "{:?}", out.overlay.removed);
+    let kept: BTreeSet<&str> = out
+        .summary
+        .kept_originals
+        .iter()
+        .map(|(p, _)| p.as_str())
+        .collect();
+    assert_eq!(kept, BTreeSet::from(["images/ui.png", "images/wall.png"]));
+
+    // an unquoted or partial stem is not a reference
+    assert!(names_image("const x = 'wall'", "images/wall.png"));
+    assert!(names_image("load(`wall`)", "images/wall.png"));
+    assert!(names_image("{\"src\":\"wall\"}", "images/wall.png"));
+    assert!(names_image("models/wall.png", "images/wall.png"));
+    assert!(!names_image("const wall = 1", "images/wall.png"));
+    assert!(!names_image("'wallpaper'", "images/wall.png"));
+    assert!(!names_image("''", "images/.png"), "no empty stem");
+}
+
+#[test]
+fn the_ignore_difference_names_both_directions() {
+    let preview = json!({
+        "ignoredOriginals": [
+            {"path": "images/a.png", "reason": "x"},
+            {"path": "images/b.png", "reason": "x"}
+        ]
+    });
+    let same = BTreeSet::from(["images/a.png".to_string(), "images/b.png".to_string()]);
+    assert_eq!(ignore_difference_warning(&preview, &same), None);
+
+    let deployed = BTreeSet::from(["images/b.png".to_string(), "images/c.png".to_string()]);
+    let warning = ignore_difference_warning(&preview, &deployed).unwrap();
+    assert!(
+        warning.contains("left out in the preview: images/a.png;"),
+        "{warning}"
+    );
+    assert!(warning.contains("served in the preview: images/c.png"), "{warning}");
+
+    let none = BTreeSet::new();
+    let warning = ignore_difference_warning(&preview, &none).unwrap();
+    assert!(warning.ends_with("served in the preview: none"), "{warning}");
+    // a manifest without the list (or none at all) compares as empty
+    assert_eq!(ignore_difference_warning(&json!({}), &none), None);
+    assert!(ignored_warning(3).starts_with("3 original image(s) left out of the upload"));
+    assert!(ignored_warning(3).contains("--keep-source-textures"));
+}
+
+#[test]
+fn progress_is_reported_only_while_encoding() {
+    let (_t, root, _) = scene("textures-progress");
+    let rels = crate::deploy::collect_publishable_files(&root).unwrap();
+    let seen = Mutex::new(Vec::new());
+    let progress = |p: Progress| seen.lock().unwrap().push(p);
+    let run = Run {
+        workers: 2,
+        progress: &progress,
+    };
+    let encoder = FakeEncoder { bloat: false };
+    optimize(&root, &rels, Settings::default(), &encoder, &|r| root.join(r), &run).unwrap();
+    let first = std::mem::take(&mut *seen.lock().unwrap());
+    assert_eq!(first.first().map(|p| p.done), Some(0));
+    assert_eq!(first.iter().map(|p| p.done).max(), Some(3));
+    assert!(first.iter().all(|p| p.total == 3 && p.failed == 0));
+    assert_eq!(first.len(), 4, "one at the start, one per encode");
+
+    // everything cached: nothing to report
+    optimize(&root, &rels, Settings::default(), &encoder, &|r| root.join(r), &run).unwrap();
+    assert!(seen.lock().unwrap().is_empty());
+}
+
+fn enable_in_settings(root: &Path) {
+    settings::apply(
+        root,
+        Overrides {
+            optimize_textures: Some(true),
+            keep_source_textures: None,
+        },
+    )
+    .unwrap();
+}
+
+static FAKE: FakeEncoder = FakeEncoder { bloat: false };
+
+fn fake() -> anyhow::Result<&'static dyn Encoder> {
+    Ok(&FAKE)
+}
+
+#[test]
+fn a_run_with_unchanged_inputs_sends_nothing() {
+    let (_t, root, _) = scene("textures-noop");
+    enable_in_settings(&root);
+    let sent: Mutex<Vec<import::ImportStatus>> = Mutex::new(Vec::new());
+    let send = |s: import::ImportStatus| sent.lock().unwrap().push(s);
+    assert!(import::import_once(&root, &fake, 2, &send, false));
+    let first = std::mem::take(&mut *sent.lock().unwrap());
+    let last = first.last().unwrap();
+    assert_eq!(last.state, import::ImportState::Ready);
+    assert_eq!((last.done, last.total, last.failed), (3, 3, 0));
+    assert!(last.enabled);
+    assert!(last.bytes_after > 0 && last.bytes_after < last.bytes_before);
+    assert!(root.join(STAGE).join(PREVIEW_MANIFEST).is_file());
+
+    // nothing moved: no run, nothing sent
+    assert!(!import::import_once(&root, &fake, 2, &send, false));
+    assert!(sent.lock().unwrap().is_empty());
+
+    // code changed, every texture cached and the overlay the same: still silent
+    std::fs::write(root.join("bin/index.js"), "'images/ui.png'; // edited").unwrap();
+    assert!(!import::import_once(&root, &fake, 2, &send, false));
+    assert!(sent.lock().unwrap().is_empty());
+    registry().remove(&root);
+}
+
+/// An encoder that runs a check before each encode, mid-run.
+struct Probe<'a>(&'a (dyn Fn() + Sync));
+
+impl Encoder for Probe<'_> {
+    fn id(&self) -> &str {
+        "fake"
+    }
+
+    fn encode(&self, png: &[u8], mode: ColorMode) -> anyhow::Result<Vec<u8>> {
+        (self.0)();
+        FAKE.encode(png, mode)
+    }
+}
+
+/// A run in progress leaves the overlay in use whole: the old staged model
+/// is still served and names only KTX2 files that overlay publishes. The new
+/// one replaces it in one swap, under a new staged name, and the old file
+/// goes once nothing names it.
+#[test]
+fn the_overlay_swaps_whole_when_a_run_ends() {
+    let (_t, root, _) = scene("textures-swap");
+    enable_in_settings(&root);
+    let sent: Mutex<Vec<import::ImportStatus>> = Mutex::new(Vec::new());
+    let send = |s: import::ImportStatus| sent.lock().unwrap().push(s);
+    assert!(import::import_once(&root, &fake, 2, &send, false));
+    let before = overlay(&root).unwrap();
+    let old_model = staged_source(&root, "models/a.glb").unwrap();
+    sent.lock().unwrap().clear();
+
+    write(&root, "images/wall.png", &noise_png(64, 64, 9));
+    let checks = std::sync::atomic::AtomicUsize::new(0);
+    let check = || {
+        checks.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let current = overlay(&root).unwrap();
+        assert!(Arc::ptr_eq(&current, &before), "no part of the new run is applied");
+        let served = staged_source(&root, "models/a.glb").unwrap();
+        assert_eq!(served, old_model);
+        let model = gltf::Model::parse(&std::fs::read(&served).unwrap()).unwrap();
+        for image in model.json["images"].as_array().unwrap() {
+            let ktx2 = format!("models/{}", image["uri"].as_str().unwrap());
+            assert!(current.added.contains(&ktx2), "{ktx2} is published");
+            assert!(current.source(&ktx2).unwrap().is_file());
+        }
+    };
+    let probe = Probe(&check);
+    let encoder = || Ok::<&dyn Encoder, anyhow::Error>(&probe);
+    assert!(import::import_once(&root, &encoder, 2, &send, false));
+    assert_eq!(checks.load(std::sync::atomic::Ordering::Relaxed), 1, "one texture changed");
+
+    let after = overlay(&root).unwrap();
+    assert_ne!(*after, *before);
+    let new_model = staged_source(&root, "models/a.glb").unwrap();
+    assert_ne!(new_model, old_model, "a new run never rewrites the served file");
+    assert!(new_model.is_file());
+    assert!(!old_model.exists(), "pruned after the swap");
+    let sent = sent.lock().unwrap();
+    assert_eq!(sent.first().unwrap().state, import::ImportState::Running);
+    assert_eq!(sent.last().unwrap().state, import::ImportState::Ready);
+    assert_eq!(
+        sent.iter()
+            .filter(|s| s.state != import::ImportState::Running)
+            .count(),
+        1,
+        "one READY per run"
+    );
+    registry().remove(&root);
+}
+
+#[test]
+fn the_import_runs_with_the_setting_off_and_applies_nothing() {
+    let (_t, root, _) = scene("textures-off");
+    let sent: Mutex<Vec<import::ImportStatus>> = Mutex::new(Vec::new());
+    let send = |s: import::ImportStatus| sent.lock().unwrap().push(s);
+    assert!(import::import_once(&root, &fake, 2, &send, false));
+    let last = *sent.lock().unwrap().last().unwrap();
+    assert_eq!(last.state, import::ImportState::Ready);
+    assert!(!last.enabled);
+    // the cache is warm, the preview serves the tree
+    assert_eq!(staged_source(&root, "models/a.glb"), None);
+    let rels = crate::deploy::collect_publishable_files(&root).unwrap();
+    assert_eq!(publishable(&root, rels.clone()), rels);
+    let warm = run(&root, Settings::default(), &FAKE);
+    assert_eq!(warm.summary.encoded, 0);
+
+    // turned on: the next run applies it without encoding anything
+    enable_in_settings(&root);
+    sent.lock().unwrap().clear();
+    assert!(import::import_once(&root, &fake, 2, &send, false));
+    let sent = sent.lock().unwrap();
+    assert_eq!(sent.len(), 1, "no RUNNING: nothing to encode");
+    assert!(sent[0].enabled && sent[0].state == import::ImportState::Ready);
+    assert!(staged_source(&root, "models/a.glb").is_some());
+    registry().remove(&root);
+}
+
+#[test]
+fn an_import_that_cannot_start_fails_loudly() {
+    let (_t, root, _) = scene("textures-fail");
+    let sent: Mutex<Vec<import::ImportStatus>> = Mutex::new(Vec::new());
+    let send = |s: import::ImportStatus| sent.lock().unwrap().push(s);
+    let broken = || -> anyhow::Result<&'static dyn Encoder> { anyhow::bail!("no encoder") };
+    assert!(!import::import_once(&root, &broken, 2, &send, false));
+    let sent = sent.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].state, import::ImportState::Failed);
+    assert!(registry().get(&root).is_none(), "nothing swapped in");
 }
 
 /// The overlay as `deploy` sees it: flag off, the payload is the tree's;
@@ -251,8 +510,15 @@ fn deploy_payload_follows_the_overlay() {
     assert_eq!(model_off.2, glb);
 
     let out = run(&project.root, Settings::default(), &FakeEncoder { bloat: false });
-    enable(&project.root, Settings::default());
-    registry().get_mut(&project.root).unwrap().overlay = Some(Arc::new(out.overlay.clone()));
+    swap(
+        &project.root,
+        Entry {
+            enabled: true,
+            settings: Settings::default(),
+            overlay: Some(Arc::new(out.overlay.clone())),
+            stamps: None,
+        },
+    );
 
     let on = crate::deploy::prepare(&project).unwrap();
     let on_files: BTreeSet<&str> = on.files.iter().map(|(f, _, _)| f.as_str()).collect();
