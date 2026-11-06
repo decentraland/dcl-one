@@ -303,17 +303,8 @@ pub fn dm_state(mut input: ConsoleCommand<DmStateCommand>, states: DmUserStates)
     ));
 }
 
-/// True if the local user has blocked `address`; such senders' DMs are dropped on receipt.
-pub fn blocked_by_me(social: &SocialClient, address: Address) -> bool {
-    social
-        .0
-        .as_ref()
-        .is_some_and(|client| client.blocked.contains(&address))
-}
-
-/// True if either side has blocked the other. Their nearby chat and reactions are hidden, as in
-/// unity-explorer, where `UserBlockingCache.HideChatMessages` is fixed on and covers both
-/// directions.
+/// True if either side has blocked the other. Their chat and reactions are not shown, on any
+/// channel.
 pub fn blocked_either_way(social: &SocialClient, address: Address) -> bool {
     social
         .0
