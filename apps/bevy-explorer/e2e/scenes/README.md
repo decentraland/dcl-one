@@ -10,9 +10,7 @@ dcl-one's CI (`../references`).
 The scenes were authored for one host scene that swapped bundles. Here every scene is a member of
 `dcl-workspace.json` at its own parcels, `12k,0` for its index `k` in that list (the widest scene
 spans three parcels, so none can see another), with the host's `skyboxConfig.fixedTime` of 43200
-(noon). Positions in a scene's source are scene-relative, so nothing else changed but each scene's
-`tsconfig.json`, which extends the vendored SDK's `@dcl/sdk/types/tsconfig.ecs7.json` as
-`dcl-scene-cli init` writes it (the host's shared base file did not come along). The visual spec
+(noon). Positions in a scene's source are scene-relative, so nothing else changed. The visual spec
 (`../specs/visual`) teleports to each scene's base parcel.
 
 Build them with `apps/dcl-scene-cli` (the vendored SDK toolchain, no npm):
@@ -22,16 +20,5 @@ DCL_SCENE_CLI=/path/to/dcl-scene-cli npm run build-scenes          # every scene
 DCL_SCENE_CLI=/path/to/dcl-scene-cli npm run build-scenes -- core   # one
 ```
 
-## The video scene
-
-`video` is the one scene not from explorer-automation: after unity-explorer's UUAV PlayMode suite
-(`Explorer/Assets/Plugins/UUAV/Packages/UUAV/Tests`), it plays a committed fixture through the
-engine's player, UUAV on the standalone and the browser's video element on the web, at parcel
-`204,0`. `assets/video/red_tone.mp4` is 6 s of solid red at 320x240 with a 440 Hz tone, written
-by `video/generate-fixture.sh` (ffmpeg, as the Unity fixtures are), so a presented frame is red
-whenever it is sampled and the audio path runs too. `specs/visual/video.test.ts` asserts the
-player's events and the frame's centre pixel instead of comparing a reference; the scene's label
-shows the last event for whoever reads the report's frame.
-
-`bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png`, `.jpg` and
-`.mp4` assets are in Git LFS.
+`bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png` and `.jpg`
+assets are in Git LFS.

@@ -49,19 +49,15 @@ async function walk(dir: string, prefix: string): Promise<string[]> {
   return out
 }
 
-/** The entity of a built SDK7 scene folder: `scene.json` as metadata, its `main` bundle and every
- *  other file in `main`'s folder (dcl-scene-cli's split bundle: `bin/sdk-runtime.js` and
- *  `bin/scene.js` beside `bin/index.js`), `main.crdt` when present, and everything under
- *  `assets/`. */
+/** The entity of a built SDK7 scene folder: `scene.json` as metadata, its `main` bundle,
+ *  `main.crdt` when present, and everything under `assets/`. */
 export async function buildScene(sceneDir: string): Promise<BuiltScene> {
   const metadata = JSON.parse(await readFile(path.join(sceneDir, 'scene.json'), 'utf8')) as Record<string, unknown>
   const main = typeof metadata.main === 'string' ? metadata.main : 'bin/index.js'
   const scene = metadata.scene as { base?: string; parcels?: string[] } | undefined
   const pointers = scene?.parcels ?? (scene?.base ? [scene.base] : [])
   if (pointers.length === 0) throw new Error(`${sceneDir}: scene.json names no parcels`)
-  const bundleDir = path.posix.dirname(main)
-  const chunks = bundleDir === '.' ? [] : (await walk(path.join(sceneDir, bundleDir), bundleDir)).filter((file) => file !== main)
-  const relativeFiles = [main, ...chunks, 'main.crdt', ...(await walk(path.join(sceneDir, 'assets'), 'assets'))]
+  const relativeFiles = [main, 'main.crdt', ...(await walk(path.join(sceneDir, 'assets'), 'assets'))]
   const files = new Map<string, string>()
   const content: ContentFile[] = []
   for (const file of relativeFiles) {
