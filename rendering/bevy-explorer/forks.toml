@@ -126,7 +126,7 @@ crates = [
 url = "https://github.com/robtfm/client-sdk-rust"
 branch = "decentraland-0.9.7"
 rev = "7f9ed8515625f5149dc074d13bd50e451a442a59"
-reason = "livekit 0.9.7 plus two commits: participant_identity on RoomEvent::DataReceived (the sender of data that arrives before its participant announcement; PR'd upstream as livekit/rust-sdks#1574, drop that commit when it lands in a release), and the webrtc-sys build downloading the ffmpeg/BoringSSL-prefixed libwebrtc prebuilts (upstream's macOS/Windows archives carry unprefixed symbols that shadow the engine's own ffmpeg). The sibling crates follow from the same checkout as the fork's path dependencies."
+reason = "livekit 0.9.7 plus two commits: participant_identity on RoomEvent::DataReceived (the sender of data that arrives before its participant announcement; PR'd upstream as livekit/rust-sdks#1574, drop that commit when it lands in a release), and the webrtc-sys build downloading the ffmpeg/BoringSSL-prefixed libwebrtc prebuilts (upstream's macOS/Windows archives export unprefixed ffmpeg and BoringSSL symbols into the engine process). The sibling crates follow from the same checkout as the fork's path dependencies."
 crates = [
   "device-info 0.1.1",
   "libwebrtc 0.3.54",
@@ -267,20 +267,6 @@ behind_parent = 70
 branch_commits_since_pin = 0
 crates = [
   "parry3d-f64 0.25.3",
-]
-
-[[source]]
-url = "https://github.com/robtfm/rust-ffmpeg"
-branch = "audio-linesize-0-6.1"
-rev = "140c74769d0ecceff78997542392afac95fe6ca3"
-parent = "zmwangx/rust-ffmpeg"
-default_branch = "master"
-pushed_at = "2025-11-28"
-ahead_of_parent = 1
-behind_parent = 68
-branch_commits_since_pin = 0
-crates = [
-  "ffmpeg-next 6.1.1",
 ]
 
 [[source]]

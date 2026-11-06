@@ -1,6 +1,6 @@
 //! Html media on the web: the page owns the `<video>` elements (the engine runs on a worker,
 //! which has no DOM) and plays the engine's av sources in them ([`host`]). The engine drives
-//! them with the [`AVCommand`]s and [`VideoData`] native's ffmpeg thread takes and reports
+//! them with the [`AVCommand`]s and [`VideoData`] native's uuav player takes and reports
 //! ([`spawn_av`]); commands go engine → page and state comes back over `futures_channel`
 //! (lock-free: the page must never block). Decoded frames never touch the engine: the page
 //! transfers each `VideoFrame` straight to the render worker, tagged with the media id, and the
@@ -143,7 +143,7 @@ impl AvSource {
 }
 
 /// Plays `url` in a page element whose frames are copied into `image`: the web counterpart of
-/// native's ffmpeg thread, driven by `commands` and reporting on `video`. `None` opens a
+/// native's uuav player, driven by `commands` and reporting on `video`. `None` opens a
 /// placeholder that never plays. Without `has_video` (an audio stream) no frames are read.
 pub fn spawn_av(
     commands: tokio::sync::mpsc::UnboundedReceiver<AVCommand>,

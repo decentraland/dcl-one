@@ -4,7 +4,7 @@ use common::structs::PrimaryUser;
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use scene_runner::{renderer_context::RendererSceneContext, ContainingScene, SceneEntity};
 use serde_json::json;
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 use serde_json::Value;
 
 pub(super) fn register(app: &mut App) {
@@ -52,9 +52,9 @@ fn media_state(
     scenes: Query<&RendererSceneContext>,
     player: Query<Entity, With<PrimaryUser>>,
     containing: ContainingScene,
-    #[cfg(any(feature = "ffmpeg", feature = "html"))] images: Res<Assets<Image>>,
-    #[cfg(any(feature = "ffmpeg", feature = "html"))] video_sinks: Query<&AVSinks<VideoPlayer>>,
-    #[cfg(any(feature = "ffmpeg", feature = "html"))] audio_sinks: Query<&AVSinks<AudioStream>>,
+    #[cfg(any(feature = "uuav", feature = "html"))] images: Res<Assets<Image>>,
+    #[cfg(any(feature = "uuav", feature = "html"))] video_sinks: Query<&AVSinks<VideoPlayer>>,
+    #[cfg(any(feature = "uuav", feature = "html"))] audio_sinks: Query<&AVSinks<AudioStream>>,
 ) {
     let Some(Ok(_)) = cmd.take() else { return };
     let mut rows = Vec::new();
@@ -80,7 +80,7 @@ fn media_state(
         }
         let mut item = row("video", entity, here, scheduled, &player.config());
         item["source"] = json!(source_label(player.url()));
-        #[cfg(any(feature = "ffmpeg", feature = "html"))]
+        #[cfg(any(feature = "uuav", feature = "html"))]
         add_sink(&mut item, video_sinks.get(_ent).ok(), &images);
         rows.push(item);
     }
@@ -91,14 +91,14 @@ fn media_state(
         }
         let mut item = row("audio", entity, here, scheduled, &player.config());
         item["source"] = json!(source_label(player.url()));
-        #[cfg(any(feature = "ffmpeg", feature = "html"))]
+        #[cfg(any(feature = "uuav", feature = "html"))]
         add_sink(&mut item, audio_sinks.get(_ent).ok(), &images);
         rows.push(item);
     }
     let backend = if cfg!(feature = "html") {
         "HTML media"
-    } else if cfg!(feature = "ffmpeg") {
-        "FFmpeg"
+    } else if cfg!(feature = "uuav") {
+        "UUAV"
     } else {
         "No playback backend"
     };
@@ -126,7 +126,7 @@ fn source_label(source: &str) -> String {
     }
 }
 
-#[cfg(any(feature = "ffmpeg", feature = "html"))]
+#[cfg(any(feature = "uuav", feature = "html"))]
 fn add_sink<T: AVPlayer>(row: &mut Value, sinks: Option<&AVSinks<T>>, images: &Assets<Image>) {
     let sink = sinks.and_then(|s| s.video.as_ref());
     row["hasSink"] = json!(sinks.is_some());
@@ -145,7 +145,7 @@ fn add_sink<T: AVPlayer>(row: &mut Value, sinks: Option<&AVSinks<T>>, images: &A
     row["durationSeconds"] = json!(sink.and_then(|s| s.length));
 }
 
-#[cfg(all(test, feature = "ffmpeg"))]
+#[cfg(all(test, feature = "uuav"))]
 mod tests {
     use super::*;
 
