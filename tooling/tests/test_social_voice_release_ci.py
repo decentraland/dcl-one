@@ -48,6 +48,7 @@ def query(sql, database=url):
 record = {'args': sys.argv[1:], 'url': url, 'psql': psql, 'data': os.environ['PGDATA'],
           'listen': query('SHOW listen_addresses'), 'server': query('SHOW server_version_num'),
           'locks': query('SHOW max_locks_per_transaction'), 'threads': os.environ['RUST_TEST_THREADS'],
+          'target': os.environ.get('CARGO_TARGET_DIR'),
           'role': query('SELECT rolsuper AND rolcreatedb FROM pg_roles WHERE rolname=current_user'),
           'collation': query("SELECT EXISTS(SELECT 1 FROM pg_collation WHERE collname='en_US.utf8' AND collnamespace='pg_catalog'::regnamespace)", url.replace('/postgres?', '/template1?'))}
 Path(os.environ['RELEASE_CI_TEST_RECORD']).write_text(json.dumps(record))
@@ -73,6 +74,7 @@ sys.exit(int(os.environ.get('RELEASE_CI_TEST_CARGO_EXIT', '0')))
             self.assertNotEqual(result.returncode, 0, 'owned PostgreSQL must be stopped')
 
     def test_always_supplies_owned_database_and_psql_to_the_actual_release_target(self):
+        self.env['CARGO_TARGET_DIR'] = str(self.files / 'isolated-target')
         result = self.run_runner()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         record = json.loads(self.record.read_text())
@@ -85,6 +87,7 @@ sys.exit(int(os.environ.get('RELEASE_CI_TEST_CARGO_EXIT', '0')))
         self.assertEqual(record['server'], '180006')
         self.assertEqual(record['locks'], '1024')
         self.assertEqual(record['threads'], '2')
+        self.assertEqual(record['target'], self.env['CARGO_TARGET_DIR'])
         self.assertEqual(record['role'], 't')
         self.assertEqual(record['collation'], 't')
         self.assert_owned_cluster_removed(record)
@@ -143,6 +146,30 @@ sys.exit(29)
         self.assertNotIn('continue-on-error', workflow)
         self.assertNotIn('secrets.', workflow)
         self.assertIn('permissions:\n  contents: read\n', workflow)
+
+    def test_workflow_isolates_release_cache_and_reserves_disk_before_nix(self):
+        workflow = WORKFLOW.read_text()
+        self.assertIn('CARGO_TARGET_DIR: ${{ github.workspace }}/services/catalyst/target-social-voice-release', workflow)
+        # Restore and save must use the exact directory Cargo receives.
+        self.assertEqual(workflow.count('            ${{ env.CARGO_TARGET_DIR }}\n'), 2)
+        self.assertNotIn('            services/catalyst/target\n', workflow)
+        namespace = 'social-voice-release-nodebug-v2-'
+        cache_keys = [line.strip() for line in workflow.splitlines()
+                      if line.strip().startswith(('key:', namespace))]
+        self.assertEqual(len(cache_keys), 3)
+        self.assertTrue(cache_keys[0].startswith(f'key: {namespace}'))
+        self.assertTrue(cache_keys[1].startswith(namespace))
+        self.assertEqual(cache_keys[2], 'key: ${{ steps.rust-cache.outputs.cache-primary-key }}')
+        self.assertNotIn('foundation-dev-', workflow)
+        self.assertNotIn('social-voice-release-nodebug-${{', workflow)
+        restore_keys = workflow.split('          restore-keys: |\n', 1)[1].split('      - name:', 1)[0]
+        self.assertEqual(len(restore_keys.strip().splitlines()), 1, 'no fallback to other cache namespaces')
+        self.assertIn("if: github.ref == 'refs/heads/main' && steps.rust-cache.outputs.cache-hit != 'true'", workflow)
+        reserve = workflow.index('      - name: Reserve disk space')
+        self.assertLess(reserve, workflow.index('uses: cachix/install-nix-action@'))
+        self.assertLess(reserve, workflow.index('uses: actions/cache/restore@'))
+        self.assertIn("        if: runner.os == 'Linux'\n", workflow)
+        self.assertIn('sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup', workflow)
 
 
 if __name__ == '__main__':
