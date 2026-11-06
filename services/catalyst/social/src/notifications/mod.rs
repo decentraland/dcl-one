@@ -176,7 +176,11 @@ impl State {
         let configured = self.email.notifications_configured();
         if !configured {
             tracing::info!(
-                "SENDGRID_NOTIFICATION_TEMPLATE_ID or SIGNING_KEY unset: email deliveries are recorded as skipped"
+                "SENDGRID_API_KEY, SENDGRID_FROM_EMAIL or SENDGRID_NOTIFICATION_TEMPLATE_ID unset: email deliveries are recorded as skipped"
+            );
+        } else if !self.email.has_signing_key() {
+            tracing::error!(
+                "SIGNING_KEY unset: notification emails stay pending (no unsubscribe link can be signed) until it is set"
             );
         }
         jobs.spawn_periodic_leased(

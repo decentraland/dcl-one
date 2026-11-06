@@ -313,7 +313,7 @@ pub async fn put_confirm_email(
         .find_unconfirmed_email(&address)
         .await?
         .ok_or_else(|| ApiError::bad_request("No unconfirmed email for this address"))?;
-    if pending.1 != code {
+    if !super::signing::constant_time_eq(pending.1.as_bytes(), code.as_bytes()) {
         return Err(ApiError::bad_request("Invalid code").into());
     }
     if state.email.is_domain_blacklisted(&pending.0) {

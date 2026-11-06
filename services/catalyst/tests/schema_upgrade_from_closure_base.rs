@@ -346,6 +346,19 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
             || name == "social.private_voice_chats_callee_idx")),
         "migrate preserves the address access paths already created by the release"
     );
+    // An index added to an existing table is created by the object pass (a step may not CREATE).
+    assert!(done.created.iter().any(|object| matches!(object,
+        schema_migrate::Object::Index(name) if name == "social.notification_deliveries_terminal_idx")));
+    let terminal_idx: String = sqlx::query_scalar(
+        "SELECT indexdef FROM pg_indexes WHERE schemaname = 'social' AND indexname = 'notification_deliveries_terminal_idx'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(
+        terminal_idx.contains("(updated_at) WHERE (state <> 'pending'::text)"),
+        "{terminal_idx}"
+    );
     assert!(has_column(pool, "explore.place_reports", "upload_token_hash").await);
     assert!(has_column(pool, "social.notifications", "in_app").await);
     assert!(has_column(pool, "social.event_notification_intents", "id").await);

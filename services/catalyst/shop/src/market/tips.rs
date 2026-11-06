@@ -8,7 +8,9 @@
 //! arrives before the index reaches the transaction, so it is kept as a
 //! claim (`shop.tip_claim`) and resolved then, by the request itself or the
 //! `tip-notifications` job; a claim the index never confirms expires after
-//! an hour. The notification id is a uuid v5 of the transaction hash.
+//! an hour. A transfer below the minimum amount, or mined longer than the
+//! maximum age before its claim, is rejected (`TipSettings`). The
+//! notification id is a uuid v5 of the transaction hash.
 
 use std::time::Duration;
 
@@ -37,7 +39,52 @@ const SUBTYPE: &str = "tip-received";
 const NET: ChainNet = ChainNet::Matic;
 const CLAIM_TTL_SECS: i64 = 3600;
 const MAX_PENDING_PER_SENDER: i64 = 20;
+/// Claims one resolve pass settles at most.
+const RESOLVE_LIMIT: i64 = 500;
 const POLL_SECS: u64 = 15;
+
+pub const DEFAULT_MIN_AMOUNT_WEI: &str = "1000000000000000000";
+pub const DEFAULT_MAX_AGE_SECS: u64 = 86_400;
+pub const DEFAULT_MAX_PENDING: u64 = 2_000;
+
+/// What a tip must be to notify, and how many claims may wait at once.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TipSettings {
+    /// `MARKETPLACE_TIP_MIN_AMOUNT_WEI`: the smallest transfer that notifies.
+    pub min_amount_wei: U256,
+    /// `MARKETPLACE_TIP_MAX_AGE_SECS`: the oldest transfer (block time before the claim) that notifies.
+    pub max_age_secs: i64,
+    /// `MARKETPLACE_TIP_MAX_PENDING`: pending claims across every sender.
+    pub max_pending: i64,
+}
+
+impl Default for TipSettings {
+    fn default() -> Self {
+        Self::parse(
+            DEFAULT_MIN_AMOUNT_WEI,
+            DEFAULT_MAX_AGE_SECS,
+            DEFAULT_MAX_PENDING,
+        )
+        .expect("the defaults parse")
+    }
+}
+
+impl TipSettings {
+    pub fn parse(
+        min_amount_wei: &str,
+        max_age_secs: u64,
+        max_pending: u64,
+    ) -> anyhow::Result<Self> {
+        let min_amount_wei = U256::from_str_radix(min_amount_wei.trim(), 10).map_err(|e| {
+            anyhow::anyhow!("MARKETPLACE_TIP_MIN_AMOUNT_WEI is not a wei amount: {e}")
+        })?;
+        Ok(Self {
+            min_amount_wei,
+            max_age_secs: i64::try_from(max_age_secs).unwrap_or(i64::MAX),
+            max_pending: i64::try_from(max_pending).unwrap_or(i64::MAX),
+        })
+    }
+}
 
 pub fn notification_id(transaction_hash: &str) -> Uuid {
     Uuid::new_v5(
@@ -113,17 +160,14 @@ async fn forward(
         Ok(tx) => tx,
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
     };
-    match claim(&state.pool, &tx, &signer).await {
+    match claim(&state.pool, &state.settings.market.tips, &tx, &signer).await {
         Ok(Outcome::Notified) => StatusCode::NO_CONTENT.into_response(),
         Ok(Outcome::Pending) => (StatusCode::ACCEPTED, Json(json!({}))).into_response(),
         Ok(Outcome::TooMany) => error(
             StatusCode::TOO_MANY_REQUESTS,
             "Too many tips waiting for confirmation",
         ),
-        Ok(Outcome::Rejected) => error(
-            StatusCode::BAD_REQUEST,
-            format!("Transaction is not a single MANA transfer from the signer: {tx}"),
-        ),
+        Ok(Outcome::Rejected(why)) => error(StatusCode::BAD_REQUEST, why.message(&tx)),
         Err(e) => {
             tracing::error!(error = %e, tx, "tip forward failed");
             error(
@@ -138,36 +182,69 @@ async fn forward(
 pub enum Outcome {
     Notified,
     Pending,
-    Rejected,
+    Rejected(Rejection),
     TooMany,
 }
 
-/// Records the claim and resolves it at once if the index already has it.
-pub async fn claim(pool: &PgPool, tx: &str, sender: &str) -> anyhow::Result<Outcome> {
-    let inserted = sqlx::query(
-        "INSERT INTO shop.tip_claim (transaction_hash, sender) \
-         SELECT $1, $2 WHERE (SELECT count(*) FROM shop.tip_claim WHERE sender = $2) < $3 \
-         ON CONFLICT DO NOTHING",
+/// Why a claim was refused; each is the old route's 400.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Rejection {
+    NotSingleTransfer,
+    TooSmall,
+    TooOld,
+    Malformed,
+}
+
+impl Rejection {
+    fn message(self, tx: &str) -> String {
+        match self {
+            Rejection::NotSingleTransfer => {
+                format!("Transaction is not a single MANA transfer from the signer: {tx}")
+            }
+            Rejection::TooSmall => format!("Transaction {tx} transfers less than the minimum tip"),
+            Rejection::TooOld => format!("Transaction {tx} is too old"),
+            Rejection::Malformed => format!("Transaction {tx} could not be read"),
+        }
+    }
+}
+
+/// Records the claim (under the sender's lock, within the per-sender and
+/// global caps) and resolves it at once if the index already has it.
+pub async fn claim(
+    pool: &PgPool,
+    settings: &TipSettings,
+    tx: &str,
+    sender: &str,
+) -> anyhow::Result<Outcome> {
+    let mut txn = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext('tip_claim:' || $1))")
+        .bind(sender)
+        .execute(&mut *txn)
+        .await?;
+    let (exists, mine, all): (bool, i64, i64) = sqlx::query_as(
+        "SELECT EXISTS (SELECT 1 FROM shop.tip_claim WHERE transaction_hash = $1 AND sender = $2), \
+                (SELECT count(*) FROM shop.tip_claim WHERE sender = $2), \
+                (SELECT count(*) FROM shop.tip_claim)",
     )
     .bind(tx)
     .bind(sender)
-    .bind(MAX_PENDING_PER_SENDER)
-    .execute(pool)
-    .await?
-    .rows_affected();
-    if inserted == 0 {
-        let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM shop.tip_claim WHERE transaction_hash = $1 AND sender = $2)",
+    .fetch_one(&mut *txn)
+    .await?;
+    if !exists {
+        // The global count is advisory: concurrent senders may pass it together.
+        if mine >= MAX_PENDING_PER_SENDER || all >= settings.max_pending {
+            return Ok(Outcome::TooMany);
+        }
+        sqlx::query(
+            "INSERT INTO shop.tip_claim (transaction_hash, sender) VALUES ($1, $2) ON CONFLICT DO NOTHING",
         )
         .bind(tx)
         .bind(sender)
-        .fetch_one(pool)
+        .execute(&mut *txn)
         .await?;
-        if !exists {
-            return Ok(Outcome::TooMany);
-        }
     }
-    let resolved = resolve(pool, Some((tx, sender))).await?;
+    txn.commit().await?;
+    let resolved = resolve(pool, settings, Some((tx, sender))).await?;
     Ok(resolved
         .into_iter()
         .next()
@@ -182,6 +259,7 @@ struct ClaimRow {
     created_at: NaiveDateTime,
     recipient: Option<String>,
     amount: Option<String>,
+    timestamp: Option<i64>,
 }
 
 /// `ethers.formatUnits(wei, 18)`: at least one fraction digit, no trailing zeros.
@@ -217,11 +295,47 @@ pub fn metadata(sender: &str, recipient: &str, amount: &str) -> Value {
     })
 }
 
-/// Settles the claims (one, or all with `None`) the published index can
-/// answer for: a single transfer from the signer notifies its recipient, any
-/// other shape is rejected, none yet leaves the claim pending.
+/// The verdict on a claim's published transfers.
+fn judge(
+    settings: &TipSettings,
+    claim: &ClaimRow,
+    transfers: &[(&str, &str, i64)],
+) -> Result<NewNotification, Rejection> {
+    let [(recipient, amount, timestamp)] = transfers else {
+        return Err(Rejection::NotSingleTransfer);
+    };
+    if *recipient == claim.sender {
+        return Err(Rejection::NotSingleTransfer);
+    }
+    let (Ok(address), Ok(wei), Some(mana)) = (
+        Address::parse(recipient),
+        U256::from_str_radix(amount, 10),
+        format_mana(amount),
+    ) else {
+        return Err(Rejection::Malformed);
+    };
+    if wei < settings.min_amount_wei {
+        return Err(Rejection::TooSmall);
+    }
+    if claim.created_at.and_utc().timestamp() - timestamp > settings.max_age_secs {
+        return Err(Rejection::TooOld);
+    }
+    Ok(NewNotification {
+        id: notification_id(&claim.transaction_hash),
+        address,
+        kind: KIND.into(),
+        metadata: metadata(&claim.sender, recipient, &mana),
+        occurred_at: claim.created_at,
+    })
+}
+
+/// Settles the claims (one, or up to [`RESOLVE_LIMIT`] with `None`) the
+/// published index holds a transfer for: a single transfer from the signer
+/// notifies its recipient, any other shape is rejected; a claim without one
+/// stays pending and is not read.
 pub async fn resolve(
     pool: &PgPool,
+    settings: &TipSettings,
     only: Option<(&str, &str)>,
 ) -> anyhow::Result<Vec<(String, Outcome)>> {
     let now = chrono::Utc::now();
@@ -230,11 +344,13 @@ pub async fn resolve(
     };
     let mut txn = pool.begin().await?;
     let rows: Vec<ClaimRow> = sqlx::query_as(
-        "SELECT c.transaction_hash, c.sender, c.created_at, t.recipient, t.amount::text AS amount \
-         FROM (SELECT * FROM shop.tip_claim \
-               WHERE $3::text IS NULL OR (transaction_hash = $3 AND sender = $4) \
-               ORDER BY transaction_hash, sender FOR UPDATE SKIP LOCKED) c \
-         LEFT JOIN shop.mana_transfer t ON t.network = $1 AND t.sender = c.sender \
+        "SELECT c.transaction_hash, c.sender, c.created_at, t.recipient, t.amount::text AS amount, t.timestamp \
+         FROM (SELECT * FROM shop.tip_claim tc \
+               WHERE ($3::text IS NULL OR (tc.transaction_hash = $3 AND tc.sender = $4)) \
+                 AND EXISTS (SELECT 1 FROM shop.mana_transfer m WHERE m.network = $1 AND m.sender = tc.sender \
+                             AND m.transaction_hash = tc.transaction_hash AND m.block_number <= $2) \
+               ORDER BY tc.created_at, tc.transaction_hash, tc.sender LIMIT $5 FOR UPDATE SKIP LOCKED) c \
+         JOIN shop.mana_transfer t ON t.network = $1 AND t.sender = c.sender \
               AND t.transaction_hash = c.transaction_hash AND t.block_number <= $2 \
          ORDER BY c.transaction_hash, c.sender, t.log_index",
     )
@@ -242,6 +358,7 @@ pub async fn resolve(
     .bind(cursor.last_block)
     .bind(only.map(|(tx, _)| tx))
     .bind(only.map(|(_, s)| s))
+    .bind(RESOLVE_LIMIT)
     .fetch_all(&mut *txn)
     .await?;
     let mut outcomes = Vec::new();
@@ -251,31 +368,26 @@ pub async fn resolve(
         rows.chunk_by(|a, b| (&a.transaction_hash, &a.sender) == (&b.transaction_hash, &b.sender))
     {
         let first = &group[0];
-        let transfers: Vec<(&str, &str)> = group
+        let transfers: Vec<(&str, &str, i64)> = group
             .iter()
-            .filter_map(|r| Some((r.recipient.as_deref()?, r.amount.as_deref()?)))
+            .filter_map(|r| Some((r.recipient.as_deref()?, r.amount.as_deref()?, r.timestamp?)))
             .collect();
-        let outcome = match transfers.as_slice() {
-            [] => Outcome::Pending,
-            [(recipient, amount)] if *recipient != first.sender => {
-                let (Ok(address), Some(mana)) = (Address::parse(recipient), format_mana(amount))
-                else {
-                    anyhow::bail!("malformed indexed transfer for {}", first.transaction_hash);
-                };
-                notifications.push(NewNotification {
-                    id: notification_id(&first.transaction_hash),
-                    address,
-                    kind: KIND.into(),
-                    metadata: metadata(&first.sender, recipient, &mana),
-                    occurred_at: first.created_at,
-                });
+        let outcome = match judge(settings, first, &transfers) {
+            Ok(n) => {
+                notifications.push(n);
                 Outcome::Notified
             }
-            _ => Outcome::Rejected,
+            Err(why) => {
+                if why == Rejection::Malformed {
+                    tracing::warn!(
+                        tx = first.transaction_hash,
+                        "tip claim: malformed indexed transfer; rejected"
+                    );
+                }
+                Outcome::Rejected(why)
+            }
         };
-        if outcome != Outcome::Pending {
-            settled.push((first.transaction_hash.clone(), first.sender.clone()));
-        }
+        settled.push((first.transaction_hash.clone(), first.sender.clone()));
         outcomes.push((first.transaction_hash.clone(), outcome));
     }
     insert_notifications(&mut *txn, &notifications).await?;
@@ -304,6 +416,7 @@ async fn expire(pool: &PgPool) -> anyhow::Result<u64> {
 }
 
 pub fn spawn_job(state: &SharedState, jobs: &Jobs) {
+    let settings = state.settings.market.tips.clone();
     if !state.settings.market.indexes.mana_transfers_enabled {
         tracing::warn!(
             "MARKETPLACE_MANA_TRANSFERS_INDEX_ENABLED is off here: tip forwards wait for an index another process must walk, and expire unconfirmed without one"
@@ -316,7 +429,7 @@ pub fn spawn_job(state: &SharedState, jobs: &Jobs) {
             .with_jitter(Duration::from_secs(5))
             .with_error_backoff(Duration::from_secs(300)),
         move |ctx| {
-            let pool = pool.clone();
+            let (pool, settings) = (pool.clone(), settings.clone());
             async move {
                 let expired = expire(&pool).await?;
                 if chain_walk::ready_cursor(&pool, INDEXER_MANA, NET, chrono::Utc::now())
@@ -332,17 +445,20 @@ pub fn spawn_job(state: &SharedState, jobs: &Jobs) {
                     ));
                     return Ok(());
                 }
-                let outcomes = resolve(&pool, None).await?;
+                let outcomes = resolve(&pool, &settings, None).await?;
                 let notified = outcomes
                     .iter()
                     .filter(|(_, o)| *o == Outcome::Notified)
                     .count();
-                if notified > 0 || expired > 0 {
-                    tracing::info!(notified, expired, "tip notifications");
+                let rejected = outcomes.len() - notified;
+                if notified > 0 || rejected > 0 || expired > 0 {
+                    tracing::info!(notified, rejected, expired, "tip notifications");
                 }
+                let waiting: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.tip_claim")
+                    .fetch_one(&pool)
+                    .await?;
                 ctx.progress(format!(
-                    "{notified} notified, {} waiting, {expired} expired",
-                    outcomes.iter().filter(|(_, o)| *o == Outcome::Pending).count()
+                    "{notified} notified, {rejected} rejected, {waiting} waiting, {expired} expired"
                 ));
                 Ok(())
             }
@@ -369,6 +485,62 @@ mod tests {
         );
     }
 
+    const TIPPER: &str = "0x00000000000000000000000000000000000000a1";
+    const RECEIVER: &str = "0x00000000000000000000000000000000000000b2";
+
+    fn hash(n: u8) -> String {
+        format!("0x{:064x}", n)
+    }
+
+    fn now_secs() -> i64 {
+        chrono::Utc::now().timestamp()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn transfer(
+        pool: &PgPool,
+        block: i64,
+        log: i32,
+        tx: &str,
+        from: &str,
+        to: &str,
+        amount: &str,
+        timestamp: i64,
+    ) {
+        sqlx::query(
+            "INSERT INTO shop.mana_transfer (network, block_number, log_index, transaction_hash, sender, recipient, amount, timestamp) \
+             VALUES ('matic', $1, $2, $3, $4, $5, $6::numeric, $7)",
+        )
+        .bind(block)
+        .bind(log)
+        .bind(tx)
+        .bind(from)
+        .bind(to)
+        .bind(amount)
+        .bind(timestamp)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn publish(pool: &PgPool, block: i64) {
+        sqlx::query(
+            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
+             VALUES ('mana_transfers', 'matic', 0, $1, $1, timezone('UTC', now()), true)",
+        )
+        .bind(block)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn tip_count(pool: &PgPool) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM social.notifications WHERE type = 'tip_received'")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
     /// Pending until the published index holds the transfer, then the
     /// recipient is told once; unpublished blocks, a stranger's claim, a
     /// multi-transfer transaction and the per-sender cap are refused.
@@ -378,52 +550,24 @@ mod tests {
             return;
         };
         let pool = &db.pool;
-        let tipper = "0x00000000000000000000000000000000000000a1";
-        let receiver = "0x00000000000000000000000000000000000000b2";
-        let hash = |n: u8| format!("0x{:064x}", n);
-        let transfer = |block: i64, log: i32, tx: String, from: &'static str| async move {
-            sqlx::query(
-                "INSERT INTO shop.mana_transfer (network, block_number, log_index, transaction_hash, sender, recipient, amount, timestamp) \
-                 VALUES ('matic', $1, $2, $3, $4, $5, 2500000000000000000, 1700000000)",
-            )
-            .bind(block)
-            .bind(log)
-            .bind(tx)
-            .bind(from)
-            .bind(receiver)
-            .execute(pool)
-            .await
-            .unwrap();
-        };
-        let count = || async {
-            sqlx::query_scalar::<_, i64>(
-                "SELECT count(*) FROM social.notifications WHERE type = 'tip_received'",
-            )
-            .fetch_one(pool)
-            .await
-            .unwrap()
-        };
-        transfer(100, 0, hash(1), tipper).await;
+        let settings = TipSettings::default();
+        let tip = "2500000000000000000";
+        let t = now_secs();
+        transfer(pool, 100, 0, &hash(1), TIPPER, RECEIVER, tip, t).await;
         assert_eq!(
-            claim(pool, &hash(1), tipper).await.unwrap(),
+            claim(pool, &settings, &hash(1), TIPPER).await.unwrap(),
             Outcome::Pending,
             "an index that is not ready answers nothing"
         );
-        sqlx::query(
-            "INSERT INTO shop.chain_cursor (indexer, network, start_block, last_block, folded_block, folded_at, full_history) \
-             VALUES ('mana_transfers', 'matic', 0, 150, 150, timezone('UTC', now()), true)",
-        )
-        .execute(pool)
-        .await
-        .unwrap();
-        let outcomes = resolve(pool, None).await.unwrap();
+        publish(pool, 150).await;
+        let outcomes = resolve(pool, &settings, None).await.unwrap();
         assert_eq!(outcomes, vec![(hash(1), Outcome::Notified)]);
         assert_eq!(
-            claim(pool, &hash(1), tipper).await.unwrap(),
+            claim(pool, &settings, &hash(1), TIPPER).await.unwrap(),
             Outcome::Notified,
             "a repeated forward is idempotent"
         );
-        assert_eq!(count().await, 1);
+        assert_eq!(tip_count(pool).await, 1);
         let (address, metadata, id): (String, Value, Uuid) = sqlx::query_as(
             "SELECT address, metadata, id FROM social.notifications WHERE type = 'tip_received'",
         )
@@ -432,34 +576,39 @@ mod tests {
         .unwrap();
         assert_eq!(
             (address.as_str(), id),
-            (receiver, notification_id(&hash(1)))
+            (RECEIVER, notification_id(&hash(1)))
         );
         assert_eq!(
             metadata,
-            json!({"amount": "2.5", "manaAmount": "2500000000000000000", "senderAddress": tipper, "receiverAddress": receiver})
+            json!({"amount": "2.5", "manaAmount": "2500000000000000000", "senderAddress": TIPPER, "receiverAddress": RECEIVER})
         );
 
-        transfer(200, 0, hash(2), tipper).await;
+        transfer(pool, 200, 0, &hash(2), TIPPER, RECEIVER, tip, t).await;
         assert_eq!(
-            claim(pool, &hash(2), tipper).await.unwrap(),
+            claim(pool, &settings, &hash(2), TIPPER).await.unwrap(),
             Outcome::Pending,
             "past the published block"
         );
-        transfer(120, 0, hash(3), tipper).await;
+        transfer(pool, 120, 0, &hash(3), TIPPER, RECEIVER, tip, t).await;
         assert_eq!(
-            claim(pool, &hash(3), "0x00000000000000000000000000000000000000c3")
-                .await
-                .unwrap(),
+            claim(
+                pool,
+                &settings,
+                &hash(3),
+                "0x00000000000000000000000000000000000000c3"
+            )
+            .await
+            .unwrap(),
             Outcome::Pending,
             "someone else's transfer never matches"
         );
-        transfer(130, 0, hash(4), tipper).await;
-        transfer(130, 1, hash(4), tipper).await;
+        transfer(pool, 130, 0, &hash(4), TIPPER, RECEIVER, tip, t).await;
+        transfer(pool, 130, 1, &hash(4), TIPPER, RECEIVER, tip, t).await;
         assert_eq!(
-            claim(pool, &hash(4), tipper).await.unwrap(),
-            Outcome::Rejected
+            claim(pool, &settings, &hash(4), TIPPER).await.unwrap(),
+            Outcome::Rejected(Rejection::NotSingleTransfer)
         );
-        assert_eq!(count().await, 1);
+        assert_eq!(tip_count(pool).await, 1);
 
         sqlx::query("UPDATE shop.tip_claim SET created_at = created_at - interval '2 hours'")
             .execute(pool)
@@ -468,15 +617,185 @@ mod tests {
         assert_eq!(expire(pool).await.unwrap(), 2);
         for n in 10..10 + MAX_PENDING_PER_SENDER as u8 {
             assert_eq!(
-                claim(pool, &hash(n), tipper).await.unwrap(),
+                claim(pool, &settings, &hash(n), TIPPER).await.unwrap(),
                 Outcome::Pending
             );
         }
         assert_eq!(
-            claim(pool, &hash(99), tipper).await.unwrap(),
+            claim(pool, &settings, &hash(99), TIPPER).await.unwrap(),
             Outcome::TooMany
         );
+        assert_eq!(
+            claim(pool, &settings, &hash(10), TIPPER).await.unwrap(),
+            Outcome::Pending,
+            "a repeated claim is not a new one"
+        );
         db.drop().await;
+    }
+
+    /// Below the minimum or mined more than the maximum age before the
+    /// claim is refused with the old route's 400; the boundaries notify.
+    #[tokio::test]
+    async fn small_or_old_tips_are_rejected() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("tips_thresholds").await else {
+            return;
+        };
+        let pool = &db.pool;
+        let settings = TipSettings::default();
+        let t = now_secs();
+        let one = "1000000000000000000";
+        transfer(pool, 10, 0, &hash(1), TIPPER, RECEIVER, "1", t).await;
+        transfer(
+            pool,
+            11,
+            0,
+            &hash(2),
+            TIPPER,
+            RECEIVER,
+            "999999999999999999",
+            t,
+        )
+        .await;
+        transfer(pool, 12, 0, &hash(3), TIPPER, RECEIVER, one, t).await;
+        transfer(
+            pool,
+            13,
+            0,
+            &hash(4),
+            TIPPER,
+            RECEIVER,
+            one,
+            t - 86_400 - 60,
+        )
+        .await;
+        transfer(
+            pool,
+            14,
+            0,
+            &hash(5),
+            TIPPER,
+            RECEIVER,
+            one,
+            t - 86_400 + 60,
+        )
+        .await;
+        transfer(pool, 15, 0, &hash(6), TIPPER, TIPPER, one, t).await;
+        publish(pool, 100).await;
+        let expect = [
+            (1, Outcome::Rejected(Rejection::TooSmall)),
+            (2, Outcome::Rejected(Rejection::TooSmall)),
+            (3, Outcome::Notified),
+            (4, Outcome::Rejected(Rejection::TooOld)),
+            (5, Outcome::Notified),
+            (6, Outcome::Rejected(Rejection::NotSingleTransfer)),
+        ];
+        for (n, outcome) in expect {
+            assert_eq!(
+                claim(pool, &settings, &hash(n), TIPPER).await.unwrap(),
+                outcome,
+                "tx {n}"
+            );
+        }
+        assert_eq!(tip_count(pool).await, 2);
+        let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM shop.tip_claim")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(pending, 0, "every verdict settles its claim");
+        let lenient = TipSettings::parse("1", 10 * 86_400, 10).unwrap();
+        transfer(pool, 16, 0, &hash(7), TIPPER, RECEIVER, "1", t - 2 * 86_400).await;
+        assert_eq!(
+            claim(pool, &lenient, &hash(7), TIPPER).await.unwrap(),
+            Outcome::Notified,
+            "the thresholds are settings"
+        );
+        db.drop().await;
+    }
+
+    /// Past the global cap every sender is refused until claims settle.
+    #[tokio::test]
+    async fn the_pending_claims_have_a_global_cap() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("tips_cap").await else {
+            return;
+        };
+        let pool = &db.pool;
+        let settings = TipSettings::parse(DEFAULT_MIN_AMOUNT_WEI, DEFAULT_MAX_AGE_SECS, 3).unwrap();
+        for n in 1..=3u8 {
+            let sender = format!("0x{:040x}", n);
+            assert_eq!(
+                claim(pool, &settings, &hash(n), &sender).await.unwrap(),
+                Outcome::Pending
+            );
+        }
+        assert_eq!(
+            claim(
+                pool,
+                &settings,
+                &hash(9),
+                "0x00000000000000000000000000000000000000f9"
+            )
+            .await
+            .unwrap(),
+            Outcome::TooMany
+        );
+        sqlx::query("DELETE FROM shop.tip_claim WHERE transaction_hash = $1")
+            .bind(hash(1))
+            .execute(pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            claim(
+                pool,
+                &settings,
+                &hash(9),
+                "0x00000000000000000000000000000000000000f9"
+            )
+            .await
+            .unwrap(),
+            Outcome::Pending
+        );
+        db.drop().await;
+    }
+
+    /// A transfer the index holds in a shape the producer cannot read rejects
+    /// its own claim; the rest of the batch is still settled.
+    #[tokio::test]
+    async fn a_malformed_transfer_rejects_only_its_claim() {
+        let Some(db) = crate::market::tests::support::OwnDb::create("tips_malformed").await else {
+            return;
+        };
+        let pool = &db.pool;
+        let settings = TipSettings::default();
+        let t = now_secs();
+        let one = "1000000000000000000";
+        claim(pool, &settings, &hash(1), TIPPER).await.unwrap();
+        claim(pool, &settings, &hash(2), TIPPER).await.unwrap();
+        sqlx::query("ALTER TABLE shop.mana_transfer DROP CONSTRAINT mana_transfer_recipient_check")
+            .execute(pool)
+            .await
+            .unwrap();
+        transfer(pool, 10, 0, &hash(1), TIPPER, "0xnot-an-address", one, t).await;
+        transfer(pool, 11, 0, &hash(2), TIPPER, RECEIVER, one, t).await;
+        publish(pool, 100).await;
+        let mut outcomes = resolve(pool, &settings, None).await.unwrap();
+        outcomes.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(
+            outcomes,
+            vec![
+                (hash(1), Outcome::Rejected(Rejection::Malformed)),
+                (hash(2), Outcome::Notified)
+            ]
+        );
+        assert_eq!(tip_count(pool).await, 1);
+        db.drop().await;
+    }
+
+    #[test]
+    fn the_tip_settings_parse() {
+        let d = TipSettings::default();
+        assert_eq!(d.min_amount_wei, U256::from(10u64).pow(U256::from(18u64)));
+        assert_eq!((d.max_age_secs, d.max_pending), (86_400, 2_000));
+        assert!(TipSettings::parse("1e18", 1, 1).is_err());
     }
 
     #[tokio::test]

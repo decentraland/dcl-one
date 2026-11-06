@@ -1099,6 +1099,87 @@ async fn unsubscribe_without_a_signing_key_refuses_every_link() {
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
+/// Served as `serve` mounts it (behind the social writes guard): a valid
+/// link on a node with social writes off answers the 503 and writes nothing.
+#[tokio::test]
+async fn unsubscribe_links_are_refused_while_social_writes_are_disabled() {
+    let Some(state) = state(Settings {
+        signing_key: Some(SIGNING_KEY.into()),
+        ..Settings::default()
+    })
+    .await
+    else {
+        return;
+    };
+    let address = fresh_address();
+    let guarded = Router::new().nest(
+        "/notifications",
+        crate::writes::guard(router(state.clone()), false),
+    );
+    for path in [
+        format!("/unsubscribe/{}", address.as_str()),
+        format!("/unsubscribe/{}/bid_received", address.as_str()),
+    ] {
+        let (status, body) = send(
+            guarded.clone(),
+            "GET",
+            &format!("/notifications{}", old_signed_path(&path)),
+            HeaderMap::new(),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+        assert_eq!(body["error"], "Service Unavailable", "{path}");
+    }
+    assert!(
+        state
+            .store
+            .get_subscription(&address)
+            .await
+            .unwrap()
+            .is_none(),
+        "nothing was written"
+    );
+}
+
+/// The opt-out is one upsert over the stored document, so a preference
+/// written in between (another type, `ignore_all_in_app`) survives it.
+#[tokio::test]
+async fn unsubscribe_keeps_preferences_written_concurrently() {
+    let Some(state) = state(Settings::default()).await else {
+        return;
+    };
+    let address = fresh_address();
+    sqlx::query("INSERT INTO social.subscriptions (address, details) VALUES ($1, $2)")
+        .bind(&address)
+        .bind(json!({"ignore_all_in_app": true, "message_type": {"item_sold": {"email": false, "in_app": false}}}))
+        .execute(state.store.pool())
+        .await
+        .unwrap();
+    state
+        .store
+        .unsubscribe_email(&address, Some("bid_received"))
+        .await
+        .unwrap();
+    state.store.unsubscribe_email(&address, None).await.unwrap();
+    let sub = state
+        .store
+        .get_subscription(&address)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(sub.details["ignore_all_email"], json!(true));
+    assert_eq!(sub.details["ignore_all_in_app"], json!(true));
+    assert_eq!(
+        sub.details["message_type"]["item_sold"],
+        json!({"email": false, "in_app": false})
+    );
+    assert_eq!(
+        sub.details["message_type"]["bid_received"],
+        json!({"email": false, "in_app": true})
+    );
+}
+
 #[tokio::test]
 async fn common_email_is_bearer_gated_and_validated() {
     let Some(state) = state(Settings {

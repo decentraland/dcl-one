@@ -918,29 +918,44 @@ pub async fn create_trade(
     let matched = resolve_signature(trade, &candidates)
         .map_err(|e| TradeCreationError::InvalidSignature(e.to_string()))?;
     verify_sent_ownership(state, trade).await?;
+    // Stateless callers (tests) link to the default origins.
+    let defaults;
+    let settings = match state {
+        Some(s) => &s.settings,
+        None => {
+            defaults = super::Settings::for_tests();
+            &defaults
+        }
+    };
+    // The bid_received notification is best effort: it never fails the bid.
+    let bid_asset = if trade.trade_type == TRADE_TYPE_BID {
+        super::trade_events::bid_asset(pool, &settings.land_image_base_url, network, trade)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "bid_received: asset lookup failed; no notification");
+                None
+            })
+    } else {
+        None
+    };
     let mut tx = pool.begin().await?;
     let trade_id = insert_trade(&mut *tx, trade, network, matched.marketplace.address).await?;
-    if trade.trade_type == TRADE_TYPE_BID {
-        // Stateless callers (tests) link to the default origins.
-        let defaults;
-        let settings = match state {
-            Some(s) => &s.settings,
-            None => {
-                defaults = super::Settings::for_tests();
-                &defaults
-            }
-        };
-        let notification = super::trade_events::bid_received_notification(
-            pool,
-            &settings.land_image_base_url,
+    if let Some(n) = bid_asset.and_then(|a| {
+        super::trade_events::bid_received_notification(
+            &a,
             &settings.market.marketplace_base_url,
             &trade_id,
             network,
             trade,
         )
-        .await?;
-        if let Some(n) = notification {
-            catalyst_social::notifications::insert_notifications(&mut *tx, &[n]).await?;
+    }) {
+        let mut savepoint = sqlx::Connection::begin(&mut *tx).await?;
+        match catalyst_social::notifications::insert_notifications(&mut *savepoint, &[n]).await {
+            Ok(_) => savepoint.commit().await?,
+            Err(e) => {
+                tracing::warn!(error = %e, trade_id, "bid_received: insert failed; the bid stands");
+                savepoint.rollback().await?;
+            }
         }
     }
     tx.commit().await?;

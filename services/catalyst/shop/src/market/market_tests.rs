@@ -1982,6 +1982,87 @@ async fn a_local_bid_notifies_the_item_creator_once() {
     cleanup_mirror(&pool, &[contract]).await;
 }
 
+/// A bid on the bidder's own item notifies nobody, and a failing
+/// notification insert leaves the bid stored.
+#[tokio::test]
+async fn a_bid_stands_without_its_notification() {
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let t = tag();
+    let contract = contract_of(&t, 8);
+    let creator = contract_of(&t, 9);
+    let signer = listings::test_support::signer().address().to_checksum(None);
+    let own = signer.to_ascii_lowercase();
+    for (item, by) in [("1", &creator), ("2", &own)] {
+        sqlx::query(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, \
+                 total_supply, max_supply, available, price, image, name, category, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', $1, $2::numeric, 137, 'wearable_v2', $3, $4, 'rare', 0, 10, 10, 0, 'https://img.example/1.png', 'Hat', 'hat', 0, 0, 0, now())",
+        )
+        .bind(&contract)
+        .bind(item)
+        .bind(format!("urn:decentraland:matic:collections-v2:{contract}:{item}"))
+        .bind(by)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let marketplace = listings::offchain_marketplace_v3(137).unwrap();
+    let bid = |item: &str| {
+        let mut trade = listings::test_support::parse(&item_bid_json(&signer, &contract, item));
+        listings::test_support::sign(&mut trade, &marketplace);
+        trade
+    };
+
+    let self_bid = listings::create_trade(&pool, Some(&state), &bid("2"), &signer, 1_000)
+        .await
+        .unwrap();
+    assert!(
+        bid_notifications(&pool, &own).await.is_empty(),
+        "no self-notification"
+    );
+
+    let func = format!("fail_bid_{t}");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE FUNCTION public.{func}() RETURNS trigger LANGUAGE plpgsql AS $f$ \
+         BEGIN IF NEW.address = '{creator}' THEN RAISE EXCEPTION 'notification refused'; END IF; RETURN NEW; END $f$"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE TRIGGER {func} BEFORE INSERT ON social.notifications FOR EACH ROW EXECUTE FUNCTION public.{func}()"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let stored = listings::create_trade(&pool, Some(&state), &bid("1"), &signer, 1_000).await;
+    for drop in [
+        format!("DROP TRIGGER {func} ON social.notifications"),
+        format!("DROP FUNCTION public.{func}()"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(drop))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let id = stored.expect("the bid is created although its notification failed");
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM shop.trades WHERE id = $1::uuid)")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(exists);
+    assert!(bid_notifications(&pool, &creator).await.is_empty());
+
+    delete_trade(&pool, &id).await;
+    delete_trade(&pool, &self_bid).await;
+    cleanup_mirror(&pool, &[contract]).await;
+}
+
 #[tokio::test]
 async fn admin_moderation_is_bearer_gated_audited_and_idempotent() {
     let Some(state) = state_with_db(

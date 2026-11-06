@@ -557,6 +557,46 @@ impl NotificationsStore {
         Ok(())
     }
 
+    /// An unsubscribe link's opt-out in one upsert: `ignore_all_email` for
+    /// `None`, else `message_type.<kind>.email = false`; every other
+    /// preference is left as a concurrent write stored it.
+    pub async fn unsubscribe_email(
+        &self,
+        address: &Address,
+        kind: Option<&str>,
+    ) -> Result<(), ApiError> {
+        let mut fresh = normalize_details(&serde_json::json!({}));
+        match kind {
+            None => fresh["ignore_all_email"] = Json::Bool(true),
+            Some(kind) => fresh["message_type"][kind]["email"] = Json::Bool(false),
+        }
+        sqlx::query(
+            r#"
+            INSERT INTO social.subscriptions AS s (address, details, updated_at)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (address) DO UPDATE
+              SET details = CASE WHEN $4::text IS NULL
+                    THEN jsonb_set(s.details, '{ignore_all_email}', 'true'::jsonb)
+                    ELSE s.details || jsonb_build_object('message_type',
+                      CASE WHEN jsonb_typeof(s.details->'message_type') = 'object'
+                           THEN s.details->'message_type' ELSE '{}'::jsonb END
+                      || jsonb_build_object($4::text,
+                        CASE WHEN jsonb_typeof(s.details->'message_type'->$4::text) = 'object'
+                             THEN s.details->'message_type'->$4::text ELSE '{}'::jsonb END
+                        || '{"email": false}'::jsonb))
+                  END,
+                  updated_at = EXCLUDED.updated_at
+            "#,
+        )
+        .bind(address)
+        .bind(&fresh)
+        .bind(now_utc())
+        .bind(kind)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     pub async fn set_email(
         &self,
         address: &Address,

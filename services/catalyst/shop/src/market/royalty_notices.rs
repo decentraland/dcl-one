@@ -51,6 +51,7 @@ struct SaleRow {
     token_id: String,
     cut: Option<String>,
     collector: Option<String>,
+    seller: Option<String>,
     image: Option<String>,
     name: Option<String>,
     rarity: Option<String>,
@@ -132,6 +133,7 @@ pub async fn run_once(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
             "SELECT e.block_number, e.log_index, e.block_time, e.contract_address, e.token_id::text AS token_id, \
                     div(e.amount * $6, 1000000)::text AS cut, \
                     lower(CASE WHEN i.beneficiary IS NOT NULL AND i.beneficiary <> $7 THEN i.beneficiary ELSE i.creator END) AS collector, \
+                    lower(e.from_address) AS seller, \
                     i.image, i.name, i.rarity, i.item_type \
              FROM shop.nft_event e \
              LEFT JOIN shop.nft n ON n.network = e.network AND n.contract_address = e.contract_address AND n.token_id = e.token_id \
@@ -158,6 +160,8 @@ pub async fn run_once(pool: &PgPool, base: &str) -> anyhow::Result<Pass> {
                     .collector
                     .as_deref()
                     .filter(|c| *c != super::nft_index::ZERO_ADDRESS)
+                    // A creator reselling their own item hears item_sold only.
+                    .filter(|c| row.seller.as_deref() != Some(*c))
                     .and_then(|c| Address::parse(c).ok())?;
                 Some(NewNotification {
                     id: notification_id(NET.db_name(), row.block_number, row.log_index),
@@ -306,8 +310,9 @@ mod tests {
     /// On a database of its own (the nft cursor row is global): nothing
     /// before the index is published; the first pass replays no history;
     /// a MarketplaceV2 sale notifies the item's beneficiary (else creator)
-    /// with the old metadata; the V1 marketplace and unpublished blocks are
-    /// not read; a retried pass inserts nothing twice.
+    /// with the old metadata, unless they sold it themselves; the V1
+    /// marketplace and unpublished blocks are not read; a retried pass
+    /// inserts nothing twice.
     #[tokio::test]
     async fn published_v2_sales_notify_their_royalty_collector_once() {
         let Ok(base_url) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
@@ -342,6 +347,14 @@ mod tests {
 
         item(&pool, 1, "1", Some(BENEFICIARY)).await;
         item(&pool, 2, "2", None).await;
+        // The seller of every test sale collects this item's royalties.
+        item(
+            &pool,
+            3,
+            "3",
+            Some("0x00000000000000000000000000000000000000aa"),
+        )
+        .await;
         sale(&pool, 100, 0, MARKETPLACE_V2, "1", "20000000000000000000").await;
         assert_eq!(run_once(&pool, BASE).await.unwrap(), Pass::NotReady);
         publish(&pool, 100).await;
@@ -353,6 +366,7 @@ mod tests {
 
         sale(&pool, 101, 3, MARKETPLACE_V2, "1", "20000000000000000000").await;
         sale(&pool, 101, 7, MARKETPLACE_V2, "2", "1000000000000000000").await;
+        sale(&pool, 101, 9, MARKETPLACE_V2, "3", "1000000000000000000").await;
         let v1 = super::super::nft_index::legacy_marketplaces(ChainNet::Matic)[0].0;
         sale(&pool, 102, 0, v1, "1", "5000000000000000000").await;
         sale(&pool, 102, 1, MARKETPLACE_V2, "9", "5000000000000000000").await;

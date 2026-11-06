@@ -185,6 +185,7 @@ pub async fn run_once(pool: &PgPool, chain_id: i64) -> anyhow::Result<Pass> {
                     lower(e.from_address) AS from_address, lower(e.to_address) AS to_address, \
                     n.item_id::text AS item_id, n.issued_id::text AS issued_id, \
                     (lower(e.from_address) <> $5 AND lower(e.to_address) <> $5 \
+                     AND lower(e.from_address) <> lower(e.to_address) \
                      AND NOT lower(e.from_address) = ANY($6) AND NOT lower(e.to_address) = ANY($6) \
                      AND NOT EXISTS (SELECT 1 FROM shop.nft_event o \
                         WHERE o.network = e.network AND o.block_number = e.block_number \
@@ -372,9 +373,9 @@ pub(crate) mod tests {
 
     /// Nothing before both indexes publish; the first pass starts at the
     /// newest published transfer; a gift notifies its receiver with the old
-    /// metadata; mints, burns, legacy order and Traded sales, bid-contract
-    /// hops and unpublished blocks notify nobody; a retried pass inserts
-    /// nothing twice.
+    /// metadata; mints, burns, self-transfers, legacy order and Traded
+    /// sales, bid-contract hops and unpublished blocks notify nobody; a
+    /// retried pass inserts nothing twice.
     #[tokio::test]
     async fn published_gifts_notify_their_receivers_once() {
         let Some(db) = PrivateDb::create("giftnotif").await else {
@@ -434,6 +435,8 @@ pub(crate) mod tests {
         transfer(101, 0, token, alice, bob).await;
         transfer(101, 1, 2, ZERO_ADDRESS, bob).await;
         transfer(101, 2, 3, bob, ZERO_ADDRESS).await;
+        // To oneself, in any case.
+        transfer(101, 3, 8, bob, "0x00000000000000000000000000000000000000B0").await;
         // A legacy order sale.
         transfer(102, 0, 4, alice, bob).await;
         sqlx::query(
@@ -499,6 +502,132 @@ pub(crate) mod tests {
         .await
         .unwrap();
         assert_eq!(cursor, (104, 1), "the cursor stops at the published block");
+        db.drop().await;
+    }
+
+    /// The cursor holds through an index that stops being published, and
+    /// moves back when the index rewinds after a deep reorg or a late
+    /// backfill writes rows below it: replacement rows are announced, the
+    /// rows read before are not announced twice.
+    #[tokio::test]
+    async fn the_cursor_survives_a_pause_and_replays_a_rewind() {
+        let Some(db) = PrivateDb::create("giftreorg").await else {
+            return;
+        };
+        let pool = db.pool.clone();
+        let collection = "0x00000000000000000000000000000000000c011e";
+        let alice = "0x00000000000000000000000000000000000000a1";
+        let bob = "0x00000000000000000000000000000000000000b0";
+        let carol = "0x00000000000000000000000000000000000000c0";
+        let transfer = |block: i64, log: i32, token: i64, to: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query(
+                    "INSERT INTO shop.nft_event (network, block_number, log_index, block_time, kind, emitter, contract_address, token_id, from_address, to_address) \
+                     VALUES ('matic', $1, $2, 1700000000 + $1, 'transfer', $3, $3, $4, $5, $6)",
+                )
+                .bind(block)
+                .bind(log)
+                .bind(collection)
+                .bind(token)
+                .bind(alice)
+                .bind(to)
+                .execute(&pool)
+                .await
+                .unwrap();
+            }
+        };
+        let notified = || {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, String>(
+                    "SELECT address FROM social.notifications WHERE type = $1 ORDER BY address",
+                )
+                .bind(KIND)
+                .fetch_all(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let cursor = || {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_as::<_, (i64, i32)>(
+                    "SELECT block_number, log_index FROM shop.notification_cursor WHERE producer = $1",
+                )
+                .bind(PRODUCER)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        publish(&pool, INDEXER_NFT, "matic", 100, 1_700_000_100).await;
+        publish(&pool, INDEXER_TRADE_EVENTS, "matic", 100, 1_700_000_100).await;
+        assert_eq!(run_once(&pool, 137).await.unwrap(), Pass::Emitted(0));
+        transfer(101, 0, 1, bob).await;
+        publish(&pool, INDEXER_NFT, "matic", 101, 1_700_000_101).await;
+        publish(&pool, INDEXER_TRADE_EVENTS, "matic", 101, 1_700_000_101).await;
+        assert_eq!(run_once(&pool, 137).await.unwrap(), Pass::Emitted(1));
+
+        // Not ready (the fold marker cleared): nothing read, the cursor kept.
+        sqlx::query(
+            "UPDATE shop.chain_cursor SET folded_block = NULL, folded_at = NULL WHERE indexer = $1",
+        )
+        .bind(INDEXER_NFT)
+        .execute(&pool)
+        .await
+        .unwrap();
+        transfer(102, 0, 2, bob).await;
+        assert!(matches!(
+            run_once(&pool, 137).await.unwrap(),
+            Pass::Waiting(_)
+        ));
+        assert_eq!(cursor().await, (101, 0));
+        publish(&pool, INDEXER_NFT, "matic", 102, 1_700_000_102).await;
+        publish(&pool, INDEXER_TRADE_EVENTS, "matic", 102, 1_700_000_102).await;
+        assert_eq!(
+            run_once(&pool, 137).await.unwrap(),
+            Pass::Emitted(1),
+            "resumes where it stopped"
+        );
+        assert_eq!(cursor().await, (102, 0));
+
+        // A reorg rewinds the nft index: block 102's log is replaced.
+        let mut tx = pool.begin().await.unwrap();
+        chain_walk::replay_notifications(&mut tx, INDEXER_NFT, ChainNet::Matic, -1)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM shop.nft_event WHERE network = 'matic' AND block_number > 101")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        chain_walk::rewind(&mut tx, INDEXER_NFT, ChainNet::Matic, -1)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert!(
+            cursor().await < (101, 0),
+            "moved back below the rewritten rows"
+        );
+        transfer(102, 1, 3, carol).await;
+        publish(&pool, INDEXER_NFT, "matic", 102, 1_700_000_102).await;
+        assert_eq!(
+            run_once(&pool, 137).await.unwrap(),
+            Pass::Emitted(1),
+            "the replacement log is announced, the rest not twice"
+        );
+        assert_eq!(notified().await, vec![bob, bob, carol]);
+
+        // A late backfill writes a gift below the cursor, within the replay window.
+        let mut tx = pool.begin().await.unwrap();
+        transfer(100, 5, 4, carol).await;
+        chain_walk::replay_notifications(&mut tx, INDEXER_NFT, ChainNet::Matic, 99)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(cursor().await, (99, i32::MAX));
+        assert_eq!(run_once(&pool, 137).await.unwrap(), Pass::Emitted(1));
+        assert_eq!(cursor().await, (102, 1));
         db.drop().await;
     }
 }
