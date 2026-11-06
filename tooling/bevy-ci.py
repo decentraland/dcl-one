@@ -17,13 +17,20 @@ NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test S
 GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
                       'apps/ui3/src/play/engine/generated/serviceTable.ts')
 INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
-          'infra/gateway', *GATEWAY_HUD_INPUTS,
+          'library/uuav/uuav-client', 'library/uuav/uuav-ipc', 'library/uuav/dist', 'tooling/uuav',
+          'apps/dcl-scene-cli', 'infra/gateway', *GATEWAY_HUD_INPUTS,
           'tooling/bevy-ci.py', 'tooling/bevy-mtimes.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
           'tooling/tests/test_bevy_*.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
           '.github/workflows/bevy-explorer-headless-build.yml',
           'tooling/ci-publication.py', '.cargo', 'rust-toolchain*')
+# Paths of the end-to-end suite that select the scenes lane: the inputs of the video playback
+# steps in bevy-explorer-scenes.yml. The run loads every visual spec before it filters, so the
+# whole folder is an input.
+SCENES_E2E_INPUTS = ('apps/bevy-explorer/e2e/scenes/', 'apps/bevy-explorer/e2e/driver/',
+                     'apps/bevy-explorer/e2e/scripts/', 'apps/bevy-explorer/e2e/specs/visual/',
+                     'apps/bevy-explorer/e2e/package.json', 'apps/bevy-explorer/e2e/package-lock.json')
 # Web files that the Test Suite's harness tests read: the benchmark runner's
 # (rendering/bevy-explorer/source/local-harness/benchmark/tests) and the web driver's
 # (local-harness/web-driver), which loads the HUD's test commands into Chrome. A change to one is
@@ -237,9 +244,13 @@ def select(base, head):
             # Launcher/package assembly cannot affect web or graphical/native tests.
             # Keep the headless build/smoke; main also packages all four platforms.
             affected = ('headless',)
+        elif path.startswith(SCENES_E2E_INPUTS) or path.startswith('apps/dcl-scene-cli/'):
+            # The scenes, the driver, the runner scripts, the visual specs, the package files and
+            # the CLI that builds the scenes select the scenes lane.
+            affected = ('scenes',)
         elif path.startswith('apps/bevy-explorer/e2e/'):
-            # The end-to-end suite drives a built client; its own workflow (bevy-explorer-e2e.yml)
-            # checks it and runs it against the web app this workflow built.
+            # The rest of the end-to-end suite drives a built client; its own workflow
+            # (bevy-explorer-e2e.yml) checks it and runs it against the web app this workflow built.
             affected = ()
         elif path.startswith('apps/bevy-explorer/') and path.removeprefix('apps/bevy-explorer/') in APP_INPUTS:
             affected = APP_INPUTS[path.removeprefix('apps/bevy-explorer/')]

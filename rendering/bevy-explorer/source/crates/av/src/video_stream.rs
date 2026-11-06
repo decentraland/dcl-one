@@ -4,14 +4,9 @@ use dcl_component::proto_components::sdk::components::VideoState;
 use ipfs::IpfsResource;
 use media::{AVCommand, VideoData};
 
+#[cfg(feature = "uuav")]
+use crate::audio_sink::AudioSink;
 use crate::{AVPlayer, AVSinks};
-#[cfg(feature = "ffmpeg")]
-use {
-    crate::audio_sink::AudioSink,
-    common::structs::AudioDecoderError,
-    kira::sound::streaming::StreamingSoundData,
-    media::{ffmpeg_worker, AudioHandle},
-};
 
 pub struct VideoSink {
     pub source: String,
@@ -54,25 +49,36 @@ pub fn av_sinks<T: AVPlayer>(
     let (video_sender, video_receiver) = tokio::sync::mpsc::channel(10);
     let (state_sender, state_receiver) = tokio::sync::watch::channel(VideoState::VsLoading);
 
-    #[cfg(feature = "ffmpeg")]
-    let audio = {
+    #[cfg(feature = "uuav")]
+    let (audio, rejected_commands) = {
         let (audio_sender, audio_receiver) = tokio::sync::mpsc::channel(10);
         let (handle_sender, handle_receiver) = tokio::sync::oneshot::channel();
-        spawn_av_thread(
-            ipfs,
-            SendersAndReceivers {
-                commands: command_receiver,
-                disposed: command_sender.downgrade(),
-                frames: T::HAS_VIDEO.then_some(video_sender),
-                audio: audio_sender,
-                state_sender,
-                audio_handle: handle_receiver,
-            },
-            source.clone(),
-            hash,
-        );
-        Some(AudioSink::new(audio_receiver, handle_sender))
+        let rejected_commands = match media::resolve_source(&ipfs, &source, &hash) {
+            Ok(url) => {
+                media::spawn_av(
+                    command_receiver,
+                    T::HAS_VIDEO.then_some(video_sender),
+                    state_sender,
+                    url,
+                    image.as_ref(),
+                    audio_sender,
+                    handle_receiver,
+                );
+                None
+            }
+            Err(e) => {
+                warn!("av source `{source}`: {e}");
+                state_sender.send_replace(VideoState::VsError);
+                Some(command_receiver)
+            }
+        };
+        (
+            Some(AudioSink::new(audio_receiver, handle_sender)),
+            rejected_commands,
+        )
     };
+    #[cfg(not(feature = "uuav"))]
+    let rejected_commands = None;
     #[cfg(feature = "html")]
     {
         let url = ipfs
@@ -94,115 +100,19 @@ pub fn av_sinks<T: AVPlayer>(
     command_sender.send(AVCommand::Repeat(repeat)).report();
 
     AVSinks {
-        #[cfg(feature = "ffmpeg")]
+        #[cfg(feature = "uuav")]
         audio,
         video: image
             .filter(|_| T::HAS_VIDEO)
             .map(|image| VideoSink::new(source, video_receiver, image)),
         command_sender,
+        rejected_commands,
         rate: None,
         state: state_receiver,
         sent_event: 0.,
         sent_volume: None,
         sent_state: VideoState::VsNone,
         _phantom: Default::default(),
-    }
-}
-
-/// Every av thread not yet seen finished, for [`join_av_threads`].
-#[cfg(feature = "ffmpeg")]
-static AV_THREADS: std::sync::Mutex<Vec<std::thread::JoinHandle<()>>> =
-    std::sync::Mutex::new(Vec::new());
-
-#[cfg(feature = "ffmpeg")]
-pub struct SendersAndReceivers {
-    commands: tokio::sync::mpsc::UnboundedReceiver<AVCommand>,
-    disposed: tokio::sync::mpsc::WeakUnboundedSender<AVCommand>,
-    frames: Option<tokio::sync::mpsc::Sender<VideoData>>,
-    audio: tokio::sync::mpsc::Sender<StreamingSoundData<AudioDecoderError>>,
-    state_sender: tokio::sync::watch::Sender<VideoState>,
-    audio_handle: tokio::sync::oneshot::Receiver<AudioHandle>,
-}
-
-#[cfg(feature = "ffmpeg")]
-pub fn spawn_av_thread(
-    ipfs: IpfsResource,
-    senders_and_receivers: SendersAndReceivers,
-    path: String,
-    hash: String,
-) {
-    let thread = std::thread::spawn(move || av_thread(ipfs, senders_and_receivers, path, hash));
-    let mut threads = AV_THREADS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    threads.retain(|thread| !thread.is_finished());
-    threads.push(thread);
-}
-
-/// Waits up to `timeout` for every av thread spawned so far, returning whether all finished.
-/// A thread whose sinks are gone leaves promptly: ffmpeg's open and reads are interrupted
-/// once the command sender is dropped.
-#[cfg(feature = "ffmpeg")]
-pub fn join_av_threads(timeout: std::time::Duration) -> bool {
-    let mut threads = std::mem::take(
-        &mut *AV_THREADS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner),
-    );
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        // `is_finished` only says the thread's body returned; join it so its teardown is over too
-        let (done, pending): (Vec<_>, Vec<_>) =
-            threads.into_iter().partition(|thread| thread.is_finished());
-        for thread in done {
-            let _ = thread.join();
-        }
-        threads = pending;
-        if threads.is_empty() {
-            return true;
-        }
-        if std::time::Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-}
-
-#[cfg(feature = "ffmpeg")]
-fn av_thread(
-    ipfs: IpfsResource,
-    senders_and_receivers: SendersAndReceivers,
-    path: String,
-    hash: String,
-) {
-    info!(
-        "spawned av thread {:?}, path {path}",
-        std::thread::current().id()
-    );
-    let _span = bevy::log::tracing::info_span!("av-thread").entered();
-    let SendersAndReceivers {
-        commands,
-        disposed,
-        frames,
-        audio,
-        state_sender,
-        audio_handle,
-    } = senders_and_receivers;
-    if let Err(e) = ffmpeg_worker(
-        &ipfs,
-        commands,
-        disposed,
-        frames.clone(),
-        audio,
-        state_sender.clone(),
-        audio_handle,
-        path,
-        hash,
-    ) {
-        state_sender.send_replace(VideoState::VsError);
-        warn!("av error: {e}");
-    } else {
-        debug!("av closed");
     }
 }
 
@@ -213,7 +123,7 @@ pub fn noop_sinks<T: AVPlayer>(source: String, image: Option<Handle<Image>>) -> 
     #[cfg_attr(not(feature = "html"), expect(unused))]
     let (state_sender, state_receiver) = tokio::sync::watch::channel(VideoState::VsLoading);
 
-    #[cfg(feature = "ffmpeg")]
+    #[cfg(feature = "uuav")]
     let audio = {
         let (_audio_sender, audio_receiver) = tokio::sync::mpsc::channel(10);
         let (handle_sender, _handle_receiver) = tokio::sync::oneshot::channel();
@@ -232,10 +142,11 @@ pub fn noop_sinks<T: AVPlayer>(source: String, image: Option<Handle<Image>>) -> 
     );
 
     AVSinks {
-        #[cfg(feature = "ffmpeg")]
+        #[cfg(feature = "uuav")]
         audio,
         video: image.map(|image| VideoSink::new(source, video_receiver, image)),
         command_sender,
+        rejected_commands: None,
         rate: None,
         state: state_receiver,
         sent_event: 0.,
