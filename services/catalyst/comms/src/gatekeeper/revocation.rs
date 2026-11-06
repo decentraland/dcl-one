@@ -25,6 +25,9 @@ pub enum RoomRevocation {
     /// The world's access setting changed: every participant it no longer
     /// admits leaves the world's live rooms (the owner stays).
     WorldAccess { world: WorldName },
+    /// Re-evaluate current policy even when no durable intent could be stored.
+    /// No cutoff is invented; existing shared-secret admissions remain valid.
+    WorldAccessRecheck { world: WorldName },
     /// The wallet is blocked everywhere: it leaves every live room.
     Everywhere { address: Address },
 }
@@ -68,6 +71,21 @@ impl CommsState {
                         retry_access_rechecks(&state, Some(world.key()), &rooms).await
                     {
                         tracing::warn!(%error,%world,"world access enforcement retained for maintenance retry");
+                    }
+                }
+
+                RoomRevocation::WorldAccessRecheck { world } => {
+                    let rooms = match state.room_service().list_rooms().await {
+                        Ok(rooms) => rooms,
+                        Err(error) => {
+                            tracing::warn!(%error, %world, "advisory world access inventory unavailable; no durable intent accepted");
+                            return;
+                        }
+                    };
+                    if let Err(error) =
+                        readmit_world_rooms_in_inventory(&state, world, None, &rooms).await
+                    {
+                        tracing::warn!(%error, %world, "advisory world access recheck incomplete; no durable intent accepted");
                     }
                 }
 

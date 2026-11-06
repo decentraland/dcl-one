@@ -3188,6 +3188,132 @@ async fn a_community_exit_evicts_from_the_livekit_rooms() {
 }
 
 #[tokio::test]
+async fn a_community_closure_rechecks_livekit_when_its_queue_insert_fails() {
+    use crate::comms::gatekeeper::{CommsState, Settings as CommsSettings};
+    let Some(f) = fixture().await else { return };
+    let world = world_name();
+    let room = format!("world-{}", world.key());
+    let owner = Wallet::random();
+    f.names.set(&owner.address, world.label());
+    let (member, granted) = (Wallet::random().address, Wallet::random().address);
+    let roster = json!({ "participants": [
+        { "identity": granted.as_str() }, { "identity": member.as_str() }
+    ] });
+    let recorded = Arc::new(RecordedRevocations::default());
+    f.state.add_revocation_sink(recorded.clone());
+    let requests = Arc::new(std::sync::Mutex::new(Vec::<(String, Value)>::new()));
+    let capture = requests.clone();
+    let listed = room.clone();
+    let fixture = Router::new().route(
+        "/twirp/livekit.RoomService/{method}",
+        axum::routing::post(
+            move |axum::extract::Path(method): axum::extract::Path<String>,
+                  axum::Json(body): axum::Json<Value>| {
+                let (capture, listed, roster) = (capture.clone(), listed.clone(), roster.clone());
+                async move {
+                    capture.lock().unwrap().push((method.clone(), body));
+                    axum::Json(match method.as_str() {
+                        "ListRooms" => json!({ "rooms": [{ "name": listed, "sid": "RM_a", "metadata": "{}" }] }),
+                        "ListParticipants" => roster,
+                        _ => json!({}),
+                    })
+                }
+            },
+        ),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut settings = CommsSettings::for_tests();
+    settings.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+    let comms = Arc::new(CommsState::new(
+        f.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        settings,
+        None,
+        None,
+        f.state.policy.clone(),
+        Arc::new(rooms::SceneResolver::new(f.pool.clone())),
+        Arc::new(crate::comms::presence::Presence::new()),
+        Arc::new(crate::comms::interfaces::test_support::StubDirectory::default()),
+    ));
+    f.state
+        .add_revocation_sink(Arc::new(super::CommsRoomRevocations(comms)));
+    sqlx::query("INSERT INTO worlds.worlds (name, access_type) VALUES ($1, 'allow-list')")
+        .bind(world.key())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO worlds.world_permissions (world_name, permission, address) VALUES ($1, 'access', $2)")
+        .bind(world.key())
+        .bind(&granted)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let community = seed_community(&f.pool, &[&member, &granted]).await;
+    sqlx::query(
+        "INSERT INTO worlds.world_access_communities (world_name, community_id) VALUES ($1, $2)",
+    )
+    .bind(world.key())
+    .bind(community)
+    .execute(&f.pool)
+    .await
+    .unwrap();
+
+    for who in [&granted, &member] {
+        leave_community(&f.pool, community, who).await;
+    }
+    // Fail only this world's queue writes; policy and community rows remain readable.
+    let constraint = format!("closure_failure_{}", Uuid::new_v4().simple());
+    sqlx::query(&format!(
+        "ALTER TABLE social.world_access_rechecks ADD CONSTRAINT {constraint} CHECK (world_name <> '{}') NOT VALID",
+        world.key()
+    ))
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    f.state.community_closed(community).await;
+    sqlx::query(&format!(
+        "ALTER TABLE social.world_access_rechecks DROP CONSTRAINT {constraint}"
+    ))
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        recorded.take(),
+        vec![super::Revocation::AccessRecheck {
+            world: world.clone()
+        }]
+    );
+    let queued: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM social.world_access_rechecks WHERE world_name=$1)",
+    )
+    .bind(world.key())
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert!(
+        !queued,
+        "the advisory must not fabricate a durable intent or cutoff"
+    );
+    let removed = |who: &Address| {
+        requests.lock().unwrap().iter().any(|(method, body)| {
+            method == "RemoveParticipant"
+                && body["room"] == room
+                && body["identity"] == who.as_str()
+        })
+    };
+    let evicted = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !removed(&member) {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await;
+    assert!(evicted.is_ok(), "{:?}", requests.lock().unwrap());
+    assert!(!removed(&granted), "the wallet grant still admits it");
+    server.abort();
+}
+
+#[tokio::test]
 async fn allow_list_edits_are_guarded_updates() {
     let Some(f) = fixture().await else { return };
     let world = world_name();
