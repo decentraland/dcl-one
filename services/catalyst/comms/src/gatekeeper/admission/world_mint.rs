@@ -182,8 +182,8 @@ fn authorization_mac(
     mac
 }
 
-/// An independent signature is necessary: LiveKit participant metadata can be
-/// changed by clients and is also copied into refreshed connection tokens.
+/// An independent signature is necessary: LiveKit participant attributes can be
+/// changed by clients and are also copied into refreshed connection tokens.
 pub(crate) fn authorization_proof(
     secret: &str,
     world: &WorldName,
