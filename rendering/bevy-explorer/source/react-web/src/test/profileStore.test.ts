@@ -226,6 +226,28 @@ describe('profile store: your own edit rejected by the deploy', () => {
     expect(result.current).toMatchObject({ version: 5, equippedWearables: [cap] })
   })
 
+  it('drops reads from before the retry once the retry is announced', () => {
+    const { result } = renderHook(() => useProfile('0xme'))
+    act(() => {
+      requestPassport('0xme')
+      receiveProfile('0xme', mine(3, hat))
+    })
+    // the edit, its failed deploy and the retry are announced before the passport's reads come back
+    act(() => {
+      profileChanged('0xme', 4)
+      profileChanged('0xme', 3)
+      profileChanged('0xme', 5)
+    })
+    // the retry's read is answered first; the restored copy and a late badge-tier copy of the
+    // rejected edit after it
+    act(() => {
+      receiveProfile('0xme', mine(5, cap))
+      receiveProfile('0xme', mine(3, hat))
+      receiveProfile('0xme', mine(4, cap))
+    })
+    expect(result.current).toMatchObject({ version: 5, equippedWearables: [cap] })
+  })
+
   it('takes a copy newer than the announced version when nothing was put back', () => {
     // another player's profile can reach the engine's cache before their avatar announces it
     const { result } = renderHook(() => useProfile('0xabc'))

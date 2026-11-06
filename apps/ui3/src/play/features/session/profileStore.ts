@@ -36,7 +36,8 @@ interface Entry {
   extras: boolean
   /** When the engine last answered that it holds nothing for this address. */
   missingAt: number | undefined
-  /** The version the engine last announced (`profileChanged`); kept when the copy is forgotten. */
+  /** The version the engine last announced (`profileChanged`): the engine already holds it, so a reply
+   *  below it was read before the announcement. Kept when the copy is forgotten. */
   announced: number | undefined
   /** Set when the engine announces a version below the last one it announced, or, before any, below
    *  the copy held: it put an earlier profile back (the local player's edit failed to deploy). A copy
@@ -176,9 +177,12 @@ export function receiveProfile(address: string, profile: Profile | null): void {
   const e = entry(key)
   // Any reply settles the read in flight, even one dropped below, or the entry could never be swept.
   e.pending = false
-  // Read before the engine put an earlier profile back but answered after it (a passport read also
-  // waits on other services): the re-read that announcement asked for brings what it holds now.
-  if (profile?.version != null && e.revertedTo != null && profile.version > e.revertedTo) return
+  // A read made before the engine's last announcement but answered after it (a passport read also
+  // waits on other services) is out of date: below the announced version, or, after a revert, above
+  // the version put back. The re-read the announcement asked for brings what the engine holds now.
+  // Otherwise a copy above the announced version is ahead of its announcement, and is taken.
+  const v = profile?.version
+  if (v != null && e.announced != null && (v < e.announced || (e.revertedTo != null && v > e.revertedTo))) return
   if (profile == null) {
     e.missingAt = Date.now()
     return
