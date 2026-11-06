@@ -247,6 +247,10 @@ reqwest = { version = "0.12", default-features = false, features = [
   "json",
   "blocking",
   "stream",
+  # Accept-Encoding: br, gzip on native, decoded before the body reaches the
+  # content-hash check (the browser's fetch does the same on the web)
+  "brotli",
+  "gzip",
 ] }
 kira = "0.9.6"
 zip = { version = "2", default-features = false }
