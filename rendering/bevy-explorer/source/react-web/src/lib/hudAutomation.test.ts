@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  LOGIN_COMMANDS,
   PAGE_COMMANDS,
   TRUSTED_INPUT_TIMEOUT_MS,
   answerHudRequest,
@@ -132,6 +133,36 @@ describe('describing a control', () => {
       error: '2 controls match; index 2 is past them'
     })
     expect(describeControl({ name: 'Unequip' })).toEqual({ found: false })
+  })
+
+  it('is not actionable while it or a box around it is still moving; an endless animation does not count', () => {
+    const root = render('<div id="page"><button>Emotes</button></div>')
+    const button = place(root.querySelector('button')!, 0, 0)
+    const page = root.querySelector('#page')!
+    // jsdom runs no animations: give elements the ones a browser would report
+    const running = (endTime: number): Animation =>
+      ({ playState: 'running', effect: { getComputedTiming: () => ({ endTime }) } }) as unknown as Animation
+    const animate = (el: Element, animations: Animation[]): void => {
+      ;(el as Element & { getAnimations: () => Animation[] }).getAnimations = () => animations
+    }
+    animate(page, [running(333)])
+    expect(describeControl({ name: 'Emotes' })).toMatchObject({ actionable: false, reason: 'still moving' })
+    animate(page, [running(Infinity)])
+    expect(describeControl({ name: 'Emotes' })).toMatchObject({ actionable: true })
+    animate(button, [running(100)])
+    expect(describeControl({ name: 'Emotes' })).toMatchObject({ actionable: false, reason: 'still moving' })
+    animate(button, [{ ...running(100), playState: 'finished' } as Animation])
+    expect(describeControl({ name: 'Emotes' })).toMatchObject({ actionable: true })
+  })
+
+  it('says a control is busy inside a region that is still loading', () => {
+    const root = render('<div role="region" aria-label="Catalog" aria-busy="true"><button>Hat</button></div><button>Close</button>')
+    place(root.querySelector('[role="region"]')!, 0, 0, 500, 500)
+    place(root.querySelectorAll('button')[0], 0, 0)
+    place(root.querySelectorAll('button')[1], 600, 0)
+    expect(describeControl({ name: 'Catalog', role: 'region' })).toMatchObject({ found: true, busy: true })
+    expect(describeControl({ name: 'Hat' })).toMatchObject({ busy: true })
+    expect(describeControl({ name: 'Close' })).toMatchObject({ busy: false })
   })
 
   it('reads values and checked state', () => {
@@ -419,6 +450,15 @@ describe('waiting for a control', () => {
     expect(await wait).toMatchObject({ ok: true, value: { found: true, actionable: true } })
   })
 
+  it('waits for a control to be ready, out of a region still loading', async () => {
+    const root = render('<div role="region" aria-label="Catalog" aria-busy="true"></div>')
+    const region = place(root.firstElementChild!, 0, 0)
+    const wait = settled(waitForControl({ name: 'Catalog', role: 'region', state: 'ready' }))
+    await later(300, () => region.setAttribute('aria-busy', 'false'))
+    await later(100)
+    expect(await wait).toMatchObject({ ok: true, value: { found: true, busy: false } })
+  })
+
   it('keeps waiting while several controls match, until one is left', async () => {
     const root = render('<button>Equip</button><button>Equip</button>')
     for (const [i, el] of Array.from(root.children).entries()) place(el, 0, i * 40)
@@ -486,8 +526,8 @@ describe('waiting for a control', () => {
   })
 
   it('refuses a state or timeout it does not know', async () => {
-    await expect(waitForControl({ name: 'x', state: 'ready' })).rejects.toThrow(
-      'unknown state `ready`: use visible, hidden, enabled, actionable'
+    await expect(waitForControl({ name: 'x', state: 'stable' })).rejects.toThrow(
+      'unknown state `stable`: use visible, hidden, enabled, actionable, ready'
     )
     for (const timeout of [-1, Number.NaN, '5s' as unknown as number]) {
       await expect(waitForControl({ name: 'x', timeout })).rejects.toThrow('expected "timeout" to be a number of milliseconds')
@@ -522,7 +562,7 @@ describe('waiting for a control', () => {
       error: 'timed out after 0 ms waiting for {"name":"Backpack"} to be hidden: the control is still visible'
     })
     expect(await answerHudWait({ id: 3, op: 'wait', selector: { state: 'nope' } })).toEqual({
-      error: 'unknown state `nope`: use visible, hidden, enabled, actionable'
+      error: 'unknown state `nope`: use visible, hidden, enabled, actionable, ready'
     })
   })
 })
@@ -872,8 +912,20 @@ describe('without a test runner', () => {
     const w = window as Window & { __dclPageCommands?: Record<string, unknown>; __dclTrustedInputDone?: unknown }
     expect(typeof w.__dclTrustedInputDone).toBe('function')
     expect(Object.keys(w.__dclPageCommands ?? {})).toEqual(Object.keys(PAGE_COMMANDS))
+    // the sign-in command is a test runner's: a page nobody drives gets none
+    expect(w.__dclPageCommands).not.toHaveProperty('/hud_login')
     delete w.__dclPageCommands
     delete w.__dclTrustedInputDone
+  })
+
+  it('a test runner driving the browser gets the sign-in command as well', () => {
+    const w = window as Window & { __dclPageCommands?: Record<string, unknown>; __dclTrustedInput?: unknown }
+    w.__dclTrustedInput = () => undefined
+    installHudAutomation()
+    expect(Object.keys(w.__dclPageCommands ?? {})).toEqual([...Object.keys(PAGE_COMMANDS), ...Object.keys(LOGIN_COMMANDS)])
+    delete w.__dclPageCommands
+    delete w.__dclTrustedInput
+    delete (window as { __dclTrustedInputDone?: unknown }).__dclTrustedInputDone
   })
 
   it('dispatches DOM events and says so', async () => {

@@ -191,7 +191,10 @@ State, in every build:
 - `/world_state`: JSON with `inWorld` and its parts (signed in, world hold, realm connected, out
   of world), the position, and `arrivals`, the player's returns to the world. Every teleport and
   realm change takes the player out of world first, so a test reads `arrivals` before one and
-  waits for it to grow with `inWorld`.
+  waits for it to grow with `inWorld`. `keyboardClaimed` is whether a text field (the HUD's or a
+  scene's) holds the keyboard: while it is true keys are typed and resolve no action, so a test
+  waits for it to turn true after filling a field and false after leaving one (null where the
+  client takes no input).
 - `/avatar_state [all|<address>]`: avatars as selected (body shape, wearables, emotes, forced
   slots), as rendered (built or not, wearables by category, hidden categories) and the emote
   each plays, as a JSON array; the player's by default. The HUD's preview avatars are tagged
@@ -216,9 +219,25 @@ The HUD and input:
 - `/hud_list [role]`, `/hud_read`, `/hud_click`, `/hud_fill`, `/hud_wait`: a HUD control by role
   and accessible name. The selector is JSON `{"name", "role", "index", "exact"}` or just the name;
   `/hud_fill` adds `"text"`, and `/hud_wait` adds `"state"` (`visible`, `hidden`, `enabled`,
-  `actionable`) and `"timeout"` in ms (10000 by default). A click needs the control visible,
-  enabled and not covered, and several matches need an `index`. `/hud_fill` answers with the field
+  `actionable`, `ready`) and `"timeout"` in ms (10000 by default). A click needs the control
+  `actionable`: visible, enabled, not covered and no longer moving (a running CSS animation or
+  transition on it or a box around it; `"reason"` says `still moving`), and several matches need an
+  `index`. `"busy"` is true inside a region that says it is still loading (`aria-busy`), such as
+  the Backpack's `Catalog` grid or `Places results` while a query is in flight; `ready` waits for a
+  control out of every such region. `/hud_fill` answers with the field
   as the typing left it. The page's side is `react-web/src/lib/hudAutomation.ts`.
+- `/hud_login <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
+  [--position <x,y>]` (web, and only while a test runner drives the browser: the page registers it
+  when `window.__dclTrustedInput` is present): sign in through the HUD's own flow with an
+  AuthIdentity encoded as `/login_identity` takes it. The HUD takes it as the page's stored sign-in
+  and goes in as its Jump In does, so it leaves its start page, which `/login_identity` alone never
+  makes it do; the sign-in accepts the terms the welcome page asks for, the pick names and dresses
+  a first login's profile (needed for an account with no profile yet; an existing one keeps its
+  own), and the destination is picked from the lobby as a link's would be, which releases the held
+  world. Replies `{"address", "guest", "phase"}` (`lobby`, `entering` on the way to the destination,
+  `picking` or `world`) once the sign-in has landed and the page is done, or fails with its error.
+  The command is `react-web/src/lib/hudAutomation.ts` (`LOGIN_COMMANDS`, `provideHudLogin`); the
+  session provides the sign-in in `react-web/src/features/session/useEngineSession.ts`.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
   `/click_at <x> <y> [--button left|right|middle]`.
 

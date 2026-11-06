@@ -8,7 +8,8 @@
 
 import { renderHook, act, waitFor, type RenderHookResult } from '@testing-library/react'
 import { expect, vi } from 'vitest'
-import type { LoginDriver } from '../engine/driver'
+import type { LoginDriver, NewAccountPick } from '../engine/driver'
+import type { AuthIdentity } from '../features/auth/sso'
 import type { PageToScene, SceneToPage } from '../engine/protocol'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { useEngineSession, type EngineSession, type ProfileState } from '../features/session/useEngineSession'
@@ -46,8 +47,11 @@ export class FakeDriver implements LoginDriver {
   async logout(): Promise<void> {
     this.calls.push('logout')
   }
-  async loginWithIdentity(): Promise<void> {
+  /** What `loginWithIdentity` was handed, in order (a `/hud_login`'s identity and pick). */
+  readonly identityLogins: { identity: AuthIdentity; defaultOnError?: boolean; guest?: boolean; pick?: NewAccountPick }[] = []
+  async loginWithIdentity(identity: AuthIdentity, defaultOnError?: boolean, guest?: boolean, pick?: NewAccountPick): Promise<void> {
     this.calls.push('loginWithIdentity')
+    this.identityLogins.push({ identity, defaultOnError, guest, pick })
   }
   async jumpIn(): Promise<void> {
     this.calls.push('jumpIn')
@@ -108,6 +112,8 @@ export interface Harness {
   result: RenderHookResult<EngineSession, unknown>['result']
   /** The current session value (re-read after acts). */
   session: () => EngineSession
+  /** Take the session down, as leaving the page does. */
+  unmount: () => void
 }
 
 /** Render the real session hook wired to a FakeDriver (pass a subclass to simulate boot panics). */
@@ -116,8 +122,8 @@ export function renderSession(
   driver: FakeDriver = new FakeDriver()
 ): Harness {
   if (previousLogin) driver.previousLogin = previousLogin
-  const { result } = renderHook(() => useEngineSession(() => driver))
-  return { driver, result, session: () => result.current }
+  const { result, unmount } = renderHook(() => useEngineSession(() => driver))
+  return { driver, result, session: () => result.current, unmount }
 }
 
 /**
@@ -205,7 +211,7 @@ export function fakeSession(): EngineSession {
     runDebugCommand: vi.fn(),
     skybox: { open: false, toggle: vi.fn(), hours: 10, progressing: true, setHours: vi.fn(), setProgressing: vi.fn() },
     emotes: { list: [], open: false, toggle: vi.fn(), play: vi.fn(), equip: vi.fn() },
-    backpack: { list: [], total: 0, loading: false, query: vi.fn(), equipped: [], setColor: vi.fn(), open: false, toggle: vi.fn(), equip: vi.fn(), saveError: null, retrySave: vi.fn(), revertSave: vi.fn(), preview: vi.fn(), focus: vi.fn(), stage: vi.fn(), emote: vi.fn(), forceRender: [], setForceRender: vi.fn(), outfits: [], outfitSlots: 5, saveOutfit: vi.fn(), deleteOutfit: vi.fn(), equipOutfit: vi.fn(), outfitHistory: { canUndo: false, canRedo: false, rolling: false }, randomizeOutfit: vi.fn(), undoOutfit: vi.fn(), redoOutfit: vi.fn() },
+    backpack: { list: [], total: 0, loading: false, query: vi.fn(), equipped: [], setColor: vi.fn(), open: false, toggle: vi.fn(), equip: vi.fn(), saveError: null, retrySave: vi.fn(), revertSave: vi.fn(), preview: vi.fn(), focus: vi.fn(), stage: vi.fn(), emote: vi.fn(), forceRender: [], setForceRender: vi.fn(), outfits: [], outfitSlots: 5, outfitsLoaded: true, saveOutfit: vi.fn(), deleteOutfit: vi.fn(), equipOutfit: vi.fn(), outfitHistory: { canUndo: false, canRedo: false, rolling: false }, randomizeOutfit: vi.fn(), undoOutfit: vi.fn(), redoOutfit: vi.fn() },
     communities: { list: [], open: false, toggle: vi.fn(), create: vi.fn(), join: vi.fn(), requestToJoin: vi.fn(), cancelRequest: vi.fn(), leave: vi.fn(), error: null, detail: null, loadDetail: vi.fn(), cards: {}, fetch: vi.fn() },
     map: { x: 0, y: 0, open: false, toggle: vi.fn(), teleport: vi.fn(), changeRealm: vi.fn(), teleportToPlace: vi.fn() },
     minimap: { pose: { current: { x: 0, z: 0, yaw: 0, camYaw: 0 } }, satelliteView: GENESIS_SATELLITE_VIEW, sceneTitle: '', setConfig: vi.fn() },
