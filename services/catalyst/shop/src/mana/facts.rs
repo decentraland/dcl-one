@@ -758,6 +758,31 @@ fn paired_managers(chain_id: ChainId, venue: Address) -> Vec<String> {
         .collect()
 }
 
+/// The coupon a primary trade's purchase offer carries
+/// ([`resolve_trade`]), as the policy prices it: the same selection, so the
+/// credits lane authorizes the price the offer quoted. `None` for anything
+/// but a `public_item_order` selling a collection item.
+pub(crate) async fn primary_trade_coupon(
+    pool: &PgPool,
+    chain_id: ChainId,
+    venue: Address,
+    trade_type: &str,
+    signer: &str,
+    subject: &crate::types::TradeAsset,
+) -> Result<Option<crate::types::TradeCoupon>, ResolveError> {
+    if trade_type != "public_item_order" || subject.asset_type != TradeAssetType::CollectionItem {
+        return Ok(None);
+    }
+    Ok(
+        live_coupon(pool, chain_id, venue, signer, subject.contract.address())
+            .await?
+            .map(|c| crate::types::TradeCoupon {
+                contract: EvmAddress::new(c.coupon_address),
+                discount_ppm: c.discount_ppm,
+            }),
+    )
+}
+
 /// The best live creator coupon for a primary trade, by the catalogue's rule
 /// (`market::shop::coupon_join`): signed by the trade's signer on its chain,
 /// against a manager paired with its marketplace, covering its collection,
@@ -832,7 +857,7 @@ async fn live_coupon(
     }))
 }
 
-pub(super) async fn resolve_trade(
+pub(crate) async fn resolve_trade(
     pool: &PgPool,
     chain: Chain,
     session: Session,
