@@ -38,6 +38,7 @@ import { validatePage } from '../capture/ingest-chunks.js'
 import { stripImageMetadata, stripPngMetadata } from '../capture/strip-image-metadata.js'
 import { writeReviewManifest } from '../review-manifest.js'
 import { stripFileKey, stripFileKeyText } from '../capture/strip-file-key.js'
+import { encodePageFileName } from '../capture/page-file-name.js'
 
 function stable(value: unknown): string {
   if (Array.isArray(value)) return '[' + value.map(stable).join(',') + ']'
@@ -332,7 +333,7 @@ async function pullLive(
       validatePage(capture)
       // Integrity is checked on the exported bytes; the stored capture drops non-rendering metadata.
       await save(
-        path.join(stagedSnapshot, 'components', `${name}.json`),
+        path.join(stagedSnapshot, 'components', encodePageFileName(name)),
         stripImageMetadata(capture)
       )
     }

@@ -32,6 +32,10 @@ export default defineConfig({
       }
     }
   ],
+  server: {
+    host: '127.0.0.1',
+    fs: { strict: true, allow: [path.resolve(import.meta.dirname, '../..')] }
+  },
   resolve: {
     dedupe: ['react', 'react-dom']
   },

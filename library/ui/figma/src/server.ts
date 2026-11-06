@@ -3,6 +3,7 @@ import { parseArgs } from 'node:util'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { createRuntime } from './runtime.js'
+import { errorText } from './server-errors.js'
 import { createContractTools } from './tools/contract.js'
 import { createTools } from './tools/index.js'
 
@@ -43,8 +44,7 @@ async function main(): Promise<void> {
             content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }]
           }
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          return { isError: true, content: [{ type: 'text' as const, text: message }] }
+          return { isError: true, content: [{ type: 'text' as const, text: errorText(error) }] }
         }
       }
     )
@@ -54,6 +54,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+  process.stderr.write(`${errorText(error)}\n`)
   process.exit(1)
 })

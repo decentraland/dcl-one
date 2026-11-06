@@ -20,10 +20,10 @@ export type NavProfileButtonProps = {
   label11?: ReactNode
   forceState?: ForcedState
 } & (
-  | { variant?: 'desktop'; state?: 'default' }
-  | { variant: 'desktopAlt'; state?: 'default' }
-  | { variant: 'mobile'; state: 'open' }
-  | { variant: 'mobile'; state: 'closed' }
+  | { variant?: "desktop"; state?: "default" }
+  | { variant: "desktopAlt"; state?: "default" }
+  | { variant: "mobile"; state: "open" }
+  | { variant: "mobile"; state: "closed" }
 ) & Omit<HTMLAttributes<HTMLElement>, 'children'>
 
 export const navProfileButtonViews: Record<string, ViewNode> = {

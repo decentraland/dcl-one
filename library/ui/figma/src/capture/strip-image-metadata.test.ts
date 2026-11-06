@@ -16,6 +16,7 @@ import {
   stripImageMetadata,
   stripPngMetadata
 } from './strip-image-metadata.js'
+import { encodePageFileName } from './page-file-name.js'
 
 // The frozen fixtures are stored clean, like every capture. These tests plant synthetic editor metadata,
 // shaped like what Figma exports really carry (Adobe XMP edit history, EXIF) but with obviously fake
@@ -69,7 +70,9 @@ const plant = (png: Buffer) => Buffer.concat([png.subarray(0, 33), ...PLANTED, p
 
 const page = async (name: string) =>
   rawComponentPageSchema.parse(
-    JSON.parse(await readFile(path.join(snapshotDir, 'components', `${name}.json`), 'utf8'))
+    JSON.parse(
+      await readFile(path.join(snapshotDir, 'components', encodePageFileName(name)), 'utf8')
+    )
   ) as RawComponentPage
 
 // A real captured raster carrying the colour chunk the case is about.

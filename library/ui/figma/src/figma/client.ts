@@ -142,7 +142,8 @@ class FigmaClient {
 
   async get<T>(path: string, options: RequestOptions = {}): Promise<T> {
     return this.request<T>({
-      label: path,
+      // API paths embed the private file key; neither diagnostics nor errors carry it.
+      label: redactFileKey(path),
       url: `${FIGMA_API}${path}`,
       init: async () => ({ headers: { 'X-Figma-Token': await this.tokens.getToken() } }),
       read: async (response) => {
@@ -182,20 +183,28 @@ class FigmaClient {
       const started = this.now()
       const line = (outcome: string) =>
         this.log(
-          `[figma] GET ${attempt.label} attempt ${number}/${total} ${outcome} ${this.now() - started}ms`
+          redactFileKey(
+            `[figma] GET ${attempt.label} attempt ${number}/${total} ${outcome} ${this.now() - started}ms`
+          )
         )
       const canRetry = retry < MAX_RETRIES
       const reason = attempt.sanitize ? codesOf : causeOf
       // A non-retryable error from fetch or the body; for a signed URL it is replaced, never passed on.
       const fatal = (error: unknown) => {
-        if (!attempt.sanitize || error instanceof DownloadLimitError) return error
+        if (error instanceof DownloadLimitError) return error
+        if (!attempt.sanitize)
+          return error instanceof Error && redactFileKey(error.message) !== error.message
+            ? new Error(redactFileKey(error.message))
+            : error
         return new Error(`Request failed on ${attempt.label}: ${codesOf(error)}`)
       }
       const transient = async (cause: unknown, outcome: string) => {
         line(outcome)
         if (!canRetry)
           throw new Error(
-            `Figma request failed after ${total} attempts on ${attempt.label}: ${reason(cause)}`,
+            redactFileKey(
+              `Figma request failed after ${total} attempts on ${attempt.label}: ${reason(cause)}`
+            ),
             attempt.sanitize ? undefined : { cause }
           )
         await this.sleep(2000 * 2 ** retry)

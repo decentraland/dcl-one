@@ -14,30 +14,44 @@ on:
 
 concurrency:
   group: ui-library-${{ inputs.ref || github.ref }}
-  cancel-in-progress: true
+  # A newer push to a pull request supersedes its run; a push to main never cancels another, so every
+  # pushed range is scanned.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
-  # Runs before anything is installed, without secrets on forks: the url check always runs; the key
-  # check runs only where the FIGMA_FILE_KEY secret is available and is reported as skipped elsewhere.
+  # Runs before anything is installed. This workflow holds no secret: it runs pull request code, so it does the
+  # url check only. The Figma file key check runs in ui-library-key-scan.yml, from the default branch, over this
+  # run's commits and Review build as data.
   key-guard:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: ${{ inputs.ref || github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
-          lfs: true
+          # Only library/ui's LFS content is read; the rest of the monorepo's LFS is not fetched.
+          lfs: false
+      - run: git lfs pull --include "library/ui/**"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      - name: Scan the tree and the outgoing commits for the Figma file key
+      - name: Scan the tree and the outgoing commits for Figma urls
         env:
-          FIGMA_FILE_KEY: ${{ secrets.FIGMA_FILE_KEY }}
-          BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          BASE: ${{ github.event.before || 'origin/main' }}
         run: |
+          if [ "$EVENT" = pull_request ]; then
+            # The pull request's own commits, not the synthetic merge with everything main gained since its
+            # branch point. Files outside library/ui reach this scan through the range; the rest of the tree
+            # was scanned when it landed on main.
+            node library/ui/figma/key-guard.mjs --no-worktree --path library/ui --range "$PR_BASE..$PR_HEAD"
+            exit 0
+          fi
           if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then BASE=origin/main; fi
           node library/ui/figma/key-guard.mjs --range "$BASE..HEAD"
 
@@ -53,7 +67,8 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
           # The pull request's base parent is checked out for the retirement guard below.
           fetch-depth: 2
-          lfs: true
+          lfs: false
+      - run: git lfs pull --include "library/ui/**"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -76,19 +91,21 @@ jobs:
             echo "first introduction of library/ui; no base ledger to compare"
             exit 0
           fi
-          git -C "$RUNNER_TEMP/figma-base" lfs pull
+          git -C "$RUNNER_TEMP/figma-base" lfs pull --include "library/ui/**"
           pnpm figma guard --base "$RUNNER_TEMP/figma-base/library/ui" --run-kind developer
+      # Fails on any mapping error or Figma drift between *.figma.ts and the saved capture.
+      - run: pnpm figma check-mappings
       - run: pnpm figma promotion-verify
       - run: pnpm figma review-manifest
       - run: git diff --exit-code -- figma/review/src/review/catalog.json figma/review/public/dcl-ui-review/icons
       - run: pnpm review:build
       - run: pnpm review:check
-      - name: Scan the Review build before upload
-        env:
-          FIGMA_FILE_KEY: ${{ secrets.FIGMA_FILE_KEY }}
+      # Url check only; ui-library-key-scan.yml checks this artifact for the key, from the default branch.
+      - name: Scan the Review build for Figma urls before upload
         run: node figma/key-guard.mjs --no-worktree --no-range --path library/ui/figma/review/review-dist
+      # Named by the commit it was built for, which ui-library-key-scan.yml downloads by that same SHA.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ui-review-${{ github.event.pull_request.number || github.sha }}
+          name: ui-review-${{ github.event.pull_request.head.sha || github.sha }}
           path: library/ui/figma/review/review-dist
           retention-days: 14

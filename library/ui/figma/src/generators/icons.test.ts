@@ -108,3 +108,14 @@ describe('generateIcons', () => {
     })
   })
 })
+
+describe('when a category cannot be a TypeScript import binding', () => {
+  it.each(['social media', 'arrow-icons', 'default', '../outside'])(
+    'should reject %j before generating paths',
+    (category) => {
+      expect(() => generateIcons([icon({ category })], context)).toThrow(
+        'Invalid generated TypeScript identifier'
+      )
+    }
+  )
+})

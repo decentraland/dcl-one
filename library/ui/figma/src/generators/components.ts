@@ -27,7 +27,14 @@ type ManifestEntry = {
 }
 
 const FLAG_PROPS = ['selected', 'disabled', 'loading']
-const quote = (value: string) => `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
+const quote = (value: string) =>
+  `'${value
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029')}'`
 const literal = (value: string) => JSON.stringify(value)
 const pad = (depth: number) => '  '.repeat(depth)
 const lowerFirst = (name: string) => name.charAt(0).toLowerCase() + name.slice(1)
@@ -267,7 +274,7 @@ function variantContract(spec: ComponentSpec): string | undefined {
         `  | { ${axes
           .map((prop, index) => {
             const value = row[index]!
-            return `${prop.name}${value === prop.default ? '?' : ''}: ${typeof value === 'boolean' ? value : quote(value)}`
+            return `${prop.name}${value === prop.default ? '?' : ''}: ${typeof value === 'boolean' ? value : literal(value)}`
           })
           .join('; ')} }`
     ),
@@ -288,6 +295,7 @@ function emitComponent(
     (prop) => prop.kind === 'boolean' && !FLAG_PROPS.includes(prop.name)
   )
   const slots = spec.slots.filter((slot) => spec.exposeTextSlots !== false || slot.kind !== 'text')
+  const omittedTextSlots = spec.slots.filter((slot) => !slots.includes(slot))
   const contract = variantContract(spec)
 
   const refImports = [
@@ -318,6 +326,7 @@ function emitComponent(
       .filter((prop) => !contract || FLAG_PROPS.includes(prop.name))
       .map((prop) => `  ${prop.name}?: ${propType(prop)}`),
     ...slots.map((slot) => `  ${slot.name}?: ReactNode`),
+    ...omittedTextSlots.map((slot) => `  ${slot.name}?: never`),
     ...hrefProps.map((name) => `  ${name}?: string`),
     ...handlerProps.map((name) => `  ${name}?: () => void`),
     '  forceState?: ForcedState'
@@ -328,6 +337,7 @@ function emitComponent(
         `${prop.name} = ${prop.kind === 'boolean' ? String(prop.default) : quote(String(prop.default))}`
     ),
     ...slots.map((slot) => slot.name),
+    ...omittedTextSlots.map((slot) => `${slot.name}: _${slot.name}`),
     ...semanticNames,
     'forceState',
     '...rest'

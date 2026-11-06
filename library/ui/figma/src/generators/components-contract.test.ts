@@ -162,3 +162,33 @@ describe('generated public component contracts', () => {
     })
   })
 })
+
+describe('when a variant value contains a line terminator', () => {
+  it('should emit a parsable union type', async () => {
+    const spec = await navbarSpec()
+    const prop = spec.props.find((item) => item.kind === 'enum')!
+    const hostile = 'one\ntwo\rthree\u2028four\u2029five'
+    prop.default = hostile
+    for (const view of spec.views) view.values[prop.name] = hostile
+    const source = sourceFor(spec)
+    const parsed = ts.createSourceFile(
+      'generated.tsx',
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TSX
+    )
+    expect((parsed as unknown as { parseDiagnostics: unknown[] }).parseDiagnostics).toEqual([])
+  })
+})
+
+describe('when a JavaScript caller supplies suppressed text slots', () => {
+  it('should consume them before forwarding DOM attributes', async () => {
+    const spec = await navbarSpec()
+    const source = sourceFor(spec)
+    for (const slot of spec.slots.filter((item) => item.kind === 'text')) {
+      expect(source).toContain(`${slot.name}: _${slot.name}`)
+      expect(source).toContain(`${slot.name}?: never`)
+    }
+  })
+})

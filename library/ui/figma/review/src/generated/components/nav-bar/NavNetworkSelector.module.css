@@ -46,7 +46,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 16.25px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -112,7 +111,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 15px;
-flex-shrink: 0;
 position: relative;
 opacity: 1;
 }
@@ -161,7 +159,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 15px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -198,7 +195,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 15px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -235,7 +231,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 15px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -272,7 +267,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 15px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -322,7 +316,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 16.25px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -380,7 +373,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 18.75px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -440,7 +432,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 18.75px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -506,7 +497,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 15px;
-flex-shrink: 0;
 position: relative;
 opacity: 1;
 }
@@ -554,7 +544,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 15px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -590,7 +579,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 15px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -626,7 +614,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 15px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -662,6 +649,5 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 15px;
-flex-shrink: 0;
 opacity: 1;
 }

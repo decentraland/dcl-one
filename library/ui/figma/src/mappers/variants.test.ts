@@ -5,12 +5,13 @@ import { snapshotDir } from '../../test/snapshot.js'
 import { expandVariants } from '../capture/expand-variants.js'
 import { rawComponentPageSchema, type RawComponent } from '../ir/raw-components.js'
 import { mapVariants, parseOption, splitWords, viewKey, type VariantOptions } from './variants.js'
+import { encodePageFileName } from '../capture/page-file-name.js'
 
 const wordAliases = { terciary: 'tertiary' }
 const defaults: VariantOptions = { wordAliases }
 
 async function rawComponent(page: string, name: string): Promise<RawComponent> {
-  const raw = await readFile(path.join(snapshotDir, 'components', `${page}.json`), 'utf8')
+  const raw = await readFile(path.join(snapshotDir, 'components', encodePageFileName(page)), 'utf8')
   const found = rawComponentPageSchema
     .parse(JSON.parse(raw))
     .components.find((c) => c.name === name)

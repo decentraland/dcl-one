@@ -29,3 +29,15 @@ function uniqueName(base: string, used: Set<string>): string {
 const textStyleClass = (name: string) => `text${Buffer.from(name).toString('hex')}`
 
 export { textStyleClass, camelCase, kebabCase, pascalCase, uniqueName }
+
+const RESERVED = new Set(
+  'break case catch class const continue debugger default delete do else enum export extends false finally for function if import in instanceof new null return super switch this throw true try typeof var void while with let static yield await implements interface package private protected public'.split(
+    ' '
+  )
+)
+function assertIdentifier(value: string): string {
+  if (!/^[A-Za-z_$][\w$]*$/.test(value) || RESERVED.has(value))
+    throw new Error(`Invalid generated TypeScript identifier: ${JSON.stringify(value)}`)
+  return value
+}
+export { assertIdentifier }

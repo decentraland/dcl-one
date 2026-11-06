@@ -290,7 +290,6 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -349,7 +348,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -459,7 +457,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -554,7 +551,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 18.75px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -577,7 +573,6 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
 align-self: stretch;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -622,7 +617,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -660,7 +654,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 14.52px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -948,7 +941,6 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -1007,7 +999,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -1117,7 +1108,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -1220,7 +1210,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 18.75px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -1243,7 +1232,6 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
 align-self: stretch;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -1288,7 +1276,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -1326,7 +1313,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 14.52px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -1614,7 +1600,6 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -1673,7 +1658,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -1783,7 +1767,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -1870,7 +1853,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 17.5px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -1885,7 +1867,6 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
 align-self: stretch;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -1930,7 +1911,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -1968,7 +1948,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 14.52px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -2256,7 +2235,6 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -2315,7 +2293,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -2425,7 +2402,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -2528,7 +2504,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 18.75px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -2543,7 +2518,6 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
 align-self: stretch;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -2588,7 +2562,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -2626,7 +2599,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 14.52px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -2939,7 +2911,6 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -2998,7 +2969,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -3108,7 +3078,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -3190,7 +3159,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 18.75px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -3647,7 +3615,6 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -3706,7 +3673,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -3816,7 +3782,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -3911,7 +3876,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 18.75px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -3979,7 +3943,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -4042,7 +4005,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -4080,7 +4042,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 14.52px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -4433,7 +4394,6 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -4492,7 +4452,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -4602,7 +4561,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -4705,7 +4663,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 18.75px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -4773,7 +4730,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -4836,7 +4792,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -4874,7 +4829,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 14.52px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -5227,7 +5181,6 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -5286,7 +5239,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -5396,7 +5348,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -5483,7 +5434,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 17.5px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -5543,7 +5493,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -5606,7 +5555,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -5644,7 +5592,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 14.52px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -5997,7 +5944,6 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -6056,7 +6002,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -6166,7 +6111,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -6269,7 +6213,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 18.75px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -6329,7 +6272,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -6392,7 +6334,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -6430,7 +6371,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 14.52px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -6759,7 +6699,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -6869,7 +6808,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 15px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -6951,7 +6889,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 17.5px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -7269,7 +7206,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 15px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -7310,7 +7246,6 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 24px;
 align-self: stretch;
-flex-shrink: 0;
 opacity: 1;
 overflow: hidden;
 text-overflow: ellipsis;
@@ -7332,7 +7267,6 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 18px;
 align-self: stretch;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -7363,7 +7297,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 16.25px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -7409,7 +7342,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 14.52px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -7592,7 +7524,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 20px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -7650,7 +7581,6 @@ text-transform: uppercase;
 letter-spacing: 0.5px;
 text-align: left;
 line-height: 20px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -7767,7 +7697,6 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -7826,7 +7755,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -7936,7 +7864,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -7994,7 +7921,6 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
 align-self: stretch;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -8039,7 +7965,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -8077,7 +8002,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 14.52px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -8194,7 +8118,6 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -8253,7 +8176,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -8363,7 +8285,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -8429,7 +8350,6 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
 align-self: stretch;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -8474,7 +8394,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -8512,7 +8431,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 14.52px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -8629,7 +8547,6 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -8688,7 +8605,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -8798,7 +8714,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -8864,7 +8779,6 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
 align-self: stretch;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -8909,7 +8823,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -8947,7 +8860,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 14.52px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -9064,7 +8976,6 @@ text-transform: uppercase;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -9123,7 +9034,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 16.94px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -9233,7 +9143,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 10px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -9299,7 +9208,6 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
 align-self: stretch;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -9344,7 +9252,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -9382,7 +9289,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 14.52px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -9581,7 +9487,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 15px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -9624,7 +9529,6 @@ letter-spacing: 0px;
 text-align: left;
 line-height: 25px;
 align-self: stretch;
-flex-shrink: 0;
 opacity: 1;
 overflow: hidden;
 text-overflow: ellipsis;
@@ -9691,7 +9595,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 21px;
-flex-shrink: 0;
 opacity: 1;
 }
 
@@ -9747,7 +9650,6 @@ text-transform: none;
 letter-spacing: 0px;
 text-align: left;
 line-height: 14.52px;
-flex-shrink: 0;
 opacity: 1;
 }
 

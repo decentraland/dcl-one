@@ -61,6 +61,36 @@ describe('FigmaClient', () => {
       expect(error.message).not.toContain('FAKEKEY000example000000')
       expect(error.message).toContain('/v1/files/<DCL_FIGMA_FILE>?depth=1')
     })
+
+    it('should keep the key out of the retry diagnostics and the error after the retries run out', async () => {
+      vi.stubEnv('FIGMA_FILE_KEY', 'FAKEKEY000example000000')
+      const { client, lines } = harness([timeout(), timeout(), timeout(), timeout()])
+
+      const error = (await client
+        .get('/v1/files/FAKEKEY000example000000/nodes?ids=1')
+        .catch((e: unknown) => e)) as Error
+
+      expect(error.message).toContain('after 4 attempts on /v1/files/<DCL_FIGMA_FILE>/nodes')
+      expect(error.message).not.toContain('FAKEKEY000example000000')
+      expect(lines).toHaveLength(4)
+      expect(lines.join('\n')).not.toContain('FAKEKEY000example000000')
+    })
+
+    it('should keep the key out of a non-retryable fetch error that quotes the url', async () => {
+      vi.stubEnv('FIGMA_FILE_KEY', 'FAKEKEY000example000000')
+      const { client, lines } = harness([
+        new Error('Failed to parse URL from https://api.figma.com/v1/files/FAKEKEY000example000000')
+      ])
+
+      const error = (await client
+        .get('/v1/files/FAKEKEY000example000000')
+        .catch((e: unknown) => e)) as Error
+
+      expect(error.message).toBe(
+        'Failed to parse URL from https://api.figma.com/v1/files/<DCL_FIGMA_FILE>'
+      )
+      expect(lines.join('\n')).not.toContain('FAKEKEY000example000000')
+    })
   })
 })
 

@@ -204,7 +204,11 @@ function typography(styles: TextStyle[], fontSizes: { [key: string]: Renderable 
     const textTransform = style.textCase === 'UPPER' ? 'uppercase' : 'none'
     const letterSpacing = style.letterSpacingPx === 0 ? 'normal' : `${style.letterSpacingPx}px`
     const fontWeight = WEIGHTS[style.fontStyle] ?? 400
-    const fontFamily = `'${style.fontFamily}', sans-serif`
+    const escapedFont = style.fontFamily.replace(
+      /[\\'\n\r\f]/g,
+      (character) => `\\${character.charCodeAt(0).toString(16)} `
+    )
+    const fontFamily = `'${escapedFont}', sans-serif`
     entries[style.name] = {
       fontFamily,
       fontWeight,

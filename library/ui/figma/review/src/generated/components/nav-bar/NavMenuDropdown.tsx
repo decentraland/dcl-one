@@ -15,13 +15,13 @@ export type NavMenuDropdownProps = {
   label7?: ReactNode
   forceState?: ForcedState
 } & (
-  | { state?: 'default'; tab?: 'whatsOn' }
-  | { state?: 'default'; tab: 'shop' }
-  | { state?: 'default'; tab: 'create' }
-  | { state?: 'default'; tab: 'learn' }
-  | { state: 'open'; tab: 'shop' }
-  | { state: 'open'; tab: 'create' }
-  | { state: 'open'; tab: 'learn' }
+  | { state?: "default"; tab?: "whatsOn" }
+  | { state?: "default"; tab: "shop" }
+  | { state?: "default"; tab: "create" }
+  | { state?: "default"; tab: "learn" }
+  | { state: "open"; tab: "shop" }
+  | { state: "open"; tab: "create" }
+  | { state: "open"; tab: "learn" }
 ) & Omit<HTMLAttributes<HTMLElement>, 'children'>
 
 export const navMenuDropdownViews: Record<string, ViewNode> = {

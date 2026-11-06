@@ -18,24 +18,24 @@ export type PlaceCardProps = {
   label9?: ReactNode
   forceState?: ForcedState
 } & (
-  | { layout?: 'below'; product?: 'explorer'; state: 'default'; access?: 'public'; size?: 'lg'; viewport?: 'desktop' }
-  | { layout?: 'below'; product?: 'explorer'; state: 'default'; access: 'private'; size?: 'lg'; viewport?: 'desktop' }
-  | { layout?: 'below'; product?: 'explorer'; state: 'default'; access: 'noAccess'; size?: 'lg'; viewport?: 'desktop' }
-  | { layout?: 'below'; product?: 'explorer'; state: 'default'; access: 'password'; size?: 'lg'; viewport?: 'desktop' }
-  | { layout: 'overlay'; product: 'web'; state: 'default'; access?: 'public'; size?: 'lg'; viewport?: 'desktop' }
-  | { layout?: 'below'; product: 'web'; state: 'default'; access?: 'public'; size?: 'lg'; viewport?: 'desktop' }
-  | { layout?: 'below'; product: 'web'; state: 'default'; access: 'private'; size?: 'lg'; viewport?: 'desktop' }
-  | { layout?: 'below'; product: 'web'; state: 'default'; access: 'noAccess'; size?: 'lg'; viewport?: 'desktop' }
-  | { layout?: 'below'; product: 'web'; state: 'default'; access: 'password'; size?: 'lg'; viewport?: 'desktop' }
-  | { layout: 'overlay'; product: 'web'; state: 'default'; access?: 'public'; size: 'sm'; viewport?: 'desktop' }
-  | { layout: 'horizontal'; product: 'web'; state: 'default'; access?: 'public'; size: 'sm'; viewport?: 'desktop' }
-  | { layout?: 'below'; product?: 'explorer'; state?: 'add'; access?: 'public'; size?: 'lg'; viewport?: 'desktop' }
-  | { layout?: 'below'; product: 'web'; state?: 'add'; access?: 'public'; size?: 'lg'; viewport?: 'desktop' }
-  | { layout?: 'below'; product: 'web'; state: 'default'; access?: 'public'; size?: 'lg'; viewport: 'mobile' }
-  | { layout?: 'below'; product: 'web'; state: 'default'; access: 'private'; size?: 'lg'; viewport: 'mobile' }
-  | { layout?: 'below'; product: 'web'; state: 'default'; access: 'noAccess'; size?: 'lg'; viewport: 'mobile' }
-  | { layout?: 'below'; product: 'web'; state: 'default'; access: 'password'; size?: 'lg'; viewport: 'mobile' }
-  | { layout: 'horizontal'; product: 'web'; state: 'default'; access?: 'public'; size: 'sm'; viewport: 'mobile' }
+  | { layout?: "below"; product?: "explorer"; state: "default"; access?: "public"; size?: "lg"; viewport?: "desktop" }
+  | { layout?: "below"; product?: "explorer"; state: "default"; access: "private"; size?: "lg"; viewport?: "desktop" }
+  | { layout?: "below"; product?: "explorer"; state: "default"; access: "noAccess"; size?: "lg"; viewport?: "desktop" }
+  | { layout?: "below"; product?: "explorer"; state: "default"; access: "password"; size?: "lg"; viewport?: "desktop" }
+  | { layout: "overlay"; product: "web"; state: "default"; access?: "public"; size?: "lg"; viewport?: "desktop" }
+  | { layout?: "below"; product: "web"; state: "default"; access?: "public"; size?: "lg"; viewport?: "desktop" }
+  | { layout?: "below"; product: "web"; state: "default"; access: "private"; size?: "lg"; viewport?: "desktop" }
+  | { layout?: "below"; product: "web"; state: "default"; access: "noAccess"; size?: "lg"; viewport?: "desktop" }
+  | { layout?: "below"; product: "web"; state: "default"; access: "password"; size?: "lg"; viewport?: "desktop" }
+  | { layout: "overlay"; product: "web"; state: "default"; access?: "public"; size: "sm"; viewport?: "desktop" }
+  | { layout: "horizontal"; product: "web"; state: "default"; access?: "public"; size: "sm"; viewport?: "desktop" }
+  | { layout?: "below"; product?: "explorer"; state?: "add"; access?: "public"; size?: "lg"; viewport?: "desktop" }
+  | { layout?: "below"; product: "web"; state?: "add"; access?: "public"; size?: "lg"; viewport?: "desktop" }
+  | { layout?: "below"; product: "web"; state: "default"; access?: "public"; size?: "lg"; viewport: "mobile" }
+  | { layout?: "below"; product: "web"; state: "default"; access: "private"; size?: "lg"; viewport: "mobile" }
+  | { layout?: "below"; product: "web"; state: "default"; access: "noAccess"; size?: "lg"; viewport: "mobile" }
+  | { layout?: "below"; product: "web"; state: "default"; access: "password"; size?: "lg"; viewport: "mobile" }
+  | { layout: "horizontal"; product: "web"; state: "default"; access?: "public"; size: "sm"; viewport: "mobile" }
 ) & Omit<HTMLAttributes<HTMLElement>, 'children'>
 
 export const placeCardViews: Record<string, ViewNode> = {

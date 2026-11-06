@@ -329,3 +329,29 @@ describe('checkMappings', () => {
     })
   })
 })
+
+describe('when captured text contains JSX syntax', () => {
+  it('should emit text as a string expression instead of executable JSX', async () => {
+    const source = mappingSource({ body: "const label = instance.getString('Label')" }).replace(
+      '>Label</',
+      '>${label}</'
+    )
+    const { mappingRoot } = await library({ mappings: { 'Button.figma.ts': source } })
+    const text = 'Pay {total} < b "quoted"'
+    const result = await resolveComponent(
+      context(mappingRoot, {
+        figmaSets: [
+          { ...buttonSet, properties: { ...buttonSet.properties, Label: { type: 'TEXT' } } }
+        ]
+      }),
+      {
+        nodeId: '1:1',
+        texts: { Label: text }
+      }
+    )
+    expect(result.ok ? [] : result.errors).toEqual([])
+    expect(result.ok && result.resolved.usage).toContain(
+      'Pay &#123;total&#125; &lt; b &quot;quoted&quot;'
+    )
+  })
+})

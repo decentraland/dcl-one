@@ -6,6 +6,14 @@ import { FigmaView, registerComponent, type ForcedState, type ViewNode } from '.
 import type { MatrixCase } from '../../../components/StateMatrix'
 
 export type NavBarProps = {
+  label?: never
+  label2?: never
+  label3?: never
+  label4?: never
+  label5?: never
+  label6?: never
+  label7?: never
+  label8?: never
   label2Href?: string
   label3Href?: string
   label4Href?: string
@@ -17,24 +25,24 @@ export type NavBarProps = {
   onSignIn?: () => void
   forceState?: ForcedState
 } & (
-  | { viewport?: 'largeDesktop'; signedIn?: false; balances?: 'none'; theme?: 'dark' }
-  | { viewport?: 'largeDesktop'; signedIn: true; balances?: 'none'; theme?: 'dark' }
-  | { viewport?: 'largeDesktop'; signedIn: true; balances?: 'none'; theme: 'light' }
-  | { viewport?: 'largeDesktop'; signedIn?: false; balances?: 'none'; theme: 'light' }
-  | { viewport?: 'largeDesktop'; signedIn: true; balances: 'creditsMana'; theme?: 'dark' }
-  | { viewport?: 'largeDesktop'; signedIn: true; balances: 'credits'; theme?: 'dark' }
-  | { viewport: 'mobile'; signedIn?: false; balances?: 'none'; theme?: 'dark' }
-  | { viewport: 'mobile'; signedIn: true; balances?: 'none'; theme?: 'dark' }
-  | { viewport: 'mobile'; signedIn: true; balances?: 'none'; theme: 'light' }
-  | { viewport: 'mobile'; signedIn?: false; balances?: 'none'; theme: 'light' }
-  | { viewport: 'mobile'; signedIn: true; balances: 'creditsMana'; theme?: 'dark' }
-  | { viewport: 'mobile'; signedIn: true; balances: 'credits'; theme?: 'dark' }
-  | { viewport: 'desktop'; signedIn?: false; balances?: 'none'; theme?: 'dark' }
-  | { viewport: 'desktop'; signedIn: true; balances?: 'none'; theme?: 'dark' }
-  | { viewport: 'desktop'; signedIn: true; balances?: 'none'; theme: 'light' }
-  | { viewport: 'desktop'; signedIn?: false; balances?: 'none'; theme: 'light' }
-  | { viewport: 'desktop'; signedIn: true; balances: 'creditsMana'; theme?: 'dark' }
-  | { viewport: 'desktop'; signedIn: true; balances: 'credits'; theme?: 'dark' }
+  | { viewport?: "largeDesktop"; signedIn?: false; balances?: "none"; theme?: "dark" }
+  | { viewport?: "largeDesktop"; signedIn: true; balances?: "none"; theme?: "dark" }
+  | { viewport?: "largeDesktop"; signedIn: true; balances?: "none"; theme: "light" }
+  | { viewport?: "largeDesktop"; signedIn?: false; balances?: "none"; theme: "light" }
+  | { viewport?: "largeDesktop"; signedIn: true; balances: "creditsMana"; theme?: "dark" }
+  | { viewport?: "largeDesktop"; signedIn: true; balances: "credits"; theme?: "dark" }
+  | { viewport: "mobile"; signedIn?: false; balances?: "none"; theme?: "dark" }
+  | { viewport: "mobile"; signedIn: true; balances?: "none"; theme?: "dark" }
+  | { viewport: "mobile"; signedIn: true; balances?: "none"; theme: "light" }
+  | { viewport: "mobile"; signedIn?: false; balances?: "none"; theme: "light" }
+  | { viewport: "mobile"; signedIn: true; balances: "creditsMana"; theme?: "dark" }
+  | { viewport: "mobile"; signedIn: true; balances: "credits"; theme?: "dark" }
+  | { viewport: "desktop"; signedIn?: false; balances?: "none"; theme?: "dark" }
+  | { viewport: "desktop"; signedIn: true; balances?: "none"; theme?: "dark" }
+  | { viewport: "desktop"; signedIn: true; balances?: "none"; theme: "light" }
+  | { viewport: "desktop"; signedIn?: false; balances?: "none"; theme: "light" }
+  | { viewport: "desktop"; signedIn: true; balances: "creditsMana"; theme?: "dark" }
+  | { viewport: "desktop"; signedIn: true; balances: "credits"; theme?: "dark" }
 ) & Omit<HTMLAttributes<HTMLElement>, 'children'>
 
 export const navBarViews: Record<string, ViewNode> = {
@@ -2312,6 +2320,14 @@ export const NavBar = ({
   signedIn = false,
   balances = 'none',
   theme = 'dark',
+  label: _label,
+  label2: _label2,
+  label3: _label3,
+  label4: _label4,
+  label5: _label5,
+  label6: _label6,
+  label7: _label7,
+  label8: _label8,
   label2Href,
   label3Href,
   label4Href,

@@ -311,7 +311,7 @@ function sizingDecls(node: RawNode, parent: Parent, isRoot: boolean): [string, s
     if (sizing === 'FIXED') {
       decls.push([property, size])
       if (isMain) decls.push(['flex-shrink', '0'])
-    } else if (sizing === 'HUG' && isMain) {
+    } else if (sizing === 'HUG' && isMain && node.type !== 'TEXT') {
       decls.push(['flex-shrink', '0'])
     } else if (sizing === 'FILL') {
       if (isMain)
@@ -334,7 +334,9 @@ const sharesParentWithAbsolute = (parent: Parent) =>
 function overlapDecls(node: RawNode, parent: Parent, env: ViewEnv): [string, string][] {
   const layout = parent?.node.layout
   if (!layout || layout.gap >= 0 || layout.wrap || node.absolute) return []
-  const flow = (parent.node.children ?? []).filter((child) => !child.absolute && !child.hidden)
+  const flow = (parent.node.children ?? []).filter(
+    (child) => !child.absolute && !child.hidden && !child.isMask
+  )
   const index = flow.indexOf(node)
   if (index < 0)
     throw new Error(`Overlapping child is not among its siblings: ${node.name ?? node.type}`)
@@ -348,7 +350,7 @@ function overlapDecls(node: RawNode, parent: Parent, env: ViewEnv): [string, str
           ]
         ]
       : []
-  return [['position', 'relative'], ...margin, ['z-index', String(index + 1)]]
+  return [['position', 'relative'], ...margin]
 }
 
 function offsetDecls(node: RawNode, parent: Parent, env: ViewEnv): [string, string][] {
@@ -493,6 +495,11 @@ type BuildState = { text: number; icon: number }
 
 function positionDecls(node: RawNode, parent: Parent, env: ViewEnv): [string, string][] {
   const decls = offsetDecls(node, parent, env)
+  if (parent?.node.layout && parent.node.layout.gap < 0 && !parent.node.layout.wrap) {
+    const layers = (parent.node.children ?? []).filter((child) => !child.hidden && !child.isMask)
+    const index = layers.indexOf(node)
+    if (index >= 0) decls.push(['z-index', String(index + 1)])
+  }
   if (!node.flip?.some(Boolean)) return decls
   const translation = decls.find(([key]) => key === 'transform')?.[1]
   return [
@@ -737,13 +744,13 @@ function instanceNode(
 const LINE_TOLERANCE = 0.1
 
 // How many lines a text node holds, read from its geometry: a hugging height is a whole number of its captured
-// line height. Exactly one line is one line in any box. A fixed-height box holding more, or a height between
-// whole lines, says nothing reliable about wrapping.
+// line height. Whole-line geometry remains meaningful in a fixed-height box too. A height between whole
+// lines remains ambiguous.
 function capturedLines(node: RawNode, lineHeight: number): number | 'ambiguous' {
   const ratio = node.h / lineHeight
   const lines = Math.round(ratio)
   const whole = lines >= 1 && Math.abs(ratio - lines) <= LINE_TOLERANCE
-  if (whole && lines === 1) return 1
+  if (whole) return lines
   if (node.sizing?.[1] === 'FIXED') return 'ambiguous'
   if (ratio < 1.5) return 1
   return whole ? lines : 'ambiguous'
@@ -949,15 +956,9 @@ function flatten(
   prefix = '',
   into = new Map<string, ViewNode>()
 ): Map<string, ViewNode> {
-  const seen = new Map<string, number>()
   const walk = (current: ViewNode, trail: string) => {
     into.set(trail, current)
-    for (const child of current.children ?? []) {
-      const base = `${trail}/${encodeURIComponent(child.name)}`
-      const count = seen.get(base) ?? 0
-      seen.set(base, count + 1)
-      walk(child, count === 0 ? base : `${base}#${count}`)
-    }
+    for (const [key, child] of keyedChildren(trail, current.children ?? [])) walk(child, key)
   }
   walk(node, prefix)
   return into

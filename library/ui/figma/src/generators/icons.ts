@@ -1,5 +1,5 @@
 import type { IconSpec } from '../ir/schemas.js'
-import { pascalCase, uniqueName } from './naming.js'
+import { assertIdentifier, pascalCase, uniqueName } from './naming.js'
 import { renderValue, header, type Renderable } from './render.js'
 import { optimizeIcon, type OptimizedIcon } from './svg-to-jsx.js'
 import type { GeneratedFile, GeneratorContext } from './types.js'
@@ -112,12 +112,13 @@ function generateIcons(icons: IconSpec[], context: GeneratorContext) {
       })
       continue
     }
-    const component = uniqueName(pascalCase(name), usedNames)
+    const component = uniqueName(assertIdentifier(pascalCase(name)), usedNames)
     const optimized = variants.map((icon) => ({
       icon,
       optimized: optimizeIcon(icon.svg, component, variants.length > 1 ? 3 : 2)
     }))
     const first = variants[0]!
+    assertIdentifier(first.category)
     const source = componentSource(component, optimized)
     const bucket = byCategory.get(first.category) ?? []
     bucket.push(source)

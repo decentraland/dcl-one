@@ -3,9 +3,10 @@ import process from 'node:process'
 import { Buffer } from 'node:buffer'
 import { setTimeout, clearTimeout } from 'node:timers'
 import { URL } from 'node:url'
-const { fetch, WebSocket, console } = globalThis
+const { fetch, WebSocket, console, AbortSignal } = globalThis
 import { spawn } from 'node:child_process'
 import { reviewSignature } from './review-signature.mjs'
+import { settleAnimations } from './capture-animations.mjs'
 import {
   CaptureTimeout,
   assertNodeVersion,
@@ -14,8 +15,9 @@ import {
   recoverInterruptedCommit,
   withStagedOutput
 } from './capture-retry.mjs'
+import { closeServer, removeProfile, stopBrowser } from './capture-teardown.mjs'
 import { createServer } from 'node:http'
-import { readFile, writeFile, mkdtemp, rm, access } from 'node:fs/promises'
+import { readFile, writeFile, mkdtemp, access } from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 
@@ -85,9 +87,6 @@ let executable
 for (const candidate of [
   process.env.BROWSER_PATH,
   process.env.CHROME_PATH,
-  '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
-  '/usr/bin/brave-browser',
-  '/usr/bin/brave',
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/usr/bin/google-chrome',
   '/usr/bin/chromium',
@@ -103,7 +102,7 @@ for (const candidate of [
 }
 if (!executable) {
   server.close()
-  throw new Error('A Chromium browser is required. Set BROWSER_PATH to the Brave executable.')
+  throw new Error('A Chromium browser is required. Set BROWSER_PATH to Chrome or Chromium.')
 }
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -124,24 +123,18 @@ async function openSession() {
     { stdio: 'ignore' }
   )
   let socket
+  let startupError
+  browser.on('error', (error) => {
+    startupError = error
+  })
   const close = async () => {
-    socket?.close()
-    browser.kill('SIGTERM')
-    // A hung browser can ignore SIGTERM; never let teardown hide the capture error behind the job timeout.
-    await new Promise((resolve) => {
-      if (browser.exitCode !== null || browser.signalCode !== null) return resolve()
-      const kill = setTimeout(() => browser.kill('SIGKILL'), 5000)
-      browser.once('exit', () => {
-        clearTimeout(kill)
-        resolve()
-      })
-    })
-    // Browser helper processes can still write to the profile for a moment after the browser exits.
-    await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
+    if (!startupError) await stopBrowser({ socket, browser })
+    await removeProfile(profile)
   }
   try {
     let port
     for (let i = 0; i < 100; i++) {
+      if (startupError) throw startupError
       try {
         port = (await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]
         break
@@ -151,12 +144,31 @@ async function openSession() {
     }
     if (!port) throw new Error('Capture browser did not start')
     const tab = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, {
-      method: 'PUT'
+      method: 'PUT',
+      signal: AbortSignal.timeout(10_000)
     }).then((response) => response.json())
     socket = new WebSocket(tab.webSocketDebuggerUrl)
     await new Promise((resolve, reject) => {
-      socket.addEventListener('open', resolve, { once: true })
-      socket.addEventListener('error', reject, { once: true })
+      const timer = setTimeout(() => {
+        socket.close()
+        reject(new Error('Capture DevTools socket timed out'))
+      }, 10_000)
+      socket.addEventListener(
+        'open',
+        () => {
+          clearTimeout(timer)
+          resolve()
+        },
+        { once: true }
+      )
+      socket.addEventListener(
+        'error',
+        (error) => {
+          clearTimeout(timer)
+          reject(error)
+        },
+        { once: true }
+      )
     })
     let serial = 0
     const pending = new Map()
@@ -231,7 +243,7 @@ async function captureVariant(session, staging, component, index, variant, key, 
   }
   if (!ready) throw new CaptureTimeout('Preview did not become ready')
   const box = await evaluate(
-    `(async()=>{await document.fonts.ready;await Promise.all([...document.images].map(image=>image.decode()));for(const element of [document.documentElement,document.body,document.querySelector('#audit-stage')]){element.style.background='transparent';element.style.overflow='visible'}const stage=document.querySelector('#audit-stage');stage.style.padding='160px';stage.style.width='max-content';stage.style.maxWidth='none';await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));const root=document.querySelector('#audit-render')?.firstElementChild;if(!root)throw Error('Rendered root missing');const b=root.getBoundingClientRect();return{x:b.x,y:b.y,width:b.width,height:b.height}})()`
+    `(async()=>{await document.fonts.ready;await Promise.all([...document.images].map(image=>image.decode()));for(const element of [document.documentElement,document.body,document.querySelector('#audit-stage')]){element.style.background='transparent';element.style.overflow='visible'}const stage=document.querySelector('#audit-stage');stage.style.padding='160px';stage.style.width='max-content';stage.style.maxWidth='none';await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));await (${settleAnimations.toString()})(()=>document.getAnimations(),()=>new Promise(resolve=>requestAnimationFrame(resolve)));const root=document.querySelector('#audit-render')?.firstElementChild;if(!root)throw Error('Rendered root missing');const b=root.getBoundingClientRect();return{x:b.x,y:b.y,width:b.width,height:b.height}})()`
   )
   if (runtimeErrors.length) throw new Error(`${key}: ${runtimeErrors.join('\n')}`)
   if (Math.abs(box.width - variant.width) > 1 || Math.abs(box.height - variant.height) > 1)
@@ -269,7 +281,7 @@ async function captureVariant(session, staging, component, index, variant, key, 
 const report = {
   generatedAt: new Date().toISOString(),
   signature: await reviewSignature(root),
-  renderer: `${/brave/i.test(executable) ? 'Brave' : 'Chromium'}, sRGB, transparent capture composited on #1e1e1e`,
+  renderer: `${/brave/i.test(executable) ? 'Brave' : 'Chromium'}, sRGB, transparent capture composited on #1e1e1e; finite animations settled, loops at 0ms`,
   scale: 1,
   cases: frozenCases
 }
@@ -311,7 +323,5 @@ try {
   )
 } finally {
   await session?.close()
-  server.close()
-  // Keep-alive connections from the browser would otherwise keep the process running.
-  server.closeAllConnections()
+  closeServer(server)
 }

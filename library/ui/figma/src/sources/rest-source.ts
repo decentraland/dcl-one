@@ -1,3 +1,5 @@
+import { download } from '../automation/exports.js'
+import { svgProblem } from '../capture/ingest-chunks.js'
 import type { FigmaClient } from '../figma/client.js'
 import type { RawComponentPage } from '../ir/raw-components.js'
 import type {
@@ -18,6 +20,8 @@ import {
 import type { FigmaSource } from './types.js'
 
 const IMAGE_BATCH = 100
+// Icon SVGs download a few at a time, not all at once.
+const DOWNLOAD_BATCH = 8
 
 type StyleMeta = { name: string; styleType: 'FILL' | 'TEXT' | 'EFFECT' | 'GRID' }
 
@@ -115,22 +119,32 @@ class RestSource implements FigmaSource {
       for (const [id, url] of Object.entries(images.images)) if (url) urls[id] = url
     }
 
-    return Promise.all(
-      components.map(async ({ section, path, ...component }) => {
-        const url = urls[component.nodeId]
-        if (!url) throw new Error(`No SVG export URL for ${path}`)
-        return {
-          ...component,
-          section,
-          category: path.split('/')[0]!,
-          group: component.variant
-            ? component.name
-            : path.split('/').slice(0, -1).join('/') || path,
-          file: `${path.replace(/\//g, '__').replace(/=/g, '-')}.svg`,
-          svg: await (await fetch(url)).text()
-        }
-      })
-    )
+    const icons: IconSpec[] = []
+    for (let start = 0; start < components.length; start += DOWNLOAD_BATCH) {
+      const batch = components.slice(start, start + DOWNLOAD_BATCH)
+      icons.push(
+        ...(await Promise.all(
+          batch.map(async ({ section, path, ...component }) => {
+            const url = urls[component.nodeId]
+            if (!url) throw new Error(`No SVG export URL for ${path}`)
+            const svg = (await download(this.client, url, path)).toString('utf8')
+            const problem = svgProblem(svg)
+            if (problem) throw new Error(`Invalid svg export for ${path}: ${problem}`)
+            return {
+              ...component,
+              section,
+              category: path.split('/')[0]!,
+              group: component.variant
+                ? component.name
+                : path.split('/').slice(0, -1).join('/') || path,
+              file: `${path.replace(/\//g, '__').replace(/=/g, '-')}.svg`,
+              svg
+            }
+          })
+        ))
+      )
+    }
+    return icons
   }
 }
 

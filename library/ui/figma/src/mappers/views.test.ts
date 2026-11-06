@@ -56,13 +56,6 @@ describe('buildView', () => {
       expect(row.css.decls).toContainEqual(['flex-shrink', '0'])
     })
 
-    it('should preserve HUG sizing independently of component identity', () => {
-      const list = buildList().children![0]!
-      const row = list.children![0]!
-
-      expect(row.css.decls).toContainEqual(['flex-shrink', '0'])
-    })
-
     it('should keep FILL rows flexible within the available space', () => {
       const row = buildList('FILL').children![0]!.children![0]!
 

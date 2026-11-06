@@ -1,6 +1,6 @@
 import { configuredPages } from '../page-identity.js'
-import { validateOutputPath } from '../guard/fs-safe.js'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { atomicWrite, resolveContained, validateOutputPath } from '../guard/fs-safe.js'
+import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
 import { runDiff, runSync, type App } from '../app.js'
@@ -244,7 +244,18 @@ function createTools(app: App): ToolDefinition[] {
         if (outDir) {
           const target = await insideWorkspace(app, outDir)
           await mkdir(target, { recursive: true })
-          await Promise.all(icons.map((icon) => writeFile(path.join(target, icon.file), icon.svg)))
+          for (const icon of icons) {
+            if (
+              path.basename(icon.file) !== icon.file ||
+              /[\\/:]/.test(icon.file) ||
+              !icon.file.endsWith('.svg')
+            )
+              throw new Error(`Invalid icon filename: ${JSON.stringify(icon.file)}`)
+            await resolveContained(target, icon.file)
+          }
+          await Promise.all(
+            icons.map((icon) => atomicWrite(path.join(target, icon.file), icon.svg))
+          )
           return { written: icons.length, outDir: target, files: icons.map((icon) => icon.file) }
         }
         if (icons.length > MAX_INLINE_SVGS) {

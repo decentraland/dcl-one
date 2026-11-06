@@ -1,9 +1,9 @@
-import { execFileSync } from 'node:child_process'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { link, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { runGuard } from './key-guard.mjs'
+import { enumerateArtifact, main, redact, runGuard, scanBuffer } from './key-guard.mjs'
 
 const FAKE_KEY = 'FAKEKEY000example000000'
 // Built by concatenation so the tree never holds a literal Figma file URL (the guard's own `url`).
@@ -38,6 +38,10 @@ function guard(options: {
   range?: string | null
   worktree?: boolean
   paths?: string[]
+  trees?: { rev: string; prefix: string }[]
+  artifacts?: string[]
+  artifactLimits?: { files: number; totalBytes: number; fileBytes: number; depth: number }
+  allowlistRev?: string
   key?: string
 }) {
   return runGuard({
@@ -45,6 +49,10 @@ function guard(options: {
     range: options.range === undefined ? 'base..HEAD' : options.range,
     worktree: options.worktree ?? true,
     paths: options.paths ?? [],
+    trees: options.trees,
+    artifacts: options.artifacts,
+    artifactLimits: options.artifactLimits,
+    allowlistRev: options.allowlistRev,
     key: options.key
   })
 }
@@ -59,6 +67,45 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(root, { recursive: true, force: true })
+})
+
+// Every form is built by concatenation, like FILE_URL, so the tree never holds a literal match.
+const HOST = 'figma' + '.com'
+describe('when matching Figma URLs for the url check', () => {
+  it.each([
+    ['a design link', `https://www.${HOST}/design/AbC123/Name`],
+    ['an uppercase host', `https://${HOST.toUpperCase()}/design/AbC123`],
+    ['a slides link', `https://${HOST}/slides/AbC123/Deck`],
+    ['a make link', `https://${HOST}/make/AbC123/App`],
+    ['a site link', `https://${HOST}/site/AbC123`],
+    ['a deck link', `https://${HOST}/deck/AbC123`],
+    [
+      'a percent-encoded embed link',
+      `https://embed.${HOST}/?url=https%3A%2F%2Fwww.${HOST}%2Fdesign%2FAbC123`
+    ],
+    ['a lowercase percent-encoded link', `${HOST}%2fproto%2fAbC123`],
+    ['a JSON-escaped link', `"https:\\/\\/www.${HOST}\\/design\\/AbC123"`],
+    ['a doubly escaped link', `${HOST}\\\\/board\\\\/AbC123`]
+  ])('should flag %s', (_, text) => {
+    expect(scanBuffer(Buffer.from(text))).toEqual(['url'])
+  })
+
+  it.each([
+    ['ordinary text', 'Designs live in Figma; ask the owner for access.'],
+    ['the bare host', `See ${HOST} for pricing.`],
+    ['a single path segment', `https://${HOST}/pricing`],
+    ['a host that only ends in figma.com', `https://not${HOST}/design/AbC123`],
+    ['another site with the same path', 'https://example.com/design/AbC123/Name'],
+    ['a figma package name', '@figma/code-connect/figma-types'],
+    ['a REST API path', `https://api.${HOST}/v1/files/AbC123/nodes`]
+  ])('should not flag %s', (_, text) => {
+    expect(scanBuffer(Buffer.from(text))).toEqual([])
+  })
+
+  it('should honour an allowlisted id in any of these forms', () => {
+    const text = `${HOST}%2Fdesign%2FAbC123 and https://${HOST.toUpperCase()}/file/AbC123`
+    expect(scanBuffer(Buffer.from(text), undefined, new Set(['AbC123']))).toEqual([])
+  })
 })
 
 describe('figma-key-guard', () => {
@@ -199,5 +246,292 @@ describe('figma-key-guard', () => {
         ])
       )
     })
+  })
+})
+
+// A trusted copy of the guard scans a pull request as data: its commits sit in the object store under a
+// private ref, nothing of it is checked out, and its own allowlist is read from that ref.
+describe('when scanning another revision from the object store', () => {
+  let leaking: string
+
+  beforeEach(async () => {
+    git('checkout', '-q', '-b', 'pr')
+    await put('library/ui/data.json', `{"file": "${FAKE_KEY}"}\n`)
+    await put('docs/outside.md', `key ${FAKE_KEY}\n`)
+    commit('pr adds the key')
+    leaking = git('rev-parse', '--short=12', 'HEAD')
+    git('checkout', '-q', 'main')
+  })
+
+  it('should fail on a blob under the scanned path, naming revision and path only', () => {
+    const { findings, lines } = guard({
+      worktree: false,
+      range: null,
+      trees: [{ rev: 'pr', prefix: 'library/ui' }],
+      key: FAKE_KEY
+    })
+
+    expect(findings).toEqual([{ check: 'key', location: `${leaking}:library/ui/data.json` }])
+    expect(lines).toContain(`tree pr:library/ui (${leaking}): 1 files`)
+    expect(lines.join('\n')).not.toContain(FAKE_KEY)
+  })
+
+  it('should read nothing from the working tree, which still holds the base', async () => {
+    await put('library/ui/local.json', `${FAKE_KEY}\n`)
+    git('checkout', '-q', '-b', 'clean', 'base')
+
+    const { findings } = guard({
+      worktree: false,
+      range: null,
+      trees: [{ rev: 'clean', prefix: 'library/ui' }],
+      key: FAKE_KEY
+    })
+
+    expect(findings).toEqual([])
+  })
+
+  it('should take the url allowlist from the scanned revision when asked to', async () => {
+    git('checkout', '-q', 'pr')
+    await put('docs/public.md', `see ${FILE_URL}\n`)
+    await put(
+      'library/ui/figma/key-guard-allow.json',
+      JSON.stringify([
+        { path: 'docs/public.md', check: 'url', id: 'AbC123', reason: 'public file' }
+      ])
+    )
+    commit('pr allowlists a public file')
+    git('checkout', '-q', 'main')
+    const scan = (allowlistRev?: string) =>
+      guard({
+        worktree: false,
+        range: null,
+        trees: [{ rev: 'pr', prefix: 'docs/public.md' }],
+        allowlistRev
+      })
+
+    expect(scan().findings.map((finding) => finding.check)).toEqual(['url'])
+    expect(scan('pr').findings).toEqual([])
+  })
+
+  it('should reject a --tree value without a path', () => {
+    expect(main(['--root', root, '--no-range', '--no-worktree', '--tree', 'pr'])).toBe(2)
+  })
+})
+
+// The unpacked Review artifact is adversarial input: the enumerator reads it without following a link and
+// fails closed on anything unexpected.
+describe('when enumerating an unpacked artifact', () => {
+  const limits = { files: 5, totalBytes: 1000, fileBytes: 100, depth: 3 }
+  let outside: string
+
+  beforeEach(async () => {
+    outside = await mkdtemp(path.join(tmpdir(), 'key-guard-outside-'))
+    await writeFile(path.join(outside, 'secret.txt'), `${FAKE_KEY}\n`)
+    await put('artifact/index.html', '<p>ok</p>')
+    await put('artifact/assets/app.js', 'console.log(1)')
+  })
+
+  afterEach(async () => {
+    await rm(outside, { recursive: true, force: true })
+  })
+
+  const enumerate = (overrides = {}) =>
+    enumerateArtifact(path.join(root, 'artifact'), { ...limits, ...overrides })
+
+  it('should list a valid tree with its relative paths and no problem', () => {
+    const { files, problems } = enumerate()
+
+    expect(files.map((file) => file.path).sort()).toEqual(['assets/app.js', 'index.html'])
+    expect(problems).toEqual([])
+  })
+
+  it('should reject a symlink to a file without following it', async () => {
+    await symlink(path.join(outside, 'secret.txt'), path.join(root, 'artifact/link.txt'))
+
+    const { files, problems } = enumerate()
+
+    expect(problems).toEqual([{ path: 'link.txt', reason: 'symlink' }])
+    expect(files.map((file) => file.path)).not.toContain('link.txt')
+  })
+
+  it('should reject a symlinked directory that escapes the artifact', async () => {
+    await symlink(outside, path.join(root, 'artifact/assets/out'))
+
+    const { files, problems } = enumerate()
+
+    expect(problems).toEqual([{ path: path.join('assets', 'out'), reason: 'symlink' }])
+    expect(files.map((file) => file.path).join()).not.toContain('secret.txt')
+  })
+
+  it('should reject a hard link', async () => {
+    await link(path.join(outside, 'secret.txt'), path.join(root, 'artifact/hard.txt'))
+
+    expect(enumerate().problems).toEqual([{ path: 'hard.txt', reason: 'hard link' }])
+  })
+
+  it('should reject a file over the per-file limit', async () => {
+    await put('artifact/big.bin', 'x'.repeat(101))
+
+    expect(enumerate().problems).toEqual([{ path: 'big.bin', reason: 'file too large' }])
+  })
+
+  it('should stop listing past the file count limit and say so once', async () => {
+    for (const name of ['a', 'b', 'c', 'd', 'e']) await put(`artifact/${name}.txt`, name)
+
+    const { files, problems } = enumerate()
+
+    expect(files).toHaveLength(5)
+    expect(problems.map((problem) => problem.reason)).toEqual(['too many files'])
+  })
+
+  it('should reject a tree that is too large in total', async () => {
+    for (const name of ['a', 'b', 'c']) await put(`artifact/${name}.txt`, 'x'.repeat(100))
+
+    expect(enumerate({ totalBytes: 250 }).problems.map((problem) => problem.reason)).toEqual([
+      'too large in total'
+    ])
+  })
+
+  it('should reject a tree that is too deep', async () => {
+    await put('artifact/a/b/c/d/deep.txt', 'x')
+
+    expect(enumerate().problems).toEqual([
+      { path: path.join('a', 'b', 'c', 'd'), reason: 'too deep' }
+    ])
+  })
+
+  it('should fail the guard on a problem and never read through a link', async () => {
+    await symlink(path.join(outside, 'secret.txt'), path.join(root, 'artifact/link.txt'))
+
+    const { findings, lines } = guard({
+      worktree: false,
+      range: null,
+      artifacts: ['artifact'],
+      artifactLimits: limits,
+      key: FAKE_KEY
+    })
+
+    expect(findings).toEqual([{ check: 'artifact', location: 'link.txt (symlink)' }])
+    expect(lines.join('\n')).not.toContain(FAKE_KEY)
+  })
+
+  it('should still find the key in a regular file of the artifact', async () => {
+    await put('artifact/assets/leak.js', `const k = '${FAKE_KEY}'`)
+
+    const { findings } = guard({
+      worktree: false,
+      range: null,
+      artifacts: ['artifact'],
+      artifactLimits: limits,
+      key: FAKE_KEY
+    })
+
+    expect(findings).toEqual([{ check: 'key', location: path.join('assets', 'leak.js') }])
+  })
+})
+
+// The scanner runs from main over a pull request's data, and the pull request chooses its file names. A path
+// named after the key must never reach the report, the check summary (the scanner's stdout) or the log.
+describe('when an untrusted path carries the private key', () => {
+  const SCRIPT = path.resolve(import.meta.dirname, 'key-guard.mjs')
+
+  // The scanner as the workflow runs it, with the key in its environment. Both streams are returned whole.
+  function scanner(...args: string[]) {
+    const result = spawnSync(process.execPath, [SCRIPT, '--root', root, ...args], {
+      env: { ...process.env, FIGMA_FILE_KEY: FAKE_KEY },
+      encoding: 'utf8'
+    })
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr }
+  }
+
+  const expectNoKey = (result: { stdout: string; stderr: string }) => {
+    expect(result.stdout).not.toContain(FAKE_KEY)
+    expect(result.stderr).not.toContain(FAKE_KEY)
+    expect(`${result.stdout}${result.stderr}`.toLowerCase()).not.toContain(FAKE_KEY.toLowerCase())
+  }
+
+  it('should redact a key-named path and content found in a tree read from the object store', async () => {
+    git('checkout', '-q', '-b', 'pr')
+    await put(`library/ui/${FAKE_KEY}.json`, `{"key": "${FAKE_KEY}"}\n`)
+    commit('pr adds a key-named file')
+    git('checkout', '-q', 'main')
+
+    const result = scanner('--no-worktree', '--no-range', '--tree', 'pr:library/ui')
+
+    expect(result.status).toBe(1)
+    expect(result.stdout).toMatch(/^FAIL key \w{12}:library\/ui\/<DCL_FIGMA_FILE>\.json$/m)
+    expectNoKey(result)
+  })
+
+  it('should redact an artifact file name, a link named after the key, and the content it holds', async () => {
+    await put(`artifact/${FAKE_KEY}.js`, `const k = '${FAKE_KEY}'`)
+    await symlink(root, path.join(root, `artifact/${FAKE_KEY}-link`))
+
+    const result = scanner('--no-worktree', '--no-range', '--artifact', 'artifact')
+
+    expect(result.status).toBe(1)
+    expect(result.stdout).toContain('FAIL key <DCL_FIGMA_FILE>.js')
+    expect(result.stdout).toContain('FAIL artifact <DCL_FIGMA_FILE>-link (symlink)')
+    expectNoKey(result)
+  })
+
+  it('should redact a path in a commit of the scanned range', async () => {
+    await put(`docs/${FAKE_KEY}.md`, `key ${FAKE_KEY}\n`)
+    commit('touch a key-named path')
+
+    const result = scanner('--no-worktree', '--range', 'base..HEAD')
+
+    expect(result.status).toBe(1)
+    expect(result.stdout).toMatch(/^FAIL key \w{12}:docs\/<DCL_FIGMA_FILE>\.md$/m)
+    expectNoKey(result)
+  })
+
+  it('should redact the path an exception would echo', () => {
+    const result = scanner('--no-worktree', '--no-range', '--artifact', `${FAKE_KEY}-missing`)
+
+    expect(result.status).toBe(2)
+    expect(result.stderr).toContain('<DCL_FIGMA_FILE>-missing')
+    expectNoKey(result)
+  })
+
+  it('should redact the revision a failing git command would quote', () => {
+    const result = scanner('--no-worktree', '--no-range', '--tree', `${FAKE_KEY}:library/ui`)
+
+    expect(result.status).toBe(2)
+    expectNoKey(result)
+  })
+
+  it('should redact an argument it rejects', () => {
+    const result = scanner(`--${FAKE_KEY}`)
+
+    expect(result.status).toBe(2)
+    expect(result.stderr).toContain('unknown argument: --<DCL_FIGMA_FILE>')
+    expectNoKey(result)
+  })
+
+  it('should redact the key in any letter case, several times, and leave other text alone', () => {
+    expect(redact(`a/${FAKE_KEY}/b/${FAKE_KEY.toLowerCase()}.json`, FAKE_KEY)).toBe(
+      'a/<DCL_FIGMA_FILE>/b/<DCL_FIGMA_FILE>.json'
+    )
+    expect(redact('plain/path.json', FAKE_KEY)).toBe('plain/path.json')
+    expect(redact('no key set', undefined)).toBe('no key set')
+  })
+
+  it('should return findings and report lines that never carry the key', async () => {
+    await put(`docs/${FAKE_KEY}.md`, `key ${FAKE_KEY}\n`)
+
+    const { findings, lines } = guard({ key: FAKE_KEY, range: null })
+
+    expect(JSON.stringify(findings)).not.toContain(FAKE_KEY)
+    expect(lines.join('\n')).not.toContain(FAKE_KEY)
+  })
+
+  it('should print only through the one redacting output function', async () => {
+    const { readFile } = await import('node:fs/promises')
+    const source = await readFile(SCRIPT, 'utf8')
+    const outside = source.replace(/\/\/ output:begin[\s\S]*?\/\/ output:end/, '')
+
+    expect(source).toContain('// output:begin')
+    expect(outside).not.toMatch(/console\.|process\.(stdout|stderr)\.write|\.write\(/)
   })
 })
