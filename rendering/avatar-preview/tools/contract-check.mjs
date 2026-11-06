@@ -8,7 +8,7 @@
 //
 // `CHROME_PATH` names the browser (default: Windows Chrome from WSL). Each console line that
 // mentions a panic, an exception, an error or a command is printed at the end.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 
 const [url, secondsArg, outArg] = process.argv.slice(2);
@@ -26,6 +26,8 @@ const chrome = spawn(chromePath, [
   ...(process.env.HEADED ? [] : ['--headless=new']),
   '--enable-unsafe-webgpu', '--no-first-run', '--no-default-browser-check',
   '--autoplay-policy=no-user-gesture-required',
+  // a test browser never plays sound on the machine it runs on; UNMUTE=1 to listen
+  ...(process.env.UNMUTE ? [] : ['--mute-audio']),
   // keep cross-origin iframes in the page's process, so their console reaches this one listener;
   // SITE_ISOLATION=1 keeps Chrome's default process-per-site instead (compositing then matches a
   // headed browser, but an iframe's console is not captured)
@@ -37,13 +39,20 @@ const chrome = spawn(chromePath, [
   'about:blank',
 ], { stdio: 'ignore' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const profile = process.env.CHROME_PROFILE || 'C:\\Users\\Public\\dcl-preview-chrome-profile';
+// Windows Chrome launched from WSL outlives the killed launcher: end every process that uses this
+// run's profile (and only those), and wait for it, so no browser keeps running after the check
 const finish = (code) => {
   chrome.kill();
   if (process.platform === 'linux' && chromePath.startsWith('/mnt/')) {
-    spawn('/mnt/c/Windows/System32/taskkill.exe', ['/F', '/IM', 'chrome.exe', '/FI', 'WINDOWTITLE eq about:blank*'], { stdio: 'ignore' });
+    const dir = profile.split('\\').pop();
+    const ps = `Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | Where-Object { $_.CommandLine -like '*${dir}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }`;
+    spawnSync('/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe', ['-NoProfile', '-Command', ps], { stdio: 'ignore' });
   }
   process.exit(code);
 };
+process.on('SIGINT', () => finish(130));
+process.on('SIGTERM', () => finish(143));
 
 let targets;
 for (let i = 0; i < 40 && !targets; i++) {
