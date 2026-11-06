@@ -119,10 +119,6 @@ struct LoginIdentityCommand {
     /// the curated default look a first login's new profile wears, 1-based
     #[arg(long)]
     look: Option<u32>,
-    /// the lambdas endpoint to fetch the account's profile from (the catalyst the sign-in
-    /// deployed it to), else the centralized catalyst's
-    #[arg(long)]
-    profiles: Option<String>,
 }
 
 fn login_identity_cmd(
@@ -141,7 +137,6 @@ fn login_identity_cmd(
             command.default_on_error,
             command.guest,
             pick,
-            command.profiles.clone(),
             sx,
         ));
         let responder = input.take_responder();
