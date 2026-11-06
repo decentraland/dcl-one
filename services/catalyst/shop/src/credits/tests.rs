@@ -2681,6 +2681,7 @@ async fn a_usd_pegged_credit_is_sized_at_its_listed_marketplaces_feed_within_the
     let mut settings = Settings::parse(RawSettings {
         writes_enabled: true,
         mock_card: true,
+        usage_chain_id: super::usage::CHAIN_AMOY,
         credits_onchain_authorize_enabled: true,
         credits_signer_key: Some(signer_key.into()),
         credits_manager_contract: Some(manager.clone()),
@@ -5664,6 +5665,11 @@ async fn a_discounted_purchase_offer_authorizes_its_discounted_credits_price() {
     };
     assert_eq!(key(&offer_line).call, SettlementCall::AcceptWithCoupon);
 
+    // The venue's feed answers the snapshot's rate. The credit is sized at
+    // it after the coupon: without the coupon the need would be 4 MANA,
+    // above the 3.06 reference, and the authorization a 503.
+    let feed = Arc::new(FakeFeed::default());
+    feed.answer(venue, Ok("0.5"));
     let state: SharedState = Arc::new(
         State::with_sources(
             pool.clone(),
@@ -5683,7 +5689,8 @@ async fn a_discounted_purchase_offer_authorizes_its_discounted_credits_price() {
             Arc::new(MockBroker::configured()),
             None,
         )
-        .with_gate(Arc::new(super::settlement::FixedGate(Ok(())))),
+        .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+        .with_feed(feed.clone()),
     );
 
     // The authorize lane derives the same line: the coupon's call, and the
@@ -5765,6 +5772,11 @@ async fn a_discounted_purchase_offer_authorizes_its_discounted_credits_price() {
                 .as_str()
         ),
         "the cap is the discounted quote's: {v}"
+    );
+    assert_eq!(
+        feed.asked(),
+        vec![(137, venue)],
+        "sized at the venue's own feed"
     );
     let reserved: Vec<(i64, i64)> = sqlx::query_as("SELECT l.quoted_cents::bigint, l.charged_cents::bigint FROM credits.authorization_lines l JOIN credits.authorizations a ON a.id = l.authorization_id WHERE a.address = $1")
         .bind(&wallet.address).fetch_all(&pool).await.unwrap();
