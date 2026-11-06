@@ -80,7 +80,9 @@ impl Denylist {
     pub fn set_operator(&self, ids: impl IntoIterator<Item = String>) {
         let exact: HashSet<String> = ids.into_iter().collect();
         let lowered = exact.iter().map(|id| id.to_lowercase()).collect();
-        *self.operator.write() = OperatorIds { exact, lowered };
+        let previous =
+            std::mem::replace(&mut *self.operator.write(), OperatorIds { exact, lowered });
+        drop(previous);
     }
 
     pub fn operator_insert(&self, id: &str) -> bool {
@@ -105,11 +107,13 @@ impl Denylist {
         removed
     }
 
-    /// Replaces the ids fetched from `source` (one remote list URL).
+    /// Replaces the ids fetched from `source` (one remote list URL). The set
+    /// is built before the write lock is taken and the old one dropped after
+    /// it is released, so a read waits only for the swap.
     pub fn set_remote(&self, source: &str, ids: impl IntoIterator<Item = String>) {
-        self.remote
-            .write()
-            .insert(source.to_string(), ids.into_iter().collect());
+        let ids: HashSet<String> = ids.into_iter().collect();
+        let previous = self.remote.write().insert(source.to_string(), ids);
+        drop(previous);
     }
 
     /// Distinct ids across the remote lists.
