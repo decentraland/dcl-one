@@ -26,7 +26,9 @@ import { closeTopPopup, hasOpenPopup, subscribePopups } from '../../design'
 import { requestDebugPanel } from '../debug/useDebugPanel'
 import { emitFriendEvent } from '../friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
+import { clearNotificationToasts, queueNotificationToasts } from '../notifications/NotificationToast'
 import { bootMode } from '../../lib/bootMode'
+import { notificationTimeMs } from '../../lib/notificationTime'
 import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { dispatchCancelLayer } from '../../lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '../../lib/inputLock'
@@ -617,6 +619,8 @@ export interface ChatState {
 }
 
 const MAX_CHAT_LINES = 200
+/** The notifications list keeps at most this many, the size of the bridge's full fetch. */
+export const NOTIFICATIONS_KEPT = 50
 // The least time between two notification pings of one conversation and kind: a flood of lines
 // is one sound, not one per line.
 const PING_INTERVAL_MS = 400
@@ -1058,6 +1062,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const ownedNamesRef = useRef(ownedNames)
   ownedNamesRef.current = ownedNames
   const [notifications, setNotifications] = useState<AppNotification[]>([])
+  // The list as of the last render, so a poll result can tell new ids from known ones without a
+  // side effect inside a state updater.
+  const notificationsRef = useRef(notifications)
+  notificationsRef.current = notifications
   const [notificationsOpen, setNotificationsOpen] = useState(false)
   const [skyboxOpen, setSkyboxOpen] = useState(false)
   const [skyboxHours, setSkyboxHoursState] = useState(SKYBOX_START_HOURS)
@@ -1498,7 +1506,23 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'notifications':
           setNotifications(msg.notifications)
+          notificationsRef.current = msg.notifications
           break
+        case 'notificationsNew': {
+          const known = new Set(notificationsRef.current.map((n) => n.id))
+          const at = (n: AppNotification): number => notificationTimeMs(n.timestamp) ?? 0
+          const fresh = msg.notifications.filter((n) => !known.has(n.id)).sort((a, b) => at(b) - at(a))
+          if (fresh.length === 0) break
+          // Kept to the size of the full fetch: older ones come back when the panel refetches.
+          notificationsRef.current = [...fresh, ...notificationsRef.current].slice(0, NOTIFICATIONS_KEPT)
+          setNotifications((prev) => {
+            const have = new Set(prev.map((n) => n.id))
+            return [...fresh.filter((n) => !have.has(n.id)), ...prev].slice(0, NOTIFICATIONS_KEPT)
+          })
+          // Newest first in the list; toasts play in arrival order.
+          queueNotificationToasts([...fresh].reverse())
+          break
+        }
         case 'emotes':
           setEmotes(msg.emotes)
           break
@@ -3008,6 +3032,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setForceRenderState([])
     setAvatarColors(undefined)
     setNotifications([])
+    clearNotificationToasts()
     setCommunities([])
     setCommunityCards({})
     setFriendPending(new Set())
