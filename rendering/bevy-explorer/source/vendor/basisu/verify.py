@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify exact vendored bytes and reconstruct the pinned crates.io import without network access."""
+"""Verify exact vendored bytes and reconstruct the pinned crates.io import, less its omitted files, without network access."""
 import hashlib
 import json
 from pathlib import Path
@@ -32,6 +32,12 @@ def main():
             raise SystemExit(f"manifest digest mismatch: {name}")
     upstream = manifest("upstream-files.sha256")
     patched = manifest("checksums.sha256")
+    # Imported files this copy deletes: still pinned by their upstream digest, never shipped.
+    omitted = set(pin["omitted"]["paths"])
+    if not omitted <= set(upstream) or omitted & set(patched):
+        raise SystemExit("omitted paths must be imported files that are not shipped")
+    if set(upstream) - omitted - set(patched):
+        raise SystemExit(f"imported files neither shipped nor omitted: {sorted(set(upstream) - omitted - set(patched))}")
     metadata = {"upstream.lock.json", "upstream-files.sha256", "checksums.sha256"}
     # The crate is excluded from the Explorer workspace; a standalone build would use target/.
     actual = {p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*")
@@ -49,16 +55,17 @@ def main():
             raise SystemExit(f"patch digest mismatch: {patch['path']}")
     with tempfile.TemporaryDirectory(prefix="basisu-provenance-") as temporary:
         destination = Path(temporary)
-        for relative in upstream:
+        kept = {relative: expected for relative, expected in upstream.items() if relative not in omitted}
+        for relative in kept:
             target = destination / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(ROOT / relative, target)
         for patch in reversed(patches):
             subprocess.run(["git", "-c", "core.autocrlf=false", "apply", "--reverse", str(ROOT / patch["path"])], cwd=destination, check=True)
-        for relative, expected in upstream.items():
+        for relative, expected in kept.items():
             if digest(destination / relative) != expected:
                 raise SystemExit(f"patch replay mismatch: {relative}")
-    print(f"Verified {len(upstream)} imported files, {len(patched)} shipped files and offline patch replay at {pin['package']} {pin['version']}.")
+    print(f"Verified {len(upstream)} imported files ({len(omitted)} omitted), {len(patched)} shipped files and offline patch replay at {pin['package']} {pin['version']}.")
 
 
 if __name__ == "__main__":

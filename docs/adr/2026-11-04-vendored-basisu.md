@@ -55,6 +55,14 @@ bounded by that window plus its length plus one block, and any output past its l
 `cargo`'s `[patch]` can't change the vendored crate's version requirement, which is why the bump
 is part of the patch.
 
+A third patch, `patches/0003-remove-etc1s-transcoders.patch`, removes ETC1S (BasisLZ)
+transcoding, which the Explorer never reaches: `image_processing` takes UASTC only. The per-format
+ETC1S transcoders and the precomputed tables only they use, about 640,000 of the crate's 680,000
+lines, are deleted, and `transcode_etc1s` returns `None` for every target, as it does for an
+unsupported one. KTX2 and `.basis` containers holding ETC1S are still parsed. The deleted files are
+listed under `omitted` in `upstream.lock.json` and keep their published digests in
+`upstream-files.sha256`.
+
 Each modified file carries a notice of modification, as Apache-2.0 section 4(b) requires.
 
 `image_processing` keeps its own policy check in front of the crate: a single 2D UASTC image
@@ -65,7 +73,8 @@ fallback stays within what the PNG path accepts.
 
 `python3 rendering/bevy-explorer/source/vendor/basisu/verify.py` checks every shipped byte against
 the manifests, the license digest and the patch hashes, and replays the patches in reverse to the
-pristine package bytes, offline. The Explorer CI's Integration guards job runs it on every
+pristine package bytes, offline. Omitted files must be absent; they are checked only against the
+published package, not in the offline replay. The Explorer CI's Integration guards job runs it on every
 Explorer change. `image_processing`'s tests cover oversized and inconsistent headers (dimensions,
 level ranges past the file, an oversized uncompressed length, too many levels, truncation,
 BasisLZ and BC7) and the glTF fallback when a KTX2 can't be transcoded.

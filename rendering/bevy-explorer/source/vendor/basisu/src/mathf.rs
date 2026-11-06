@@ -1,3 +1,5 @@
+// Modified in dcl-one: the ETC1S per-format transcoders are removed; see
+// patches/0003-remove-etc1s-transcoders.patch beside this crate.
 //! Float helpers that route to `std`'s float methods when the `std` feature is
 //! on, and to `libm` when it is off. The float `sqrt` and `round` methods live
 //! in `std`, not `core`, so a no_std build needs `libm` for them (enable the
@@ -55,13 +57,6 @@ pub fn ceilf(x: f32) -> f32 {
 #[inline]
 pub fn fabsf(x: f32) -> f32 {
     f32::from_bits(x.to_bits() & 0x7fff_ffff)
-}
-
-/// `f64` absolute value as a sign-bit clear, exactly IEEE `abs`. Same MSRV
-/// rationale as [`fabsf`].
-#[inline]
-pub fn fabs(x: f64) -> f64 {
-    f64::from_bits(x.to_bits() & 0x7fff_ffff_ffff_ffff)
 }
 
 #[cfg(all(not(feature = "std"), not(feature = "libm")))]

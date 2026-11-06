@@ -1,3 +1,5 @@
+// Modified in dcl-one: the ETC1S per-format transcoders are removed; see
+// patches/0003-remove-etc1s-transcoders.patch beside this crate.
 //! Container-independent per-target transcode dispatch, shared by both the KTX2
 //! and `.basis` front-ends. Each front-end parses its own container framing to
 //! recover the same inputs: for ETC1S, the decoded codebooks plus a color slice
@@ -61,109 +63,25 @@ fn mul_8(v: u32, q: u32) -> u32 {
     (v + (v >> 8)) >> 8
 }
 
-/// Transcode one ETC1S image to `fmt`, writing into `out` (sized per the
-/// target's own layout). `rgb` is the BasisLZ color slice and `alpha`, if
-/// present, the paired alpha slice (both already decoded from the container
-/// framing). `(bx, by)` are the level's 4x4 block dimensions and `(lw, lh)`
-/// its pixel dimensions. `video`, if present, is the ETC1S video state plus
-/// the mip level index whose previous-frame slots this image uses. `None` for
-/// an unsupported target.
+/// ETC1S images are not transcoded in this copy: the per-target ETC1S
+/// transcoders and their tables are removed, so every target is unsupported
+/// and this returns `None`. The signature is kept for the KTX2 and `.basis`
+/// front-ends, which still parse ETC1S containers.
 #[allow(clippy::too_many_arguments)]
 pub fn transcode_etc1s(
-    t: &Etc1sTranscoder,
-    rgb: &[u8],
-    alpha: Option<&[u8]>,
-    bx: u32,
-    by: u32,
-    lw: u32,
-    lh: u32,
-    fmt: i32,
-    flags: u32,
-    video: Option<(&mut crate::basislz::etc1s::VideoState, u32)>,
-    out: &mut [u8],
+    _t: &Etc1sTranscoder,
+    _rgb: &[u8],
+    _alpha: Option<&[u8]>,
+    _bx: u32,
+    _by: u32,
+    _lw: u32,
+    _lh: u32,
+    _fmt: i32,
+    _flags: u32,
+    _video: Option<(&mut crate::basislz::etc1s::VideoState, u32)>,
+    _out: &mut [u8],
 ) -> Option<()> {
-    let vid = video.map(|(state, level)| state.slots(level as usize, (bx * by) as usize));
-    match fmt {
-        target::ASTC_4X4_RGBA => match alpha {
-            Some(a) => t.transcode_image_astc_rgba(rgb, a, bx, by, vid, out),
-            None => t.transcode_slice_astc(rgb, bx, by, vid.map(|(c, _)| c), out),
-        },
-        target::BC1_RGB => {
-            // opaque target: an alpha slice, if present, is ignored
-            // (the alpha-to-opaque decode flag is not supported here)
-            let forbid = (flags & decode_flags::BC1_FORBID_THREE_COLOR_BLOCKS) != 0;
-            t.transcode_slice_bc1(rgb, bx, by, forbid, vid.map(|(c, _)| c), out)
-        }
-        target::BC3_RGBA => match alpha {
-            Some(a) => t.transcode_image_bc3_rgba(rgb, a, bx, by, vid, out),
-            None => t.transcode_slice_bc3_opaque(rgb, bx, by, vid.map(|(c, _)| c), out),
-        },
-        // PVRTC1_4_RGBA is image-global with alpha; without an alpha slice it
-        // falls back to the RGB path.
-        target::PVRTC1_4_RGBA => match alpha {
-            Some(a) => t.transcode_slice_pvrtc1_4_rgba(rgb, a, bx, by, vid, out),
-            None => t.transcode_slice_pvrtc1_4_rgb(rgb, bx, by, vid.map(|(c, _)| c), out),
-        },
-        // PVRTC1 is image-global: per-block bounding-box endpoints, then a
-        // whole-image modulation pass. Opaque (alpha ignored).
-        target::PVRTC1_4_RGB => {
-            t.transcode_slice_pvrtc1_4_rgb(rgb, bx, by, vid.map(|(c, _)| c), out)
-        }
-        target::BC4_R => t.transcode_slice_bc4(rgb, bx, by, vid.map(|(c, _)| c), out),
-        target::BC5_RG => match alpha {
-            Some(a) => t.transcode_image_bc5_rg(rgb, a, bx, by, vid, out),
-            None => t.transcode_slice_bc5_opaque(rgb, bx, by, vid.map(|(c, _)| c), out),
-        },
-        target::BC7_RGBA => {
-            // cross-block BC7 mode-5 chroma filtering is on by default;
-            // NO_ETC1S_CHROMA_FILTERING opts out.
-            let chroma = (flags & decode_flags::NO_ETC1S_CHROMA_FILTERING) == 0;
-            match alpha {
-                Some(a) => t.transcode_image_bc7_rgba(rgb, a, bx, by, chroma, vid, out),
-                None => t.transcode_slice_bc7(rgb, bx, by, chroma, vid.map(|(c, _)| c), out),
-            }
-        }
-        target::ETC2_RGBA => match alpha {
-            Some(a) => t.transcode_image_etc2_rgba(rgb, a, bx, by, vid, out),
-            None => t.transcode_slice_etc2_rgba_opaque(rgb, bx, by, vid.map(|(c, _)| c), out),
-        },
-        target::EAC_R11 => t.transcode_slice_eac_r11(rgb, bx, by, vid.map(|(c, _)| c), out),
-        target::EAC_RG11 => match alpha {
-            Some(a) => t.transcode_image_eac_rg11(rgb, a, bx, by, vid, out),
-            None => t.transcode_slice_eac_rg11_opaque(rgb, bx, by, vid.map(|(c, _)| c), out),
-        },
-        target::ATC_RGB => t.transcode_slice_atc(rgb, bx, by, vid.map(|(c, _)| c), out),
-        target::ATC_RGBA => match alpha {
-            Some(a) => t.transcode_image_atc_rgba(rgb, a, bx, by, vid, out),
-            None => t.transcode_slice_atc_rgba_opaque(rgb, bx, by, vid.map(|(c, _)| c), out),
-        },
-        target::PVRTC2_4_RGB => t.transcode_slice_pvrtc2_rgb(rgb, bx, by, vid.map(|(c, _)| c), out),
-        target::PVRTC2_4_RGBA => match alpha {
-            Some(a) => t.transcode_image_pvrtc2_rgba(rgb, a, bx, by, vid, out),
-            None => t.transcode_slice_pvrtc2_rgba_opaque(rgb, bx, by, vid.map(|(c, _)| c), out),
-        },
-        target::RGBA32 => match alpha {
-            Some(a) => t.transcode_image_rgba32(rgb, a, bx, by, lw, lh, vid, out),
-            None => t.transcode_slice_rgba32(rgb, bx, by, lw, lh, vid.map(|(c, _)| c), out),
-        },
-        target::ETC1_RGB => t.transcode_slice_etc1(rgb, bx, by, vid.map(|(c, _)| c), out),
-        // FXT1 has an 8x4 block (the only such target): output grid is
-        // ceil(w/8)*ceil(h/4), two ETC1S 4x4 blocks per FXT1 block.
-        target::FXT1_RGB => t.transcode_slice_fxt1(rgb, bx, by, lw, lh, vid.map(|(c, _)| c), out),
-        target::RGB565 => {
-            t.transcode_slice_565(rgb, bx, by, lw, lh, false, vid.map(|(c, _)| c), out)
-        }
-        target::BGR565 => {
-            t.transcode_slice_565(rgb, bx, by, lw, lh, true, vid.map(|(c, _)| c), out)
-        }
-        target::RGBA4444 => match alpha {
-            Some(a) => t.transcode_image_rgba4444(rgb, a, bx, by, lw, lh, vid, out),
-            None => {
-                t.transcode_slice_rgba4444_opaque(rgb, bx, by, lw, lh, vid.map(|(c, _)| c), out)
-            }
-        },
-        _ => None,
-    }
+    None
 }
 
 /// Transcode one UASTC image to `fmt`, writing into `out` (sized per the

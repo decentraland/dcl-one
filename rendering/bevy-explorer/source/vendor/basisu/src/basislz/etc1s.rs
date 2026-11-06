@@ -1,3 +1,5 @@
+// Modified in dcl-one: the ETC1S per-format transcoders are removed; see
+// patches/0003-remove-etc1s-transcoders.patch beside this crate.
 //! ETC1S codebook decode and slice transcode. Decompresses the endpoint +
 //! selector codebooks and the slice-decode Huffman models using the BasisLZ
 //! entropy codec, then decodes slices into per-block indices and emits them in
@@ -161,25 +163,6 @@ impl VideoState {
                 v.clear();
             }
         }
-    }
-
-    /// The color and alpha prev-frame arrays for one mip level, each grown to
-    /// `total_blocks`. Newly grown entries are zero, so a block with no prior
-    /// history reads as endpoint 0 / selector 0.
-    pub(crate) fn slots(
-        &mut self,
-        level: usize,
-        total_blocks: usize,
-    ) -> (&mut Vec<u32>, &mut Vec<u32>) {
-        let [color, alpha] = &mut self.prev_frame_indices;
-        let (c, a) = (&mut color[level], &mut alpha[level]);
-        if c.len() < total_blocks {
-            c.resize(total_blocks, 0);
-        }
-        if a.len() < total_blocks {
-            a.resize(total_blocks, 0);
-        }
-        (c, a)
     }
 }
 
