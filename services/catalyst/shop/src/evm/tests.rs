@@ -2289,6 +2289,79 @@ async fn the_relay_refuses_use_credits_on_a_resale_a_crafted_batch_a_hybrid_resa
     cleanup_user(&pool, &user).await;
 }
 
+/// dcl-one's own Amoy manager is guarded like the shared ones: a relayed
+/// `executeMetaTransaction(useCredits)` to it is decoded on Amoy's routes and
+/// judged, so a resale is refused and a mint of a mirrored wearable passes. On
+/// Polygon the same address is no CreditsManager, so nothing is judged there.
+#[tokio::test]
+async fn the_relay_guards_use_credits_to_dcl_ones_amoy_manager() {
+    use super::abi::{ItemToBuy, buyCall, offchain};
+    use crate::guards::relay::guard_meta_transaction;
+    use crate::policy_entry::{
+        DCL_ONE_AMOY_MANAGER, call_args, is_credits_manager, manager_routes,
+    };
+    use crate::types::ChainId;
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    seed_item(&pool, COLLECTION, 4, "wearable_v2", VICTIM).await;
+    let key = PrivateKeySigner::random();
+    let user = format!("{:#x}", key.address());
+    let manager = format!("{DCL_ONE_AMOY_MANAGER:#x}");
+    let collection: Address = COLLECTION.parse().unwrap();
+    let routes = manager_routes(ChainId::AMOY).unwrap();
+    let one_mana = U256::from(1_000_000_000_000_000_000u128);
+
+    let resale = signed_split_calldata(
+        &key,
+        &use_credits(
+            routes.marketplaces[2],
+            offchain::acceptCall::SELECTOR,
+            call_args(&offchain::acceptCall {
+                _trades: vec![offchain_trade(key.address(), 3, collection, 42)],
+            }),
+            U256::ZERO,
+        ),
+    );
+    match guard_meta_transaction(&pool, 80002, &user, &manager, &resale).await {
+        Err(ApiError::PaymentRule(refused)) => {
+            assert_eq!(refused.detail()["code"], "creditsNotAllowed", "{refused}")
+        }
+        other => panic!(
+            "a resale paid with credits through dcl-one's manager must be refused: {other:?}"
+        ),
+    }
+
+    let mint = signed_split_calldata(
+        &key,
+        &use_credits(
+            routes.collection_store,
+            buyCall::SELECTOR,
+            call_args(&buyCall {
+                itemsToBuy: vec![ItemToBuy {
+                    collection,
+                    ids: vec![U256::from(4)],
+                    prices: vec![one_mana],
+                    beneficiaries: vec![key.address()],
+                }],
+            }),
+            U256::ZERO,
+        ),
+    );
+    guard_meta_transaction(&pool, 80002, &user, &manager, &mint)
+        .await
+        .expect("a mint of a mirrored wearable through dcl-one's manager is allowed");
+
+    assert!(!is_credits_manager(ChainId::POLYGON, DCL_ONE_AMOY_MANAGER));
+    guard_meta_transaction(&pool, 137, &user, &manager, &resale)
+        .await
+        .expect("on Polygon the address is no CreditsManager: the guard judges nothing");
+}
+
 /// `POST /v1/broker/buy` is the credit-funded lane: a resale (an order-book
 /// token, an ERC-721 trade) is refused before the claim and the broadcast;
 /// a mint is admitted once the mirrors describe it.

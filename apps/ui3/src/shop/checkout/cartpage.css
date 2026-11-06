@@ -13,6 +13,8 @@
   width: 100%;
   min-width: 0;
   min-height: calc(100vh - 158px);
+  /* Upstream's page main ends 80px below the cross-sell (shop@3a322cf9 `main.page`). */
+  padding-bottom: 80px;
   color: #fcfcfc;
 }
 
@@ -397,8 +399,9 @@
     display: none;
   }
 
+  /* Room for the fixed summary bar (188px), plus upstream's mobile `main.page` bottom padding (56px). */
   .shop-cart {
-    padding-bottom: 188px;
+    padding-bottom: 244px;
   }
 
   .shop-cart__band {

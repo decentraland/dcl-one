@@ -62,6 +62,36 @@ fn deployment(
     })
 }
 
+/// Refuse serving an upgraded catalogue while mapped entity-id bans still need
+/// the explicit release conversion. Use the resolver's parser so malformed or
+/// unmapped legacy/Genesis rows do not block startup, and Unicode bases have the
+/// same meaning as admission. Stream the startup audit instead of loading the
+/// catalogue into memory; this does not modify any stored ban.
+pub async fn ensure_world_scene_ban_release(pool: &PgPool) -> anyhow::Result<()> {
+    use futures::TryStreamExt;
+
+    let mut rows = sqlx::query_as::<_, (String, String, Vec<String>, Option<String>)>(
+        "SELECT ws.world_name, ws.entity_id, ws.parcels, ws.entity #>> '{metadata,scene,base}' \
+         FROM (SELECT world_name, entity_id, parcels, entity FROM worlds.world_scenes \
+               UNION ALL SELECT world_name, entity_id, parcels, entity FROM worlds.retired_world_scenes) ws \
+         WHERE EXISTS (SELECT 1 FROM social.scene_bans b WHERE b.place_id=ws.entity_id)",
+    )
+    .fetch(pool);
+    while let Some((world, entity, parcels, declared_base)) = rows.try_next().await? {
+        let scene = SceneId::from_stored(entity.clone());
+        if let Ok((_, base)) = footprint(&parcels, declared_base.as_deref(), &scene)
+            && entity != format!("{world}:{}", base.canonical())
+        {
+            anyhow::bail!(
+                "world scene bans require release conversion before serving: stop old replicas, \
+                 back up the database, and run schemas/releases/world-scene-ban-keys.sql \
+                 with the administrative database role; then restart"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// The shared Places UUID explicitly bound to this active (world, entity)
 /// deployment. Discovery and storage consume this same identity.
 macro_rules! identity_column {
@@ -110,6 +140,49 @@ pub async fn world_scene(
     .fetch_optional(pool)
     .await?;
     row.map(|r| world_row(world, &r)).transpose()
+}
+
+pub async fn replaced_world_scene(
+    pool: &PgPool,
+    world: &WorldName,
+    scene: &SceneId,
+) -> Result<Option<crate::comms::rooms::ReplacedScene>, ResolveError> {
+    let row: Option<(Vec<String>, Option<String>)> = sqlx::query_as(
+        "SELECT parcels, entity #>> '{metadata,scene,base}' FROM worlds.retired_world_scenes \
+         WHERE world_name = $1 AND entity_id = $2",
+    )
+    .bind(world.key())
+    .bind(scene)
+    .fetch_optional(pool)
+    .await?;
+    let Some((parcels, base)) = row else {
+        return Ok(None);
+    };
+    let Ok((footprint_parcels, base)) = footprint(&parcels, base.as_deref(), scene) else {
+        return Ok(None);
+    };
+    let current: Vec<(String, Vec<String>, Option<String>)> = sqlx::query_as(
+        "SELECT entity_id, parcels, entity #>> '{metadata,scene,base}' FROM worlds.world_scenes \
+         WHERE world_name = $1 AND parcels && $2::text[]",
+    )
+    .bind(world.key())
+    .bind(footprint_parcels.canonical())
+    .fetch_all(pool)
+    .await?;
+    let mut successors: Vec<Parcel> = current
+        .iter()
+        .filter_map(|(id, parcels, base)| {
+            footprint(parcels, base.as_deref(), &SceneId::from_stored(id.clone()))
+                .ok()
+                .map(|(_, base)| base)
+        })
+        .collect();
+    successors.sort();
+    successors.dedup();
+    Ok(Some(crate::comms::rooms::ReplacedScene {
+        base,
+        successors,
+    }))
 }
 
 /// The world scene standing on `parcel` (newest first, like the about).
@@ -445,6 +518,14 @@ impl crate::comms::interfaces::SceneIdentity for SceneResolver {
         scene: &SceneId,
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         world_scene(&self.pool, world, scene).await
+    }
+
+    async fn replaced_world_scene(
+        &self,
+        world: &WorldName,
+        scene: &SceneId,
+    ) -> Result<Option<crate::comms::rooms::ReplacedScene>, ResolveError> {
+        replaced_world_scene(&self.pool, world, scene).await
     }
 
     async fn world_active_scene(

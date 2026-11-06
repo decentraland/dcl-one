@@ -12,11 +12,11 @@ import {
   toFunctionSelector,
   type Hex,
 } from "viem";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CHAIN } from "../../model/chain";
 import { COLLECTION_STORE_ABI, CREDITS_MANAGER_ABI, MARKETPLACE_ABI, NATIVE_META_TX_ABI, OFFCHAIN_META_TX_ABI } from "./abi";
-import { chainContracts, contractAt, requireContracts } from "./contracts";
+import { chainContracts, contractAt, replacedCreditsManager, requireContracts } from "./contracts";
 import {
   chainIdSalt,
   encodeExecuteMetaTransaction,
@@ -133,6 +133,65 @@ describe("the address book", () => {
     expect(chainContracts(CHAIN.ETHEREUM)!.creditsManager).toBeNull();
     expect(chainContracts(5)).toBeNull();
     expect(() => requireContracts(5)).toThrow();
+  });
+
+  describe("with the deployment's own CreditsManager configured", () => {
+    const OWN = "0xB65FD692D15C30C3ADCACDD5CCF80E1FACECFC7C";
+    const REGISTRY_AMOY = "0x8052a560e6e6ac86eeb7e711a4497f639b322fb3";
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("names it on the chain the build settles on, with the registry manager's EIP-712 domain", () => {
+      vi.stubEnv("VITE_SHOP_CHAIN_ID", String(CHAIN.AMOY));
+      vi.stubEnv("VITE_SHOP_CREDITS_MANAGER", ` ${OWN} `);
+      expect(requireContracts(CHAIN.AMOY).creditsManager).toMatchObject({
+        address: OWN.toLowerCase(),
+        chainId: CHAIN.AMOY,
+        name: "Decentraland Credits",
+        version: "1.0.0",
+        metaTx: "functionData",
+      });
+      expect(contractAt(CHAIN.AMOY, OWN)?.address).toBe(OWN.toLowerCase());
+    });
+
+    it("keeps the replaced registry manager listed, for its approvals only", () => {
+      vi.stubEnv("VITE_SHOP_CHAIN_ID", String(CHAIN.AMOY));
+      vi.stubEnv("VITE_SHOP_CREDITS_MANAGER", OWN);
+      expect(replacedCreditsManager(CHAIN.AMOY)).toMatchObject({ address: REGISTRY_AMOY, label: "CreditsManager (previous)" });
+      expect(contractAt(CHAIN.AMOY, REGISTRY_AMOY)?.label).toBe("CreditsManager (previous)");
+      expect(replacedCreditsManager(CHAIN.POLYGON)).toBeNull();
+      vi.unstubAllEnvs();
+      expect(replacedCreditsManager(CHAIN.AMOY)).toBeNull();
+    });
+
+    it("leaves the other chains' managers alone", () => {
+      vi.stubEnv("VITE_SHOP_CHAIN_ID", String(CHAIN.AMOY));
+      vi.stubEnv("VITE_SHOP_CREDITS_MANAGER", OWN);
+      expect(requireContracts(CHAIN.POLYGON).creditsManager!.address).toBe("0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5");
+      expect(requireContracts(CHAIN.ETHEREUM).creditsManager).toBeNull();
+    });
+
+    it("applies only to a chain the build names explicitly, never to one picked at runtime", () => {
+      vi.stubEnv("VITE_SHOP_CREDITS_MANAGER", OWN);
+      vi.stubEnv("VITE_SHOP_CHAIN_ID", "");
+      expect(requireContracts(CHAIN.POLYGON).creditsManager!.address).toBe("0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5");
+      expect(requireContracts(CHAIN.AMOY).creditsManager!.address).toBe(REGISTRY_AMOY);
+      vi.stubEnv("VITE_SHOP_CHAIN_ID", String(CHAIN.AMOY));
+      const win = window as Window & { __SHOP_CHAIN__?: { settlementChainId?: number } };
+      win.__SHOP_CHAIN__ = { settlementChainId: CHAIN.POLYGON };
+      try {
+        expect(requireContracts(CHAIN.POLYGON).creditsManager!.address).toBe("0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5");
+      } finally {
+        delete win.__SHOP_CHAIN__;
+      }
+    });
+
+    it("keeps the registry manager when it is unset or not an address", () => {
+      vi.stubEnv("VITE_SHOP_CHAIN_ID", String(CHAIN.AMOY));
+      vi.stubEnv("VITE_SHOP_CREDITS_MANAGER", "");
+      expect(requireContracts(CHAIN.AMOY).creditsManager!.address).toBe(REGISTRY_AMOY);
+      vi.stubEnv("VITE_SHOP_CREDITS_MANAGER", "0xnot-an-address");
+      expect(requireContracts(CHAIN.AMOY).creditsManager!.address).toBe(REGISTRY_AMOY);
+    });
   });
 });
 

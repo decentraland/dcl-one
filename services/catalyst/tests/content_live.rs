@@ -10,7 +10,7 @@
 //! provenance; a random wallet is refused on the owner's other parcel; the
 //! admin wallet signs in with SIWE, denylists the scene's file (the node
 //! stops serving it and refuses a deploy naming it), lists it, lifts it,
-//! toggles read-only (403 on the next deploy) and accepting-users (`/about`),
+//! toggles read-only (404 on the next deploy) and accepting-users (`/about`),
 //! refreshes the challenge; the stranger cannot unpublish, the owner can,
 //! and the parcel is empty; a second scene's file is left denylisted for the
 //! next phase. Phase `gated` (the same database, both switches off, a fresh
@@ -485,10 +485,7 @@ async fn phase_open(
     let (a, _) = node.deploy(owner, &scene(neighbour, &[]), &[]).await;
     assert_eq!(
         (a.status, String::from_utf8_lossy(&a.bytes).to_string()),
-        (
-            403,
-            "Content Server is in read-only mode; deployments are disabled".to_string()
-        )
+        (404, "Not found".to_string()),
     );
     node.console(
         &cookie,
@@ -518,13 +515,12 @@ async fn phase_open(
     let a = node
         .console(&cookie, "/admin/api/content/challenge/refresh", json!({}))
         .await;
-    assert!(
-        a.body["body"]["challenge"]
-            .as_str()
-            .unwrap()
-            .starts_with("dcl-crypto-"),
-        "{}",
-        a.body
+    let refreshed = a.body["body"]["challenge"].as_str().unwrap();
+    assert!(uuid::Uuid::parse_str(refreshed).is_ok(), "{}", a.body);
+    assert_eq!(
+        node.get("/content/challenge").await.body["challengeText"],
+        json!(refreshed),
+        "the refresh replaces the process's challenge"
     );
     let audit = node
         .send(

@@ -175,6 +175,57 @@ pub struct ContentConfig {
     #[arg(long, env = "POST_ENTITIES_DAILY_QUOTA_MAX", default_value_t = 300)]
     pub post_entities_daily_quota_max: u32,
 
+    /// `POST /entities` requests one client address (IPv6 by /64) may make per
+    /// `POST_ENTITIES_RATE_LIMIT_WINDOW_SECONDS`, every request counted, before
+    /// a 429 with `Retry-After`; upstream's burst limit. 0 turns it off. Kept
+    /// per process, like the daily quota.
+    #[arg(long, env = "POST_ENTITIES_RATE_LIMIT_MAX", default_value_t = 200)]
+    pub post_entities_rate_limit_max: u32,
+
+    /// The burst limit's fixed window, in seconds.
+    #[arg(
+        long,
+        env = "POST_ENTITIES_RATE_LIMIT_WINDOW_SECONDS",
+        default_value_t = 60
+    )]
+    pub post_entities_rate_limit_window_seconds: u64,
+
+    /// `GET`/`HEAD /contents/{hash}` requests one client (IPv6 by
+    /// `CONTENT_GET_RATE_LIMIT_IPV6_PREFIX_LENGTH`) may make per
+    /// `CONTENT_GET_RATE_LIMIT_WINDOW_SECONDS`, the burst bucket. Upstream's
+    /// names and defaults; every limit must be at least 1.
+    #[arg(long, env = "CONTENT_GET_RATE_LIMIT_MAX", default_value_t = 1000, value_parser = clap::value_parser!(u32).range(1..))]
+    pub content_get_rate_limit_max: u32,
+
+    #[arg(long, env = "CONTENT_GET_RATE_LIMIT_WINDOW_SECONDS", default_value_t = 60, value_parser = clap::value_parser!(u32).range(1..))]
+    pub content_get_rate_limit_window_seconds: u32,
+
+    /// The hourly quota on `/contents/{hash}`, a bucket of its own after the burst.
+    #[arg(long, env = "CONTENT_GET_HOURLY_QUOTA_MAX", default_value_t = 3000, value_parser = clap::value_parser!(u32).range(1..))]
+    pub content_get_hourly_quota_max: u32,
+
+    /// The daily quota on `/contents/{hash}`, after the hourly one.
+    #[arg(long, env = "CONTENT_GET_DAILY_QUOTA_MAX", default_value_t = 20000, value_parser = clap::value_parser!(u32).range(1..))]
+    pub content_get_daily_quota_max: u32,
+
+    /// IPv6 clients of the `/contents` limit are counted per network of this
+    /// prefix length (1-128); IPv4 per address.
+    #[arg(long, env = "CONTENT_GET_RATE_LIMIT_IPV6_PREFIX_LENGTH", default_value_t = 64, value_parser = clap::value_parser!(u8).range(1..=128))]
+    pub content_get_rate_limit_ipv6_prefix_length: u8,
+
+    /// Comma list of the addresses or networks (CIDR) of peers that sync from
+    /// this node: never limited on `/contents`. Invalid entries are dropped
+    /// with a warning.
+    #[arg(long, env = "TRUSTED_SYNC_PEER_IPS", default_value = "")]
+    pub trusted_sync_peer_ips: String,
+
+    /// The header whose rightmost entry is the client address of the
+    /// `/contents` limit, read only from a peer in `HTTP_TRUSTED_PROXY_CIDRS`.
+    /// Unset, such a peer's one `X-Real-IP`; any other peer is its socket
+    /// address.
+    #[arg(long, env = "TRUSTED_CLIENT_IP_HEADER")]
+    pub trusted_client_ip_header: Option<String>,
+
     // Worlds' partial uploads also read these (not the cleanup interval or pointer cap) as their own budget.
     /// Milliseconds a partial (multi-request) upload lives from its first
     /// batch; batches do not extend it.
@@ -207,9 +258,121 @@ pub struct ContentConfig {
     #[arg(long, env = "MAX_PENDING_BYTES", default_value_t = 50 * 1024 * 1024 * 1024)]
     pub max_pending_bytes: u64,
 
-    /// Partial-upload batch bytes one account may send per minute.
-    #[arg(long, env = "MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE", default_value_t = 512 * 1024 * 1024)]
+    /// Partial-upload batch bytes one account may send per minute; at least
+    /// a batch of the entity file (10 MiB) and one 100 MiB file, or startup
+    /// fails, as upstream's.
+    #[arg(
+        long,
+        env = "MAX_PARTIAL_UPLOAD_BYTES_PER_MINUTE",
+        default_value_t = 512 * 1024 * 1024,
+        value_parser = clap::value_parser!(u64).range(MIN_PARTIAL_UPLOAD_BYTES_PER_MINUTE..)
+    )]
     pub max_partial_upload_bytes_per_minute: u64,
+
+    /// `POST /entities` bodies one client address (IPv6 by /64) may have in
+    /// flight at once on this process, before a 429 with `Retry-After: 5`.
+    /// Upstream's catalyst and worlds-content-server read the same variable,
+    /// so the worlds multipart uploads take it too.
+    #[arg(
+        long,
+        env = "MAX_CONCURRENT_UPLOADS_PER_SOURCE",
+        default_value_t = 4,
+        value_parser = clap::value_parser!(u32).range(1..)
+    )]
+    pub max_concurrent_uploads_per_source: u32,
+
+    /// Bytes of `POST /entities` bodies (declared, else the 200 MiB cap) one
+    /// client address may have in flight. The worlds uploads read it too, so
+    /// a set value must fit one 350 MiB world deploy; below that the config
+    /// is refused. Unset, each route keeps one maximum-size upload of its
+    /// own (content 200 MiB, worlds 350 MiB): a source with one large or
+    /// undeclared-length (chunked) body in flight is turned away (429) until
+    /// it ends, whatever `MAX_CONCURRENT_UPLOADS_PER_SOURCE` allows; raise it
+    /// to let one source upload several large bodies at once.
+    #[arg(
+        long,
+        env = "MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE",
+        value_parser = clap::value_parser!(u64).range(MIN_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE..)
+    )]
+    pub max_in_flight_upload_bytes_per_source: Option<u64>,
+
+    /// How old an entity's timestamp may be when deployed (a duration such
+    /// as `20m`, or milliseconds).
+    #[arg(long, env = "REQUEST_TTL_BACKWARDS", default_value = "20m", value_parser = ms_duration)]
+    pub request_ttl_backwards_ms: u64,
+
+    /// The per-pointer deploy rate limit (upstream's names) of an entity
+    /// type outside the per-type table below: a pointer deployed within the
+    /// window (a duration) is refused, as is any deploy while more than
+    /// `_MAX` pointers are held. As upstream's, every deployable type is in
+    /// that table, so a type without its own setting keeps its built-in
+    /// window whatever these say.
+    #[arg(long, env = "DEPLOYMENTS_DEFAULT_RATE_LIMIT_TTL", value_parser = ms_duration)]
+    pub deployments_default_rate_limit_ttl_ms: Option<u64>,
+    #[arg(long, env = "DEPLOYMENTS_DEFAULT_RATE_LIMIT_MAX")]
+    pub deployments_default_rate_limit_max: Option<u64>,
+
+    /// Per-type overrides of the deploy rate limit (`DEPLOYMENT_RATE_LIMIT_TTL_<TYPE>`, a
+    /// duration, and `DEPLOYMENT_RATE_LIMIT_MAX_<TYPE>`).
+    #[arg(long, env = "DEPLOYMENT_RATE_LIMIT_TTL_SCENE", value_parser = ms_duration)]
+    pub deployment_rate_limit_ttl_scene_ms: Option<u64>,
+    #[arg(long, env = "DEPLOYMENT_RATE_LIMIT_TTL_PROFILE", value_parser = ms_duration)]
+    pub deployment_rate_limit_ttl_profile_ms: Option<u64>,
+    #[arg(long, env = "DEPLOYMENT_RATE_LIMIT_TTL_WEARABLE", value_parser = ms_duration)]
+    pub deployment_rate_limit_ttl_wearable_ms: Option<u64>,
+    #[arg(long, env = "DEPLOYMENT_RATE_LIMIT_TTL_STORE", value_parser = ms_duration)]
+    pub deployment_rate_limit_ttl_store_ms: Option<u64>,
+    #[arg(long, env = "DEPLOYMENT_RATE_LIMIT_TTL_EMOTE", value_parser = ms_duration)]
+    pub deployment_rate_limit_ttl_emote_ms: Option<u64>,
+    #[arg(long, env = "DEPLOYMENT_RATE_LIMIT_TTL_OUTFITS", value_parser = ms_duration)]
+    pub deployment_rate_limit_ttl_outfits_ms: Option<u64>,
+    #[arg(long, env = "DEPLOYMENT_RATE_LIMIT_MAX_SCENE")]
+    pub deployment_rate_limit_max_scene: Option<u64>,
+    #[arg(long, env = "DEPLOYMENT_RATE_LIMIT_MAX_PROFILE")]
+    pub deployment_rate_limit_max_profile: Option<u64>,
+    #[arg(long, env = "DEPLOYMENT_RATE_LIMIT_MAX_WEARABLE")]
+    pub deployment_rate_limit_max_wearable: Option<u64>,
+    #[arg(long, env = "DEPLOYMENT_RATE_LIMIT_MAX_STORE")]
+    pub deployment_rate_limit_max_store: Option<u64>,
+    #[arg(long, env = "DEPLOYMENT_RATE_LIMIT_MAX_EMOTE")]
+    pub deployment_rate_limit_max_emote: Option<u64>,
+    #[arg(long, env = "DEPLOYMENT_RATE_LIMIT_MAX_OUTFITS")]
+    pub deployment_rate_limit_max_outfits: Option<u64>,
+}
+
+/// The least `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE`: one maximum-size
+/// upload of either route reading it, the larger being a world deploy
+/// (worlds' `MAX_UPLOAD_SIZE_BYTES`, 350 MiB; content's `MAX_DEPLOYMENT_BYTES`
+/// is 200 MiB).
+const MIN_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE: u64 = 350 * 1024 * 1024;
+
+/// A partial batch of the entity file (10 MiB) and one maximum-size
+/// (100 MiB) file.
+const MIN_PARTIAL_UPLOAD_BYTES_PER_MINUTE: u64 = (10 + 100) * 1024 * 1024;
+
+/// A duration as the `ms` package reads one: a number with an optional
+/// unit (`ms`, `s`, `m`, `h`, `d`, `w`, `y` and their long forms), bare
+/// milliseconds without one.
+fn ms_duration(raw: &str) -> Result<u64, String> {
+    let text = raw.trim().to_ascii_lowercase();
+    let split = text
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(text.len());
+    let (number, unit) = text.split_at(split);
+    let value: f64 = number
+        .parse()
+        .map_err(|_| format!("expected a duration such as 20m or 1200000, got {raw:?}"))?;
+    let unit_ms = match unit.trim() {
+        "" | "ms" | "msec" | "msecs" | "millisecond" | "milliseconds" => 1.0,
+        "s" | "sec" | "secs" | "second" | "seconds" => 1e3,
+        "m" | "min" | "mins" | "minute" | "minutes" => 60e3,
+        "h" | "hr" | "hrs" | "hour" | "hours" => 3_600e3,
+        "d" | "day" | "days" => 86_400e3,
+        "w" | "week" | "weeks" => 604_800e3,
+        "y" | "yr" | "yrs" | "year" | "years" => 31_557_600e3,
+        other => return Err(format!("unknown duration unit {other:?} in {raw:?}")),
+    };
+    Ok((value * unit_ms).round() as u64)
 }
 
 impl ContentConfig {
@@ -385,6 +548,48 @@ mod tests {
     }
 
     #[test]
+    fn write_path_limits_read_upstreams_names_and_refuse_what_cannot_work() {
+        let base = ["x", "--database-url", "postgres:///catalyst"];
+        let cli = parse(&base).unwrap();
+        assert_eq!(cli.content.request_ttl_backwards_ms, 20 * 60 * 1000);
+        assert_eq!(cli.content.max_concurrent_uploads_per_source, 4);
+        assert_eq!(cli.content.max_in_flight_upload_bytes_per_source, None);
+        assert_eq!(cli.content.deployments_default_rate_limit_ttl_ms, None);
+        let with = |extra: &[&str]| parse(&[&base[..], extra].concat());
+        let cli = with(&[
+            "--request-ttl-backwards-ms",
+            "90s",
+            "--deployments-default-rate-limit-ttl-ms",
+            "1m",
+            "--deployment-rate-limit-ttl-profile-ms",
+            "1500",
+        ])
+        .unwrap();
+        assert_eq!(cli.content.request_ttl_backwards_ms, 90_000);
+        assert_eq!(
+            cli.content.deployments_default_rate_limit_ttl_ms,
+            Some(60_000)
+        );
+        assert_eq!(cli.content.deployment_rate_limit_ttl_profile_ms, Some(1500));
+        assert!(with(&["--request-ttl-backwards-ms", "soon"]).is_err());
+        // A rate below one entity file and one maximal file, a source share
+        // below one maximal upload of either route (a world deploy, 350 MiB),
+        // or no upload at all refuse to start.
+        assert!(with(&["--max-partial-upload-bytes-per-minute", "1048576"]).is_err());
+        assert!(with(&["--max-in-flight-upload-bytes-per-source", "1048576"]).is_err());
+        let mib = |n: u64| (n * 1024 * 1024).to_string();
+        assert!(with(&["--max-in-flight-upload-bytes-per-source", &mib(300)]).is_err());
+        assert_eq!(
+            with(&["--max-in-flight-upload-bytes-per-source", &mib(350)])
+                .unwrap()
+                .content
+                .max_in_flight_upload_bytes_per_source,
+            Some(350 * 1024 * 1024)
+        );
+        assert!(with(&["--max-concurrent-uploads-per-source", "0"]).is_err());
+    }
+
+    #[test]
     fn denylist_urls_split_on_commas_and_whitespace() {
         let urls = |raw: &str| {
             parse(&[
@@ -437,9 +642,24 @@ mod tests {
                 c.content.max_upload_field_count,
                 c.content.max_upload_field_size,
                 c.content.max_in_memory_deployment_bytes,
-                c.content.post_entities_daily_quota_max
+                c.content.post_entities_daily_quota_max,
+                c.content.post_entities_rate_limit_max,
+                c.content.post_entities_rate_limit_window_seconds
             ),
-            (32, 32 * 1024, 2 * 1024 * 1024 * 1024, 300)
+            (32, 32 * 1024, 2 * 1024 * 1024 * 1024, 300, 200, 60)
+        );
+        assert_eq!(
+            (
+                c.content.content_get_rate_limit_max,
+                c.content.content_get_rate_limit_window_seconds,
+                c.content.content_get_hourly_quota_max,
+                c.content.content_get_daily_quota_max,
+                c.content.content_get_rate_limit_ipv6_prefix_length,
+                c.content.trusted_sync_peer_ips.as_str(),
+                c.content.trusted_client_ip_header.as_deref()
+            ),
+            (1000, 60, 3000, 20000, 64, "", None),
+            "upstream's GET /contents limit defaults"
         );
         assert!(c.content.retry_failed_enabled);
         assert_eq!(c.content.max_failed_deployment_retries, 10);
@@ -485,5 +705,36 @@ mod tests {
                 && c.validator.additional_decentraland_address.is_none(),
             "local deploys run every access check"
         );
+    }
+
+    /// As upstream, a zero limit or a prefix outside 1-128 fails at startup
+    /// rather than rejecting every download.
+    #[test]
+    fn content_get_limits_refuse_zero_and_bad_prefixes() {
+        for (flag, value) in [
+            ("--content-get-rate-limit-max", "0"),
+            ("--content-get-rate-limit-window-seconds", "0"),
+            ("--content-get-hourly-quota-max", "0"),
+            ("--content-get-daily-quota-max", "0"),
+            ("--content-get-rate-limit-ipv6-prefix-length", "0"),
+            ("--content-get-rate-limit-ipv6-prefix-length", "129"),
+        ] {
+            assert!(
+                parse(&["x", "--database-url", "postgres:///catalyst", flag, value]).is_err(),
+                "{flag}={value}"
+            );
+        }
+        let c = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--content-get-rate-limit-ipv6-prefix-length",
+            "128",
+            "--trusted-sync-peer-ips",
+            "203.0.113.5, 2001:db8::1",
+        ])
+        .unwrap();
+        assert_eq!(c.content.content_get_rate_limit_ipv6_prefix_length, 128);
+        assert_eq!(c.content.trusted_sync_peer_ips, "203.0.113.5, 2001:db8::1");
     }
 }
