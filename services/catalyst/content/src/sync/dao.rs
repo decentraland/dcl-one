@@ -4,7 +4,9 @@
 //! `@dcl/catalyst-contracts`. With `SYNC_FROM_DAO` on, the sync worker reads
 //! it at start and every [`REFRESH`], drops this node's own entry and syncs
 //! from every other catalyst's `/content`; when a read fails or names no
-//! other peer, the list it had (at start, `SYNC_SOURCE`) stays.
+//! other peer, the list it had (at start, `SYNC_SOURCE`) stays. Registry
+//! domains are third-party input: an entry that is not a plain public https
+//! name ([`peer_base_url`]) is left out.
 //! `/lambdas/contracts/servers` decodes the same records
 //! (`catalyst-shop` `market::contracts`).
 
@@ -16,7 +18,10 @@ use futures::{StreamExt, TryStreamExt};
 use serde_json::json;
 
 use crate::http::jsonrpc::{hex_of, parse_envelope, request, result_of};
-use crate::http::read_body_capped;
+use crate::http::{
+    RetryDecision, is_private_or_internal_host, is_transient_status, read_body_capped,
+    retry_with_backoff,
+};
 
 /// The registry proxy per `ETH_NETWORK`, the addresses `/lambdas/contracts/servers`
 /// reads (Decentraland's `addresses.json` `CatalystProxy` on mainnet); another
@@ -42,7 +47,14 @@ pub const SEL_CATALYST_BY_ID: &str = "c9038ce9";
 /// How often the list is read again (the reference's `UPDATE_FROM_DAO_INTERVAL` default).
 pub const REFRESH: Duration = Duration::from_secs(30 * 60);
 
+/// Above any real registry (a few dozen entries): a larger `catalystCount()`
+/// is a bad RPC answer, refused before it turns into that many calls.
+pub const MAX_CATALYSTS: usize = 1024;
+
 const CALLS_IN_FLIGHT: usize = 16;
+/// Tries per `eth_call` on a timeout, connect error, 5xx or 429.
+const RPC_ATTEMPTS: u32 = 3;
+const RPC_RETRY_BASE_MS: u64 = 500;
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const RPC_BODY_CAP: usize = 1024 * 1024;
 
@@ -71,6 +83,33 @@ impl Catalyst {
     }
 }
 
+/// The base URL sync may fetch from, or `None` for an entry it must not
+/// dial: only `https://` to a public DNS name on the default port, with no
+/// userinfo, query or fragment. IP literals, `localhost`, single-label and
+/// internal names are refused (`is_private_or_internal_host`). The host comes
+/// back lowercased, the path without a trailing `/`.
+pub fn peer_base_url(catalyst: &Catalyst) -> Option<String> {
+    let raw = catalyst.base_url()?;
+    let url = url::Url::parse(&raw).ok()?;
+    let host = match url.host()? {
+        url::Host::Domain(host) => host.to_string(),
+        url::Host::Ipv4(_) | url::Host::Ipv6(_) => return None,
+    };
+    let plain = url.scheme() == "https"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.port().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none();
+    if !plain || is_private_or_internal_host(&host) {
+        return None;
+    }
+    Some(format!(
+        "https://{host}{}",
+        url.path().trim_end_matches('/')
+    ))
+}
+
 fn word_usize(word: &[u8]) -> Result<usize, String> {
     if word.len() != 32 || word[..24].iter().any(|b| *b != 0) {
         return Err(format!("not a small uint word: 0x{}", hex::encode(word)));
@@ -80,11 +119,18 @@ fn word_usize(word: &[u8]) -> Result<usize, String> {
         .fold(0usize, |v, b| (v << 8) | usize::from(*b)))
 }
 
-/// A `catalystCount()` answer.
+/// A `catalystCount()` answer, at most [`MAX_CATALYSTS`].
 pub fn decode_count(ret: &[u8]) -> Result<usize, String> {
-    ret.get(..32)
+    let count = ret
+        .get(..32)
         .ok_or_else(|| format!("bad catalystCount return: 0x{}", hex::encode(ret)))
-        .and_then(word_usize)
+        .and_then(word_usize)?;
+    if count > MAX_CATALYSTS {
+        return Err(format!(
+            "catalystCount {count} is above {MAX_CATALYSTS}: not a registry answer"
+        ));
+    }
+    Ok(count)
 }
 
 /// A `catalystById(id)` answer: `(bytes32 id, address owner, string domain, ...)`;
@@ -97,8 +143,10 @@ pub fn decode_catalyst(id: &str, ret: &[u8]) -> Result<Catalyst, String> {
     let mut owner = [0u8; 20];
     owner.copy_from_slice(&ret[44..64]);
     let offset = word_usize(&ret[64..96])?;
-    let len = word_usize(ret.get(offset..offset + 32).ok_or_else(short)?)?;
-    let bytes = ret.get(offset + 32..offset + 32 + len).ok_or_else(short)?;
+    let start = offset.checked_add(32).ok_or_else(short)?;
+    let len = word_usize(ret.get(offset..start).ok_or_else(short)?)?;
+    let end = start.checked_add(len).ok_or_else(short)?;
+    let bytes = ret.get(start..end).ok_or_else(short)?;
     let domain =
         String::from_utf8(bytes.to_vec()).map_err(|e| format!("domain is not utf8: {e}"))?;
     Ok(Catalyst {
@@ -139,8 +187,9 @@ where
         .await
 }
 
-/// One `eth_call` at `latest` over the sync client. The error never names the
-/// endpoint: it commonly carries a gateway key.
+/// One `eth_call` at `latest` over the sync client, retried on a timeout,
+/// connect error, 5xx or 429 (`retry_with_backoff`, as the shop's `eth_call`).
+/// The error never names the endpoint: it commonly carries a gateway key.
 async fn eth_call(
     client: &reqwest::Client,
     rpc_url: &str,
@@ -152,17 +201,41 @@ async fn eth_call(
         "eth_call",
         json!([{ "to": to, "data": format!("0x{data_hex}") }, "latest"]),
     );
-    let resp = client
-        .post(rpc_url)
-        .timeout(RPC_TIMEOUT)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| e.without_url().to_string())?;
-    let status = resp.status().as_u16();
-    let bytes = read_body_capped(resp, RPC_BODY_CAP)
-        .await
-        .map_err(|e| e.to_string())?;
+    let answer = retry_with_backoff("dao-eth-call", RPC_ATTEMPTS, RPC_RETRY_BASE_MS, || {
+        let body = &body;
+        async move {
+            let resp = match client
+                .post(rpc_url)
+                .timeout(RPC_TIMEOUT)
+                .json(body)
+                .send()
+                .await
+            {
+                Ok(resp) => resp,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    return Ok(RetryDecision::Retry {
+                        after: None,
+                        rate_limited: false,
+                    });
+                }
+                Err(e) => return Err(anyhow::anyhow!("{}", e.without_url())),
+            };
+            let status = resp.status();
+            if is_transient_status(status) {
+                return Ok(RetryDecision::Retry {
+                    after: None,
+                    rate_limited: status == reqwest::StatusCode::TOO_MANY_REQUESTS,
+                });
+            }
+            let bytes = read_body_capped(resp, RPC_BODY_CAP).await?;
+            Ok(RetryDecision::Done((status.as_u16(), bytes)))
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    let Some((status, bytes)) = answer else {
+        return Err("RPC unavailable after retries".to_string());
+    };
     let hex = parse_envelope(status, &bytes)
         .and_then(result_of)
         .and_then(hex_of)
@@ -200,30 +273,25 @@ impl DaoSource {
     }
 }
 
-fn normalized(url: &str) -> String {
-    url.trim().trim_end_matches('/').to_ascii_lowercase()
-}
-
-/// Each listed server's `/content`, in registry order, without this node
-/// (compared case-insensitively against `own_urls`, with or without
-/// `/content`, as the reference compares its `CONTENT_SERVER_ADDRESS`) and
-/// without repeats.
+/// Each listed server's `/content`, in registry order: only entries
+/// [`peer_base_url`] accepts, without this node (compared case-insensitively
+/// against `own_urls`, with or without `/content`, as the reference compares
+/// its `CONTENT_SERVER_ADDRESS`; the same identities `SYNC_SOURCE` is checked
+/// against) and without repeats.
 pub fn content_peers(catalysts: &[Catalyst], own_urls: &[String]) -> Vec<String> {
-    let mut own = HashSet::new();
-    for url in own_urls.iter().map(|u| normalized(u)) {
-        if url.is_empty() {
-            continue;
-        }
-        own.insert(url.trim_end_matches("/content").to_string());
-        own.insert(url);
-    }
+    let own = super::own_identities(own_urls);
     let mut seen = HashSet::new();
     catalysts
         .iter()
-        .filter_map(Catalyst::base_url)
-        .map(|base| base.trim_end_matches('/').to_string())
+        .filter_map(|catalyst| {
+            let base = peer_base_url(catalyst);
+            if base.is_none() {
+                tracing::warn!(domain = %catalyst.domain, "Skipping a DAO catalyst entry that is not a public https name");
+            }
+            base
+        })
         .filter(|base| {
-            let key = normalized(base);
+            let key = base.to_ascii_lowercase();
             !own.contains(&key) && seen.insert(key)
         })
         .map(|base| format!("{base}/content"))
@@ -288,6 +356,51 @@ mod tests {
         assert!(decode_catalyst("ab", &truncated).is_err());
         assert_eq!(decode_count(&word(7)).unwrap(), 7);
         assert!(decode_count(&[0u8; 8]).is_err());
+        assert!(
+            decode_count(&word(MAX_CATALYSTS + 1)).is_err(),
+            "a huge count is refused"
+        );
+    }
+
+    #[test]
+    fn a_domain_offset_or_length_near_usize_max_is_an_error_not_a_panic() {
+        let mut bad_offset = record(0xab, 0x11, "peer.example.org");
+        bad_offset[64..96].copy_from_slice(&[0u8; 32]);
+        bad_offset[88..96].copy_from_slice(&u64::MAX.to_be_bytes());
+        assert!(decode_catalyst("ab", &bad_offset).is_err());
+        let mut bad_len = record(0xab, 0x11, "peer.example.org");
+        bad_len[5 * 32 + 24..6 * 32].copy_from_slice(&u64::MAX.to_be_bytes());
+        assert!(decode_catalyst("ab", &bad_len).is_err());
+    }
+
+    #[test]
+    fn only_public_https_names_are_dialled() {
+        for domain in [
+            "peer.example.org",
+            "https://peer.example.org/",
+            "https://Peer.Example.org:443",
+        ] {
+            assert_eq!(
+                peer_base_url(&catalyst(domain)).as_deref(),
+                Some("https://peer.example.org"),
+                "{domain}"
+            );
+        }
+        for domain in [
+            "http://peer.example.org",
+            "10.0.0.5",
+            "https://127.0.0.1",
+            "https://[::1]",
+            "localhost",
+            "https://metadata",
+            "peer.internal",
+            "https://user:pass@peer.example.org",
+            "https://peer.example.org:8443",
+            "https://peer.example.org/?x=1",
+            "not a url",
+        ] {
+            assert_eq!(peer_base_url(&catalyst(domain)), None, "{domain}");
+        }
     }
 
     #[tokio::test]
@@ -329,6 +442,7 @@ mod tests {
             catalyst("http://plain.example.org"),
             catalyst("https://Me.Example.org"),
             catalyst("peer.example.org/"),
+            catalyst("192.168.1.10"),
             catalyst("other.example.org"),
         ];
         let own = ["https://me.example.org/content/".to_string()];

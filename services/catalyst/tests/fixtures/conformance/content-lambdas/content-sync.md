@@ -1010,16 +1010,23 @@ catalyst list and its `/about` is healthy.
       `ETH_RPC_URL` (`catalystCount`, `catalystIds(i)`, `catalystById(id)`; mainnet
       `0x4a2f10076101650f40342885b99b6b101d83c486`, sepolia `0x9b5091588a4bae0a5ea54a35af3c31f57a68ed37`,
       the registry `/lambdas/contracts/servers` reads) when the sync leader starts and every 30 minutes
-      (`services/catalyst/content/src/sync/dao.rs`). An `http://` domain is dropped, a bare one gets
-      `https://`, and an entry equal to `PUBLIC_URL`, `CONTENT_URL` or the bind address (case-insensitive,
-      with or without `/content`) is this node. Until a read succeeds, or when it lists no other server,
-      the node syncs from `SYNC_SOURCE` (under mirror the three Decentraland peers); a later failure
-      keeps the current list. After the bootstrap, a changed list goes to the running orchestrator
-      (`sync/orchestrator.rs` `run_sync_job`): a new peer bootstraps from its snapshots while the node
-      stays `Syncing`, a dropped peer's stream stops, and the failed-deployments retry fetches from the
-      new list. Read-through keeps `SYNC_SOURCE`. Tests: `sync::dao::tests`.
+      (`services/catalyst/content/src/sync/dao.rs`); each `eth_call` is retried on a timeout, 5xx or
+      429. An `http://` domain is dropped, a bare one gets `https://`, and an entry that is not a public
+      DNS name on the default https port (an IP literal, `localhost`, an internal name, userinfo, a
+      port, a query) is dropped too. An entry equal to `PUBLIC_URL`, `CONTENT_URL` or the bind address
+      (case-insensitive, with or without `/content`) is this node. Until a read succeeds, or when it
+      lists no other server, the node syncs from `SYNC_SOURCE` (under mirror the three Decentraland
+      peers); a later failure keeps the current list. A changed list goes to the running orchestrator
+      at any time (`sync/orchestrator.rs` `run_sync_job`): a new peer bootstraps from its snapshots
+      while the node keeps its state, a dropped peer's stream stops, running streams download from the
+      new list, and the failed-deployments retry fetches from it. Read-through keeps `SYNC_SOURCE`.
+      Tests: `sync::dao::tests`, `tests/sync_peer_changes.rs`.
     - Left: without `ETH_RPC_URL`, or on a network other than mainnet and sepolia, the node syncs from
-      `SYNC_SOURCE` only; `lastSyncWithDAO` stays the sync heartbeat (CS-15).
+      `SYNC_SOURCE` only; `lastSyncWithDAO` stays the sync heartbeat (CS-15). Difference: upstream
+      applies a changed list only after the bootstrap; dcl-one also applies it during the bootstrap
+      (which restarts from the persisted cursors), so a registry catalyst that never answers stops
+      holding the node in `Bootstrapping` once the registry drops it. While it is listed, it holds the
+      node there, as any `SYNC_SOURCE` peer does.
     - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not

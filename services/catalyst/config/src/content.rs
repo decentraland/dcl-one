@@ -14,8 +14,9 @@ pub struct ContentConfig {
     /// Sync from the DAO catalyst list: the L1 Catalyst registry read over
     /// ETH_RPC_URL (mainnet or sepolia by ETH_NETWORK) when the worker starts
     /// and every 30 minutes, without this node's own entry (PUBLIC_URL,
-    /// CONTENT_URL). Peers join and leave the running worker once its
-    /// bootstrap is done. SYNC_SOURCE is the list used while no registry read
+    /// CONTENT_URL) and without entries that are not public https names.
+    /// Peers join and leave the running worker, during its bootstrap too.
+    /// SYNC_SOURCE is the list used while no registry read
     /// has succeeded (no ETH_RPC_URL, another network, a failing RPC, a list
     /// naming only this node); read-through keeps reading SYNC_SOURCE.
     #[arg(long, env = "SYNC_FROM_DAO", default_value_t = false, action = clap::ArgAction::Set)]

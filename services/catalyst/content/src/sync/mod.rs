@@ -64,12 +64,13 @@ fn normalize_source(raw: &str) -> String {
     raw.trim().trim_end_matches('/').to_string()
 }
 
-/// A node's own reachable URLs reduced to what a peer entry would look like:
-/// `https://host/content` and `https://host` both name this node.
-fn own_identities(own_urls: &[String]) -> HashSet<String> {
+/// A node's own reachable URLs reduced to what a peer entry would look like,
+/// lowercased (compare a lowercased candidate): `https://host/content` and
+/// `https://host` both name this node.
+pub(crate) fn own_identities(own_urls: &[String]) -> HashSet<String> {
     let mut ids = HashSet::new();
     for url in own_urls {
-        let base = normalize_source(url);
+        let base = normalize_source(url).to_ascii_lowercase();
         if base.is_empty() {
             continue;
         }
@@ -101,7 +102,8 @@ pub fn parse_sync_sources(raw: &str, own_urls: &[String]) -> Result<Vec<String>,
                 return Err(SyncConfigError::PlaintextPeer(source, host));
             }
         }
-        if own.contains(&source) || own.contains(source.trim_end_matches("/content")) {
+        let key = source.to_ascii_lowercase();
+        if own.contains(&key) || own.contains(key.trim_end_matches("/content")) {
             return Err(SyncConfigError::SelfReferential(source));
         }
         if !seen.insert(source.clone()) {
