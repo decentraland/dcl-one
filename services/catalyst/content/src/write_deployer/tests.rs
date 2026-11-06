@@ -399,6 +399,29 @@ async fn a_deploy_whose_write_fails_does_not_hold_its_pointers() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
+/// Two concurrent deploys of one entity (a client's retry while the first
+/// is still in flight) both answer its stored timestamp; the second waits for
+/// the first instead of meeting the pointer it holds.
+#[tokio::test]
+async fn two_concurrent_deploys_of_one_entity_both_answer_its_stored_timestamp() {
+    let Some(pool) = test_pool(4).await else {
+        return;
+    };
+    let (storage, tmp) = temp_storage("same-entity").await;
+    let deployer = WriteDeployer::new(pool, storage, Arc::new(NoEip1654));
+    let pointers = Scope::new().pointers(&["8,8"]);
+    let (bytes, id, chain) = signed_scene(&pointers, chrono::Utc::now().timestamp_millis()).await;
+    let deploy = || deployer.deploy_entity(vec![bytes.clone()], &id, chain.clone(), "LOCAL");
+
+    let (first, second) = tokio::join!(deploy(), deploy());
+    let first = first.expect("the first copy deploys");
+    let second = second.expect("the concurrent copy answers the stored timestamp");
+    assert_eq!(first, second);
+    assert_eq!(deployer.deployed_timestamp(&id).await.unwrap(), Some(first));
+    assert!(deployer.is_rate_limited("scene", &pointers[0]));
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 /// The first deploy holds its pointer while its write is in flight (a database that accepts
 /// connections and never answers), so a concurrent deploy to that pointer is refused.
 #[tokio::test]
