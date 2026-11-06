@@ -363,6 +363,7 @@ fn append_chat_messages(
     mut chats: EventReader<ChatEvent>,
     mut chatbox: Query<&mut ChatBox>,
     users: Query<&UserProfile>,
+    #[cfg(feature = "livekit")] social: Res<social::SocialClient>,
 ) {
     let Ok(mut chatbox) = chatbox.single_mut() else {
         return;
@@ -382,6 +383,11 @@ fn append_chat_messages(
             };
             profile.content.eth_address.as_h160()
         };
+
+        #[cfg(feature = "livekit")]
+        if sender.is_some_and(|address| dm_state::blocked_either_way(&social, address)) {
+            continue;
+        }
 
         chatbox.chat_log.send(DisplayChatMessage {
             timestamp: ev.timestamp,
@@ -898,7 +904,7 @@ fn pipe_chat_reactions_to_scene(
 
     for ev in reactions.read() {
         #[cfg(feature = "livekit")]
-        if dm_state::blocked_by_me(&social, ev.from) {
+        if dm_state::blocked_either_way(&social, ev.from) {
             continue;
         }
         debug!("reaction {ev:?}");

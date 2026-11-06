@@ -251,8 +251,9 @@ pub fn blocked_by_me(social: &SocialClient, address: Address) -> bool {
         .is_some_and(|client| client.blocked.contains(&address))
 }
 
-/// True if either side has blocked the other. Their nearby chat is hidden, as in unity-explorer,
-/// where `UserBlockingCache.HideChatMessages` is fixed on and covers both directions.
+/// True if either side has blocked the other. Their nearby chat and reactions are hidden, as in
+/// unity-explorer, where `UserBlockingCache.HideChatMessages` is fixed on and covers both
+/// directions.
 pub fn blocked_either_way(social: &SocialClient, address: Address) -> bool {
     social
         .0
