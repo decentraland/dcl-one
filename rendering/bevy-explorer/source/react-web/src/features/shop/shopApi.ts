@@ -33,7 +33,11 @@ export async function fetchShop(
   const params = new URLSearchParams({ first: String(SHOP_PAGE_SIZE), skip: String(q.skip), category: q.category, sortBy: q.sortBy, isOnSale: 'true' })
   if (q.search.trim() !== '') params.set('search', q.search.trim())
   const res = await fetch(`${CATALOG_API}?${params}`, { signal })
-  if (!res.ok) throw new Error(`Marketplace returned ${res.status}`)
+  if (!res.ok) {
+    // Release the unread error body rather than leave the connection holding it.
+    await res.body?.cancel()
+    throw new Error(`Marketplace returned ${res.status}`)
+  }
   const body = (await res.json()) as { data?: ShopItem[]; total?: number }
   if (!Array.isArray(body.data)) throw new Error('Marketplace returned an unexpected response')
   return { items: body.data, total: body.total ?? body.data.length }
@@ -60,7 +64,11 @@ const CREATIONS_PER_CATEGORY = 100
 async function fetchCreationsOf(creator: string, category: ShopCategory, signal?: AbortSignal): Promise<CreationItem[]> {
   const params = new URLSearchParams({ category, creator, includeSocialEmotes: 'false', first: String(CREATIONS_PER_CATEGORY) })
   const res = await fetch(`${CREATIONS_API}?${params}`, { signal })
-  if (!res.ok) throw new Error(`Marketplace returned ${res.status}`)
+  if (!res.ok) {
+    // Release the unread error body rather than leave the connection holding it.
+    await res.body?.cancel()
+    throw new Error(`Marketplace returned ${res.status}`)
+  }
   const body = (await res.json()) as { data?: CreationItem[] }
   if (!Array.isArray(body.data)) throw new Error('Marketplace returned an unexpected response')
   return body.data

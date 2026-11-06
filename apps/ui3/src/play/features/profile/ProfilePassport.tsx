@@ -230,8 +230,11 @@ function CreationsSection({ address }: { address: string }): React.JSX.Element {
   useEffect(() => {
     const ctl = new AbortController()
     setLoad({ status: 'loading' })
+    // A reply that lands after the address changed (or the tab closed) belongs to the old request.
     fetchCreations(address, ctl.signal).then(
-      (creations) => setLoad({ status: 'ready', creations }),
+      (creations) => {
+        if (!ctl.signal.aborted) setLoad({ status: 'ready', creations })
+      },
       () => {
         if (!ctl.signal.aborted) setLoad({ status: 'error' })
       }
@@ -612,7 +615,9 @@ export function ProfilePassport({
               </section>
             )}
 
-            {tab === 'creations' && <CreationsSection address={profile.address} />}
+            {/* Keyed on the lowercased address: the passport opens with the address it was given, then
+                switches to the stored profile's lowercase one, which is the same creator. */}
+            {tab === 'creations' && <CreationsSection key={profile.address.toLowerCase()} address={profile.address.toLowerCase()} />}
           </div>
         </div>
       </div>

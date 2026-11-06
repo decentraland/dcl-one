@@ -6,7 +6,8 @@
 // recreated in CSS), then name (ellipsized) + rarity tag below on the dark body. When the item
 // has a marketplace listing, hovering pops the card with an animated gradient border ring +
 // glow (Unity's hover frame) and extends it downward to reveal a SHOP button inside; base/
-// off-chain items (no listing) get neither. Distinct from WearableCard (the Backpack's
+// off-chain items (no listing) get neither. With `pinShop` the button sits inside the card at all
+// times instead, and hovering only frames and lifts it (the passport's Creations grid). Distinct from WearableCard (the Backpack's
 // clickable, equip-focused grid tile, which has no caption) — this one is purely for display.
 
 import { useState } from 'react'

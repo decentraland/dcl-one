@@ -132,31 +132,25 @@
   font-variant-numeric: tabular-nums;
 }
 
-.hasShop:hover {
-  z-index: 2;
-  transform: scale(1.04);
-}
-.hasShop:hover::before {
-  bottom: calc(-1 * var(--shop-ext));
-  box-shadow: 0 0 18px var(--brand-active);
-}
-.hasShop:hover::after {
-  opacity: 1;
-  bottom: calc(-1 * var(--shop-ext));
-  animation: ringShift 2.5s linear infinite;
-}
-/* Pinned shop link (pinShop): the same hover frame and lift, but the card doesn't grow, since
-   the link already sits inside it. */
+/* The hover frame and lift, shared by both shop variants. Only the hover-reveal card (hasShop)
+   grows downward; a pinned one (pinShop) already holds its link. */
+.hasShop:hover,
 .pinnedShop:hover {
   z-index: 2;
   transform: scale(1.04);
 }
+.hasShop:hover::before,
 .pinnedShop:hover::before {
   box-shadow: 0 0 18px var(--brand-active);
 }
+.hasShop:hover::after,
 .pinnedShop:hover::after {
   opacity: 1;
   animation: ringShift 2.5s linear infinite;
+}
+.hasShop:hover::before,
+.hasShop:hover::after {
+  bottom: calc(-1 * var(--shop-ext));
 }
 @keyframes ringShift {
   0% {

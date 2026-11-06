@@ -104,6 +104,47 @@ describe('passport creations', () => {
     expect(await screen.findByText('There are no creations to show yet.')).toBeInTheDocument()
   })
 
+  it('gives an item with no shop page no button', async () => {
+    stubCatalog({ wearable: [item({ id: 'draft', name: 'Draft Cape', urn: 'urn:draft', url: '' })], emote: [] })
+    await openCreations()
+    const draft = (await screen.findByText('Draft Cape')).parentElement as HTMLElement
+    expect(within(draft).queryByRole('link')).toBeNull()
+  })
+
+  it('shows the error state when only one category fails', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const category = new URL(String(input)).searchParams.get('category')
+      return category === 'emote' ? new Response('down', { status: 503 }) : Response.json({ data: [HAT] })
+    }))
+    await openCreations()
+    expect(await screen.findByText("Couldn't load the creations")).toBeInTheDocument()
+    expect(screen.queryByText('Neon Hat')).toBeNull()
+  })
+
+  it('does not load again when the same address arrives in another case', async () => {
+    const fetchMock = stubCatalog({ wearable: [HAT], emote: [] })
+    const { rerender } = render(<ProfilePassport profile={profile} onClose={vi.fn()} />)
+    await userEvent.click(screen.getByRole('tab', { name: 'CREATIONS' }))
+    await screen.findByText('Neon Hat')
+    rerender(<ProfilePassport profile={{ ...profile, address: CREATOR.toLowerCase() }} onClose={vi.fn()} />)
+    expect(screen.getByText('Neon Hat')).toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('never shows a previous player\'s creations after the address changes', async () => {
+    const replies: Array<(r: Response) => void> = []
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((resolve) => replies.push(resolve))))
+    const { rerender } = render(<ProfilePassport profile={profile} onClose={vi.fn()} />)
+    await userEvent.click(screen.getByRole('tab', { name: 'CREATIONS' }))
+    const OTHER = '0x00000000000000000000000000000000000000bb'
+    rerender(<ProfilePassport profile={{ ...profile, address: OTHER }} onClose={vi.fn()} />)
+    // The first player's replies land after the switch; the second player's never do.
+    for (const reply of replies.splice(0, 2)) reply(Response.json({ data: [HAT] }))
+    await new Promise((r) => setTimeout(r, 0))
+    expect(screen.queryByText('Neon Hat')).toBeNull()
+    expect(screen.getByRole('status', { name: 'Loading' })).toBeInTheDocument()
+  })
+
   it('shows an error with Retry when the catalog fails, and Retry loads again', async () => {
     stubCatalog('fail')
     await openCreations()
