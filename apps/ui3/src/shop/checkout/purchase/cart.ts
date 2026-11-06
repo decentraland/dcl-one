@@ -201,6 +201,16 @@ export type LineUnbuyable = "gone" | "own" | "no-price" | "stale" | "unsupported
 
 export type LineOutcome = { status: "buyable"; resolved: ResolvedLine } | { status: LineUnbuyable; lineId: string; detail?: string };
 
+/** The coupon about to settle is the one the offer was priced with: same id, contract and discount. */
+function sameCoupon(coupon: ListingCoupon, priced: PurchaseOffer["coupon"]): boolean {
+  return (
+    !!priced &&
+    coupon.id === priced.id &&
+    coupon.couponAddress.toLowerCase() === priced.couponAddress.toLowerCase() &&
+    Number(coupon.discount) === priced.discountPpm
+  );
+}
+
 function tradePriceMatches(trade: SignedTrade, coupon: ListingCoupon | undefined, quote: Quote): boolean {
   const price = trade.received[0];
   const amount = price?.amount ?? price?.value;
@@ -255,6 +265,9 @@ export async function resolveLine(
   if (key.call.kind === "acceptWithCoupon") {
     coupon = couponForTrade(await resolvers.coupon?.(line), trade, now);
     if (!coupon) return { status: "stale", lineId: line.id, detail: "the sale ended" };
+    // The sale the buyer confirmed, and no other: a USD-priced line paid in MANA is not re-checked by price, so a
+    // coupon swapped or lowered since the offer would otherwise settle at a price the buyer never saw.
+    if (!sameCoupon(coupon, offer.coupon)) return { status: "stale", lineId: line.id, detail: "the sale changed" };
   }
   if (!tradePriceMatches(trade, coupon, quote)) return { status: "stale", lineId: line.id, detail: "price moved" };
   return { status: "buyable", resolved: { ...base, acquisition: "trade", trade, ...(coupon ? { coupon } : {}) } };

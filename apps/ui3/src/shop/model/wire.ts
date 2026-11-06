@@ -5,7 +5,7 @@ import { parseEvmAddress } from "./address";
 import { ASSET_KINDS, SALE_KINDS, parseAssetId, type AssetKind, type SaleKind } from "./asset";
 import { isChainId } from "./chain";
 import { manaToWire, parseManaWei, parseUsdCents } from "./money";
-import type { PurchaseOffer } from "./purchase";
+import type { OfferCoupon, PurchaseOffer } from "./purchase";
 import {
   PAYMENT_METHODS,
   type Eligibility,
@@ -191,7 +191,15 @@ export function decodePurchaseOffer(value: unknown): PurchaseOffer | null {
     return null;
   }
   const quotedAt = typeof v.quotedAt === "number" && Number.isFinite(v.quotedAt) ? v.quotedAt : 0;
-  return { asset, kind, sale, bundle: v.bundle, eligibility, quotes, unavailable, settlement, available, quotedAt };
+  let coupon: OfferCoupon | null = null;
+  if (v.coupon !== undefined && v.coupon !== null) {
+    const c = obj(v.coupon);
+    const address = c ? parseEvmAddress(c.couponAddress) : null;
+    if (!c || typeof c.id !== "string" || !c.id || !address) return null;
+    if (typeof c.discountPpm !== "number" || !Number.isSafeInteger(c.discountPpm) || c.discountPpm <= 0 || c.discountPpm >= 1_000_000) return null;
+    coupon = { id: c.id, couponAddress: address, discountPpm: c.discountPpm };
+  }
+  return { asset, kind, sale, bundle: v.bundle, eligibility, quotes, unavailable, settlement, available, quotedAt, ...(coupon ? { coupon } : {}) };
 }
 
 export function encodePurchaseOffer(offer: PurchaseOffer): Json {
