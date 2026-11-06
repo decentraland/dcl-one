@@ -212,6 +212,12 @@ pub enum SystemApi {
     GetDmHistory(String, RpcResultSender<Vec<DmHistoryEntryData>>),
     /// Deletes the stored DMs with a partner.
     DeleteDmHistory(String),
+    // Social / Communities
+    /// A community member came online or went offline, until dropped.
+    GetCommunityConnectivityStream(RpcStreamSender<CommunityMemberConnectivityData>),
+    /// The community channels the local user listens to (member of, chat not closed), as
+    /// community ids; replaces the previous set.
+    SetCommunityChannels(Vec<String>),
 }
 
 #[derive(Resource)]

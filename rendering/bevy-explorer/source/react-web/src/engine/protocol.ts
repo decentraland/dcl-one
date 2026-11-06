@@ -66,7 +66,8 @@ export interface RpcRequest {
   params?: Record<string, string>
 }
 
-/** Send a chat message (page → engine via the scene's BevyApi.sendChat). */
+/** Send a chat message (page → engine via the scene's BevyApi.sendChat). The channel is 'Nearby',
+ *  the DM partner's wallet, or a community's `community:<id>`. */
 export interface SendChatRequest {
   kind: 'sendChat'
   message: string
@@ -77,7 +78,7 @@ export interface SendChatRequest {
  *  BevyApi.sendChatReaction). The engine echoes it back as a ChatReactionMessage. */
 export interface SendChatReactionRequest {
   kind: 'sendChatReaction'
-  /** 'Nearby' or the DM partner's wallet. */
+  /** 'Nearby', the DM partner's wallet, or `community:<id>`. */
   channel: string
   messageId: string
   emoji: string
@@ -203,12 +204,17 @@ export type PageToScene =
   | SetAvatarColorRequest
   | SetForceRenderRequest
   | GetCommunitiesRequest
+  | GetCommunityRequest
   | CreateCommunityRequest
   | JoinCommunityRequest
   | LeaveCommunityRequest
   | RequestToJoinCommunityRequest
   | CancelJoinRequestRequest
   | GetCommunityDetailRequest
+  | GetCommunityChannelsRequest
+  | SetCommunityChannelsRequest
+  | GetCommunityOnlineMembersRequest
+  | PlayUiSoundRequest
   | GetMapRequest
   | GetHomeSceneRequest
   | GetWelcomeRequest
@@ -286,7 +292,7 @@ export interface ChatMessage {
 
 /** A reaction added to or removed from a chat message, the local user's included. */
 export interface ChatReaction {
-  /** 'Nearby' or the DM partner's wallet. */
+  /** 'Nearby', the DM partner's wallet, or `community:<id>`. */
   channel: string
   messageId: string
   emoji: string
@@ -442,7 +448,9 @@ export interface FriendActionFailedMessage {
   error: string
 }
 
-/** Whether the local user can DM someone, and why not. Mirrors the engine's DmUserStateData. */
+/** Whether the local user can DM someone, and why not. Mirrors the engine's DmUserStateData. For
+ *  a community channel (`community:<id>`): whether a community message can go anywhere
+ *  (`notConnected`: not in the private chat room; `noRouter`: no message router in it). */
 export type DmUserState =
   | 'notConnected'
   | 'connected'
@@ -451,9 +459,11 @@ export type DmUserState =
   | 'privateMessagesBlocked'
   | 'disconnected'
   | 'otherClient'
+  | 'noRouter'
 
-/** Start or stop following a partner's DM state (page → scene). The scene holds one engine
- *  stream per watched address; the page watches each open DM tab. */
+/** Start or stop following a partner's DM state, or community chat's for a community channel
+ *  (page → scene). The scene holds one engine stream per watched address; the page watches each
+ *  open DM tab and the shown community tab. */
 export interface DmWatchRequest {
   kind: 'dmWatch'
   address: string
@@ -472,6 +482,7 @@ export interface DmUserStateMessage {
 /** The stored DMs with a partner (page → scene), answered by DmHistoryMessage. */
 export interface DmHistoryRequest {
   kind: 'dmHistory'
+  /** The partner's wallet, or a community's `community:<id>`. */
   address: string
 }
 
@@ -504,6 +515,7 @@ export interface DmHistoryMessage {
 /** Delete the stored DMs with a partner (page → scene). */
 export interface DmDeleteRequest {
   kind: 'dmDelete'
+  /** The partner's wallet, or a community's `community:<id>`. */
   address: string
 }
 
@@ -1095,6 +1107,17 @@ export interface GetCommunitiesRequest {
   kind: 'getCommunities'
 }
 
+/** One community by id (page → scene → social-api GET /v2/communities/{id}), for a card opened
+ *  outside the browse list, e.g. from its chat. Answered by CommunityMessage. */
+export interface GetCommunityRequest {
+  kind: 'getCommunity'
+  id: string
+}
+export interface CommunityMessage {
+  kind: 'community'
+  community: Community
+}
+
 /** Create a community (page → scene → signed multipart POST to the social-api). */
 export interface CreateCommunityRequest {
   kind: 'createCommunity'
@@ -1127,9 +1150,9 @@ export interface CancelJoinRequestRequest {
   requestId: string
 }
 
-export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave'
+export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch'
 
-/** A community write the social-api rejected (scene → page), so the UI can say so. */
+/** A community write, or the read of one community, the social-api rejected (scene → page), so the UI can say so. */
 export interface CommunityActionFailedMessage {
   kind: 'communityActionFailed'
   id: string
@@ -1199,6 +1222,70 @@ export interface CommunityDetailMessage {
   places: CommunityPlace[]
   events: CommunityEvent[]
   photos: CommunityPhoto[]
+}
+
+// ---- community chat --------------------------------------------------------
+
+/** A community the local user is a member of, as a chat channel. */
+export interface CommunityChannel {
+  id: string
+  name: string
+  /** The community's thumbnail URL (may 404: the UI falls back to the initial). */
+  thumbnail: string
+  /** 'owner' | 'moderator' | 'member' */
+  role: string
+}
+
+/** The communities the local user is a member of (page → scene → social-api onlyMemberOf). */
+export interface GetCommunityChannelsRequest {
+  kind: 'getCommunityChannels'
+}
+export interface CommunityChannelsMessage {
+  kind: 'communityChannels'
+  communities: CommunityChannel[]
+}
+/** The local user joined (or was told they are in) a community (scene → page). */
+export interface CommunityChannelAddedMessage {
+  kind: 'communityChannelAdded'
+  community: CommunityChannel
+}
+/** The local user left, was removed from, or lost a community (scene → page). */
+export interface CommunityChannelRemovedMessage {
+  kind: 'communityChannelRemoved'
+  id: string
+}
+
+/** The community channels the HUD listens to: member of, chat not closed (page → scene → engine).
+ *  The engine drops messages on any other community channel before storing them. */
+export interface SetCommunityChannelsRequest {
+  kind: 'setCommunityChannels'
+  ids: string[]
+}
+
+/** The members of a community who are online now (page → scene → social-api onlyOnline). */
+export interface GetCommunityOnlineMembersRequest {
+  kind: 'getCommunityOnlineMembers'
+  id: string
+}
+export interface CommunityOnlineMembersMessage {
+  kind: 'communityOnlineMembers'
+  id: string
+  members: CommunityMember[]
+}
+
+/** A member of one of the local user's communities came online or went offline (scene → page). */
+export interface CommunityPresenceMessage {
+  kind: 'communityPresence'
+  communityId: string
+  member: CommunityMember
+  online: boolean
+}
+
+/** Play a UI sound (page → scene → engine): a chat line landing, or one that mentions the user. */
+export type UiSound = 'chatMessage' | 'chatMention'
+export interface PlayUiSoundRequest {
+  kind: 'playUiSound'
+  sound: UiSound
 }
 
 // ---- gallery (camera reel) -------------------------------------------------
@@ -1714,12 +1801,18 @@ export type SceneToPage =
   | OutfitsMessage
   | OutfitHistoryMessage
   | CommunitiesMessage
+  | CommunityMessage
   | VoiceActivityMessage
   | CommunityActionFailedMessage
   | TravelResultMessage
   | AvatarSaveFailedMessage
   | RequestFailedMessage
   | CommunityDetailMessage
+  | CommunityChannelsMessage
+  | CommunityChannelAddedMessage
+  | CommunityChannelRemovedMessage
+  | CommunityOnlineMembersMessage
+  | CommunityPresenceMessage
   | MapMessage
   | HomeSceneMessage
   | WelcomeMessage

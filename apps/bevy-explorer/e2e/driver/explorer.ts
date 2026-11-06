@@ -123,6 +123,21 @@ export interface ChatHistory {
   messages: ChatMessage[]
 }
 
+/** `/community_state`: community chat's routing and counters (no message bodies). */
+export interface CommunityState {
+  routerIdentity: string
+  routerInRoom: boolean
+  channels: string[]
+  channelCount: number
+  roomSpawned: boolean
+  sent?: number
+  received?: number
+  reactionsSent?: number
+  reactionsReceived?: number
+  dropped?: { notMember: number; unattributed: number; rateLimited: number }
+  lastError?: string | null
+}
+
 export interface VoiceState {
   mic: { available: boolean; enabled: boolean }
   livekit: boolean
@@ -364,9 +379,28 @@ export class Explorer {
     await this.run(`/dm ${address} ${message}`)
   }
 
+  /** The stored lines of a conversation: a partner's wallet, or a community's `community:<id>`. */
   async dmHistory(address: string, count = 20): Promise<string[]> {
     const reply = await this.run(`/dm_history ${address} ${count}`)
     return reply === '' ? [] : reply.split('\n')
+  }
+
+  /** A community chat message; `/community_chat` takes several words. Not a delivery confirmation. */
+  async communityChat(communityId: string, message: string): Promise<void> {
+    await this.run(`/community_chat ${communityId} ${message}`)
+  }
+
+  /** The community channels the engine listens to, after an optional edit. */
+  async communityChannels(edit?: { action: 'add' | 'remove'; communityId: string } | { action: 'clear' }): Promise<string[]> {
+    const args = edit == null ? '' : edit.action === 'clear' ? ' clear' : ` ${edit.action} ${edit.communityId}`
+    const reply = await this.run(`/community_channels${args}`)
+    const listed = /community channels: \[(.*)\]$/.exec(reply)?.[1]
+    if (listed === undefined) throw new Error(`unexpected /community_channels reply: ${reply}`)
+    return listed === '' ? [] : listed.split(',').map((id) => id.trim().replace(/^"|"$/g, ''))
+  }
+
+  communityState(): Promise<CommunityState> {
+    return this.json<CommunityState>('/community_state')
   }
 
   /** Other players' addresses, then the local player's. */

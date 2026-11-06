@@ -38,7 +38,12 @@ import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { getCursor } from '../pointer/cursorStore'
 import { openProfileCard } from '../profileCard/ProfileCard'
 import { formatConsoleReply, parseChatCommand } from '../chat/chatCommands'
-import { applyLanguageSetting } from '../chat/translation'
+import { applyLanguageSetting, clearAutoTranslate } from '../chat/translation'
+import { clearPingMode, shouldPing } from '../chat/ping'
+import { risingIds, rowKeys } from '../chat/lineIds'
+import { communityChannel, communityIdOf } from '../../engine/communityChannel'
+import { mentionName, mentionsName } from '../../engine/mention'
+import { PREF, getPref, setPref } from '../../lib/prefs'
 import { PARCEL_METERS, isGenesisSatelliteView } from '../map/atlas'
 import { EDITOR_BUILD } from '../editorHost/config'
 import { editorEntry } from '../editorHost/source'
@@ -55,6 +60,8 @@ import type {
   DmUserState,
   CommunityAction,
   CommunityDetailMessage,
+  CommunityChannel,
+  CommunityMember,
   Emote,
   BlockedUser,
   Friend,
@@ -95,7 +102,8 @@ const COMMUNITY_ERROR: Record<CommunityAction, string> = {
   join: 'There was an error joining the community. Please try again.',
   requestToJoin: 'There was an error requesting to join community. Please try again.',
   cancelJoinRequest: 'There was an error cancelling join request. Please try again.',
-  leave: 'There was an error leaving the community. Please try again.'
+  leave: 'There was an error leaving the community. Please try again.',
+  fetch: 'There was an error loading the community. Please try again.'
 }
 
 // The engine's clock starts at 10:00 and runs at 12× (crates/visuals/src/day_night.rs start_clock).
@@ -210,6 +218,11 @@ export interface CommunitiesState {
   detail: CommunityDetailMessage | null
   /** Request a community's detail (call when its modal opens). */
   loadDetail: (id: string) => void
+  /** Communities fetched one at a time for a card opened from outside the browse list (the
+   *  chat's View Community), by id; the browse list is left to the Communities page. */
+  cards: Readonly<Record<string, Community>>
+  /** Fetch one community into `cards`. */
+  fetch: (id: string) => void
 }
 
 export interface MapState {
@@ -494,7 +507,30 @@ export interface Conversation {
   online: boolean
 }
 
-/** A chat line's tab: 'Nearby', or the partner wallet in lowercase. */
+/** An open community chat: a community the local user is a member of whose chat they have not
+ *  closed. Its lines are the engine's stored history, read like a DM's. */
+export interface CommunityConversation {
+  id: string
+  /** The channel: `community:<id>`. */
+  key: string
+  name: string
+  thumbnail: string
+  /** 'owner' | 'moderator' | 'member' */
+  role: string
+  /** Lines received while the tab was not the one shown (or chat was closed). */
+  unread: number
+  /** One of the unread lines @-mentions the local user; cleared with `unread`. */
+  mention: boolean
+  /** The members online now, once asked for (when the tab is first shown); null until then. */
+  members: CommunityMember[] | null
+  /** How many of `members` count: not the local user, not anyone they blocked. */
+  online: number
+  /** Community chat's state from the engine while this tab is shown (the private chat room, and
+   *  the server's message router in it); null until the first report. */
+  state: DmUserState | null
+}
+
+/** A chat line's tab: 'Nearby', the partner wallet in lowercase, or `community:<id>`. */
 export function channelKey(channel: string): string {
   return channel === 'Nearby' ? channel : channel.toLowerCase()
 }
@@ -502,6 +538,36 @@ export function channelKey(channel: string): string {
 /** A DM rides a wallet-named channel; anything else (Nearby, System) belongs to the Nearby list. */
 export function isDmChannel(channel: string): boolean {
   return /^0x[0-9a-f]{40}$/i.test(channel)
+}
+
+function communityConversation(c: CommunityChannel): CommunityConversation {
+  return { id: c.id, key: communityChannel(c.id), name: c.name, thumbnail: c.thumbnail, role: c.role, unread: 0, mention: false, members: null, online: 0, state: null }
+}
+
+/** One row per member, the last word on each address winning. */
+function dedupeMembers(members: CommunityMember[]): CommunityMember[] {
+  const byAddress = new Map(members.map((m) => [m.address.toLowerCase(), m]))
+  return [...byAddress.values()]
+}
+
+/** A list of community ids kept per account under one pref key for every account: the chats an
+ *  account closed, and the communities it had chats for. */
+function readAccountList(key: string, account: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(getPref(key) ?? '{}')
+    const list = parsed != null && typeof parsed === 'object' ? (parsed as Record<string, unknown>)[account] : undefined
+    return Array.isArray(list) ? list.filter((id): id is string => typeof id === 'string') : []
+  } catch {
+    return []
+  }
+}
+function writeAccountList(key: string, account: string, ids: string[]): void {
+  let all: Record<string, unknown> = {}
+  try {
+    const parsed: unknown = JSON.parse(getPref(key) ?? '{}')
+    if (parsed != null && typeof parsed === 'object') all = parsed as Record<string, unknown>
+  } catch {}
+  setPref(key, JSON.stringify({ ...all, [account]: ids }))
 }
 
 export interface ChatState {
@@ -524,8 +590,14 @@ export interface ChatState {
   openConversation: (address: string) => void
   /** Drop a DM tab; its history stays stored. */
   closeConversation: (address: string) => void
-  /** Delete the stored history with a partner and clear their lines. */
+  /** Delete the stored history of a conversation (a partner or `community:<id>`) and clear its lines. */
   deleteHistory: (address: string) => void
+  /** The community chats open, most recently active first. */
+  communities: CommunityConversation[]
+  /** Show a community's chat (reopening it if closed), select it, and open chat. */
+  openCommunity: (community: CommunityChannel) => void
+  /** Hide a community's chat until it is opened again; its history stays stored. */
+  closeCommunity: (id: string) => void
   /** Visibility, toggled by the React sidebar chat icon. */
   open: boolean
   toggle: () => void
@@ -557,6 +629,9 @@ export interface ChatState {
 }
 
 const MAX_CHAT_LINES = 200
+// The least time between two notification pings of one conversation and kind: a flood of lines
+// is one sound, not one per line.
+const PING_INTERVAL_MS = 400
 
 // Render-settle: after a scene first reports loaded, hold the loader at least this long for the
 // engine to render the first frame (so the world isn't revealed as black models), and at most this
@@ -895,6 +970,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // Reactions to Nearby lines, by message id; a DM tab's come with its stored history.
   const [nearbyReactions, setNearbyReactions] = useState<Record<string, MessageReaction[]>>({})
   const nearbyIdsRef = useRef<Set<string>>(new Set())
+  // Every community the local user is a member of, as chat tabs (closed ones included: `closed`
+  // says which are hidden), most recently active first. The handler reads the refs.
+  const [communityConvos, setCommunityConvos] = useState<CommunityConversation[]>([])
+  const communityConvosRef = useRef<CommunityConversation[]>([])
+  communityConvosRef.current = communityConvos
+  const [closedCommunities, setClosedCommunities] = useState<ReadonlySet<string>>(() => new Set())
+  const closedCommunitiesRef = useRef<ReadonlySet<string>>(closedCommunities)
+  closedCommunitiesRef.current = closedCommunities
   const [members, setMembers] = useState<NearbyMember[]>([])
   const [speaking, setSpeaking] = useState<ReadonlySet<string>>(() => new Set())
   // Mirror cursor-lock into a ref so the run-once message handler reads it without a stale closure —
@@ -964,6 +1047,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const captureRef = useRef<{ id: string; resolve: (input: string) => void } | null>(null)
   const captureSeq = useRef(0)
   const [profile, setProfile] = useState<Profile | null>(null)
+  // The handler's view of the local user, for @-mention detection on lines that land.
+  const meRef = useRef<Profile | null>(null)
+  meRef.current = profile
   const [profileOpen, setProfileOpen] = useState(false)
   // Own-profile edit: the claimed names the picker offers, and the state of the save in flight.
   const [ownedNames, setOwnedNames] = useState<string[]>([])
@@ -995,6 +1081,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [outfitHistory, setOutfitHistory] = useState<OutfitHistory>(NO_OUTFIT_HISTORY)
   const [backpackOpen, setBackpackOpen] = useState(false)
   const [communities, setCommunities] = useState<Community[]>([])
+  const [communityCards, setCommunityCards] = useState<Record<string, Community>>({})
   const [communitiesOpen, setCommunitiesOpen] = useState(false)
   const [communityDetail, setCommunityDetail] = useState<CommunityDetailMessage | null>(null)
   const [communityError, setCommunityError] = useState<{ id: string; message: string } | null>(null)
@@ -1039,6 +1126,20 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const answeredPermissions = useRef(new Map<string, boolean | null>())
   const [worldPassword, setWorldPassword] = useState<WorldPasswordRequestMessage | null>(null)
   const chatId = useRef(0)
+  // when each conversation last pinged, per kind of ping
+  const pingAtRef = useRef<Map<string, number>>(new Map())
+  // the lines appended to a shown tab since its history was last read, by conversation: a read
+  // queued before such a line was stored answers without it
+  const appendedRef = useRef<Map<string, Set<string>>>(new Map())
+  // the next id for a line of each DM or community tab: ids are the HUD's own, never a row's
+  // place in the store (the engine trims a community's store, which moves every row)
+  const dmNextIdRef = useRef<Map<string, number>>(new Map())
+  const nextDmId = (key: string): number => {
+    const id = dmNextIdRef.current.get(key) ?? 0
+    dmNextIdRef.current.set(key, id + 1)
+    return id
+  }
+  const chatAccountRef = useRef<string | null>(null)
   // The speed to restore when Time progression is turned back on (the last running speed seen).
   const skyboxDaySpeed = useRef(SKYBOX_DAY_SPEED)
   // Catalog fetches done once per session (cache; relays re-emit on change).
@@ -1050,6 +1151,32 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // The profile store asks the engine itself for any address it's shown and doesn't hold.
     setProfileRequester((address, extras) => driver.send({ kind: 'getUserProfile', address, extras }))
 
+    // A community the user is no longer in (left, removed, or the community deleted): its tab
+    // goes, and with it its stored history (the delete option went with the tab), its ping and
+    // translate settings and its closed entry.
+    const forgetCommunity = (id: string): void => {
+      const key = communityChannel(id)
+      driver.send({ kind: 'dmDelete', address: key })
+      clearPingMode(key)
+      clearAutoTranslate(key)
+      setCommunityConvos((prev) => prev.filter((c) => c.id !== id))
+      const account = chatAccountRef.current
+      if (account != null) writeAccountList(PREF.chatKnownCommunities, account, readAccountList(PREF.chatKnownCommunities, account).filter((k) => k !== id))
+      setClosedCommunities((prev) => {
+        if (!prev.has(id)) return prev
+        const next = new Set(prev)
+        next.delete(id)
+        if (chatAccountRef.current != null) writeAccountList(PREF.chatClosedCommunities, chatAccountRef.current, [...next])
+        return next
+      })
+      setDmLines((prev) => {
+        if (!(key in prev)) return prev
+        const next = { ...prev }
+        delete next[key]
+        return next
+      })
+      if (channelRef.current === key) setChannel('Nearby')
+    }
     // One generic subscription; switch on kind (mirrors dcl-editor's onSceneMessage).
     const off = driver.on((msg) => {
       switch (msg.kind) {
@@ -1126,9 +1253,52 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         }
         case 'chat': {
+          const me = meRef.current
+          const own = me != null && msg.chat.sender.toLowerCase() === me.address.toLowerCase()
+          const system = msg.chat.sender === '' || msg.chat.sender.toLowerCase() === 'system'
+          const mentioned = !own && !system && me != null && mentionsName(msg.chat.message, mentionName(me.name, me.address, me.hasClaimedName))
+          const ping = (channel: string): void => {
+            if (own || system || !shouldPing(channel, mentioned)) return
+            const slot = `${channel}|${mentioned ? 'mention' : 'message'}`
+            const now = Date.now()
+            if (now - (pingAtRef.current.get(slot) ?? -Infinity) < PING_INTERVAL_MS) return
+            pingAtRef.current.set(slot, now)
+            driver.send({ kind: 'playUiSound', sound: mentioned ? 'chatMention' : 'chatMessage' })
+          }
+          const communityId = communityIdOf(msg.chat.channel)
+          if (communityId != null) {
+            // Only a community whose chat is open is listened to; the engine drops the rest, and so
+            // does this (a line can land between a close and the engine learning of it).
+            const key = communityChannel(communityId)
+            if (!communityConvosRef.current.some((c) => c.id === communityId) || closedCommunitiesRef.current.has(communityId)) break
+            const shown = chatOpenRef.current && channelRef.current === key
+            if (!shown && !(chatOpenRef.current && chatActiveRef.current)) setChatUnread((n) => n + 1)
+            // the shown tab appends the line (the store has it too; a later re-read matches it by
+            // messageId and keeps its id) rather than reading the whole store back for every line a
+            // busy community sends; any other tab counts it; either way the community moves to the
+            // top, as every non-Nearby line does
+            setCommunityConvos((prev) => {
+              const i = prev.findIndex((c) => c.id === communityId)
+              if (i < 0) return prev
+              const c = shown ? prev[i] : { ...prev[i], unread: prev[i].unread + 1, mention: prev[i].mention || mentioned }
+              return [c, ...prev.slice(0, i), ...prev.slice(i + 1)]
+            })
+            if (shown) {
+              if (msg.chat.messageId !== '') {
+                const appended = appendedRef.current.get(key) ?? new Set<string>()
+                appended.add(msg.chat.messageId)
+                appendedRef.current.set(key, appended)
+              }
+              const line: ChatLine = { sender: msg.chat.sender, message: msg.chat.message, channel: key, messageId: msg.chat.messageId, id: nextDmId(key), ts: Date.now(), reactions: [] }
+              setDmLines((prev) => ({ ...prev, [key]: [...(prev[key] ?? []), line].slice(-MAX_CHAT_LINES) }))
+            }
+            ping(key)
+            break
+          }
           const key = isDmChannel(msg.chat.channel) ? channelKey(msg.chat.channel) : 'Nearby'
           const shown = chatOpenRef.current && channelRef.current === key
           if (!shown && !(chatOpenRef.current && chatActiveRef.current)) setChatUnread((n) => n + 1)
+          if (key !== 'Nearby' || msg.chat.channel === 'Nearby') ping(key)
           if (key === 'Nearby') {
             if (!shown) setNearbyUnread((n) => n + 1)
             // known at once, so a reaction relayed right behind its line isn't dropped
@@ -1153,20 +1323,35 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'dmHistory': {
           const key = channelKey(msg.address)
           // a late answer for a tab closed meanwhile
-          if (!openTabsRef.current.has(key)) break
-          // Ids are the row's place in the store, so a re-read keeps every row it already showed
-          // and only the rows added since read as new.
-          const skipped = Math.max(0, msg.entries.length - MAX_CHAT_LINES)
-          const lines: ChatLine[] = msg.entries.slice(skipped).map((e, i) => ({
-            sender: e.from,
-            message: e.message,
-            channel: key,
-            messageId: e.messageId,
-            id: skipped + i,
-            ts: e.receivedAt,
-            reactions: e.reactions
-          }))
-          setDmLines((prev) => ({ ...prev, [key]: lines }))
+          const communityId = communityIdOf(key)
+          const communityOpen = communityId != null && communityConvosRef.current.some((c) => c.id === communityId) && !closedCommunitiesRef.current.has(communityId)
+          if (!openTabsRef.current.has(key) && !communityOpen) break
+          // A line keeps the id it was shown with, so a re-read after the engine trimmed the store
+          // leaves keys, the NEW separator and the open reaction bar on the same lines.
+          const entries = msg.entries.slice(Math.max(0, msg.entries.length - MAX_CHAT_LINES))
+          // a line appended while this read was pending, and stored after the read was queued, is
+          // not in the answer: it stays behind the stored rows until a later read returns it
+          const appended = appendedRef.current.get(key)
+          setDmLines((prev) => {
+            const shown = prev[key] ?? []
+            const known = new Map(rowKeys(shown.map((l) => l.messageId)).map((k, i) => [k, shown[i].id]))
+            const keys = rowKeys(entries.map((e) => e.messageId))
+            const lines: ChatLine[] = entries.map((e, i) => ({
+              sender: e.from,
+              message: e.message,
+              channel: key,
+              messageId: e.messageId,
+              id: known.get(keys[i]) ?? nextDmId(key),
+              ts: e.receivedAt,
+              reactions: e.reactions
+            }))
+            const nextId = (): number => nextDmId(key)
+            if (appended == null || appended.size === 0) return { ...prev, [key]: risingIds(lines, nextId) }
+            const stored = new Set(lines.map((l) => l.messageId))
+            const pending = shown.filter((l) => appended.has(l.messageId) && !stored.has(l.messageId))
+            appendedRef.current.set(key, new Set(pending.map((l) => l.messageId)))
+            return { ...prev, [key]: risingIds([...lines, ...pending], nextId).slice(-MAX_CHAT_LINES) }
+          })
           break
         }
         case 'chatReaction': {
@@ -1180,13 +1365,26 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             })
             break
           }
-          // a DM's reactions are stored with it: the shown tab re-reads them
+          // a DM's or a community's reaction is stored with its line; a tab that has the line
+          // applies it there (a later read folds the store the same way), nothing is read back
           const key = channelKey(r.channel)
-          if (chatOpenRef.current && channelRef.current === key) driverRef.current?.send({ kind: 'dmHistory', address: key })
+          setDmLines((prev) => {
+            const lines = prev[key]
+            const i = lines?.findIndex((l) => l.messageId === r.messageId) ?? -1
+            if (lines == null || i < 0) return prev
+            const reactions = applyReaction(lines[i].reactions ?? [], r)
+            if (reactions === lines[i].reactions) return prev
+            return { ...prev, [key]: lines.map((l, j) => (j === i ? { ...l, reactions } : l)) }
+          })
           break
         }
         case 'dmUserState': {
           const key = channelKey(msg.address)
+          const communityId = communityIdOf(key)
+          if (communityId != null) {
+            setCommunityConvos((prev) => prev.map((c) => (c.id === communityId ? { ...c, state: msg.state } : c)))
+            break
+          }
           setConversations((prev) => prev.map((c) => (c.address === key ? { ...c, state: msg.state, online: msg.online } : c)))
           break
         }
@@ -1357,11 +1555,78 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'communities':
           setCommunities(msg.communities)
           break
+        case 'community':
+          // one community for a card, kept apart from the browse list (replaced if already there)
+          setCommunityCards((prev) => ({ ...prev, [msg.community.id]: msg.community }))
+          break
         case 'communityActionFailed':
           setCommunityError({ id: msg.id, message: COMMUNITY_ERROR[msg.action] })
           break
         case 'communityDetail':
           setCommunityDetail(msg)
+          break
+        case 'communityChannels': {
+          // the user's communities, in the order they already have (new ones last)
+          setCommunityConvos((prev) => {
+            const next = msg.communities.map((c) => {
+              const old = prev.find((p) => p.id === c.id)
+              return old != null ? { ...old, name: c.name, thumbnail: c.thumbnail, role: c.role } : communityConversation(c)
+            })
+            const order = new Map(prev.map((c, i) => [c.id, i]))
+            return next.sort((a, b) => (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity))
+          })
+          // the communities the account had chats for are remembered: one gone from this list was
+          // left (or the user removed) while no client of theirs was looking, and the store cannot
+          // be listed, so this is where its history and settings go
+          if (chatAccountRef.current != null) {
+            const account = chatAccountRef.current
+            const ids = msg.communities.map((c) => c.id)
+            for (const id of readAccountList(PREF.chatKnownCommunities, account)) if (!ids.includes(id)) forgetCommunity(id)
+            writeAccountList(PREF.chatKnownCommunities, account, ids)
+          }
+          // the shown community gone from the list (left from elsewhere): back to Nearby, as when
+          // its removal arrives alone, or the Nearby header would front sends to the community
+          const shownId = communityIdOf(channelRef.current)
+          if (shownId != null && !msg.communities.some((c) => c.id === shownId)) {
+            const key = communityChannel(shownId)
+            setDmLines((prev) => {
+              if (!(key in prev)) return prev
+              const next = { ...prev }
+              delete next[key]
+              return next
+            })
+            setChannel('Nearby')
+          }
+          break
+        }
+        case 'communityChannelAdded': {
+          setCommunityConvos((prev) => (prev.some((c) => c.id === msg.community.id) ? prev.map((c) => (c.id === msg.community.id ? { ...c, name: msg.community.name, thumbnail: msg.community.thumbnail, role: msg.community.role } : c)) : [...prev, communityConversation(msg.community)]))
+          const account = chatAccountRef.current
+          if (account != null) {
+            const known = readAccountList(PREF.chatKnownCommunities, account)
+            if (!known.includes(msg.community.id)) writeAccountList(PREF.chatKnownCommunities, account, [...known, msg.community.id])
+          }
+          break
+        }
+        case 'communityChannelRemoved':
+          forgetCommunity(msg.id)
+          break
+        case 'communityOnlineMembers':
+          setCommunityConvos((prev) => prev.map((c) => (c.id === msg.id ? { ...c, members: dedupeMembers(msg.members) } : c)))
+          break
+        case 'communityPresence':
+          // only a list already asked for is kept up to date; any other update changes nothing
+          setCommunityConvos((prev) => {
+            const i = prev.findIndex((c) => c.id === msg.communityId)
+            const c = i < 0 ? undefined : prev[i]
+            if (c?.members == null) return prev
+            const same = (m: CommunityMember): boolean => m.address.toLowerCase() === msg.member.address.toLowerCase()
+            // the update names the member only: the role stays the listed one, if they were listed
+            const listed = c.members.find(same)
+            const rest = c.members.filter((m) => !same(m))
+            const members = msg.online ? [...rest, listed != null ? { ...msg.member, role: listed.role } : msg.member] : rest
+            return prev.map((p, j) => (j === i ? { ...c, members } : p))
+          })
           break
         case 'mapState':
           setMapParcel({ x: msg.x, y: msg.y })
@@ -1620,6 +1885,47 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     }
   }, [playerReady])
 
+  // The closed community chats are the account's: read when it is known, written on each change.
+  const chatAccount = profile?.address.toLowerCase() ?? null
+  chatAccountRef.current = chatAccount
+  useEffect(() => {
+    setClosedCommunities(new Set(chatAccount == null ? [] : readAccountList(PREF.chatClosedCommunities, chatAccount)))
+  }, [chatAccount])
+  // The community chats open from the start (the Communities page lists more). Asked
+  // for once the account is known, so its closed chats are closed from the first list (the engine
+  // never listens to them) and a close made before the profile is not lost.
+  useEffect(() => {
+    if (!playerReady || chatAccount == null) return
+    if (!fetchedRef.current.has('getCommunityChannels')) {
+      fetchedRef.current.add('getCommunityChannels')
+      driverRef.current?.send({ kind: 'getCommunityChannels' })
+    }
+  }, [playerReady, chatAccount])
+  const setCommunityClosed = useCallback((id: string, closed: boolean) => {
+    setClosedCommunities((prev) => {
+      if (prev.has(id) === closed) return prev
+      const next = new Set(prev)
+      if (closed) next.add(id)
+      else next.delete(id)
+      if (chatAccount != null) writeAccountList(PREF.chatClosedCommunities, chatAccount, [...next])
+      return next
+    })
+  }, [chatAccount])
+  // What the engine listens to: the open community chats. Sent whenever that set changes.
+  const openCommunityIds = useMemo(() => communityConvos.filter((c) => !closedCommunities.has(c.id)).map((c) => c.id).sort().join(','), [communityConvos, closedCommunities])
+  useEffect(() => {
+    if (!playerReady) return
+    driverRef.current?.send({ kind: 'setCommunityChannels', ids: openCommunityIds === '' ? [] : openCommunityIds.split(',') })
+  }, [openCommunityIds, playerReady])
+  // The shown community tab follows community chat's state (the private chat room, the server's
+  // message router in it), as a DM tab follows its partner's: one watch, while it is shown.
+  useEffect(() => {
+    const key = channel
+    if (!chatOpen || communityIdOf(key) == null) return
+    driverRef.current?.send({ kind: 'dmWatch', address: key, on: true })
+    return () => driverRef.current?.send({ kind: 'dmWatch', address: key, on: false })
+  }, [chatOpen, channel])
+
   // Inject a local "DCL System" line (empty sender → rendered as the system member) for command
   // feedback (/help, /goto usage, /commands output) that must NOT be broadcast to other players.
   const pushSystemMessage = useCallback((message: string) => {
@@ -1742,9 +2048,19 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       setNearbyUnread(0)
     } else {
       setConversations((prev) => prev.map((c) => (c.address === key ? { ...c, unread: 0 } : c)))
+      showCommunity(key)
       driverRef.current?.send({ kind: 'dmHistory', address: key })
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chatOpen])
+  // A community tab shown: its counts are cleared, and who is online is asked for again (presence
+  // while it was not shown is not relayed, and a social reconnect can miss some).
+  const showCommunity = useCallback((key: string) => {
+    const id = communityIdOf(key)
+    if (id == null) return
+    setCommunityConvos((prev) => prev.map((c) => (c.id === id ? { ...c, unread: 0, mention: false } : c)))
+    driverRef.current?.send({ kind: 'getCommunityOnlineMembers', id })
+  }, [])
   // Active, the panel shows its rail and the per-channel counts, so the sidebar's can go.
   const setChatActive = useCallback((active: boolean) => {
     chatActiveRef.current = active
@@ -1773,10 +2089,43 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       setNearbyUnread(0)
     } else {
       setConversations((prev) => prev.map((c) => (c.address === key ? { ...c, unread: 0 } : c)))
+      if (chatOpenRef.current) showCommunity(key)
       // with chat closed, opening it reads the tab
       if (chatOpenRef.current) driverRef.current?.send({ kind: 'dmHistory', address: key })
     }
-  }, [])
+  }, [showCommunity])
+  const openCommunity = useCallback((community: CommunityChannel) => {
+    const key = communityChannel(community.id)
+    setCommunityClosed(community.id, false)
+    // right after joining, before the list has been re-read
+    setCommunityConvos((prev) => (prev.some((c) => c.id === community.id) ? prev : [communityConversation(community), ...prev]))
+    panelSetters.forEach((set) => set(false))
+    setChatOpen(true)
+    selectChannel(key)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [setCommunityClosed, selectChannel])
+  const closeCommunity = useCallback((id: string) => {
+    const key = communityChannel(id)
+    setCommunityClosed(id, true)
+    setCommunityConvos((prev) => prev.map((c) => (c.id === id ? { ...c, unread: 0, mention: false, members: null, state: null } : c)))
+    setDmLines((prev) => {
+      if (!(key in prev)) return prev
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+    if (channelRef.current === key) setChannel('Nearby')
+  }, [setCommunityClosed])
+  // The tabs shown, with the online count: not the local user, not anyone they blocked.
+  const communityConversations = useMemo(() => {
+    const blocked = new Set(friendsData.blocked.map((a) => a.toLowerCase()))
+    return communityConvos
+      .filter((c) => !closedCommunities.has(c.id))
+      .map((c) => {
+        const members = c.members?.filter((m) => m.address.toLowerCase() !== chatAccount && !blocked.has(m.address.toLowerCase())) ?? null
+        return { ...c, members, online: members?.length ?? 0 }
+      })
+  }, [communityConvos, closedCommunities, chatAccount, friendsData.blocked])
   const openConversation = useCallback((address: string) => {
     const key = channelKey(address)
     panelSetters.forEach((set) => set(false))
@@ -1866,6 +2215,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     [exclusive, ensure]
   )
   const toggleCommunities = useCallback(() => exclusive(setCommunitiesOpen, () => ensure('getCommunities')), [exclusive, ensure])
+  const fetchCommunity = useCallback((id: string) => {
+    // a failed fetch's message would otherwise outlive a later success
+    setCommunityError((prev) => (prev?.id === id ? null : prev))
+    driverRef.current?.send({ kind: 'getCommunity', id })
+  }, [])
   const toggleMap = useCallback(() => exclusive(setMapOpen, () => send('getMap')), [exclusive, send])
   // Places fetches its own HTTP data (no bridge), so opening needs no engine request.
   const togglePlaces = useCallback(() => exclusive(setPlacesOpen), [exclusive])
@@ -2639,12 +2993,15 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setAvatarColors(undefined)
     setNotifications([])
     setCommunities([])
+    setCommunityCards({})
     setFriendPending(new Set())
     setMutualFriends({})
     setMessages(initialMessages)
     setChannel('Nearby')
     openTabsRef.current.clear()
     setConversations([])
+    setCommunityConvos([])
+    setClosedCommunities(new Set())
     setDmLines({})
     setChatUnread(0)
     setNearbyUnread(0)
@@ -3255,6 +3612,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       openConversation,
       closeConversation,
       deleteHistory,
+      communities: communityConversations,
+      openCommunity,
+      closeCommunity,
       open: chatOpen,
       toggle: toggleChat,
       members,
@@ -3320,7 +3680,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
-    communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail },
+    communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },
