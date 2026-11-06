@@ -66,11 +66,16 @@ describe('when limiting offline visual evidence to configured page IDs', () => {
       /Unknown capture page ID/
     )
   })
-  it('should preserve the original frozen evidence values', () => {
+  it('should preserve the original frozen evidence values, signed by the capture they came from', () => {
     const evidence = { sourceId: '10:2', image: '/render.png', differentPixels: 4 }
-    assert.deepEqual(preserveFrozenCases([second], { cases: { 'Second-0': evidence } }), {
-      'Second-0': evidence
-    })
+    assert.deepEqual(
+      preserveFrozenCases([second], { signature: 'earlier', cases: { 'Second-0': evidence } }),
+      { 'Second-0': { ...evidence, signature: 'earlier' } }
+    )
+  })
+  it('should mark evidence from an unsigned report so that it can never match a signature', () => {
+    const kept = preserveFrozenCases([second], { cases: { 'Second-0': { sourceId: '10:2' } } })
+    assert.equal((kept['Second-0'] as { signature: string }).signature, 'unsigned')
   })
   for (const previous of [
     undefined,

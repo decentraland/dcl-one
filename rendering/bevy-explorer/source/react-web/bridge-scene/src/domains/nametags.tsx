@@ -113,15 +113,22 @@ const MSG_GAP = 2
 const MSG_TRUNCATE = 100
 const MENTION_BORDER = Color4.create(1, 45 / 255, 85 / 255, 1) // brand #ff2d55
 const TRANSLATED_ICON = 26 // beside a message the HUD translated
+// A community message's bubble names the community on a row ABOVE the name: 12px to the name's
+// 16px, white at 70%, upper-left, one line. The SDK's text has no ellipsis, so the name is cut
+// by length.
+const COMMUNITY_FONT = Math.round((FONT * 12) / 16)
+const COMMUNITY_COLOR = Color4.create(1, 1, 1, 0.7)
+const COMMUNITY_TRUNCATE = 28
 
-type Bubble = { message: string; mention: boolean; ttl: number; messageId: string; translated: boolean }
+type Bubble = { message: string; mention: boolean; ttl: number; messageId: string; translated: boolean; community?: string }
 const bubbles = new Map<string, Bubble>() // lowercased address → its live bubble
 
-/** Show (or refresh) a player's chat bubble. Called by the chat domain for each incoming message. */
-export function setChatBubble(address: string, message: string, mention: boolean, messageId: string): void {
+/** Show (or refresh) a player's chat bubble. Called by the chat domain for each incoming message;
+ *  `community` names the community a community message was said in. */
+export function setChatBubble(address: string, message: string, mention: boolean, messageId: string, community?: string): void {
   const text = message.trim()
   if (address === '' || text === '') return
-  bubbles.set(address.toLowerCase(), { message: text, mention, ttl: BUBBLE_TTL, messageId, translated: false })
+  bubbles.set(address.toLowerCase(), { message: text, mention, ttl: BUBBLE_TTL, messageId, translated: false, community })
 }
 
 /** Show a bubble's message in other words (its translation) and start its time again, if it is still
@@ -233,6 +240,12 @@ function tagElement(userId: string): () => ReactEcs.JSX.Element | null {
           }}
           uiBackground={{ color: PILL_BG }}
         >
+          {bubble?.community != null && (
+            <UiEntity
+              uiTransform={{ alignSelf: 'flex-start', maxWidth: BUBBLE_MAX_W }}
+              uiText={{ value: truncateMessage(bubble.community, COMMUNITY_TRUNCATE), fontSize: COMMUNITY_FONT, color: COMMUNITY_COLOR, textAlign: 'top-left' }}
+            />
+          )}
           <UiEntity uiTransform={{ flexDirection: 'row', alignItems: 'center' }}>
             <UiEntity uiText={{ value, fontSize: FONT, color: nameColor(userId, name, isClaimed), textAlign: 'middle-center' }} />
             {isClaimed && (

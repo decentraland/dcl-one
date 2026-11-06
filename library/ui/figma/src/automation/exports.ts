@@ -4,6 +4,7 @@ import { imageDataProblem, pngProblem, svgProblem } from '../capture/ingest-chun
 
 const HOSTS = ['.figma.com', '.amazonaws.com', '.figmausercontent.com']
 
+// Signed export URLs: https on a Figma or export-storage host only, no redirects, bounded size.
 async function download(client: FigmaClient, address: string, label: string): Promise<Buffer> {
   const url = new URL(address)
   if (url.protocol !== 'https:' || !HOSTS.some((suffix) => url.hostname.endsWith(suffix)))
@@ -92,4 +93,4 @@ async function exportNodes(
   }
   return result
 }
-export { exportImageFills, exportNodes, imageType }
+export { download, exportImageFills, exportNodes, imageType }

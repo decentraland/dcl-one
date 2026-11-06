@@ -11,6 +11,7 @@
     "allowImportingTsExtensions": true,
     "types": ["vite/client", "node"]
   },
-  "include": ["src/play"],
+  // The play HUD reuses the web Shop's data and payment modules, which read ui3's window globals.
+  "include": ["src/play", "src/overlay/dcl-globals.d.ts"],
   "exclude": []
 }

@@ -549,7 +549,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             crate::index::market_settings(&config, &self_hosts)?,
         )
         .with_eip1654(eip1654.clone())
-        .with_read_through(read_through.clone()),
+        .with_read_through(read_through.clone())
+        .with_denylist(storage.denylist().clone()),
     );
     market.spawn_api_jobs(&jobs);
 
@@ -605,6 +606,24 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .await
         .context("loading content.denylist")?;
     content.spawn_jobs(&jobs);
+    // The remote moderation lists (DENYLIST_URLS; Decentraland's on a
+    // mirror), fetched once before the routes serve and every 120 s after,
+    // into the same projection; a failed fetch is logged, never fatal.
+    let denylist_urls = config.content.denylist_urls()?;
+    if !denylist_urls.is_empty() {
+        let (remote, errors) = content
+            .reload_remote_denylist(&http_client, &denylist_urls)
+            .await;
+        for error in &errors {
+            tracing::warn!(%error, "remote denylist fetch failed at boot");
+        }
+        tracing::info!(
+            urls = denylist_urls.len(),
+            remote,
+            "remote denylists loaded"
+        );
+    }
+    content.spawn_remote_denylist(&jobs, http_client.clone(), denylist_urls);
     if config.writes.content_writes_enabled {
         tracing::warn!(
             denylisted,
@@ -933,17 +952,23 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         },
         eip1654.clone(),
     ));
-    let mana = Arc::new(shop::mana::State::new(
-        pool.clone(),
-        http_client.clone(),
-        market.clone(),
-        signatures.clone(),
-        shop::mana::Settings {
-            writes_enabled: config.writes.data_writes_enabled,
-            track_interval: Duration::from_secs(config.marketplace.marketplace_index_interval_secs),
-        },
-        eip1654.clone(),
-    ));
+    let mana = Arc::new(
+        shop::mana::State::new(
+            pool.clone(),
+            http_client.clone(),
+            market.clone(),
+            signatures.clone(),
+            shop::mana::Settings {
+                writes_enabled: config.writes.data_writes_enabled,
+                track_interval: Duration::from_secs(
+                    config.marketplace.marketplace_index_interval_secs,
+                ),
+                collections_chain_id: config.economy.collections_chain_id,
+            },
+            eip1654.clone(),
+        )
+        .context("the Shop's MANA settlement venues")?,
+    );
     shop::mana::spawn_jobs(&mana, &jobs);
     let social = social_states(
         &config,

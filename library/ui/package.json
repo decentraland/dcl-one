@@ -21,7 +21,7 @@
     "figma:mcp": "cd figma && tsx src/server.ts",
     "key-guard": "node figma/key-guard.mjs",
     "figma:freeze-snapshot": "node figma/scripts/freeze-test-snapshot.mjs",
-    "review": "vite --config figma/review/review.vite.config.ts --host 0.0.0.0 --port 6019 --strictPort",
+    "review": "vite --config figma/review/review.vite.config.ts --port 6019 --strictPort",
     "review:build": "vite build --config figma/review/review.vite.config.ts",
     "review:capture": "node figma/review/scripts/capture-review.mjs",
     "review:check": "node figma/review/scripts/check-review.mjs"

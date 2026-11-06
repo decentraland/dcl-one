@@ -28,8 +28,22 @@ function preserveFrozenCases(frozen, previous) {
       const evidence = previous?.cases?.[key]
       if (!evidence || evidence.sourceId !== variant.id)
         throw new Error(`Missing frozen visual evidence: ${key}`)
-      cases[key] = evidence
+      // A kept case carries the signature it was captured under (its own, or else the report it came from), so
+      // a partial capture cannot pass its old renders off under the signature of the new report. Evidence from a
+      // report that had no signature is marked so that it can never match one.
+      cases[key] = {
+        ...evidence,
+        signature: evidence.signature ?? previous.signature ?? 'unsigned'
+      }
     }
   return cases
 }
-export { captureScope, preserveFrozenCases }
+
+// The cases of a report that were not captured under `signature`. A freshly captured case has no signature of
+// its own and belongs to the report; a kept one names the capture it came from.
+function staleCases(report, signature) {
+  return Object.entries(report.cases)
+    .filter(([, evidence]) => (evidence.signature ?? report.signature) !== signature)
+    .map(([key]) => key)
+}
+export { captureScope, preserveFrozenCases, staleCases }

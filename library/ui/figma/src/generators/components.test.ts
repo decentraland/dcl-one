@@ -160,6 +160,31 @@ describe('generateComponents', () => {
   })
 })
 
+describe('generateComponents with a Figma name that holds a line terminator', () => {
+  it.each([
+    ['a line feed', '\n'],
+    ['a carriage return', '\r'],
+    ['a line separator', '\u2028'],
+    ['a paragraph separator', '\u2029']
+  ])('should keep %s inside the header comment instead of emitting code', async (_, terminator) => {
+    const specs = await componentSpecs()
+    const target = specs[0]!
+    target.figmaName = `Button${terminator}export const injected = 1`
+    target.page = `Page${terminator}globalThis.pwned = true`
+    const source = generateComponents(specs, context).files.find((file) =>
+      file.path.endsWith(`/${target.name}.tsx`)
+    )!.content
+
+    const lines = source.split(/\r\n|[\n\r\u2028\u2029]/)
+    expect(lines.some((line) => /^\s*(export const injected|globalThis\.pwned)/.test(line))).toBe(
+      false
+    )
+    expect(lines.filter((line) => line.startsWith('// Figma: '))).toEqual([
+      expect.stringContaining('Page globalThis.pwned = true / Button export const injected = 1')
+    ])
+  })
+})
+
 describe('generateComponents with opt-in semantics', () => {
   const boxes = (node: ViewNode): ViewNode[] => [
     ...(node.kind === 'box' && node.path.length > 0 ? [node] : []),

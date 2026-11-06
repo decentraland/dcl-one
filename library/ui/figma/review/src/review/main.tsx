@@ -19,6 +19,7 @@ import { Foundations } from './Foundations'
 import { ComparisonControls, PixelDifference } from './ComparisonControls'
 import { propertyOptions, selectVariant } from './selection'
 import { reviewStore, type CanvasMode, type FidelityReport } from './review.store'
+import { fidelityUrl, reviewPageUrl, reviewUrl } from './review-url'
 
 const query = new URLSearchParams(location.search)
 const audit = query.has('audit')
@@ -56,11 +57,13 @@ const background =
         ? '#3c3c3c'
         : '#1e1e1e'
 const href = (name: string, v?: number) =>
-  '/dcl-ui-review/?platform=' +
-  reviewStore.state.platform +
-  '&component=' +
-  encodeURIComponent(name) +
-  (v === undefined ? '' : '&variant=' + v)
+  reviewPageUrl(
+    'platform=' +
+      reviewStore.state.platform +
+      '&component=' +
+      encodeURIComponent(name) +
+      (v === undefined ? '' : '&variant=' + v)
+  )
 
 function Stage() {
   const comparison = useSelector(reviewStore, (value) => ({
@@ -96,7 +99,7 @@ function Stage() {
           {!audit && comparison.mode === 'overlay' && reference && (
             <img
               className={styles.overlay}
-              src={reference.file}
+              src={reviewUrl(reference.file)}
               width={reference.width}
               height={reference.height}
               style={{
@@ -184,7 +187,7 @@ function App() {
   const platform = useSelector(reviewStore, (value) => value.platform)
   useEffect(() => {
     if (!audit)
-      void fetch('/dcl-ui-review/fidelity.json')
+      void fetch(fidelityUrl())
         .then((response) => (response.ok ? (response.json() as Promise<FidelityReport>) : null))
         .then((fidelity) => {
           if (fidelity) reviewStore.setState((value) => ({ ...value, fidelity }))
@@ -274,7 +277,7 @@ function App() {
                   {mode === 'difference' && reference ? (
                     <PixelDifference
                       caseKey={selected.name + '-' + index}
-                      source={reference.file}
+                      source={reviewUrl(reference.file)}
                     />
                   ) : (
                     <Stage />
@@ -288,7 +291,7 @@ function App() {
                     {reference ? (
                       <div className={styles.source} style={{ background }}>
                         <img
-                          src={reference.file}
+                          src={reviewUrl(reference.file)}
                           width={reference.width}
                           height={reference.height}
                           alt={selected.name + ' original Figma variant'}

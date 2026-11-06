@@ -1,0 +1,31 @@
+# ADR: Web app server state
+
+- Status: Accepted
+- Date: 2026-11-04
+
+## Context
+
+Server data is read today without a shared standard. Code under `apps/` and `rendering/bevy-explorer/source/react-web` uses route loaders, direct `fetch` calls, TanStack Query and, in Shop, a custom module-level cache, and some pages create their own `QueryClient` when the code that mounts them provides none. The contributor guides still describe Redux Toolkit and RTK Query, which no app here uses. The standards need one answer for where server state lives, who owns the client, and how server-rendered data reaches the browser. The code that does each of these today is listed in the standards as evidence and as named exceptions.
+
+## Decision
+
+- **Location and scope.** The standards live in this repository's `docs/`: [web app architecture standards](../web-app-standards.md) and [frontend testing standards](../frontend-testing.md). They replace the state, data-fetching and UI-testing parts of the contributor guides. Like the [UI standards](../ui-standards.md#scope), they apply to every route, page and UI code in every current and future app under `apps/`, and to `rendering/bevy-explorer/source/react-web`. The apps the standards name are evidence of current practice, not an allowlist. A rule applies where the code has that concern. The Tauri shell `apps/creator-hub` has no code with these concerns today, so no rule is triggered, and its team implements them if that changes. Every team in scope is expected to follow the standards; migrations are progressive, and each team owns and runs its own.
+- **UI destination.** New and migrated UI goes to `library/ui` (`library/ui/components/` for shared UI, `library/ui/apps/<app>/` for app-specific UI) once `library/ui` is implemented and adopted by the app; until then, it goes in the app that owns the route, per the [UI standards](../ui-standards.md#shared-ui-libraryui). Pages, routes and data wiring always live in the app that owns the route. Importing a module from another app does not make it that app's code. These standards do not assign any feature or SPA to a host app: which app owns Shop, Creator Hub or any other route is decided by its owning team, and `apps/sites` hosting a route today is current practice, not a target. `apps/ui3` is not a destination: no new or migrated code goes there, apart from the Shop exception in the [standards' Scope](../web-app-standards.md#scope-and-relation-to-the-contributor-guides) and the `/play` HUD exception in the standards' [Exceptions and migration gates](../web-app-standards.md#exceptions-and-migration-gates). The rest of `apps/ui3` is frozen, with an urgent-fix route described in the standards' Scope.
+- **One cache for server state.** TanStack Query is the only cache for server state that UI code reads. Server-side memoization of public upstream responses is a separate category: it is allowed when keyed by every input that changes the response and when the service configuration it depends on is process-constant.
+- **One client per host.** Each host provides one `QueryClient`. Fallback clients are removed only through the migration gates in the standards.
+- **Server rendering handoff.** A route loader creates its own `QueryClient`, loads the route's data (`fetchQuery` for required data, `prefetchQuery` for optional data), awaits it, dehydrates only settled successful queries, discards the client and returns the dehydrated state. The page renders under `HydrationBoundary`. Client navigations are owned by the route's components on the browser client, through a `clientLoader` that does not call `serverLoader`.
+- **Client state.** Mechanism-neutral and following current practice: `useSyncExternalStore` stores and React state or context. The standards do not add zustand or another state library.
+
+## Alternatives considered
+
+- **Redux Toolkit and RTK Query:** used in other Decentraland repositories and described by the contributor guides. For the code this ADR covers, server state uses TanStack Query instead: no app in this repository uses Redux Toolkit or RTK Query today, and the guides' testing section also requires Jest and `redux-saga-test-plan`, which these apps do not run.
+- **zustand for client state:** used by other Decentraland repositories, but not by these apps, whose stores are small and already written with `useSyncExternalStore`. A library can be adopted later by a new decision.
+- **`initialData` handoff** (passing loader data to each hook as `initialData`): it also fills the shared cache, and shared key factories avoid duplicating keys. It was not chosen because it is per hook: it requires making loader data available where queries are initialized, `initialData` applies only when that query has no cache entry yet (staleness then depends on `initialDataUpdatedAt`), and there is no single place that excludes failed queries, as dehydrating the loader's client does by carrying only settled successful queries across the server and browser boundary as one value.
+- **A custom module-level cache** (the Shop cache today): a process-wide `Map` on the server is shared by interleaved requests, and it duplicates staleness, deduplication and invalidation that TanStack Query already provides.
+
+## Consequences
+
+- The mirrored contributor guides stay available for apps not yet migrated pending retirement; this change does not edit them.
+- The named exceptions, with their owners and exit criteria and no dates, are listed in the standards' [Exceptions and migration gates](../web-app-standards.md#exceptions-and-migration-gates).
+- Moving UI into `library/ui` is progressive and will change code and documents that live in `apps/` today; these standards set the direction, and the affected rules and exceptions are updated as each migration lands.
+- Automatic enforcement is planned for a later stage. Until then, and during migration, compliance is checked in code review against the standards.

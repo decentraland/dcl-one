@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useSelector } from '@tanstack/react-store'
 import { reviewStore, type ComparisonMode } from './review.store'
+import { reviewUrl } from './review-url'
 import styles from './ComparisonControls.module.css'
 
 function ComparisonControls({ caseKey }: { caseKey: string }) {
@@ -67,7 +68,7 @@ function PixelDifference({ caseKey, source }: { caseKey: string; source: string 
     const original = new Image()
     const actual = new Image()
     original.src = source
-    actual.src = result.image
+    actual.src = reviewUrl(result.image)
     void Promise.all([original.decode(), actual.decode()])
       .then(() => {
         if (!active || !canvas.current) return

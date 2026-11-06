@@ -133,6 +133,7 @@ const componentSpecSchema = z.object({
   tag: z.enum(['button', 'div']),
   props: z.array(propSpecSchema),
   slots: z.array(slotSpecSchema),
+  exposeTextSlots: z.boolean().optional(),
   views: z.array(viewSpecSchema),
   defaultKey: z.string(),
   needsManual: z.array(z.string()),

@@ -2,6 +2,7 @@ import data from './catalog.json'
 import { breakpoints, gradients } from '../generated/tokens/tokens'
 import { theme } from '../generated/tokens/theme'
 import textStyles from '../generated/tokens/text-styles.module.css'
+import { reviewUrl } from './review-url'
 import styles from './Foundations.module.css'
 
 const sections = [
@@ -261,7 +262,7 @@ function Foundations({ section }: { section: string }) {
               <div className={styles.icon} key={icon.nodeId} title={`Figma node ${icon.nodeId}`}>
                 <img
                   loading="lazy"
-                  src={icon.file}
+                  src={reviewUrl(icon.file)}
                   alt=""
                   width={Math.min(icon.width, 64)}
                   height={Math.min(icon.height, 64)}

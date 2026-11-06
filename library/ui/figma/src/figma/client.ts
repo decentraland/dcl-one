@@ -90,21 +90,27 @@ function codesOf(error: unknown): string {
 
 class DownloadLimitError extends Error {}
 
-async function readBytes(response: Response, limit?: number) {
+async function readBytes(response: Response, limit?: number, truncate = false) {
   if (!response.body) throw new Error('response has no body')
   const chunks: Uint8Array[] = []
   let size = 0
   for await (const chunk of response.body) {
+    if (limit !== undefined && chunk.length > limit - size) {
+      if (!truncate) throw new RangeError(`exceeds ${limit} bytes`)
+      chunks.push(Buffer.from(chunk.subarray(0, limit - size)))
+      break
+    }
     size += chunk.length
-    if (limit !== undefined && size > limit) throw new RangeError(`exceeds ${limit} bytes`)
     chunks.push(chunk)
+    if (truncate && size === limit) break
   }
   return Buffer.concat(chunks)
 }
 
 async function bodyExcerpt(response: Response): Promise<string> {
   try {
-    return (await response.text()).slice(0, 200)
+    // Breaking the stream at the byte budget cancels the unread error body, including retry responses.
+    return (await readBytes(response, 1024, true)).toString('utf8').slice(0, 200)
   } catch {
     return ''
   }
@@ -142,7 +148,8 @@ class FigmaClient {
 
   async get<T>(path: string, options: RequestOptions = {}): Promise<T> {
     return this.request<T>({
-      label: path,
+      // API paths embed the private file key; neither diagnostics nor errors carry it.
+      label: redactFileKey(path),
       url: `${FIGMA_API}${path}`,
       init: async () => ({ headers: { 'X-Figma-Token': await this.tokens.getToken() } }),
       read: async (response) => {
@@ -182,20 +189,28 @@ class FigmaClient {
       const started = this.now()
       const line = (outcome: string) =>
         this.log(
-          `[figma] GET ${attempt.label} attempt ${number}/${total} ${outcome} ${this.now() - started}ms`
+          redactFileKey(
+            `[figma] GET ${attempt.label} attempt ${number}/${total} ${outcome} ${this.now() - started}ms`
+          )
         )
       const canRetry = retry < MAX_RETRIES
       const reason = attempt.sanitize ? codesOf : causeOf
       // A non-retryable error from fetch or the body; for a signed URL it is replaced, never passed on.
       const fatal = (error: unknown) => {
-        if (!attempt.sanitize || error instanceof DownloadLimitError) return error
+        if (error instanceof DownloadLimitError) return error
+        if (!attempt.sanitize)
+          return error instanceof Error && redactFileKey(error.message) !== error.message
+            ? new Error(redactFileKey(error.message))
+            : error
         return new Error(`Request failed on ${attempt.label}: ${codesOf(error)}`)
       }
       const transient = async (cause: unknown, outcome: string) => {
         line(outcome)
         if (!canRetry)
           throw new Error(
-            `Figma request failed after ${total} attempts on ${attempt.label}: ${reason(cause)}`,
+            redactFileKey(
+              `Figma request failed after ${total} attempts on ${attempt.label}: ${reason(cause)}`
+            ),
             attempt.sanitize ? undefined : { cause }
           )
         await this.sleep(2000 * 2 ** retry)

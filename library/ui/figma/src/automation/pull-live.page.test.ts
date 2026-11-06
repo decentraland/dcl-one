@@ -11,6 +11,7 @@ import { writeReviewManifest } from '../review-manifest.js'
 import type { LiveFile, LiveNode } from './live-file.js'
 import { decodePng } from '../capture/png-decode.js'
 import { pullLive } from './pull-live.js'
+import { encodePageFileName } from '../capture/page-file-name.js'
 
 // A successful `pull-live --page --apply` over a real (frozen) capture and a real generated Review:
 // the selected page is refreshed, every unselected page keeps its capture, readiness, baseline entry and
@@ -96,7 +97,10 @@ type SavedSet = {
 }
 const savedSets = (
   JSON.parse(
-    readFileSync(path.join(fixtures, 'figma-snapshot/components', `${SELECTED.name}.json`), 'utf8')
+    readFileSync(
+      path.join(fixtures, 'figma-snapshot/components', encodePageFileName(SELECTED.name)),
+      'utf8'
+    )
   ) as { components: SavedSet[] }
 ).components.map((set): LiveNode => ({
   id: set.id,
@@ -277,7 +281,7 @@ describe('when one page is refreshed with --page --apply', () => {
 
   it('should refresh the selected capture and baseline entry', async () => {
     const page = await json(
-      path.join(directory, 'figma-snapshot/components', `${SELECTED.name}.json`)
+      path.join(directory, 'figma-snapshot/components', encodePageFileName(SELECTED.name))
     )
     const baseline = await json(path.join(directory, 'figma-snapshot/live-source.json'))
 
@@ -305,7 +309,7 @@ describe('when one page is refreshed with --page --apply', () => {
     for (const file of Object.keys(before).filter(
       (file) =>
         file.startsWith('figma-snapshot/components/') &&
-        file !== `figma-snapshot/components/${SELECTED.name}.json`
+        file !== `figma-snapshot/components/${encodePageFileName(SELECTED.name)}`
     ))
       expect(after[file]).toBe(before[file])
     for (const component of catalog.components as {
@@ -340,11 +344,11 @@ describe('when one page is refreshed with --page --apply', () => {
       }
     ]
 
-    expect(changed).toContain(`figma-snapshot/components/${SELECTED.name}.json`)
+    expect(changed).toContain(`figma-snapshot/components/${encodePageFileName(SELECTED.name)}`)
     expect(
       changed.filter(
         (file) =>
-          file !== `figma-snapshot/components/${SELECTED.name}.json` &&
+          file !== `figma-snapshot/components/${encodePageFileName(SELECTED.name)}` &&
           !SHARED_REWRITES.some((pattern) => pattern.test(file))
       )
     ).toEqual([])

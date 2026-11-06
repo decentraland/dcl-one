@@ -4,6 +4,66 @@ import type { ColorResolver } from './colors.js'
 import { buildView, graftAddedLayers, stateRules, type ViewEnv } from './views.js'
 
 describe('buildView', () => {
+  describe('when an auto-layout list clips HUG rows', () => {
+    const testEnv: ViewEnv = {
+      colors: { resolve: () => ({ css: '#000000' }) } as unknown as ColorResolver,
+      textStyles: new Map(),
+      textStyleAliases: {},
+      numbers: { space: new Map(), radius: new Map() },
+      icons: new Map(),
+      iconAliases: {},
+      refsById: new Map(),
+      report: { notes: new Set(), manual: new Set() }
+    }
+    const buildList = (verticalSizing: 'HUG' | 'FILL' = 'HUG') =>
+      buildView(
+        {
+          type: 'COMPONENT',
+          w: 380,
+          h: 570,
+          children: [
+            {
+              type: 'FRAME',
+              w: 380,
+              h: 570,
+              clipsContent: true,
+              layout: {
+                mode: 'VERTICAL',
+                pad: [0, 0, 0, 0],
+                gap: 8,
+                main: 'MIN',
+                cross: 'CENTER',
+                wrap: false
+              },
+              children: [
+                {
+                  type: 'INSTANCE',
+                  w: 380,
+                  h: 102,
+                  sizing: ['FILL', verticalSizing]
+                }
+              ]
+            }
+          ]
+        } as RawNode,
+        testEnv
+      )
+
+    it('should prevent captured HUG rows from shrinking in the clipped list', () => {
+      const list = buildList().children![0]!
+      const row = list.children![0]!
+
+      expect(row.css.decls).toContainEqual(['flex-shrink', '0'])
+    })
+
+    it('should keep FILL rows flexible within the available space', () => {
+      const row = buildList('FILL').children![0]!.children![0]!
+
+      expect(row.css.decls).toContainEqual(['flex', '1 1 0'])
+      expect(row.css.decls).not.toContainEqual(['flex-shrink', '0'])
+    })
+  })
+
   describe('when a node has multiple fills', () => {
     let env: ViewEnv
     let root: RawNode
@@ -396,6 +456,45 @@ describe('buildView', () => {
       })
     })
 
+    describe('and radial gradient paints have their own opacity', () => {
+      beforeEach(() => {
+        root.fills = [
+          {
+            type: 'GRADIENT_RADIAL',
+            opacity: 0.5,
+            transform: [
+              [1, 0, 0],
+              [0, 1, 0]
+            ],
+            stops: [{ position: 0, hex: '#ff4bed', alpha: 0.42 }]
+          }
+        ]
+      })
+
+      it('should multiply SVG stop alpha by the paint opacity', () => {
+        expect(
+          buildView(root, env)
+            .css.decls.find(([key]) => key === 'background')![1]
+            .replace(/url\("data:image\/svg\+xml,([^"]+)"\)/g, (_, body: string) =>
+              decodeURIComponent(body)
+            )
+        ).toContain('stop-opacity="0.21"')
+      })
+
+      describe('and the captured transform is absent', () => {
+        beforeEach(() => {
+          ;(root.fills as Exclude<RawNode['fills'], string | undefined>)[0]!.transform = undefined
+        })
+
+        it('should preserve paint opacity in the fallback gradient', () => {
+          expect(buildView(root, env).css.decls).toContainEqual([
+            'background',
+            'linear-gradient(180deg, rgba(#ff4bed, 0.21) 0%)'
+          ])
+        })
+      })
+    })
+
     it('should render every paint as a layered background over the base fill', () => {
       const view = buildView(root, env)
 
@@ -421,6 +520,88 @@ describe('buildView', () => {
       expect(stateRules(result.rest, result.other, env.report, 'hover')).toContainEqual({
         path: [0],
         decls: [['display', 'none']]
+      })
+    })
+
+    describe('and a state reveals an added layer among captured siblings', () => {
+      let restRoot: RawNode
+      let stateRoot: RawNode
+
+      beforeEach(() => {
+        restRoot = {
+          type: 'FRAME',
+          w: 200,
+          h: 100,
+          children: [
+            { type: 'FRAME', name: 'Frame 1', w: 180, h: 25 },
+            { type: 'FRAME', name: 'Info', w: 100, h: 20 },
+            { type: 'FRAME', name: 'Buttons', w: 120, h: 32 }
+          ]
+        }
+        stateRoot = {
+          type: 'FRAME',
+          w: 200,
+          h: 100,
+          children: [
+            { type: 'TEXT', name: 'Title', text: 'Title', w: 180, h: 25 },
+            { type: 'FRAME', name: 'Info', w: 100, h: 20 },
+            { type: 'FRAME', name: 'Buttons', w: 120, h: 32 }
+          ]
+        }
+      })
+
+      it('should place the revealed title before its captured Info and Buttons siblings', () => {
+        const rest = buildView(restRoot, env)
+        const result = graftAddedLayers(rest, buildView(stateRoot, env))
+
+        expect(result.rest.children?.map((child) => child.name)).toEqual([
+          'Frame 1',
+          'Title',
+          'Info',
+          'Buttons'
+        ])
+      })
+    })
+
+    describe('and an existing state transition changes only paint', () => {
+      let restRoot: RawNode
+      let stateRoot: RawNode
+
+      beforeEach(() => {
+        restRoot = {
+          type: 'FRAME',
+          w: 120,
+          h: 40,
+          children: [
+            { type: 'FRAME', name: 'Label', w: 90, h: 20 },
+            { type: 'RECTANGLE', name: 'Icon', w: 20, h: 20 }
+          ]
+        }
+        stateRoot = {
+          type: 'FRAME',
+          w: 120,
+          h: 40,
+          children: [
+            { type: 'FRAME', name: 'Label', w: 90, h: 20 },
+            {
+              type: 'RECTANGLE',
+              name: 'Icon',
+              w: 20,
+              h: 20,
+              fills: [{ type: 'SOLID', hex: '#ff2d55' }]
+            }
+          ]
+        }
+      })
+
+      it('should keep the existing sibling order and paths', () => {
+        const rest = buildView(restRoot, env)
+        const result = graftAddedLayers(rest, buildView(stateRoot, env))
+
+        expect(result.rest.children?.map((child) => [child.name, child.path])).toEqual([
+          ['Label', [0]],
+          ['Icon', [1]]
+        ])
       })
     })
 

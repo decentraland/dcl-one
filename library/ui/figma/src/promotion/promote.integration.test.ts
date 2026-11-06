@@ -127,6 +127,7 @@ afterAll(async () => {
 
 describe('promoteReviewed over a hand-written component', () => {
   describe('when promotion.include names the synced component', () => {
+    // Promotes twice over a real Git-backed library tree, so it gets the setup budget, not the 5 s default.
     it('should replace only that hand-written directory and its exports, and be a no-op on a second run', async () => {
       const { root, app } = await library(['TabsBar'], 'TabsBar', 'Tabs')
       const tabs = await readFile(path.join(root, 'components/Tabs/Tabs.tsx'), 'utf8')
@@ -155,7 +156,7 @@ describe('promoteReviewed over a hand-written component', () => {
       const after = await libraryState(root)
       expect(await promoteReviewed(app)).toMatchObject({ changed: false })
       expect(await libraryState(root)).toEqual(after)
-    })
+    }, 120_000)
   })
 
   describe('when the synced component is pulled in only as a preview dependency', () => {

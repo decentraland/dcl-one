@@ -19,6 +19,7 @@ import {
 } from '../ir/schemas.js'
 import type { FigmaSource } from './types.js'
 import { readMaterialized } from '../lfs.js'
+import { encodePageFileName } from '../capture/page-file-name.js'
 
 const readText = async (file: string) => (await readMaterialized(file)).toString('utf8')
 
@@ -92,7 +93,7 @@ class SnapshotSource implements FigmaSource {
       }
     )
     const matches: RawComponentPage[] = []
-    const excluded = new Set(this.legacySnapshotNames.map((name) => `${name}.json`))
+    const excluded = new Set(this.legacySnapshotNames.map(encodePageFileName))
     for (const name of names.filter((name) => name.endsWith('.json') && !excluded.has(name))) {
       const data = await this.readJson(path.join('components', name), rawComponentPageSchema)
       if (data.page.id === pageId) matches.push(data)
@@ -114,7 +115,7 @@ class SnapshotSource implements FigmaSource {
   }
 
   async getComponentPage(pageName: string): Promise<RawComponentPage | undefined> {
-    const file = path.join('components', `${pageName}.json`)
+    const file = path.join('components', encodePageFileName(pageName))
     const raw = await readText(path.join(this.dir, file)).catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') return undefined
       throw error

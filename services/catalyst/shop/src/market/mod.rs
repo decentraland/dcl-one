@@ -156,6 +156,10 @@ pub struct Upstreams {
     /// `NFT_WORKER_BASE_URL`: the NFT ownership indexer the old lambdas asked
     /// for an owner's third-party holdings; unset, they are read from the chain.
     pub nft_worker_base_url: Option<String>,
+    /// `EXPLORER_ESCROW_GRANTS_ENABLED`: the explorer lists escrow grants.
+    pub explorer_escrow_grants_enabled: bool,
+    /// `LAMBDAS_CATALOG_EXTENSIONS_ENABLED`: the wearables catalogue's extended filters.
+    pub lambdas_catalog_extensions_enabled: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -180,6 +184,14 @@ pub struct Settings {
     pub third_party_registry_subgraph_url: Option<String>,
     /// `NFT_WORKER_BASE_URL`: the owner's third-party holdings (`third_party`).
     pub nft_worker_base_url: Option<String>,
+    /// `EXPLORER_ESCROW_GRANTS_ENABLED`: the explorer backpack's on-chain
+    /// items include this node's active escrow grants (`shop.usage_grants`);
+    /// off under the mirror posture, where lamb2 lists chain-owned tokens only.
+    pub explorer_escrow_grants: bool,
+    /// `LAMBDAS_CATALOG_EXTENSIONS_ENABLED`: `/lambdas/collections/wearables`
+    /// takes `collectionType`, `category`, `rarity`, `name`, `orderBy` and
+    /// `direction`; off under the mirror posture, where lamb2 ignores them.
+    pub lambdas_catalog_extensions: bool,
     /// `LAND_IMAGE_BASE_URL`: the map service `/lambdas/users/{a}/lands` points its images at.
     pub land_image_base_url: String,
     pub trades_sync_upstream_url: Option<String>,
@@ -378,6 +390,8 @@ impl Settings {
             })
             .transpose()?,
             nft_worker_base_url: checked("NFT_WORKER_BASE_URL", &upstreams.nft_worker_base_url)?,
+            explorer_escrow_grants: upstreams.explorer_escrow_grants_enabled,
+            lambdas_catalog_extensions: upstreams.lambdas_catalog_extensions_enabled,
             land_image_base_url: config.map_urls().land_image_base,
             trades_sync_upstream_url: checked(
                 "TRADES_SYNC_UPSTREAM_URL",
@@ -436,6 +450,8 @@ impl Settings {
             polygon_rpc_url: None,
             third_party_registry_subgraph_url: None,
             nft_worker_base_url: None,
+            explorer_escrow_grants: true,
+            lambdas_catalog_extensions: true,
             land_image_base_url: "https://api.decentraland.org".to_string(),
             trades_sync_upstream_url: None,
             trades_sync_interval: Duration::from_secs(900),
@@ -479,6 +495,10 @@ pub struct MarketplaceState {
     pub(crate) eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     /// `READ_THROUGH_ENABLED`: a profile this node does not hold is asked of the sync sources.
     pub(crate) read_through: Option<Arc<crate::content::read_through::ReadThrough>>,
+    /// The store's moderation projection (`content::Denylist`): every read of
+    /// active entities here leaves the listed ones out, as lamb2 reading the
+    /// content server's filtered `/entities/active` does.
+    pub(crate) denylist: Arc<crate::content::Denylist>,
     /// `/profile-images`, attached once the social states exist: the faces a
     /// response points at are warmed there.
     pub(crate) profile_images: std::sync::OnceLock<crate::social::profile_images::SharedState>,
@@ -515,6 +535,7 @@ impl MarketplaceState {
             explorer_cache: lambdas_explorer::explorer_cache(),
             eip1654: None,
             read_through: None,
+            denylist: Arc::default(),
             profile_images: std::sync::OnceLock::new(),
             settings,
         }
@@ -526,6 +547,13 @@ impl MarketplaceState {
         eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     ) -> Self {
         self.eip1654 = eip1654;
+        self
+    }
+
+    /// Attaches the store's denylist (`Storage::denylist`), which the active
+    /// entity reads honour; without it nothing is hidden.
+    pub fn with_denylist(mut self, denylist: Arc<crate::content::Denylist>) -> Self {
+        self.denylist = denylist;
         self
     }
 
@@ -617,13 +645,23 @@ impl MarketplaceState {
         self.rpc_url_for(net, net.chain_id())
     }
 
-    /// The endpoint the settlement venues of `chain_id` (1 or 137) are read
-    /// over. Their addresses are mainnet's, so off mainnet `ETH_RPC_URL`,
-    /// which serves `ETH_NETWORK`, does not stand in for chain 1.
+    /// The endpoint the settlement venues of `chain_id` (1, 137, or the
+    /// testnet book's 80002) are read over. Their addresses are mainnet's, so
+    /// off mainnet `ETH_RPC_URL`, which serves `ETH_NETWORK`, does not stand
+    /// in for chain 1. Amoy reads only its own `TRADE_RPC_URLS` entry: no
+    /// other chain's endpoint stands in for it.
     pub fn venue_rpc_url(&self, chain_id: u64) -> Option<String> {
         let net = match chain_id {
             1 => chain_walk::ChainNet::Ethereum,
             137 => chain_walk::ChainNet::Matic,
+            80002 => {
+                return self
+                    .settings
+                    .market
+                    .trade_rpc_urls
+                    .for_chain(80002)
+                    .map(str::to_string);
+            }
             _ => return None,
         };
         if self.settings.eth_network.trim() != "mainnet" {

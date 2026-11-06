@@ -158,7 +158,11 @@ function strokeLayoutInset(node: RawNode, env: ViewEnv): [number, number, number
 function paintCss(paint: RawPaint, env: ViewEnv): string {
   if (paint.type === 'SOLID') return solidCss(paint, env, 'fill') ?? 'transparent'
   if (paint.type.startsWith('GRADIENT') && paint.stops) {
-    const stops = paint.stops
+    const effectiveStops = paint.stops.map((stop) => ({
+      ...stop,
+      alpha: stop.alpha * (paint.opacity ?? 1)
+    }))
+    const stops = effectiveStops
       .map(
         (stop) =>
           `${env.colors.resolve({ hex: stop.hex, opacity: stop.alpha }).css} ${r2(stop.position * 100)}%`
@@ -176,7 +180,7 @@ function paintCss(paint: RawPaint, env: ViewEnv): string {
         const tag = paint.type === 'GRADIENT_LINEAR' ? 'linearGradient' : 'radialGradient'
         const points =
           tag === 'linearGradient' ? 'x1="0" y1="0.5" x2="1" y2="0.5"' : 'cx="0.5" cy="0.5" r="0.5"'
-        const svgStops = paint.stops
+        const svgStops = effectiveStops
           .map(
             (stop) =>
               `<stop offset="${stop.position}" stop-color="${stop.hex}" stop-opacity="${stop.alpha}"/>`
@@ -307,6 +311,8 @@ function sizingDecls(node: RawNode, parent: Parent, isRoot: boolean): [string, s
     if (sizing === 'FIXED') {
       decls.push([property, size])
       if (isMain) decls.push(['flex-shrink', '0'])
+    } else if (sizing === 'HUG' && isMain && node.type !== 'TEXT') {
+      decls.push(['flex-shrink', '0'])
     } else if (sizing === 'FILL') {
       if (isMain)
         decls.push(['flex', '1 1 0'], [property === 'width' ? 'min-width' : 'min-height', '0'])
@@ -322,9 +328,37 @@ const sharesParentWithAbsolute = (parent: Parent) =>
   !!parent?.node.layout &&
   (parent.node.children ?? []).some((child) => child.absolute && !child.hidden)
 
+// Figma's negative item spacing overlaps each in-flow child onto the previous one. CSS has no negative gap, so
+// every child after the first moves back by a negative main-axis margin, which also gives the hug size Figma
+// computes. Overlapping children paint in their captured layer order, later ones on top.
+function overlapDecls(node: RawNode, parent: Parent, env: ViewEnv): [string, string][] {
+  const layout = parent?.node.layout
+  if (!layout || layout.gap >= 0 || layout.wrap || node.absolute) return []
+  const flow = (parent.node.children ?? []).filter(
+    (child) => !child.absolute && !child.hidden && !child.isMask
+  )
+  const index = flow.indexOf(node)
+  if (index < 0)
+    throw new Error(`Overlapping child is not among its siblings: ${node.name ?? node.type}`)
+  const magnitude = lengthValue(-layout.gap, env.numbers.space)
+  const margin: [string, string][] =
+    index > 0
+      ? [
+          [
+            layout.mode === 'VERTICAL' ? 'margin-top' : 'margin-left',
+            magnitude.startsWith('var(') ? `calc(${magnitude} * -1)` : px(layout.gap)
+          ]
+        ]
+      : []
+  return [['position', 'relative'], ...margin]
+}
+
 function offsetDecls(node: RawNode, parent: Parent, env: ViewEnv): [string, string][] {
-  if (!parent?.positioned && !node.absolute)
+  if (!parent?.positioned && !node.absolute) {
+    const overlap = overlapDecls(node, parent, env)
+    if (overlap.length) return overlap
     return sharesParentWithAbsolute(parent) ? [['position', 'relative']] : []
+  }
   if (node.x !== undefined && node.y !== undefined) {
     return [
       ['position', 'absolute'],
@@ -365,7 +399,8 @@ function containerDecls(node: RawNode, env: ViewEnv): [string, string][] {
   if (node.clipsContent) decls.push(['overflow', 'hidden'])
   if (layout.wrap) decls.push(['flex-wrap', 'wrap'])
   if (layout.gap > 0) decls.push(['gap', lengthValue(layout.gap, env.numbers.space)])
-  else if (layout.gap < 0) env.report.notes.add('negative-gap-ignored')
+  // A negative gap overlaps the children through their margins (overlapDecls); wrapped rows stay unsupported.
+  else if (layout.gap < 0 && layout.wrap) env.report.notes.add('negative-gap-ignored')
   const inset = strokeLayoutInset(node, env)
   const [top = 0, right = 0, bottom = 0, left = 0] = layout.pad.map(
     (value, side) => value + (inset[side] ?? 0)
@@ -460,6 +495,11 @@ type BuildState = { text: number; icon: number }
 
 function positionDecls(node: RawNode, parent: Parent, env: ViewEnv): [string, string][] {
   const decls = offsetDecls(node, parent, env)
+  if (parent?.node.layout && parent.node.layout.gap < 0 && !parent.node.layout.wrap) {
+    const layers = (parent.node.children ?? []).filter((child) => !child.hidden && !child.isMask)
+    const index = layers.indexOf(node)
+    if (index >= 0) decls.push(['z-index', String(index + 1)])
+  }
   if (!node.flip?.some(Boolean)) return decls
   const translation = decls.find(([key]) => key === 'transform')?.[1]
   return [
@@ -501,11 +541,18 @@ function withRing(decls: [string, string][], node: RawNode, env: ViewEnv): CssBl
   return { decls: [...merged.entries()], after }
 }
 
-function leafBoxCss(node: RawNode, parent: Parent, env: ViewEnv, circle: boolean): CssBlock {
+// `source` is the captured node itself when `node` is a trimmed copy, so its place among its siblings is known.
+function leafBoxCss(
+  node: RawNode,
+  parent: Parent,
+  env: ViewEnv,
+  circle: boolean,
+  source: RawNode = node
+): CssBlock {
   const decls: [string, string][] = [
     ['box-sizing', 'border-box'],
     ...sizingDecls(node, parent, false),
-    ...positionDecls(node, parent, env)
+    ...positionDecls(source, parent, env)
   ]
   if (node.layout && !node.children?.length) {
     if (node.sizing?.[0] === 'HUG') decls.push(['width', px(node.w)])
@@ -604,7 +651,8 @@ function artworkNode(
     { ...node, ...paintedSize(node), fills: undefined, strokes: undefined, effects: undefined },
     parent,
     env,
-    false
+    false,
+    node
   )
   css.decls.push(['background', `${picture} center / contain no-repeat`])
   return { kind: 'box', path, name: node.name ?? 'artwork', css }
@@ -623,7 +671,8 @@ function glyphNode(
     { ...node, fills: undefined, strokes: undefined, effects: undefined },
     parent,
     env,
-    false
+    false,
+    node
   )
   css.decls.push(
     ['border', `1px dashed ${(tint && solidCss(tint, env, 'tint')) || 'currentColor'}`],
@@ -650,7 +699,8 @@ function instanceNode(
     { ...node, fills: undefined, strokes: undefined, effects: undefined },
     parent,
     env,
-    false
+    false,
+    node
   )
   // A set whose variants are different glyphs (ContextualMenuIcons) is aliased per variant: `Set#Property=Value`.
   const iconName =
@@ -691,6 +741,21 @@ function instanceNode(
   return glyphNode(node, path, parent, env, `unresolved-instance:${component}`)
 }
 
+const LINE_TOLERANCE = 0.1
+
+// How many lines a text node holds, read from its geometry: a hugging height is a whole number of its captured
+// line height. Whole-line geometry remains meaningful in a fixed-height box too. A height between whole
+// lines remains ambiguous.
+function capturedLines(node: RawNode, lineHeight: number): number | 'ambiguous' {
+  const ratio = node.h / lineHeight
+  const lines = Math.round(ratio)
+  const whole = lines >= 1 && Math.abs(ratio - lines) <= LINE_TOLERANCE
+  if (whole) return lines
+  if (node.sizing?.[1] === 'FIXED') return 'ambiguous'
+  if (ratio < 1.5) return 1
+  return whole ? lines : 'ambiguous'
+}
+
 function buildNode(
   node: RawNode,
   path: number[],
@@ -707,8 +772,29 @@ function buildNode(
     const lineHeight = style
       ? (style.fontSize * style.lineHeightPercent) / 100
       : (node.fontSize ?? 16) * 1.2
+    // The node's own line height is what Figma lays the text out with; the style's only stands in for it.
+    const capturedLineHeight =
+      node.lineHeight?.unit === 'PIXELS'
+        ? node.lineHeight.value
+        : node.lineHeight?.unit === 'PERCENT' && node.lineHeight.value !== undefined
+          ? ((node.fontSize ?? style?.fontSize ?? 16) * node.lineHeight.value) / 100
+          : undefined
+    const widthBound = node.sizing?.[0] !== undefined && node.sizing[0] !== 'HUG'
+    const styleWraps = widthBound && node.h > lineHeight * 1.5
+    const geometryLines = capturedLineHeight ? capturedLines(node, capturedLineHeight) : undefined
+    if (widthBound && geometryLines === 'ambiguous') {
+      const label = node.name ?? path.join('.')
+      env.report.notes.add(`text-wrap-ambiguous:${label}`)
+      env.report.manual.add(
+        `text-wrap-ambiguous:${label}: the height is not a whole number of captured lines, so it stays on one line`
+      )
+    }
     const wraps =
-      node.sizing?.[0] !== undefined && node.sizing[0] !== 'HUG' && node.h > lineHeight * 1.5
+      geometryLines === 'ambiguous'
+        ? false
+        : typeof geometryLines === 'number'
+          ? widthBound && geometryLines >= 2
+          : styleWraps
     // Figma text nodes sometimes carry a line height that differs from the matched text style's, which
     // changes the height of hugging containers by a pixel or two; the measured node height is the truth.
     if (!node.lineHeight && node.text && !/[\n\u2028\u2029]/.test(node.text)) {
@@ -870,18 +956,22 @@ function flatten(
   prefix = '',
   into = new Map<string, ViewNode>()
 ): Map<string, ViewNode> {
-  const seen = new Map<string, number>()
   const walk = (current: ViewNode, trail: string) => {
     into.set(trail, current)
-    for (const child of current.children ?? []) {
-      const base = `${trail}/${encodeURIComponent(child.name)}`
-      const count = seen.get(base) ?? 0
-      seen.set(base, count + 1)
-      walk(child, count === 0 ? base : `${base}#${count}`)
-    }
+    for (const [key, child] of keyedChildren(trail, current.children ?? [])) walk(child, key)
   }
   walk(node, prefix)
   return into
+}
+
+function keyedChildren(parentKey: string, children: readonly ViewNode[]): [string, ViewNode][] {
+  const seen = new Map<string, number>()
+  return children.map((child) => {
+    const base = `${parentKey}/${encodeURIComponent(child.name)}`
+    const count = seen.get(base) ?? 0
+    seen.set(base, count + 1)
+    return [count === 0 ? base : `${base}#${count}`, child]
+  })
 }
 
 const RESET: Record<string, string> = {
@@ -1017,7 +1107,8 @@ function graftAddedLayers(
       setDecl(node, 'display', node.kind === 'box' ? 'block' : 'inline')
     if (restIndex.has(key) || grafted.some((prefix) => key.startsWith(`${prefix}/`))) continue
     const cut = key.lastIndexOf('/')
-    const parent = cut < 0 ? undefined : restIndex.get(key.slice(0, cut))
+    const parentKey = cut < 0 ? '' : key.slice(0, cut)
+    const parent = cut < 0 ? undefined : restIndex.get(parentKey)
     if (!parent) continue
     const used = (parent.children ?? []).map((child) => child.path[child.path.length - 1] ?? 0)
     const slot = Math.max(GRAFT_BASE - 1, ...used) + 1
@@ -1030,7 +1121,38 @@ function graftAddedLayers(
     }
     renumber(copy, [...parent.path, slot])
     setDecl(copy, 'display', 'none')
-    parent.children = [...(parent.children ?? []), copy]
+    const siblings = parent.children ?? []
+    const targetParent = target.get(parentKey)
+    const targetEntries = keyedChildren(parentKey, targetParent?.children ?? [])
+    const targetPosition = targetEntries.findIndex(([targetKey]) => targetKey === key)
+    const currentEntries = keyedChildren(parentKey, siblings)
+    let insertAt = -1
+    for (let index = targetPosition + 1; index < targetEntries.length; index++) {
+      const [targetKey, targetSibling] = targetEntries[index]!
+      const baseSibling = currentEntries.find(
+        ([currentKey, currentSibling]) =>
+          currentKey === targetKey && currentSibling.kind === targetSibling.kind
+      )?.[1]
+      if (baseSibling) {
+        insertAt = siblings.indexOf(baseSibling)
+        break
+      }
+    }
+    if (insertAt < 0) {
+      for (let index = targetPosition - 1; index >= 0; index--) {
+        const [targetKey, targetSibling] = targetEntries[index]!
+        const baseSibling = currentEntries.find(
+          ([currentKey, currentSibling]) =>
+            currentKey === targetKey && currentSibling.kind === targetSibling.kind
+        )?.[1]
+        if (baseSibling) {
+          insertAt = siblings.indexOf(baseSibling) + 1
+          break
+        }
+      }
+    }
+    if (insertAt < 0) insertAt = siblings.length
+    parent.children = [...siblings.slice(0, insertAt), copy, ...siblings.slice(insertAt)]
     grafted.push(key)
   }
   persistRings(restClone, otherClone)

@@ -7,8 +7,6 @@ import { FigmaView, registerComponent, type ForcedState, type ViewNode } from '.
 import type { MatrixCase } from '../../../components/StateMatrix'
 
 export type NavProfileButtonProps = {
-  variant?: 'desktop' | 'desktopAlt' | 'mobile'
-  state?: 'open' | 'closed' | 'default'
   label?: ReactNode
   label2?: ReactNode
   label3?: ReactNode
@@ -21,7 +19,12 @@ export type NavProfileButtonProps = {
   label10?: ReactNode
   label11?: ReactNode
   forceState?: ForcedState
-} & Omit<HTMLAttributes<HTMLElement>, 'children'>
+} & (
+  | { variant?: "desktop"; state?: "default" }
+  | { variant: "desktopAlt"; state?: "default" }
+  | { variant: "mobile"; state: "open" }
+  | { variant: "mobile"; state: "closed" }
+) & Omit<HTMLAttributes<HTMLElement>, 'children'>
 
 export const navProfileButtonViews: Record<string, ViewNode> = {
   'variant:desktop|state:default': {

@@ -5,6 +5,7 @@ import os from 'node:os'
 import { createApp } from '../app.js'
 import { SnapshotSource } from './snapshot-source.js'
 import { snapshotSource } from '../../test/snapshot.js'
+import { encodePageFileName } from '../capture/page-file-name.js'
 
 describe('SnapshotSource', () => {
   describe('when reading the committed snapshot', () => {
@@ -81,7 +82,7 @@ describe('when a canonical snapshot is missing', () => {
   const legacy = 'Bars: Nav bar - Tabs bar - Footer'
   const save = async (name: string, pageId = id) =>
     writeFile(
-      path.join(root, 'components', `${name}.json`),
+      path.join(root, 'components', encodePageFileName(name)),
       JSON.stringify({
         page: { id: pageId, name },
         components: []

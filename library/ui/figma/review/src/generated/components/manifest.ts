@@ -203,9 +203,7 @@ export const componentManifest: ComponentManifestEntry[] = [
     ],
     "views": 12,
     "needsManual": [],
-    "notes": [
-      "negative-gap-ignored"
-    ]
+    "notes": []
   },
   {
     "name": "SearchResultItem",
@@ -288,7 +286,6 @@ export const componentManifest: ComponentManifestEntry[] = [
     "views": 25,
     "needsManual": [],
     "notes": [
-      "negative-gap-ignored",
       "state-reveals-layers:layout:below|product:explorer|state:default|access:noAccess|size:lg|viewport:desktop:hover: /Info/Actions, /Info/CTA",
       "state-reveals-layers:layout:below|product:explorer|state:default|access:password|size:lg|viewport:desktop:hover: /Info/Actions, /Info/CTA",
       "state-reveals-layers:layout:below|product:explorer|state:default|access:private|size:lg|viewport:desktop:hover: /Info/Actions, /Info/CTA",
@@ -733,9 +730,7 @@ export const componentManifest: ComponentManifestEntry[] = [
     ],
     "views": 5,
     "needsManual": [],
-    "notes": [
-      "negative-gap-ignored"
-    ]
+    "notes": []
   },
   {
     "name": "ShopFilters",
@@ -752,8 +747,6 @@ export const componentManifest: ComponentManifestEntry[] = [
     "needsManual": [
       "slot-property: Figma slots have no generated equivalent"
     ],
-    "notes": [
-      "negative-gap-ignored"
-    ]
+    "notes": []
   }
 ]

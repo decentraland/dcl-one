@@ -1,3 +1,4 @@
+import { assertIdentifier } from '../generators/naming.js'
 import { expandVariants } from '../capture/expand-variants.js'
 import type { FigmaConfig } from '../config.js'
 import { TokenIndex } from '../generators/tokens.js'
@@ -40,9 +41,9 @@ const capitalize = (word: string) => word.charAt(0).toUpperCase() + word.slice(1
 
 function componentName(raw: RawComponent, config: FigmaConfig): string {
   const configured = config.componentNames[raw.name]
-  if (configured) return configured
+  if (configured) return assertIdentifier(configured)
   if (/^[A-Z][A-Za-z0-9]*$/.test(raw.name)) return raw.name
-  return splitWords(raw.name).map(capitalize).join('')
+  return assertIdentifier(splitWords(raw.name).map(capitalize).join(''))
 }
 
 function numberTokens(collections: TokenCollection[]): NumberTokens {
@@ -301,6 +302,8 @@ function buildComponentSpecsWithCollisions(input: SpecInput): {
   }
   const specs = pending.map((entry) => {
     const spec = buildSpec(entry, env)
+    const exposeTextSlots = input.config.components[entry.raw.name]?.exposeTextSlots
+    if (exposeTextSlots !== undefined) spec.exposeTextSlots = exposeTextSlots
     const semantics = input.config.components[entry.raw.name]?.semantics
     if (!semantics) return spec
     const names = new Set<string>()

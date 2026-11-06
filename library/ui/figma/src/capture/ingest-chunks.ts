@@ -9,6 +9,7 @@ import {
   type RawNode
 } from '../ir/raw-components.js'
 import { stripFileKey } from './strip-file-key.js'
+import { encodePageFileName } from './page-file-name.js'
 
 type PageChunk = {
   page: { id: string; name: string }
@@ -119,10 +120,6 @@ function groupByPage(chunks: CaptureChunk[]): Map<string, PageChunk[]> {
   return grouped
 }
 
-function fileName(pageName: string): string {
-  return `${pageName.replace(/[\\/]/g, '-')}.json`
-}
-
 async function readExisting(file: string): Promise<RawComponentPage | undefined> {
   const raw = await readFile(file, 'utf8').catch(() => undefined)
   return raw === undefined ? undefined : rawComponentPageSchema.parse(JSON.parse(raw))
@@ -206,7 +203,7 @@ async function ingestChunks(snapshotDir: string, chunks: CaptureChunk[]): Promis
   for (const entries of groupByPage(chunks).values()) {
     const [first] = entries
     if (!first) continue
-    const file = path.join(directory, fileName(first.page.name.trim()))
+    const file = path.join(directory, encodePageFileName(first.page.name.trim()))
     const existing = await findExisting(directory, first.page.id, file)
     const previous = new Map(
       (existing?.page.components ?? []).map((component) => [component.id, component])

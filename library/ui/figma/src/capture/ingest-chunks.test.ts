@@ -15,11 +15,14 @@ import {
   svgProblem,
   type CaptureChunk
 } from './ingest-chunks.js'
+import { encodePageFileName } from './page-file-name.js'
 
 type Artwork = { svg?: string; png?: string; sum?: string; children?: Artwork[] }
 
 const readPage = async (name: string) =>
-  JSON.parse(await readFile(path.join(snapshotDir, 'components', `${name}.json`), 'utf8')) as {
+  JSON.parse(
+    await readFile(path.join(snapshotDir, 'components', encodePageFileName(name)), 'utf8')
+  ) as {
     page: { id: string; name: string }
     components: Array<{ id: string; name: string; base: { tree: Artwork }; others: unknown[] }>
   }

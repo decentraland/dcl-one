@@ -524,7 +524,13 @@ async function componentsOf(pageId) {
       while (page.parent && page.type !== 'PAGE') page = page.parent
       const reason = page.type === 'PAGE' ? await syncStateOf(page) : 'missing-page'
       const target = node.parent && node.parent.type === 'COMPONENT_SET' ? node.parent : node
-      const exception = NOT_READY_EXCEPTIONS.some(item => item.pageId === page.id && item.componentId === target.id && typeof item.reason === 'string' && item.reason.trim())
+      const exception = NOT_READY_EXCEPTIONS.some(
+        (item) =>
+          item.pageId === page.id &&
+          item.componentId === target.id &&
+          typeof item.reason === 'string' &&
+          item.reason.trim()
+      )
       if (reason && !(reason === 'not-ready' && exception)) {
         skipped.push({ id, page: page.name, reason })
         continue
@@ -547,14 +553,17 @@ async function componentsOf(pageId) {
     }
   await figma.setCurrentPageAsync(page)
   const reason = await syncStateOf(page)
-  const exceptions = NOT_READY_EXCEPTIONS.filter(item => item.pageId === page.id && typeof item.reason === 'string' && item.reason.trim())
-  if (reason && !(reason === 'not-ready' && exceptions.length > 0)) return { page, found: [], skipped: [{ id: page.id, page: page.name.trim(), reason }] }
+  const exceptions = NOT_READY_EXCEPTIONS.filter(
+    (item) => item.pageId === page.id && typeof item.reason === 'string' && item.reason.trim()
+  )
+  if (reason && !(reason === 'not-ready' && exceptions.length > 0))
+    return { page, found: [], skipped: [{ id: page.id, page: page.name.trim(), reason }] }
   let found = page
     .findAllWithCriteria({ types: ['COMPONENT_SET', 'COMPONENT'] })
     .filter((n) => !nested(n))
   let external = false
   if (reason === 'not-ready') {
-    const selected = found.filter(node => exceptions.some(item => item.componentId === node.id))
+    const selected = found.filter((node) => exceptions.some((item) => item.componentId === node.id))
     return { page, found: selected, external, labels: false }
   }
   if (found.length === 0) {
@@ -644,7 +653,12 @@ outer: for (let pageIndex = START_PAGE; pageIndex < jobs.length; pageIndex++) {
     if (!resume) resume = { page: pageIndex, component: next }
     break outer
   }
-  if (VARIANT_LIMIT > 0) break
+  if (VARIANT_LIMIT > 0) {
+    // One part per run. A finished page hands over to the next page of the job, from its first component and
+    // first variant; only the last page ends the job with resume null.
+    if (pageIndex + 1 < jobs.length) resume = { page: pageIndex + 1, component: 0, variant: 0 }
+    break
+  }
   if (size > BUDGET && pageIndex + 1 < jobs.length) {
     resume = { page: pageIndex + 1, component: 0 }
     break outer

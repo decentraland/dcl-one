@@ -7,6 +7,7 @@ import { GENERATED, SNAPSHOT } from './guard/ownership.js'
 import { fixtureBytes } from './guard/lifecycle-fixture.js'
 import { projectRoot } from '../test/snapshot.js'
 import { initializeFixtureGit } from './guard/git-fixture.js'
+import { encodePageFileName } from './capture/page-file-name.js'
 
 // A throwaway repository: figma with a frozen snapshot, and the generated folder beside it.
 describe('runSync guard and retirements', () => {
@@ -299,7 +300,10 @@ describe('runSync guard and retirements', () => {
         page: string
       }
       const saved = JSON.parse(
-        await readFile(path.join(root, SNAPSHOT, `components/${entry.page}.json`), 'utf8')
+        await readFile(
+          path.join(root, SNAPSHOT, `components/${encodePageFileName(entry.page)}`),
+          'utf8'
+        )
       )
       await writeRetirements([`${GENERATED}/components/${entry.file}.tsx`], saved.page.id)
 
@@ -324,7 +328,10 @@ describe('runSync guard and retirements', () => {
         page: string
       }
       const saved = JSON.parse(
-        await readFile(path.join(root, SNAPSHOT, `components/${entry.page}.json`), 'utf8')
+        await readFile(
+          path.join(root, SNAPSHOT, `components/${encodePageFileName(entry.page)}`),
+          'utf8'
+        )
       )
       const owned = `${GENERATED}/components/${entry.file}.tsx`
       await writeRetirements([owned], saved.page.id)

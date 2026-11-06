@@ -20,6 +20,7 @@ pnpm figma diff              # generated Review output matches the capture (exit
 pnpm figma check-mappings    # every *.figma.ts matches the library and the capture
 pnpm figma promotion-verify  # the sealed promotion manifest still matches its reviewed inputs
 pnpm review                  # Review gallery on http://localhost:6019/dcl-ui-review/
+pnpm review:build --base <BASE>  # static Review; BASE is / (default), ./, or an absolute nested prefix
 ```
 
 ## The Figma file key is private

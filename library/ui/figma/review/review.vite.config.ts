@@ -1,7 +1,10 @@
 import path from 'node:path'
-import { copyFile, writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { defineConfig } from 'vite'
 import { reviewSignature } from './scripts/review-signature.mjs'
+
+let outDir = path.resolve(import.meta.dirname, 'review-dist')
+let relativeBase = false
 
 export default defineConfig({
   root: import.meta.dirname,
@@ -9,13 +12,19 @@ export default defineConfig({
     {
       name: 'review-source-signature',
       apply: 'build',
+      configResolved(config) {
+        outDir = path.resolve(config.root, config.build.outDir)
+        relativeBase = config.base === '' || config.base.startsWith('.')
+      },
       async closeBundle() {
-        await copyFile(
-          path.resolve(import.meta.dirname, 'review-dist/dcl-ui-review/index.html'),
-          path.resolve(import.meta.dirname, 'review-dist/index.html')
+        // The root entry sits one level above the generated page, so relative asset URLs move with it.
+        const page = await readFile(path.resolve(outDir, 'dcl-ui-review/index.html'), 'utf8')
+        await writeFile(
+          path.resolve(outDir, 'index.html'),
+          relativeBase ? page.replaceAll('"../dcl-ui-review/', '"./dcl-ui-review/') : page
         )
         await writeFile(
-          path.resolve(import.meta.dirname, 'review-dist/dcl-ui-review/source-signature.json'),
+          path.resolve(outDir, 'dcl-ui-review/source-signature.json'),
           JSON.stringify({ signature: await reviewSignature(import.meta.dirname) })
         )
       }
@@ -32,6 +41,10 @@ export default defineConfig({
       }
     }
   ],
+  server: {
+    host: '127.0.0.1',
+    fs: { strict: true, allow: [path.resolve(import.meta.dirname, '../..')] }
+  },
   resolve: {
     dedupe: ['react', 'react-dom']
   },
