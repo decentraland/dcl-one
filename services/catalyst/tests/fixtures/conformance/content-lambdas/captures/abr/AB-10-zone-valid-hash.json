@@ -1,0 +1,25 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://peer.decentraland.zone",
+  "request": {
+    "method": "GET",
+    "path": "/content/contents/bafkreigrzrkkewmttywttnvfjkirsk2cmeuawoazbwzbmntcqixutywx74",
+    "headers": {
+      "If-None-Match": "*"
+    },
+    "body": ""
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "98",
+      "cache-control": "public, max-age=31536000",
+      "vary": "accept-encoding"
+    },
+    "body": {
+      "error": "No content found with hash bafkreigrzrkkewmttywttnvfjkirsk2cmeuawoazbwzbmntcqixutywx74"
+    }
+  },
+  "note": "Answered by the application (it carries the application trace header). 404, not 304, for the same request that production answers 304: the zone result does not separate a denylisted hash from another one."
+}

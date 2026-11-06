@@ -1,0 +1,30 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/entities/status/0,0",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "content-length": "211"
+    },
+    "body": {
+      "entityId": "bafkreifjj7y4dqzyu5topcw3omj774dxa2obms6nmnccxb2fwp4pl25gxy",
+      "catalyst": "complete",
+      "complete": false,
+      "assetBundles": {
+        "mac": "pending",
+        "windows": "pending"
+      },
+      "lods": {
+        "mac": "pending",
+        "windows": "pending"
+      }
+    }
+  }
+}
