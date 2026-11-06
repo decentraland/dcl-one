@@ -27,6 +27,7 @@ import { requestDebugPanel } from '../debug/useDebugPanel'
 import { emitFriendEvent } from '../friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
 import { clearNotificationToasts, queueNotificationToasts } from '../notifications/NotificationToast'
+import { clearRewardPopups, queueRewardPopups } from '../rewards/RewardPopup'
 import { bootMode } from '../../lib/bootMode'
 import { notificationTimeMs } from '../../lib/notificationTime'
 import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
@@ -1514,8 +1515,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             const have = new Set(prev.map((n) => n.id))
             return [...fresh.filter((n) => !have.has(n.id)), ...prev].slice(0, NOTIFICATIONS_KEPT)
           })
-          // Newest first in the list; toasts play in arrival order.
-          queueNotificationToasts([...fresh].reverse())
+          // Newest first in the list; toasts and reward popups play in arrival order.
+          const arrived = [...fresh].reverse()
+          queueNotificationToasts(arrived)
+          // A popup, unlike the toasts, would still render with the HUD hidden (?hud=0).
+          if (!bootMode().hideHud) queueRewardPopups(arrived)
           break
         }
         case 'emotes':
@@ -3037,6 +3041,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setAvatarColors(undefined)
     setNotifications([])
     clearNotificationToasts()
+    clearRewardPopups()
     setCommunities([])
     setCommunityCards({})
     setFriendPending(new Set())

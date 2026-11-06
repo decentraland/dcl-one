@@ -43,8 +43,8 @@ export function ShopCard({
   onSelect: () => void
   onTryOn: () => void
   onOpenOnWeb: () => void
-  /** BUY: buys the item (the shell's purchase dialog), with the creator's name to show in it. */
-  onBuy: (creatorName: string, input: PressedWith) => void
+  /** BUY: buys the item (the shell's purchase dialog). */
+  onBuy: (input: PressedWith) => void
   /** Whether an emote can be tried on (InWorldShop's emoteTryOn). */
   emoteTryOn?: boolean
 }): React.JSX.Element {
@@ -82,7 +82,7 @@ export function ShopCard({
                 }
           }
           buyInWorld={buyableInWorld(price)}
-          onBuy={(input) => onBuy(creatorName, input)}
+          onBuy={onBuy}
           onView={webShopUrl(item) != null ? onOpenOnWeb : undefined}
         />
       }
@@ -90,17 +90,32 @@ export function ShopCard({
   )
 }
 
+/** A creator's name, from their profile (their short address without one). */
+export function CreatorName({ address }: { address: string }): React.JSX.Element {
+  const creator = useProfile(address)
+  return <>{creator?.name || shortAddr(address)}</>
+}
+
+/** An item's category glyph for a cart line (`category`: 'emote' or the wearable's). */
+export function categoryGlyph(category: string | undefined, size: number): React.ReactNode {
+  if (category === 'emote') return <MaskIcon src={emotesIcon} size={size} />
+  return category ? <CategoryIcon category={category} size={size} /> : undefined
+}
+
 export function SelectedItemPanel({
   item,
   onClose,
   onOpenOnWeb,
-  onBuy
+  onBuy,
+  onAddToCart
 }: {
   item: CatalogItem
   onClose: () => void
   onOpenOnWeb: () => void
-  /** BUY ITEM, with the creator's name to show in the purchase dialog. */
-  onBuy: (creatorName: string, input: PressedWith) => void
+  /** BUY ITEM. */
+  onBuy: (input: PressedWith) => void
+  /** ADD TO CART; absent while the cart can't take it (or nothing is bought here). */
+  onAddToCart?: () => void
 }): React.JSX.Element {
   const creator = useProfile(item.creator)
   const entity = useItemEntity(tryOnUrn(item))
@@ -120,7 +135,8 @@ export function SelectedItemPanel({
       hides={(entity.data?.hides ?? []).map((h) => ({ key: h, label: categoryName(h), icon: <CategoryIcon category={h} size={22} /> }))}
       onClose={onClose}
       onOpenOnWeb={webShopUrl(item) != null ? onOpenOnWeb : undefined}
-      onBuy={(input) => onBuy(creatorName, input)}
+      onBuy={onBuy}
+      onAddToCart={onAddToCart}
     />
   )
 }

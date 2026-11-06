@@ -1,0 +1,569 @@
+import * as readline from 'readline'
+import { randomBytes } from 'crypto'
+import { ChainId, Scene } from '@dcl/schemas'
+import { AuthChain } from '@dcl/crypto'
+import { Lifecycle } from '@well-known-components/interfaces'
+import { createCatalystClient, createContentClient, CatalystClient, ContentClient } from 'dcl-catalyst-client'
+import { getCatalystServersFromCache } from 'dcl-catalyst-client/dist/contracts-snapshots'
+import { hexToBytes } from 'eth-connect'
+import { ethSign } from '@dcl/crypto/dist/crypto'
+import { Authenticator } from '@dcl/crypto'
+
+import { CliComponents } from '../../components'
+import { IFile } from '../../logic/scene-validations'
+import { LinkerResponse } from '../../linker-dapp/routes'
+import { setRoutes } from '../../linker-dapp/routes'
+import { createWallet } from '../../logic/account'
+import { IFuture } from '../../logic/future'
+import { getEstateRegistry, getLandRegistry } from '../../logic/config'
+import { getObject } from '../../logic/coordinates'
+import { getPointers } from '../../logic/catalyst-requests'
+import { drainResponse, withDeadline } from '../../logic/fetch'
+import { CliError } from '../../logic/error'
+import { Router } from '@well-known-components/http-server'
+import { dAppOptions, runDapp } from '../../run-dapp'
+import { IDeploymentComponent } from './deployment'
+import { setDeployResourceRoutes } from './routes'
+
+/**
+ * Minimal undici-backed fetch component for the catalyst client. Replaces
+ * @well-known-components/fetch-component, which uses cross-fetch -> node-fetch v2
+ * and trips a gzip "Premature close" under keep-alive socket reuse on recent Node
+ * runtimes (nodejs/node#63989). Honors the `timeout`, `signal` and `abortController`
+ * options via an AbortController (until the headers arrive); `rejectHttpErrors` rejects
+ * non-2xx responses with an {@link HttpStatusError}. All other init fields (including
+ * `duplex` for streamed uploads) pass straight through to undici.fetch.
+ */
+export function createFetchComponent() {
+  return {
+    async fetch(url: string, init: CatalystFetchInit = {}): Promise<Response> {
+      const { timeout, signal, abortController, rejectHttpErrors, ...rest } = init
+      const externalSignals = [signal, abortController?.signal].filter((s): s is AbortSignal => !!s)
+      const controller = new AbortController()
+      const onExternalAbort = () => controller.abort()
+      for (const external of externalSignals) {
+        if (external.aborted) controller.abort()
+        external.addEventListener('abort', onExternalAbort, { once: true })
+      }
+      const timer = timeout ? setTimeout(() => controller.abort(), timeout) : undefined
+      try {
+        const response = await fetch(url, { ...rest, signal: controller.signal })
+        if (rejectHttpErrors && !response.ok) {
+          await drainResponse(response)
+          throw new HttpStatusError(response.status)
+        }
+        return response
+      } finally {
+        if (timer) clearTimeout(timer)
+        for (const external of externalSignals) external.removeEventListener('abort', onExternalAbort)
+      }
+    }
+  }
+}
+
+export type CatalystFetchInit = RequestInit & {
+  timeout?: number
+  abortController?: AbortController
+  rejectHttpErrors?: boolean
+}
+
+export class HttpStatusError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP ${status}`)
+  }
+}
+
+export async function getCatalyst(
+  chainId: ChainId = ChainId.ETHEREUM_MAINNET,
+  target?: string,
+  targetContent?: string
+): Promise<{ client: ContentClient; url: string }> {
+  if (target) {
+    const catalyst = createCatalystClient({
+      url: target.endsWith('/') ? target.slice(0, -1) : target,
+      fetcher: createFetchComponent(),
+      streamingUploads: true
+    })
+
+    const content = await catalyst.getContentClient()
+    const {
+      lambdas: { publicUrl }
+    } = await catalyst.fetchAbout()
+
+    return { client: content, url: publicUrl }
+  }
+
+  if (targetContent) {
+    return {
+      client: createContentClient({ url: targetContent, fetcher: createFetchComponent(), streamingUploads: true }),
+      url: targetContent
+    }
+  }
+
+  let catalystClient: CatalystClient
+
+  if (chainId === ChainId.ETHEREUM_SEPOLIA) {
+    catalystClient = createCatalystClient({
+      url: 'peer.decentraland.zone',
+      fetcher: createFetchComponent(),
+      streamingUploads: true
+    })
+  } else {
+    const catalysts = getCatalystServersFromCache('mainnet')
+
+    for (const catalyst of catalysts) {
+      try {
+        const client = createCatalystClient({
+          url: catalyst.address,
+          fetcher: createFetchComponent(),
+          streamingUploads: true
+        })
+        const about = await client.fetchAbout()
+        if (about.healthy) {
+          catalystClient = client
+          break
+        }
+      } catch (_) {
+        // Unreachable or invalid response — skip and try next catalyst
+        continue
+      }
+    }
+  }
+
+  return {
+    client: await catalystClient!.getContentClient(),
+    url: (await catalystClient!.fetchAbout()).lambdas.publicUrl
+  }
+}
+
+export function buildDeleteScenesFromWorldPayload(worldName: string): string {
+  const encodedName = encodeURIComponent(worldName)
+  const path = `/entities/${encodedName}`
+  const timestamp = String(Date.now())
+  const metadata = '{}'
+  return ['delete', path, timestamp, metadata].join(':').toLowerCase()
+}
+
+export async function deleteWorldScenes(
+  components: Pick<CliComponents, 'logger'>,
+  worldName: string,
+  deleteSignature: string,
+  targetContent?: string,
+  signal?: AbortSignal
+): Promise<Response> {
+  const { logger } = components
+
+  const encodedName = encodeURIComponent(worldName)
+  const deleteUrl = `${targetContent}/entities/${encodedName}`
+
+  const authChain: AuthChain = JSON.parse(deleteSignature)
+  const lastLink = authChain[authChain.length - 1]
+  const payloadParts = lastLink.payload.split(':')
+  const timestamp = payloadParts[2] || String(Date.now())
+  const metadata = payloadParts[3] || '{}'
+
+  const headers: Record<string, string> = {
+    'x-identity-timestamp': timestamp,
+    'x-identity-metadata': metadata
+  }
+  authChain.forEach((link, i) => {
+    headers[`x-identity-auth-chain-${i}`] = JSON.stringify(link)
+  })
+
+  const response = await fetch(deleteUrl, { method: 'DELETE', headers, signal })
+  logger.info(`[DELETE] deleting world scenes status=${response.status}`)
+  return response
+}
+
+export async function getAddressAndSignature(
+  components: CliComponents,
+  awaitResponse: IFuture<void>,
+  messageToSign: string,
+  scene: Scene,
+  files: IFile[],
+  skipValidations: boolean,
+  linkOptions: Omit<dAppOptions, 'uri'>,
+  deployment: IDeploymentComponent,
+  deployToken: string,
+  deleteScenesFromWorldPayload?: string,
+  targetContent?: string,
+  multiScene?: boolean
+): Promise<{ program?: Lifecycle.ComponentBasedProgram<unknown> }> {
+  if (process.env.DCL_PRIVATE_KEY) {
+    const wallet = createWallet(process.env.DCL_PRIVATE_KEY)
+    const authChain = Authenticator.createSimpleAuthChain(
+      messageToSign,
+      wallet.address,
+      ethSign(hexToBytes(wallet.privateKey), messageToSign)
+    )
+    let deleteSignature: string | undefined
+    if (deleteScenesFromWorldPayload) {
+      const deleteAuthChain = Authenticator.createSimpleAuthChain(
+        deleteScenesFromWorldPayload,
+        wallet.address,
+        ethSign(hexToBytes(wallet.privateKey), deleteScenesFromWorldPayload)
+      )
+      deleteSignature = JSON.stringify(deleteAuthChain)
+    }
+    const linkerResponse: LinkerResponse = { authChain, address: wallet.address, deleteSignature }
+    await deployment.run(linkerResponse)
+    awaitResponse.resolve()
+    return {}
+  }
+
+  const sceneInfo = await getSceneInfo(
+    components,
+    scene,
+    messageToSign,
+    skipValidations,
+    deleteScenesFromWorldPayload,
+    targetContent,
+    multiScene
+  )
+  const { router: commonRouter } = setRoutes(components, sceneInfo)
+  const router = setDeployRoutes(commonRouter, components, awaitResponse, sceneInfo, files, deployment, deployToken)
+
+  components.logger.info('You need to sign the content before the deployment:')
+  const { program } = await runDapp(components, router, { ...linkOptions, uri: deployLinkerUri(deployToken) })
+  return { program }
+}
+
+function setDeployRoutes(
+  router: Router<object>,
+  components: CliComponents,
+  awaitResponse: IFuture<void>,
+  sceneInfo: SceneInfo,
+  files: IFile[],
+  deployment: IDeploymentComponent,
+  deployToken: string
+): Router<object> {
+  const { logger } = components
+
+  const resolveLinkerPromise = () => setTimeout(() => awaitResponse.resolve(), 100)
+  let linkerResponse: LinkerResponse
+
+  router.get('/api/files', async () => ({
+    body: files.map((file) => ({
+      name: file.path,
+      size: file.size
+    }))
+  }))
+
+  router.get('/api/catalyst-pointers', async () => {
+    const { x, y } = getObject(sceneInfo.baseParcel)
+    const pointer = `${x},${y}`
+    const chainId = linkerResponse?.chainId || 1
+    const network = chainId === ChainId.ETHEREUM_MAINNET ? 'mainnet' : 'sepolia'
+    const value = await getPointers(components, pointer, network)
+    const deployedToAll = new Set(value.map((c) => c.entityId)).size === 1
+
+    if (deployedToAll) resolveLinkerPromise()
+
+    return {
+      body: { catalysts: value }
+    }
+  })
+
+  router.get('/api/world-parcel-permissions/:address', async (ctx) => {
+    if (!sceneInfo.isWorld || !sceneInfo.world || !sceneInfo.targetContent) {
+      return { status: 400, body: { message: 'Not a world deployment or missing targetContent' } }
+    }
+    try {
+      const address = ctx.params.address
+      const permissions = await fetchWorldPermissions(sceneInfo.world, sceneInfo.targetContent)
+      const lowerAddress = address.toLowerCase()
+
+      const allGranted = sceneInfo.parcels.map((p) => {
+        const [x, y] = p.split(',')
+        return { x: parseInt(x, 10), y: parseInt(y, 10), isUpdateAuthorized: true }
+      })
+
+      if (permissions.owner?.toLowerCase() === lowerAddress) {
+        return { body: { authorizations: allGranted, worldWidePermission: true } }
+      }
+
+      const walletSummary = permissions.summary?.[lowerAddress]
+      const deploymentSummary = walletSummary?.find((s) => s.permission === 'deployment')
+      const hasWorldWide = deploymentSummary?.world_wide ?? false
+
+      if (hasWorldWide) {
+        return { body: { authorizations: allGranted, worldWidePermission: true } }
+      }
+
+      const allowedParcels = await fetchParcelPermissions(sceneInfo.world, address, sceneInfo.targetContent)
+      const allowedSet = new Set(allowedParcels)
+
+      return {
+        body: {
+          authorizations: sceneInfo.parcels.map((p) => {
+            const [x, y] = p.split(',')
+            return { x: parseInt(x, 10), y: parseInt(y, 10), isUpdateAuthorized: allowedSet.has(p) }
+          }),
+          worldWidePermission: false
+        }
+      }
+    } catch (e) {
+      logger.error(`Error fetching world parcel permissions: ${(e as Error).message}`)
+      return { status: 500, body: { message: (e as Error).message } }
+    }
+  })
+
+  setDeployResourceRoutes(router, components, {
+    deployment,
+    deployToken,
+    isWorld: sceneInfo.isWorld,
+    resolve: () => awaitResponse.resolve(),
+    reject: (e) => awaitResponse.reject(e),
+    onLinkerResponse: (value) => {
+      linkerResponse = value
+    }
+  })
+
+  return router
+}
+
+export const MIN_DEPLOY_TOKEN_LENGTH = 16
+
+/** The `--deploy-token` given to the CLI, or a random one for this run. */
+export function resolveDeployToken(deployTokenArg?: string): string {
+  if (deployTokenArg === undefined) return randomBytes(16).toString('hex')
+  if (deployTokenArg.length < MIN_DEPLOY_TOKEN_LENGTH) {
+    throw new CliError(
+      'DEPLOY_INVALID_ARGUMENTS',
+      `--deploy-token must be at least ${MIN_DEPLOY_TOKEN_LENGTH} characters long.`
+    )
+  }
+  return deployTokenArg
+}
+
+/**
+ * The linker dapp reads the token that authorizes cancelling the deployment from its URL fragment, which is
+ * never sent in HTTP requests.
+ */
+export function deployLinkerUri(deployToken: string): string {
+  return `/#token=${encodeURIComponent(deployToken)}`
+}
+
+export function sceneHasWorldCfg(scene: Scene) {
+  return !!Object.keys(scene.worldConfiguration || {}).length
+}
+
+export interface SceneInfo {
+  baseParcel: string
+  parcels: string[]
+  rootCID: string
+  landRegistry?: string
+  estateRegistry?: string
+  debug: boolean
+  title?: string
+  description?: string
+  skipValidations: boolean
+  isPortableExperience: boolean
+  isWorld: boolean
+  world?: string
+  deleteScenesFromWorldPayload?: string
+  targetContent?: string
+  multiScene?: boolean
+}
+
+export async function getSceneInfo(
+  components: Pick<CliComponents, 'config'>,
+  scene: Scene,
+  rootCID: string,
+  skipValidations: boolean,
+  deleteScenesFromWorldPayload?: string,
+  targetContent?: string,
+  multiScene?: boolean
+) {
+  const {
+    scene: { parcels, base },
+    display,
+    isPortableExperience
+  } = scene
+
+  return {
+    baseParcel: base,
+    parcels,
+    rootCID,
+    landRegistry: await getLandRegistry(components),
+    estateRegistry: await getEstateRegistry(components),
+    debug: !!process.env.DEBUG,
+    title: display?.title,
+    description: display?.description,
+    skipValidations,
+    isPortableExperience: !!isPortableExperience,
+    isWorld: sceneHasWorldCfg(scene),
+    world: scene.worldConfiguration?.name,
+    deleteScenesFromWorldPayload,
+    targetContent,
+    multiScene
+  }
+}
+
+export interface WorldScene {
+  entityId: string
+  parcels?: string[]
+  entity?: { metadata?: { display?: { title?: string } } }
+}
+
+export function getScenesOnOtherParcels(existingScenes: WorldScene[], deployingParcels: string[]): WorldScene[] {
+  const parcelsSet = new Set(deployingParcels)
+  return existingScenes.filter((scene) => {
+    const sceneParcels = scene.parcels || []
+    return sceneParcels.every((p) => !parcelsSet.has(p))
+  })
+}
+
+interface WorldScenesResponse {
+  scenes: WorldScene[]
+  total: number
+}
+
+export async function fetchWorldScenes(
+  logger: { info: (msg: string) => void },
+  worldName: string,
+  targetContent?: string
+): Promise<WorldScene[]> {
+  const encodedName = encodeURIComponent(worldName)
+  const url = `${targetContent}/world/${encodedName}/scenes`
+  const response = await fetch(url)
+  if (!response.ok) {
+    const text = await response.text()
+    logger.info(`[DEPLOY] fetching scenes from world -  error: ${text}`)
+    throw new Error(`Failed to fetch world scenes: ${response.status} ${response.statusText}`)
+  }
+  const data = (await response.json()) as WorldScenesResponse
+  logger.info(`[DEPLOY] fetching scenes from world success: total=${data.total}, scenes=${data.scenes?.length}`)
+  return data.scenes || []
+}
+
+/**
+ * Whether the entity is live on the content server. Worlds servers don't list entities by id, so a world
+ * is checked through its scenes.
+ */
+export async function isEntityPublished(
+  client: Pick<ContentClient, 'fetchEntitiesByIds'>,
+  entityId: string,
+  options: { world?: { name: string; targetContent: string }; timeoutMs: number }
+): Promise<boolean> {
+  const { world, timeoutMs } = options
+  // Bounds the whole check, body included: the catalyst client's fetcher stops its timer at the headers.
+  return withDeadline(
+    async (signal) => {
+      if (world) {
+        const encodedName = encodeURIComponent(world.name)
+        const response = await fetch(
+          `${world.targetContent}/world/${encodedName}/scenes?entity_id=${encodeURIComponent(entityId)}`,
+          { signal }
+        )
+        if (!response.ok) {
+          await drainResponse(response)
+          throw new Error(`Failed to fetch world scenes: ${response.status} ${response.statusText}`)
+        }
+        const data = (await response.json()) as Partial<WorldScenesResponse>
+        return (data.scenes ?? []).some((scene) => scene.entityId === entityId)
+      }
+      const entities = await client.fetchEntitiesByIds([entityId], { signal })
+      return entities.some((entity) => entity.id === entityId)
+    },
+    { timeoutMs }
+  )
+}
+
+export function promptUser(question: string): Promise<boolean> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close()
+      resolve(answer.toLowerCase() === 'y' || answer.toLowerCase() === 'yes')
+    })
+  })
+}
+
+interface WorldPermissionsResponse {
+  permissions: {
+    deployment: {
+      type: string
+      wallets: string[]
+    }
+  }
+  owner?: string
+  summary?: Record<string, { permission: string; world_wide: boolean; parcel_count: number }[]>
+}
+
+export async function fetchWorldPermissions(
+  worldName: string,
+  targetContent: string,
+  signal?: AbortSignal
+): Promise<WorldPermissionsResponse> {
+  const encodedName = encodeURIComponent(worldName)
+  const url = `${targetContent}/world/${encodedName}/permissions`
+  const response = await fetch(url, { signal })
+  if (!response.ok) {
+    await drainResponse(response)
+    throw new Error(`Failed to fetch world permissions: ${response.status} ${response.statusText}`)
+  }
+  return (await response.json()) as WorldPermissionsResponse
+}
+
+export async function fetchParcelPermissions(
+  worldName: string,
+  address: string,
+  targetContent: string,
+  signal?: AbortSignal
+): Promise<string[]> {
+  const encodedName = encodeURIComponent(worldName)
+  const url = `${targetContent}/world/${encodedName}/permissions/deployment/address/${address.toLowerCase()}/parcels`
+  const response = await fetch(url, { signal })
+  if (!response.ok) {
+    await drainResponse(response)
+    throw new Error(`Failed to fetch parcel permissions: ${response.status} ${response.statusText}`)
+  }
+  const data = (await response.json()) as { parcels: string[] }
+  return data.parcels || []
+}
+
+export async function checkWorldDeploymentPermission(
+  logger: { info: (msg: string) => void },
+  worldName: string,
+  address: string,
+  targetContent: string,
+  deployingParcels: string[],
+  signal?: AbortSignal
+): Promise<{ allowed: boolean; deniedParcels?: string[] }> {
+  const permissions = await fetchWorldPermissions(worldName, targetContent, signal)
+  const lowerAddress = address.toLowerCase()
+
+  // Check if wallet is the world owner
+  if (permissions.owner?.toLowerCase() === lowerAddress) {
+    return { allowed: true }
+  }
+
+  // Check world-wide deployment permission
+  const deploymentPermission = permissions.permissions?.deployment
+  if (deploymentPermission) {
+    if (deploymentPermission.type === 'unrestricted') {
+      return { allowed: true }
+    }
+    const allowedWallets = (deploymentPermission.wallets || []).map((w: string) => w.toLowerCase())
+    if (allowedWallets.includes(lowerAddress)) {
+      // Check if wallet has world-wide permission or only per-parcel
+      const walletSummary = permissions.summary?.[lowerAddress]
+      const deploymentSummary = walletSummary?.find((s) => s.permission === 'deployment')
+      if (!deploymentSummary || deploymentSummary.world_wide) {
+        return { allowed: true }
+      }
+    }
+  }
+
+  // Check per-parcel permissions
+  const allowedParcels = await fetchParcelPermissions(worldName, address, targetContent, signal)
+  const allowedSet = new Set(allowedParcels)
+  const deniedParcels = deployingParcels.filter((p) => !allowedSet.has(p))
+
+  if (deniedParcels.length === 0) {
+    return { allowed: true }
+  }
+
+  return { allowed: false, deniedParcels }
+}
