@@ -219,6 +219,86 @@ fn trades_leg_sql(extra: &str) -> String {
     )
 }
 
+/// An open v3 listing ([`TRADES_LEG_SQL`]'s row) as an order: its id is the
+/// trade's, and `tradeId` names it so a client cancels that trade.
+fn trade_row_order(r: &sqlx::postgres::PgRow) -> Order {
+    let (network, chain_id) = network_and_chain(&r.get::<String, _>("network"));
+    let created_at: i64 = r.get("created_at");
+    Order {
+        id: r.get("id"),
+        trade_id: Some(r.get("id")),
+        marketplace_address: r
+            .get::<Option<String>, _>("marketplace_address")
+            .unwrap_or_default(),
+        contract_address: r.get("nft_address"),
+        token_id: r.get("token_id"),
+        owner: r.get("owner"),
+        buyer: Some(String::new()),
+        price: r.get("price"),
+        status: "open".to_string(),
+        expires_at: r.get("expires_at"),
+        created_at,
+        updated_at: created_at,
+        network,
+        chain_id,
+        issued_id: r.get("issued_id"),
+    }
+}
+
+/// The newest open v3 listing of each `(network, contract, token, owner)`,
+/// signed by that owner: the `order` an nft page carries when it has no
+/// legacy one. One statement for the whole page; `network` is the
+/// database name (`matic`, `ethereum`), the rest lowercase.
+pub async fn open_trade_orders(
+    state: &MarketplaceState,
+    wanted: &[(String, String, String, String)],
+) -> Result<std::collections::HashMap<(String, String), Order>, ApiError> {
+    let mut out = std::collections::HashMap::new();
+    if wanted.is_empty() {
+        return Ok(out);
+    }
+    let sql = format!(
+        "WITH {} SELECT DISTINCT ON (x.network, x.nft_address, x.token_id) x.* FROM ({} \
+           AND (lower(u.network), u.contract_address_sent, u.token_id, u.signer) IN \
+               (SELECT * FROM unnest($3::text[], $4::text[], $5::text[], $6::text[]))) x \
+         ORDER BY x.network, x.nft_address, x.token_id, x.created_at DESC, x.id ASC",
+        unified_trades_cte("$1", "$2"),
+        TRADES_LEG_SQL.replace("SHIFT", ITEM_ID_SHIFT)
+    );
+    let column = |i: usize| {
+        wanted
+            .iter()
+            .map(|w| match i {
+                0 => w.0.clone(),
+                1 => w.1.clone(),
+                2 => w.2.clone(),
+                _ => w.3.clone(),
+            })
+            .collect::<Vec<String>>()
+    };
+    let now = Utc::now().naive_utc();
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(now)
+        .bind(super::trades::mirrored_since(&state.settings, now))
+        .bind(column(0))
+        .bind(column(1))
+        .bind(column(2))
+        .bind(column(3))
+        .fetch_all(&state.pool)
+        .await?;
+    for r in &rows {
+        let order = trade_row_order(r);
+        out.insert(
+            (
+                order.contract_address.clone(),
+                order.token_id.clone().unwrap_or_default(),
+            ),
+            order,
+        );
+    }
+    Ok(out)
+}
+
 fn keyed(order: Order, sort_token_id: String) -> Keyed {
     let sort_price = order.price.parse::<u128>().unwrap_or(0);
     Keyed {
@@ -281,32 +361,9 @@ pub async fn trades_leg(
     let mut out: Vec<(Keyed, Option<String>)> = rows
         .iter()
         .map(|r| {
-            let (network, chain_id) = network_and_chain(&r.get::<String, _>("network"));
-            let created_at: i64 = r.get("created_at");
-            let token_id: Option<String> = r.get("token_id");
-            let order = Order {
-                id: r.get("id"),
-                trade_id: Some(r.get("id")),
-                marketplace_address: r
-                    .get::<Option<String>, _>("marketplace_address")
-                    .unwrap_or_default(),
-                contract_address: r.get("nft_address"),
-                token_id: token_id.clone(),
-                owner: r.get("owner"),
-                buyer: Some(String::new()),
-                price: r.get("price"),
-                status: "open".to_string(),
-                expires_at: r.get("expires_at"),
-                created_at,
-                updated_at: created_at,
-                network,
-                chain_id,
-                issued_id: r.get("issued_id"),
-            };
-            (
-                keyed(order, token_id.unwrap_or_default()),
-                r.get::<Option<String>, _>("urn"),
-            )
+            let order = trade_row_order(r);
+            let token_id = order.token_id.clone().unwrap_or_default();
+            (keyed(order, token_id), r.get::<Option<String>, _>("urn"))
         })
         .collect();
     let requested: HashSet<(String, String)> = out
