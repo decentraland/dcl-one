@@ -23,7 +23,7 @@ export interface ShopHomeOutfit {
   gradientTo?: string
 }
 
-/** What a hovered outfit offers: how many items it has, their price, and BUY when they're bought here. */
+/** What a hovered outfit offers: how many items it has, their price when it has one, and BUY (without it, none). */
 export interface ShopHomeOutfitOffer {
   items: number
   price?: React.ReactNode

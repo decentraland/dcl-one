@@ -30,7 +30,7 @@ import { cartRequestLines, cartUnits, inWorldCart, inWorldCartInputFor, useInWor
 import { CATALOGUE_SORTS, categoriesFor, defaultFilters, pageCount, useShopCatalogue, type CatalogueFilters, type CatalogueKind } from './catalogueQuery'
 import { useShopFlag } from './flagsQuery'
 import { homeQueries, useNewest, useShopOutfits, useTrending, type OutfitSummary } from './homeQuery'
-import { tryOnUrn, webShopUrl } from './itemLinks'
+import { tryOnUrn, webOutfitUrl, webShopUrl } from './itemLinks'
 import { useCreditsBalance, useShopCapabilities, useShopPurchase } from './purchaseQuery'
 import { categoryGlyph, CreatorName, SelectedItemPanel, ShopCard } from './ShopItems'
 import { CreditsPill, EmoteControls, PriceTag, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopItemSkeleton, type PressedWith, type ShopHomeOutfitOffer } from './ui'
@@ -77,7 +77,11 @@ export interface InWorldShopProps {
 
 /** Asks first, then opens the item on the web Shop in the browser. */
 async function openOnWeb(item: CatalogItem): Promise<void> {
-  const url = webShopUrl(item)
+  await openWebShop(webShopUrl(item))
+}
+
+/** Opens a page of the web Shop in the browser, once the player agrees to leave. */
+async function openWebShop(url: string | null): Promise<void> {
   if (url == null) return
   const go = await showConfirm({
     title: 'You will be redirected to the web Shop',
@@ -314,25 +318,30 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
       if (!opened) showToast("The purchase couldn't open. Try again in a moment.", { tone: 'error' })
     })
   }
-  // An outfit's tile counts its items; it prices them and offers BUY only when it has some and every one of
-  // them sells in credits, as the web Shop's outfit card prices one. BUY buys the whole outfit in one
-  // purchase, not the cart's (what it buys stays in the cart).
+  // An outfit's tile counts its items and prices them when every one of them sells in credits, as the web
+  // Shop's outfit card prices one. BUY buys the whole outfit in one purchase where purchases run (the web
+  // shell) and it is priced so; not the cart's purchase, so what it buys stays in the cart. Anywhere else, or
+  // when the shell can't open it, BUY opens the outfit on the web Shop, as an item's BUY does.
   const outfitOffer = (outfit: OutfitSummary): ShopHomeOutfitOffer => {
-    const items = outfitReads[outfits.data?.indexOf(outfit) ?? -1]?.data
+    if (outfit.items.length === 0) return { items: 0 }
+    const read = outfitReads[outfits.data?.indexOf(outfit) ?? -1]
+    const items = read?.data
     const inputs = (items ?? []).map((item) => inWorldCartInputFor(item))
     const lines = inputs.flatMap((i) => (i == null ? [] : [{ contract: i.contract, itemId: i.itemId, quantity: 1 }]))
-    if (items == null || items.length === 0 || items.length !== outfit.items.length || lines.length !== items.length) return { items: outfit.items.length }
+    const priced = items != null && items.length === outfit.items.length && lines.length === items.length
+    const onWeb = (): void => void openWebShop(webOutfitUrl(outfit.id))
     const credits = inputs.reduce((n, i) => n + (i?.credits ?? 0), 0)
     return {
       items: outfit.items.length,
-      price: <PriceTag price={{ kind: 'credits', credits, compareAt: null, mana: null }} />,
-      onBuy: purchase.available
-        ? (input) => {
-            void purchase.buyAll(lines, input).then((opened) => {
-              if (!opened) showToast("The purchase couldn't open. Try again in a moment.", { tone: 'error' })
-            })
-          }
-        : undefined
+      price: priced ? <PriceTag price={{ kind: 'credits', credits, compareAt: null, mana: null }} /> : undefined,
+      // In the shell, BUY waits for the items: it can't tell yet whether the purchase runs here.
+      onBuy: !purchase.available
+        ? onWeb
+        : priced
+          ? (input) => void purchase.buyAll(lines, input).then((opened) => (opened ? undefined : onWeb()))
+          : read?.isPending === false
+            ? onWeb
+            : undefined
     }
   }
   const select = (item: CatalogItem): void => {

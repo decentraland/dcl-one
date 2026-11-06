@@ -117,6 +117,7 @@ afterEach(async () => {
   primeRemoteFlags(null)
   shell.request.mockReset()
   shell.handlers.clear()
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   for (const line of [...inWorldCart.getSnapshot()]) await inWorldCart.remove(line)
   localStorage.clear()
@@ -230,6 +231,46 @@ describe('the in-world Shop’s cart', () => {
     const [, params] = shell.request.mock.calls.find(([m]) => m === 'shop.buy')!
     expect(params).toEqual({ v: 1, items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }], method: 'credits', input: 'pointer' })
     expect(cartButton()).toHaveAccessibleName('Cart, 1 item')
+  })
+
+  // Two items, of which the catalogue knows only the Golden Armor: the outfit can't be priced here.
+  const HALF_KNOWN = { id: 'o2', name: 'Half Known', thumbnailHash: '', items: [{ contractAddress: CONTRACT, itemId: '1' }, { contractAddress: CONTRACT, itemId: '9' }], gradientFrom: '#ff0000', gradientTo: '#0000ff' }
+  const outfitBuy = async (name: string): Promise<HTMLElement> => {
+    const tile = (await screen.findByRole('button', { name: `Try on ${name}` }, { timeout: 5000 })).parentElement!
+    return within(tile).findByRole('button', { name: 'BUY' })
+  }
+  const continueToWeb = async (): Promise<void> => {
+    const dialog = await screen.findByRole('dialog', {}, { timeout: 5000 })
+    expect(within(dialog).getByText('You will be redirected to the web Shop')).toBeInTheDocument()
+    await userEvent.click(within(dialog).getByRole('button', { name: 'CONTINUE' }))
+  }
+
+  it('sends an outfit it can’t price in credits to the web Shop on its BUY', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    serveCatalogue([HALF_KNOWN])
+    answerShell()
+    renderShop()
+    await userEvent.click(await screen.findByRole('tab', { name: 'All' }))
+    await userEvent.click(await outfitBuy('Half Known'))
+    await continueToWeb()
+    expect(open).toHaveBeenCalledWith(expect.stringContaining('/shop/items/outfits/o2'), '_blank', 'noopener')
+    expect(shell.request).not.toHaveBeenCalledWith('shop.buy', expect.anything())
+  })
+
+  it('sends an outfit to the web Shop when the shell can’t open its purchase', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    serveCatalogue([{ id: 'o1', name: 'Neon Night', thumbnailHash: '', items: [{ contractAddress: CONTRACT, itemId: '1' }], gradientFrom: '#ff0000', gradientTo: '#0000ff' }])
+    answerShell()
+    const answered = shell.request.getMockImplementation()!
+    shell.request.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === 'shop.buy') throw new Error('refused')
+      return answered(method, params)
+    })
+    renderShop()
+    await userEvent.click(await screen.findByRole('tab', { name: 'All' }))
+    await userEvent.click(await outfitBuy('Neon Night'))
+    await continueToWeb()
+    expect(open).toHaveBeenCalledWith(expect.stringContaining('/shop/items/outfits/o1'), '_blank', 'noopener')
   })
 
   it('offers no price or BUY on an outfit with no items', async () => {

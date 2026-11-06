@@ -329,14 +329,25 @@ describe('in-world shop', () => {
   const boots = (over: Record<string, unknown> = {}): Record<string, unknown> => catalogueRow({ id: `${CONTRACT}-2`, itemId: '2', name: 'Silver Boots', priceCredits: 250, ...over })
   const outfitTile = async (): Promise<HTMLElement> => (await screen.findByRole('button', { name: 'Try on Neon Night' }, { timeout: 5000 })).parentElement!
 
-  it('counts an outfit’s items and prices them when every one sells in credits, with no BUY outside the web shell', async () => {
+  it('counts an outfit’s items and prices them when every one sells in credits', async () => {
     serve({ outfits: [TWO_PIECE], byIds: [catalogueRow(), boots()] })
     renderShop()
     await openTab('All')
     const tile = await outfitTile()
     expect(within(tile).getByText('2 Items')).toBeInTheDocument()
     expect(await within(tile).findByText('750')).toBeInTheDocument()
-    expect(within(tile).queryByRole('button', { name: 'BUY' })).toBeNull()
+  })
+
+  it('sends an outfit to the web Shop on its BUY outside the web shell, after asking', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    serve({ outfits: [TWO_PIECE], byIds: [catalogueRow(), boots()] })
+    renderShop()
+    await openTab('All')
+    await userEvent.click(within(await outfitTile()).getByRole('button', { name: 'BUY' }))
+    const dialog = await screen.findByRole('dialog', {}, { timeout: 5000 })
+    expect(within(dialog).getByText('You will be redirected to the web Shop')).toBeInTheDocument()
+    await userEvent.click(within(dialog).getByRole('button', { name: 'CONTINUE' }))
+    expect(open).toHaveBeenCalledWith(expect.stringContaining('/shop/items/outfits/o1'), '_blank', 'noopener')
   })
 
   it('leaves an outfit unpriced when one of its items doesn’t sell in credits or didn’t load', async () => {
