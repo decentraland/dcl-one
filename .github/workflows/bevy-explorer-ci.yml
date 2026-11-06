@@ -75,7 +75,8 @@
         default: ''
 concurrency:
   group: bevy-explorer-ci-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.ref }}
-  cancel-in-progress: true
+  # Main runs finish; runs started meanwhile wait as one pending run (the newest replaces it).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.ref != 'refs/heads/main' }}
 name: Bevy Explorer / CI
 jobs:
   source:
@@ -121,7 +122,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          # Compare the PR's tested merge tree with its actual base, not the default branch.
+          # Fallback only: bevy-ci.py compares the merge tree with the main tip it was merged onto.
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: python3 tooling/bevy-ci.py plan
       - name: Select image consumers
